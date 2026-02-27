@@ -121,7 +121,7 @@ async fn main() -> anyhow::Result<()> {
                 thread: run_thread,
                 max_concurrent_connections: _,
             },
-        swqos: _,
+        swqos,
     } = solana_streamer::nonblocking::testing_utilities::spawn_stake_weighted_qos_server(
         "quic_streamer_test",
         [socket.try_clone()?],
@@ -192,5 +192,6 @@ async fn main() -> anyhow::Result<()> {
     cancel.cancel();
     drop(endpoints);
     stats.report("final_stats");
+    swqos.load_tracker().report_saturation_stats(cli.test_duration);
     status
 }

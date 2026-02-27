@@ -31,6 +31,14 @@ pub struct LoadDebtTracker {
     max_streams_per_second: u64,
     burst_capacity: i64,
     saturation_threshold: i64,
+    /// Count of unsaturated→saturated transitions (monotonic).
+    transitions_to_saturated: AtomicU64,
+    /// Count of saturated→unsaturated transitions (monotonic).
+    transitions_to_unsaturated: AtomicU64,
+    /// Cumulative nanos spent in saturated state (for duty-cycle measurement).
+    saturated_nanos: AtomicU64,
+    /// Nanos-since-epoch when we last entered saturated state.
+    saturated_since_nanos: AtomicU64,
 }
 
 impl LoadDebtTracker {
@@ -59,6 +67,10 @@ impl LoadDebtTracker {
             max_streams_per_second,
             burst_capacity,
             saturation_threshold,
+            transitions_to_saturated: AtomicU64::new(0),
+            transitions_to_unsaturated: AtomicU64::new(0),
+            saturated_nanos: AtomicU64::new(0),
+            saturated_since_nanos: AtomicU64::new(0),
         }
     }
 
@@ -88,14 +100,26 @@ impl LoadDebtTracker {
         } else {
             false
         };
+        let now_nanos = self.nanos_since_epoch();
         let prev = self.was_saturated.swap(saturated, Ordering::Relaxed);
         if saturated && !prev {
+            self.transitions_to_saturated
+                .fetch_add(1, Ordering::Relaxed);
+            self.saturated_since_nanos
+                .store(now_nanos, Ordering::Relaxed);
             log::warn!(
                 "LoadDebtTracker: system saturated (bucket={}, threshold={})",
                 self.bucket.load(Ordering::Relaxed),
                 self.saturation_threshold,
             );
         } else if !saturated && prev {
+            self.transitions_to_unsaturated
+                .fetch_add(1, Ordering::Relaxed);
+            let entered = self.saturated_since_nanos.load(Ordering::Relaxed);
+            if now_nanos > entered {
+                self.saturated_nanos
+                    .fetch_add(now_nanos - entered, Ordering::Relaxed);
+            }
             log::info!(
                 "LoadDebtTracker: system recovered (bucket={}, threshold={})",
                 self.bucket.load(Ordering::Relaxed),
@@ -108,6 +132,39 @@ impl LoadDebtTracker {
     /// Return the current bucket level.
     pub fn bucket_level(&self) -> i64 {
         self.bucket.load(Ordering::Relaxed)
+    }
+
+    /// Return and reset the number of unsaturated→saturated transitions.
+    pub fn take_transitions_to_saturated(&self) -> u64 {
+        self.transitions_to_saturated.swap(0, Ordering::Relaxed)
+    }
+
+    /// Return and reset the number of saturated→unsaturated transitions.
+    pub fn take_transitions_to_unsaturated(&self) -> u64 {
+        self.transitions_to_unsaturated.swap(0, Ordering::Relaxed)
+    }
+
+    /// Return and reset cumulative nanos spent in saturated state.
+    pub fn take_saturated_nanos(&self) -> u64 {
+        self.saturated_nanos.swap(0, Ordering::Relaxed)
+    }
+
+    /// Log saturation statistics and reset counters.
+    pub fn report_saturation_stats(&self, elapsed: Duration) {
+        let to_sat = self.take_transitions_to_saturated();
+        let to_unsat = self.take_transitions_to_unsaturated();
+        let sat_nanos = self.take_saturated_nanos();
+        let elapsed_nanos = elapsed.as_nanos() as u64;
+        let duty_pct = if elapsed_nanos > 0 {
+            sat_nanos as f64 / elapsed_nanos as f64 * 100.0
+        } else {
+            0.0
+        };
+        log::info!(
+            "LoadDebtTracker: transitions to_saturated={to_sat} to_unsaturated={to_unsat} \
+             saturated_duty={duty_pct:.1}% bucket={}",
+            self.bucket_level(),
+        );
     }
 
     fn try_refill(&self) {
