@@ -55,4 +55,4 @@ spl-memo-interface = { workspace = true }
 solana-keypair = { workspace = true }
 solana-seed-derivable = { workspace = true }
 solana-signer = { workspace = true }
-solana-transaction-context = { workspace = true }
+solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode"] }

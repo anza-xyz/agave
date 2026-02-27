@@ -61,21 +61,21 @@ solana-vote-interface = { workspace = true, features = ["bincode"] }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
 solana-account = { workspace = true }
 solana-clock = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
-solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-program-runtime = { path = "../../program-runtime", features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sha256-hasher = { workspace = true }
-solana-svm-feature-set = { workspace = true }
-solana-system-program = { workspace = true }
-solana-vote-program = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-svm-feature-set = { path = "../../svm-feature-set", features = ["agave-unstable-api"] }
+solana-system-program = { path = "../system", features = ["agave-unstable-api"] }
+solana-vote-program = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"], default-features = false }
 test-case = { workspace = true }
 
 [[bench]]

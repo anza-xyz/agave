@@ -47,7 +47,7 @@ tokio = { workspace = true, features = ["full"] }
 tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
-solana-net-utils = { workspace = true }
-solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
+solana-rpc = { path = "../rpc", features = ["dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }

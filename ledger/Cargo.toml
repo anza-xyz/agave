@@ -138,21 +138,21 @@ default-features = false
 features = ["lz4"]
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 bs58 = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
-solana-account-decoder = { workspace = true }
+solana-account-decoder = { path = "../account-decoder", features = ["agave-unstable-api"] }
 solana-bls-signatures = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-ledger = { path = ".", features = ["dev-context-only-utils", "agave-unstable-api"] }
-solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
-solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
+solana-net-utils = { path = "../net-utils", features = ["dev-context-only-utils"] }
+solana-perf = { path = "../perf", features = ["dev-context-only-utils"] }
 solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }
 solana-signature = { workspace = true, features = ["rand"] }
-solana-vote = { workspace = true, features = ["dev-context-only-utils"] }
+solana-vote = { path = "../vote", features = ["dev-context-only-utils"] }
 spl-generic-token = { workspace = true }
 spl-pod = { workspace = true }
 test-case = { workspace = true }

@@ -34,7 +34,7 @@ solana-secp256k1-program = { workspace = true, features = ["serde"] }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-precompiles = { path = ".", features = ["agave-unstable-api"] }
 bytemuck = { workspace = true }
 hex = { workspace = true }

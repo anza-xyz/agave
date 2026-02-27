@@ -56,8 +56,8 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
-solana-test-validator = { workspace = true }
+solana-test-validator = { path = "../test-validator" }
 solana-transaction-error = { workspace = true }

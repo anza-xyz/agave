@@ -31,6 +31,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 rand_chacha = { workspace = true }
-solana-net-utils = { workspace = true }
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }

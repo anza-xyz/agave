@@ -39,13 +39,13 @@ tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 solana-account = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-genesis-config = { workspace = true }
-solana-net-utils = { workspace = true }
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-nonce = { workspace = true }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }

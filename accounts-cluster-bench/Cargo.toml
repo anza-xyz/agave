@@ -51,11 +51,11 @@ spl-token-interface = { workspace = true }
 jemallocator = { workspace = true }
 
 [dev-dependencies]
-solana-accounts-db = { workspace = true }
-solana-core = { workspace = true, features = ["dev-context-only-utils"] }
-solana-faucet = { workspace = true, features = ["dev-context-only-utils"] }
-solana-local-cluster = { workspace = true, features = ["dev-context-only-utils"] }
+solana-accounts-db = { path = "../accounts-db", features = ["agave-unstable-api"] }
+solana-core = { path = "../core", features = ["dev-context-only-utils"] }
+solana-faucet = { path = "../faucet", features = ["dev-context-only-utils"] }
+solana-local-cluster = { path = "../local-cluster", features = ["dev-context-only-utils"] }
 solana-native-token = { workspace = true }
 solana-poh-config = { workspace = true }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-test-validator = { workspace = true }
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }
+solana-test-validator = { path = "../test-validator" }

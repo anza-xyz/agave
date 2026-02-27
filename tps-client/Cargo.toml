@@ -46,5 +46,5 @@ solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }
 tempfile = { workspace = true }

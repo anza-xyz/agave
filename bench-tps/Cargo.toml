@@ -77,13 +77,13 @@ thiserror = { workspace = true }
 jemallocator = { workspace = true }
 
 [dev-dependencies]
-agave-feature-set = { workspace = true }
+agave-feature-set = { path = "../feature-set", features = ["agave-unstable-api"] }
 serial_test = { workspace = true }
-solana-faucet = { workspace = true, features = ["dev-context-only-utils"] }
-solana-local-cluster = { workspace = true }
+solana-faucet = { path = "../faucet", features = ["dev-context-only-utils"] }
+solana-local-cluster = { path = "../local-cluster", features = ["agave-unstable-api"] }
 solana-rent = { workspace = true }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
-solana-test-validator = { workspace = true }
-solana-tps-client = { workspace = true, features = ["bank-client"] }
+solana-test-validator = { path = "../test-validator" }
+solana-tps-client = { path = "../tps-client", features = ["bank-client"] }
 tempfile = { workspace = true }

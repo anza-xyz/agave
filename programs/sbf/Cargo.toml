@@ -187,11 +187,11 @@ dummy-for-ci-check = ["sbf_c", "sbf_rust", "sbf_sanity_list", "sbpf-v3"]
 frozen-abi = []
 
 [dev-dependencies]
-agave-feature-set = { workspace = true }
-agave-logger = { workspace = true }
-agave-reserved-account-keys = { workspace = true }
-agave-syscalls = { workspace = true }
-agave-validator = { workspace = true }
+agave-feature-set = { path = "../../feature-set", features = ["agave-unstable-api"] }
+agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
+agave-reserved-account-keys = { path = "../../reserved-account-keys", features = ["agave-unstable-api"] }
+agave-syscalls = { path = "../../syscalls", features = ["agave-unstable-api"], default-features = false }
+agave-validator = { path = "../../validator" }
 bincode = { workspace = true }
 borsh = { workspace = true }
 byteorder = { workspace = true }
@@ -201,38 +201,38 @@ log = { workspace = true }
 miow = { workspace = true }
 net2 = { workspace = true }
 solana-account = "3.3.0"
-solana-account-decoder = { workspace = true }
+solana-account-decoder = { path = "../../account-decoder", features = ["agave-unstable-api"] }
 solana-account-info = "3.1.0"
-solana-accounts-db = { workspace = true }
-solana-bpf-loader-program = { workspace = true }
-solana-cli-output = { workspace = true }
+solana-accounts-db = { path = "../../accounts-db", features = ["agave-unstable-api"] }
+solana-bpf-loader-program = { path = "../bpf_loader", features = ["agave-unstable-api"], default-features = false }
+solana-cli-output = { path = "../../cli-output", features = ["agave-unstable-api"] }
 solana-client-traits = "3.0.0"
 solana-clock = "3.0.0"
 solana-cluster-type = "3.0.0"
-solana-compute-budget = { workspace = true }
-solana-compute-budget-instruction = { workspace = true, features = [
+solana-compute-budget = { path = "../../compute-budget", features = ["agave-unstable-api"] }
+solana-compute-budget-instruction = { path = "../../compute-budget-instruction", features = [
     "dev-context-only-utils",
 ] }
 solana-compute-budget-interface = "3.0.0"
-solana-fee = { workspace = true }
+solana-fee = { path = "../../fee", features = ["agave-unstable-api"] }
 solana-fee-calculator = "3.0.0"
 solana-fee-structure = "3.0.0"
 solana-genesis-config = "3.0.0"
 solana-hash = "4.0.1"
 solana-instruction = { workspace = true }
 solana-keypair = "3.0.0"
-solana-ledger = { workspace = true }
+solana-ledger = { path = "../../ledger", features = ["agave-unstable-api"] }
 solana-loader-v3-interface = "6.1.0"
 solana-loader-v4-interface = "3.1.0"
-solana-measure = { workspace = true }
+solana-measure = { path = "../../measure", features = ["agave-unstable-api"] }
 solana-message = "3.0.0"
 solana-program = { workspace = true }
 solana-program-entrypoint = "3.1.1"
-solana-program-runtime = { workspace = true }
+solana-program-runtime = { path = "../../program-runtime", features = ["agave-unstable-api"] }
 solana-pubkey = "4.0.0"
 solana-rent = "3.0.0"
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-runtime-transaction = { workspace = true, features = [
+solana-runtime = { path = "../../runtime", features = ["dev-context-only-utils"] }
+solana-runtime-transaction = { path = "../../runtime-transaction", features = [
     "dev-context-only-utils",
 ] }
 solana-sbf-rust-invoke-dep = { workspace = true }
@@ -242,25 +242,25 @@ solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = "3.1.0"
 solana-signer = "3.0.0"
 solana-stake-interface = "2.0.2"
-solana-svm = { workspace = true }
-solana-svm-callback = { workspace = true }
-solana-svm-feature-set = { workspace = true }
-solana-svm-log-collector = { workspace = true }
-solana-svm-test-harness-instr = { workspace = true }
-solana-svm-timings = { workspace = true }
-solana-svm-transaction = { workspace = true }
-solana-svm-type-overrides = { workspace = true }
+solana-svm = { path = "../../svm", features = ["agave-unstable-api"] }
+solana-svm-callback = { path = "../../svm-callback", features = ["agave-unstable-api"] }
+solana-svm-feature-set = { path = "../../svm-feature-set", features = ["agave-unstable-api"] }
+solana-svm-log-collector = { path = "../../svm-log-collector", features = ["agave-unstable-api"] }
+solana-svm-test-harness-instr = { path = "../../svm-test-harness/instr" }
+solana-svm-timings = { path = "../../svm-timings", features = ["agave-unstable-api"] }
+solana-svm-transaction = { path = "../../svm-transaction", features = ["agave-unstable-api"] }
+solana-svm-type-overrides = { path = "../../svm-type-overrides", features = ["agave-unstable-api"] }
 solana-system-interface = { workspace = true }
 solana-sysvar = "3.1.1"
 solana-transaction = "3.0.2"
-solana-transaction-context = { workspace = true, features = [
+solana-transaction-context = { path = "../../transaction-context", features = [
     "dev-context-only-utils",
 ] }
 solana-transaction-error = "3.0.0"
-solana-transaction-status = { workspace = true }
-solana-vote = { workspace = true }
+solana-transaction-status = { path = "../../transaction-status", features = ["agave-unstable-api"] }
+solana-vote = { path = "../../vote", features = ["agave-unstable-api"] }
 solana-vote-interface = { workspace = true }
-solana-vote-program = { workspace = true }
+solana-vote-program = { path = "../vote", features = ["agave-unstable-api"], default-features = false }
 test-case = { workspace = true }
 
 [profile.dev]

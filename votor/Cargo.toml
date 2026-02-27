@@ -86,11 +86,11 @@ wincode = { workspace = true, features = ["alloc"] }
 [dev-dependencies]
 agave-votor = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 rand = { workspace = true }
-solana-net-utils = { workspace = true }
-solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
+solana-perf = { path = "../perf", features = ["dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
-solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
+solana-streamer = { path = "../streamer", features = ["dev-context-only-utils"] }
 tempfile = { workspace = true }
 test-case = { workspace = true }
 tokio-util = { workspace = true }

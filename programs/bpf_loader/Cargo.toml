@@ -55,18 +55,18 @@ solana-transaction-context = { workspace = true, features = ["bincode"] }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
-solana-bpf-loader-program = { path = ".", features = ["agave-unstable-api", "svm-internal"] }
+solana-bpf-loader-program = { path = ".", features = ["agave-unstable-api", "svm-internal"], default-features = false }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-last-restart-slot = { workspace = true }
 solana-program = { workspace = true }
-solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-program-runtime = { path = "../../program-runtime", features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-slot-hashes = { workspace = true }
-solana-svm-callback = { workspace = true }
-solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
+solana-svm-callback = { path = "../../svm-callback", features = ["agave-unstable-api"] }
+solana-transaction-context = { path = "../../transaction-context", features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
