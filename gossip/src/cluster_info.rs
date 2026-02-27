@@ -152,6 +152,14 @@ pub struct ClusterInfo {
     pub gossip: CrdsGossip,
     /// set the keypair that will be used to sign crds values generated. It is unset only in tests.
     keypair: ArcSwap<Keypair>,
+    /// Optional keypair for block production under a different identity (e.g. during identity
+    /// transitions). When set, this keypair is used for shred signing and a second ContactInfo
+    /// entry is published in gossip so the network can route transactions to this validator
+    /// for the block-producer's leader slots.
+    block_producer_keypair: ArcSwap<Option<Arc<Keypair>>>,
+    /// ContactInfo published under the block_producer identity, mirrors the node's socket
+    /// addresses so the network can reach this validator for the block-producer's leader slots.
+    block_producer_contact_info: RwLock<Option<ContactInfo>>,
     /// Network entrypoints
     entrypoints: RwLock<Vec<ContactInfo>>,
     outbound_budget: DataBudget,
@@ -176,6 +184,8 @@ impl ClusterInfo {
         let me = Self {
             gossip: CrdsGossip::default(),
             keypair: ArcSwap::from(keypair),
+            block_producer_keypair: ArcSwap::from(Arc::new(None)),
+            block_producer_contact_info: RwLock::new(None),
             entrypoints: RwLock::default(),
             outbound_budget: DataBudget::default(),
             my_contact_info: RwLock::new(contact_info),
@@ -414,6 +424,7 @@ impl ClusterInfo {
             .unwrap()
             .set_tpu(contact_info::Protocol::QUIC, tpu_addr)?;
         self.refresh_my_gossip_contact_info();
+        self.refresh_block_producer_contact_info();
         Ok(())
     }
 
@@ -426,7 +437,77 @@ impl ClusterInfo {
             .unwrap()
             .set_tpu_forwards(contact_info::Protocol::QUIC, tpu_forwards_addr)?;
         self.refresh_my_gossip_contact_info();
+        self.refresh_block_producer_contact_info();
         Ok(())
+    }
+
+    /// Set the block-producer keypair. This publishes a second ContactInfo in gossip under the
+    /// block-producer's pubkey, pointing to the same TPU/TVU sockets as this node's identity.
+    /// This allows the network to route transactions to this validator for the block-producer's
+    /// leader slots during an identity transition.
+    pub fn set_block_producer_keypair(&self, keypair: Arc<Keypair>) {
+        info!("Setting block producer keypair: {}", keypair.pubkey());
+        self.block_producer_keypair.store(Arc::new(Some(keypair)));
+        self.refresh_block_producer_contact_info();
+    }
+
+    /// Returns the block-producer keypair if set, otherwise the identity keypair.
+    /// Use this for shred signing and relayer/block-engine authentication.
+    pub fn block_producer_keypair(&self) -> Arc<Keypair> {
+        if let Some(bp_keypair) = self.block_producer_keypair.load().as_ref() {
+            bp_keypair.clone()
+        } else {
+            self.keypair()
+        }
+    }
+
+    /// Returns the pubkey to use for the turbine tree.
+    /// If a block-producer is configured, returns the block-producer's pubkey
+    /// (the identity on the leader schedule). Otherwise returns id().
+    pub fn turbine_id(&self) -> Pubkey {
+        if let Some(bp_keypair) = self.block_producer_keypair.load().as_ref() {
+            bp_keypair.pubkey()
+        } else {
+            self.id()
+        }
+    }
+
+    /// Returns the ContactInfo to use for the local node in the turbine tree.
+    /// If a block-producer is configured, returns its ContactInfo (with block-producer
+    /// pubkey and same TVU addresses). Otherwise returns the primary identity's ContactInfo.
+    pub fn turbine_contact_info(&self) -> ContactInfo {
+        if let Some(bp_ci) = self.block_producer_contact_info.read().unwrap().as_ref() {
+            bp_ci.clone()
+        } else {
+            self.my_contact_info.read().unwrap().clone()
+        }
+    }
+
+    /// Re-publishes the block-producer's ContactInfo in CRDS, mirroring any socket
+    /// changes from the identity's ContactInfo (e.g. TPU address updates).
+    fn refresh_block_producer_contact_info(&self) {
+        let bp_keypair_opt = self.block_producer_keypair.load();
+        let Some(bp_keypair) = bp_keypair_opt.as_ref() else {
+            return;
+        };
+
+        // Clone the primary identity's ContactInfo to pick up any socket changes,
+        // then hot_swap_pubkey to the block-producer identity. This gives a fresh
+        // outset each refresh, enabling duplicate-instance detection if another
+        // validator starts with the same block-producer pubkey.
+        let mut bp_info = self.my_contact_info.read().unwrap().clone();
+        bp_info.hot_swap_pubkey(bp_keypair.pubkey());
+        bp_info.set_wallclock(timestamp());
+
+        let entry = CrdsValue::new(CrdsData::ContactInfo(bp_info.clone()), bp_keypair);
+        if let Err(err) = {
+            let mut gossip_crds = self.gossip.crds.write().unwrap();
+            gossip_crds.insert(entry, timestamp(), GossipRoute::LocalMessage)
+        } {
+            error!("refresh_block_producer_contact_info: {err:?}");
+        }
+
+        *self.block_producer_contact_info.write().unwrap() = Some(bp_info);
     }
 
     pub fn set_tpu_vote(
@@ -1449,6 +1530,7 @@ impl ClusterInfo {
                     //we saw a deadlock passing an self.read().unwrap().timeout into sleep
                     if start - last_push > CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2 {
                         self.refresh_my_gossip_contact_info();
+                        self.refresh_block_producer_contact_info();
                         self.refresh_push_active_set(
                             &recycler,
                             &stakes,
@@ -1914,15 +1996,23 @@ impl ClusterInfo {
         }
         // Check if there is a duplicate instance of
         // this node with more recent timestamp.
+        // Also checks the block-producer identity if one is configured.
         let check_duplicate_instance = {
             let my_contact_info = self.my_contact_info();
+            let bp_contact_info = self.block_producer_contact_info.read().unwrap().clone();
             move |values: &[CrdsValue]| {
-                let mut nodes = values.iter().filter_map(CrdsValue::contact_info);
-                if nodes.any(|other| my_contact_info.check_duplicate(other)) {
-                    Err(GossipError::DuplicateNodeInstance)
-                } else {
-                    Ok(())
+                for other in values.iter().filter_map(CrdsValue::contact_info) {
+                    if my_contact_info.check_duplicate(other) {
+                        return Err(GossipError::DuplicateNodeInstance);
+                    }
+                    if let Some(ref bp_ci) = bp_contact_info {
+                        if bp_ci.check_duplicate(other) {
+                            log::warn!("Duplicate block-producer instance: {other:?}");
+                            return Err(GossipError::DuplicateNodeInstance);
+                        }
+                    }
                 }
+                Ok(())
             }
         };
         let mut pings = Vec::new();

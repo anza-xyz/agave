@@ -122,6 +122,7 @@ pub fn execute(
     } = cli::thread_args::parse_num_threads_args(matches);
 
     let identity_keypair = Arc::new(run_args.identity_keypair);
+    let block_producer_keypair = run_args.block_producer_keypair.map(Arc::new);
 
     let logfile = run_args.logfile;
     if let Some(logfile) = logfile.as_ref() {
@@ -1116,6 +1117,7 @@ pub fn execute(
     let validator = Validator::new_with_exit(
         node,
         identity_keypair,
+        block_producer_keypair,
         &ledger_path,
         &vote_account,
         authorized_voter_keypairs,

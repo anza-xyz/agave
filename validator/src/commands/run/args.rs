@@ -47,6 +47,7 @@ pub mod send_transaction_config;
 #[derive(Debug, PartialEq)]
 pub struct RunArgs {
     pub identity_keypair: Keypair,
+    pub block_producer_keypair: Option<Keypair>,
     pub ledger_path: PathBuf,
     pub logfile: Option<PathBuf>,
     pub entrypoints: Vec<SocketAddr>,
@@ -66,6 +67,8 @@ impl FromClapArgMatches for RunArgs {
                 "The --identity <KEYPAIR> argument is required",
                 clap::ErrorKind::ArgumentNotFound,
             ))?;
+
+        let block_producer_keypair = keypair_of(matches, "block_producer");
 
         let ledger_path = PathBuf::from(matches.value_of("ledger_path").ok_or(
             clap::Error::with_description(
@@ -118,6 +121,7 @@ impl FromClapArgMatches for RunArgs {
 
         Ok(RunArgs {
             identity_keypair,
+            block_producer_keypair,
             ledger_path,
             logfile,
             entrypoints,
@@ -148,6 +152,19 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(is_keypair_or_ask_keyword)
             .help("Validator identity keypair"),
+    )
+    .arg(
+        Arg::with_name("block_producer")
+            .long("block-producer")
+            .value_name("KEYPAIR")
+            .takes_value(true)
+            .validator(is_keypair_or_ask_keyword)
+            .help(
+                "Optional keypair whose identity is checked against the leader schedule for block \
+                 production. Use this to produce blocks under a previous identity during an \
+                 identity transition, while the new identity propagates through the epoch stakes \
+                 snapshot. [default: the --identity keypair]",
+            ),
     )
     .arg(
         Arg::with_name("authorized_voter_keypairs")
@@ -1304,6 +1321,7 @@ mod tests {
 
             RunArgs {
                 identity_keypair,
+                block_producer_keypair: None,
                 ledger_path,
                 logfile: Some(logfile),
                 entrypoints,
@@ -1328,6 +1346,10 @@ mod tests {
         fn clone(&self) -> Self {
             RunArgs {
                 identity_keypair: self.identity_keypair.insecure_clone(),
+                block_producer_keypair: self
+                    .block_producer_keypair
+                    .as_ref()
+                    .map(|kp| kp.insecure_clone()),
                 logfile: self.logfile.clone(),
                 entrypoints: self.entrypoints.clone(),
                 known_validators: self.known_validators.clone(),
