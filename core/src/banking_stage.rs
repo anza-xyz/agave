@@ -745,13 +745,11 @@ mod external {
         super::*,
         crate::banking_stage::consume_worker::external::ExternalWorker,
         agave_bridge::SchedulerBindings,
-        agave_schedulers::{
-            shared::PriorityId,
-        },
+        agave_scheduler_greedy_throughput::{GreedyThroughputArgs, GreedyThroughputScheduler},
+        agave_schedulers::shared::PriorityId,
         agave_scheduling_utils::handshake::{
-            client,
+            ClientLogon, client,
             server::{AgaveSession, AgaveWorkerSession, Server},
-            ClientLogon,
         },
         std::os::fd::IntoRawFd,
         tpu_to_pack::BankingPacketReceivers,
