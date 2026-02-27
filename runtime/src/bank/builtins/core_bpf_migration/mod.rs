@@ -191,6 +191,7 @@ impl Bank {
                 &mut load_program_metrics,
                 dummy_invoke_context.program_cache_for_tx_batch,
                 program_runtime_environments.program_runtime_v1.clone(),
+                feature_set.disable_sbpf_v0_v1_v2_deployment,
                 program_id,
                 &bpf_loader_upgradeable::id(),
                 // The size of the program cache entry is the size of the program account
