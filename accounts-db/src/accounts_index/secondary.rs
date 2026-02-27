@@ -1,5 +1,5 @@
 use {
-    dashmap::{DashMap, mapref::entry::Entry::Occupied},
+    dashmap::DashMap,
     log::*,
     solana_pubkey::Pubkey,
     solana_time_utils::AtomicInterval,
@@ -129,101 +129,106 @@ impl<SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send>
         }
     }
 
+    /// Inserts `inner_key` into `key`'s map.
     pub fn insert(&self, key: &Pubkey, inner_key: &Pubkey) {
-        {
-            let pubkeys_map = self
-                .index
-                .get(key)
-                .unwrap_or_else(|| self.index.entry(*key).or_default().downgrade());
+        // Note: Always lock the reverse index first, so we synchronize with remove().
+        let reverse_index_entry = self.reverse_index.entry(*inner_key).or_default();
+        let mut outer_keys = reverse_index_entry.write().unwrap();
 
-            pubkeys_map.insert_if_not_exists(inner_key, &self.stats.num_inner_keys);
+        // Now insert into the index.
+        // Note, we do this get()-then-unwrap instead of calling entry() directly, because
+        // get() is a read lock whereas entry() is a write lock.  We assume `key` already has
+        // a map created, so optimize for the common case and only take a read lock.
+        self.index
+            .get(key)
+            .unwrap_or_else(|| self.index.entry(*key).or_default().downgrade())
+            .insert_if_not_exists(inner_key, &self.stats.num_inner_keys);
+
+        if !outer_keys.contains(key) {
+            outer_keys.push(*key);
         }
 
-        {
-            let outer_keys = self.reverse_index.get(inner_key).unwrap_or_else(|| {
-                self.reverse_index
-                    .entry(*inner_key)
-                    .or_insert(RwLock::new(Vec::with_capacity(1)))
-                    .downgrade()
-            });
-
-            let should_insert = !outer_keys.read().unwrap().contains(key);
-            if should_insert {
-                let mut w_outer_keys = outer_keys.write().unwrap();
-                if !w_outer_keys.contains(key) {
-                    w_outer_keys.push(*key);
-                }
-            }
-        }
+        // explicityly drop the locks so we don't hold them while reporting metrics
+        drop(outer_keys);
+        drop(reverse_index_entry);
 
         if self.stats.last_report.should_update(1000) {
             datapoint_info!(
                 self.metrics_name,
-                ("num_secondary_keys", self.index.len() as i64, i64),
+                ("num_secondary_keys", self.index.len(), i64),
                 (
                     "num_inner_keys",
-                    self.stats.num_inner_keys.load(Ordering::Relaxed) as i64,
+                    self.stats.num_inner_keys.load(Ordering::Relaxed),
                     i64
                 ),
-                (
-                    "num_reverse_index_keys",
-                    self.reverse_index.len() as i64,
-                    i64
-                ),
+                ("num_reverse_index_keys", self.reverse_index.len(), i64),
             );
         }
     }
 
-    // Only safe to call from `remove_by_inner_key()` due to asserts
-    fn remove_index_entries(&self, outer_key: &Pubkey, removed_inner_key: &Pubkey) {
-        let is_outer_key_empty = {
-            let inner_key_map = self
-                .index
-                .get_mut(outer_key)
-                .expect("If we're removing a key, then it must have an entry in the map");
-            // If we deleted a pubkey from the reverse_index, then the corresponding entry
-            // better exist in this index as well or the two indexes are out of sync!
-            assert!(inner_key_map.value().remove_inner_key(removed_inner_key));
-            inner_key_map.is_empty()
+    /// Removes `inner_key` from `outer_key`'s map.
+    ///
+    /// Must only be called by remove_by_inner_key(), or equiv, that is
+    /// holding a lock on self.reverse_index.
+    fn remove_index_entries(&self, outer_key: &Pubkey, inner_key: &Pubkey) -> bool {
+        let Some(inner_keys) = self.index.get_mut(outer_key) else {
+            // we were told that inner_key is in the outer_key map,
+            // so the outer_key map should exist!
+            panic!(
+                "{}: bad index: missing entry for outer_key={outer_key} (inner_key={inner_key})",
+                self.metrics_name
+            );
         };
 
-        // Delete the `key` if the set of inner keys is empty
-        if is_outer_key_empty {
-            // Other threads may have interleaved writes to this `key`,
-            // so double-check again for its emptiness
-            if let Occupied(key_entry) = self.index.entry(*outer_key) {
-                if key_entry.get().is_empty() {
-                    key_entry.remove();
-                }
-            }
+        let was_removed = inner_keys.value().remove_inner_key(inner_key);
+        if !was_removed {
+            // we were told that inner_key is in the outer_key map,
+            // so the outer_key map should contain the inner_key!
+            panic!(
+                "{}: bad index: missing entry for inner_key={inner_key} in map for \
+                 outer_key={outer_key}",
+                self.metrics_name
+            );
         }
+
+        // Before dropping the lock, check if the outer_key map is empty.
+        // Because if it is *not* empty, we can skip checking again below.
+        let is_outer_key_empty = inner_keys.is_empty();
+        drop(inner_keys);
+
+        if is_outer_key_empty {
+            // If the outer_key map was empty, we'll check again and remove it if still empty.
+            // If it is no longer empty, that is fine, it was re-added, and nothing to do here.
+            self.index
+                .remove_if(outer_key, |_, inner_keys| inner_keys.is_empty());
+        }
+        was_removed
     }
 
+    /// Removes `inner_key` from the secondary index.
     pub fn remove_by_inner_key(&self, inner_key: &Pubkey) {
-        // Save off which keys in `self.index` had slots removed so we can remove them
-        // after we purge the reverse index
-        let mut removed_outer_keys: HashSet<Pubkey> = HashSet::new();
-
-        // Check if the entry for `inner_key` in the reverse index is empty
-        // and can be removed
-        if let Some((_, outer_keys_set)) = self.reverse_index.remove(inner_key) {
-            for removed_outer_key in outer_keys_set.into_inner().unwrap().into_iter() {
-                removed_outer_keys.insert(removed_outer_key);
+        // First go through the reverse-index and remove inner_key from all forward-indexes.
+        // Note: Always lock the reverse index first, so we synchronize with insert().
+        let mut num_removed = 0;
+        if let Some(reverse_index_entry) = self.reverse_index.get(inner_key) {
+            let mut outer_keys = reverse_index_entry.write().unwrap();
+            for outer_key in outer_keys.iter() {
+                num_removed += self.remove_index_entries(outer_key, inner_key) as u64;
             }
+            outer_keys.clear();
         }
 
-        // Remove this value from those keys
-        for outer_key in &removed_outer_keys {
-            self.remove_index_entries(outer_key, inner_key);
-        }
+        // Then write-lock the reverse-index entry for inner_key.
+        // If its outer keys list is still empty, then remove the whole entry.
+        // However, foreground transaction processing may've inserted a value
+        // back into the index, which is fine.  In that case, do nothing.
+        self.reverse_index.remove_if(inner_key, |_, outer_keys| {
+            outer_keys.read().unwrap().is_empty()
+        });
 
-        // Safe to `fetch_sub()` here because a dead key cannot be removed more than once,
-        // and the `num_inner_keys` must have been incremented by exactly removed_outer_keys.len()
-        // in previous unique insertions of `inner_key` into `self.index` for each key
-        // in `removed_outer_keys`
         self.stats
             .num_inner_keys
-            .fetch_sub(removed_outer_keys.len() as u64, Ordering::Relaxed);
+            .fetch_sub(num_removed, Ordering::Relaxed);
     }
 
     pub fn get(&self, key: &Pubkey) -> Vec<Pubkey> {
@@ -247,5 +252,127 @@ impl<SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send>
             .rev()
             .take(20)
             .for_each(|(v, k)| info!("owner: {k}, accounts: {v}"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Ensures remove_by_inner() enforces invariant that outer_key must
+    // have an entry in forward index.
+    #[test]
+    #[should_panic(expected = "bad index: missing entry for outer_key=")]
+    fn test_remove_by_inner_key_panics_on_stale_reverse_mapping() {
+        let secondary_index =
+            SecondaryIndex::<RwLockSecondaryIndexEntry>::new("test_secondary_index");
+        let outer_key = Pubkey::new_unique();
+        let inner_key = Pubkey::new_unique();
+
+        // only add an entry to the reverse index, not the forward index
+        secondary_index
+            .reverse_index
+            .insert(inner_key, RwLock::new(vec![outer_key]));
+
+        secondary_index.remove_by_inner_key(&inner_key);
+    }
+
+    // Ensures remove_by_inner() enforces invariant that inner_key must
+    // have an entry in the outer_key's forward index map.
+    #[test]
+    #[should_panic(expected = "bad index: missing entry for inner_key=")]
+    fn test_remove_by_inner_key_panics_on_stale_forward_mapping() {
+        let secondary_index =
+            SecondaryIndex::<RwLockSecondaryIndexEntry>::new("test_secondary_index");
+        let inner_key = Pubkey::new_unique();
+        let outer_key_1 = Pubkey::new_unique();
+        let outer_key_2 = Pubkey::new_unique();
+
+        secondary_index.insert(&outer_key_1, &inner_key);
+        secondary_index.insert(&outer_key_2, &inner_key);
+
+        // remove the inner key from the outer key's forward index map
+        secondary_index
+            .index
+            .get(&outer_key_2)
+            .unwrap()
+            .remove_inner_key(&inner_key);
+
+        secondary_index.remove_by_inner_key(&inner_key);
+    }
+}
+
+#[cfg(all(test, feature = "shuttle-test"))]
+mod shuttle_tests {
+    use {
+        super::*,
+        shuttle::thread,
+        std::{iter, sync::Arc},
+    };
+
+    fn do_test_concurrent_insert_remove() {
+        let secondary_index = Arc::new(SecondaryIndex::<RwLockSecondaryIndexEntry>::new(
+            "test_secondary_index",
+        ));
+        let inner_keys: Vec<_> = iter::repeat_with(Pubkey::new_unique).take(4).collect();
+        let outer_keys: Vec<_> = iter::repeat_with(Pubkey::new_unique).take(2).collect();
+
+        let inserter = {
+            let secondary_index = Arc::clone(&secondary_index);
+            let inner_keys = inner_keys.clone();
+            let outer_keys = outer_keys.clone();
+            thread::spawn(move || {
+                for outer_key in &outer_keys {
+                    for inner_key in &inner_keys {
+                        secondary_index.insert(outer_key, inner_key);
+                        thread::yield_now();
+                        secondary_index.insert(outer_key, inner_key);
+                        thread::yield_now();
+                    }
+                }
+            })
+        };
+
+        let remover = {
+            let secondary_index = Arc::clone(&secondary_index);
+            let inner_keys = inner_keys.clone();
+            thread::spawn(move || {
+                for _ in 0..3 {
+                    for inner_key in &inner_keys {
+                        secondary_index.remove_by_inner_key(inner_key);
+                        thread::yield_now();
+                    }
+                }
+            })
+        };
+
+        inserter.join().unwrap();
+        remover.join().unwrap();
+
+        // After all the concurrent insert/removals, try removing everything
+        // and ensure final state is consistent.
+        for inner_key in &inner_keys {
+            secondary_index.remove_by_inner_key(inner_key);
+            assert!(secondary_index.reverse_index.get(inner_key).is_none());
+        }
+        for outer_key in &outer_keys {
+            assert!(secondary_index.index.get(outer_key).is_none());
+        }
+        assert_eq!(
+            secondary_index.stats.num_inner_keys.load(Ordering::Relaxed),
+            0,
+        );
+    }
+
+    #[test]
+    fn test_concurrent_insert_remove_random() {
+        const RANDOM_ITERATIONS: usize = 50_000;
+        shuttle::check_random(do_test_concurrent_insert_remove, RANDOM_ITERATIONS);
+    }
+
+    #[test]
+    fn test_concurrent_insert_remove_dfs() {
+        const DFS_ITERATIONS: Option<usize> = Some(50_000);
+        shuttle::check_dfs(do_test_concurrent_insert_remove, DFS_ITERATIONS);
     }
 }
