@@ -315,6 +315,9 @@ fn process_loader_upgradeable_instruction(
                     .get(buffer_data_offset..)
                     .ok_or(InstructionError::AccountDataTooSmall)?,
                 clock.slot,
+                invoke_context
+                    .get_feature_set()
+                    .disable_sbpf_v0_v1_v2_deployment,
             );
             drop(buffer);
 
@@ -478,6 +481,9 @@ fn process_loader_upgradeable_instruction(
                     .get(buffer_data_offset..)
                     .ok_or(InstructionError::AccountDataTooSmall)?,
                 clock.slot,
+                invoke_context
+                    .get_feature_set()
+                    .disable_sbpf_v0_v1_v2_deployment,
             );
             drop(buffer);
 
@@ -950,6 +956,7 @@ fn common_extend_program(
             .get(programdata_data_offset..)
             .ok_or(InstructionError::AccountDataTooSmall)?,
         clock_slot,
+        false, // disable_sbpf_v0_v1_v2_deployment // explicitly continue to allow them for extend program
     );
     drop(programdata_account);
 
@@ -3734,6 +3741,7 @@ mod tests {
             elf.len(),
             &elf,
             2_u64,
+            true, // disable_sbpf_v0_v1_v2_deployment
         );
         Ok(())
     }
