@@ -181,9 +181,10 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
             umem,
         } = self;
 
-        let Ok((socket, tx)) = Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) else {
-            panic!("failed to create AF_XDP socket on queue {queue_id:?}");
-        };
+        let (socket, tx) =
+            Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size).unwrap_or_else(|err| {
+                panic!("failed to create AF_XDP socket on queue {queue_id:?}: {err}");
+            });
 
         let Tx {
             // this is where we'll queue frames
