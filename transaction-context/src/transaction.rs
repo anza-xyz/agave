@@ -386,7 +386,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction.nesting_level = nesting_level as u16;
         }
 
-        if self.number_of_active_instructions_in_trace() >= self.instruction_trace_capacity {
+        if self.number_of_called_instructions_in_trace() >= self.instruction_trace_capacity {
             return Err(InstructionError::MaxInstructionTraceLengthExceeded);
         }
 
@@ -572,9 +572,12 @@ impl<'ix_data> TransactionContext<'ix_data> {
         )
     }
 
-    /// An active instruction is either one that has already finished execution or that is
-    /// under execution (e.g. all nested CPIs are active).
-    pub fn number_of_active_instructions_in_trace(&self) -> usize {
+    /// Called instruction are those that the program runtime has already called into. It
+    /// encompasses instructions under execution (e.g. all nested CPIs are already called) and
+    /// finished ones.
+    ///
+    /// Top level instructions that have not yet been executed aren't considered called.
+    pub fn number_of_called_instructions_in_trace(&self) -> usize {
         self.next_top_level_instruction_index
             .saturating_add(self.transaction_frame.number_of_cpis_in_trace as usize)
     }
@@ -882,7 +885,7 @@ mod tests {
             0
         );
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             1
         );
 
@@ -909,7 +912,7 @@ mod tests {
             0,
         );
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             1
         );
 
@@ -943,7 +946,7 @@ mod tests {
             1
         );
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             2
         );
 
@@ -989,13 +992,13 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             3
         );
         // Return from nested CPI
         transaction_context.pop().unwrap();
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             3
         );
 
@@ -1053,7 +1056,7 @@ mod tests {
             3
         );
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             4
         );
 
@@ -1089,7 +1092,7 @@ mod tests {
         // Return from first CPI
         transaction_context.pop().unwrap();
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             4
         );
 
@@ -1171,7 +1174,7 @@ mod tests {
             4
         );
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             6
         );
 
