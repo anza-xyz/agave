@@ -6522,13 +6522,13 @@ fn test_mark_obsolete_accounts_at_startup_purge_slot() {
     // Store other pubkey in slot0 to ensure slot is not purged
     accounts_db.store_for_tests((0, [(&pubkey1, &account), (&pubkey2, &account)].as_slice()));
     accounts_db.add_root(0);
-    accounts_db.flush_accounts_cache_slot_for_tests(0);
+    accounts_db.flush_rooted_accounts_cache_without_clean();
     accounts_db.store_for_tests((1, [(&pubkey1, &account)].as_slice()));
     accounts_db.add_root(1);
-    accounts_db.flush_accounts_cache_slot_for_tests(1);
+    accounts_db.flush_rooted_accounts_cache_without_clean();
     accounts_db.store_for_tests((2, [(&pubkey1, &account)].as_slice()));
     accounts_db.add_root(2);
-    accounts_db.flush_accounts_cache_slot_for_tests(2);
+    accounts_db.flush_rooted_accounts_cache_without_clean();
 
     let pubkeys_with_duplicates_by_bin = vec![vec![pubkey1]];
 
@@ -6561,7 +6561,7 @@ fn test_mark_obsolete_accounts_at_startup_multiple_bins() {
             [(&pubkey1, &account), (&pubkey2, &account)].as_slice(),
         ));
         accounts_db.add_root(slot);
-        accounts_db.flush_accounts_cache_slot_for_tests(slot);
+        accounts_db.flush_rooted_accounts_cache_without_clean();
     }
 
     let pubkeys_with_duplicates_by_bin = vec![vec![pubkey1], vec![pubkey2]];

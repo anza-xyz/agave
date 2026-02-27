@@ -1201,7 +1201,7 @@ mod tests {
         /// to use the write cache
         pub fn add_root_and_flush_write_cache(&self, slot: Slot) {
             self.add_root(slot);
-            self.accounts_db.flush_accounts_cache_slot_for_tests(slot);
+            self.accounts_db.flush_accounts_cache(true, Some(slot));
         }
     }
 
