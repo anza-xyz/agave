@@ -48,6 +48,7 @@ pub struct FeatureSnapshot {
     pub enable_sbpf_v1_deployment_and_execution: bool,
     pub enable_sbpf_v2_deployment_and_execution: bool,
     pub enable_sbpf_v3_deployment_and_execution: bool,
+    pub disable_sbpf_v0_v1_v2_deployment: bool,
     pub deplete_cu_meter_on_vm_failure: bool,
     pub fix_alt_bn128_multiplication_input_length: bool,
     pub formalize_loaded_transaction_data_size: bool,
@@ -147,6 +148,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_sbpf_v3_deployment_and_execution: is_active(
                 &enable_sbpf_v3_deployment_and_execution::ID,
             ),
+            disable_sbpf_v0_v1_v2_deployment: is_active(&disable_sbpf_v0_v1_v2_deployment::ID),
             deplete_cu_meter_on_vm_failure: is_active(&deplete_cu_meter_on_vm_failure::ID),
             fix_alt_bn128_multiplication_input_length: is_active(
                 &fix_alt_bn128_multiplication_input_length::ID,
@@ -316,21 +318,22 @@ impl FeatureSet {
             blake3_syscall_enabled: snapshot.blake3_syscall_enabled,
             curve25519_syscall_enabled: snapshot.curve25519_syscall_enabled,
             disable_fees_sysvar: snapshot.disable_fees_sysvar,
-            disable_sbpf_v0_execution: snapshot.disable_sbpf_v0_execution,
             enable_alt_bn128_compression_syscall: snapshot.enable_alt_bn128_compression_syscall,
             enable_alt_bn128_syscall: snapshot.enable_alt_bn128_syscall,
             enable_big_mod_exp_syscall: snapshot.enable_big_mod_exp_syscall,
             enable_get_epoch_stake_syscall: snapshot.enable_get_epoch_stake_syscall,
             enable_poseidon_syscall: snapshot.enable_poseidon_syscall,
+            disable_sbpf_v0_execution: snapshot.disable_sbpf_v0_execution,
+            reenable_sbpf_v0_execution: snapshot.reenable_sbpf_v0_execution,
             enable_sbpf_v1_deployment_and_execution: snapshot
                 .enable_sbpf_v1_deployment_and_execution,
             enable_sbpf_v2_deployment_and_execution: snapshot
                 .enable_sbpf_v2_deployment_and_execution,
             enable_sbpf_v3_deployment_and_execution: snapshot
                 .enable_sbpf_v3_deployment_and_execution,
+            disable_sbpf_v0_v1_v2_deployment: snapshot.disable_sbpf_v0_v1_v2_deployment,
             get_sysvar_syscall_enabled: snapshot.get_sysvar_syscall_enabled,
             last_restart_slot_sysvar: snapshot.last_restart_slot_sysvar,
-            reenable_sbpf_v0_execution: snapshot.reenable_sbpf_v0_execution,
             remaining_compute_units_syscall_enabled: snapshot
                 .remaining_compute_units_syscall_enabled,
             remove_bpf_loader_incorrect_program_id: snapshot.remove_bpf_loader_incorrect_program_id,
@@ -1226,6 +1229,10 @@ pub mod enable_sbpf_v2_deployment_and_execution {
 
 pub mod enable_sbpf_v3_deployment_and_execution {
     solana_pubkey::declare_id!("5cC3foj77CWun58pC51ebHFUWavHWKarWyR5UUik7dnC");
+}
+
+pub mod disable_sbpf_v0_v1_v2_deployment {
+    solana_pubkey::declare_id!("5789pRHRXvzpj5ZmGAjHL2QRCDwFx5CuoUqEB55hunbo");
 }
 
 pub mod remove_accounts_executable_flag_checks {
@@ -2324,6 +2331,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             enable_sbpf_v3_deployment_and_execution::id(),
             "SIMD-0178, SIMD-0189 and SIMD-0377: Enable deployment and execution of SBPFv3 \
              programs",
+        ),
+        (
+            disable_sbpf_v0_v1_v2_deployment::id(),
+            "SIMD-0500: Disable deployment of SBPF v0, v1 and v2 programs",
         ),
         (
             remove_accounts_executable_flag_checks::id(),
