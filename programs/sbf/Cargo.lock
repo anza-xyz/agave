@@ -8668,14 +8668,12 @@ dependencies = [
  "solana-msg",
  "solana-program",
  "solana-program-entrypoint",
- "solana-sysvar",
 ]
 
 [[package]]
 name = "solana-sbf-rust-alt-bn128"
 version = "4.1.0-alpha.0"
 dependencies = [
- "array-bytes",
  "solana-bn254",
  "solana-msg",
  "solana-program-entrypoint",
@@ -8685,7 +8683,6 @@ dependencies = [
 name = "solana-sbf-rust-alt-bn128-compression"
 version = "4.1.0-alpha.0"
 dependencies = [
- "array-bytes",
  "solana-bn254",
  "solana-msg",
  "solana-program-entrypoint",
@@ -8722,7 +8719,6 @@ dependencies = [
  "solana-msg",
  "solana-program",
  "solana-program-entrypoint",
- "solana-sysvar",
 ]
 
 [[package]]
@@ -8774,7 +8770,6 @@ dependencies = [
  "solana-instruction",
  "solana-msg",
  "solana-program",
- "solana-program-entrypoint",
  "solana-program-error",
  "solana-pubkey 4.1.0",
  "solana-sbf-rust-invoke-dep",
@@ -8866,7 +8861,6 @@ dependencies = [
  "solana-program-entrypoint",
  "solana-program-error",
  "solana-pubkey 4.1.0",
- "solana-sysvar",
 ]
 
 [[package]]
@@ -8941,7 +8935,6 @@ dependencies = [
  "solana-sbf-rust-invoked-dep",
  "solana-sdk-ids",
  "solana-system-interface 3.0.0",
- "solana-sysvar",
 ]
 
 [[package]]
@@ -8969,7 +8962,6 @@ dependencies = [
  "solana-program-entrypoint",
  "solana-program-error",
  "solana-pubkey 4.1.0",
- "solana-sysvar",
 ]
 
 [[package]]
@@ -9052,7 +9044,6 @@ version = "4.1.0-alpha.0"
 name = "solana-sbf-rust-poseidon"
 version = "4.1.0-alpha.0"
 dependencies = [
- "array-bytes",
  "solana-msg",
  "solana-poseidon",
  "solana-program-entrypoint",
@@ -9070,8 +9061,6 @@ dependencies = [
 name = "solana-sbf-rust-rand"
 version = "4.1.0-alpha.0"
 dependencies = [
- "getrandom 0.2.10",
- "rand 0.8.5",
  "solana-account-info",
  "solana-msg",
  "solana-program-entrypoint",
