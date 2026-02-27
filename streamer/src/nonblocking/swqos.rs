@@ -540,6 +540,10 @@ impl QosController<SwQosConnectionContext> for SwQos {
         }
     }
 
+    fn pull_stats(&self, stats: &crate::quic::StreamerStats, elapsed: Duration) {
+        stats.pull_saturation_stats(&self.load_tracker, elapsed);
+    }
+
     fn max_concurrent_connections(&self) -> usize {
         // Allow 25% more connections than required to allow for handshake
         (self.config.max_staked_connections + self.config.max_unstaked_connections) * 5 / 4

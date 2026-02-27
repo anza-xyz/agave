@@ -191,7 +191,7 @@ async fn main() -> anyhow::Result<()> {
     info!("Server terminating");
     cancel.cancel();
     drop(endpoints);
+    stats.pull_saturation_stats(swqos.load_tracker(), cli.test_duration);
     stats.report("final_stats");
-    swqos.load_tracker().report_saturation_stats(cli.test_duration);
     status
 }

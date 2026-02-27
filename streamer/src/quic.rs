@@ -1,6 +1,7 @@
 use {
     crate::{
         nonblocking::{
+            load_debt_tracker::LoadDebtTracker,
             qos::{ConnectionContext, QosController},
             quic::{ALPN_TPU_PROTOCOL_ID, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
             simple_qos::{SimpleQos, SimpleQosConfig},
@@ -227,9 +228,40 @@ pub struct StreamerStats {
     pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
     pub(crate) total_incoming_connection_attempts: AtomicUsize,
     pub(crate) quic_endpoints_count: AtomicUsize,
+    /// Unsaturated→saturated transitions since last report.
+    pub(crate) transitions_to_saturated: AtomicU64,
+    /// Saturated→unsaturated transitions since last report.
+    pub(crate) transitions_to_unsaturated: AtomicU64,
+    /// Microseconds spent in saturated state since last report.
+    pub(crate) saturated_us: AtomicU64,
+    /// Percentage of time spent saturated (0–100, integer).
+    pub(crate) saturated_pct: AtomicU64,
 }
 
 impl StreamerStats {
+    /// Pull saturation counters from the LoadDebtTracker into this stats
+    /// struct. Call before `report()` to include them in the datapoint.
+    /// `elapsed` is the time since the last pull (or since startup).
+    pub fn pull_saturation_stats(&self, tracker: &LoadDebtTracker, elapsed: Duration) {
+        self.transitions_to_saturated.store(
+            tracker.take_transitions_to_saturated(),
+            Ordering::Relaxed,
+        );
+        self.transitions_to_unsaturated.store(
+            tracker.take_transitions_to_unsaturated(),
+            Ordering::Relaxed,
+        );
+        let sat_nanos = tracker.take_saturated_nanos();
+        self.saturated_us.store(sat_nanos / 1_000, Ordering::Relaxed);
+        let elapsed_nanos = elapsed.as_nanos() as u64;
+        let pct = if elapsed_nanos > 0 {
+            sat_nanos * 100 / elapsed_nanos
+        } else {
+            0
+        };
+        self.saturated_pct.store(pct, Ordering::Relaxed);
+    }
+
     pub fn total_new_streams(&self) -> usize {
         self.total_new_streams.load(Ordering::Relaxed)
     }
@@ -566,6 +598,26 @@ impl StreamerStats {
             (
                 "parked_streams",
                 self.parked_streams.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "transitions_to_saturated",
+                self.transitions_to_saturated.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "transitions_to_unsaturated",
+                self.transitions_to_unsaturated.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "saturated_us",
+                self.saturated_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "saturated_pct",
+                self.saturated_pct.swap(0, Ordering::Relaxed),
                 i64
             ),
         );
