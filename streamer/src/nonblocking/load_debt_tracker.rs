@@ -30,7 +30,11 @@ pub struct LoadDebtTracker {
     refill_interval_nanos: u64,
     max_streams_per_second: u64,
     burst_capacity: i64,
+    /// Bucket level below which the system enters saturation.
     saturation_threshold: i64,
+    /// Bucket level above which the system exits saturation (hysteresis).
+    /// Higher than `saturation_threshold` to prevent rapid oscillation.
+    unsaturation_threshold: i64,
     /// Count of unsaturated→saturated transitions (monotonic).
     transitions_to_saturated: AtomicU64,
     /// Count of saturated→unsaturated transitions (monotonic).
@@ -58,6 +62,10 @@ impl LoadDebtTracker {
         );
         let burst_capacity = burst_capacity as i64;
         let saturation_threshold = saturation_threshold_tokens as i64;
+        // Default unsaturation threshold: half of burst capacity.
+        // The wide gap between entry and exit prevents rapid oscillation
+        // when saturated demand is just below capacity.
+        let unsaturation_threshold = burst_capacity / 2;
         Self {
             bucket: AtomicI64::new(burst_capacity),
             last_refill_nanos: AtomicU64::new(0),
@@ -67,6 +75,7 @@ impl LoadDebtTracker {
             max_streams_per_second,
             burst_capacity,
             saturation_threshold,
+            unsaturation_threshold,
             transitions_to_saturated: AtomicU64::new(0),
             transitions_to_unsaturated: AtomicU64::new(0),
             saturated_nanos: AtomicU64::new(0),
@@ -85,18 +94,24 @@ impl LoadDebtTracker {
 
     /// Return whether the system is saturated.
     ///
-    /// The system is saturated when the bucket level is below
-    /// `saturation_threshold`. When already below that threshold,
-    /// a refill is attempted so parked connections can detect recovery
-    /// even when no streams are flowing.
+    /// Uses hysteresis: the system enters saturation when the bucket drops
+    /// below `saturation_threshold`, but only exits when it rises above the
+    /// higher `unsaturation_threshold`.  This prevents rapid oscillation
+    /// when saturated demand is just below capacity.
     ///
     /// Logs a warning when the system becomes saturated and an info message
     /// when it recovers.
     pub fn is_saturated(&self) -> bool {
         let level = self.bucket.load(Ordering::Relaxed);
-        let saturated = if level < self.saturation_threshold {
+        // Use a higher threshold to exit saturation than to enter it.
+        let threshold = if self.was_saturated.load(Ordering::Relaxed) {
+            self.unsaturation_threshold
+        } else {
+            self.saturation_threshold
+        };
+        let saturated = if level < threshold {
             self.try_refill();
-            self.bucket.load(Ordering::Relaxed) < self.saturation_threshold
+            self.bucket.load(Ordering::Relaxed) < threshold
         } else {
             false
         };
@@ -320,12 +335,20 @@ mod tests {
 
     #[test]
     fn test_recovery_through_refill() {
-        let g = simple(); // threshold = 10
+        // burst=100, saturation_threshold=10, unsaturation_threshold=50
+        let g = simple();
         acquire_n(&g, 100); // level = 0, saturated
         assert!(g.is_saturated());
 
-        // Refill 15 tokens (150ms at 100/s) → level = 15 >= 10
+        // Refill 15 tokens (150ms at 100/s) → level = 15.
+        // Above saturation_threshold (10) but below unsaturation_threshold (50)
+        // → still saturated due to hysteresis.
         g.refill_at(150_000_000);
+        assert!(g.is_saturated());
+
+        // Refill to 55 tokens (550ms at 100/s) → level = 55 >= 50
+        // → recovered.
+        g.refill_at(550_000_000);
         assert!(!g.is_saturated());
     }
 }
