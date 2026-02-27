@@ -543,9 +543,9 @@ impl TpuClientNextClient {
         ConnectionWorkersSchedulerConfig {
             bind: BindTarget::Socket(bind_socket),
             stake_identity: stake_identity.map(StakeIdentity::new),
-            // Cache size of 128 covers all nodes above the P90 slot count threshold,
-            // which together account for ~75% of total slots in the epoch.
-            num_connections: 128,
+            // Cache size of 64 covers all nodes for at least next 64 * 4 slots
+            // which corresponds to ~100sec.
+            num_connections: 64,
             skip_check_transaction_age: true,
             worker_channel_size: 2,
             max_reconnect_attempts: 4,
