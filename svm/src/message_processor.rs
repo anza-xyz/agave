@@ -733,7 +733,7 @@ mod tests {
             ))
         );
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             4
         );
     }
