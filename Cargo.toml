@@ -480,7 +480,7 @@ solana-nonce = "3.0.0"
 solana-nonce-account = "3.0.0"
 solana-notifier = { path = "notifier", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-offchain-message = "3.0.0"
-solana-packet = "4.0.0"
+solana-packet = "4.1.0"
 solana-perf = { path = "perf", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-poh = { path = "poh", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-poh-config = "3.0.0"
