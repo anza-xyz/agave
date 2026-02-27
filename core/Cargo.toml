@@ -192,33 +192,33 @@ shaq = { workspace = true }
 sysctl = { workspace = true }
 
 [dev-dependencies]
-agave-reserved-account-keys = { workspace = true }
-agave-scheduler-bindings = { workspace = true }
+agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
+agave-scheduler-bindings = { path = "../scheduler-bindings", features = ["agave-unstable-api"] }
 bencher = { workspace = true }
 criterion = { workspace = true }
 fs_extra = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
 solana-account = { workspace = true, features = ["dev-context-only-utils"] }
-solana-bpf-loader-program = { workspace = true }
-solana-client = { workspace = true, features = ["dev-context-only-utils"] }
+solana-bpf-loader-program = { path = "../programs/bpf_loader", features = ["agave-unstable-api"], default-features = false }
+solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-compute-budget-interface = { workspace = true }
-solana-compute-budget-program = { workspace = true }
+solana-compute-budget-program = { path = "../programs/compute-budget", features = ["agave-unstable-api"] }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-core = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-cost-model = { workspace = true, features = ["dev-context-only-utils"] }
+solana-cost-model = { path = "../cost-model", features = ["dev-context-only-utils"] }
 solana-keypair = { workspace = true }
-solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
-solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
-solana-poh = { workspace = true, features = ["dev-context-only-utils"] }
-solana-program-binaries = { workspace = true }
-solana-program-runtime = { workspace = true, features = ["metrics"] }
-solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
-solana-system-program = { workspace = true }
-solana-unified-scheduler-pool = { workspace = true, features = [
+solana-ledger = { path = "../ledger", features = ["dev-context-only-utils"] }
+solana-net-utils = { path = "../net-utils", features = ["dev-context-only-utils"] }
+solana-poh = { path = "../poh", features = ["dev-context-only-utils"] }
+solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"] }
+solana-program-runtime = { path = "../program-runtime", features = ["metrics"] }
+solana-rpc = { path = "../rpc", features = ["dev-context-only-utils"] }
+solana-system-program = { path = "../programs/system", features = ["agave-unstable-api"] }
+solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", features = [
     "dev-context-only-utils",
 ] }
-solana-vote = { workspace = true, features = ["dev-context-only-utils"] }
+solana-vote = { path = "../vote", features = ["dev-context-only-utils"] }
 spl-memo-interface = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }

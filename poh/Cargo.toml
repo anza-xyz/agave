@@ -44,16 +44,16 @@ solana-transaction = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
-solana-entry = { workspace = true, features = ["dev-context-only-utils"] }
+solana-entry = { path = "../entry", features = ["dev-context-only-utils"] }
 solana-keypair = { workspace = true }
-solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
+solana-perf = { path = "../perf", features = ["dev-context-only-utils"] }
 solana-poh = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }

@@ -28,4 +28,4 @@ solana-genesis-config = { workspace = true }
 solana-runtime = { workspace = true }
 
 [dev-dependencies]
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }

@@ -61,10 +61,10 @@ tokio-util = { workspace = true, features = ["rt"] }
 x509-parser = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
 chrono = { workspace = true, features = ["now"] }
 clap = { version = "4.5.31", features = ["cargo", "derive", "error-context"] }
-solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
+solana-net-utils = { path = "../net-utils", features = ["dev-context-only-utils"] }
 solana-streamer = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }

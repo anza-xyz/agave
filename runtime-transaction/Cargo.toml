@@ -37,12 +37,12 @@ solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-feature-set = { workspace = true }
-agave-reserved-account-keys = { workspace = true }
+agave-feature-set = { path = "../feature-set", features = ["agave-unstable-api"] }
+agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 bincode = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
-solana-compute-budget-instruction = { workspace = true, features = ["dev-context-only-utils"] }
+solana-compute-budget-instruction = { path = "../compute-budget-instruction", features = ["dev-context-only-utils"] }
 solana-compute-budget-interface = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }

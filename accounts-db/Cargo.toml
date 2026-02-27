@@ -105,8 +105,8 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
-agave-reserved-account-keys = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
 libsecp256k1 = { workspace = true }
@@ -115,12 +115,12 @@ rand_chacha = { workspace = true }
 serde_bytes = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-compute-budget = { workspace = true }
+solana-compute-budget = { path = "../compute-budget", features = ["agave-unstable-api"] }
 solana-instruction = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-slot-history = { workspace = true }
-solana-svm = { workspace = true }
+solana-svm = { path = "../svm", features = ["agave-unstable-api"] }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
