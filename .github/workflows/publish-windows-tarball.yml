@@ -79,7 +79,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Download
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: windows-artifact
           path: ./windows-release
@@ -99,7 +99,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Download
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: windows-artifact
           path: ./windows-release/
