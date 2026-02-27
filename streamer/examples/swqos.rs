@@ -18,6 +18,7 @@ use {
     solana_streamer::{
         nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
         quic::QuicStreamerConfig,
+        quic_xdp_socket::QuicSocket,
         streamer::StakedNodes,
     },
     std::{
@@ -117,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
         max_concurrent_connections: _,
     } = solana_streamer::nonblocking::testing_utilities::spawn_stake_weighted_qos_server(
         "quic_streamer_test",
-        [socket.try_clone()?],
+        vec![QuicSocket::new(socket.try_clone()?, None)],
         &keypair,
         sender,
         staked_nodes,

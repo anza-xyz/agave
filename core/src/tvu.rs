@@ -64,6 +64,7 @@ use {
         evicting_sender::EvictingSender,
         nonblocking::simple_qos::SimpleQosConfig,
         quic::{QuicStreamerConfig, SpawnServerResult, spawn_simple_qos_server},
+        quic_xdp_socket::QuicSocket,
         streamer::StakedNodes,
     },
     solana_turbine::retransmit_stage::RetransmitStage,
@@ -283,7 +284,8 @@ impl Tvu {
                 spawn_simple_qos_server(
                     "solQuicBLS",
                     "quic_streamer_bls",
-                    vec![bls_socket],
+                    // For now, don't use AF_XDP egress even if configured.
+                    vec![QuicSocket::new(bls_socket, None)],
                     &cluster_info.keypair(),
                     bls_packet_sender,
                     staked_nodes,

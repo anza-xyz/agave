@@ -5,13 +5,16 @@ use {
             qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
         },
         quic::{QuicServerError, QuicStreamerConfig, StreamerStats, configure_server},
+        quic_xdp_socket::{QuicSocket, QuicXdpSocket},
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
     crossbeam_channel::{Sender, TrySendError},
     futures::{Future, StreamExt as _, stream::FuturesUnordered},
     indexmap::map::{Entry, IndexMap},
-    quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime},
+    quinn::{
+        Accept, AsyncUdpSocket, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime,
+    },
     rand::{Rng, rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
@@ -26,7 +29,7 @@ use {
     std::{
         array, fmt,
         iter::repeat_with,
-        net::{IpAddr, SocketAddr, UdpSocket},
+        net::{IpAddr, SocketAddr},
         pin::Pin,
         sync::{
             Arc, RwLock,
@@ -133,7 +136,7 @@ pub struct SpawnNonBlockingServerResult {
 pub(crate) fn spawn_server<Q, C>(
     name: &'static str,
     stats: Arc<StreamerStats>,
-    sockets: impl IntoIterator<Item = UdpSocket>,
+    sockets: Vec<QuicSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
@@ -144,20 +147,30 @@ where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
 {
-    let sockets: Vec<_> = sockets.into_iter().collect();
     info!("Start {name} quic server on {sockets:?}");
     let (config, _) = configure_server(keypair)?;
 
     let endpoints = sockets
         .into_iter()
-        .map(|sock| {
-            Endpoint::new(
+        .map(|socket| match socket {
+            QuicSocket::Xdp(quic_xdp_socket_config) => {
+                let socket = Arc::new(QuicXdpSocket::new(quic_xdp_socket_config).unwrap())
+                    as Arc<dyn AsyncUdpSocket>;
+                Endpoint::new_with_abstract_socket(
+                    EndpointConfig::default(),
+                    Some(config.clone()),
+                    socket,
+                    Arc::new(TokioRuntime),
+                )
+                .map_err(QuicServerError::EndpointFailed)
+            }
+            QuicSocket::Kernel(udp_socket) => Endpoint::new(
                 EndpointConfig::default(),
                 Some(config.clone()),
-                sock,
+                udp_socket,
                 Arc::new(TokioRuntime),
             )
-            .map_err(QuicServerError::EndpointFailed)
+            .map_err(QuicServerError::EndpointFailed),
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -1579,7 +1592,7 @@ pub mod test {
             max_concurrent_connections: _,
         } = spawn_stake_weighted_qos_server(
             "quic_streamer_test",
-            [s],
+            vec![QuicSocket::new(s, None)],
             &keypair,
             sender,
             staked_nodes,
@@ -1615,7 +1628,7 @@ pub mod test {
             max_concurrent_connections: _,
         } = spawn_stake_weighted_qos_server(
             "quic_streamer_test",
-            [s],
+            vec![QuicSocket::new(s, None)],
             &keypair,
             sender,
             staked_nodes,

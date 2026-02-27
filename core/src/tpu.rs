@@ -53,6 +53,7 @@ use {
             SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
             spawn_simple_qos_server, spawn_stake_wighted_qos_server,
         },
+        quic_xdp_socket::QuicSocket,
         streamer::StakedNodes,
     },
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
@@ -188,6 +189,11 @@ impl Tpu {
         } = banking_tracer_channels;
 
         // Streamer for Votes:
+        // For now disable AF_XDP egress for votes even if AF_XDP is configured.
+        let quic_vote_sockets = tpu_vote_quic_sockets
+            .into_iter()
+            .map(|socket| QuicSocket::new(socket, None))
+            .collect::<Vec<_>>();
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_vote_quic_t,
@@ -195,7 +201,7 @@ impl Tpu {
         } = spawn_simple_qos_server(
             "solQuicTVo",
             "quic_streamer_tpu_vote",
-            tpu_vote_quic_sockets,
+            quic_vote_sockets,
             keypair,
             vote_packet_sender,
             staked_nodes.clone(),
@@ -206,6 +212,10 @@ impl Tpu {
         .unwrap();
 
         // Streamer for TPU
+        let txs_tpu_sockets = transactions_quic_sockets
+            .into_iter()
+            .map(|socket| QuicSocket::new(socket, xdp_sender.clone()))
+            .collect::<Vec<_>>();
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_quic_t,
@@ -213,7 +223,7 @@ impl Tpu {
         } = spawn_stake_wighted_qos_server(
             "solQuicTpu",
             "quic_streamer_tpu",
-            transactions_quic_sockets,
+            txs_tpu_sockets,
             keypair,
             packet_sender,
             staked_nodes.clone(),
@@ -224,6 +234,10 @@ impl Tpu {
         .unwrap();
 
         // Streamer for TPU forward
+        let txs_fwd_sockets = transactions_forwards_quic_sockets
+            .into_iter()
+            .map(|socket| QuicSocket::new(socket, xdp_sender.clone()))
+            .collect::<Vec<_>>();
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_forwards_quic_t,
@@ -231,7 +245,7 @@ impl Tpu {
         } = spawn_stake_wighted_qos_server(
             "solQuicTpuFwd",
             "quic_streamer_tpu_forwards",
-            transactions_forwards_quic_sockets,
+            txs_fwd_sockets,
             keypair,
             forwarded_packet_sender,
             staked_nodes.clone(),
