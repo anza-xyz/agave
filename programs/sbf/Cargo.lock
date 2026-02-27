@@ -306,7 +306,7 @@ dependencies = [
  "core_affinity",
  "crossbeam-channel",
  "fd-lock",
- "indicatif 0.18.4",
+ "indicatif",
  "itertools 0.14.0",
  "jsonrpc-core",
  "jsonrpc-core-client",
@@ -3377,19 +3377,6 @@ dependencies = [
  "equivalent",
  "hashbrown 0.16.1",
  "rayon",
-]
-
-[[package]]
-name = "indicatif"
-version = "0.17.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4adb2ee6ad319a912210a36e56e3623555817bcc877a7e6e8802d1d69c4d8056"
-dependencies = [
- "console 0.16.2",
- "portable-atomic",
- "unicode-width 0.2.0",
- "unit-prefix",
- "web-time",
 ]
 
 [[package]]
@@ -6483,7 +6470,7 @@ dependencies = [
  "clap",
  "console 0.16.2",
  "humantime",
- "indicatif 0.18.4",
+ "indicatif",
  "pretty-hex",
  "semver",
  "serde",
@@ -6522,7 +6509,7 @@ dependencies = [
  "futures 0.3.32",
  "futures-util",
  "indexmap 2.13.0",
- "indicatif 0.18.4",
+ "indicatif",
  "log",
  "quinn",
  "rayon",
@@ -7156,12 +7143,12 @@ dependencies = [
 
 [[package]]
 name = "solana-file-download"
-version = "3.1.0"
+version = "3.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6884e13cc98f58e609a9b73e3d53f728f0f743b8c15c6768cad6f6382c336c1"
+checksum = "a1022ee4c7fa77446a735aec66aaed1d1a946b27d00fd27684305519c281c1e2"
 dependencies = [
  "console 0.15.11",
- "indicatif 0.17.12",
+ "indicatif",
  "log",
  "reqwest 0.11.27",
 ]
@@ -8315,7 +8302,7 @@ dependencies = [
  "bincode",
  "bs58",
  "futures 0.3.32",
- "indicatif 0.18.4",
+ "indicatif",
  "log",
  "reqwest 0.12.28",
  "reqwest-middleware",
@@ -10041,7 +10028,7 @@ dependencies = [
  "bincode",
  "futures-util",
  "indexmap 2.13.0",
- "indicatif 0.18.4",
+ "indicatif",
  "log",
  "rayon",
  "solana-client-traits",
