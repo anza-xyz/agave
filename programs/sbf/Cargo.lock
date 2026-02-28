@@ -6527,7 +6527,7 @@ dependencies = [
  "quinn",
  "rayon",
  "solana-account 3.4.0",
- "solana-client-traits",
+ "solana-client-traits 4.0.0",
  "solana-commitment-config",
  "solana-connection-cache",
  "solana-epoch-info",
@@ -6556,6 +6556,27 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-util 0.7.18",
+]
+
+[[package]]
+name = "solana-client-traits"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08618ed587e128105510c54ae3e456b9a06d674d8640db75afe66dad65cb4e02"
+dependencies = [
+ "solana-account 3.4.0",
+ "solana-commitment-config",
+ "solana-epoch-info",
+ "solana-hash 3.1.0",
+ "solana-instruction",
+ "solana-keypair",
+ "solana-message 3.1.0",
+ "solana-pubkey 3.0.0",
+ "solana-signature",
+ "solana-signer",
+ "solana-system-interface 2.0.0",
+ "solana-transaction 3.1.0",
+ "solana-transaction-error",
 ]
 
 [[package]]
@@ -8470,7 +8491,7 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-bucket-map",
  "solana-builtins",
- "solana-client-traits",
+ "solana-client-traits 4.0.0",
  "solana-clock",
  "solana-cluster-type",
  "solana-commitment-config",
@@ -8604,7 +8625,7 @@ dependencies = [
  "solana-accounts-db",
  "solana-bpf-loader-program",
  "solana-cli-output",
- "solana-client-traits",
+ "solana-client-traits 3.0.0",
  "solana-clock",
  "solana-cluster-type",
  "solana-compute-budget",
@@ -10047,7 +10068,7 @@ dependencies = [
  "indicatif",
  "log",
  "rayon",
- "solana-client-traits",
+ "solana-client-traits 4.0.0",
  "solana-clock",
  "solana-commitment-config",
  "solana-connection-cache",
