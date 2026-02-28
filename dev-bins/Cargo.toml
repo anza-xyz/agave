@@ -115,7 +115,7 @@ solana-message = "3.1.0"
 solana-metrics = { path = "../metrics", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-native-token = "3.0.0"
 solana-net-utils = { path = "../net-utils", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-solana-nonce = "3.0.0"
+solana-nonce = "3.1.0"
 solana-perf = { path = "../perf", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-poh = { path = "../poh", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-program-runtime = { path = "../program-runtime", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
