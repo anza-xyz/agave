@@ -1295,12 +1295,12 @@ checksum = "2cce099aaf3abb89f9a1f8594ffe07fa53738ebc2882fac624d10d9ba31a1b10"
 
 [[package]]
 name = "aya-ebpf-macros"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72f47f7b4a75eb5f1d7ba0fb5628d247b1cf20388658899177875dabdda66865"
+checksum = "96fd02363736177e7e91d6c95d7effbca07be87502c7b5b32fc194aed8b177a0"
 dependencies = [
- "proc-macro-error",
  "proc-macro2",
+ "proc-macro2-diagnostics",
  "quote",
  "syn 2.0.117",
 ]
@@ -5473,6 +5473,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "proc-macro2-diagnostics"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+ "version_check",
 ]
 
 [[package]]
