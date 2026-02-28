@@ -25,7 +25,7 @@ reqwest = { workspace = true, features = ["blocking", "rustls-tls", "rustls-tls-
 semver = { workspace = true }
 serde = { workspace = true }
 solana-file-download = "=3.1.0"
-solana-keypair = "=3.1.0"
+solana-keypair = "=3.1.2"
 tar = { workspace = true }
 
 [dev-dependencies]
