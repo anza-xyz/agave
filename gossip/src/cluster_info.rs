@@ -494,6 +494,35 @@ impl ClusterInfo {
     }
 
     pub fn rpc_info_trace(&self) -> String {
+        // This sets the format string for the table, defining the columns and their widths
+        // For reference, this is the header of the table:
+        // RPC Address       |Age(ms)|               Node identifier                |       Version       | RPC  |PubSub|ShredVer
+        macro_rules! format_string {
+            () => {
+                "{:15} {:2}|{:^7}| {:^44} |{:^21}|{:^6}|{:^6}|{:^8}\n"
+            };
+        }
+        // Make sure format_string above has enough room for each column's title
+        let header = format!(
+            format_string!(),
+            "RPC Address",
+            "", // this is for "me" marker
+            "Age(ms)",
+            "Node identifier",
+            "Version",
+            "RPC",
+            "PubSub",
+            "ShredVer"
+        );
+        // header_bottom is a String representing the separator between header and data
+        let header_bottom: String = header
+            .chars()
+            .map(|s| match s {
+                '|' => '+',
+                '\n' => '\n',
+                _ => '-',
+            })
+            .collect();
         let now = timestamp();
         let my_pubkey = self.id();
         let my_shred_version = self.my_shred_version();
@@ -510,7 +539,7 @@ impl ClusterInfo {
                 }
                 let rpc_addr = node_rpc.ip();
                 Some(format!(
-                    "{:15} {:2}| {:5} | {:44} |{:^21}| {:5}| {:5}| {}\n",
+                    format_string!(),
                     rpc_addr.to_string(),
                     if node.pubkey() == &my_pubkey {
                         "me"
@@ -532,18 +561,50 @@ impl ClusterInfo {
             .collect();
 
         format!(
-            "RPC Address       |Age(ms)| Node identifier                              \
-             |       Version       | RPC  |PubSub|ShredVer\n\
-             ------------------+-------+----------------------------------------------\
-             +---------------------+------+------+--------\n\
-             {}\
-             RPC Enabled Nodes: {}",
+            "{}{}{}\nRPC Enabled Nodes: {}\n",
+            header,
+            header_bottom,
             nodes.join(""),
             nodes.len(),
         )
     }
 
     pub fn contact_info_trace(&self) -> String {
+        // This sets the format string for the table, defining the columns and their widths
+        // For reference, this is the header of the table:
+        // IP Address        |Age(ms)|               Node identifier                |       Version       |Gossip|TPUvote| TPU |TPUfwd| TVU |ServeR|Alpeng|ShredVer
+        macro_rules! format_string {
+            () => {
+                "{:15} {:2}|{:^7}| {:^44} |{:^21}|{:^6}|{:^7}|{:^5}|{:^6}|{:^5}|{:^6}|{:^6}|{:^8}\n"
+            };
+        }
+        // Make sure format_string above has enough room for each column's title
+        let header = format!(
+            format_string!(),
+            "IP Address",
+            "", // this is for "me" marker
+            "Age(ms)",
+            "Node identifier",
+            "Version",
+            "Gossip",
+            "TPUvote",
+            "TPU",
+            "TPUfwd",
+            "TVU",
+            "ServeR",
+            "Alpeng",
+            "ShredVer"
+        );
+        // header_bottom is a String representing the separator between header and data
+        let header_bottom: String = header
+            .chars()
+            .map(|s| match s {
+                '|' => '+',
+                '\n' => '\n',
+                _ => '-',
+            })
+            .collect();
+
         let now = timestamp();
         let mut shred_spy_nodes = 0usize;
         let mut total_spy_nodes = 0usize;
@@ -569,8 +630,7 @@ impl ClusterInfo {
                     }
                     let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
                     Some(format!(
-                        "{:15} {:2}| {:5} | {:44} |{:^21}| {:5}|  {:5} | {:5}| {:5}| {:5}| {:5}| \
-                         {:5}| {}\n",
+                        format_string!(),
                         node.gossip()
                             .filter(|addr| self.socket_addr_space.check(addr))
                             .as_ref()
@@ -610,10 +670,7 @@ impl ClusterInfo {
             .collect();
 
         format!(
-            // this is using an oversized raw string to simplify lining up the columns
-            r#"IP Address        |Age(ms)| Node identifier                              |       Version       |Gossip|TPUvote | TPU  |TPUfwd| TVU  |ServeR|Alpeng|ShredVer
-------------------+-------+----------------------------------------------+---------------------+------+--------+------+------+------+------+------+----------
-{}Nodes: {}{}{}"#,
+            "{header}{header_bottom}{}Nodes: {}{}{}",
             nodes.join(""),
             nodes.len().saturating_sub(shred_spy_nodes),
             if total_spy_nodes > 0 {
@@ -3508,22 +3565,6 @@ mod tests {
     #[test]
     fn test_contact_trace() {
         agave_logger::setup();
-        // If you change the format of cluster_info_trace or rpc_info_trace, please make sure
-        // you read the actual output so the headers line up with the output.
-        const CLUSTER_INFO_TRACE_LENGTH: usize = 472;
-        const RPC_INFO_TRACE_LENGTH: usize = 371;
-        let keypair43 = Arc::new(
-            Keypair::try_from(
-                [
-                    198, 203, 8, 178, 196, 71, 119, 152, 31, 96, 221, 142, 115, 224, 45, 34, 173,
-                    138, 254, 39, 181, 238, 168, 70, 183, 47, 210, 91, 221, 179, 237, 153, 14, 58,
-                    154, 59, 67, 220, 235, 106, 241, 99, 4, 72, 60, 245, 53, 30, 225, 122, 145,
-                    225, 8, 40, 30, 174, 26, 228, 125, 127, 125, 21, 96, 28,
-                ]
-                .as_ref(),
-            )
-            .unwrap(),
-        );
         let keypair44 = Arc::new(
             Keypair::try_from(
                 [
@@ -3539,32 +3580,26 @@ mod tests {
 
         let cluster_info44 = Arc::new({
             let node = Node::new_localhost_with_pubkey(&keypair44.pubkey());
-            info!("{node:?}");
             ClusterInfo::new(node.info, keypair44.clone(), SocketAddrSpace::Unspecified)
         });
-        let cluster_info43 = Arc::new({
-            let node = Node::new_localhost_with_pubkey(&keypair43.pubkey());
-            ClusterInfo::new(node.info, keypair43.clone(), SocketAddrSpace::Unspecified)
-        });
 
-        assert_eq!(keypair43.pubkey().to_string().len(), 43);
-        assert_eq!(keypair44.pubkey().to_string().len(), 44);
+        fn check_table_layout(trace: String) {
+            let line_lengths = trace.lines().map(|l| l.len()).collect::<Vec<_>>();
+            for &ll in line_lengths.iter().take(3) {
+                assert_eq!(
+                    ll, line_lengths[0],
+                    "Line length mismatch, check table layout!"
+                );
+            }
+        }
 
         let trace = cluster_info44.contact_info_trace();
         info!("cluster:\n{trace}");
-        assert_eq!(trace.len(), CLUSTER_INFO_TRACE_LENGTH);
+        check_table_layout(trace);
 
         let trace = cluster_info44.rpc_info_trace();
         info!("rpc:\n{trace}");
-        assert_eq!(trace.len(), RPC_INFO_TRACE_LENGTH);
-
-        let trace = cluster_info43.contact_info_trace();
-        info!("cluster:\n{trace}");
-        assert_eq!(trace.len(), CLUSTER_INFO_TRACE_LENGTH);
-
-        let trace = cluster_info43.rpc_info_trace();
-        info!("rpc:\n{trace}");
-        assert_eq!(trace.len(), RPC_INFO_TRACE_LENGTH);
+        check_table_layout(trace);
     }
 
     #[test]
