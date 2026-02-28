@@ -21,7 +21,6 @@ agave-unstable-api = []
 
 [dependencies]
 agave-reserved-account-keys = { workspace = true }
-backoff = { workspace = true, features = ["tokio"] }
 bincode = { workspace = true }
 bytes = { workspace = true }
 bzip2 = { workspace = true }

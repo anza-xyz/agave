@@ -7,9 +7,9 @@ use {
         compression::{compress_best, decompress},
         root_ca_certificate,
     },
-    backoff::{Error as BackoffError, ExponentialBackoff, future::retry},
     log::*,
     std::{
+        future::Future,
         str::FromStr,
         time::{Duration, Instant},
     },
@@ -85,13 +85,40 @@ pub enum Error {
     Timeout,
 }
 
-fn to_backoff_err(err: Error) -> BackoffError<Error> {
-    if let Error::Rpc(ref status) = err {
-        if status.code() == tonic::Code::NotFound && status.message().starts_with("table") {
-            return BackoffError::Permanent(err);
+fn is_retryable_error(err: &Error) -> bool {
+    if let Error::Rpc(status) = err {
+        return !(status.code() == tonic::Code::NotFound && status.message().starts_with("table"));
+    }
+    true
+}
+
+async fn retry_with_exponential_backoff<T, O, F>(mut operation: O) -> Result<T>
+where
+    O: FnMut() -> F,
+    F: Future<Output = Result<T>>,
+{
+    const INITIAL_INTERVAL: Duration = Duration::from_millis(500);
+    const MULTIPLIER: u32 = 2;
+    const MAX_INTERVAL: Duration = Duration::from_secs(60);
+    const MAX_ELAPSED_TIME: Duration = Duration::from_secs(15 * 60);
+
+    let started = Instant::now();
+    let mut delay = INITIAL_INTERVAL;
+
+    loop {
+        match operation().await {
+            Ok(value) => return Ok(value),
+            Err(err) if is_retryable_error(&err) => {
+                if started.elapsed() >= MAX_ELAPSED_TIME {
+                    return Err(err);
+                }
+
+                tokio::time::sleep(delay).await;
+                delay = std::cmp::min(delay.saturating_mul(MULTIPLIER), MAX_INTERVAL);
+            }
+            Err(err) => return Err(err),
         }
     }
-    err.into()
 }
 
 impl std::convert::From<std::io::Error> for Error {
@@ -286,18 +313,17 @@ impl BigTableConnection {
     where
         T: serde::ser::Serialize,
     {
-        retry(ExponentialBackoff::default(), || async {
+        retry_with_exponential_backoff(|| async {
             let mut client = self.client();
-            let result = client.put_bincode_cells(table, cells).await;
-            result.map_err(to_backoff_err)
+            client.put_bincode_cells(table, cells).await
         })
         .await
     }
 
     pub async fn delete_rows_with_retry(&self, table: &str, row_keys: &[RowKey]) -> Result<()> {
-        retry(ExponentialBackoff::default(), || async {
+        retry_with_exponential_backoff(|| async {
             let mut client = self.client();
-            Ok(client.delete_rows(table, row_keys).await?)
+            client.delete_rows(table, row_keys).await
         })
         .await
     }
@@ -310,9 +336,9 @@ impl BigTableConnection {
     where
         T: serde::de::DeserializeOwned,
     {
-        retry(ExponentialBackoff::default(), || async {
+        retry_with_exponential_backoff(|| async {
             let mut client = self.client();
-            Ok(client.get_bincode_cells(table, row_keys).await?)
+            client.get_bincode_cells(table, row_keys).await
         })
         .await
     }
@@ -325,10 +351,9 @@ impl BigTableConnection {
     where
         T: prost::Message,
     {
-        retry(ExponentialBackoff::default(), || async {
+        retry_with_exponential_backoff(|| async {
             let mut client = self.client();
-            let result = client.put_protobuf_cells(table, cells).await;
-            result.map_err(to_backoff_err)
+            client.put_protobuf_cells(table, cells).await
         })
         .await
     }
