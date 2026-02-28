@@ -53,7 +53,7 @@ mod transaction {
 // This vote batch size was selected to balance the following two things:
 // 1. Amortize execution overhead (Larger is better)
 // 2. Constrain max entry size for FEC set packing (Smaller is better)
-pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 16;
+pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 4;
 
 pub struct VoteWorker {
     exit: Arc<AtomicBool>,
@@ -502,7 +502,7 @@ impl VoteWorker {
     }
 
     fn extract_retryable(
-        vote_packets: &mut ArrayVec<RuntimeTransactionView, 16>,
+        vote_packets: &mut ArrayVec<RuntimeTransactionView, UNPROCESSED_BUFFER_STEP_SIZE>,
         retryable_vote_indices: Vec<usize>,
     ) -> impl Iterator<Item = RuntimeTransactionView> + '_ {
         debug_assert!(retryable_vote_indices.is_sorted());

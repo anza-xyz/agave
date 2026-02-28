@@ -8,7 +8,7 @@ use {
     solana_hash::Hash,
     solana_ledger::{
         blockstore::Blockstore,
-        shred::{self, ProcessShredsStats, get_data_shred_bytes_per_batch_typical},
+        shred::{self, ProcessShredsStats, get_chained_merkle_fec_set_capacity_no_retransmit},
     },
     solana_poh::poh_recorder::WorkingBankEntry,
     solana_runtime::bank::Bank,
@@ -27,17 +27,6 @@ pub(super) struct ReceiveResults {
     pub last_tick_height: u64,
 }
 
-const fn get_target_batch_bytes_default() -> u64 {
-    // Empirically discovered to be a good balance between avoiding padding and
-    // not delaying broadcast.
-    2 * get_data_shred_bytes_per_batch_typical()
-}
-
-const fn get_target_batch_pad_bytes() -> u64 {
-    // Less than 5% padding is acceptable overhead. Let's not push our luck.
-    get_data_shred_bytes_per_batch_typical() / 20
-}
-
 fn keep_coalescing_entries(
     last_tick_height: u64,
     max_tick_height: u64,
@@ -52,18 +41,6 @@ fn keep_coalescing_entries(
     } else if serialized_batch_byte_count >= max_batch_byte_count {
         // Exceeded the max batch byte count.
         process_stats.coalesce_exited_hit_max += 1;
-        return false;
-    }
-    let typical = get_data_shred_bytes_per_batch_typical();
-    let remaining_bytes = serialized_batch_byte_count % typical;
-    let bytes_to_fill_erasure_batch = if remaining_bytes == 0 {
-        0
-    } else {
-        typical - remaining_bytes
-    };
-    if bytes_to_fill_erasure_batch < get_target_batch_pad_bytes() {
-        // We're close enough to tightly packing erasure batches. Just send it.
-        process_stats.coalesce_exited_tightly_packed += 1;
         return false;
     }
     true
@@ -84,40 +61,13 @@ pub(super) fn recv_slot_entries(
     assert!(last_tick_height <= bank.max_tick_height());
     let mut entries = vec![entry];
 
-    // Drain the channel of entries.
-    while last_tick_height != bank.max_tick_height() {
-        let Ok((try_bank, (entry, tick_height))) = receiver.try_recv() else {
-            break;
-        };
-        // If the bank changed, that implies the previous slot was interrupted and we do not have to
-        // broadcast its entries.
-        if try_bank.slot() != bank.slot() {
-            warn!("Broadcast for slot: {} interrupted", bank.slot());
-            entries.clear();
-            bank = try_bank;
-        }
-        last_tick_height = tick_height;
-        entries.push(entry);
-        assert!(last_tick_height <= bank.max_tick_height());
-    }
-
     let mut serialized_batch_byte_count = serialized_size(&entries)?;
-
-    // Determine the maximum batch size we will allow for coalescing. Normally
-    // this would just be the default target batch size, but if we happened to
-    // pull out a large number of entries from the channel, we might have
-    // already exceeded the default target, and we should try to build towards the
-    // next batch boundary to avoid excessive padding.
-    let next_full_batch_byte_count = serialized_batch_byte_count
-        .div_ceil(get_data_shred_bytes_per_batch_typical())
-        .saturating_mul(get_data_shred_bytes_per_batch_typical());
-    let max_batch_byte_count = next_full_batch_byte_count.max(get_target_batch_bytes_default());
+    let max_batch_byte_count = get_chained_merkle_fec_set_capacity_no_retransmit();
 
     // Coalesce entries until one of the following conditions are hit:
     // 1. We ticked through the entire slot.
     // 2. We hit the timeout.
-    // 3. We're over the max data target.
-    // 4. We're "close enough" to tightly packing erasure batches.
+    // 3. An entry would push us over the FEC set capacity (carryover).
     let mut coalesce_start = Instant::now();
     while keep_coalescing_entries(
         last_tick_height,
@@ -220,10 +170,14 @@ mod tests {
         super::*,
         crossbeam_channel::unbounded,
         solana_genesis_config::GenesisConfig,
-        solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
+        solana_ledger::{
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
+            shred::get_chained_merkle_fec_set_capacity_no_retransmit,
+        },
         solana_pubkey::Pubkey,
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
+        wincode,
     };
 
     fn setup_test() -> (GenesisConfig, Arc<Bank>, Transaction) {
@@ -266,7 +220,9 @@ mod tests {
 
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
-        while let Ok(result) = recv_slot_entries(&r, &mut None, &mut ProcessShredsStats::default())
+        let mut carryover = None;
+        while let Ok(result) =
+            recv_slot_entries(&r, &mut carryover, &mut ProcessShredsStats::default())
         {
             assert_eq!(result.bank.slot(), bank1.slot());
             last_tick_height = result.last_tick_height;
@@ -309,7 +265,9 @@ mod tests {
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
         let mut bank_slot = 0;
-        while let Ok(result) = recv_slot_entries(&r, &mut None, &mut ProcessShredsStats::default())
+        let mut carryover = None;
+        while let Ok(result) =
+            recv_slot_entries(&r, &mut carryover, &mut ProcessShredsStats::default())
         {
             bank_slot = result.bank.slot();
             last_tick_height = result.last_tick_height;
@@ -321,64 +279,24 @@ mod tests {
     }
 
     #[test]
-    fn test_keep_coalescing_exact_boundary_exits() {
-        let typical = get_data_shred_bytes_per_batch_typical();
+    fn test_keep_coalescing_below_max_continues() {
+        let typical = get_chained_merkle_fec_set_capacity_no_retransmit();
         let mut stats = ProcessShredsStats::default();
-        let serialized = typical * 2; // exact boundary
-        let max_batch = typical * 4; // still below max
+        // Below max, should keep coalescing.
+        let serialized = typical - 1;
         let keep = keep_coalescing_entries(
             LAST_TICK_HEIGHT,
             MAX_TICK_HEIGHT,
             serialized,
-            max_batch,
-            &mut stats,
-        );
-        assert!(!keep);
-        assert_eq!(stats.coalesce_exited_tightly_packed, 1);
-    }
-
-    #[test]
-    fn test_keep_coalescing_near_boundary_exits() {
-        let typical = get_data_shred_bytes_per_batch_typical();
-        let pad = get_target_batch_pad_bytes();
-        assert!(pad > 0);
-        let mut stats = ProcessShredsStats::default();
-        // bytes_to_fill = pad - 1 -> ensure early exit
-        let rem = typical - (pad - 1);
-        let serialized = typical * 3 + rem;
-        let keep = keep_coalescing_entries(
-            LAST_TICK_HEIGHT,
-            MAX_TICK_HEIGHT,
-            serialized,
-            typical * 10,
-            &mut stats,
-        );
-        assert!(!keep);
-        assert_eq!(stats.coalesce_exited_tightly_packed, 1);
-    }
-
-    #[test]
-    fn test_keep_coalescing_not_close_enough_continues() {
-        let typical = get_data_shred_bytes_per_batch_typical();
-        let pad = get_target_batch_pad_bytes();
-        let mut stats = ProcessShredsStats::default();
-        // bytes_to_fill = pad -> should continue
-        let rem = typical - pad;
-        let serialized = typical + rem;
-        let keep = keep_coalescing_entries(
-            LAST_TICK_HEIGHT,
-            MAX_TICK_HEIGHT,
-            serialized,
-            typical * 10,
+            typical,
             &mut stats,
         );
         assert!(keep);
-        assert_eq!(stats.coalesce_exited_tightly_packed, 0);
     }
 
     #[test]
     fn test_keep_coalescing_hit_max() {
-        let typical = get_data_shred_bytes_per_batch_typical();
+        let typical = get_chained_merkle_fec_set_capacity_no_retransmit();
         let mut stats = ProcessShredsStats::default();
         let serialized = typical * 4;
         let max_batch = typical * 4; // >= triggers hit_max
@@ -400,5 +318,47 @@ mod tests {
             keep_coalescing_entries(MAX_TICK_HEIGHT, MAX_TICK_HEIGHT, 0, 1_000_000, &mut stats);
         assert!(!keep);
         assert_eq!(stats.coalesce_exited_slot_ended, 1);
+    }
+
+    /// Verifies we never get stuck when a carryover entry exceeds FEC set capacity.
+    /// When the initial or carryover entry is larger than max_batch_byte_count,
+    /// keep_coalescing_entries returns false (hit_max) before the coalesce loop,
+    /// so we return immediately and never re-put the same entry in carryover.
+    #[test]
+    fn test_carryover_larger_than_fec_set_returns_and_consumes() {
+        let (genesis_config, bank0, tx) = setup_test();
+        let bank1 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 1));
+        let fec_capacity = get_chained_merkle_fec_set_capacity_no_retransmit();
+
+        // Create an entry larger than FEC set capacity (typical ~30KB, need many txns)
+        let last_hash = genesis_config.hash();
+        let large_entry = Entry::new(
+            &last_hash,
+            1,
+            std::iter::repeat_with(|| tx.clone())
+                .take(400) // ~400 * ~100 bytes > 30KB
+                .collect(),
+        );
+        let entry_size = wincode::serialized_size(&large_entry).unwrap();
+        assert!(
+            entry_size > fec_capacity,
+            "entry size {} must exceed FEC capacity {} for this test",
+            entry_size,
+            fec_capacity
+        );
+
+        let (s, r) = unbounded();
+        drop(s);
+
+        let mut carryover = Some((bank1.clone(), (large_entry.clone(), 1u64)));
+        let mut stats = ProcessShredsStats::default();
+
+        let result = recv_slot_entries(&r, &mut carryover, &mut stats).unwrap();
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0], large_entry);
+        assert!(carryover.is_none(), "carryover must be consumed");
+
+        let result2 = recv_slot_entries(&r, &mut carryover, &mut stats);
+        assert!(result2.is_err(), "channel empty, expect timeout");
     }
 }
