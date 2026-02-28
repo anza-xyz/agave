@@ -312,7 +312,7 @@ impl CostTracker {
     ) -> Result<(), CostTrackerError> {
         let cost: u64 = tx_cost.sum();
 
-        if tx_cost.is_simple_vote() {
+        if tx_cost.should_track_as_simple_vote() {
             // if vote transaction, check if it exceeds vote_transaction_limit
             if self.vote_cost.saturating_add(cost) > self.vote_cost_limit {
                 return Err(CostTrackerError::WouldExceedVoteMaxLimit);
@@ -396,7 +396,7 @@ impl CostTracker {
             costliest_account_cost = costliest_account_cost.max(*account_cost);
         }
         self.block_cost.fetch_add(adjustment);
-        if tx_cost.is_simple_vote() {
+        if tx_cost.should_track_as_simple_vote() {
             self.vote_cost = self.vote_cost.saturating_add(adjustment);
         }
 
@@ -417,7 +417,7 @@ impl CostTracker {
             *account_cost = account_cost.saturating_sub(adjustment);
         }
         self.block_cost.fetch_sub(adjustment);
-        if tx_cost.is_simple_vote() {
+        if tx_cost.should_track_as_simple_vote() {
             self.vote_cost = self.vote_cost.saturating_sub(adjustment);
         }
     }
@@ -471,6 +471,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_signer::Signer,
         std::cmp,
+        test_case::test_case,
     };
 
     impl CostTracker {
@@ -529,16 +530,21 @@ mod tests {
 
     fn simple_vote_transaction_cost(
         transaction: &WritableKeysTransaction,
+        remove_simple_vote_from_cost_model: bool,
     ) -> TransactionCost<'_, WritableKeysTransaction> {
-        TransactionCost::Transaction(UsageCostDetails {
-            transaction,
-            signature_cost: 1,
-            write_lock_cost: 2,
-            data_bytes_cost: 0,
-            programs_execution_cost: solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
-            loaded_accounts_data_size_cost: 8,
-            allocated_accounts_data_size: 0,
-        })
+        if !remove_simple_vote_from_cost_model {
+            TransactionCost::SimpleVote { transaction }
+        } else {
+            TransactionCost::Transaction(UsageCostDetails {
+                transaction,
+                signature_cost: 1,
+                write_lock_cost: 2,
+                data_bytes_cost: 0,
+                programs_execution_cost: solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
+                loaded_accounts_data_size_cost: 8,
+                allocated_accounts_data_size: 0,
+            })
+        }
     }
 
     #[test]
@@ -568,11 +574,12 @@ mod tests {
         assert_eq!(cost, costliest_account_cost);
     }
 
-    #[test]
-    fn test_cost_tracker_ok_add_one_vote() {
+    #[test_case(false; "remove_simple_vote_from_cost_model not activated")]
+    #[test_case(true; "remove_simple_vote_from_cost_model activated")]
+    fn test_cost_tracker_ok_add_one_vote(remove_simple_vote_from_cost_model: bool) {
         let mint_keypair = test_setup();
         let tx = build_simple_vote_transaction(&mint_keypair);
-        let tx_cost = simple_vote_transaction_cost(&tx);
+        let tx_cost = simple_vote_transaction_cost(&tx, remove_simple_vote_from_cost_model);
         let cost = tx_cost.sum();
 
         // build testee to have capacity for one simple transaction
@@ -580,7 +587,12 @@ mod tests {
         assert!(testee.would_fit(&tx_cost).is_ok());
         testee.add_transaction_cost(&tx_cost);
         assert_eq!(cost, testee.block_cost());
-        assert_eq!(cost, testee.vote_cost);
+        if !remove_simple_vote_from_cost_model {
+            assert_eq!(cost, testee.vote_cost);
+        } else {
+            // not trackijng vote cu after feature activation
+            assert_eq!(0, testee.vote_cost);
+        }
         let (_costliest_account, costliest_account_cost) = testee.find_costliest_account();
         assert_eq!(cost, costliest_account_cost);
     }
@@ -711,16 +723,17 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_cost_tracker_reach_vote_limit() {
+    #[test_case(false; "remove_simple_vote_from_cost_model not activated")]
+    #[test_case(true; "remove_simple_vote_from_cost_model activated")]
+    fn test_cost_tracker_reach_vote_limit(remove_simple_vote_from_cost_model: bool) {
         let mint_keypair = test_setup();
         // build two mocking vote transactions with diff accounts
         let second_account = Keypair::new();
         let tx1 = build_simple_vote_transaction(&mint_keypair);
-        let tx_cost1 = simple_vote_transaction_cost(&tx1);
+        let tx_cost1 = simple_vote_transaction_cost(&tx1, remove_simple_vote_from_cost_model);
         let cost1 = tx_cost1.sum();
         let tx2 = build_simple_vote_transaction(&second_account);
-        let tx_cost2 = simple_vote_transaction_cost(&tx2);
+        let tx_cost2 = simple_vote_transaction_cost(&tx2, remove_simple_vote_from_cost_model);
         let cost2 = tx_cost2.sum();
 
         // build testee to have capacity for each chain, but not enough room for both votes
@@ -730,9 +743,12 @@ mod tests {
             assert!(testee.would_fit(&tx_cost1).is_ok());
             testee.add_transaction_cost(&tx_cost1);
         }
-        // but no more room for package as whole
-        {
+        if !remove_simple_vote_from_cost_model {
+            // but no more room for package as whole
             assert!(testee.would_fit(&tx_cost2).is_err());
+        } else {
+            // no more vote cu limit if feature activated
+            assert!(testee.would_fit(&tx_cost2).is_ok());
         }
         // however there is room for none-vote tx3
         {

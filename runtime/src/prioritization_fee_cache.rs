@@ -248,10 +248,8 @@ impl PrioritizationFeeCache {
                     .map(|(_, key)| *key)
                     .collect();
 
-                let (prioritization_fee, calculate_prioritization_fee_us) = measure_us!({
-                    solana_fee_structure::FeeBudgetLimits::from(compute_budget_limits)
-                        .prioritization_fee
-                });
+                let (prioritization_fee, calculate_prioritization_fee_us) =
+                    measure_us!(compute_budget_limits.get_prioritization_fee());
                 self.metrics
                     .accumulate_total_calculate_prioritization_fee_elapsed_us(
                         calculate_prioritization_fee_us,

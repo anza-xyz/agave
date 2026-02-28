@@ -301,8 +301,8 @@ impl BankingTracer {
         let (gossip_vote_sender, gossip_vote_receiver) = Self::channel(
             ChannelLabel::GossipVote,
             self.active_tracer.as_ref().cloned(),
-            Some(unified_sender.clone()),
-            Some(is_unified.clone()),
+            Some(unified_sender),
+            Some(is_unified),
         );
 
         Channels {

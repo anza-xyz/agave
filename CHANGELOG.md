@@ -8,12 +8,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v4.0](#edge-channel)
-* [beta - v3.1](https://github.com/anza-xyz/agave/blob/v3.1/CHANGELOG.md)
-* [stable - v3.0](https://github.com/anza-xyz/agave/blob/v3.0/CHANGELOG.md)
+* [edge - v4.1](#edge-channel)
+* [beta - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
+* [stable - v3.1](https://github.com/anza-xyz/agave/blob/v3.1/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## 4.0.0-Unreleased
+## 4.1.0-Unreleased
+### RPC
+#### Breaking
+#### Changes
+### Validator
+#### Breaking
+#### Changes
+
+## 4.0.0
 ### RPC
 #### Breaking
 * `--public-tpu-address` and `--public-tpu-forwards-address` CLI arguments and `setPublicTpuForwardsAddress`, `setPublicTpuAddress` RPC methods now specify QUIC ports, not UDP.
@@ -71,6 +79,21 @@ without warning.
         ```
         sudo setcap cap_net_raw,cap_net_admin,cap_bpf,cap_perfmon=p /path/to/agave-validator
         ```
+* Interpretation of the `Version` struct fields in gossip `ContactInfo` has been
+[changed](https://github.com/anza-xyz/agave/pull/10286) to support communicating
+[semver prerelease notation](https://semver.org/#spec-item-9). Implementations lacking this
+support will observe a larger than expected _`min` version_ field from node publishing from a
+prerelease version. The new interpretation is as follows:
+  * The top two bits (14 and 15) of the `minor` field are now reserved for prerelease status
+  * Prerelease status bit values are;
+    3 - alpha, 2 - beta, 1 - release candidate (rc), 0 - stable
+  * When prerelease status bits are non-zero, the `Version::patch` field is interpreted as
+    the prerelease number and the actual `patch` value is implicitly zero
+  * Examples:
+    * { min: 0x0001, patch: 0x0003 } -> X.1.3
+    * { min: 0x4002, patch: 0x0002 } -> X.2.0-rc.2
+    * { min: 0x8003, patch: 0x0001 } -> X.3.0-beta.1
+    * { min: 0xC004, patch: 0x0000 } -> X.4.0-alpha.0
 
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.

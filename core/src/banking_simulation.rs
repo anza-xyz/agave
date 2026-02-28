@@ -274,22 +274,22 @@ impl SimulatorLoopLogger {
 
     fn log_frozen_bank_cost(&self, bank: &Bank, bank_elapsed: Duration) {
         info!(
-            "simulated bank slot+delta: {}+{}ms costs: {:?} fees: {} txs: {} (frozen)",
+            "simulated bank slot+delta: {}+{}ms costs: {:?} fees: {:?} txs: {} (frozen)",
             bank.slot(),
             bank_elapsed.as_millis(),
             Self::bank_costs(bank),
-            bank.collector_fees(),
+            bank.get_collector_fee_details(),
             bank.executed_transaction_count(),
         );
     }
 
     fn log_ongoing_bank_cost(&self, bank: &Bank, bank_elapsed: Duration) {
         info!(
-            "simulated bank slot+delta: {}+{}ms costs: {:?} fees: {} txs: {} (ongoing)",
+            "simulated bank slot+delta: {}+{}ms costs: {:?} fees: {:?} txs: {} (ongoing)",
             bank.slot(),
             bank_elapsed.as_millis(),
             Self::bank_costs(bank),
-            bank.collector_fees(),
+            bank.get_collector_fee_details(),
             bank.executed_transaction_count(),
         );
     }
@@ -839,7 +839,7 @@ impl BankingSimulator {
         .expect("should bind");
         let broadcast_stage = BroadcastStageType::Standard.new_broadcast_stage(
             vec![socket],
-            cluster_info_for_broadcast.clone(),
+            cluster_info_for_broadcast,
             entry_receiver,
             retransmit_slots_receiver,
             exit.clone(),
@@ -852,7 +852,7 @@ impl BankingSimulator {
 
         info!("Start banking stage!...");
         let banking_stage = BankingStage::new_num_threads(
-            block_production_method.clone(),
+            block_production_method,
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,

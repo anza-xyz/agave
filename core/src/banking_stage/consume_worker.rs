@@ -121,7 +121,10 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             bank,
             &work.transactions,
             &work.max_ages,
-            ExecutionFlags::default(),
+            ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing: false,
+            },
         );
         self.metrics.update_for_consume(&output);
         self.metrics.has_data.store(true, Ordering::Relaxed);

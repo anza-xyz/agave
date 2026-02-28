@@ -12,8 +12,6 @@ edition = { workspace = true }
 crate-type = ["cdylib"]
 
 [dependencies]
-getrandom = { workspace = true, features = ["custom"] }
-rand = { workspace = true }
 solana-account-info = { workspace = true }
 solana-msg = { workspace = true }
 solana-program-entrypoint = { workspace = true }

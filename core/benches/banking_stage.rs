@@ -236,7 +236,7 @@ fn bench_banking(
     let (s, _r) = unbounded();
     let _banking_stage = BankingStage::new_num_threads(
         block_production_method,
-        poh_recorder.clone(),
+        poh_recorder,
         transaction_recorder,
         non_vote_receiver,
         tpu_vote_receiver,

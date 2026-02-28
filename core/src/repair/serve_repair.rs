@@ -179,6 +179,7 @@ struct ServeRepairStats {
     total_requests: usize,
     dropped_requests_outbound_bandwidth: usize,
     dropped_requests_load_shed: usize,
+    dropped_requests_load_shed_sigverify: usize,
     dropped_requests_low_stake: usize,
     whitelisted_requests: usize,
     total_dropped_response_packets: usize,
@@ -657,9 +658,15 @@ impl ServeRepair {
         whitelist: &HashSet<Pubkey>,
         my_id: &Pubkey,
         socket_addr_space: &SocketAddrSpace,
+        mut remaining_budget_estimate: usize,
         stats: &mut ServeRepairStats,
     ) -> Vec<RepairRequestWithMeta> {
+        const MIN_RESPONSE_SIZE: usize = PACKET_DATA_SIZE + SIZE_OF_NONCE;
         let decode_request = |request| {
+            if remaining_budget_estimate < MIN_RESPONSE_SIZE {
+                stats.dropped_requests_load_shed_sigverify += 1;
+                return None;
+            }
             let result = Self::decode_request(
                 request,
                 epoch_staked_nodes,
@@ -674,6 +681,9 @@ impl ServeRepair {
                     } else {
                         stats.handle_requests_staked += 1;
                     }
+                    // assuming we will reply to the request, we need to update the budget estimate
+                    // some responses may be larger, but we have to be conservative here
+                    remaining_budget_estimate -= MIN_RESPONSE_SIZE;
                 }
                 Err(e) => {
                     Self::record_request_decode_error(e, stats);
@@ -739,28 +749,6 @@ impl ServeRepair {
         stats.dropped_requests_load_shed += dropped_requests;
         stats.total_requests += total_requests;
 
-        let decode_start = Instant::now();
-        let mut decoded_requests = {
-            let whitelist = self.repair_whitelist.read().unwrap();
-            Self::decode_requests(
-                requests,
-                &epoch_staked_nodes,
-                &whitelist,
-                &my_id,
-                &socket_addr_space,
-                stats,
-            )
-        };
-        let whitelisted_request_count = decoded_requests.iter().filter(|r| r.whitelisted).count();
-        stats.decode_time_us += decode_start.elapsed().as_micros() as u64;
-        stats.whitelisted_requests += whitelisted_request_count.min(MAX_REQUESTS_PER_ITERATION);
-
-        if decoded_requests.len() > MAX_REQUESTS_PER_ITERATION {
-            stats.dropped_requests_low_stake += decoded_requests.len() - MAX_REQUESTS_PER_ITERATION;
-            decoded_requests.sort_unstable_by_key(|r| Reverse((r.whitelisted, r.stake)));
-            decoded_requests.truncate(MAX_REQUESTS_PER_ITERATION);
-        }
-
         // Check if we are currently a leader, so we can limit the service rate
         // If information is not available, assume we are not a leader.
         let is_leader = self
@@ -774,6 +762,35 @@ impl ServeRepair {
         } else {
             1
         };
+
+        let decode_start = Instant::now();
+        let mut decoded_requests = {
+            // Estimate how much data budget we have left, 2x margin to prioritize staked,
+            // apply byte cost multiplier here so we can operate in bytes inside decode_requests
+            let effective_data_budget_estimate =
+                data_budget.get().saturating_mul(2) / byte_cost_multiplier;
+            // staked requests (as those get filtered after sigverify)
+            let whitelist = self.repair_whitelist.read().unwrap();
+            Self::decode_requests(
+                requests,
+                &epoch_staked_nodes,
+                &whitelist,
+                &my_id,
+                &socket_addr_space,
+                effective_data_budget_estimate,
+                stats,
+            )
+        };
+        let whitelisted_request_count = decoded_requests.iter().filter(|r| r.whitelisted).count();
+        stats.decode_time_us += decode_start.elapsed().as_micros() as u64;
+        stats.whitelisted_requests += whitelisted_request_count.min(MAX_REQUESTS_PER_ITERATION);
+
+        if decoded_requests.len() > MAX_REQUESTS_PER_ITERATION {
+            stats.dropped_requests_low_stake += decoded_requests.len() - MAX_REQUESTS_PER_ITERATION;
+            decoded_requests.sort_unstable_by_key(|r| Reverse((r.whitelisted, r.stake)));
+            decoded_requests.truncate(MAX_REQUESTS_PER_ITERATION);
+        }
+
         let handle_requests_start = Instant::now();
         self.handle_requests(
             ping_cache,
@@ -810,6 +827,11 @@ impl ServeRepair {
             (
                 "dropped_requests_load_shed",
                 stats.dropped_requests_load_shed,
+                i64
+            ),
+            (
+                "dropped_requests_load_shed_sigverify",
+                stats.dropped_requests_load_shed_sigverify,
                 i64
             ),
             (
@@ -1062,7 +1084,10 @@ impl ServeRepair {
             whitelisted: _,
         } in requests.into_iter()
         {
-            if !data_budget.check(request.max_response_bytes() * byte_cost_multiplier) {
+            // we deliberately consume early assuming that request succeeds,
+            // if it does we will refund the unused tokens
+            let max_response_cost = request.max_response_bytes() * byte_cost_multiplier;
+            if !data_budget.take(max_response_cost) {
                 stats.dropped_requests_outbound_bandwidth += 1;
                 continue;
             }
@@ -1085,14 +1110,15 @@ impl ServeRepair {
             };
             let num_response_packets = rsp.len();
             let num_response_bytes: usize = rsp.iter().map(|p| p.meta().size).sum();
-            if data_budget.take(num_response_bytes * byte_cost_multiplier)
-                && send_response(
-                    rsp,
-                    protocol,
-                    packet_batch_sender,
-                    repair_response_quic_sender,
-                )
-            {
+            // refund unused bytes if we can only serve the request partially
+            data_budget
+                .put(max_response_cost.saturating_sub(num_response_bytes * byte_cost_multiplier));
+            if send_response(
+                rsp,
+                protocol,
+                packet_batch_sender,
+                repair_response_quic_sender,
+            ) {
                 stats.total_response_packets += num_response_packets;
                 match stake > 0 {
                     true => stats.total_response_bytes_staked += num_response_bytes,

@@ -7,6 +7,7 @@ use {
             swqos::{SwQos, SwQosConfig},
         },
         quic::{QUIC_MAX_TIMEOUT, QuicServerError, QuicStreamerConfig, StreamerStats},
+        quic_socket::QuicSocket,
         streamer::StakedNodes,
     },
     crossbeam_channel::{Receiver, Sender, unbounded},
@@ -22,7 +23,7 @@ use {
     solana_perf::packet::PacketBatch,
     solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
     std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         sync::{Arc, RwLock},
         time::{Duration, Instant},
     },
@@ -38,7 +39,7 @@ const QUIC_KEEP_ALIVE_FOR_TESTS: Duration = Duration::from_secs(5);
 /// Spawn a streamer instance in the current tokio runtime.
 pub fn spawn_stake_weighted_qos_server(
     name: &'static str,
-    sockets: impl IntoIterator<Item = UdpSocket>,
+    sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
@@ -99,7 +100,7 @@ pub struct SpawnTestServerResult {
     pub cancel: CancellationToken,
 }
 
-pub fn create_quic_server_sockets() -> Vec<UdpSocket> {
+pub fn create_quic_server_sockets() -> Vec<QuicSocket> {
     let num = if cfg!(not(target_os = "windows")) {
         10
     } else {
@@ -114,6 +115,9 @@ pub fn create_quic_server_sockets() -> Vec<UdpSocket> {
     )
     .expect("bind operation for quic server sockets should succeed")
     .1
+    .into_iter()
+    .map(QuicSocket::from)
+    .collect()
 }
 
 pub fn setup_quic_server(

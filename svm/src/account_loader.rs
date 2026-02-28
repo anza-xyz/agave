@@ -653,7 +653,7 @@ mod tests {
     use {
         super::*,
         crate::transaction_account_state_info::TransactionAccountStateInfo,
-        rand0_7::prelude::*,
+        rand::prelude::*,
         solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction},
@@ -2303,16 +2303,16 @@ mod tests {
     // other than trying not to swamp programs with blank accounts and keep transaction size below the 64mb limit
     #[test]
     fn test_load_transaction_accounts_data_sizes() {
-        let mut rng = rand0_7::thread_rng();
+        let mut rng = rand::rng();
         let mut mock_bank = TestCallbacks::default();
 
         // arbitrary accounts
         for _ in 0..128 {
             let account = AccountSharedData::create_from_existing_shared_data(
                 1,
-                Arc::new(vec![0; rng.gen_range(0, 128)]),
+                Arc::new(vec![0; rng.random_range(0..128)]),
                 Pubkey::new_unique(),
-                rng.r#gen(),
+                rng.random(),
                 u64::MAX,
             );
             mock_bank
@@ -2326,9 +2326,9 @@ mod tests {
             let fee_payer = Pubkey::new_unique();
             let account = AccountSharedData::create_from_existing_shared_data(
                 LAMPORTS_PER_SOL,
-                Arc::new(vec![0; rng.gen_range(0, 32)]),
+                Arc::new(vec![0; rng.random_range(0..32)]),
                 system_program::id(),
-                rng.r#gen(),
+                rng.random(),
                 u64::MAX,
             );
             mock_bank.accounts_map.insert(fee_payer, (account, 1));
@@ -2343,9 +2343,9 @@ mod tests {
                 let program_id = Pubkey::new_unique();
                 let mut account = AccountSharedData::create_from_existing_shared_data(
                     1,
-                    Arc::new(vec![0; rng.gen_range(0, 512)]),
+                    Arc::new(vec![0; rng.random_range(0..512)]),
                     *loader,
-                    rng.r#gen(),
+                    rng.random(),
                     u64::MAX,
                 );
 
@@ -2356,15 +2356,15 @@ mod tests {
                 // this will always fail at execution but we are merely testing the data size accounting here
                 if *loader == bpf_loader_upgradeable::id() && account.data().len() >= 64 {
                     let programdata_address = Pubkey::new_unique();
-                    let has_programdata = rng.r#gen();
+                    let has_programdata = rng.random();
 
                     if has_programdata {
                         let programdata_account =
                             AccountSharedData::create_from_existing_shared_data(
                                 1,
-                                Arc::new(vec![0; rng.gen_range(0, 512)]),
+                                Arc::new(vec![0; rng.random_range(0..512)]),
                                 *loader,
-                                rng.r#gen(),
+                                rng.random(),
                                 u64::MAX,
                             );
                         programdata_tracker.insert(
@@ -2377,7 +2377,7 @@ mod tests {
                         loader_owned_accounts.push(programdata_address);
                     }
 
-                    if has_programdata || rng.r#gen() {
+                    if has_programdata || rng.random() {
                         account
                             .set_state(&UpgradeableLoaderState::Program {
                                 programdata_address,
@@ -2413,16 +2413,16 @@ mod tests {
         // * the programdata conditions hold regardless of ordering
         for _ in 0..1024 {
             let mut instructions = vec![];
-            for _ in 0..rng.gen_range(1, 8) {
+            for _ in 0..rng.random_range(1..8) {
                 let mut accounts = vec![];
-                for _ in 0..rng.gen_range(1, 16) {
+                for _ in 0..rng.random_range(1..16) {
                     all_accounts.shuffle(&mut rng);
                     let pubkey = all_accounts[0];
 
                     accounts.push(AccountMeta {
                         pubkey,
-                        is_writable: rng.r#gen(),
-                        is_signer: rng.r#gen() && rng.r#gen(),
+                        is_writable: rng.random(),
+                        is_signer: rng.random() && rng.random(),
                     });
                 }
 

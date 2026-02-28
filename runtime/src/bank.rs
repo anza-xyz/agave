@@ -96,7 +96,7 @@ use {
         accounts_hash::AccountsLtHash,
         accounts_index::{IndexKey, ScanConfig, ScanResult},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
-        ancestors::{Ancestors, AncestorsForSerialization},
+        ancestors::Ancestors,
         blockhash_queue::BlockhashQueue,
         storable_accounts::StorableAccounts,
         utils::create_account_shared_data,
@@ -182,6 +182,7 @@ use {
         vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
         vote_parser,
     },
+    solana_vote_interface::state::VoteStateV4,
     std::{
         collections::{HashMap, HashSet},
         fmt,
@@ -458,7 +459,6 @@ impl TransactionLogCollector {
 #[derive(Clone, Debug)]
 pub struct BankFieldsToDeserialize {
     pub(crate) blockhash_queue: BlockhashQueue,
-    pub(crate) ancestors: AncestorsForSerialization,
     pub(crate) hash: Hash,
     pub(crate) parent_hash: Hash,
     pub(crate) parent_slot: Slot,
@@ -477,7 +477,6 @@ pub struct BankFieldsToDeserialize {
     pub(crate) epoch: Epoch,
     pub(crate) block_height: u64,
     pub(crate) leader_id: Pubkey,
-    pub(crate) collector_fees: u64,
     pub(crate) fee_rate_governor: FeeRateGovernor,
     pub(crate) rent_collector: RentCollector,
     pub(crate) epoch_schedule: EpochSchedule,
@@ -503,7 +502,6 @@ pub struct BankFieldsToDeserialize {
 #[derive(Debug)]
 pub struct BankFieldsToSerialize {
     pub blockhash_queue: BlockhashQueue,
-    pub ancestors: AncestorsForSerialization,
     pub hash: Hash,
     pub parent_hash: Hash,
     pub parent_slot: Slot,
@@ -522,7 +520,6 @@ pub struct BankFieldsToSerialize {
     pub epoch: Epoch,
     pub block_height: u64,
     pub leader_id: Pubkey,
-    pub collector_fees: u64,
     pub fee_rate_governor: FeeRateGovernor,
     pub rent_collector: RentCollector,
     pub epoch_schedule: EpochSchedule,
@@ -547,7 +544,7 @@ impl PartialEq for Bank {
             rc: _,
             status_cache: _,
             blockhash_queue,
-            ancestors,
+            ancestors: _,
             hash,
             parent_hash,
             parent_slot,
@@ -571,7 +568,6 @@ impl PartialEq for Bank {
             epoch,
             block_height,
             leader,
-            collector_fees,
             fee_rate_governor,
             rent_collector,
             epoch_schedule,
@@ -615,7 +611,6 @@ impl PartialEq for Bank {
             // is added to the struct, this PartialEq is accordingly updated.
         } = self;
         *blockhash_queue.read().unwrap() == *other.blockhash_queue.read().unwrap()
-            && ancestors == &other.ancestors
             && *hash.read().unwrap() == *other.hash.read().unwrap()
             && parent_hash == &other.parent_hash
             && parent_slot == &other.parent_slot
@@ -634,7 +629,6 @@ impl PartialEq for Bank {
             && epoch == &other.epoch
             && block_height == &other.block_height
             && leader == &other.leader
-            && collector_fees.load(Relaxed) == other.collector_fees.load(Relaxed)
             && fee_rate_governor == &other.fee_rate_governor
             && rent_collector == &other.rent_collector
             && epoch_schedule == &other.epoch_schedule
@@ -658,7 +652,6 @@ impl BankFieldsToSerialize {
     pub fn default_for_tests() -> Self {
         Self {
             blockhash_queue: BlockhashQueue::default(),
-            ancestors: AncestorsForSerialization::default(),
             hash: Hash::default(),
             parent_hash: Hash::default(),
             parent_slot: Slot::default(),
@@ -677,7 +670,6 @@ impl BankFieldsToSerialize {
             epoch: Epoch::default(),
             block_height: u64::default(),
             leader_id: Pubkey::default(),
-            collector_fees: u64::default(),
             fee_rate_governor: FeeRateGovernor::default(),
             rent_collector: RentCollector::default(),
             epoch_schedule: EpochSchedule::default(),
@@ -843,9 +835,6 @@ pub struct Bank {
 
     /// The leader who produced this block
     leader: SlotLeader,
-
-    /// Fees that have been collected
-    collector_fees: AtomicU64,
 
     /// Track cluster signature throughput and adjust fee rate
     pub(crate) fee_rate_governor: FeeRateGovernor,
@@ -1131,7 +1120,6 @@ impl Bank {
             epoch: Epoch::default(),
             block_height: u64::default(),
             leader: SlotLeader::default(),
-            collector_fees: AtomicU64::default(),
             fee_rate_governor: FeeRateGovernor::default(),
             rent_collector: RentCollector::default(),
             epoch_schedule: EpochSchedule::default(),
@@ -1222,7 +1210,7 @@ impl Bank {
         // genesis needs stakes for all epochs up to the epoch implied by
         //  slot = 0 and genesis configuration
         {
-            let stakes = bank.stakes_cache.stakes().clone();
+            let stakes = bank.get_top_epoch_stakes();
             let stakes = SerdeStakesToStakeFormat::from(stakes);
             for epoch in 0..=bank.get_leader_schedule_epoch(bank.slot) {
                 bank.epoch_stakes
@@ -1374,7 +1362,6 @@ impl Bank {
             parent_hash: parent.hash(),
             parent_slot: parent.slot(),
             leader,
-            collector_fees: AtomicU64::new(0),
             ancestors: Ancestors::default(),
             hash: RwLock::new(Hash::default()),
             is_delta: AtomicBool::new(false),
@@ -1861,7 +1848,8 @@ impl Bank {
         epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
     ) -> Self {
         let now = Instant::now();
-        let ancestors = Ancestors::from(&fields.ancestors);
+        let slot = fields.slot;
+        let ancestors = Ancestors::from(vec![slot]);
         // For backward compatibility, we can only serialize and deserialize
         // Stakes<Delegation> in BankFieldsTo{Serialize,Deserialize}. But Bank
         // caches Stakes<StakeAccount>. Below Stakes<StakeAccount> is obtained
@@ -1944,12 +1932,11 @@ impl Bank {
             ns_per_slot: fields.ns_per_slot,
             genesis_creation_time: fields.genesis_creation_time,
             slots_per_year: fields.slots_per_year,
-            slot: fields.slot,
+            slot,
             bank_id: 0,
             epoch: fields.epoch,
             block_height: fields.block_height,
             leader,
-            collector_fees: AtomicU64::new(fields.collector_fees),
             fee_rate_governor: fields.fee_rate_governor,
             // clone()-ing is needed to consider a gated behavior in rent_collector
             rent_collector: Self::get_rent_collector_from(&fields.rent_collector, fields.epoch),
@@ -2069,7 +2056,6 @@ impl Bank {
     pub(crate) fn get_fields_to_serialize(&self) -> BankFieldsToSerialize {
         BankFieldsToSerialize {
             blockhash_queue: self.blockhash_queue.read().unwrap().clone(),
-            ancestors: AncestorsForSerialization::from(&self.ancestors),
             hash: *self.hash.read().unwrap(),
             parent_hash: self.parent_hash,
             parent_slot: self.parent_slot,
@@ -2088,7 +2074,6 @@ impl Bank {
             epoch: self.epoch,
             block_height: self.block_height,
             leader_id: self.leader.id,
-            collector_fees: self.collector_fees.load(Relaxed),
             fee_rate_governor: self.fee_rate_governor.clone(),
             rent_collector: self.rent_collector.clone(),
             epoch_schedule: self.epoch_schedule.clone(),
@@ -2380,7 +2365,7 @@ impl Bank {
                 // to ensure we retain the oldest epoch, if that epoch is 0.
                 epoch >= leader_schedule_epoch.saturating_sub(MAX_LEADER_SCHEDULE_STAKES - 1)
             });
-            let stakes = self.stakes_cache.stakes().clone();
+            let stakes = self.get_top_epoch_stakes();
             let stakes = SerdeStakesToStakeFormat::from(stakes);
             let new_epoch_stakes = VersionedEpochStakes::new(stakes, leader_schedule_epoch);
             info!(
@@ -2388,6 +2373,8 @@ impl Bank {
                 leader_schedule_epoch,
                 new_epoch_stakes.total_stake(),
             );
+
+            self.maybe_burn_vat_from_staked_accounts(&new_epoch_stakes);
 
             // It is expensive to log the details of epoch stakes. Only log them at "trace"
             // level for debugging purpose.
@@ -2404,6 +2391,64 @@ impl Bank {
             self.epoch_stakes
                 .insert(leader_schedule_epoch, new_epoch_stakes);
         }
+    }
+
+    /// Burn the Validator Admission ticket from each vote account if both the VAT and Alpenglow feature flags
+    /// are enabled
+    ///
+    /// Note: This must ONLY be called after the vote accounts have been filtered (`clone_and_filter_for_vat`)
+    /// to the top `MAX_ALPENGLOW_VOTE_ACCOUNTS` that contain enough balance for admission.
+    fn maybe_burn_vat_from_staked_accounts(&mut self, epoch_stakes: &VersionedEpochStakes) {
+        // Only deduct and burn the VAT if both the VAT and alpenglow features are active.
+        if !self
+            .feature_set
+            .is_active(&agave_feature_set::alpenglow::id())
+            || !self
+                .feature_set
+                .is_active(&agave_feature_set::validator_admission_ticket::id())
+        {
+            return;
+        }
+
+        let vote_accounts = epoch_stakes.stakes().vote_accounts();
+        debug_assert!(vote_accounts.len() <= 2000);
+        // +1 for the incinerator account
+        let mut accounts_to_store: Vec<(Pubkey, AccountSharedData)> =
+            Vec::with_capacity(vote_accounts.len() + 1);
+        let mut total_vat = 0u64;
+
+        // Vote accounts have already been filtered by clone_and_filter_for_vat to only include
+        // accounts with non-zero stake and sufficient balance.
+        for (vote_pubkey, _stake) in vote_accounts.delegated_stakes() {
+            let mut account = self.get_account(vote_pubkey).unwrap();
+            total_vat += VAT_TO_BURN_PER_EPOCH;
+            account.set_lamports(
+                account
+                    .lamports()
+                    .checked_sub(VAT_TO_BURN_PER_EPOCH)
+                    .expect(
+                        "Vote accounts should have already been filtered to contain enough \
+                         balance for the VAT",
+                    ),
+            );
+            accounts_to_store.push((*vote_pubkey, account));
+        }
+
+        // Per SIMD-0357, transfer collected VAT to the incinerator account.
+        let mut incinerator_account = self.get_account(&incinerator::id()).unwrap_or_default();
+        incinerator_account.set_lamports(
+            incinerator_account
+                .lamports()
+                .checked_add(total_vat)
+                .unwrap(),
+        );
+        accounts_to_store.push((incinerator::id(), incinerator_account));
+
+        self.store_accounts((self.slot, accounts_to_store.as_slice()));
+        info!(
+            "Transferred total VAT of {total_vat} lamports to incinerator from staked vote \
+             accounts"
+        );
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -4881,10 +4926,6 @@ impl Bank {
         hash
     }
 
-    pub fn collector_fees(&self) -> u64 {
-        self.collector_fees.load(Relaxed)
-    }
-
     /// Used by ledger tool to run a final hash calculation once all ledger replay has completed.
     /// This should not be called by validator code.
     pub fn run_final_hash_calc(&self) {
@@ -6068,6 +6109,37 @@ impl Bank {
     /// Return total transaction fee collected
     pub fn get_collector_fee_details(&self) -> CollectorFeeDetails {
         self.collector_fee_details.read().unwrap().clone()
+    }
+
+    /// If the VAT feature is active, returns the `Stakes` as filtered by SIMD-0357
+    /// See `VoteAccounts::clone_and_filter_for_vat` for the full criteria
+    ///
+    /// If the VAT feature is not active, return all stakes
+    pub fn get_top_epoch_stakes(&self) -> Stakes<StakeAccount<Delegation>> {
+        let vote_account_rent_exempt_minimum = self
+            .rent_collector
+            .rent
+            .minimum_balance(VoteStateV4::size_of());
+        let minimum_vote_account_balance =
+            if self.feature_set.is_active(&feature_set::alpenglow::id()) {
+                // When alpenglow is active the minimum required balance is
+                // VAT + rent-exempt minimum for vote account.
+                vote_account_rent_exempt_minimum + VAT_TO_BURN_PER_EPOCH
+            } else {
+                // If alpenglow is not active, the minimum required balance is rent-exempt-minimum
+                vote_account_rent_exempt_minimum
+            };
+
+        if self
+            .feature_set
+            .is_active(&feature_set::validator_admission_ticket::id())
+        {
+            self.stakes_cache
+                .stakes()
+                .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, minimum_vote_account_balance)
+        } else {
+            self.stakes_cache.stakes().clone()
+        }
     }
 }
 

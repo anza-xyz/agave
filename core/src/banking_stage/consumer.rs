@@ -51,16 +51,6 @@ pub struct ExecutionFlags {
     pub all_or_nothing: bool,
 }
 
-#[allow(clippy::derivable_impls)]
-impl Default for ExecutionFlags {
-    fn default() -> Self {
-        Self {
-            drop_on_failure: false,
-            all_or_nothing: false,
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RetryableIndex {
     pub index: usize,
@@ -161,7 +151,10 @@ impl Consumer {
             bank,
             txs,
             check_results.into_iter(),
-            ExecutionFlags::default(),
+            ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing: false,
+            },
         );
 
         // Accumulate error counters from the initial checks into final results
@@ -1386,7 +1379,7 @@ mod tests {
         let commit_results = status_batch
             .commit_results
             .into_iter()
-            .map(|r| r.unwrap().status.clone())
+            .map(|r| r.unwrap().status)
             .collect::<Vec<_>>();
         assert_eq!(
             commit_results,
@@ -1448,7 +1441,7 @@ mod tests {
 
         let tx = VersionedTransaction::try_new(message, &[&keypair]).unwrap();
         let sanitized_tx = RuntimeTransaction::try_create(
-            tx.clone(),
+            tx,
             MessageHash::Compute,
             Some(false),
             bank.as_ref(),
