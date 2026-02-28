@@ -1057,7 +1057,6 @@ pub struct CliEpochReward {
     pub amount: u64,       // lamports
     pub post_balance: u64, // lamports
     pub percent_change: f64,
-    pub apr: Option<f64>,
     pub commission: Option<u8>,
     pub block_time: UnixTimestamp,
 }
@@ -1107,14 +1106,13 @@ impl VerboseDisplay for CliKeyedEpochRewards {
         writeln!(w, "Epoch Rewards:")?;
         writeln!(
             w,
-            "  {:<44}  {:<11}  {:<23}  {:<18}  {:<20}  {:>14}  {:>7}  {:>10}",
+            "  {:<44}  {:<11}  {:<23}  {:<18}  {:<20}  {:>14}  {:>10}",
             "Address",
             "Reward Slot",
             "Time",
             "Amount",
             "New Balance",
             "Percent Change",
-            "APR",
             "Commission"
         )?;
         for keyed_reward in &self.rewards {
@@ -1122,17 +1120,13 @@ impl VerboseDisplay for CliKeyedEpochRewards {
                 Some(reward) => {
                     writeln!(
                         w,
-                        "  {:<44}  {:<11}  {:<23}  ◎{:<17.9}  ◎{:<19.9}  {:>13.9}%  {:>7}  {:>10}",
+                        "  {:<44}  {:<11}  {:<23}  ◎{:<17.9}  ◎{:<19.9}  {:>13.9}%  {:>10}",
                         keyed_reward.address,
                         reward.effective_slot,
                         Utc.timestamp_opt(reward.block_time, 0).unwrap(),
                         build_balance_message(reward.amount, false, false),
                         build_balance_message(reward.post_balance, false, false),
                         reward.percent_change,
-                        reward
-                            .apr
-                            .map(|apr| format!("{apr:.2}%"))
-                            .unwrap_or_default(),
                         reward
                             .commission
                             .map(|commission| format!("{commission}%"))
@@ -1161,23 +1155,19 @@ impl fmt::Display for CliKeyedEpochRewards {
         writeln!(f, "Epoch Rewards:")?;
         writeln!(
             f,
-            "  {:<44}  {:<18}  {:<18}  {:>14}  {:>7}  {:>10}",
-            "Address", "Amount", "New Balance", "Percent Change", "APR", "Commission"
+            "  {:<44}  {:<18}  {:<18}  {:>14}  {:>10}",
+            "Address", "Amount", "New Balance", "Percent Change", "Commission"
         )?;
         for keyed_reward in &self.rewards {
             match &keyed_reward.reward {
                 Some(reward) => {
                     writeln!(
                         f,
-                        "  {:<44}  ◎{:<17.9}  ◎{:<17.9}  {:>13.9}%  {:>7}  {:>10}",
+                        "  {:<44}  ◎{:<17.9}  ◎{:<17.9}  {:>13.9}%  {:>10}",
                         keyed_reward.address,
                         build_balance_message(reward.amount, false, false),
                         build_balance_message(reward.post_balance, false, false),
                         reward.percent_change,
-                        reward
-                            .apr
-                            .map(|apr| format!("{apr:.2}%"))
-                            .unwrap_or_default(),
                         reward
                             .commission
                             .map(|commission| format!("{commission}%"))
@@ -1331,8 +1321,8 @@ fn show_epoch_rewards(
         let fmt = if use_csv { Format::Csv } else { Format::Human };
         format_as!(
             f,
-            "{},{},{},{},{},{},{},{}",
-            "  {:<6}  {:<11}  {:<26}  {:<18}  {:<18}  {:>14}  {:>14}  {:>10}",
+            "{},{},{},{},{},{},{}",
+            "  {:<6}  {:<11}  {:<26}  {:<18}  {:<18}  {:>14}  {:>10}",
             fmt,
             "Epoch",
             "Reward Slot",
@@ -1340,14 +1330,13 @@ fn show_epoch_rewards(
             "Amount",
             "New Balance",
             "Percent Change",
-            "APR",
             "Commission",
         )?;
         for reward in epoch_rewards {
             format_as!(
                 f,
-                "{},{},{},{},{},{}%,{},{}",
-                "  {:<6}  {:<11}  {:<26}  ◎{:<17.11}  ◎{:<17.11}  {:>13.3}%  {:>14}  {:>10}",
+                "{},{},{},{},{},{}%,{}",
+                "  {:<6}  {:<11}  {:<26}  ◎{:<17.11}  ◎{:<17.11}  {:>13.3}%  {:>10}",
                 fmt,
                 reward.epoch,
                 reward.effective_slot,
@@ -1355,10 +1344,6 @@ fn show_epoch_rewards(
                 build_balance_message(reward.amount, false, false),
                 build_balance_message(reward.post_balance, false, false),
                 reward.percent_change,
-                reward
-                    .apr
-                    .map(|apr| format!("{apr:.2}%"))
-                    .unwrap_or_default(),
                 reward
                     .commission
                     .map(|commission| format!("{commission}%"))
@@ -3607,7 +3592,6 @@ mod tests {
                 epoch: 1,
                 amount: 10,
                 block_time: 0,
-                apr: Some(10.0),
             },
             CliEpochReward {
                 percent_change: 11.0,
@@ -3617,7 +3601,6 @@ mod tests {
                 epoch: 2,
                 amount: 12,
                 block_time: 1_000_000,
-                apr: Some(13.0),
             },
         ];
 
@@ -3648,9 +3631,9 @@ mod tests {
         #[rustfmt::skip]
         let expected_epoch_rewards_output =
             "Epoch Rewards:\n  \
-             Epoch   Reward Slot  Time                        Amount              New Balance         Percent Change             APR  Commission\n  \
-             1       100          1970-01-01 00:00:00 UTC  ◎0.00000001         ◎0.0000001                 11.000%          10.00%          1%\n  \
-             2       200          1970-01-12 13:46:40 UTC  ◎0.000000012        ◎0.0000001                 11.000%          13.00%          1%\n";
+             Epoch   Reward Slot  Time                        Amount              New Balance         Percent Change  Commission\n  \
+             1       100          1970-01-01 00:00:00 UTC  ◎0.00000001         ◎0.0000001                 11.000%          1%\n  \
+             2       200          1970-01-12 13:46:40 UTC  ◎0.000000012        ◎0.0000001                 11.000%          1%\n";
         assert_eq!(
             s,
             format!("{expected_output_common}{expected_epoch_rewards_output}")
@@ -3662,9 +3645,9 @@ mod tests {
         #[rustfmt::skip]
         let expected_epoch_rewards_output =
             "Epoch Rewards:\n\
-             Epoch,Reward Slot,Time,Amount,New Balance,Percent Change,APR,Commission\n\
-             1,100,1970-01-01 00:00:00 UTC,0.00000001,0.0000001,11%,10.00%,1%\n\
-             2,200,1970-01-12 13:46:40 UTC,0.000000012,0.0000001,11%,13.00%,1%\n";
+             Epoch,Reward Slot,Time,Amount,New Balance,Percent Change,Commission\n\
+             1,100,1970-01-01 00:00:00 UTC,0.00000001,0.0000001,11%,1%\n\
+             2,200,1970-01-12 13:46:40 UTC,0.000000012,0.0000001,11%,1%\n";
         assert_eq!(
             s,
             format!("{expected_output_common}{expected_epoch_rewards_output}")
