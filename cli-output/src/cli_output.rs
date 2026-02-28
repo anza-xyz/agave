@@ -3094,7 +3094,7 @@ impl CliGossipNode {
             identity_label: labels.get(&info.pubkey).cloned(),
             identity_pubkey: info.pubkey,
             gossip_port: info.gossip.map(|addr| addr.port()),
-            tpu_port: info.tpu.map(|addr| addr.port()),
+            tpu_port: info.tpu_quic.map(|addr| addr.port()),
             rpc_host: info.rpc.map(|addr| addr.to_string()),
             pubsub_host: info.pubsub.map(|addr| addr.to_string()),
             version: info.version,
