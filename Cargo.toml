@@ -458,7 +458,7 @@ solana-instruction = "3.2.0"
 solana-instruction-error = "2.1.0"
 solana-instructions-sysvar = "3.0.0"
 solana-keccak-hasher = "3.1.0"
-solana-keypair = "3.1.0"
+solana-keypair = "3.1.2"
 solana-last-restart-slot = "3.0.0"
 solana-lattice-hash = { path = "lattice-hash", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-leader-schedule = { path = "leader-schedule", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
