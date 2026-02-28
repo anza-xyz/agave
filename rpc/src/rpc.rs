@@ -1846,6 +1846,7 @@ impl JsonRpcRequestProcessor {
         let SignatureInfosForAddress {
             infos: mut results,
             found_before,
+            found_until,
         } = self
             .blockstore
             .get_confirmed_signatures_for_address2(address, highest_slot, before, until, limit)
@@ -1872,7 +1873,7 @@ impl JsonRpcRequestProcessor {
                 .collect()
         };
 
-        if results.len() < limit {
+        if results.len() < limit || !found_until {
             if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
                 let mut bigtable_before = before;
                 if !results.is_empty() {
@@ -1888,7 +1889,7 @@ impl JsonRpcRequestProcessor {
                         .get_signature_status(&bigtable_before.unwrap())
                         .await
                     {
-                        Err(StorageError::SignatureNotFound) => {
+                        Err(StorageError::SignatureNotFound(_)) => {
                             bigtable_before = None;
                         }
                         Err(err) => {
@@ -1922,10 +1923,36 @@ impl JsonRpcRequestProcessor {
                             }
                         }
                     }
-                    Err(StorageError::SignatureNotFound) => {}
+                    Err(StorageError::SignatureNotFound(not_found_signature)) => {
+                        // bigtable_before is checked above
+                        // SignatureNotFound means the blockstore before was not found, or the until signature was never found.
+                        return Err(RpcCustomError::FilterTransactionNotFound {
+                            signature: not_found_signature.to_string(),
+                        }
+                        .into());
+                    }
                     Err(err) => {
                         warn!("Failed to query Bigtable: {err:?}");
                         return Err(RpcCustomError::LongTermStorageUnreachable.into());
+                    }
+                }
+            } else {
+                // Long-term storage is not enabled.
+                // Return an error to the user if either before/until were provided but not found.
+                if !found_before {
+                    if let Some(signature) = before {
+                        return Err(RpcCustomError::FilterTransactionNotFound {
+                            signature: signature.to_string(),
+                        }
+                        .into());
+                    }
+                }
+                if !found_until {
+                    if let Some(signature) = until {
+                        return Err(RpcCustomError::FilterTransactionNotFound {
+                            signature: signature.to_string(),
+                        }
+                        .into());
                     }
                 }
             }
