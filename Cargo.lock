@@ -159,8 +159,7 @@ dependencies = [
  "scopeguard",
  "semver 1.0.27",
  "serde",
- "serde_yaml 0.8.26",
- "serde_yaml 0.9.34+deprecated",
+ "serde_yaml",
  "solana-clap-utils",
  "solana-config-interface",
  "solana-hash 4.2.0",
@@ -422,7 +421,7 @@ dependencies = [
  "scopeguard",
  "serde",
  "serde_json",
- "serde_yaml 0.9.34+deprecated",
+ "serde_yaml",
  "solana-account",
  "solana-account-decoder",
  "solana-accounts-db",
@@ -4462,12 +4461,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "linked-hash-map"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fb9b38af92608140b86b693604b9ffcc5824240a484d1ecd4795bacb2fe88f3"
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5217,7 +5210,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c53a5ade47760e8cc4986bdc5e72daeffaaaee64cbc374f9cfe0a00c1cd87b1f"
 dependencies = [
  "serde",
- "serde_yaml 0.8.26",
+ "serde_json",
 ]
 
 [[package]]
@@ -6597,18 +6590,6 @@ dependencies = [
 
 [[package]]
 name = "serde_yaml"
-version = "0.8.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "578a7433b776b56a35785ed5ce9a7e777ac0598aac5a6dd1b4b18a307c7fc71b"
-dependencies = [
- "indexmap 1.9.3",
- "ryu",
- "serde",
- "yaml-rust",
-]
-
-[[package]]
-name = "serde_yaml"
 version = "0.9.34+deprecated"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
@@ -7657,7 +7638,7 @@ dependencies = [
  "anyhow",
  "dirs-next",
  "serde",
- "serde_yaml 0.9.34+deprecated",
+ "serde_yaml",
  "solana-clap-utils",
  "solana-commitment-config",
  "url 2.5.8",
@@ -8558,7 +8539,7 @@ dependencies = [
  "itertools 0.14.0",
  "serde",
  "serde_json",
- "serde_yaml 0.9.34+deprecated",
+ "serde_yaml",
  "solana-account",
  "solana-bls-signatures",
  "solana-borsh",
@@ -11221,6 +11202,8 @@ dependencies = [
  "indicatif",
  "pickledb",
  "serde",
+ "serde_json",
+ "serde_yaml",
  "solana-account-decoder",
  "solana-clap-utils",
  "solana-cli-config",
@@ -13831,15 +13814,6 @@ dependencies = [
  "libc",
  "linux-raw-sys 0.4.14",
  "rustix 0.38.39",
-]
-
-[[package]]
-name = "yaml-rust"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56c1936c4cc7a1c9ab21a1ebb602eb942ba868cbd44a99cb7cdc5892335e1c85"
-dependencies = [
- "linked-hash-map",
 ]
 
 [[package]]
