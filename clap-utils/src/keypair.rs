@@ -174,11 +174,11 @@ impl DefaultSigner {
                         Ok(())
                     }
                 })
-                .map_err(|_| {
+                .map_err(|err| {
                     std::io::Error::other(format!(
-                        "No default signer found, run \"solana-keygen new -o {}\" to create a new \
-                         one",
-                        self.path
+                        "could not read keypair file \"{}\". \
+                         Run \"solana-keygen new -o {}\" to create a new one: {err}",
+                        self.path, self.path
                     ))
                 })?;
             *self.is_path_checked.borrow_mut() = true;
@@ -1289,6 +1289,22 @@ mod tests {
                 derivation_path: None,
                 legacy: false,
             } if p == relative_path_str)
+        );
+    }
+
+    #[test]
+    fn test_default_signer_path_with_nonexistent_file() {
+        let default_signer =
+            DefaultSigner::new("keypair", "/tmp/nonexistent-keypair-file-123456.json");
+        let err = default_signer.path().unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("could not read keypair file"),
+            "Error should mention keypair file, got: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("nonexistent-keypair-file-123456.json"),
+            "Error should include the file path, got: {err_msg}"
         );
     }
 
