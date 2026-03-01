@@ -276,6 +276,9 @@ pub(crate) mod external {
             let mut last_empty_time = Instant::now();
             let mut sleep_duration = STARTING_SLEEP_DURATION;
 
+            let mut parsing_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
+            let mut parsed_transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
+
             while !self.exit.load(Ordering::Relaxed) {
                 self.allocator.clean_remote_free_lists();
                 if receiver.is_empty() {
@@ -287,8 +290,12 @@ pub(crate) mod external {
                     Some(message) => {
                         did_work = true;
                         self.sender.sync();
-                        should_drain_executes |=
-                            self.process_message(message, should_drain_executes)?;
+                        should_drain_executes |= self.process_message(
+                            message,
+                            should_drain_executes,
+                            &mut parsing_results,
+                            &mut parsed_transactions,
+                        )?;
                         self.sender.commit();
                         receiver.finalize();
                     }
@@ -313,6 +320,8 @@ pub(crate) mod external {
             &mut self,
             message: &PackToWorkerMessage,
             should_drain_executes: bool,
+            parsing_results: &mut Vec<Result<(), TransactionViewError>>,
+            parsed_transactions: &mut Vec<TxView>,
         ) -> Result<bool, ExternalConsumeWorkerError> {
             if !Self::validate_message(message) {
                 return self
@@ -331,7 +340,8 @@ pub(crate) mod external {
             if message.flags & pack_message_flags::EXECUTE != 0 {
                 self.execute_batch(message, should_drain_executes)
             } else {
-                self.check_batch(message).map(|()| false)
+                self.check_batch(message, parsing_results, parsed_transactions)
+                    .map(|()| false)
             }
         }
 
@@ -457,6 +467,8 @@ pub(crate) mod external {
         fn check_batch(
             &mut self,
             message: &PackToWorkerMessage,
+            parsing_results: &mut Vec<Result<(), TransactionViewError>>,
+            parsed_transactions: &mut Vec<TxView>,
         ) -> Result<(), ExternalConsumeWorkerError> {
             let BankPair {
                 root_bank,
@@ -487,20 +499,22 @@ pub(crate) mod external {
             .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
 
             // SAFETY: responses_ptr is sufficiently sized and aligned.
-            let (parsing_results, parsed_transactions, response_slice) = unsafe {
+            let response_slice = unsafe {
                 Self::parse_transactions_and_populate_initial_check_responses(
                     message,
                     &batch,
                     &root_bank,
                     responses_ptr,
+                    parsing_results,
+                    parsed_transactions,
                 )
             };
 
             // Check fee-payer if requested.
             if message.flags & check_flags::LOAD_FEE_PAYER_BALANCE != 0 {
                 Self::check_load_fee_payer_balance(
-                    &parsing_results,
-                    &parsed_transactions,
+                    parsing_results,
+                    parsed_transactions,
                     response_slice,
                     &working_bank,
                 );
@@ -512,7 +526,7 @@ pub(crate) mod external {
 
             if message.flags & check_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
                 self.check_resolve_pubkeys(
-                    &parsing_results,
+                    parsing_results,
                     &parsing_and_resolve_results,
                     &txs,
                     &max_ages,
@@ -764,19 +778,18 @@ pub(crate) mod external {
             batch: &TransactionPtrBatch,
             bank: &Bank,
             responses_ptr: NonNull<CheckResponse>,
-        ) -> (
-            Vec<Result<(), TransactionViewError>>,
-            Vec<TxView>,
-            &'a mut [CheckResponse],
-        ) {
+            parsing_results: &mut Vec<Result<(), TransactionViewError>>,
+            parsed_transactions: &mut Vec<TxView>,
+        ) -> &'a mut [CheckResponse] {
+            parsing_results.clear();
+            parsed_transactions.clear();
+
             let enable_static_instruction_limit = bank
                 .feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::ID);
             let enable_instruction_accounts_limit = bank
                 .feature_set
                 .is_active(&agave_feature_set::limit_instruction_accounts::ID);
-            let mut parsing_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
-            let mut parsed_transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             for (tx_ptr, _) in batch.iter() {
                 // Parsing and basic sanitization checks
                 match SanitizedTransactionView::try_new_sanitized(
@@ -796,7 +809,7 @@ pub(crate) mod external {
 
             // SAFETY: `response_ptr` is valid and of length message.batch.num_transactions
             unsafe {
-                Self::check_populate_initial_messages(message, &parsing_results, responses_ptr)
+                Self::check_populate_initial_messages(message, parsing_results, responses_ptr)
             };
             // SAFETY: `response_ptr` is valid and of length message.batch.num_transactions
             //         initial messages populated immediately above, so not possible to have
@@ -808,7 +821,7 @@ pub(crate) mod external {
                 )
             };
 
-            (parsing_results, parsed_transactions, response_slice)
+            response_slice
         }
 
         /// Write initial response value for each transaction.
