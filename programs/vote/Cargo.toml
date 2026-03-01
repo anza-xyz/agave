@@ -30,9 +30,6 @@ frozen-abi = [
 agave-feature-set = { workspace = true }
 bincode = { workspace = true }
 log = { workspace = true }
-num-derive = { workspace = true }
-num-traits = { workspace = true }
-serde = { workspace = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-bls-signatures = { workspace = true }
@@ -46,19 +43,15 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
-solana-keypair = { workspace = true }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, features = ["curve25519"] }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-signer = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-transaction = { workspace = true, features = ["bincode"] }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
-thiserror = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { workspace = true }
