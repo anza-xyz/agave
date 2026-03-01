@@ -17,7 +17,7 @@ pub const MAX_ACCOUNTS_PER_TRANSACTION: usize = 256;
 pub const MAX_ACCOUNTS_PER_INSTRUCTION: usize = 255;
 pub const MAX_INSTRUCTION_DATA_LEN: usize = 10 * 1024;
 pub const MAX_ACCOUNT_DATA_LEN: u64 = 10 * 1024 * 1024;
-// Note: With stricter_abi_and_runtime_constraints programs can grow accounts
+// Note: With virtual_address_space_adjustments programs can grow accounts
 // faster than they intend to, because the AccessViolationHandler might grow
 // an account up to MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION at once.
 pub const MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION: i64 = MAX_ACCOUNT_DATA_LEN as i64 * 2;
