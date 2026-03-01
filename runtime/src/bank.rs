@@ -978,15 +978,15 @@ impl Default for BankTestConfig {
 }
 
 /// Data returned from [`Bank::calculate_epoch_inflation_rewards()`].
-struct EpochInflationRewards {
+pub(crate) struct EpochInflationRewards {
     /// Amount of rewards a validator should get if it voted in every slot in
     /// the epoch and its stake is equal to the network capitalization i.e.
     /// the total supply.
-    validator_rewards_lamports: u64,
+    pub(crate) validator_rewards_lamports: u64,
     /// The current inflation rate for the validators.
-    validator_rate: f64,
+    pub(crate) validator_rate: f64,
     /// The current inflation rate for the foundation.
-    foundation_rate: f64,
+    pub(crate) foundation_rate: f64,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -2479,7 +2479,7 @@ impl Bank {
     }
 
     /// For a given [`capitalization`] (total_supply in lamports) and [`epoch`], calculates various inflation related info.
-    fn calculate_epoch_inflation_rewards(
+    pub(crate) fn calculate_epoch_inflation_rewards(
         &self,
         capitalization: u64,
         epoch: Epoch,
@@ -4317,7 +4317,7 @@ impl Bank {
 
     /// Technically this issues (or even burns!) new lamports,
     /// so be extra careful for its usage
-    fn store_account_and_update_capitalization(
+    pub(crate) fn store_account_and_update_capitalization(
         &self,
         pubkey: &Pubkey,
         new_account: &AccountSharedData,
