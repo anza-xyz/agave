@@ -88,6 +88,16 @@ impl TokenBucket {
         }
     }
 
+    /// Adds given amount of tokens, up to a maximum of self.max_tokens.
+    #[inline]
+    pub fn add_tokens(&self, new_tokens: u64) {
+        let _ = self.tokens.fetch_update(
+            Ordering::AcqRel,  // writer publishes new amount
+            Ordering::Acquire, //we fetch the correct amount
+            |tokens| Some(tokens.saturating_add(new_tokens).min(self.max_tokens)),
+        );
+    }
+
     /// Returns time in microseconds until `num_tokens` worth of new
     /// tokens can be consumed.
     ///
@@ -157,11 +167,7 @@ impl TokenBucket {
 
                 let time_to_return = if new_tokens >= 1 {
                     // Credit tokens, saturating at max_tokens
-                    let _ = self.tokens.fetch_update(
-                        Ordering::AcqRel,  // writer publishes new amount
-                        Ordering::Acquire, //we fetch the correct amount
-                        |tokens| Some(tokens.saturating_add(new_tokens).min(self.max_tokens)),
-                    );
+                    self.add_tokens(new_tokens);
                     // Fractional remainder of elapsed time (not enough to mint a whole token)
                     // that will be credited to other minters
                     (new_tokens_f64.fract() / self.new_tokens_per_us) as u64
