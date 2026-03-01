@@ -135,7 +135,7 @@ solana-ledger = { path = "../../ledger", version = "=4.1.0-alpha.0" }
 solana-measure = { path = "../../measure", version = "=4.1.0-alpha.0" }
 solana-msg = "=3.0.0"
 solana-poseidon = "=4.0.0"
-solana-program = "=3.0.0"
+solana-program = "=4.0.0"
 solana-program-entrypoint = "=3.1.1"
 solana-program-error = "=3.0.0"
 solana-program-memory = "=3.1.0"
