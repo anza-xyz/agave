@@ -39,12 +39,10 @@ solana-instruction = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["serde"] }
 solana-loader-v4-interface = { workspace = true, features = ["bincode"] }
 solana-packet = { workspace = true }
-solana-program-entrypoint = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = { workspace = true }
-solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
 solana-svm-measure = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
