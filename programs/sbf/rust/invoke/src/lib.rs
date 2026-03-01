@@ -1660,8 +1660,10 @@ struct RcBox<T> {
 
 #[allow(invalid_reference_casting)]
 unsafe fn overwrite_account_data(account: &AccountInfo, data: Rc<RefCell<&mut [u8]>>) {
-    std::ptr::write_volatile(
-        &account.data as *const _ as usize as *mut Rc<RefCell<&mut [u8]>>,
-        data,
-    );
+    unsafe {
+        std::ptr::write_volatile(
+            &account.data as *const _ as usize as *mut Rc<RefCell<&mut [u8]>>,
+            data,
+        );
+    }
 }
