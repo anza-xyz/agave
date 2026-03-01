@@ -812,7 +812,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut program_accounts_set = HashMap::default();
         for account_key in tx.account_keys().iter() {
             if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
-                cache_entry.tx_usage_counter.fetch_add(1, Ordering::Relaxed);
+                cache_entry.stats.uses.fetch_add(1, Ordering::Relaxed);
             } else if let Some((account, last_modification_slot)) =
                 account_loader.get_account_shared_data(account_key)
                 && PROGRAM_OWNERS.contains(account.owner())
