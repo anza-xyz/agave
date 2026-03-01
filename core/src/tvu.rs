@@ -602,6 +602,11 @@ impl Tvu {
             bls_sigverify_threads,
             votor,
             commitment_service,
+            // TODO: these two channels are here temporarily and will be removed when the block
+            // component processor is upstreamed from the Alpenglow repo which will consume them.
+            // We need some place to store them temporarily so that they are not dropped.
+            // Dropping them causes interacting with the other ends in the BlsSigverifier to fail
+            // which causes the sigverifier to exit which resulting in various tests to fail.
             reward_certs_receiver,
             build_reward_certs_sender,
         })
