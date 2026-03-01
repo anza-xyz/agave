@@ -15,7 +15,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sbpf::{
         elf::{ElfError, Executable},
-        program::BuiltinProgram,
+        program::{BuiltinProgram, SBPFVersion},
         verifier::RequisiteVerifier,
     },
     solana_svm_log_collector::{LogCollector, ic_logger_msg},
@@ -25,13 +25,13 @@ use {
 
 fn morph_into_deployment_environment_v1<'a>(
     from: Arc<BuiltinProgram<InvokeContext<'a, 'a>>>,
+    disable_sbpf_v0_v1_v2_deployment: bool,
 ) -> Result<BuiltinProgram<InvokeContext<'a, 'a>>, ElfError> {
     let mut config = from.get_config().clone();
     config.reject_broken_elfs = true;
-    // Once the tests are being build using a toolchain which supports the newer SBPF versions,
-    // the deployment of older versions will be disabled:
-    // config.enabled_sbpf_versions =
-    //     *config.enabled_sbpf_versions.end()..=*config.enabled_sbpf_versions.end();
+    if disable_sbpf_v0_v1_v2_deployment {
+        config.enabled_sbpf_versions = SBPFVersion::V3..=SBPFVersion::V3;
+    }
 
     let mut result = BuiltinProgram::new_loader(config);
 
@@ -54,6 +54,7 @@ pub fn deploy_program(
     #[cfg(feature = "metrics")] load_program_metrics: &mut LoadProgramMetrics,
     program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
     program_runtime_environment: ProgramRuntimeEnvironment,
+    disable_sbpf_v0_v1_v2_deployment: bool,
     program_id: &Pubkey,
     loader_key: &Pubkey,
     account_size: usize,
@@ -62,11 +63,14 @@ pub fn deploy_program(
 ) -> Result<(), InstructionError> {
     #[cfg(feature = "metrics")]
     let mut register_syscalls_time = Measure::start("register_syscalls_time");
-    let deployment_program_runtime_environment =
-        morph_into_deployment_environment_v1(program_runtime_environment.clone()).map_err(|e| {
-            ic_logger_msg!(log_collector, "Failed to register syscalls: {}", e);
-            InstructionError::ProgramEnvironmentSetupFailure
-        })?;
+    let deployment_program_runtime_environment = morph_into_deployment_environment_v1(
+        program_runtime_environment.clone(),
+        disable_sbpf_v0_v1_v2_deployment,
+    )
+    .map_err(|e| {
+        ic_logger_msg!(log_collector, "Failed to register syscalls: {}", e);
+        InstructionError::ProgramEnvironmentSetupFailure
+    })?;
     #[cfg(feature = "metrics")]
     {
         register_syscalls_time.stop();
@@ -149,6 +153,9 @@ macro_rules! deploy_program {
                 .get_program_runtime_environments_for_deployment()
                 .program_runtime_v1
                 .clone(),
+            $invoke_context
+                .get_feature_set()
+                .disable_sbpf_v0_v1_v2_deployment,
             $program_id,
             $loader_key,
             $account_size,

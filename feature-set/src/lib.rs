@@ -119,6 +119,8 @@ impl FeatureSet {
                 .is_active(&disable_deploy_of_alloc_free_syscall::id()),
             disable_fees_sysvar: self.is_active(&disable_fees_sysvar::id()),
             disable_sbpf_v0_execution: self.is_active(&disable_sbpf_v0_execution::id()),
+            disable_sbpf_v0_v1_v2_deployment: self
+                .is_active(&disable_sbpf_v0_v1_v2_deployment::id()),
             enable_alt_bn128_compression_syscall: self
                 .is_active(&enable_alt_bn128_compression_syscall::id()),
             enable_alt_bn128_syscall: self.is_active(&enable_alt_bn128_syscall::id()),
@@ -1034,6 +1036,10 @@ pub mod enable_sbpf_v2_deployment_and_execution {
 
 pub mod enable_sbpf_v3_deployment_and_execution {
     solana_pubkey::declare_id!("5cC3foj77CWun58pC51ebHFUWavHWKarWyR5UUik7dnC");
+}
+
+pub mod disable_sbpf_v0_v1_v2_deployment {
+    solana_pubkey::declare_id!("TestFeature31111111111111111111111111111111");
 }
 
 pub mod remove_accounts_executable_flag_checks {
@@ -2102,6 +2108,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             enable_sbpf_v3_deployment_and_execution::id(),
             "SIMD-0178, SIMD-0189 and SIMD-0377: Enable deployment and execution of SBPFv3 \
              programs",
+        ),
+        (
+            disable_sbpf_v0_v1_v2_deployment::id(),
+            "SIMD-????: Disable deployment of SBPF v0, v1 and v2 programs",
         ),
         (
             remove_accounts_executable_flag_checks::id(),
