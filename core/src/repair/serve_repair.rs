@@ -207,7 +207,7 @@ struct ServeRepairStats {
     err_id_mismatch: usize,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi))]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RepairRequestHeader {
     signature: Signature,
@@ -215,6 +215,21 @@ pub struct RepairRequestHeader {
     recipient: Pubkey,
     timestamp: u64,
     nonce: Nonce,
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<RepairRequestHeader>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> RepairRequestHeader {
+        RepairRequestHeader {
+            signature: Signature::from(rng.random::<[u8; 64]>()),
+            sender: Pubkey::new_from_array(rng.random()),
+            recipient: Pubkey::new_from_array(rng.random()),
+            timestamp: rng.random(),
+            nonce: rng.random(),
+        }
+    }
 }
 
 impl RepairRequestHeader {
@@ -235,8 +250,11 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
 /// Window protocol messages
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "HbUQDATKfpN8pjyyarSGa8uN4SuLNTvMf7T5b66ajnNZ")
+    derive(AbiEnumVisitor, AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "HbUQDATKfpN8pjyyarSGa8uN4SuLNTvMf7T5b66ajnNZ",
+        abi_digest = "7DpV7t5vZAWSZEshJ4hAVTHnR37jzLwUMYhs1fGrX3G5"
+    )
 )]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum RepairProtocol {
@@ -266,6 +284,46 @@ pub enum RepairProtocol {
         header: RepairRequestHeader,
         slot: Slot,
     },
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> RepairProtocol {
+        use ping_pong::{Ping, Pong};
+        let variant = rng.random_range(7..=11);
+        match variant {
+            // we never actually use any of the Legacy_ variants
+            // so we don't need to sample them here
+            7 => {
+                let mut token = [0u8; 8];
+                rng.fill_bytes(&mut token);
+                let keypair = Keypair::new_from_array(rng.random());
+                let ping = Ping::new(token, &keypair);
+                RepairProtocol::Pong(Pong::new(&ping, &keypair))
+            }
+            8 => RepairProtocol::WindowIndex {
+                header: rng.random(),
+                slot: rng.random(),
+                shred_index: rng.random(),
+            },
+            9 => RepairProtocol::HighestWindowIndex {
+                header: rng.random(),
+                slot: rng.random(),
+                shred_index: rng.random(),
+            },
+            10 => RepairProtocol::Orphan {
+                header: rng.random(),
+                slot: rng.random(),
+            },
+            11 => RepairProtocol::AncestorHashes {
+                header: rng.random(),
+                slot: rng.random(),
+            },
+            _ => unreachable!(),
+        }
+    }
 }
 
 const REPAIR_REQUEST_PONG_SERIALIZED_BYTES: usize = PUBKEY_BYTES + HASH_BYTES + SIGNATURE_BYTES;
