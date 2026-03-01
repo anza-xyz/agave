@@ -108,11 +108,11 @@ assert_cmd = { workspace = true }
 predicates = { workspace = true }
 pretty_assertions = { workspace = true }
 scopeguard = { workspace = true }
-solana-account-decoder = { workspace = true }
-solana-core = { workspace = true, features = ["dev-context-only-utils"] }
+solana-account-decoder = { path = "../account-decoder", features = ["agave-unstable-api"] }
+solana-core = { path = "../core", features = ["dev-context-only-utils"] }
 solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }
 solana-time-utils = { workspace = true }
 spl-generic-token = { workspace = true }
 spl-token-2022-interface = { workspace = true }

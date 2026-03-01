@@ -71,6 +71,6 @@ tempfile = { workspace = true }
 solana-borsh = { workspace = true }
 solana-genesis = { path = ".", features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-vote = { workspace = true }
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }
+solana-vote = { path = "../vote", features = ["agave-unstable-api"] }
 test-case = { workspace = true }

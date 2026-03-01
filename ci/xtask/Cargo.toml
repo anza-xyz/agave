@@ -23,7 +23,7 @@ clap = { version = "4.5.59", features = ["derive"] }
 env_logger = "0.11.9"
 log = "0.4.28"
 tokio = { version = "1.48.0", features = ["full"] }
-xtask_shared = { package = "xtask", git = "https://github.com/anza-xyz/xtask", rev = "d189441" }
+xtask_shared = { package = "xtask", git = "https://github.com/anza-xyz/xtask", rev = "refs/pull/23/head" }
 
 [profile.dev]
 debug = "line-tables-only"

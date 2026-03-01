@@ -30,7 +30,7 @@ thiserror = { workspace = true }
 tempfile = { workspace = true }
 
 [target."cfg(unix)".dev-dependencies]
-agave-scheduler-bindings = { workspace = true }
+agave-scheduler-bindings = { path = "../scheduler-bindings", features = ["agave-unstable-api"] }
 
 [lints]
 workspace = true

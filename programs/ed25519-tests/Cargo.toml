@@ -21,7 +21,7 @@ solana-ed25519-program = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-precompile-error = { workspace = true }
-solana-program-test = { workspace = true }
+solana-program-test = { path = "../../program-test", features = ["agave-unstable-api"] }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }

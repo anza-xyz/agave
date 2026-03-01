@@ -59,7 +59,7 @@ crossbeam-channel = { workspace = true }
 futures = { workspace = true }
 jsonrpc-core = { workspace = true }
 jsonrpc-http-server = { workspace = true }
-solana-account-decoder = { workspace = true }
+solana-account-decoder = { path = "../account-decoder", features = ["agave-unstable-api"] }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }

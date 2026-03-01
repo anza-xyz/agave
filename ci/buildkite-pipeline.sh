@@ -299,6 +299,11 @@ EOF
     annotate --style info --context test-coverage \
       "Coverage skipped as no .rs files were modified"
   fi
+
+  # crate publish test
+  if [[ -z $CI_PULL_REQUEST ]]; then
+    command_step crate-publish-test "cargo xtask publish test" 30 default
+  fi
 }
 
 pull_or_push_steps() {

@@ -50,10 +50,10 @@ tracing = { workspace = true, optional = true }
 crossbeam-channel = { workspace = true }
 futures = { workspace = true }
 serde_json = { workspace = true }
-solana-cli-config = { workspace = true }
+solana-cli-config = { path = "../cli-config" }
 solana-commitment-config = { workspace = true }
-solana-net-utils = { workspace = true }
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true }
 solana-signer = { workspace = true }
-solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
+solana-streamer = { path = "../streamer", features = ["dev-context-only-utils"] }
 solana-tpu-client-next = { path = ".", features = ["agave-unstable-api", "websocket-node-address-service", "dev-context-only-utils"] }

@@ -193,18 +193,18 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
-agave-transaction-view = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-transaction-view = { path = "../transaction-view", features = ["agave-unstable-api"] }
 bitvec = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
-solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
-solana-builtins = { workspace = true, features = ["dev-context-only-utils"] }
+solana-accounts-db = { path = "../accounts-db", features = ["dev-context-only-utils"] }
+solana-builtins = { path = "../builtins", features = ["dev-context-only-utils"] }
 solana-instruction-error = { workspace = true }
-solana-program-binaries = { workspace = true }
+solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"] }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime-transaction = { workspace = true, features = [
+solana-runtime-transaction = { path = "../runtime-transaction", features = [
     "dev-context-only-utils",
 ] }
 solana-sdk-ids = { workspace = true }
@@ -212,11 +212,11 @@ solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 solana-signature = { workspace = true, features = ["std"] }
 solana-signer-store = { workspace = true }
 solana-stake-interface = { workspace = true, features = ["sysvar"] }
-solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
-solana-transaction-context = { workspace = true, features = [
+solana-svm = { path = "../svm", features = ["dev-context-only-utils"] }
+solana-transaction-context = { path = "../transaction-context", features = [
     "dev-context-only-utils",
 ] }
-solana-vote-program = { workspace = true, features = ["dev-context-only-utils"] }
+solana-vote-program = { path = "../programs/vote", features = ["dev-context-only-utils"], default-features = false }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
