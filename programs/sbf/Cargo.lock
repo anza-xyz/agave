@@ -6354,7 +6354,6 @@ dependencies = [
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
  "solana-packet 4.1.0",
- "solana-program-entrypoint",
  "solana-program-runtime",
  "solana-pubkey 4.1.0",
  "solana-sbpf",
@@ -7590,7 +7589,6 @@ dependencies = [
 name = "solana-loader-v4-program"
 version = "4.1.0-alpha.0"
 dependencies = [
- "log",
  "solana-account",
  "solana-bincode",
  "solana-bpf-loader-program",
@@ -9861,7 +9859,6 @@ version = "4.1.0-alpha.0"
 dependencies = [
  "bincode",
  "log",
- "serde",
  "solana-account",
  "solana-bincode",
  "solana-fee-calculator",
@@ -9873,7 +9870,6 @@ dependencies = [
  "solana-pubkey 4.1.0",
  "solana-sdk-ids",
  "solana-svm-log-collector",
- "solana-svm-type-overrides",
  "solana-system-interface 3.0.0",
  "solana-sysvar",
  "solana-transaction-context",
@@ -10382,9 +10378,6 @@ dependencies = [
  "agave-feature-set",
  "bincode",
  "log",
- "num-derive",
- "num-traits",
- "serde",
  "solana-account",
  "solana-bincode",
  "solana-bls-signatures",
@@ -10392,29 +10385,22 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-hash 4.2.0",
  "solana-instruction",
- "solana-keypair",
  "solana-packet 4.1.0",
  "solana-program-runtime",
  "solana-pubkey 4.1.0",
  "solana-rent 3.0.0",
  "solana-sdk-ids",
- "solana-signer",
  "solana-slot-hashes",
  "solana-system-interface 3.0.0",
- "solana-transaction",
  "solana-transaction-context",
  "solana-vote-interface",
- "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "solana-zk-elgamal-proof-program"
 version = "4.1.0-alpha.0"
 dependencies = [
- "agave-feature-set",
  "bytemuck",
- "num-derive",
- "num-traits",
  "solana-instruction",
  "solana-program-runtime",
  "solana-sdk-ids",
