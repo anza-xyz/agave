@@ -40,7 +40,7 @@ impl EntryNotifierService {
                     }
 
                     if let Err(RecvTimeoutError::Disconnected) =
-                        Self::notify_entry(&entry_notification_receiver, entry_notifier.clone())
+                        Self::notify_entry(&entry_notification_receiver, &entry_notifier)
                     {
                         break;
                     }
@@ -55,7 +55,7 @@ impl EntryNotifierService {
 
     fn notify_entry(
         entry_notification_receiver: &EntryNotifierReceiver,
-        entry_notifier: EntryNotifierArc,
+        entry_notifier: &EntryNotifierArc,
     ) -> Result<(), RecvTimeoutError> {
         let EntryNotification {
             slot,
