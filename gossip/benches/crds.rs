@@ -33,7 +33,7 @@ fn bench_find_old_labels(c: &mut Criterion) {
     );
     c.bench_function("bench_find_old_labels", |b| {
         b.iter(|| {
-            let out = crds.find_old_labels(&thread_pool, now, &timeouts);
+            let out = crds.find_evictable_labels(&thread_pool, now, &timeouts);
             assert!(out.len() > 10);
             assert!(out.len() < 250);
             out

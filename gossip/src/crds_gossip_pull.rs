@@ -546,7 +546,7 @@ impl CrdsGossipPull {
         timeouts: &CrdsTimeouts,
     ) -> usize {
         let mut crds = crds.write().unwrap();
-        let labels = crds.find_old_labels(thread_pool, now, timeouts);
+        let labels = crds.find_evictable_labels(thread_pool, now, timeouts);
         for label in &labels {
             crds.remove(label, now);
         }
