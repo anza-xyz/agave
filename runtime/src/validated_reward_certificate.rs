@@ -156,6 +156,7 @@ mod tests {
             SignatureCompressed as BlsSignatureCompressed, SignatureProjective,
         },
         solana_hash::Hash,
+        solana_leader_schedule::SlotLeader,
         solana_signer_store::encode_base2,
         std::{collections::HashMap, sync::Arc},
     };
@@ -207,7 +208,7 @@ mod tests {
             vec![100; validator_keypairs.len()],
         );
         let bank = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
-        let bank = Bank::new_from_parent(bank, &Pubkey::default(), bank_slot);
+        let bank = Bank::new_from_parent(bank, SlotLeader::default(), bank_slot);
 
         let rank_map = bank
             .epoch_stakes_from_slot(reward_slot)

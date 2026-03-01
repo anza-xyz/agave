@@ -222,14 +222,14 @@ mod tests {
         solana_cluster_type::ClusterType,
         solana_epoch_schedule::EpochSchedule,
         solana_genesis_config::GenesisConfig,
+        solana_leader_schedule::SlotLeader,
         solana_stake_interface::state::{Authorized, Lockup, Meta},
         std::{collections::BTreeMap, sync::Arc},
     };
 
     fn new_from_parent(parent: Arc<Bank>) -> Bank {
         let slot = parent.slot() + 1;
-        let leader_id = Pubkey::default();
-        Bank::new_from_parent(parent, &leader_id, slot)
+        Bank::new_from_parent(parent, SlotLeader::default(), slot)
     }
 
     #[test]

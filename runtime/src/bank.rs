@@ -49,6 +49,7 @@ use {
         },
         inflation_rewards::points::InflationPointCalculationEvent,
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
+        leader_schedule_utils::leader_schedule_from_vote_accounts,
         rent_collector::RentCollector,
         reward_info::RewardInfo,
         runtime_config::RuntimeConfig,
@@ -209,7 +210,10 @@ use {
     solana_nonce_account::{SystemAccountKind, get_system_account_kind},
     solana_program_runtime::sysvar_cache::SysvarCache,
 };
-pub use {partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_reward_info::RewardType};
+pub use {
+    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_leader_schedule::SlotLeader,
+    solana_reward_info::RewardType,
+};
 
 /// params to `verify_accounts_hash`
 struct VerifyAccountsHashConfig {
@@ -563,7 +567,7 @@ impl PartialEq for Bank {
             bank_id: _,
             epoch,
             block_height,
-            leader_id,
+            leader,
             fee_rate_governor,
             rent_collector,
             epoch_schedule,
@@ -624,7 +628,7 @@ impl PartialEq for Bank {
             && slot == &other.slot
             && epoch == &other.epoch
             && block_height == &other.block_height
-            && leader_id == &other.leader_id
+            && leader == &other.leader
             && fee_rate_governor == &other.fee_rate_governor
             && rent_collector == &other.rent_collector
             && epoch_schedule == &other.epoch_schedule
@@ -829,8 +833,8 @@ pub struct Bank {
     /// Bank block_height
     block_height: u64,
 
-    /// The validator identity of the leader who produced this block.
-    leader_id: Pubkey,
+    /// The leader who produced this block
+    leader: SlotLeader,
 
     /// Track cluster signature throughput and adjust fee rate
     pub(crate) fee_rate_governor: FeeRateGovernor,
@@ -1115,7 +1119,7 @@ impl Bank {
             bank_id: BankId::default(),
             epoch: Epoch::default(),
             block_height: u64::default(),
-            leader_id: Pubkey::default(),
+            leader: SlotLeader::default(),
             fee_rate_governor: FeeRateGovernor::default(),
             rent_collector: RentCollector::default(),
             epoch_schedule: EpochSchedule::default(),
@@ -1172,7 +1176,7 @@ impl Bank {
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
         accounts_db_config: AccountsDbConfig,
         accounts_update_notifier: Option<AccountsUpdateNotifier>,
-        #[allow(unused)] leader_id_for_tests: Option<Pubkey>,
+        #[allow(unused)] leader_for_tests: Option<SlotLeader>,
         exit: Arc<AtomicBool>,
         #[allow(unused)] genesis_hash: Option<Hash>,
         #[allow(unused)] feature_set: Option<FeatureSet>,
@@ -1199,7 +1203,7 @@ impl Bank {
         #[cfg(not(feature = "dev-context-only-utils"))]
         bank.process_genesis_config(genesis_config);
         #[cfg(feature = "dev-context-only-utils")]
-        bank.process_genesis_config(genesis_config, leader_id_for_tests, genesis_hash);
+        bank.process_genesis_config(genesis_config, leader_for_tests, genesis_hash);
 
         bank.compute_and_apply_genesis_features();
 
@@ -1225,10 +1229,10 @@ impl Bank {
     }
 
     /// Create a new bank that points to an immutable checkpoint of another bank.
-    pub fn new_from_parent(parent: Arc<Bank>, leader_id: &Pubkey, slot: Slot) -> Self {
+    pub fn new_from_parent(parent: Arc<Bank>, leader: SlotLeader, slot: Slot) -> Self {
         Self::_new_from_parent(
             parent,
-            leader_id,
+            leader,
             slot,
             null_tracer(),
             NewBankOptions::default(),
@@ -1237,22 +1241,22 @@ impl Bank {
 
     pub fn new_from_parent_with_options(
         parent: Arc<Bank>,
-        leader_id: &Pubkey,
+        leader: SlotLeader,
         slot: Slot,
         new_bank_options: NewBankOptions,
     ) -> Self {
-        Self::_new_from_parent(parent, leader_id, slot, null_tracer(), new_bank_options)
+        Self::_new_from_parent(parent, leader, slot, null_tracer(), new_bank_options)
     }
 
     pub fn new_from_parent_with_tracer(
         parent: Arc<Bank>,
-        leader_id: &Pubkey,
+        leader: SlotLeader,
         slot: Slot,
         reward_calc_tracer: impl RewardCalcTracer,
     ) -> Self {
         Self::_new_from_parent(
             parent,
-            leader_id,
+            leader,
             slot,
             Some(reward_calc_tracer),
             NewBankOptions::default(),
@@ -1265,7 +1269,7 @@ impl Bank {
 
     fn _new_from_parent(
         parent: Arc<Bank>,
-        leader_id: &Pubkey,
+        leader: SlotLeader,
         slot: Slot,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         new_bank_options: NewBankOptions,
@@ -1357,7 +1361,7 @@ impl Bank {
             epoch_stakes,
             parent_hash: parent.hash(),
             parent_slot: parent.slot(),
-            leader_id: *leader_id,
+            leader,
             ancestors: Ancestors::default(),
             hash: RwLock::new(Hash::default()),
             is_delta: AtomicBool::new(false),
@@ -1810,10 +1814,10 @@ impl Bank {
     ///   in the past
     /// * Adjusts the new bank's tick height to avoid having to run PoH for millions of slots
     /// * Freezes the new bank, assuming that the user will `Bank::new_from_parent` from this bank
-    pub fn warp_from_parent(parent: Arc<Bank>, leader_id: &Pubkey, slot: Slot) -> Self {
+    pub fn warp_from_parent(parent: Arc<Bank>, leader: SlotLeader, slot: Slot) -> Self {
         parent.freeze();
         let parent_timestamp = parent.clock().unix_timestamp;
-        let mut new = Bank::new_from_parent(parent, leader_id, slot);
+        let mut new = Bank::new_from_parent(parent, leader, slot);
         new.update_epoch_stakes(new.epoch_schedule().get_epoch(slot));
         new.tick_height.store(new.max_tick_height(), Relaxed);
 
@@ -1838,6 +1842,7 @@ impl Bank {
         genesis_config: &GenesisConfig,
         runtime_config: Arc<RuntimeConfig>,
         fields: BankFieldsToDeserialize,
+        leader_for_tests: Option<SlotLeader>,
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
         accounts_data_size_initial: u64,
         epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
@@ -1876,6 +1881,33 @@ impl Bank {
             !epoch_stakes.is_empty(),
             "should be populated (from fields.versioned_epoch_stakes)"
         );
+
+        // Compute and validate the slot leader from epoch stakes
+        let leader: SlotLeader;
+        #[cfg(not(feature = "dev-context-only-utils"))]
+        {
+            _ = leader_for_tests;
+            leader = Self::slot_leader_from_epoch_stakes(
+                fields.slot,
+                &fields.epoch_schedule,
+                &epoch_stakes,
+            );
+        }
+        #[cfg(feature = "dev-context-only-utils")]
+        {
+            leader = leader_for_tests.unwrap_or_else(|| {
+                Self::slot_leader_from_epoch_stakes(
+                    fields.slot,
+                    &fields.epoch_schedule,
+                    &epoch_stakes,
+                )
+            });
+        }
+        assert_eq!(
+            fields.leader_id, leader.id,
+            "snapshot leader_id does not match computed slot leader"
+        );
+
         let stakes_accounts_load_duration = now.elapsed();
         let mut bank = Self {
             rc: bank_rc,
@@ -1904,7 +1936,7 @@ impl Bank {
             bank_id: 0,
             epoch: fields.epoch,
             block_height: fields.block_height,
-            leader_id: fields.leader_id,
+            leader,
             fee_rate_governor: fields.fee_rate_governor,
             // clone()-ing is needed to consider a gated behavior in rent_collector
             rent_collector: Self::get_rent_collector_from(&fields.rent_collector, fields.epoch),
@@ -2002,6 +2034,24 @@ impl Bank {
         bank
     }
 
+    /// Compute the slot leader from epoch stakes during snapshot restoration.
+    fn slot_leader_from_epoch_stakes(
+        slot: Slot,
+        epoch_schedule: &EpochSchedule,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
+    ) -> SlotLeader {
+        let (epoch, slot_index) = epoch_schedule.get_epoch_and_slot_index(slot);
+        let epoch_vote_accounts = epoch_stakes
+            .get(&epoch)
+            .expect("epoch stakes should contain current epoch")
+            .stakes()
+            .vote_accounts();
+        let leader_schedule =
+            leader_schedule_from_vote_accounts(epoch, epoch_schedule, epoch_vote_accounts.as_ref())
+                .expect("leader schedule should be computable from epoch stakes");
+        leader_schedule.get_slot_leader_at_index(slot_index as usize)
+    }
+
     /// Return subset of bank fields representing serializable state
     pub(crate) fn get_fields_to_serialize(&self) -> BankFieldsToSerialize {
         BankFieldsToSerialize {
@@ -2023,7 +2073,7 @@ impl Bank {
             slot: self.slot,
             epoch: self.epoch,
             block_height: self.block_height,
-            leader_id: self.leader_id,
+            leader_id: self.leader.id,
             fee_rate_governor: self.fee_rate_governor.clone(),
             rent_collector: self.rent_collector.clone(),
             epoch_schedule: self.epoch_schedule.clone(),
@@ -2036,8 +2086,12 @@ impl Bank {
         }
     }
 
+    pub fn leader(&self) -> &SlotLeader {
+        &self.leader
+    }
+
     pub fn leader_id(&self) -> &Pubkey {
-        &self.leader_id
+        &self.leader.id
     }
 
     pub fn genesis_creation_time(&self) -> UnixTimestamp {
@@ -2750,7 +2804,7 @@ impl Bank {
     fn process_genesis_config(
         &mut self,
         genesis_config: &GenesisConfig,
-        #[cfg(feature = "dev-context-only-utils")] leader_id_for_tests: Option<Pubkey>,
+        #[cfg(feature = "dev-context-only-utils")] leader_for_tests: Option<SlotLeader>,
         #[cfg(feature = "dev-context-only-utils")] genesis_hash: Option<Hash>,
     ) {
         // Bootstrap validator collects fees until `new_from_parent` is called.
@@ -2780,12 +2834,11 @@ impl Bank {
         // After storing genesis accounts, the bank stakes cache will be warmed
         // up and can be used to set the leader id to the highest staked
         // node. If no staked nodes exist, allow fallback to an unstaked test
-        // leader id during tests.
-        let leader_id = self.stakes_cache.stakes().highest_staked_node().copied();
+        // leader during tests.
+        let leader = self.stakes_cache.stakes().highest_staked_node();
         #[cfg(feature = "dev-context-only-utils")]
-        let leader_id = leader_id.or(leader_id_for_tests);
-        self.leader_id =
-            leader_id.expect("genesis processing failed because no staked nodes exist");
+        let leader = leader.or(leader_for_tests);
+        self.leader = leader.expect("genesis processing failed because no staked nodes exist");
 
         #[cfg(not(feature = "dev-context-only-utils"))]
         let genesis_hash = genesis_config.hash();
@@ -6208,7 +6261,7 @@ impl Bank {
             None,
             test_config.accounts_db_config,
             None,
-            Some(Pubkey::new_unique()),
+            Some(SlotLeader::new_unique()),
             Arc::default(),
             None,
             None,
@@ -6229,7 +6282,7 @@ impl Bank {
             None,
             ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
             None,
-            Some(Pubkey::new_unique()),
+            Some(SlotLeader::new_unique()),
             Arc::default(),
             None,
             None,
@@ -6239,10 +6292,10 @@ impl Bank {
     pub fn new_from_parent_with_bank_forks(
         bank_forks: &RwLock<BankForks>,
         parent: Arc<Bank>,
-        leader_id: &Pubkey,
+        leader: SlotLeader,
         slot: Slot,
     ) -> Arc<Self> {
-        let bank = Bank::new_from_parent(parent, leader_id, slot);
+        let bank = Bank::new_from_parent(parent, leader, slot);
         bank_forks
             .write()
             .unwrap()
