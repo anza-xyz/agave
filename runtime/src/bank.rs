@@ -2357,7 +2357,7 @@ impl Bank {
         }
 
         let vote_accounts = epoch_stakes.stakes().vote_accounts();
-        debug_assert!(vote_accounts.len() <= 2000);
+        debug_assert!(vote_accounts.len() <= MAX_ALPENGLOW_VOTE_ACCOUNTS);
         // +1 for the incinerator account
         let mut accounts_to_store: Vec<(Pubkey, AccountSharedData)> =
             Vec::with_capacity(vote_accounts.len() + 1);
@@ -2365,7 +2365,7 @@ impl Bank {
 
         // Vote accounts have already been filtered by clone_and_filter_for_vat to only include
         // accounts with non-zero stake and sufficient balance.
-        for (vote_pubkey, _stake) in vote_accounts.delegated_stakes() {
+        for (vote_pubkey, _vote_account) in vote_accounts.iter() {
             let mut account = self.get_account(vote_pubkey).unwrap();
             total_vat += VAT_TO_BURN_PER_EPOCH;
             account.set_lamports(
@@ -2380,21 +2380,32 @@ impl Bank {
             accounts_to_store.push((*vote_pubkey, account));
         }
 
-        // Per SIMD-0357, transfer collected VAT to the incinerator account.
-        let mut incinerator_account = self.get_account(&incinerator::id()).unwrap_or_default();
-        incinerator_account.set_lamports(
-            incinerator_account
-                .lamports()
-                .checked_add(total_vat)
-                .unwrap(),
-        );
-        accounts_to_store.push((incinerator::id(), incinerator_account));
+        self.store_burn_to_incinerator(total_vat, &mut accounts_to_store);
 
         self.store_accounts((self.slot, accounts_to_store.as_slice()));
         info!(
             "Transferred total VAT of {total_vat} lamports to incinerator from staked vote \
              accounts"
         );
+    }
+
+    fn store_burn_to_incinerator(
+        &self,
+        lamports_to_burn: u64,
+        accounts_to_store: &mut Vec<(Pubkey, AccountSharedData)>,
+    ) {
+        if lamports_to_burn == 0 {
+            return;
+        }
+
+        let mut incinerator_account = self.get_account(&incinerator::id()).unwrap_or_default();
+        incinerator_account.set_lamports(
+            incinerator_account
+                .lamports()
+                .checked_add(lamports_to_burn)
+                .expect("Burn to incinerator should not overflow"),
+        );
+        accounts_to_store.push((incinerator::id(), incinerator_account));
     }
 
     #[cfg(feature = "dev-context-only-utils")]
