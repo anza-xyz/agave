@@ -2,6 +2,7 @@ use {
     crate::invoke_context::{BuiltinFunctionWithContext, InvokeContext},
     log::{debug, error, log_enabled, trace},
     percentage::PercentageInteger,
+    rand::rngs::ThreadRng,
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_sbpf::{
@@ -10,6 +11,7 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
+    solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::{
         rand::{Rng, rng},
         sync::{
@@ -24,11 +26,13 @@ use {
         sync::Weak,
     },
 };
+
 #[cfg(feature = "metrics")]
-use {solana_svm_measure::measure::Measure, solana_svm_timings::ExecuteDetailsTimings};
+use solana_svm_timings::ExecuteDetailsTimings;
 
 pub type ProgramRuntimeEnvironment = Arc<BuiltinProgram<InvokeContext<'static, 'static>>>;
-pub const MAX_LOADED_ENTRY_COUNT: usize = 512;
+pub const MAX_LOADED_ENTRY_COUNT: usize = 1024;
+pub const MAX_COMPILED_ENTRY_COUNT: usize = 512;
 pub const DELAY_VISIBILITY_SLOT_OFFSET: Slot = 1;
 
 /// Relationship between two fork IDs
@@ -283,8 +287,6 @@ pub struct LoadProgramMetrics {
     pub load_elf_us: u64,
     /// Microseconds it took to `executable.verify::<RequisiteVerifier>`
     pub verify_code_us: u64,
-    /// Microseconds it took to `executable.jit_compile`
-    pub jit_compile_us: u64,
 }
 
 #[cfg(feature = "metrics")]
@@ -293,7 +295,6 @@ impl LoadProgramMetrics {
         timings.create_executor_register_syscalls_us += self.register_syscalls_us;
         timings.create_executor_load_elf_us += self.load_elf_us;
         timings.create_executor_verify_code_us += self.verify_code_us;
-        timings.create_executor_jit_compile_us += self.jit_compile_us;
     }
 }
 
@@ -387,17 +388,6 @@ impl ProgramCacheEntry {
             #[cfg(feature = "metrics")]
             {
                 metrics.verify_code_us = verify_code_time.end_as_us();
-            }
-        }
-
-        #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
-        {
-            #[cfg(feature = "metrics")]
-            let jit_compile_time = Measure::start("jit_compile_time");
-            executable.jit_compile()?;
-            #[cfg(feature = "metrics")]
-            {
-                metrics.jit_compile_us = jit_compile_time.end_as_us();
             }
         }
 
@@ -684,6 +674,9 @@ pub struct ProgramCache<FG: ForkGraph> {
     pub fork_graph: Option<Weak<RwLock<FG>>>,
     /// Coordinates TX batches waiting for others to complete their task during cooperative loading
     pub loading_task_waiter: Arc<LoadingTaskWaiter>,
+    /// As programs are extracted, we'll check if they are a candidate for compilation and send the
+    /// request to compile to a dedicated compilation thread.
+    pub compilation_requests: crossbeam_channel::Sender<(Arc<ProgramCacheEntry>, Arc<AtomicU64>)>,
 }
 
 impl<FG: ForkGraph> Debug for ProgramCache<FG> {
@@ -801,8 +794,47 @@ pub enum ProgramCacheMatchCriteria {
     NoCriteria,
 }
 
+// There are ~600ms per slot. Making an assumption that each compile takes on average 1ms, that
+// would mean we'd fit about 600 compiles per slot. Given that slot also involves sending and
+// receiving data, executing programs, etc. giving about 1/10th of the slot time for compilation
+// seems quite appropriate. Otherwise we might end up spending a lot of time compiling programs
+// that have already been executed in interpreted mode.
+const COMPILE_REQUEST_CHANNEL_SIZE: usize = 64;
+
 impl<FG: ForkGraph> ProgramCache<FG> {
     pub fn new(root_slot: Slot) -> Self {
+        let (compile_send, compile_recv) = crossbeam_channel::bounded::<(
+            Arc<ProgramCacheEntry>,
+            Arc<AtomicU64>,
+        )>(COMPILE_REQUEST_CHANNEL_SIZE);
+        std::thread::Builder::new()
+            .name("solCompile".into())
+            .spawn(move || {
+                for (entry, time_metric) in compile_recv {
+                    let executable = match &entry.program {
+                        ProgramCacheEntryType::FailedVerification(_)
+                        | ProgramCacheEntryType::Closed
+                        | ProgramCacheEntryType::DelayVisibility
+                        | ProgramCacheEntryType::Unloaded(_)
+                        | ProgramCacheEntryType::Builtin(_) => continue,
+                        ProgramCacheEntryType::Loaded(executable) => executable,
+                    };
+                    if executable.get_compiled_program().is_some() {
+                        continue;
+                    }
+
+                    #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
+                    {
+                        let jit_compile_time = Measure::start("jit_compile_time");
+                        if let Err(e) = executable.jit_compile() {
+                            log::warn!("compiling failed even though program is valid: {e:?}");
+                        }
+                        let jit_compile_time = jit_compile_time.end_as_us();
+                        time_metric.fetch_add(jit_compile_time, Ordering::Relaxed);
+                    }
+                }
+            })
+            .expect("thread spawns should succeed");
         Self {
             index: IndexImplementation::V1 {
                 entries: HashMap::new(),
@@ -812,6 +844,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             stats: ProgramCacheStats::default(),
             fork_graph: None,
             loading_task_waiter: Arc::new(LoadingTaskWaiter::default()),
+            compilation_requests: compile_send,
         }
     }
 
@@ -1047,6 +1080,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         program_runtime_environments_for_execution: &ProgramRuntimeEnvironments,
         increment_usage_counter: bool,
         count_hits_and_misses: bool,
+        on_found_loaded: impl Fn(&Pubkey, &Arc<ProgramCacheEntry>),
     ) -> Option<Pubkey> {
         debug_assert!(self.fork_graph.is_some());
         let fork_graph = self.fork_graph.as_ref().unwrap().upgrade().unwrap();
@@ -1121,6 +1155,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 };
                                 entry_to_return
                                     .update_access_slot(loaded_programs_for_tx_batch.slot);
+                                on_found_loaded(key, &entry_to_return);
                                 if increment_usage_counter {
                                     entry_to_return
                                         .tx_usage_counter
@@ -1278,27 +1313,41 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         let num_to_unload = sorted_candidates
             .len()
             .saturating_sub(shrink_to.apply_to(MAX_LOADED_ENTRY_COUNT));
-        for (program, last_modification_slot, entry) in sorted_candidates.iter().take(num_to_unload)
-        {
-            self.unload_program_entry(*program, *last_modification_slot, entry);
+        for (program, last_modification_slot, entry) in sorted_candidates.drain(..num_to_unload) {
+            self.unload_program_entry(program, last_modification_slot, &entry);
+        }
+        sorted_candidates.retain(|(_, _, entry)| match &entry.program {
+            ProgramCacheEntryType::Loaded(executable) => {
+                executable.get_compiled_program().is_some()
+            }
+            _ => false,
+        });
+        let num_to_uncompile = sorted_candidates
+            .len()
+            .saturating_sub(shrink_to.apply_to(MAX_COMPILED_ENTRY_COUNT));
+        for (_, _, entry) in sorted_candidates.iter().take(num_to_uncompile) {
+            if let ProgramCacheEntryType::Loaded(executable) = &entry.program {
+                executable.take_compiled_program();
+            }
         }
     }
 
-    /// Evicts programs using 2's random selection, choosing the least used program out of the two entries.
-    /// The eviction is performed enough number of times to reduce the cache usage to the given percentage.
+    /// Evicts programs using 2's random selection, choosing the least used program out of the two
+    /// entries.
+    ///
+    /// The eviction is performed enough number of times to reduce the cache usage to the given
+    /// percentage.
     pub fn evict_using_2s_random_selection(&mut self, shrink_to: PercentageInteger, now: Slot) {
+        let mut rng = rng();
         let mut candidates = self.get_flattened_entries(true, true);
         self.stats
             .water_level
             .store(candidates.len() as u64, Ordering::Relaxed);
-        let num_to_unload = candidates
-            .len()
-            .saturating_sub(shrink_to.apply_to(MAX_LOADED_ENTRY_COUNT));
         fn random_index_and_usage_counter(
+            rng: &mut ThreadRng,
             candidates: &[(Pubkey, Slot, Arc<ProgramCacheEntry>)],
             now: Slot,
         ) -> (usize, u64) {
-            let mut rng = rng();
             // gen_range is deprecated in favor of random_range in rand>=0.9, but we also get
             // rnd() from shuttle, which doesn't yet support rand 0.9 APIs
             #[allow(deprecated)]
@@ -1311,16 +1360,43 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             (index, usage_counter)
         }
 
+        let num_to_unload = candidates
+            .len()
+            .saturating_sub(shrink_to.apply_to(MAX_LOADED_ENTRY_COUNT));
         for _ in 0..num_to_unload {
-            let (index1, usage_counter1) = random_index_and_usage_counter(&candidates, now);
-            let (index2, usage_counter2) = random_index_and_usage_counter(&candidates, now);
-
+            let (index1, usage_counter1) =
+                random_index_and_usage_counter(&mut rng, &candidates, now);
+            let (index2, usage_counter2) =
+                random_index_and_usage_counter(&mut rng, &candidates, now);
             let (id, last_modification_slot, entry) = if usage_counter1 < usage_counter2 {
                 candidates.swap_remove(index1)
             } else {
                 candidates.swap_remove(index2)
             };
             self.unload_program_entry(id, last_modification_slot, &entry);
+        }
+        candidates.retain(|(_, _, entry)| match &entry.program {
+            ProgramCacheEntryType::Loaded(executable) => {
+                executable.get_compiled_program().is_some()
+            }
+            _ => false,
+        });
+        let num_to_uncompile = candidates
+            .len()
+            .saturating_sub(shrink_to.apply_to(MAX_COMPILED_ENTRY_COUNT));
+        for _ in 0..num_to_uncompile {
+            let (index1, usage_counter1) =
+                random_index_and_usage_counter(&mut rng, &candidates, now);
+            let (index2, usage_counter2) =
+                random_index_and_usage_counter(&mut rng, &candidates, now);
+            let (_, _, entry) = if usage_counter1 < usage_counter2 {
+                candidates.swap_remove(index1)
+            } else {
+                candidates.swap_remove(index2)
+            };
+            if let ProgramCacheEntryType::Loaded(executable) = &entry.program {
+                executable.take_compiled_program();
+            }
         }
     }
 
@@ -2420,7 +2496,7 @@ mod tests {
         assert!(match_missing(&missing, &program2, false));
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(22);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 20, 22));
         assert!(match_slot(&extracted, &program4, 0, 22));
 
@@ -2429,7 +2505,7 @@ mod tests {
             get_entries_to_load(&cache, 15, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(15);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 0, 15));
         assert!(match_slot(&extracted, &program2, 11, 15));
         // The effective slot of program4 deployed in slot 15 is 19. So it should not be usable in slot 16.
@@ -2445,7 +2521,7 @@ mod tests {
             get_entries_to_load(&cache, 18, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(18);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 0, 18));
         assert!(match_slot(&extracted, &program2, 11, 18));
         // The effective slot of program4 deployed in slot 15 is 18. So it should be usable in slot 18.
@@ -2456,7 +2532,7 @@ mod tests {
             get_entries_to_load(&cache, 23, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(23);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 0, 23));
         assert!(match_slot(&extracted, &program2, 11, 23));
         // The effective slot of program4 deployed in slot 15 is 19. So it should be usable in slot 23.
@@ -2467,7 +2543,7 @@ mod tests {
             get_entries_to_load(&cache, 11, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(11);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 0, 11));
         // program2 was updated at slot 11, but is not effective till slot 12. The result should contain a tombstone.
         let tombstone = extracted
@@ -2499,7 +2575,7 @@ mod tests {
             get_entries_to_load(&cache, 21, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(21);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         // Since the fork was pruned, we should not find the entry deployed at slot 20.
         assert!(match_slot(&extracted, &program1, 0, 21));
         assert!(match_slot(&extracted, &program2, 11, 21));
@@ -2509,7 +2585,7 @@ mod tests {
         let mut missing =
             get_entries_to_load(&cache, 27, &[program1, program2, program3, program4]);
         let mut extracted = ProgramCacheForTxBatch::new(27);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 0, 27));
         assert!(match_slot(&extracted, &program2, 11, 27));
         assert!(match_slot(&extracted, &program3, 25, 27));
@@ -2537,7 +2613,7 @@ mod tests {
             get_entries_to_load(&cache, 23, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(23);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 0, 23));
         assert!(match_slot(&extracted, &program2, 11, 23));
         assert!(match_slot(&extracted, &program4, 15, 23));
@@ -2586,7 +2662,7 @@ mod tests {
         let mut missing = get_entries_to_load(&cache, 12, &[program1, program2, program3]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(12);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 0, 12));
         assert!(match_slot(&extracted, &program2, 11, 12));
 
@@ -2596,7 +2672,7 @@ mod tests {
         missing.get_mut(1).unwrap().1 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(12);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_missing(&missing, &program1, true));
         assert!(match_slot(&extracted, &program2, 11, 12));
     }
@@ -2659,14 +2735,14 @@ mod tests {
         let mut missing = get_entries_to_load(&cache, 19, &[program1, program2, program3]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(19);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 0, 19));
         assert!(match_slot(&extracted, &program2, 11, 19));
 
         // Testing fork 0 - 5 - 11 - 25 - 27 with current slot at 27
         let mut missing = get_entries_to_load(&cache, 27, &[program1, program2, program3]);
         let mut extracted = ProgramCacheForTxBatch::new(27);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 0, 27));
         assert!(match_slot(&extracted, &program2, 11, 27));
         assert!(match_missing(&missing, &program3, true));
@@ -2675,7 +2751,7 @@ mod tests {
         let mut missing = get_entries_to_load(&cache, 22, &[program1, program2, program3]);
         assert!(match_missing(&missing, &program2, false));
         let mut extracted = ProgramCacheForTxBatch::new(22);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 20, 22));
         assert!(match_missing(&missing, &program3, true));
     }
@@ -2720,13 +2796,20 @@ mod tests {
         // Testing fork 0 - 10 - 20 - 22 with current slot at 22
         let mut missing = get_entries_to_load(&cache, 22, &[program1]);
         let mut extracted = ProgramCacheForTxBatch::new(22);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 20, 22));
 
         // Looking for a different environment
         let mut missing = get_entries_to_load(&cache, 22, &[program1]);
         let mut extracted = ProgramCacheForTxBatch::new(22);
-        cache.extract(&mut missing, &mut extracted, &other_envs, true, true);
+        cache.extract(
+            &mut missing,
+            &mut extracted,
+            &other_envs,
+            true,
+            true,
+            |_, _| {},
+        );
         assert!(match_missing(&missing, &program1, true));
     }
 
@@ -2741,7 +2824,7 @@ mod tests {
         let program1 = Pubkey::new_unique();
         let mut missing = vec![(program1, ProgramCacheMatchCriteria::NoCriteria, 0)];
         let mut extracted = ProgramCacheForTxBatch::new(0);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_missing(&missing, &program1, true));
     }
 
@@ -2817,7 +2900,7 @@ mod tests {
 
         let mut missing = get_entries_to_load(&cache, 20, &[program1]);
         let mut extracted = ProgramCacheForTxBatch::new(20);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
 
         // The cache should have the program deployed at slot 0
         assert_eq!(
@@ -2859,14 +2942,14 @@ mod tests {
 
         let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
         let mut extracted = ProgramCacheForTxBatch::new(20);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 0, 20));
         assert!(match_slot(&extracted, &program2, 10, 20));
 
         let mut missing = get_entries_to_load(&cache, 6, &[program1, program2]);
         assert!(match_missing(&missing, &program2, false));
         let mut extracted = ProgramCacheForTxBatch::new(6);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 5, 6));
 
         // Pruning slot 5 will remove program1 entry deployed at slot 5.
@@ -2875,14 +2958,14 @@ mod tests {
 
         let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
         let mut extracted = ProgramCacheForTxBatch::new(20);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 0, 20));
         assert!(match_slot(&extracted, &program2, 10, 20));
 
         let mut missing = get_entries_to_load(&cache, 6, &[program1, program2]);
         assert!(match_missing(&missing, &program2, false));
         let mut extracted = ProgramCacheForTxBatch::new(6);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 0, 6));
 
         // Pruning slot 10 will remove program2 entry deployed at slot 10.
@@ -2892,7 +2975,7 @@ mod tests {
         let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
         assert!(match_missing(&missing, &program2, false));
         let mut extracted = ProgramCacheForTxBatch::new(20);
-        cache.extract(&mut missing, &mut extracted, &envs, true, true);
+        cache.extract(&mut missing, &mut extracted, &envs, true, true, |_, _| {});
         assert!(match_slot(&extracted, &program1, 0, 20));
     }
 

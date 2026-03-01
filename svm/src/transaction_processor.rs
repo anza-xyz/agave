@@ -855,6 +855,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         loop {
             // Lock the global cache.
             let global_program_cache = self.global_program_cache.read().unwrap();
+            let compilation_requests = global_program_cache.compilation_requests.clone();
             // Figure out which program needs to be loaded next.
             let program_to_load = global_program_cache.extract(
                 &mut missing_programs,
@@ -862,7 +863,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 program_runtime_environments_for_execution,
                 increment_usage_counter,
                 count_hits_and_misses,
+                |_key, program| {
+                    let _ = compilation_requests.try_send((
+                        Arc::clone(program),
+                        Arc::clone(&execute_timings.details.create_executor_jit_compile_us),
+                    ));
+                },
             );
+
             count_hits_and_misses = false;
             let task_waiter = Arc::clone(&global_program_cache.loading_task_waiter);
             let task_cookie = task_waiter.cookie();
@@ -870,7 +878,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             drop(global_program_cache);
 
             let program_to_store = program_to_load.map(|key| {
-                // Load, verify and compile one program.
+                // Load, verify and potentially compile one program.
                 let (program, last_modification_slot) = load_program_with_pubkey(
                     account_loader,
                     program_runtime_environments_for_execution,
@@ -2085,6 +2093,7 @@ mod tests {
                 &program_runtime_environments,
                 true,
                 true,
+                |_, _| {},
             );
         let entry = loaded_programs_for_tx_batch.find(&key).unwrap();
 

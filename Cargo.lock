@@ -9654,6 +9654,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "cfg-if 1.0.4",
+ "crossbeam-channel",
  "itertools 0.14.0",
  "log",
  "percentage",
@@ -10375,8 +10376,6 @@ checksum = "dcf09694a0fc14e5ffb18f9b7b7c0f15ecb6eac5b5610bf76a1853459d19daf9"
 [[package]]
 name = "solana-sbpf"
 version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "733b3657a0fab205102b799dbe17f85d3972cf984232c1b0b108fa6ba438e382"
 dependencies = [
  "byteorder",
  "combine 3.8.1",
