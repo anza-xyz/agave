@@ -1028,6 +1028,17 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced()),
     )
     .arg(
+        Arg::with_name("no_accounts_db_snapshots_direct_io")
+            .long("no-accounts-db-snapshots-direct-io")
+            .help("Disable direct I/O use for accounts-db snapshot operations")
+            .long_help(
+                "Do *not* use direct I/O for accounts-db file operations related to snapshot \
+                 processsing. Direct I/O can improve performance by bypassing OS page cache, but \
+                 requires the file systems hosting snapshots and accounts-db directories to \
+                 support files opened with the O_DIRECT flag.",
+            ),
+    )
+    .arg(
         Arg::with_name("accounts_index_scan_results_limit_mb")
             .long("accounts-index-scan-results-limit-mb")
             .value_name("MEGABYTES")

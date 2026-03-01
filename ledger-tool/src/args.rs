@@ -150,6 +150,9 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .takes_value(true)
             .help("The number of ancient storages the ancient slot combining should converge to.")
             .hidden(hidden_unless_forced()),
+        Arg::with_name("no_accounts_db_snapshots_direct_io")
+            .long("no-accounts-db-snapshots-direct-io")
+            .help("Disable direct I/O use for accounts-db snapshot operations"),
     ]
     .into_boxed_slice()
 }
@@ -364,6 +367,7 @@ pub fn get_accounts_db_config(
         use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
             solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
         ),
+        snapshots_use_direct_io: !arg_matches.is_present("no_accounts_db_snapshots_direct_io"),
         ..AccountsDbConfig::default()
     }
 }
