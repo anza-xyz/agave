@@ -326,7 +326,7 @@ impl RpcSender for MockSender {
                         vote_pubkey: PUBKEY.to_string(),
                         node_pubkey: PUBKEY.to_string(),
                         activated_stake: 0,
-                        commission: 0,
+                        inflation_rewards_commission_bps: 10000,
                         epoch_vote_account: false,
                         epoch_credits: vec![],
                         last_vote: 0,

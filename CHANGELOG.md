@@ -24,7 +24,10 @@ Release channels have their own copy of this changelog:
 ## 4.0.0
 ### RPC
 #### Breaking
-* `--public-tpu-address` and `--public-tpu-forwards-address` CLI arguments and `setPublicTpuForwardsAddress`, `setPublicTpuAddress` RPC methods now specify QUIC ports, not UDP.
+* The `getVoteAccounts` RPC endpoint now returns inflation rewards commissions
+  in basis points in a new field named `inflation_rewards_commission_bps` and no
+  longer returns the `commission` field. This change is made to preemptively
+  handle the new commission basis points change in SIMD-0291.
 #### Changes
 * Added `--enable-scheduler-bindings` which binds an IPC server at `<ledger-path>/scheduler_bindings.ipc` for external schedulers to connect to.
 * Added `clientId` field to each node in `getClusterNodes` response
