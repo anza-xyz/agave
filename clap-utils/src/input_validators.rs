@@ -472,11 +472,17 @@ where
 
 pub fn is_non_zero(value: impl AsRef<str>) -> Result<(), String> {
     let value = value.as_ref();
-    if value.eq("0") {
-        Err(String::from("cannot be zero"))
-    } else {
-        Ok(())
+
+    // Try parsing as f64 to catch "0.00" or "0e2"
+    if let Ok(float_val) = value.parse::<f64>() {
+        if float_val == 0.0 {
+            return Err(String::from("cannot be zero"));
+        }
+        return Ok(());
     }
+
+    // Other validators should catch parse errors.
+    Ok(())
 }
 
 #[cfg(test)]
