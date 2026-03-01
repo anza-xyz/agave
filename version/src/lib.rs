@@ -27,7 +27,7 @@ macro_rules! semver {
 #[macro_export]
 macro_rules! version {
     () => {
-        &*format!("{:?}", $crate::Version::default())
+        &*format!("{}", $crate::Version::default().as_detailed_string())
     };
 }
 

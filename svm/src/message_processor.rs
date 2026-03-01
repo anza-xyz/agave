@@ -85,7 +85,6 @@ mod tests {
             ec::{EcGroup, EcKey},
             nid::Nid,
         },
-        rand0_7::thread_rng,
         solana_account::{
             Account, AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS, ReadableAccount,
             WritableAccount,
@@ -606,7 +605,8 @@ mod tests {
 
     fn secp256k1_instruction_for_test() -> Instruction {
         let message = b"hello";
-        let secret_key = libsecp256k1::SecretKey::random(&mut thread_rng());
+        let bytes: [u8; 32] = rand::random();
+        let secret_key = libsecp256k1::SecretKey::parse(&bytes).unwrap();
         let pubkey = libsecp256k1::PublicKey::from_secret_key(&secret_key);
         let eth_address = eth_address_from_pubkey(&pubkey.serialize()[1..].try_into().unwrap());
         let (signature, recovery_id) =

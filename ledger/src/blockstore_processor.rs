@@ -1728,7 +1728,7 @@ fn confirm_slot_entries(
     let last_entry_hash = entries.last().map(|e| e.hash);
     if !skip_verification {
         let start_hash = progress.last_entry;
-        let verify_entries = entries.clone();
+        let verify_entries = entry::entries_to_verification_data(&entries);
         progress.async_verification.spawn(
             replay_tx_thread_pool,
             poh_verify_elapsed,
@@ -1737,7 +1737,7 @@ fn confirm_slot_entries(
                     "verify-batch-size",
                     ("size", verify_entries.len() as i64, i64)
                 );
-                let state = verify_entries.verify_cpu(&start_hash);
+                let state = entry::verify_entries_cpu(&verify_entries, &start_hash);
                 let error = if state.status() {
                     None
                 } else {

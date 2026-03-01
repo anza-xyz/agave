@@ -283,7 +283,7 @@ impl Tvu {
                 spawn_simple_qos_server(
                     "solQuicBLS",
                     "quic_streamer_bls",
-                    vec![bls_socket],
+                    vec![bls_socket.into()],
                     &cluster_info.keypair(),
                     bls_packet_sender,
                     staked_nodes,

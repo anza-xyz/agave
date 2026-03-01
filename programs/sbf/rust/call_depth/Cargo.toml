@@ -15,7 +15,6 @@ crate-type = ["cdylib"]
 solana-msg = { workspace = true }
 solana-program = { workspace = true }
 solana-program-entrypoint = { workspace = true }
-solana-sysvar = { workspace = true }
 
 [lints]
 workspace = true

@@ -5,6 +5,7 @@ use {
             qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
         },
         quic::{QuicServerError, QuicStreamerConfig, StreamerStats, configure_server},
+        quic_socket::QuicSocket,
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
@@ -26,7 +27,7 @@ use {
     std::{
         array, fmt,
         iter::repeat_with,
-        net::{IpAddr, SocketAddr, UdpSocket},
+        net::{IpAddr, SocketAddr},
         pin::Pin,
         sync::{
             Arc, RwLock,
@@ -133,7 +134,7 @@ pub struct SpawnNonBlockingServerResult {
 pub(crate) fn spawn_server<Q, C>(
     name: &'static str,
     stats: Arc<StreamerStats>,
-    sockets: impl IntoIterator<Item = UdpSocket>,
+    sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
@@ -150,14 +151,15 @@ where
 
     let endpoints = sockets
         .into_iter()
-        .map(|sock| {
-            Endpoint::new(
+        .map(|sock| match sock {
+            QuicSocket::Kernel(udp_sock) => Endpoint::new(
                 EndpointConfig::default(),
                 Some(config.clone()),
-                sock,
+                udp_sock,
                 Arc::new(TokioRuntime),
             )
-            .map_err(QuicServerError::EndpointFailed)
+            .map_err(QuicServerError::EndpointFailed),
+            QuicSocket::Xdp(_xdp_cfg) => unimplemented!(),
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -1579,7 +1581,7 @@ pub mod test {
             max_concurrent_connections: _,
         } = spawn_stake_weighted_qos_server(
             "quic_streamer_test",
-            [s],
+            [s.into()],
             &keypair,
             sender,
             staked_nodes,
@@ -1615,7 +1617,7 @@ pub mod test {
             max_concurrent_connections: _,
         } = spawn_stake_weighted_qos_server(
             "quic_streamer_test",
-            [s],
+            [s.into()],
             &keypair,
             sender,
             staked_nodes,

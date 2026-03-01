@@ -1285,8 +1285,8 @@ pub mod set_lamports_per_byte_to_696 {
     pub const LAMPORTS_PER_BYTE: u64 = 696;
 }
 
-pub mod stop_use_static_simple_vote_tx_cost {
-    solana_pubkey::declare_id!("NSVt1s8oP1A9NjEc6UNcj2voeCcfzHaq4jZTiUL2Mf5");
+pub mod remove_simple_vote_from_cost_model {
+    solana_pubkey::declare_id!("2GCrNXbzmt4xrwdcKS2RdsLzsgu4V5zHAemW57pcHT6a");
 }
 
 pub mod limit_instruction_accounts {
@@ -2314,7 +2314,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0437-5: Set lamports per byte to 696",
         ),
         (
-            stop_use_static_simple_vote_tx_cost::id(),
+            remove_simple_vote_from_cost_model::id(),
             "stop use static SimpleVote transaction cost, issue #10227",
         ),
         (

@@ -53,6 +53,7 @@ use {
             SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
             spawn_simple_qos_server, spawn_stake_wighted_qos_server,
         },
+        quic_socket::QuicSocket,
         streamer::StakedNodes,
     },
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
@@ -188,6 +189,8 @@ impl Tpu {
         } = banking_tracer_channels;
 
         // Streamer for Votes:
+        let quic_vote_sockets: Vec<QuicSocket> =
+            tpu_vote_quic_sockets.into_iter().map(Into::into).collect();
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_vote_quic_t,
@@ -195,7 +198,7 @@ impl Tpu {
         } = spawn_simple_qos_server(
             "solQuicTVo",
             "quic_streamer_tpu_vote",
-            tpu_vote_quic_sockets,
+            quic_vote_sockets,
             keypair,
             vote_packet_sender,
             staked_nodes.clone(),
@@ -206,6 +209,10 @@ impl Tpu {
         .unwrap();
 
         // Streamer for TPU
+        let transactions_quic_sockets: Vec<QuicSocket> = transactions_quic_sockets
+            .into_iter()
+            .map(Into::into)
+            .collect();
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_quic_t,
@@ -224,6 +231,11 @@ impl Tpu {
         .unwrap();
 
         // Streamer for TPU forward
+        let transactions_forwards_quic_sockets: Vec<QuicSocket> =
+            transactions_forwards_quic_sockets
+                .into_iter()
+                .map(Into::into)
+                .collect();
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_forwards_quic_t,
