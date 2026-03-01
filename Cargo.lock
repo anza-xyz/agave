@@ -10206,6 +10206,7 @@ dependencies = [
  "blake3",
  "bv",
  "bytemuck",
+ "criterion",
  "crossbeam-channel",
  "dashmap",
  "im",
@@ -10330,6 +10331,7 @@ dependencies = [
  "tempfile",
  "test-case",
  "thiserror 2.0.18",
+ "tikv-jemallocator",
  "wincode",
 ]
 
