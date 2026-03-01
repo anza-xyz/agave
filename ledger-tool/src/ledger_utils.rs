@@ -301,7 +301,7 @@ pub fn load_and_process_ledger(
     let enable_rpc_transaction_history = arg_matches.is_present("enable_rpc_transaction_history");
 
     let (transaction_status_sender, transaction_status_service) =
-        if geyser_plugin_active || enable_rpc_transaction_history {
+        if enable_rpc_transaction_history || transaction_notifier.is_some() {
             // Need Primary (R/W) access to insert transaction and rewards data;
             // obtain Primary access if we do not already have it
             let write_blockstore =
