@@ -56,7 +56,14 @@ const FAILED_INSERTS_RETENTION_MS: u64 = 20_000;
 pub const FALSE_RATE: f64 = 0.1f64;
 pub const KEYS: f64 = 8f64;
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "6PjPBa3GoCgj4AKieT1CgkcWmyTBtV5Cugrz4Uhw3Ee2",
+        abi_digest = "7dQoAoXukjKa3EcuMY8Z51yRji93WJnQknqkPWfq2RpZ"
+    )
+)]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct CrdsFilter {
     pub filter: Bloom<Hash>,
@@ -86,6 +93,24 @@ impl solana_sanitize::Sanitize for CrdsFilter {
     fn sanitize(&self) -> std::result::Result<(), solana_sanitize::SanitizeError> {
         self.filter.sanitize()?;
         Ok(())
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<CrdsFilter>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> CrdsFilter {
+        let num_keys = KEYS as u64;
+        let keys: Vec<u64> = std::iter::repeat_with(|| rng.random())
+            .take(num_keys as usize)
+            .collect();
+        let num_bits = rng.random_range(1usize..=PACKET_DATA_SIZE * 8);
+        CrdsFilter {
+            filter: Bloom::new(num_bits, keys),
+            mask: rng.random(),
+            mask_bits: rng.random(),
+        }
     }
 }
 

@@ -146,6 +146,7 @@ impl PackedMinor {
     }
 }
 
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Version {
     major: u16,

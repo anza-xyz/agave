@@ -45,6 +45,14 @@ const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
 
 /// Gossip protocol messages base enum
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi),
+    frozen_abi(
+        api_digest = "9WoxQJnKymbj8xMLpKV99qDzsrCD7gJCZ13quupLBAGv",
+        abi_digest = "a2haSpGoDLZHNqMDRFfMJH4XvGYPoLeaNVayitBE8oZ"
+    )
+)]
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Protocol {
@@ -62,7 +70,14 @@ pub(crate) enum Protocol {
 pub(crate) type Ping = ping_pong::Ping<GOSSIP_PING_TOKEN_SIZE>;
 pub(crate) type PingCache = ping_pong::PingCache<GOSSIP_PING_TOKEN_SIZE>;
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "5wuGJYfwZn5ScB5p3pfXDUc9u2Y6mjDNEYABNaDAkshN",
+        abi_digest = "81s8mDfZhMPZ1b3PQGGmdCa1TgdBpvmE7oq7LPKAd3FZ"
+    )
+)]
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub(crate) struct PruneData {
     /// Pubkey of the node that sent this prune data
@@ -215,6 +230,66 @@ impl Signable for PruneData {
     fn verify(&self) -> bool {
         // Try to verify PruneData with both prefixed and non-prefixed data
         self.verify_data(false) || self.verify_data(true)
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<PruneData>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> PruneData {
+        let num_prunes = rng.random_range(0usize..5);
+        let prunes: Vec<Pubkey> = (0..num_prunes)
+            .map(|_| Pubkey::new_from_array(rng.random()))
+            .collect();
+        PruneData {
+            pubkey: Pubkey::new_from_array(rng.random()),
+            prunes,
+            signature: Signature::from(rng.random::<[u8; 64]>()),
+            destination: Pubkey::new_from_array(rng.random()),
+            wallclock: rng.random(),
+        }
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<Protocol>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> Protocol {
+        let variant = rng.random_range(0u8..6);
+        match variant {
+            0 => Protocol::PullRequest(rng.random(), rng.random()),
+            1 => {
+                let num = rng.random_range(0usize..3);
+                let values = (0..num).map(|_| rng.random()).collect();
+                Protocol::PullResponse(Pubkey::new_from_array(rng.random()), values)
+            }
+            2 => {
+                let num = rng.random_range(0usize..3);
+                let values = (0..num).map(|_| rng.random()).collect();
+                Protocol::PushMessage(Pubkey::new_from_array(rng.random()), values)
+            }
+            3 => {
+                let pubkey = Pubkey::new_from_array(rng.random());
+                let num_prunes = rng.random_range(0usize..5);
+                let prunes: Vec<Pubkey> = (0..num_prunes)
+                    .map(|_| Pubkey::new_from_array(rng.random()))
+                    .collect();
+                Protocol::PruneMessage(
+                    pubkey,
+                    PruneData {
+                        pubkey,
+                        prunes,
+                        signature: Signature::from(rng.random::<[u8; 64]>()),
+                        destination: Pubkey::new_from_array(rng.random()),
+                        wallclock: rng.random(),
+                    },
+                )
+            }
+            4 => Protocol::PingMessage(rng.random()),
+            _ => Protocol::PongMessage(rng.random()),
+        }
     }
 }
 

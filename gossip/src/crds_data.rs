@@ -39,7 +39,14 @@ pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
 /// * Merge Strategy - Latest wallclock is picked
 /// * LowestSlot index is deprecated
 #[allow(clippy::large_enum_variant)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi),
+    frozen_abi(
+        api_digest = "DRdbWSbzhgHf4h757kNidF7sQpVdQxJw9zS6e7Q6ANVc",
+        abi_digest = "DgVJxUsGiTAUMPtevvmZwj5dgr7oJk4KxPnavL1cs7uf"
+    )
+)]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum CrdsData {
     #[allow(private_interfaces)]
@@ -495,6 +502,91 @@ macro_rules! reject_deserialize {
     };
 }
 pub(crate) use reject_deserialize;
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<CrdsData>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> CrdsData {
+        use crate::restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots};
+
+        let variant = rng.random_range(0u8..8);
+        match variant {
+            0 => CrdsData::Vote(
+                rng.random_range(0..MAX_VOTES),
+                Vote {
+                    from: Pubkey::new_from_array(rng.random()),
+                    transaction: Transaction::default(),
+                    wallclock: rng.random(),
+                    slot: None,
+                },
+            ),
+            1 => CrdsData::LowestSlot(
+                0,
+                LowestSlot {
+                    from: Pubkey::new_from_array(rng.random()),
+                    root: 0,
+                    lowest: rng.random(),
+                    slots: std::collections::BTreeSet::default(),
+                    stash: Vec::default(),
+                    wallclock: rng.random(),
+                },
+            ),
+            2 => CrdsData::EpochSlots(
+                rng.random_range(0..MAX_EPOCH_SLOTS),
+                crate::epoch_slots::EpochSlots {
+                    from: Pubkey::new_from_array(rng.random()),
+                    slots: vec![crate::epoch_slots::CompressedSlots::new(
+                        rng.random_range(1usize..16),
+                    )],
+                    wallclock: rng.random(),
+                },
+            ),
+            3 => CrdsData::DuplicateShred(
+                rng.random_range(0..crate::duplicate_shred::MAX_DUPLICATE_SHREDS),
+                rng.random(),
+            ),
+            4 => {
+                let num_inc = rng.random_range(0usize..5);
+                let incremental: Vec<(Slot, Hash)> = (0..num_inc)
+                    .map(|_| (rng.random(), Hash::new_from_array(rng.random())))
+                    .collect();
+                CrdsData::SnapshotHashes(SnapshotHashes {
+                    from: Pubkey::new_from_array(rng.random()),
+                    full: (rng.random(), Hash::new_from_array(rng.random())),
+                    incremental,
+                    wallclock: rng.random(),
+                })
+            }
+            5 => CrdsData::ContactInfo(rng.random()),
+            6 => {
+                let num_slots = rng.random_range(2usize..10);
+                let slots: Vec<Slot> =
+                    std::iter::repeat_with(|| 47825632 + rng.random_range(0u64..512))
+                        .take(num_slots)
+                        .collect();
+                CrdsData::RestartLastVotedForkSlots(
+                    RestartLastVotedForkSlots::new(
+                        Pubkey::new_from_array(rng.random()),
+                        rng.random(),
+                        &slots,
+                        Hash::new_from_array(rng.random()),
+                        rng.random(),
+                    )
+                    .expect("failed to create RestartLastVotedForkSlots"),
+                )
+            }
+            _ => CrdsData::RestartHeaviestFork(RestartHeaviestFork {
+                from: Pubkey::new_from_array(rng.random()),
+                wallclock: rng.random(),
+                last_slot: rng.random(),
+                last_slot_hash: Hash::new_from_array(rng.random()),
+                observed_stake: rng.random(),
+                shred_version: rng.random(),
+            }),
+        }
+    }
+}
 
 #[cfg(test)]
 mod test {

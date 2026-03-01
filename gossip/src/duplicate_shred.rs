@@ -1,3 +1,5 @@
+#[cfg(feature = "frozen-abi")]
+use solana_packet::PACKET_DATA_SIZE;
 use {
     crate::crds_data::sanitize_wallclock,
     itertools::Itertools,
@@ -22,6 +24,7 @@ const DUPLICATE_SHRED_HEADER_SIZE: usize = 63;
 
 pub(crate) type DuplicateShredIndex = u16;
 pub(crate) const MAX_DUPLICATE_SHREDS: DuplicateShredIndex = 512;
+pub(crate) const MAX_DUPLICATE_SHRED_CHUNKS: usize = 3;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -333,6 +336,28 @@ impl Sanitize for DuplicateShred {
             return Err(SanitizeError::IndexOutOfBounds);
         }
         self.from.sanitize()
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<DuplicateShred>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> DuplicateShred {
+        let chunk_len = rng.random_range(0usize..=PACKET_DATA_SIZE);
+        let chunk: Vec<u8> = (0..chunk_len).map(|_| rng.random::<u8>()).collect();
+        let num_chunks = rng.random_range(1u8..=MAX_DUPLICATE_SHRED_CHUNKS as u8);
+        let chunk_index = rng.random_range(0..num_chunks);
+        DuplicateShred {
+            from: Pubkey::new_from_array(rng.random()),
+            wallclock: rng.random(),
+            slot: rng.random(),
+            _unused: rng.random(),
+            _unused_shred_type: rng.random(),
+            num_chunks,
+            chunk_index,
+            chunk,
+        }
     }
 }
 
