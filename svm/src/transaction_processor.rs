@@ -193,6 +193,11 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// Builtin program ids
     pub builtin_program_ids: RwLock<HashSet<Pubkey>>,
 
+    /// Cached ProgramCacheForTxBatch pre-populated with builtin entries.
+    /// Populated once per block in `new_from()` from the global program cache,
+    /// avoiding re-acquiring the lock and re-running extract() on every batch.
+    builtin_program_cache: RwLock<ProgramCacheForTxBatch>,
+
     execution_cost: SVMTransactionExecutionCost,
 }
 
@@ -217,6 +222,7 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
             global_program_cache: Arc::new(RwLock::new(ProgramCache::new(Slot::default()))),
             environments: ProgramRuntimeEnvironments::default(),
             builtin_program_ids: RwLock::new(HashSet::new()),
+            builtin_program_cache: RwLock::new(ProgramCacheForTxBatch::new(Slot::default())),
             execution_cost: SVMTransactionExecutionCost::default(),
         }
     }
@@ -240,6 +246,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             epoch,
             epoch_boundary_preparation,
             global_program_cache: Arc::new(RwLock::new(ProgramCache::new(slot))),
+            builtin_program_cache: RwLock::new(ProgramCacheForTxBatch::new(slot)),
             ..Self::default()
         }
     }
@@ -291,14 +298,33 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ///   instance.
     /// * Resets the sysvar cache.
     pub fn new_from(&self, slot: Slot, epoch: Epoch) -> Self {
+        let builtin_program_ids = self.builtin_program_ids.read().unwrap().clone();
+        let environments = self.environments.clone();
+
+        // Pre-populate the builtin program cache from the global cache.
+        // This is done once per block rather than once per batch.
+        let mut builtin_program_cache = ProgramCacheForTxBatch::new(slot);
+        let mut search_for: Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> = builtin_program_ids
+            .iter()
+            .map(|key| (*key, ProgramCacheMatchCriteria::NoCriteria, 0))
+            .collect();
+        self.global_program_cache.read().unwrap().extract(
+            &mut search_for,
+            &mut builtin_program_cache,
+            &environments,
+            false,
+            false,
+        );
+
         Self {
             slot,
             epoch,
             sysvar_cache: RwLock::<SysvarCache>::default(),
             epoch_boundary_preparation: self.epoch_boundary_preparation.clone(),
             global_program_cache: self.global_program_cache.clone(),
-            environments: self.environments.clone(),
-            builtin_program_ids: RwLock::new(self.builtin_program_ids.read().unwrap().clone()),
+            environments,
+            builtin_program_ids: RwLock::new(builtin_program_ids),
+            builtin_program_cache: RwLock::new(builtin_program_cache),
             execution_cost: self.execution_cost,
         }
     }
@@ -403,29 +429,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .enable_transaction_balance_recording
             .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
 
-        // Create the batch-local program cache.
-        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
-        let builtins = self
-            .builtin_program_ids
-            .read()
-            .unwrap()
-            .iter()
-            .map(|key| (*key, 0))
-            .collect::<HashMap<Pubkey, Slot>>();
-        let ((), program_cache_us) = measure_us!({
-            self.replenish_program_cache(
-                &account_loader,
-                &builtins,
-                &environment.program_runtime_environments_for_execution,
-                &mut program_cache_for_tx_batch,
-                &mut execute_timings,
-                config.check_program_deployment_slot,
-                config.limit_to_load_programs,
-                false, // increment_usage_counter
-            );
-        });
-        execute_timings
-            .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
+        // Clone the batch-local program cache (builtins already populated in new_from()).
+        // User-deployed programs are loaded per-transaction via replenish_program_cache
+        // in the transaction loop below.
+        let mut program_cache_for_tx_batch = self.builtin_program_cache.read().unwrap().clone();
 
         if program_cache_for_tx_batch.hit_max_limit {
             return LoadAndExecuteSanitizedTransactionsOutput {
@@ -1162,12 +1169,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// Add a built-in program
     pub fn add_builtin(&self, program_id: Pubkey, builtin: ProgramCacheEntry) {
         self.builtin_program_ids.write().unwrap().insert(program_id);
+        let entry = Arc::new(builtin);
         self.global_program_cache.write().unwrap().assign_program(
             &self.environments,
             program_id,
             0,
-            Arc::new(builtin),
+            Arc::clone(&entry),
         );
+        self.builtin_program_cache
+            .write()
+            .unwrap()
+            .replenish(program_id, entry);
     }
 
     #[cfg(feature = "dev-context-only-utils")]
