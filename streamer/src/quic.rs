@@ -4,7 +4,7 @@ use {
             qos::{ConnectionContext, QosController},
             quic::{ALPN_TPU_PROTOCOL_ID, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
             simple_qos::{SimpleQos, SimpleQosConfig},
-            swqos::{SwQos, SwQosConfig},
+            swqos::{SwQos, SwQosConfig, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS},
         },
         quic_socket::QuicSocket,
         streamer::StakedNodes,
@@ -15,7 +15,7 @@ use {
         Endpoint, IdleTimeout, ServerConfig, VarInt,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
     },
-    rustls::KeyLogFile,
+    rustls::{server::ServerSessionMemoryCache, KeyLogFile},
     solana_keypair::Keypair,
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::PacketBatch,
@@ -88,6 +88,7 @@ pub struct SpawnServerResult {
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 pub(crate) fn configure_server(
     identity_keypair: &Keypair,
+    enable_0rtt: bool,
 ) -> Result<(ServerConfig, String), QuicServerError> {
     let (cert, priv_key) = new_dummy_x509_certificate(identity_keypair);
     let cert_chain_pem_parts = vec![Pem {
@@ -100,6 +101,11 @@ pub(crate) fn configure_server(
         tls_server_config_builder().with_single_cert(vec![cert], priv_key)?;
     server_tls_config.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
     server_tls_config.key_log = Arc::new(KeyLogFile::new());
+    if enable_0rtt {
+        // Enable early data for 0-RTT connections
+        server_tls_config.max_early_data_size = u32::MAX;
+        server_tls_config.session_storage = ServerSessionMemoryCache::new(4096);
+    }
     let quic_server_config = QuicServerConfig::try_from(server_tls_config)?;
 
     let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
@@ -115,8 +121,14 @@ pub(crate) fn configure_server(
     // set the receive window really small initially to prevent the fresh connections
     // from slamming us with traffic.
     config.receive_window((PACKET_DATA_SIZE as u32).into());
-    // disable uni_streams until handshake is complete
-    config.max_concurrent_uni_streams(0u32.into());
+
+    let initial_max_concurrent_streams = if enable_0rtt {
+        // set max concurrent streams to a small default for 0rtt
+        QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS as u32
+    } else {
+        0
+    };
+    config.max_concurrent_uni_streams(initial_max_concurrent_streams.into());
     config.receive_window(CONNECTION_RECEIVE_WINDOW_BYTES);
     let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
     config.max_idle_timeout(Some(timeout));
@@ -155,11 +167,12 @@ pub enum QuicServerError {
 
 pub struct EndpointKeyUpdater {
     endpoints: Vec<Endpoint>,
+    enable_0rtt: bool,
 }
 
 impl NotifyKeyUpdate for EndpointKeyUpdater {
     fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        let (config, _) = configure_server(key)?;
+        let (config, _) = configure_server(key, self.enable_0rtt)?;
         for endpoint in &self.endpoints {
             endpoint.set_server_config(Some(config.clone()));
         }
@@ -567,6 +580,7 @@ pub struct QuicStreamerConfig {
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
     pub num_threads: NonZeroUsize,
+    pub enable_0rtt: bool,
 }
 
 #[derive(Clone)]
@@ -587,6 +601,7 @@ impl Default for QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
+            enable_0rtt: false,
         }
     }
 }
@@ -621,6 +636,7 @@ where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
 {
+    let enable_0rtt = quic_server_params.enable_0rtt;
     let runtime = rt(format!("{thread_name}Rt"), quic_server_params.num_threads);
     let result = {
         let _guard = runtime.enter();
@@ -645,6 +661,7 @@ where
         .unwrap();
     let updater = EndpointKeyUpdater {
         endpoints: result.endpoints.clone(),
+        enable_0rtt,
     };
     Ok(SpawnServerResult {
         endpoints: result.endpoints,

@@ -1244,6 +1244,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .requires("retransmit_xdp_cpu_cores")
             .help("EXPERIMENTAL: Enable XDP zero copy. Requires hardware support"),
     )
+    .arg(
+        Arg::with_name("enable_tpu_quic_0rtt")
+            .hidden(hidden_unless_forced())
+            .long("enable-tpu-quic-0rtt")
+            .takes_value(false)
+            .help("EXPERIMENTAL: Enable 0-RTT for TPU QUIC connections"),
+    )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())
     .args(&rpc_bigtable_config::args())
