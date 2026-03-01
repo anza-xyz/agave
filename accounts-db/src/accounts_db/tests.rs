@@ -3127,24 +3127,27 @@ fn run_test_flush_accounts_cache_if_needed(num_roots: usize, num_unrooted: usize
     db.flush_accounts_cache(false, None);
 
     let total_slots = num_roots + num_unrooted;
-    // If there's <= the max size, then nothing will be flushed from the slot
+    // If there's <= the max size, then nothing will be flushed from the cache
     if total_slots <= max_cache_slots() {
         assert_eq!(db.accounts_cache.num_slots(), total_slots);
     } else {
-        // Otherwise, all the roots are flushed, and only at most max_cache_slots()
-        // of the unrooted slots are kept in the cache
-        let expected_size = std::cmp::min(num_unrooted, max_cache_slots());
-        if expected_size > 0 {
-            // +1: slot is 1-based. slot 1 has 1 byte of data
-            for unrooted_slot in (total_slots - expected_size + 1)..total_slots {
-                assert!(
-                    db.accounts_cache
-                        .slot_cache(unrooted_slot as Slot)
-                        .is_some(),
-                    "unrooted_slot: {unrooted_slot}, total_slots: {total_slots}, expected_size: \
-                     {expected_size}"
-                );
-            }
+        // Otherwise, all roots are flushed to storage and all unrooted slots remain
+        // in the cache. unrooted slots are never evicted by the flush path, so they will
+        // always be in the cache regardless of the total size.
+        assert_eq!(db.accounts_cache.num_slots(), num_unrooted);
+        for root_slot in 0..num_roots {
+            assert!(
+                db.accounts_cache.slot_cache(root_slot as Slot).is_none(),
+                "root_slot {root_slot} should have been flushed from cache"
+            );
+        }
+        for unrooted_slot in num_roots..total_slots {
+            assert!(
+                db.accounts_cache
+                    .slot_cache(unrooted_slot as Slot)
+                    .is_some(),
+                "unrooted_slot {unrooted_slot} should remain in cache"
+            );
         }
     }
 
@@ -4495,209 +4498,6 @@ fn test_load_account_and_shrink_race_with_retry() {
 #[test]
 fn test_load_account_and_shrink_race_without_retry() {
     do_test_load_account_and_shrink_race(false);
-}
-
-#[test]
-fn test_cache_flush_delayed_remove_unrooted_race() {
-    let mut db = AccountsDb::new_single_for_tests();
-    db.load_delay = RACY_SLEEP_MS;
-    let db = Arc::new(db);
-    let slot = 10;
-    let bank_id = 10;
-
-    let lamports = 42;
-    let mut account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
-    account.set_lamports(lamports);
-
-    // Start up a thread to flush the accounts cache
-    let (flush_trial_start_sender, flush_trial_start_receiver) = crossbeam_channel::unbounded();
-    let (flush_done_sender, flush_done_receiver) = crossbeam_channel::unbounded();
-    let t_flush_cache = {
-        let db = db.clone();
-        std::thread::Builder::new()
-            .name("account-cache-flush".to_string())
-            .spawn(move || {
-                loop {
-                    // Wait for the signal to start a trial
-                    if flush_trial_start_receiver.recv().is_err() {
-                        return;
-                    }
-                    db.flush_unrooted_slot_cache(10);
-                    flush_done_sender.send(()).unwrap();
-                }
-            })
-            .unwrap()
-    };
-
-    // Start up a thread remove the slot
-    let (remove_trial_start_sender, remove_trial_start_receiver) = crossbeam_channel::unbounded();
-    let (remove_done_sender, remove_done_receiver) = crossbeam_channel::unbounded();
-    let t_remove = {
-        let db = db.clone();
-        std::thread::Builder::new()
-            .name("account-remove".to_string())
-            .spawn(move || {
-                loop {
-                    // Wait for the signal to start a trial
-                    if remove_trial_start_receiver.recv().is_err() {
-                        return;
-                    }
-                    db.remove_unrooted_slots(&[(slot, bank_id)]);
-                    remove_done_sender.send(()).unwrap();
-                }
-            })
-            .unwrap()
-    };
-
-    let num_trials = 10;
-    for _ in 0..num_trials {
-        let pubkey = Pubkey::new_unique();
-        db.store_for_tests((slot, &[(&pubkey, &account)][..]));
-        // Wait for both threads to finish
-        flush_trial_start_sender.send(()).unwrap();
-        remove_trial_start_sender.send(()).unwrap();
-        let _ = flush_done_receiver.recv();
-        let _ = remove_done_receiver.recv();
-    }
-
-    drop(flush_trial_start_sender);
-    drop(remove_trial_start_sender);
-    t_flush_cache.join().unwrap();
-    t_remove.join().unwrap();
-}
-
-#[test]
-fn test_cache_flush_remove_unrooted_race_multiple_slots() {
-    let db = AccountsDb::new_single_for_tests();
-    let db = Arc::new(db);
-    let num_cached_slots = 100;
-
-    let num_trials = 100;
-    let (new_trial_start_sender, new_trial_start_receiver) = crossbeam_channel::unbounded();
-    let (flush_done_sender, flush_done_receiver) = crossbeam_channel::unbounded();
-    // Start up a thread to flush the accounts cache
-    let t_flush_cache = {
-        let db = db.clone();
-
-        std::thread::Builder::new()
-            .name("account-cache-flush".to_string())
-            .spawn(move || {
-                loop {
-                    // Wait for the signal to start a trial
-                    if new_trial_start_receiver.recv().is_err() {
-                        return;
-                    }
-                    for slot in 0..num_cached_slots {
-                        db.flush_unrooted_slot_cache(slot);
-                    }
-                    flush_done_sender.send(()).unwrap();
-                }
-            })
-            .unwrap()
-    };
-
-    let exit = Arc::new(AtomicBool::new(false));
-
-    let t_spurious_signal = {
-        let db = db.clone();
-        let exit = exit.clone();
-        std::thread::Builder::new()
-            .name("account-cache-flush".to_string())
-            .spawn(move || {
-                loop {
-                    if exit.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    // Simulate spurious wake-up that can happen, but is too rare to
-                    // otherwise depend on in tests.
-                    db.remove_unrooted_slots_synchronization.signal.notify_all();
-                }
-            })
-            .unwrap()
-    };
-
-    // Run multiple trials. Has the added benefit of rewriting the same slots after we've
-    // dumped them in previous trials.
-    for _ in 0..num_trials {
-        // Store an account
-        let lamports = 42;
-        let mut account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
-        account.set_lamports(lamports);
-
-        // Pick random 50% of the slots to pass to `remove_unrooted_slots()`
-        let mut all_slots: Vec<(Slot, BankId)> = (0..num_cached_slots)
-            .map(|slot| {
-                let bank_id = slot + 1;
-                (slot, bank_id)
-            })
-            .collect();
-        all_slots.shuffle(&mut rand::rng());
-        let slots_to_dump = &all_slots[0..num_cached_slots as usize / 2];
-        let slots_to_keep = &all_slots[num_cached_slots as usize / 2..];
-
-        // Set up a one account per slot across many different slots, track which
-        // pubkey was stored in each slot.
-        let slot_to_pubkey_map: HashMap<Slot, Pubkey> = (0..num_cached_slots)
-            .map(|slot| {
-                let pubkey = Pubkey::new_unique();
-                db.store_for_tests((slot, &[(&pubkey, &account)][..]));
-                (slot, pubkey)
-            })
-            .collect();
-
-        // Signal the flushing shred to start flushing
-        new_trial_start_sender.send(()).unwrap();
-
-        // Here we want to test both:
-        // 1) Flush thread starts flushing a slot before we try dumping it.
-        // 2) Flushing thread trying to flush while/after we're trying to dump the slot,
-        // in which case flush should ignore/move past the slot to be dumped
-        //
-        // Hence, we split into chunks to get the dumping of each chunk to race with the
-        // flushes. If we were to dump the entire chunk at once, then this reduces the possibility
-        // of the flush occurring first since the dumping logic reserves all the slots it's about
-        // to dump immediately.
-
-        for chunks in slots_to_dump.chunks(slots_to_dump.len() / 2) {
-            db.remove_unrooted_slots(chunks);
-        }
-
-        // Check that all the slots in `slots_to_dump` were completely removed from the
-        // cache, storage, and index
-
-        for (slot, _) in slots_to_dump {
-            assert_no_storages_at_slot(&db, *slot);
-            assert!(db.accounts_cache.slot_cache(*slot).is_none());
-            let account_in_slot = slot_to_pubkey_map[slot];
-            assert!(!db.accounts_index.contains(&account_in_slot));
-        }
-
-        // Wait for flush to finish before starting next trial
-
-        flush_done_receiver.recv().unwrap();
-
-        for (slot, bank_id) in slots_to_keep {
-            let account_in_slot = slot_to_pubkey_map[slot];
-            assert!(
-                db.load(
-                    &Ancestors::from(vec![(*slot, 0)]),
-                    &account_in_slot,
-                    LoadHint::FixedMaxRoot,
-                    PopulateReadCache::True,
-                )
-                .is_some()
-            );
-            // Clear for next iteration so that `assert!(self.storage.get_slot_storage_entry(purged_slot).is_none());`
-            // in `purge_slot_pubkeys()` doesn't trigger
-            db.remove_unrooted_slots(&[(*slot, *bank_id)]);
-        }
-    }
-
-    exit.store(true, Ordering::Relaxed);
-    drop(new_trial_start_sender);
-    t_flush_cache.join().unwrap();
-
-    t_spurious_signal.join().unwrap();
 }
 
 #[test]
