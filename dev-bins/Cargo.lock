@@ -7314,6 +7314,7 @@ name = "solana-geyser-plugin-manager"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-geyser-plugin-interface",
+ "arc-swap",
  "bs58",
  "crossbeam-channel",
  "json5",
@@ -9287,6 +9288,7 @@ dependencies = [
  "agave-feature-set",
  "agave-snapshots",
  "agave-syscalls",
+ "arc-swap",
  "base64 0.22.1",
  "bincode",
  "crossbeam-channel",
