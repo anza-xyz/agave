@@ -6,6 +6,7 @@ use {
         route::Router,
         route_monitor::RouteMonitor,
         set_cpu_affinity,
+        tx_loop::Request,
         tx_loop::{TxLoop, TxLoopBuilder, TxLoopConfigBuilder},
         umem::{OwnedUmem, PageAlignedMemory},
     },
@@ -20,7 +21,7 @@ use {
     crossbeam_channel::{Sender, TrySendError},
     std::{
         error::Error,
-        net::{Ipv4Addr, SocketAddr},
+        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
         sync::{Arc, atomic::AtomicBool},
         thread,
     },
@@ -66,9 +67,56 @@ impl XdpConfig {
     }
 }
 
+/// [`XdpRequest`] encapsulates the information needed to retransmit a packet via XDP.
+/// Besides the payload and destination addresses, it also optionally allows overriding the source
+/// address of the packet which is useful for quinn.
+pub struct XdpRequest {
+    pub addrs: XdpAddrs,
+    pub payload: Bytes,
+    pub src_addr_override: Option<SocketAddrV4>,
+}
+
+impl XdpRequest {
+    pub fn new(addrs: impl Into<XdpAddrs>, payload: Bytes) -> Self {
+        Self {
+            addrs: addrs.into(),
+            payload,
+            src_addr_override: None,
+        }
+    }
+
+    pub fn with_src_addr(
+        addrs: impl Into<XdpAddrs>,
+        payload: Bytes,
+        src_addr: SocketAddrV4,
+    ) -> Self {
+        let mut request = Self::new(addrs, payload);
+        request.src_addr_override = Some(src_addr);
+        request
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Request for XdpRequest {
+    type Addrs = XdpAddrs;
+    type Payload = Bytes;
+
+    fn addrs(&self) -> &Self::Addrs {
+        &self.addrs
+    }
+
+    fn payload(&self) -> &Self::Payload {
+        &self.payload
+    }
+
+    fn src_address(&self) -> Option<SocketAddrV4> {
+        self.src_addr_override
+    }
+}
+
 #[derive(Clone)]
 pub struct XdpSender {
-    senders: Vec<Sender<(XdpAddrs, Bytes)>>,
+    senders: Vec<Sender<XdpRequest>>,
 }
 
 pub enum XdpAddrs {
@@ -105,13 +153,12 @@ impl XdpSender {
     pub fn try_send(
         &self,
         sender_index: usize,
-        addr: impl Into<XdpAddrs>,
-        payload: Bytes,
-    ) -> Result<(), TrySendError<(XdpAddrs, Bytes)>> {
+        request: XdpRequest,
+    ) -> Result<(), TrySendError<XdpRequest>> {
         let idx = sender_index
             .checked_rem(self.senders.len())
             .expect("XdpSender::senders should not be empty");
-        self.senders[idx].try_send((addr.into(), payload))
+        self.senders[idx].try_send(request)
     }
 }
 

@@ -9,7 +9,7 @@ use {
     },
     agave_votor::event::VotorEvent,
     agave_votor_messages::migration::MigrationStatus,
-    agave_xdp::xdp_retransmitter::XdpSender,
+    agave_xdp::xdp_retransmitter::{XdpRequest, XdpSender},
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError},
     lru::LruCache,
     rand::Rng,
@@ -485,7 +485,10 @@ fn retransmit_shred(
         RetransmitSocket::Xdp(sender) => {
             let mut sent = num_addrs;
             if num_addrs > 0
-                && let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred.bytes)
+                && let Err(e) = sender.try_send(
+                    key.index() as usize,
+                    XdpRequest::new(addrs.to_vec(), shred.bytes),
+                )
             {
                 log::warn!("xdp channel full: {e:?}");
                 stats
