@@ -68,20 +68,6 @@ async fn simulate_for_compute_unit_limit_unchecked(
     u32::try_from(units_consumed).map_err(Into::into)
 }
 
-/// Returns the compute unit limit used during simulation
-///
-/// Returns an error if the message does not contain a compute unit limit
-/// instruction or if the simulation fails.
-pub(crate) async fn simulate_for_compute_unit_limit(
-    rpc_client: &RpcClient,
-    message: &Message,
-) -> Result<u32, Box<dyn std::error::Error>> {
-    if get_compute_unit_limit_instruction_index(message).is_none() {
-        return Err("No compute unit limit instruction found".into());
-    }
-    simulate_for_compute_unit_limit_unchecked(rpc_client, message).await
-}
-
 /// Simulates a message and returns the index of the compute unit limit
 /// instruction
 ///
