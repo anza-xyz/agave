@@ -1181,6 +1181,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "attohttpc"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16e2cdb6d5ed835199484bb92bb8b3edd526effe995c61732580439c1a67e2e9"
+dependencies = [
+ "base64 0.22.1",
+ "flate2",
+ "http 1.1.0",
+ "log",
+ "native-tls",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "url 2.5.8",
+]
+
+[[package]]
 name = "atty"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3309,21 +3326,19 @@ dependencies = [
 
 [[package]]
 name = "goauth"
-version = "0.13.1"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8af59a261bcf42f45d1b261232847b9b850ba0a1419d6100698246fb66e9240"
+checksum = "c6a66933ee399eb5dcb9fa142d0d0eaf3faca037a06add0e8de4fdec25f11d21"
 dependencies = [
  "arc-swap",
- "futures 0.3.32",
+ "attohttpc",
  "log",
- "reqwest 0.11.27",
  "serde",
  "serde_derive",
  "serde_json",
  "simpl",
  "smpl_jwt",
  "time",
- "tokio",
 ]
 
 [[package]]
@@ -5992,12 +6007,10 @@ dependencies = [
  "http-body 0.4.5",
  "hyper 0.14.32",
  "hyper-rustls 0.24.1",
- "hyper-tls",
  "ipnet",
  "js-sys",
  "log",
  "mime",
- "native-tls",
  "once_cell",
  "percent-encoding 2.3.2",
  "pin-project-lite",
@@ -6009,7 +6022,6 @@ dependencies = [
  "sync_wrapper 0.1.2",
  "system-configuration",
  "tokio",
- "tokio-native-tls",
  "tokio-rustls 0.24.1",
  "tokio-util 0.7.18",
  "tower-service",
@@ -6843,11 +6855,11 @@ dependencies = [
 
 [[package]]
 name = "smpl_jwt"
-version = "0.7.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95b6ff8c21c74ce7744643a7cddbb02579a44f1f77e4316bff1ddb741aca8ac9"
+checksum = "a45432dc6b645c982d4ef68966b4507fb57d98ca67289df780cd7ca4a4369f5e"
 dependencies = [
- "base64 0.13.1",
+ "base64 0.22.1",
  "log",
  "openssl",
  "serde",
