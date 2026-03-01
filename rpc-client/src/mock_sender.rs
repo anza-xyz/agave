@@ -17,7 +17,7 @@ use {
         config::RpcBlockProductionConfig,
         request::RpcRequest,
         response::{
-            Response, RpcAccountBalance, RpcBlockProduction, RpcBlockProductionRange, RpcBlockhash,
+            Response, RpcAccountBalance, RpcBlockCommitment, RpcBlockProduction, RpcBlockProductionRange, RpcBlockhash,
             RpcConfirmedTransactionStatusWithSignature, RpcContactInfo, RpcIdentity,
             RpcInflationGovernor, RpcInflationRate, RpcInflationReward, RpcKeyedAccount,
             RpcPerfSample, RpcPrioritizationFee, RpcResponseContext, RpcSimulateTransactionResult,
@@ -35,6 +35,7 @@ use {
         UiRawMessage, UiTransaction, UiTransactionStatusMeta, option_serializer::OptionSerializer,
     },
     solana_version::Version,
+    solana_vote_interface::state::MAX_LOCKOUT_HISTORY,
     std::{
         collections::{HashMap, VecDeque},
         net::SocketAddr,
@@ -260,7 +261,12 @@ impl RpcSender for MockSender {
                 incremental: Some(110),
             }),
             "getBlockHeight" => Value::Number(Number::from(1234)),
+            "getSlotLeader" => Value::String(PUBKEY.to_string()),
             "getSlotLeaders" => json!([PUBKEY]),
+            "getBlockCommitment" => serde_json::to_value(RpcBlockCommitment {
+                commitment: Some([0; MAX_LOCKOUT_HISTORY + 1]),
+                total_stake: 42,
+            })?,
             "getBlockProduction" => {
                 if params.is_null() {
                     json!(Response {

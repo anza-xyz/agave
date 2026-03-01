@@ -1936,6 +1936,122 @@ impl RpcClient {
             .await
     }
 
+    /// Returns the commitment information for a particular block.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getBlockCommitment`] RPC method.
+    ///
+    /// [`getBlockCommitment`]: https://solana.com/docs/rpc/http/getblockcommitment
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+    /// # use solana_clock::Slot;
+    /// # futures::executor::block_on(async {
+    /// #     let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let slot: Slot = 5;
+    /// let commitment = rpc_client.get_block_commitment(slot).await?;
+    /// #     Ok::<(), Error>(())
+    /// # })?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub async fn get_block_commitment(
+        &self,
+        slot: Slot,
+    ) -> ClientResult<RpcBlockCommitment<[u64; MAX_LOCKOUT_HISTORY + 1]>> {
+        self.send(RpcRequest::GetBlockCommitment, json!([slot]))
+            .await
+    }
+
+    /// Returns the leader of the current slot using the configured [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getSlotLeader`] RPC method.
+    ///
+    /// [`getSlotLeader`]: https://solana.com/docs/rpc/http/getslotleader
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+    /// # futures::executor::block_on(async {
+    /// #     let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let leader = rpc_client.get_slot_leader().await?;
+    /// #     Ok::<(), Error>(())
+    /// # })?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub async fn get_slot_leader(&self) -> ClientResult<Pubkey> {
+        self.get_slot_leader_with_commitment(self.commitment()).await
+    }
+
+    /// Returns the leader of the current slot using the provided [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getSlotLeader`] RPC method.
+    ///
+    /// [`getSlotLeader`]: https://solana.com/docs/rpc/http/getslotleader
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+    /// # use solana_commitment_config::CommitmentConfig;
+    /// # futures::executor::block_on(async {
+    /// #     let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let commitment_config = CommitmentConfig::processed();
+    /// let leader = rpc_client.get_slot_leader_with_commitment(commitment_config).await?;
+    /// #     Ok::<(), Error>(())
+    /// # })?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub async fn get_slot_leader_with_commitment(
+        &self,
+        commitment_config: CommitmentConfig,
+    ) -> ClientResult<Pubkey> {
+        self.get_slot_leader_with_config(RpcContextConfig {
+            commitment: Some(commitment_config),
+            ..RpcContextConfig::default()
+        })
+        .await
+    }
+
+    /// Returns the leader of the current slot using the provided [`RpcContextConfig`].
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getSlotLeader`] RPC method.
+    ///
+    /// [`getSlotLeader`]: https://solana.com/docs/rpc/http/getslotleader
+    pub async fn get_slot_leader_with_config(
+        &self,
+        config: RpcContextConfig,
+    ) -> ClientResult<Pubkey> {
+        let params = if config == RpcContextConfig::default() {
+            Value::Null
+        } else {
+            json!([config])
+        };
+        let slot_leader: String = self.send(RpcRequest::GetSlotLeader, params).await?;
+        Pubkey::from_str(&slot_leader).map_err(|_| {
+            ClientError::new_with_request(
+                RpcError::ParseError("Pubkey".to_string()).into(),
+                RpcRequest::GetSlotLeader,
+            )
+        })
+    }
+
     /// Returns the slot leaders for a given slot range.
     ///
     /// # RPC Reference
