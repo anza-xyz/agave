@@ -1948,6 +1948,14 @@ impl ReplayStage {
             )
         };
 
+        // Wait for any active schedulers on the removed banks to finish
+        // executing transactions. This prevents the race where a descendant
+        // bank is loading accounts from an ancestor slot that is about to
+        // be purged by remove_unrooted_slots().
+        for bank_with_scheduler in &removed_banks {
+            let _ = bank_with_scheduler.wait_for_completed_scheduler();
+        }
+
         // Clear the accounts for these slots so that any ongoing RPC scans fail.
         // These have to be atomically cleared together in the same batch, in order
         // to prevent RPC from seeing inconsistent results in scans.
