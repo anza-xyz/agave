@@ -6,7 +6,7 @@ use {
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_trace::BankingTracer,
         block_creation_loop::ReplayHighestFrozen,
-        bls_sigverify,
+        bls_sigverify::bls_sigverifier,
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
             VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, VoteTracker,
@@ -153,7 +153,7 @@ impl Default for TvuConfig {
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
-            bls_sigverify_threads: NonZeroUsize::new(4).expect("1 is non-zero"),
+            bls_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             xdp_sender: None,
         }
     }
@@ -303,12 +303,12 @@ impl Tvu {
             };
 
             // sigverifier
-            let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-            let bls_sigverifier = bls_sigverify::bls_sigverifier::spawn_service(
+            let banks = bank_forks.read().unwrap().sharable_banks();
+            let bls_sigverifier_t = bls_sigverifier::spawn_service(
                 exit.clone(),
                 migration_status.clone(),
                 bls_packet_receiver,
-                sharable_banks,
+                banks,
                 verified_voter_slots_sender,
                 rewards_msg_sender,
                 consensus_message_sender.clone(),
@@ -321,7 +321,7 @@ impl Tvu {
             let mut key_notifiers = key_notifiers.write().unwrap();
             key_notifiers.add(KeyUpdaterType::Bls, bls_key_updater);
 
-            Some((bls_streamer_t, bls_sigverifier))
+            Some((bls_streamer_t, bls_sigverifier_t))
         } else {
             None
         };
