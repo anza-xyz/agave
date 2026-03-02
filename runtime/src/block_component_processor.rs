@@ -148,14 +148,14 @@ impl BlockComponentProcessor {
             }
 
             // Everything else is only valid once migration is complete
-            BlockMarkerV1::BlockFooter(footer) => self.on_footer(
+            BlockMarkerV1::BlockFooter(footer) if markers_fully_enabled => self.on_footer(
                 bank,
                 parent_bank,
                 footer.into_inner(),
                 finalization_cert_sender,
             ),
 
-            BlockMarkerV1::UpdateParent(update_parent) => {
+            BlockMarkerV1::UpdateParent(update_parent) if markers_fully_enabled => {
                 self.on_update_parent(update_parent.inner())
             }
 
@@ -677,6 +677,46 @@ mod tests {
         let result = processor.on_marker(bank, parent, marker, None, &migration_status);
         assert_eq!(
             result,
+            Err(BlockComponentProcessorError::BlockComponentPreMigration)
+        );
+    }
+
+    #[test]
+    fn test_footer_and_update_parent_rejected_pre_migration() {
+        let migration_status = MigrationStatus::default();
+        let parent = create_test_bank();
+        let bank = create_child_bank(&parent, 1);
+
+        let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
+        let footer_marker = VersionedBlockMarker::new_block_footer(BlockFooterV1 {
+            bank_hash: Hash::new_unique(),
+            block_producer_time_nanos: (parent_time_nanos + 500_000_000) as u64,
+            block_user_agent: vec![],
+            final_cert: None,
+            skip_reward_cert: None,
+            notar_reward_cert: None,
+        });
+
+        let mut processor = BlockComponentProcessor::default();
+        assert_eq!(
+            processor.on_marker(
+                bank.clone(),
+                parent.clone(),
+                footer_marker,
+                None,
+                &migration_status
+            ),
+            Err(BlockComponentProcessorError::BlockComponentPreMigration)
+        );
+
+        let update_parent_marker = VersionedBlockMarker::new_update_parent(UpdateParentV1 {
+            new_parent_slot: 0,
+            new_parent_block_id: Hash::default(),
+        });
+
+        let mut processor = BlockComponentProcessor::default();
+        assert_eq!(
+            processor.on_marker(bank, parent, update_parent_marker, None, &migration_status),
             Err(BlockComponentProcessorError::BlockComponentPreMigration)
         );
     }
