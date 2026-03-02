@@ -332,7 +332,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
         enable_address_translation: true,
-        enable_stack_frame_gaps: true,
+        enable_stack_frame_gaps: !feature_set.virtual_address_space_adjustments,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
         enable_register_tracing: debugging_features,
@@ -342,7 +342,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         sanitize_user_provided_values: true,
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
-        aligned_memory_mapping: !feature_set.stricter_abi_and_runtime_constraints,
+        aligned_memory_mapping: !feature_set.virtual_address_space_adjustments,
         allow_memory_region_zero: feature_set.enable_sbpf_v3_deployment_and_execution,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
