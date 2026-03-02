@@ -19,7 +19,10 @@ use {
         iter::{self, FromIterator},
         ops::Range,
         str::FromStr,
-        sync::{RwLock, atomic::AtomicBool},
+        sync::{
+            RwLock,
+            atomic::{AtomicBool, Ordering},
+        },
         thread::{self, Builder, JoinHandle, sleep},
     },
     test_case::{test_case, test_matrix},
@@ -6844,27 +6847,27 @@ fn test_write_accounts_to_cache_scenarios(
     }
 
     let ephemeral = db
-        .stats
+        .store_accounts_unfrozen_stats
         .num_ephemeral_accounts_skipped
-        .load(std::sync::atomic::Ordering::Relaxed);
+        .load(Ordering::Relaxed);
     assert_eq!(
         ephemeral, expected_ephemeral_skips,
         "Wrong number of ephemeral skips"
     );
 
     let ancestors_zero_lamport = db
-        .stats
+        .store_accounts_unfrozen_stats
         .num_ancestors_zero_lamport_skipped
-        .load(std::sync::atomic::Ordering::Relaxed);
+        .load(Ordering::Relaxed);
     assert_eq!(
         ancestors_zero_lamport, expected_ancestors_skips,
         "Wrong number of ancestors zero lamport skips"
     );
 
     let duplicates = db
-        .stats
+        .store_accounts_unfrozen_stats
         .num_duplicate_accounts_skipped
-        .load(std::sync::atomic::Ordering::Relaxed);
+        .load(Ordering::Relaxed);
     assert_eq!(
         duplicates, expected_duplicate_skips,
         "Wrong number of duplicate skips"
