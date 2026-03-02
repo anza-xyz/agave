@@ -546,7 +546,7 @@ solana-svm-test-harness-instr = { path = "svm-test-harness/instr", version = "=4
 solana-svm-timings = { path = "svm-timings", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-transaction = { path = "svm-transaction", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-solana-system-interface = { version = "3.0", features = ["alloc","bincode","serde"] }
+solana-system-interface = { version = "3.1", features = ["alloc","bincode","serde"] }
 solana-system-program = { path = "programs/system", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-system-transaction = "3.0.0"
 solana-sysvar = "3.1.1"
