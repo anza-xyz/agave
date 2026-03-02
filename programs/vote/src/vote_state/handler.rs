@@ -2469,4 +2469,20 @@ mod tests {
             assert_eq!(v4.inflation_rewards_commission_bps, bps);
         }
     }
+
+    #[test]
+    fn test_compute_vote_latency() {
+        for (voted_for_slot, current_slot, expected) in [
+            (0, 0, 0),                   // zero latency
+            (0, 1, 1),                   // normal
+            (0, 255, 255),               // max u8
+            (0, 256, 255),               // clamped to u8::MAX
+            (0, 1_000, 255),             // large gap, clamped
+            (u64::MAX - 1, u64::MAX, 1), // near-max slots
+            (5, 5, 0),                   // same slot
+            (10, 5, 0),                  // current < voted, saturating_sub → 0
+        ] {
+            assert_eq!(compute_vote_latency(voted_for_slot, current_slot), expected);
+        }
+    }
 }
