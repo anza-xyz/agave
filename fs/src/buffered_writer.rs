@@ -15,7 +15,7 @@ const DEFAULT_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 /// Return a buffered writer for creating a new file at `path`
 ///
 /// The returned writer is using a buffer size tuned for writing large files to disks.
-pub fn large_file_buf_writer(path: impl AsRef<Path>) -> io::Result<impl io::Write + io::Seek> {
+pub fn large_file_buf_writer(path: impl AsRef<Path>) -> io::Result<impl io::Write> {
     let file = fs::File::create(path)?;
 
     Ok(BufWriter::with_capacity(DEFAULT_BUFFER_SIZE, file))
@@ -48,6 +48,7 @@ impl<W: io::Write> SizeLimitedWriter<W> {
 }
 
 impl<W: io::Write> io::Write for SizeLimitedWriter<W> {
+    #[allow(clippy::arithmetic_side_effects)]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let attempted_size = self.bytes_written + buf.len() as FileSize;
         if attempted_size > self.limit {
@@ -79,7 +80,6 @@ mod tests {
         let mut w = SizeLimitedWriter::new(&mut buf, limit);
         w.write_all(data).unwrap();
         assert_eq!(w.bytes_written(), data.len() as FileSize);
-        drop(w);
         assert_eq!(buf, data);
     }
 
@@ -103,7 +103,6 @@ mod tests {
         let err = w.write(b"four").unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::FileTooLarge);
         assert_eq!(w.bytes_written(), 2);
-        drop(w);
         assert_eq!(buf, b"hi");
     }
 }
