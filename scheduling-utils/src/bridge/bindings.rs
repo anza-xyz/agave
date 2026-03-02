@@ -18,7 +18,7 @@ use {
     agave_transaction_view::{
         result::TransactionViewError, transaction_view::SanitizedTransactionView,
     },
-    metrics::{Gauge, gauge},
+    metrics::{Counter, Gauge, counter, gauge},
     rts_alloc::Allocator,
     slotmap::SlotMap,
     solana_fee::FeeFeatures,
@@ -295,7 +295,7 @@ where
                     self.allocator.free_offset(msg.transaction.offset);
                 }
 
-                // TODO: Metrics.
+                self.metrics.recv_tpu_err_sanitize.increment(1);
 
                 continue;
             };
@@ -513,12 +513,14 @@ where
 
 struct SchedulerBindingsMetrics {
     state_len: Gauge,
+    recv_tpu_err_sanitize: Counter,
 }
 
 impl SchedulerBindingsMetrics {
     fn new() -> Self {
         Self {
             state_len: gauge!("container_len", "label" => "state"),
+            recv_tpu_err_sanitize: counter!("recv_tpu", "label" => "err", "err" => "sanitize"),
         }
     }
 }
