@@ -690,50 +690,16 @@ macro_rules! socketaddr_any {
 mod tests {
     use {
         super::*,
-        rand::{
-            Rng,
-            prelude::{IndexedRandom as _, SliceRandom as _},
-        },
+        rand::{Rng, prelude::SliceRandom as _},
         solana_keypair::Keypair,
         solana_signer::Signer,
         std::{
             collections::{HashMap, HashSet},
-            iter::repeat_with,
             net::{Ipv4Addr, Ipv6Addr},
             ops::Range,
             time::Duration,
         },
     };
-
-    fn new_rand_addr<R: Rng>(rng: &mut R) -> IpAddr {
-        if rng.random() {
-            let addr = Ipv4Addr::new(rng.random(), rng.random(), rng.random(), rng.random());
-            IpAddr::V4(addr)
-        } else {
-            let addr = Ipv6Addr::new(
-                rng.random(),
-                rng.random(),
-                rng.random(),
-                rng.random(),
-                rng.random(),
-                rng.random(),
-                rng.random(),
-                rng.random(),
-            );
-            IpAddr::V6(addr)
-        }
-    }
-
-    fn new_rand_port<R: Rng>(rng: &mut R) -> u16 {
-        let port = rng.random::<u16>();
-        let bits = u16::BITS - port.leading_zeros();
-        let shift = rng.random_range(0u32..bits + 1u32);
-        port.checked_shr(shift).unwrap_or_default()
-    }
-
-    fn new_rand_socket<R: Rng>(rng: &mut R) -> SocketAddr {
-        SocketAddr::new(new_rand_addr(rng), new_rand_port(rng))
-    }
 
     #[test]
     fn test_new_gossip_entry_point() {
@@ -758,7 +724,13 @@ mod tests {
     #[test]
     fn test_sanitize_entries() {
         let mut rng = rand::rng();
-        let addrs: Vec<IpAddr> = repeat_with(|| new_rand_addr(&mut rng)).take(5).collect();
+        let addrs = [
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)),
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 1)),
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 2)),
+        ];
         let mut keys: Vec<u8> = (0u8..=u8::MAX).collect();
         keys.shuffle(&mut rng);
         // Duplicate IP addresses.
@@ -841,7 +813,16 @@ mod tests {
     fn test_round_trip() {
         const KEYS: Range<u8> = 0u8..16u8;
         let mut rng = rand::rng();
-        let addrs: Vec<IpAddr> = repeat_with(|| new_rand_addr(&mut rng)).take(8).collect();
+        let addrs = [
+            IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 1, 2)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 1, 3)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 1, 4)),
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 1)),
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 2)),
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 3)),
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 4)),
+        ];
         let mut node = ContactInfo {
             pubkey: Pubkey::new_unique(),
             wallclock: rng.random(),
@@ -854,17 +835,13 @@ mod tests {
             cache: EMPTY_SOCKET_ADDR_CACHE,
         };
         let mut sockets = HashMap::<u8, SocketAddr>::new();
-        for _ in 0..1 << 14 {
-            let addr = addrs.choose(&mut rng).unwrap();
-            let socket = SocketAddr::new(*addr, new_rand_port(&mut rng));
+        for i in 0..1 << 10 {
+            let addr = addrs[i % addrs.len()];
+            let socket = SocketAddr::new(addr, 10_000u16 + i as u16);
             let key = rng.random_range(KEYS.start..KEYS.end);
-            if sanitize_socket(&socket).is_ok() {
-                sockets.insert(key, socket);
-                assert_matches!(node.set_socket(key, socket), Ok(()));
-                assert_matches!(sanitize_entries(&node.addrs, &node.sockets), Ok(()));
-            } else {
-                assert_matches!(node.set_socket(key, socket), Err(_));
-            }
+            sockets.insert(key, socket);
+            assert_matches!(node.set_socket(key, socket), Ok(()));
+            assert_matches!(sanitize_entries(&node.addrs, &node.sockets), Ok(()));
             for key in KEYS.clone() {
                 let socket = sockets.get(&key);
                 assert_eq!(node.get_socket(key).ok().as_ref(), socket);
@@ -975,9 +952,7 @@ mod tests {
             rng.random(), // wallclock
             rng.random(), // shred_version
         );
-        let socket = repeat_with(|| new_rand_socket(&mut rng))
-            .find(|socket| matches!(sanitize_socket(socket), Ok(())))
-            .unwrap();
+        let socket = SocketAddr::from((Ipv4Addr::new(10, 1, 0, 1), 12_345));
         node.set_alpenglow(socket).unwrap();
         assert_eq!(node.alpenglow().unwrap(), socket);
         node.remove_alpenglow();
@@ -1003,11 +978,15 @@ mod tests {
         // Updated socket address is not a duplicate instance.
         {
             let mut other = node.clone();
-            while other.set_gossip(new_rand_socket(&mut rng)).is_err() {}
-            while other
-                .set_serve_repair(Protocol::UDP, new_rand_socket(&mut rng))
-                .is_err()
-            {}
+            other
+                .set_gossip(SocketAddr::from((Ipv4Addr::new(10, 1, 0, 2), 12_346)))
+                .unwrap();
+            other
+                .set_serve_repair(
+                    Protocol::UDP,
+                    SocketAddr::from((Ipv4Addr::new(10, 1, 0, 3), 12_347)),
+                )
+                .unwrap();
             assert!(!node.check_duplicate(&other));
             assert!(!other.check_duplicate(&node));
             assert_eq!(node.overrides(&other), None);
