@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        device::{DeviceQueue, NetworkDevice, QueueId, RingSizes, TxCompletionRing},
+        device::{DeviceQueue, NetworkDevice, QueueId, RingSizes, TxCompletionRing, TxRing},
         gre::{construct_gre_packet, gre_packet_size},
         netlink::MacAddress,
         packet::{
@@ -11,7 +11,7 @@ use {
         },
         route::NextHop,
         set_cpu_affinity,
-        socket::{Socket, Tx, TxRing},
+        socket::{Socket, Tx},
         umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
