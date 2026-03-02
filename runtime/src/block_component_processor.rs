@@ -404,7 +404,10 @@ impl BlockComponentProcessor {
 mod tests {
     use {
         super::*,
-        crate::{bank::Bank, genesis_utils::create_genesis_config},
+        crate::{
+            bank::Bank,
+            genesis_utils::{activate_all_features_alpenglow, create_genesis_config},
+        },
         solana_entry::block_component::{
             BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedUpdateParent,
         },
@@ -414,6 +417,12 @@ mod tests {
 
     fn create_test_bank() -> Arc<Bank> {
         let genesis_config_info = create_genesis_config(10_000);
+        Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config))
+    }
+
+    fn create_test_bank_alpenglow() -> Arc<Bank> {
+        let mut genesis_config_info = create_genesis_config(10_000);
+        activate_all_features_alpenglow(&mut genesis_config_info.genesis_config);
         Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config))
     }
 
@@ -880,7 +889,7 @@ mod tests {
             ..Default::default()
         };
 
-        let parent = create_test_bank();
+        let parent = create_test_bank_alpenglow();
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
 
         // Set up clock on parent so validation doesn't skip bounds checking
