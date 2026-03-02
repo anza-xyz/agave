@@ -53,7 +53,7 @@ impl RentCollector {
                 * f64::from_le_bytes(self.rent.exemption_threshold))
                 as u64,
             exemption_threshold: 1.0f64.to_le_bytes(),
-            ..Rent::default()
+            burn_percent: 50,
         }
     }
 }
