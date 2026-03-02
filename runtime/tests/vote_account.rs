@@ -552,3 +552,100 @@ fn test_clone_and_filter_for_vat_empty_accounts() {
         vote_accounts.clone_and_filter_for_vat(current_limit - 500, MIN_STAKE_FOR_STAKED_ACCOUNT);
     assert_eq!(filtered.len(), 0);
 }
+
+#[test]
+fn test_vote_account_trailing_bytes_ignored() {
+    // Trailing bytes (zero and garbage) must not affect VoteAccount
+    // accessor results.
+    let mut rng = rand::rng();
+    let base_account = new_rand_vote_account(&mut rng, None, true);
+    let base_data = base_account.data().to_vec();
+
+    // With trailing zeros.
+    let mut data_zero = base_data.clone();
+    data_zero.extend_from_slice(&[0x00; 42]);
+    let mut acct_zero = AccountSharedData::new(
+        base_account.lamports(),
+        data_zero.len(),
+        base_account.owner(),
+    );
+    acct_zero.set_data_from_slice(&data_zero);
+    let va_zero = VoteAccount::try_from(acct_zero).unwrap();
+
+    // With trailing garbage.
+    let mut data_garbage = base_data.clone();
+    data_garbage.extend_from_slice(&[0xFF; 42]);
+    let mut acct_garbage = AccountSharedData::new(
+        base_account.lamports(),
+        data_garbage.len(),
+        base_account.owner(),
+    );
+    acct_garbage.set_data_from_slice(&data_garbage);
+    let va_garbage = VoteAccount::try_from(acct_garbage).unwrap();
+
+    // Both should return identical accessor values.
+    assert_eq!(va_zero.node_pubkey(), va_garbage.node_pubkey());
+}
+
+#[test]
+fn test_vote_account_v3_vs_v4_accessor_parity() {
+    // Same logical vote state in V3 and V4 should produce equivalent
+    // VoteAccount accessor results.
+    let node_pubkey = Pubkey::new_unique();
+    let authorized_voter = Pubkey::new_unique();
+    let authorized_withdrawer = Pubkey::new_unique();
+    let commission = 42u8;
+
+    // V3
+    let v3_state = solana_vote_interface::state::VoteStateV3::new(
+        &VoteInit {
+            node_pubkey,
+            authorized_voter,
+            authorized_withdrawer,
+            commission,
+        },
+        &solana_clock::Clock::default(),
+    );
+    let v3_versioned = VoteStateVersions::V3(Box::new(v3_state));
+    let v3_bytes = bincode::serialize(&v3_versioned).unwrap();
+    let mut v3_account = AccountSharedData::new(
+        10_000_000,
+        v3_bytes.len(),
+        &solana_vote_interface::program::id(),
+    );
+    v3_account.set_data_from_slice(&v3_bytes);
+    let va_v3 = VoteAccount::try_from(v3_account).unwrap();
+
+    // V4 (equivalent state via migration defaults).
+    let v4_state = VoteStateV4 {
+        node_pubkey,
+        authorized_voters: AuthorizedVoters::new(0, authorized_voter),
+        authorized_withdrawer,
+        inflation_rewards_commission_bps: commission as u16 * 100,
+        ..VoteStateV4::default()
+    };
+    let v4_versioned = VoteStateVersions::new_v4(v4_state);
+    let v4_bytes = bincode::serialize(&v4_versioned).unwrap();
+    let mut v4_account = AccountSharedData::new(
+        10_000_000,
+        v4_bytes.len(),
+        &solana_vote_interface::program::id(),
+    );
+    v4_account.set_data_from_slice(&v4_bytes);
+    let va_v4 = VoteAccount::try_from(v4_account).unwrap();
+
+    // Accessors should return equivalent values.
+    assert_eq!(va_v3.node_pubkey(), va_v4.node_pubkey());
+
+    let view_v3 = va_v3.vote_state_view();
+    let view_v4 = va_v4.vote_state_view();
+    assert_eq!(view_v3.commission(), view_v4.commission());
+    assert_eq!(view_v3.root_slot(), view_v4.root_slot());
+    assert_eq!(view_v3.last_voted_slot(), view_v4.last_voted_slot());
+    assert_eq!(view_v3.last_timestamp(), view_v4.last_timestamp());
+    assert_eq!(view_v3.num_epoch_credits(), view_v4.num_epoch_credits());
+    assert_eq!(
+        view_v3.get_authorized_voter(0),
+        view_v4.get_authorized_voter(0)
+    );
+}
