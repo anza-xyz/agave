@@ -1261,7 +1261,7 @@ pub(crate) mod tests {
 
             let instruction = Instruction::new_with_bytes(*target_program_id, &[], Vec::new());
 
-            invoke_context.native_invoke(instruction, &[])
+            invoke_context.native_invoke_signed(instruction, &[])
         });
     }
 

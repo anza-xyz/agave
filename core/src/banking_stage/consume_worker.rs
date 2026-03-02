@@ -121,7 +121,10 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             bank,
             &work.transactions,
             &work.max_ages,
-            ExecutionFlags::default(),
+            ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing: false,
+            },
         );
         self.metrics.update_for_consume(&output);
         self.metrics.has_data.store(true, Ordering::Relaxed);
@@ -893,7 +896,6 @@ pub(crate) mod external {
                 let fee_payer_balance = working_bank
                     .rc
                     .accounts
-                    .accounts_db
                     .load_with_fixed_root(
                         &working_bank.ancestors,
                         &transaction.static_account_keys()[0],
@@ -2214,7 +2216,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         // Warp to next epoch for MaxAge tests.
         let mut bank = Bank::new_from_parent(
             bank.clone(),

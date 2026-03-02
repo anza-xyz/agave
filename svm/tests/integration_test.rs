@@ -3459,7 +3459,7 @@ fn svm_metrics_accumulation() {
 mod balance_collector {
     use {
         super::*,
-        rand0_7::prelude::*,
+        rand::prelude::*,
         solana_program_pack::Pack,
         spl_generic_token::token_2022,
         spl_token_interface::state::{
@@ -3484,13 +3484,13 @@ mod balance_collector {
     impl Transfer {
         // given a set of users, picks two randomly and does a random transfer between them
         fn new_rand(users: &[Pubkey]) -> Self {
-            let mut rng = rand0_7::thread_rng();
+            let mut rng = rand::rng();
             let [from_idx, to_idx] = (0..users.len()).choose_multiple(&mut rng, 2)[..] else {
                 unreachable!()
             };
             let from = users[from_idx];
             let to = users[to_idx];
-            let amount = rng.gen_range(1, STARTING_BALANCE / 100);
+            let amount = rng.random_range(1..STARTING_BALANCE / 100);
 
             Self { from, to, amount }
         }
@@ -3530,7 +3530,7 @@ mod balance_collector {
     #[test_case(false; "native")]
     #[test_case(true; "token")]
     fn svm_collect_balances(use_tokens: bool) {
-        let mut rng = rand0_7::thread_rng();
+        let mut rng = rand::rng();
 
         let fee_payer_keypair = Keypair::new();
         let fake_fee_payer_keypair = Keypair::new();
@@ -3625,7 +3625,7 @@ mod balance_collector {
             for _ in 0..50 {
                 // failures result in no balance changes (note we use a separate fee-payer)
                 // we mix some in with the successes to test that we never record changes for failures
-                let expected_status = match rng.r#gen::<f64>() {
+                let expected_status = match rng.random::<f64>() {
                     n if n < 0.85 => ExecutionStatus::Succeeded,
                     n if n < 0.90 => ExecutionStatus::ExecutedFailed,
                     n if n < 0.95 => ExecutionStatus::ProcessedFailed,

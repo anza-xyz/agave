@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn test_make_consume_or_forward_decision() {
         let genesis_config = create_genesis_config(2).genesis_config;
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let mut shared_leader_state = SharedLeaderState::new(0, None, None);
 

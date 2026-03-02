@@ -294,17 +294,8 @@ fn process_loader_upgradeable_instruction(
                 .accounts
                 .push(AccountMeta::new(buffer_key, false));
 
-            let transaction_context = &invoke_context.transaction_context;
-            let instruction_context = transaction_context.get_current_instruction_context()?;
-            let caller_program_id = instruction_context.get_program_key()?;
-            // The conversion from `PubkeyError` to `InstructionError` through
-            // num-traits is incorrect, but it's the existing behavior.
-            let signers = [[new_program_id.as_ref(), &[bump_seed]]]
-                .iter()
-                .map(|seeds| Pubkey::create_program_address(seeds, caller_program_id))
-                .collect::<Result<Vec<Pubkey>, solana_pubkey::PubkeyError>>()
-                .map_err(|e| e as u64)?;
-            invoke_context.native_invoke(instruction, signers.as_slice())?;
+            invoke_context
+                .native_invoke_signed(instruction, &[&[new_program_id.as_ref(), &[bump_seed]]])?;
 
             // Load and verify the program bits
             let transaction_context = &invoke_context.transaction_context;
@@ -877,7 +868,7 @@ fn process_loader_upgradeable_instruction(
                         )),
                     );
             } else {
-                invoke_context.native_invoke(
+                invoke_context.native_invoke_signed(
                     solana_loader_v4_interface::instruction::set_program_length(
                         &program_address,
                         &provided_authority_address,
@@ -887,7 +878,7 @@ fn process_loader_upgradeable_instruction(
                     &[],
                 )?;
 
-                invoke_context.native_invoke(
+                invoke_context.native_invoke_signed(
                     solana_loader_v4_interface::instruction::copy(
                         &program_address,
                         &provided_authority_address,
@@ -899,7 +890,7 @@ fn process_loader_upgradeable_instruction(
                     &[],
                 )?;
 
-                invoke_context.native_invoke(
+                invoke_context.native_invoke_signed(
                     solana_loader_v4_interface::instruction::deploy(
                         &program_address,
                         &provided_authority_address,
@@ -909,7 +900,7 @@ fn process_loader_upgradeable_instruction(
 
                 if let Some(upgrade_authority_address) = upgrade_authority_address {
                     if migration_authority::check_id(&provided_authority_address) {
-                        invoke_context.native_invoke(
+                        invoke_context.native_invoke_signed(
                             solana_loader_v4_interface::instruction::transfer_authority(
                                 &program_address,
                                 &provided_authority_address,
@@ -919,7 +910,7 @@ fn process_loader_upgradeable_instruction(
                         )?;
                     }
                 } else {
-                    invoke_context.native_invoke(
+                    invoke_context.native_invoke_signed(
                         solana_loader_v4_interface::instruction::finalize(
                             &program_address,
                             &provided_authority_address,
@@ -1068,7 +1059,7 @@ fn common_extend_program(
         min_balance.saturating_sub(balance)
     };
 
-    // Borrowed accounts need to be dropped before native_invoke
+    // Borrowed accounts need to be dropped before native_invoke_signed
     drop(programdata_account);
 
     // Dereference the program ID to prevent overlapping mutable/immutable borrow of invoke context
@@ -1077,7 +1068,7 @@ fn common_extend_program(
         let payer_key =
             *instruction_context.get_key_of_instruction_account(optional_payer_account_index)?;
 
-        invoke_context.native_invoke(
+        invoke_context.native_invoke_signed(
             system_instruction::transfer(&payer_key, &programdata_key, required_payment),
             &[],
         )?;

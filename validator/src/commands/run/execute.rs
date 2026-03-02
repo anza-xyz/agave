@@ -24,6 +24,7 @@ use {
             AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
             DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold, ScanFilter,
         },
+        partitioned_rewards::PartitionedEpochRewardsConfig,
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
@@ -683,6 +684,7 @@ pub fn execute(
         shrink_paths: account_shrink_run_paths,
         shrink_ratio,
         read_cache_limit_bytes,
+        read_cache_evict_sample_size: None,
         write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
             .ok()
             .map(|mb| mb * MB as u64),
@@ -694,7 +696,9 @@ pub fn execute(
         )
         .ok(),
         max_ancient_storages: value_t!(matches, "accounts_db_max_ancient_storages", usize).ok(),
+        skip_initial_hash_calc: false,
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
+        partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         storage_access,
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
@@ -703,7 +707,7 @@ pub fn execute(
         use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
             solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
         ),
-        ..AccountsDbConfig::default()
+        snapshots_use_direct_io: false,
     };
 
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {

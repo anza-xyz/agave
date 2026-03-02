@@ -90,11 +90,10 @@ thiserror = { workspace = true }
 agave-syscalls = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
-ed25519-dalek = { workspace = true }
 env_logger = { workspace = true }
 libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
-rand0-7 = { workspace = true }
+rand = { workspace = true }
 shuttle = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-clock = { workspace = true }
