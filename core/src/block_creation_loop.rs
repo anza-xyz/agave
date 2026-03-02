@@ -166,7 +166,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
     let record_receiver = match record_receiver_receiver.recv() {
         Ok(receiver) => receiver,
         Err(e) => {
-            error!("{my_pubkey}: Failed to receive RecordReceiver from PohService. Exiting: {e:?}",);
+            info!("{my_pubkey}: Failed to receive RecordReceiver from PohService. Exiting: {e:?}",);
             return;
         }
     };

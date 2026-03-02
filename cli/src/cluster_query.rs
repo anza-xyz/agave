@@ -477,19 +477,6 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                 ),
         )
         .subcommand(
-            SubCommand::with_name("wait-for-max-stake")
-                .about(
-                    "Wait for the max stake of any one node to drop below a percentage of total.",
-                )
-                .arg(
-                    Arg::with_name("max_percent")
-                        .long("max-percent")
-                        .value_name("PERCENT")
-                        .takes_value(true)
-                        .index(1),
-                ),
-        )
-        .subcommand(
             SubCommand::with_name("rent")
                 .about("Calculate rent-exempt-minimum value for a given account data field length.")
                 .arg(
@@ -2059,18 +2046,6 @@ pub async fn process_show_stakes(
             .output_format
             .formatted_string(&CliStakeVec::new(stake_accounts)))
     }
-}
-
-pub async fn process_wait_for_max_stake(
-    rpc_client: &RpcClient,
-    config: &CliConfig<'_>,
-    max_stake_percent: f32,
-) -> ProcessResult {
-    let now = std::time::Instant::now();
-    rpc_client
-        .wait_for_max_stake(config.commitment, max_stake_percent)
-        .await?;
-    Ok(format!("Done waiting, took: {}s", now.elapsed().as_secs()))
 }
 
 pub async fn process_show_validators(

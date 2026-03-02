@@ -11,6 +11,10 @@ An RPC node typically does not vote.
 
 After your validator is running, you can refer to this section for the RPC node specific setup instructions.
 
+_**WARNING:**_ The RPC service is _**NOT**_ intended to be directly exposed to the public internet. Operators who
+intend to do so should be familiar with common strategies for protecting HTTP services from abuse. This topic
+will not be covered in this document, nor will the team offer any guidance or technical support on the matter.
+
 ## Sample RPC Node
 
 Below is an example `validator.sh` file for a `testnet` RPC server.
@@ -40,7 +44,6 @@ exec agave-validator \
     --accounts /mnt/accounts \
     --log /home/sol/solana-rpc.log \
     --rpc-port 8899 \
-    --rpc-bind-address 0.0.0.0 \
     --private-rpc \
     --dynamic-port-range 8000-8020 \
     --entrypoint entrypoint.testnet.solana.com:8001 \

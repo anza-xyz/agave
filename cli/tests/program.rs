@@ -3117,17 +3117,17 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
-    let program_pubkey_str = json
-        .as_object()
-        .unwrap()
-        .get("programId")
-        .unwrap()
-        .as_str()
-        .unwrap();
+    let json_obj = json.as_object().unwrap();
+    let program_pubkey_str = json_obj.get("programId").unwrap().as_str().unwrap();
     assert_eq!(
         program_keypair.pubkey(),
         Pubkey::from_str(program_pubkey_str).unwrap()
     );
+    let deploy_signature = json_obj
+        .get("signature")
+        .and_then(|s| s.as_str())
+        .map(|s| Signature::from_str(s).unwrap())
+        .unwrap();
     let program_account = rpc_client
         .get_account(&program_keypair.pubkey())
         .await
@@ -3135,21 +3135,6 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
     assert_eq!(program_account.lamports, minimum_balance_for_program);
     assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
     assert!(program_account.executable);
-    let signature_statuses = rpc_client
-        .get_signatures_for_address_with_config(
-            &keypair.pubkey(),
-            GetConfirmedSignaturesForAddress2Config {
-                commitment: Some(CommitmentConfig::confirmed()),
-                ..GetConfirmedSignaturesForAddress2Config::default()
-            },
-        )
-        .await
-        .unwrap();
-    let signatures: Vec<_> = signature_statuses
-        .into_iter()
-        .rev()
-        .map(|status| Signature::from_str(&status.signature).unwrap())
-        .collect();
 
     async fn fetch_and_decode_transaction(
         rpc_client: &RpcClient,
@@ -3174,10 +3159,32 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
             .unwrap()
     }
 
+    let signatures = loop {
+        let statuses = rpc_client
+            .get_signatures_for_address_with_config(
+                &keypair.pubkey(),
+                GetConfirmedSignaturesForAddress2Config {
+                    commitment: Some(CommitmentConfig::confirmed()),
+                    ..GetConfirmedSignaturesForAddress2Config::default()
+                },
+            )
+            .await
+            .unwrap();
+        let signatures: Vec<_> = statuses
+            .into_iter()
+            .rev()
+            .map(|status| Signature::from_str(&status.signature).unwrap())
+            .collect();
+        if signatures.contains(&deploy_signature) {
+            break signatures;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    };
+
     assert!(signatures.len() >= 4);
     let initial_tx = fetch_and_decode_transaction(&rpc_client, &signatures[1]).await;
     let write_tx = fetch_and_decode_transaction(&rpc_client, &signatures[2]).await;
-    let final_tx = fetch_and_decode_transaction(&rpc_client, signatures.last().unwrap()).await;
+    let final_tx = fetch_and_decode_transaction(&rpc_client, &deploy_signature).await;
 
     if let Some(compute_unit_price) = compute_unit_price {
         for tx in [&initial_tx, &write_tx, &final_tx] {

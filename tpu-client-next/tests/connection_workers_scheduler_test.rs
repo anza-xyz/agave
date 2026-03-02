@@ -68,6 +68,7 @@ fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerCon
             send: 1,
             connect: 1,
         },
+        override_initial_congestion_window: None,
     }
 }
 

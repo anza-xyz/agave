@@ -93,7 +93,7 @@ bincode = { workspace = true }
 env_logger = { workspace = true }
 libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
-rand0-7 = { workspace = true }
+rand = { workspace = true }
 shuttle = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-clock = { workspace = true }

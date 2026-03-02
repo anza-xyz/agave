@@ -791,12 +791,8 @@ async fn feature_activation_allowed(
     let feature_set_stats = cluster_info_stats.aggregate_by_feature_set();
 
     let tool_version = solana_version::Version::default();
-    let tool_feature_set = tool_version.feature_set;
-    let tool_software_version = CliVersion::from(semver::Version::new(
-        tool_version.major as u64,
-        tool_version.minor as u64,
-        tool_version.patch as u64,
-    ));
+    let tool_feature_set = tool_version.feature_set();
+    let tool_software_version = CliVersion::from(tool_version.as_semver_version());
     let (stake_allowed, rpc_allowed) = feature_set_stats
         .get(&tool_feature_set)
         .map(

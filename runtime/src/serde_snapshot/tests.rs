@@ -290,11 +290,7 @@ mod serde_snapshot_tests {
         db.assert_load_account(new_root, key2, 1);
 
         // Check purged account stays gone
-        let unrooted_slot_ancestors = vec![(unrooted_slot, 1)].into_iter().collect();
-        assert!(
-            db.load_without_fixed_root(&unrooted_slot_ancestors, &key)
-                .is_none()
-        );
+        db.assert_not_load_account(unrooted_slot, key);
     }
 
     #[test_matrix(

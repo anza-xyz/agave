@@ -8,20 +8,16 @@ use {
         epoch_specs::EpochSpecs,
     },
     crossbeam_channel::Sender,
-    rand::{Rng, rng},
-    solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
     solana_keypair::Keypair,
     solana_net_utils::{DEFAULT_IP_ECHO_SERVER_THREADS, SocketAddrSpace},
     solana_perf::recycler::Recycler,
     solana_pubkey::Pubkey,
-    solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
     solana_streamer::{
         evicting_sender::EvictingSender,
         streamer::{self, StreamerReceiveStats},
     },
-    solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},
     std::{
         collections::HashSet,
         net::{SocketAddr, TcpListener, UdpSocket},
@@ -234,42 +230,6 @@ pub fn discover_peers(
 
     info!("discover failed...\n{}", spy_ref.contact_info_trace());
     Err(std::io::Error::other("Discover failed"))
-}
-
-/// Creates a TpuClient by selecting a valid node at random
-pub fn get_client(
-    nodes: &[ContactInfo],
-    connection_cache: Arc<ConnectionCache>,
-) -> TpuClientWrapper {
-    let select = rng().random_range(0..nodes.len());
-
-    let rpc_pubsub_url = format!("ws://{}/", nodes[select].rpc_pubsub().unwrap());
-    let rpc_url = format!("http://{}", nodes[select].rpc().unwrap());
-
-    match &*connection_cache {
-        ConnectionCache::Quic(cache) => TpuClientWrapper::Quic(
-            TpuClient::new_with_connection_cache(
-                Arc::new(RpcClient::new(rpc_url)),
-                rpc_pubsub_url.as_str(),
-                TpuClientConfig::default(),
-                cache.clone(),
-            )
-            .unwrap_or_else(|err| {
-                panic!("Could not create TpuClient with Quic Cache {err:?}");
-            }),
-        ),
-        ConnectionCache::Udp(cache) => TpuClientWrapper::Udp(
-            TpuClient::new_with_connection_cache(
-                Arc::new(RpcClient::new(rpc_url)),
-                rpc_pubsub_url.as_str(),
-                TpuClientConfig::default(),
-                cache.clone(),
-            )
-            .unwrap_or_else(|err| {
-                panic!("Could not create TpuClient with Udp Cache {err:?}");
-            }),
-        ),
-    }
 }
 
 fn spy(
