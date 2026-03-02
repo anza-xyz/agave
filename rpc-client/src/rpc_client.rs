@@ -1971,29 +1971,6 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_vote_accounts_with_config(config))
     }
 
-    pub fn wait_for_max_stake(
-        &self,
-        commitment: CommitmentConfig,
-        max_stake_percent: f32,
-    ) -> ClientResult<()> {
-        self.invoke((self.rpc_client.as_ref()).wait_for_max_stake(commitment, max_stake_percent))
-    }
-
-    pub fn wait_for_max_stake_below_threshold_with_timeout(
-        &self,
-        commitment: CommitmentConfig,
-        max_stake_percent: f32,
-        timeout: Duration,
-    ) -> ClientResult<()> {
-        self.invoke(
-            (self.rpc_client.as_ref()).wait_for_max_stake_below_threshold_with_timeout(
-                commitment,
-                max_stake_percent,
-                timeout,
-            ),
-        )
-    }
-
     /// Returns information about all the nodes participating in the cluster.
     ///
     /// # RPC Reference
