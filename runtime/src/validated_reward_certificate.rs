@@ -7,7 +7,6 @@ use {
     },
     agave_votor_messages::vote::Vote,
 };
-
 use {
     agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
     solana_bls_signatures::BlsError, solana_clock::Slot, solana_pubkey::Pubkey, thiserror::Error,
