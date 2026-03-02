@@ -549,7 +549,7 @@ impl VoteStateHandle for VoteStateV4 {
     }
 
     fn commission(&self) -> u8 {
-        (self.inflation_rewards_commission_bps / 100) as u8
+        (self.inflation_rewards_commission_bps / 100).min(u8::MAX as u16) as u8
     }
 
     #[allow(clippy::arithmetic_side_effects)]
@@ -2112,6 +2112,28 @@ mod tests {
             // Verify the internal V4 state has the correct basis points.
             let vote_state_v4 = handler.as_ref_v4();
             assert_eq!(vote_state_v4.inflation_rewards_commission_bps, expected);
+        }
+    }
+
+    #[test]
+    fn test_v4_commission_getter_clamps_extreme_bps() {
+        // Verify commission() clamps to u8::MAX for extreme bps values
+        // instead of wrapping around. SIMD-0291 allows storing any u16 as
+        // inflation_rewards_commission_bps — the legacy getter must not
+        // produce misleading values.
+        for (bps, expected) in [
+            (10_000, 100),   // normal
+            (25_500, 255),   // exact boundary, no clamping needed
+            (25_501, 255),   // just past boundary, clamped
+            (25_600, 255),   // would wrap to 0 without clamping
+            (u16::MAX, 255), // would wrap to 143 without clamping
+        ] {
+            let vote_state = VoteStateV4 {
+                inflation_rewards_commission_bps: bps,
+                ..Default::default()
+            };
+            let handler = VoteStateHandler::new_v4(vote_state);
+            assert_eq!(handler.commission(), expected);
         }
     }
 
