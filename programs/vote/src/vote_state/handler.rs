@@ -2138,6 +2138,38 @@ mod tests {
     }
 
     #[test]
+    fn test_commission_v3_v4_parity() {
+        // Verify commission() returns the same value for equivalent V3
+        // and V4 states, both directly and through migration.
+        let vote_pubkey = Pubkey::new_unique();
+        for n in [0u8, 1, 50, 100] {
+            // Direct construction.
+            let v3 = VoteStateV3 {
+                commission: n,
+                ..Default::default()
+            };
+            let v3_handler = VoteStateHandler::new_v3(v3.clone());
+
+            let mut v4_handler = VoteStateHandler::new_v4(VoteStateV4::default());
+            v4_handler.set_commission(n);
+
+            assert_eq!(v3_handler.commission(), v4_handler.commission());
+
+            // Through V3→V4 migration.
+            let versioned = VoteStateVersions::V3(Box::new(v3));
+            let migrated = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
+            let migrated_handler = VoteStateHandler::new_v4(migrated);
+            assert_eq!(migrated_handler.commission(), n);
+            assert_eq!(
+                migrated_handler
+                    .as_ref_v4()
+                    .inflation_rewards_commission_bps,
+                n as u16 * 100
+            );
+        }
+    }
+
+    #[test]
     fn test_v4_conversion_from_all_versions() {
         // Test conversion from all vote state versions to v4 per SIMD-0185.
         let vote_pubkey = Pubkey::new_unique();
