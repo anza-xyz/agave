@@ -13,16 +13,16 @@ pub struct AccountsStats {
     pub last_store_report: AtomicInterval,
     pub store_accounts_to_cache_us: AtomicU64,
     pub store_accounts_to_storage_us: AtomicU64,
-    pub store_update_index: AtomicU64,
-    pub store_handle_reclaims: AtomicU64,
-    pub store_append_accounts: AtomicU64,
+    pub store_update_index_us: AtomicU64,
+    pub store_handle_reclaims_us: AtomicU64,
+    pub store_append_accounts_us: AtomicU64,
     pub stakes_cache_check_and_store_us: AtomicU64,
     pub num_store_accounts_to_cache: AtomicU64,
     pub num_store_accounts_to_storage: AtomicU64,
-    pub store_total_data: AtomicU64,
+    pub store_data_total_bytes: AtomicU64,
     pub num_reclaims: AtomicU64,
     pub create_store_count: AtomicU64,
-    pub dropped_stores: AtomicU64,
+    pub dropped_stores_count: AtomicU64,
     pub handle_dead_keys_us: AtomicU64,
     pub purge_exact_us: AtomicU64,
     pub purge_exact_count: AtomicU64,
@@ -38,18 +38,18 @@ pub struct AccountsStats {
 #[derive(Debug, Default)]
 pub struct PurgeStats {
     pub last_report: AtomicInterval,
-    pub safety_checks_elapsed: AtomicU64,
-    pub remove_cache_elapsed: AtomicU64,
-    pub remove_storage_entries_elapsed: AtomicU64,
-    pub drop_storage_entries_elapsed: AtomicU64,
+    pub safety_checks_us: AtomicU64,
+    pub remove_cache_us: AtomicU64,
+    pub remove_storage_entries_us: AtomicU64,
+    pub drop_storage_entries_us: AtomicU64,
     pub num_cached_slots_removed: AtomicUsize,
     pub num_stored_slots_removed: AtomicUsize,
-    pub total_removed_storage_entries: AtomicUsize,
+    pub total_num_stored_slots_removed: AtomicUsize,
     pub total_removed_cached_bytes: AtomicU64,
     pub total_removed_stored_bytes: AtomicU64,
-    pub scan_storages_elapsed: AtomicU64,
-    pub purge_accounts_index_elapsed: AtomicU64,
-    pub handle_reclaims_elapsed: AtomicU64,
+    pub scan_storages_us: AtomicU64,
+    pub purge_accounts_index_us: AtomicU64,
+    pub handle_reclaims_us: AtomicU64,
 }
 
 impl PurgeStats {
@@ -62,24 +62,23 @@ impl PurgeStats {
             datapoint_info!(
                 metric_name,
                 (
-                    "safety_checks_elapsed",
-                    self.safety_checks_elapsed.swap(0, Ordering::Relaxed),
+                    "safety_checks_us",
+                    self.safety_checks_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
-                    "remove_cache_elapsed",
-                    self.remove_cache_elapsed.swap(0, Ordering::Relaxed),
+                    "remove_cache_us",
+                    self.remove_cache_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
-                    "remove_storage_entries_elapsed",
-                    self.remove_storage_entries_elapsed
-                        .swap(0, Ordering::Relaxed),
+                    "remove_storage_entries_us",
+                    self.remove_storage_entries_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
-                    "drop_storage_entries_elapsed",
-                    self.drop_storage_entries_elapsed.swap(0, Ordering::Relaxed),
+                    "drop_storage_entries_us",
+                    self.drop_storage_entries_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -93,8 +92,8 @@ impl PurgeStats {
                     i64
                 ),
                 (
-                    "total_removed_storage_entries",
-                    self.total_removed_storage_entries
+                    "total_num_stored_slots_removed",
+                    self.total_num_stored_slots_removed
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),
@@ -109,18 +108,18 @@ impl PurgeStats {
                     i64
                 ),
                 (
-                    "scan_storages_elapsed",
-                    self.scan_storages_elapsed.swap(0, Ordering::Relaxed),
+                    "scan_storages_us",
+                    self.scan_storages_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
-                    "purge_accounts_index_elapsed",
-                    self.purge_accounts_index_elapsed.swap(0, Ordering::Relaxed),
+                    "purge_accounts_index_us",
+                    self.purge_accounts_index_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
-                    "handle_reclaims_elapsed",
-                    self.handle_reclaims_elapsed.swap(0, Ordering::Relaxed),
+                    "handle_reclaims_us",
+                    self.handle_reclaims_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
             );
@@ -130,16 +129,16 @@ impl PurgeStats {
 
 #[derive(Default, Debug)]
 pub struct StoreAccountsTiming {
-    pub store_accounts_elapsed: u64,
-    pub update_index_elapsed: u64,
-    pub handle_reclaims_elapsed: u64,
+    pub store_accounts_us: u64,
+    pub update_index_us: u64,
+    pub handle_reclaims_us: u64,
 }
 
 impl StoreAccountsTiming {
     pub fn accumulate(&mut self, other: &Self) {
-        self.store_accounts_elapsed += other.store_accounts_elapsed;
-        self.update_index_elapsed += other.update_index_elapsed;
-        self.handle_reclaims_elapsed += other.handle_reclaims_elapsed;
+        self.store_accounts_us += other.store_accounts_us;
+        self.update_index_us += other.update_index_us;
+        self.handle_reclaims_us += other.handle_reclaims_us;
     }
 }
 
