@@ -3,7 +3,7 @@ use {
         address_lookup_table::*, clap_app::*, cluster_query::*, feature::*, inflation::*, nonce::*,
         program::*, program_v4::*, spend_utils::*, stake::*, validator_info::*, vote::*, wallet::*,
     },
-    clap::{ArgMatches, Shell, crate_description, crate_name, value_t_or_exit},
+    clap::{ArgMatches, Shell, crate_description, crate_name},
     num_traits::FromPrimitive,
     serde_json::{self, Value},
     solana_clap_utils::{self, input_parsers::*, keypair::*},
@@ -132,9 +132,6 @@ pub enum CliCommand {
         until: Option<Signature>,
         limit: usize,
         show_transactions: bool,
-    },
-    WaitForMaxStake {
-        max_stake_percent: f32,
     },
     // Nonce commands
     AuthorizeNonceAccount {
@@ -706,12 +703,6 @@ pub fn parse_command(
         ("address-lookup-table", Some(matches)) => {
             parse_address_lookup_table_subcommand(matches, default_signer, wallet_manager)
         }
-        ("wait-for-max-stake", Some(matches)) => {
-            let max_stake_percent = value_t_or_exit!(matches, "max_percent", f32);
-            Ok(CliCommandInfo::without_signers(
-                CliCommand::WaitForMaxStake { max_stake_percent },
-            ))
-        }
         // Stake Commands
         ("create-stake-account", Some(matches)) => {
             parse_create_stake_account(matches, default_signer, wallet_manager, !CHECKED)
@@ -1066,9 +1057,6 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
                 withdraw_authority.as_ref(),
             )
             .await
-        }
-        CliCommand::WaitForMaxStake { max_stake_percent } => {
-            process_wait_for_max_stake(&rpc_client, config, *max_stake_percent).await
         }
         CliCommand::ShowValidators {
             use_lamports_unit,
