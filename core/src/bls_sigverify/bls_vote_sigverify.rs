@@ -30,25 +30,27 @@ use {
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    std::collections::{HashMap, HashSet},
+    std::collections::HashMap,
 };
 
+/// [`VoteMessage`] along with other information needed to sig verify it.
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 #[derive(Clone, Debug)]
-pub(super) struct VoteToVerify {
+pub(super) struct VotePayload {
     pub vote_message: VoteMessage,
     pub bls_pubkey: BlsPubkey,
     pub pubkey: Pubkey,
 }
 
-impl VoteToVerify {
-    fn verify(&self) -> bool {
-        let Ok(payload) = bincode::serialize(&self.vote_message.vote) else {
-            return false;
+impl VotePayload {
+    fn verify(self) -> Option<Self> {
+        let Ok(payload) = wincode::serialize(&self.vote_message.vote) else {
+            return None;
         };
         self.bls_pubkey
             .verify_signature(&self.vote_message.signature, &payload)
             .is_ok()
+            .then_some(self)
     }
 }
 
@@ -59,7 +61,7 @@ impl VoteToVerify {
 /// buffer might be lower than the input buffer.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn verify_and_send_votes(
-    votes_to_verify: Vec<VoteToVerify>,
+    votes_to_verify: Vec<VotePayload>,
     root_bank: &Bank,
     cluster_info: &ClusterInfo,
     leader_schedule: &LeaderScheduleCache,
@@ -67,11 +69,11 @@ pub(super) fn verify_and_send_votes(
     channel_to_repair: &VerifiedVoterSlotsSender,
     channel_to_reward: &Sender<AddVoteMessage>,
     channel_to_metrics: &ConsensusMetricsEventSender,
-) -> Result<(Vec<VoteToVerify>, SigVerifyVoteStats), SigVerifyVoteError> {
+) -> Result<SigVerifyVoteStats, SigVerifyVoteError> {
     let mut measure = Measure::start("verify_and_send_votes");
     let mut stats = SigVerifyVoteStats::default();
     if votes_to_verify.is_empty() {
-        return Ok((votes_to_verify, stats));
+        return Ok(stats);
     }
     stats.votes_to_sig_verify += votes_to_verify.len() as u64;
     let verified_votes = verify_votes(votes_to_verify, &mut stats);
@@ -90,19 +92,19 @@ pub(super) fn verify_and_send_votes(
         .fn_verify_and_send_votes_stats
         .increment(measure.as_us())
         .unwrap();
-    Ok((verified_votes, stats))
+    Ok(stats)
 }
 
 /// If the vote is relevant to repair, then adds it to the [`msgs_for_repair`] so it can eventually
 /// be sent to repair.
-fn inspect_for_repair(vote: &VoteToVerify, msgs_for_repair: &mut HashMap<Pubkey, HashSet<Slot>>) {
+fn inspect_for_repair(vote: &VotePayload, msgs_for_repair: &mut HashMap<Pubkey, Vec<Slot>>) {
     let vote_slot = vote.vote_message.vote.slot();
     match vote.vote_message.vote {
         Vote::Notarize(_) | Vote::Finalize(_) | Vote::NotarizeFallback(_) => {
             msgs_for_repair
                 .entry(vote.pubkey)
                 .or_default()
-                .insert(vote_slot);
+                .push(vote_slot);
         }
         Vote::Skip(_) | Vote::SkipFallback(_) | Vote::Genesis(_) => (),
     }
@@ -113,7 +115,7 @@ fn inspect_for_repair(vote: &VoteToVerify, msgs_for_repair: &mut HashMap<Pubkey,
 /// In particular, collects and returns the relevant messages for the consensus pool; rewards;
 /// repair; and metrics;
 fn process_verified_votes(
-    verified_votes: &[VoteToVerify],
+    verified_votes: &[VotePayload],
     root_bank: &Bank,
     cluster_info: &ClusterInfo,
     leader_schedule: &LeaderScheduleCache,
@@ -149,7 +151,11 @@ fn process_verified_votes(
     }
     let msgs_for_repair = msgs_for_repair
         .into_iter()
-        .map(|(k, v)| (k, v.into_iter().collect()))
+        .map(|(pubkey, mut slots)| {
+            slots.sort_unstable();
+            slots.dedup();
+            (pubkey, slots)
+        })
         .collect();
     (
         votes_for_pool,
@@ -160,10 +166,12 @@ fn process_verified_votes(
         votes_for_metrics,
     )
 }
+
+/// Sig verifies `votes_to_verify` and returns a `Vec` of votes that passed verification.
 fn verify_votes(
-    votes_to_verify: Vec<VoteToVerify>,
+    votes_to_verify: Vec<VotePayload>,
     stats: &mut SigVerifyVoteStats,
-) -> Vec<VoteToVerify> {
+) -> Vec<VotePayload> {
     // Try optimistic verification - fast to verify, but cannot identify invalid votes
     if verify_votes_optimistic(&votes_to_verify, stats) {
         return votes_to_verify;
@@ -175,7 +183,7 @@ fn verify_votes(
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn verify_votes_optimistic(
-    votes_to_verify: &[VoteToVerify],
+    votes_to_verify: &[VotePayload],
     stats: &mut SigVerifyVoteStats,
 ) -> bool {
     let mut measure = Measure::start("verify_votes_optimistic");
@@ -217,8 +225,7 @@ fn verify_votes_optimistic(
         //
         // Assuming that sigverifier's dedicated thread pool was used to call this function, the
         // following should run on that thread pool.
-        let payload_slices: Vec<&[u8]> =
-            distinct_payloads.par_iter().map(|p| p.as_slice()).collect();
+        let payload_slices: Vec<&[u8]> = distinct_payloads.iter().map(|p| p.as_slice()).collect();
         SignatureProjective::par_verify_distinct_aggregated(
             &aggregate_pubkeys,
             &aggregate_signature,
@@ -238,7 +245,7 @@ fn verify_votes_optimistic(
 // Assuming that sigverifier's dedicated thread pool was used to call this function, the
 // following should run on that thread pool.
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-fn aggregate_signatures(votes: &[VoteToVerify]) -> Result<SignatureProjective, BlsError> {
+fn aggregate_signatures(votes: &[VotePayload]) -> Result<SignatureProjective, BlsError> {
     let signatures = votes.par_iter().map(|v| &v.vote_message.signature);
     // TODO(sam): Currently, `par_aggregate` performs full validation
     // (on-curve + subgroup check) for every signature. Since the subgroup
@@ -252,7 +259,7 @@ fn aggregate_signatures(votes: &[VoteToVerify]) -> Result<SignatureProjective, B
 #[allow(clippy::type_complexity)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn aggregate_pubkeys_by_payload(
-    votes: &[VoteToVerify],
+    votes: &[VotePayload],
     stats: &mut SigVerifyVoteStats,
 ) -> (Vec<Vec<u8>>, Result<Vec<PubkeyProjective>, BlsError>) {
     let mut grouped_votes: HashMap<&Vote, Vec<&BlsPubkey>> = HashMap::new();
@@ -273,13 +280,13 @@ fn aggregate_pubkeys_by_payload(
     // following should run on that thread pool.
     let (distinct_payloads, distinct_pubkeys_results): (Vec<_>, Vec<_>) = grouped_votes
         .into_par_iter()
-        .map(|(vote, pubkeys)| {
-            (
-                bincode::serialize(vote).unwrap(),
+        .filter_map(|(vote, pubkeys)| {
+            wincode::serialize(vote).ok().map(|vote| {
                 // TODO(sam): https://github.com/anza-xyz/alpenglow/issues/708
                 // should improve public key aggregation drastically (more than 80%)
-                PubkeyProjective::par_aggregate(pubkeys.into_par_iter()),
-            )
+                let pubkey = PubkeyProjective::par_aggregate(pubkeys.into_par_iter());
+                (vote, pubkey)
+            })
         })
         .unzip();
     let aggregate_pubkeys_result = distinct_pubkeys_results.into_iter().collect();
@@ -289,16 +296,16 @@ fn aggregate_pubkeys_by_payload(
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn verify_individual_votes(
-    votes_to_verify: Vec<VoteToVerify>,
+    votes_to_verify: Vec<VotePayload>,
     stats: &mut SigVerifyVoteStats,
-) -> Vec<VoteToVerify> {
+) -> Vec<VotePayload> {
     let mut measure = Measure::start("verify_individual_votes");
 
     // Assuming that sigverifier's dedicated thread pool was used to call this function, the
     // following should run on that thread pool.
     let verified_votes = votes_to_verify
         .into_par_iter()
-        .filter_map(|vote| vote.verify().then_some(vote))
+        .filter_map(|vote| vote.verify())
         .collect();
 
     measure.stop();

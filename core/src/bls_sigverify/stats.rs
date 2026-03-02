@@ -5,130 +5,25 @@ use {
     std::time::{Duration, Instant},
 };
 
-pub(super) const STATS_INTERVAL_DURATION: Duration = Duration::from_secs(1);
+const STATS_INTERVAL_DURATION: Duration = Duration::from_secs(1);
 
-/// Stats for when the sigverifier is receiving packets from the streamer.
-pub(super) struct StreamerRecvStats {
-    /// Stats on amount of time streamer::recv() took.
-    pub(super) streamer_recv_us: Histogram,
-    /// Stats on how long [`verify_and_send_batches`] took.
-    pub(super) verify_and_send_batches_us: Histogram,
-    /// Stats on how many batches the streamer sent.
-    pub(super) num_batches: Histogram,
-    /// Stats on how many packets the streamer sent.
-    pub(super) num_packets: Histogram,
-    /// Tracks when stats were last reported.
-    pub(super) last_report: Instant,
-}
-
-impl Default for StreamerRecvStats {
-    fn default() -> Self {
-        Self {
-            streamer_recv_us: Histogram::default(),
-            verify_and_send_batches_us: Histogram::default(),
-            num_batches: Histogram::default(),
-            num_packets: Histogram::default(),
-            last_report: Instant::now(),
-        }
-    }
-}
-
-impl StreamerRecvStats {
-    pub(super) fn maybe_report(&mut self) {
-        let Self {
-            streamer_recv_us,
-            verify_and_send_batches_us,
-            num_batches,
-            num_packets,
-            last_report,
-        } = self;
-
-        if last_report.elapsed() < STATS_INTERVAL_DURATION || num_batches.entries() == 0 {
-            return;
-        }
-
-        datapoint_info!(
-            "bls-sigverifier-streamer-recv-stats",
-            (
-                "streamer_recv_us_90pct",
-                streamer_recv_us.percentile(90.0).unwrap_or(0),
-                i64
-            ),
-            (
-                "streamer_recv_us_min",
-                streamer_recv_us.minimum().unwrap_or(0),
-                i64
-            ),
-            (
-                "streamer_recv_us_max",
-                streamer_recv_us.maximum().unwrap_or(0),
-                i64
-            ),
-            (
-                "streamer_recv_us_mean",
-                streamer_recv_us.mean().unwrap_or(0),
-                i64
-            ),
-            ("streamer_recv_us_count", streamer_recv_us.entries(), i64),
-            (
-                "verify_and_send_batches_us_90pct",
-                verify_and_send_batches_us.percentile(90.0).unwrap_or(0),
-                i64
-            ),
-            (
-                "verify_and_send_batches_us_min",
-                verify_and_send_batches_us.minimum().unwrap_or(0),
-                i64
-            ),
-            (
-                "verify_and_send_batches_us_max",
-                verify_and_send_batches_us.maximum().unwrap_or(0),
-                i64
-            ),
-            (
-                "verify_and_send_batches_us_mean",
-                verify_and_send_batches_us.mean().unwrap_or(0),
-                i64
-            ),
-            (
-                "verify_and_send_batches_us_count",
-                verify_and_send_batches_us.entries(),
-                i64
-            ),
-            (
-                "num_batches_90pct",
-                num_batches.percentile(90.0).unwrap_or(0),
-                i64
-            ),
-            ("num_batches_min", num_batches.minimum().unwrap_or(0), i64),
-            ("num_batches_max", num_batches.maximum().unwrap_or(0), i64),
-            ("num_batches_mean", num_batches.mean().unwrap_or(0), i64),
-            ("num_batches_count", num_batches.entries(), i64),
-            (
-                "num_packets_90pct",
-                num_packets.percentile(90.0).unwrap_or(0),
-                i64
-            ),
-            ("num_packets_min", num_packets.minimum().unwrap_or(0), i64),
-            ("num_packets_max", num_packets.maximum().unwrap_or(0), i64),
-            ("num_packets_mean", num_packets.mean().unwrap_or(0), i64),
-            ("num_packets_count", num_packets.entries(), i64),
-        );
-
-        *self = Self::default();
-    }
-}
-
-/// Stats for the sigverifier itself.
+/// Stats for the sigverifier.
 pub(super) struct SigVerifierStats {
     /// Stats for sigverifying votes.
     pub(super) vote_stats: SigVerifyVoteStats,
     /// Stats for sigverifying certs.
     pub(super) cert_stats: SigVerifyCertStats,
+    /// Stats on how long [`verify_and_send_batch`] took.
+    pub(super) verify_and_send_batch_us: Histogram,
     /// Stats on how long [`extract_and_filter_msgs`] took.
     pub(super) extract_filter_msgs_us: Histogram,
-    /// Number of packets received from the streamer.
-    pub(super) num_pkts_received: u64,
+    /// Number of `PacketBatch`es received.
+    pub(super) num_batches: Histogram,
+    /// Number of packets received.
+    ///
+    /// At the time of writing, each batch contains exactly one packet so this metric should be
+    /// the same as [`Self::num_batches`].  Tracking it still just to support future implementations.
+    pub(super) num_pkts: Histogram,
     /// Number of discarded packets received from the streamer.
     pub(super) num_discarded_pkts: u64,
     /// Number of times we failed to deserialize a packet.
@@ -153,7 +48,7 @@ impl Default for SigVerifierStats {
             vote_stats: SigVerifyVoteStats::default(),
             cert_stats: SigVerifyCertStats::default(),
             extract_filter_msgs_us: Histogram::new(),
-            num_pkts_received: 0,
+            num_pkts: Histogram::default(),
             discard_vote_invalid_rank: 0,
             num_discarded_pkts: 0,
             num_malformed_pkts: 0,
@@ -161,6 +56,8 @@ impl Default for SigVerifierStats {
             num_old_votes_received: 0,
             num_old_certs_received: 0,
             num_verified_certs_received: 0,
+            verify_and_send_batch_us: Histogram::default(),
+            num_batches: Histogram::default(),
             last_report: Instant::now(),
         }
     }
@@ -172,7 +69,7 @@ impl SigVerifierStats {
             vote_stats,
             cert_stats,
             extract_filter_msgs_us,
-            num_pkts_received,
+            num_pkts,
             num_discarded_pkts,
             num_malformed_pkts,
             num_old_votes_received,
@@ -180,6 +77,8 @@ impl SigVerifierStats {
             num_verified_certs_received,
             discard_vote_invalid_rank,
             discard_vote_no_epoch_stakes,
+            verify_and_send_batch_us,
+            num_batches,
             last_report,
         } = self;
         if last_report.elapsed() < STATS_INTERVAL_DURATION {
@@ -200,7 +99,6 @@ impl SigVerifierStats {
                 extract_filter_msgs_us.mean().unwrap_or(0),
                 i64
             ),
-            ("num_pkts_received", *num_pkts_received, i64),
             ("discard_vote_invalid_rank", *discard_vote_invalid_rank, i64),
             ("num_discarded_pkts", *num_discarded_pkts, i64),
             ("num_old_votes_received", *num_old_votes_received, i64),
@@ -216,6 +114,49 @@ impl SigVerifierStats {
             ),
             ("num_malformed_pkts", *num_malformed_pkts, i64),
             ("num_old_certs_received", *num_old_certs_received, i64),
+            (
+                "verify_and_send_batch_us_90pct",
+                verify_and_send_batch_us.percentile(90.0).unwrap_or(0),
+                i64
+            ),
+            (
+                "verify_and_send_batch_us_min",
+                verify_and_send_batch_us.minimum().unwrap_or(0),
+                i64
+            ),
+            (
+                "verify_and_send_batch_us_max",
+                verify_and_send_batch_us.maximum().unwrap_or(0),
+                i64
+            ),
+            (
+                "verify_and_send_batch_us_mean",
+                verify_and_send_batch_us.mean().unwrap_or(0),
+                i64
+            ),
+            (
+                "verify_and_send_batch_us_count",
+                verify_and_send_batch_us.entries(),
+                i64
+            ),
+            (
+                "num_batches_90pct",
+                num_batches.percentile(90.0).unwrap_or(0),
+                i64
+            ),
+            ("num_batches_min", num_batches.minimum().unwrap_or(0), i64),
+            ("num_batches_max", num_batches.maximum().unwrap_or(0), i64),
+            ("num_batches_mean", num_batches.mean().unwrap_or(0), i64),
+            ("num_batches_count", num_batches.entries(), i64),
+            (
+                "num_pkts_90pct",
+                num_pkts.percentile(90.0).unwrap_or(0),
+                i64
+            ),
+            ("num_pkts_min", num_pkts.minimum().unwrap_or(0), i64),
+            ("num_pkts_max", num_pkts.maximum().unwrap_or(0), i64),
+            ("num_pkts_mean", num_pkts.mean().unwrap_or(0), i64),
+            ("num_pkts_count", num_pkts.entries(), i64),
         );
         *self = SigVerifierStats::default();
     }

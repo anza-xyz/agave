@@ -6,7 +6,7 @@ use {
         consensus_message::{Certificate, CertificateType, ConsensusMessage},
         fraction::Fraction,
     },
-    crossbeam_channel::{Sender, bounded},
+    crossbeam_channel::Sender,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     solana_measure::measure::Measure,
     solana_runtime::bank::Bank,
@@ -49,7 +49,7 @@ pub(super) fn verify_and_send_certificates(
     }
 
     stats.certs_to_sig_verify += certs.len() as u64;
-    let messages = verify_certs(verified_certs_set, certs, bank, &mut stats);
+    let messages = verify_certs(certs, bank, verified_certs_set, &mut stats);
     stats.sig_verified_certs += messages.len() as u64;
     send_certs_to_pool(messages, channel_to_pool, &mut stats)?;
 
@@ -61,32 +61,27 @@ pub(super) fn verify_and_send_certificates(
     Ok(stats)
 }
 
-/// Verifies certs.
+/// Verifies certificates in `certs`, stores a local copy, and prepares them for forwarding.
 ///
 /// The valid certs are inserted into the [`verified_certs_set`].
 /// Returns a Vec of [`ConsensusMessage`] constructed from the valid certs.
 fn verify_certs(
-    verified_certs_set: &mut HashSet<CertificateType>,
     certs: Vec<Certificate>,
     bank: &Bank,
+    verified_certs_set: &mut HashSet<CertificateType>,
     stats: &mut SigVerifyCertStats,
 ) -> Vec<ConsensusMessage> {
-    // We want to verify the certs in parallel however collecting them and inserting them into the
-    // set has to happen sequentially.  Following allows us to do that while minimising the number
-    // of times we have to iterate over the list of certs.
-
-    let (tx, rx) = bounded(certs.len());
-    // Assuming that sigverifier's dedicated thread pool was used to call this function, the
-    // following should run on that thread pool.
-    rayon::scope(|s| {
-        s.spawn(|_| {
-            certs.into_par_iter().for_each_with(tx, |tx, cert| {
-                tx.send((verify_cert(&cert, bank), cert)).unwrap()
-            })
+    let verified = certs
+        .into_par_iter()
+        .map(|cert| {
+            let res = verify_cert(&cert, bank);
+            (cert, res)
         })
-    });
-    rx.into_iter()
-        .filter_map(|(res, cert)| match res {
+        .collect::<Vec<_>>();
+
+    verified
+        .into_iter()
+        .filter_map(|(cert, res)| match res {
             Ok(()) => {
                 verified_certs_set.insert(cert.cert_type);
                 Some(ConsensusMessage::Certificate(cert))
@@ -96,13 +91,10 @@ fn verify_certs(
                     stats.stake_verification_failed += 1;
                     None
                 }
-                CertVerifyError::CertVerifyFailed(e) => match e {
-                    BlsCertVerifyError::MissingRankMap => None,
-                    _ => {
-                        stats.signature_verification_failed += 1;
-                        None
-                    }
-                },
+                CertVerifyError::CertVerifyFailed(_) => {
+                    stats.signature_verification_failed += 1;
+                    None
+                }
             },
         })
         .collect()

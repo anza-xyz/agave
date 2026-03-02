@@ -3,9 +3,9 @@
 use {
     super::{
         bls_cert_sigverify::verify_and_send_certificates,
-        bls_vote_sigverify::{VoteToVerify, verify_and_send_votes},
+        bls_vote_sigverify::{VotePayload, verify_and_send_votes},
         errors::SigVerifyError,
-        stats::{SigVerifierStats, StreamerRecvStats},
+        stats::SigVerifierStats,
     },
     crate::cluster_info_vote_listener::VerifiedVoterSlotsSender,
     agave_votor::{
@@ -26,10 +26,7 @@ use {
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
-    solana_streamer::{
-        packet::PacketBatch,
-        streamer::{self, StreamerError},
-    },
+    solana_streamer::packet::PacketBatch,
     std::{
         collections::HashSet,
         sync::{
@@ -37,6 +34,7 @@ use {
             atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder},
+        time::Duration,
     },
 };
 
@@ -92,8 +90,6 @@ struct SigVerifier {
     last_checked_root_slot: Slot,
     cluster_info: Arc<ClusterInfo>,
     leader_schedule: Arc<LeaderScheduleCache>,
-    /// Buffer to collect votes to verify.  Stored here to reduce reallocations.
-    votes_buffer: Vec<VoteToVerify>,
     /// thread pool to use for all parallel tasks
     thread_pool: ThreadPool,
 }
@@ -127,50 +123,48 @@ impl SigVerifier {
             last_checked_root_slot: 0,
             cluster_info,
             leader_schedule,
-            votes_buffer: Vec::new(),
             thread_pool,
         }
     }
 
     fn run(mut self, exit: Arc<AtomicBool>, packet_receiver: Receiver<PacketBatch>) {
-        const SOFT_RECEIVE_CAP: usize = 5_000;
-        let mut stats = StreamerRecvStats::default();
+        const SOFT_RECEIVE_CAP: usize = 5000;
         while !exit.load(Ordering::Relaxed) {
-            let (batches, num_packets, recv_duration) =
-                match streamer::recv_packet_batches(&packet_receiver, SOFT_RECEIVE_CAP) {
-                    Ok(res) => res,
+            let mut batches = Vec::with_capacity(SOFT_RECEIVE_CAP);
+            let mut num_batches = 0;
+            while num_batches < SOFT_RECEIVE_CAP {
+                match packet_receiver.recv_timeout(Duration::from_secs(1)) {
+                    Ok(b) => {
+                        batches.push(b);
+                        num_batches = num_batches.saturating_add(1);
+                    }
                     Err(e) => match e {
-                        StreamerError::RecvTimeout(RecvTimeoutError::Disconnected) => break,
-                        StreamerError::RecvTimeout(RecvTimeoutError::Timeout) => continue,
-                        _ => {
-                            error!("Error receiving packets: {e:?}");
-                            continue;
+                        RecvTimeoutError::Timeout => break,
+                        RecvTimeoutError::Disconnected => {
+                            error!("packet_receiver disconnected:  Exiting.");
+                            return;
                         }
                     },
                 };
+            }
 
             // Ignore packets if alpenglow is not active yet.
             if self.migration_status.is_pre_feature_activation() {
                 continue;
             }
 
-            let num_batches = batches.len();
-            let (verify_res, verify_time_us) = measure_us!(self.verify_and_send_batches(batches));
-
-            stats
-                .streamer_recv_us
-                .increment(recv_duration.as_micros().try_into().unwrap_or(u64::MAX))
+            self.stats
+                .num_batches
+                .increment(batches.len() as u64)
                 .unwrap();
-            stats.num_batches.increment(num_batches as u64).unwrap();
-            stats.num_packets.increment(num_packets as u64).unwrap();
-            stats
-                .verify_and_send_batches_us
+            let (verify_res, verify_time_us) = measure_us!(self.verify_and_send_batches(batches));
+            self.stats
+                .verify_and_send_batch_us
                 .increment(verify_time_us)
                 .unwrap();
-            stats.maybe_report();
-
+            self.stats.maybe_report();
             if let Err(e) = verify_res {
-                error!("verify_and_send_batches() failed with {e}. Exiting.");
+                error!("verify_and_send_batch() failed with {e}. Exiting.");
                 break;
             }
         }
@@ -180,9 +174,8 @@ impl SigVerifier {
         let root_bank = self.sharable_banks.root();
         self.maybe_prune_caches(root_bank.slot());
 
-        let votes_buffer = std::mem::take(&mut self.votes_buffer);
         let ((certs_to_verify, votes_to_verify), extract_msgs_us) =
-            measure_us!(self.extract_and_filter_msgs(batches, &root_bank, votes_buffer));
+            measure_us!(self.extract_and_filter_msgs(batches, &root_bank,));
         self.stats
             .extract_filter_msgs_us
             .increment(extract_msgs_us)
@@ -211,13 +204,11 @@ impl SigVerifier {
             },
         );
 
-        let (votes_buffer, vote_stats) = votes_result?;
-        self.votes_buffer = votes_buffer;
+        let vote_stats = votes_result?;
         let cert_stats = certs_result?;
 
         self.stats.vote_stats.merge(vote_stats);
         self.stats.cert_stats.merge(cert_stats);
-        self.stats.maybe_report();
         Ok(())
     }
 
@@ -232,13 +223,13 @@ impl SigVerifier {
         &mut self,
         batches: Vec<PacketBatch>,
         root_bank: &Bank,
-        mut votes_buffer: Vec<VoteToVerify>,
-    ) -> (Vec<Certificate>, Vec<VoteToVerify>) {
+    ) -> (Vec<Certificate>, Vec<VotePayload>) {
         let root_slot = root_bank.slot();
         let mut certs = Vec::new();
-        votes_buffer.clear();
+        let mut votes = Vec::new();
+        let mut num_pkts = 0u64;
         for packet in batches.iter().flatten() {
-            self.stats.num_pkts_received += 1;
+            num_pkts = num_pkts.saturating_add(1);
             if packet.meta().discard() {
                 self.stats.num_discarded_pkts += 1;
                 continue;
@@ -250,7 +241,7 @@ impl SigVerifier {
             match msg {
                 ConsensusMessage::Vote(vote) => {
                     if let Some((pubkey, bls_pubkey)) = self.keep_vote(&vote, root_bank) {
-                        votes_buffer.push(VoteToVerify {
+                        votes.push(VotePayload {
                             vote_message: vote,
                             bls_pubkey,
                             pubkey,
@@ -270,7 +261,8 @@ impl SigVerifier {
                 }
             }
         }
-        (certs, votes_buffer)
+        self.stats.num_pkts.increment(num_pkts).unwrap();
+        (certs, votes)
     }
 
     /// If this vote should be verified, then returns the sender's Pubkey and BlsPubkey.
@@ -303,10 +295,7 @@ impl SigVerifier {
 mod tests {
     use {
         super::*,
-        crate::{
-            bls_sigverify::stats::STATS_INTERVAL_DURATION,
-            cluster_info_vote_listener::VerifiedVoterSlotsReceiver,
-        },
+        crate::cluster_info_vote_listener::VerifiedVoterSlotsReceiver,
         agave_votor::consensus_pool::certificate_builder::CertificateBuilder,
         agave_votor_messages::{
             consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
@@ -329,7 +318,6 @@ mod tests {
         },
         solana_signer::Signer,
         solana_signer_store::encode_base2,
-        std::time::Instant,
     };
 
     fn create_keypairs_and_bls_sig_verifier_with_channels(
@@ -476,7 +464,7 @@ mod tests {
         assert_eq!(receiver.try_iter().flatten().count(), 2);
         assert_eq!(verifier.stats.vote_stats.pool_sent, 1);
         assert_eq!(verifier.stats.cert_stats.pool_sent, 1);
-        assert_eq!(verifier.stats.num_pkts_received, 2);
+        assert_eq!(verifier.stats.num_pkts.get(2).unwrap(), 1);
         let received_verified_votes1 = votes_for_repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes1,
@@ -493,14 +481,15 @@ mod tests {
             vote_rank2,
         );
         let messages2 = vec![ConsensusMessage::Vote(vote_message2)];
+        verifier.stats = SigVerifierStats::default();
         verifier
             .verify_and_send_batches(messages_to_batches(&messages2))
             .unwrap();
 
         assert_eq!(receiver.try_iter().flatten().count(), 1);
-        assert_eq!(verifier.stats.vote_stats.pool_sent, 2);
-        assert_eq!(verifier.stats.cert_stats.pool_sent, 1);
-        assert_eq!(verifier.stats.num_pkts_received, 3); // 2 + 1 = 3
+        assert_eq!(verifier.stats.vote_stats.pool_sent, 1);
+        assert_eq!(verifier.stats.cert_stats.pool_sent, 0);
+        assert_eq!(verifier.stats.num_pkts.get(1).unwrap(), 1);
         let received_verified_votes2 = votes_for_repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes2,
@@ -510,7 +499,6 @@ mod tests {
             )
         );
 
-        verifier.stats.last_report = Instant::now() - STATS_INTERVAL_DURATION;
         let vote_rank3 = 9;
         let vote_message3 = create_signed_vote_message(
             &validator_keypairs,
@@ -518,12 +506,13 @@ mod tests {
             vote_rank3,
         );
         let messages3 = vec![ConsensusMessage::Vote(vote_message3)];
+        verifier.stats = SigVerifierStats::default();
         verifier
             .verify_and_send_batches(messages_to_batches(&messages3))
             .unwrap();
         assert_eq!(receiver.try_iter().flatten().count(), 1);
-        assert_eq!(verifier.stats.vote_stats.pool_sent, 0);
-        assert_eq!(verifier.stats.num_pkts_received, 0);
+        assert_eq!(verifier.stats.vote_stats.pool_sent, 1);
+        assert_eq!(verifier.stats.num_pkts.get(1).unwrap(), 1);
         let received_verified_votes3 = votes_for_repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes3,
@@ -543,7 +532,7 @@ mod tests {
         let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
         verifier.verify_and_send_batches(packet_batches).unwrap();
 
-        assert_eq!(verifier.stats.num_pkts_received, 1);
+        assert_eq!(verifier.stats.num_pkts.get(1).unwrap(), 1);
         assert_eq!(verifier.stats.num_malformed_pkts, 1);
 
         // Expect no messages since the packet was malformed
@@ -660,7 +649,7 @@ mod tests {
         verifier.verify_and_send_batches(packet_batches).unwrap();
         expect_no_receive(&receiver);
         assert_eq!(verifier.stats.vote_stats.pool_sent, 0);
-        assert_eq!(verifier.stats.num_pkts_received, 1);
+        assert_eq!(verifier.stats.num_pkts.get(1).unwrap(), 1);
         assert_eq!(verifier.stats.num_discarded_pkts, 1);
     }
 
@@ -869,15 +858,6 @@ mod tests {
                 false
             }
         }));
-    }
-
-    #[test]
-    fn test_blssigverifier_verify_votes_empty_batch() {
-        let (_, mut verifier, _r, _a) = create_keypairs_and_bls_sig_verifier();
-
-        let packet_batches = vec![];
-        verifier.verify_and_send_batches(packet_batches).unwrap();
-        assert_eq!(verifier.stats.num_pkts_received, 0);
     }
 
     #[test]
@@ -1298,12 +1278,9 @@ mod tests {
 
         verifier.verify_and_send_batches(packet_batches1).unwrap();
 
-        assert_eq!(
-            message_receiver.try_iter().flatten().count(),
-            1,
-            "First certificate should be sent"
-        );
+        assert_eq!(message_receiver.try_iter().flatten().count(), 1);
         assert_eq!(verifier.stats.num_verified_certs_received, 0);
+        assert_eq!(verifier.stats.num_pkts.get(1).unwrap(), 1);
 
         vote_messages.pop(); // Remove one signature
         let mut builder2 = CertificateBuilder::new(cert_type);
@@ -1314,16 +1291,11 @@ mod tests {
         let consensus_message2 = ConsensusMessage::Certificate(cert2);
         let packet_batches2 = messages_to_batches(&[consensus_message2]);
 
+        verifier.stats = SigVerifierStats::default();
         verifier.verify_and_send_batches(packet_batches2).unwrap();
         expect_no_receive(&message_receiver);
-        assert_eq!(
-            verifier.stats.num_pkts_received, 2,
-            "Should have received two packets in total"
-        );
-        assert_eq!(
-            verifier.stats.num_verified_certs_received, 1,
-            "Should have detected one already-verified cert"
-        );
+        assert_eq!(verifier.stats.num_pkts.get(1).unwrap(), 1);
+        assert_eq!(verifier.stats.num_verified_certs_received, 1);
     }
 
     fn messages_to_batches(messages: &[ConsensusMessage]) -> Vec<PacketBatch> {

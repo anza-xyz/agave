@@ -11,7 +11,7 @@ use {
     solana_bls_signatures::{Keypair as BLSKeypair, Pubkey as BLSPubkey, VerifiablePubkey},
     solana_core::bls_sigverify::{
         bls_vote_sigverify::{
-            VoteToVerify, aggregate_pubkeys_by_payload, aggregate_signatures,
+            VotePayload, aggregate_pubkeys_by_payload, aggregate_signatures,
             verify_individual_votes, verify_votes_optimistic,
         },
         stats::SigVerifyVoteStats,
@@ -37,7 +37,7 @@ fn get_matrix_params() -> impl Iterator<Item = (usize, usize)> {
     })
 }
 
-fn generate_test_data(num_distinct_messages: usize, batch_size: usize) -> Vec<VoteToVerify> {
+fn generate_test_data(num_distinct_messages: usize, batch_size: usize) -> Vec<VotePayload> {
     assert!(
         batch_size >= num_distinct_messages,
         "Batch size must be >= distinct messages"
@@ -68,7 +68,7 @@ fn generate_test_data(num_distinct_messages: usize, batch_size: usize) -> Vec<Vo
             rank: 0,
         };
 
-        votes_to_verify.push(VoteToVerify {
+        votes_to_verify.push(VotePayload {
             vote_message,
             bls_pubkey: bls_keypair.public.into(),
             pubkey: Keypair::new().pubkey(),

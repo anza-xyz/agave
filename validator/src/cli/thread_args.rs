@@ -417,8 +417,8 @@ struct TvuBlsShredSigverifyThreadsArg;
 impl ThreadArg for TvuBlsShredSigverifyThreadsArg {
     const NAME: &'static str = "tvu_bls_shred_sigverify_threads";
     const LONG_NAME: &'static str = "tvu-bls-shred-sigverify-threads";
-    const HELP: &'static str =
-        "Number of threads to use for performing BLS signature verification of received msgs";
+    const HELP: &'static str = "Number of threads to use for performing BLS signature \
+                                verification of received Alpenglow consensus messages";
 
     fn default() -> usize {
         get_thread_count()
