@@ -2590,4 +2590,50 @@ mod tests {
             assert_eq!(compute_vote_latency(voted_for_slot, current_slot), expected);
         }
     }
+
+    #[test]
+    fn test_process_timestamp_v3_v4_parity() {
+        let mut v3 = VoteStateV3::default();
+        let mut v4 = VoteStateV4::default();
+
+        let timestamps = [
+            (10, 1_000_000),
+            (11, 1_000_001),
+            (15, 1_000_005),
+            (20, 1_000_010),
+        ];
+        for (slot, ts) in timestamps {
+            assert_eq!(
+                v3.process_timestamp(slot, ts),
+                v4.process_timestamp(slot, ts)
+            );
+            assert_eq!(v3.last_timestamp(), v4.last_timestamp());
+        }
+    }
+
+    #[test]
+    fn test_process_next_vote_slot_v3_v4_parity() {
+        let voter = Pubkey::new_unique();
+        let mut v3 = VoteStateV3 {
+            authorized_voters: AuthorizedVoters::new(0, voter),
+            ..Default::default()
+        };
+        let mut v4 = VoteStateV4 {
+            authorized_voters: AuthorizedVoters::new(0, voter),
+            ..Default::default()
+        };
+
+        for slot in [5, 10, 15, 20] {
+            v3.process_next_vote_slot(slot, 0, 20);
+            v4.process_next_vote_slot(slot, 0, 20);
+        }
+
+        // Both should have identical vote state after processing.
+        assert_eq!(v3.votes().len(), v4.votes().len());
+        for (lv3, lv4) in v3.votes().iter().zip(v4.votes().iter()) {
+            assert_eq!(lv3.slot(), lv4.slot());
+            assert_eq!(lv3.confirmation_count(), lv4.confirmation_count());
+        }
+        assert_eq!(v3.root_slot(), v4.root_slot());
+    }
 }
