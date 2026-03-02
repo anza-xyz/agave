@@ -20,7 +20,7 @@
 
 mod accounts_db_config;
 mod geyser_plugin_utils;
-pub mod stats;
+pub(crate) mod stats;
 pub(crate) mod tests;
 
 pub use accounts_db_config::{
@@ -4047,7 +4047,7 @@ impl AccountsDb {
 
     /// Purges every slot in `removed_slots` from both the cache and storage. This includes
     /// entries in the accounts index, cache entries, and any backing storage entries.
-    pub fn purge_slots_from_cache_and_store<'a>(
+    fn purge_slots_from_cache_and_store<'a>(
         &self,
         removed_slots: impl Iterator<Item = &'a Slot> + Clone,
         purge_stats: &PurgeStats,
@@ -4090,6 +4090,18 @@ impl AccountsDb {
         purge_stats
             .total_removed_cached_bytes
             .fetch_add(total_removed_cached_bytes, Ordering::Relaxed);
+    }
+
+    /// Purges every slot in `removed_slots` from both the cache and storage. This includes
+    /// entries in the accounts index, cache entries, and any backing storage entries.
+    ///
+    /// This fn is to only be called by snapshot minimizer
+    pub fn purge_slots_for_snapshot_minimizer<'a>(
+        &self,
+        removed_slots: impl Iterator<Item = &'a Slot> + Clone,
+    ) {
+        let stats = PurgeStats::default();
+        self.purge_slots_from_cache_and_store(removed_slots, &stats);
     }
 
     /// Purge the backing storage entries for the given slot, does not purge from
