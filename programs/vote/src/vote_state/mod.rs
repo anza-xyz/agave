@@ -5456,4 +5456,122 @@ mod tests {
             Err(InstructionError::InvalidArgument)
         );
     }
+
+    #[test]
+    fn test_collector_fields_immutable_in_v4_only_scope() {
+        // Verify `inflation_rewards_collector` and `block_revenue_collector`
+        // are not modified by `Authorize` or `UpdateCommission` post-v4.
+        let vote_pubkey = solana_pubkey::new_rand();
+        let vote_state = vote_state_new_for_test(&vote_pubkey, VoteStateTargetVersion::V4);
+        let withdrawer = *vote_state.authorized_withdrawer();
+        let original_inflation_collector = vote_state.as_ref_v4().inflation_rewards_collector;
+        let original_block_revenue_collector = vote_state.as_ref_v4().block_revenue_collector;
+
+        let serialized = vote_state.clone().serialize();
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(serialized.len());
+        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
+        vote_account.set_data_from_slice(&serialized);
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let transaction_context = new_transaction_context(
+            vec![(id(), program_account), (vote_pubkey, vote_account)],
+            vec![InstructionAccount::new(1, false, true)],
+            &rent,
+        );
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+        let clock = Clock::default();
+
+        // Authorize: should not change collectors.
+        authorize(
+            &mut borrowed,
+            VoteStateTargetVersion::V4,
+            &solana_pubkey::new_rand(),
+            VoteAuthorize::Voter,
+            &signers,
+            &clock,
+            false,
+            || Ok(()),
+        )
+        .unwrap();
+
+        let v4 = VoteStateV4::deserialize(borrowed.get_data(), &vote_state.as_ref_v4().node_pubkey)
+            .unwrap();
+        assert_eq!(v4.inflation_rewards_collector, original_inflation_collector);
+        assert_eq!(v4.block_revenue_collector, original_block_revenue_collector);
+
+        // UpdateCommission: should not change collectors.
+        update_commission(
+            &mut borrowed,
+            VoteStateTargetVersion::V4,
+            50,
+            &signers,
+            &solana_epoch_schedule::EpochSchedule::without_warmup(),
+            &clock,
+            false,
+        )
+        .unwrap();
+
+        let v4 = VoteStateV4::deserialize(borrowed.get_data(), &vote_state.as_ref_v4().node_pubkey)
+            .unwrap();
+        assert_eq!(v4.inflation_rewards_collector, original_inflation_collector);
+        assert_eq!(v4.block_revenue_collector, original_block_revenue_collector);
+    }
+
+    #[test]
+    fn test_pending_delegator_rewards_zero_in_v4_only_scope() {
+        // Verify `pending_delegator_rewards` stays 0 through post-v4
+        // instructions (SIMD-0123 not active).
+        let vote_pubkey = solana_pubkey::new_rand();
+        let vote_state = vote_state_new_for_test(&vote_pubkey, VoteStateTargetVersion::V4);
+        let withdrawer = *vote_state.authorized_withdrawer();
+
+        let serialized = vote_state.clone().serialize();
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(serialized.len());
+        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
+        vote_account.set_data_from_slice(&serialized);
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let transaction_context = new_transaction_context(
+            vec![(id(), program_account), (vote_pubkey, vote_account)],
+            vec![InstructionAccount::new(1, false, true)],
+            &rent,
+        );
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        assert_eq!(
+            VoteStateV4::deserialize(borrowed.get_data(), &vote_state.as_ref_v4().node_pubkey)
+                .unwrap()
+                .pending_delegator_rewards,
+            0
+        );
+
+        // Authorize: pending should stay 0.
+        let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+        authorize(
+            &mut borrowed,
+            VoteStateTargetVersion::V4,
+            &solana_pubkey::new_rand(),
+            VoteAuthorize::Voter,
+            &signers,
+            &Clock::default(),
+            false,
+            || Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            VoteStateV4::deserialize(borrowed.get_data(), &vote_state.as_ref_v4().node_pubkey)
+                .unwrap()
+                .pending_delegator_rewards,
+            0
+        );
+    }
 }
