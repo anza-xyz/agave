@@ -98,6 +98,9 @@ pub enum SnapshotError {
 
     #[error("failed to rebuild snapshot storages: {0}")]
     RebuildStorages(String),
+
+    #[error("capitalization mismatch: expected: {0}, calculated: {1}")]
+    MismatchedCapitalization(u64, u64),
 }
 
 impl From<SendError<FileInfo>> for SnapshotError {
