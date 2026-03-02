@@ -4882,4 +4882,260 @@ mod tests {
             );
         }
     }
+
+    /// recipient at index 2.
+    fn setup_withdraw_context(
+        vote_pubkey: Pubkey,
+        vote_account: AccountSharedData,
+    ) -> TransactionContext<'static> {
+        let rent = Rent::default();
+        let recipient = solana_pubkey::new_rand();
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let mut transaction_context = TransactionContext::new(
+            vec![
+                (id(), program_account),
+                (vote_pubkey, vote_account),
+                (recipient, AccountSharedData::default()),
+            ],
+            rent,
+            0,
+            0,
+            1,
+        );
+        transaction_context
+            .configure_top_level_instruction_for_tests(
+                0,
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                vec![],
+            )
+            .unwrap();
+        transaction_context
+    }
+
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_withdraw(target_version: VoteStateTargetVersion) {
+        // Verify withdraw boundary conditions around the rent-exempt
+        // minimum: partial withdraw, full deinit, and over-withdraw.
+        let vote_pubkey = solana_pubkey::new_rand();
+        let vote_state = vote_state_new_for_test(&vote_pubkey, target_version);
+        let withdrawer = *vote_state.authorized_withdrawer();
+        let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+        let rent = Rent::default();
+        let serialized = vote_state.clone().serialize();
+        let serialized_len = serialized.len();
+        let min_balance = rent.minimum_balance(serialized_len);
+        let clock = Clock {
+            epoch: 100,
+            ..Clock::default()
+        };
+
+        // Account at exact rent-exempt minimum: withdraw 1 fails.
+        {
+            let mut acct = AccountSharedData::new(min_balance, serialized_len, &id());
+            acct.set_data_from_slice(&serialized);
+            let transaction_context = setup_withdraw_context(vote_pubkey, acct);
+            let ix = transaction_context.get_next_instruction_context().unwrap();
+            assert_eq!(
+                withdraw(&ix, 0, target_version, 1, 1, &signers, &rent, &clock),
+                Err(InstructionError::InsufficientFunds)
+            );
+        }
+
+        // Account at exact rent-exempt minimum: withdraw all succeeds (deinit).
+        {
+            let mut acct = AccountSharedData::new(min_balance, serialized_len, &id());
+            acct.set_data_from_slice(&serialized);
+            let transaction_context = setup_withdraw_context(vote_pubkey, acct);
+            let ix = transaction_context.get_next_instruction_context().unwrap();
+            assert!(
+                withdraw(
+                    &ix,
+                    0,
+                    target_version,
+                    min_balance,
+                    1,
+                    &signers,
+                    &rent,
+                    &clock
+                )
+                .is_ok()
+            );
+        }
+
+        // Account at rent_exempt + 100: withdraw 100 succeeds.
+        {
+            let mut acct = AccountSharedData::new(min_balance + 100, serialized_len, &id());
+            acct.set_data_from_slice(&serialized);
+            let transaction_context = setup_withdraw_context(vote_pubkey, acct);
+            let ix = transaction_context.get_next_instruction_context().unwrap();
+            assert!(withdraw(&ix, 0, target_version, 100, 1, &signers, &rent, &clock).is_ok());
+        }
+
+        // Account at rent_exempt + 100: withdraw 101 fails.
+        {
+            let mut acct = AccountSharedData::new(min_balance + 100, serialized_len, &id());
+            acct.set_data_from_slice(&serialized);
+            let transaction_context = setup_withdraw_context(vote_pubkey, acct);
+            let ix = transaction_context.get_next_instruction_context().unwrap();
+            assert_eq!(
+                withdraw(&ix, 0, target_version, 101, 1, &signers, &rent, &clock),
+                Err(InstructionError::InsufficientFunds)
+            );
+        }
+    }
+
+    /// Helper to create a V4 vote account with a specific
+    /// `pending_delegator_rewards` value.
+    fn make_v4_account_with_pending(
+        vote_pubkey: &Pubkey,
+        pending: u64,
+        extra_lamports: u64,
+    ) -> (VoteStateHandler, AccountSharedData) {
+        let vote_state = vote_state_new_for_test(vote_pubkey, VoteStateTargetVersion::V4);
+        let mut v4 = vote_state.as_ref_v4().clone();
+        v4.pending_delegator_rewards = pending;
+        let handler = VoteStateHandler::new_v4(v4);
+        let serialized = handler.clone().serialize();
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(serialized.len()) + extra_lamports;
+        let mut account = AccountSharedData::new(lamports, serialized.len(), &id());
+        account.set_data_from_slice(&serialized);
+        (handler, account)
+    }
+
+    #[test]
+    fn test_withdraw_with_pending_delegator_rewards() {
+        // Verify withdraw protects pending_delegator_rewards: partial
+        // withdrawals respect the pending reserve, and full close is
+        // blocked when pending > 0.
+        let vote_pubkey = solana_pubkey::new_rand();
+        let rent = Rent::default();
+        let clock = Clock {
+            epoch: 100,
+            ..Clock::default()
+        };
+
+        // pending = 1000, extra = 1000. withdrawable = 0.
+        {
+            let (handler, account) = make_v4_account_with_pending(&vote_pubkey, 1000, 1000);
+            let withdrawer = *handler.authorized_withdrawer();
+            let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+            let tx = setup_withdraw_context(vote_pubkey, account);
+            let ix = tx.get_next_instruction_context().unwrap();
+
+            // Withdraw 1 fails (withdrawable = lamports - rent - pending = 0).
+            assert_eq!(
+                withdraw(
+                    &ix,
+                    0,
+                    VoteStateTargetVersion::V4,
+                    1,
+                    1,
+                    &signers,
+                    &rent,
+                    &clock
+                ),
+                Err(InstructionError::InsufficientFunds)
+            );
+        }
+
+        // pending = 1000, extra = 1001. withdrawable = 1.
+        {
+            let (handler, account) = make_v4_account_with_pending(&vote_pubkey, 1000, 1001);
+            let withdrawer = *handler.authorized_withdrawer();
+            let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+            let tx = setup_withdraw_context(vote_pubkey, account);
+            let ix = tx.get_next_instruction_context().unwrap();
+
+            // Withdraw 1 succeeds.
+            assert!(
+                withdraw(
+                    &ix,
+                    0,
+                    VoteStateTargetVersion::V4,
+                    1,
+                    1,
+                    &signers,
+                    &rent,
+                    &clock
+                )
+                .is_ok()
+            );
+        }
+
+        // pending = 1000, extra = 1001. Withdraw 2 fails.
+        {
+            let (handler, account) = make_v4_account_with_pending(&vote_pubkey, 1000, 1001);
+            let withdrawer = *handler.authorized_withdrawer();
+            let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+            let tx = setup_withdraw_context(vote_pubkey, account);
+            let ix = tx.get_next_instruction_context().unwrap();
+
+            assert_eq!(
+                withdraw(
+                    &ix,
+                    0,
+                    VoteStateTargetVersion::V4,
+                    2,
+                    1,
+                    &signers,
+                    &rent,
+                    &clock
+                ),
+                Err(InstructionError::InsufficientFunds)
+            );
+        }
+
+        // Full close blocked when pending > 0.
+        {
+            let (handler, account) = make_v4_account_with_pending(&vote_pubkey, 1, 1_000_000);
+            let withdrawer = *handler.authorized_withdrawer();
+            let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+            let lamports = rent.minimum_balance(VoteStateV4::size_of()) + 1_000_000;
+            let tx = setup_withdraw_context(vote_pubkey, account);
+            let ix = tx.get_next_instruction_context().unwrap();
+
+            assert_eq!(
+                withdraw(
+                    &ix,
+                    0,
+                    VoteStateTargetVersion::V4,
+                    lamports,
+                    1,
+                    &signers,
+                    &rent,
+                    &clock
+                ),
+                Err(InstructionError::InsufficientFunds)
+            );
+        }
+
+        // Full close succeeds when pending = 0.
+        {
+            let (handler, account) = make_v4_account_with_pending(&vote_pubkey, 0, 100);
+            let withdrawer = *handler.authorized_withdrawer();
+            let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+            let lamports = rent.minimum_balance(VoteStateV4::size_of()) + 100;
+            let tx = setup_withdraw_context(vote_pubkey, account);
+            let ix = tx.get_next_instruction_context().unwrap();
+
+            assert!(
+                withdraw(
+                    &ix,
+                    0,
+                    VoteStateTargetVersion::V4,
+                    lamports,
+                    1,
+                    &signers,
+                    &rent,
+                    &clock
+                )
+                .is_ok()
+            );
+        }
+    }
 }
