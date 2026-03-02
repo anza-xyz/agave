@@ -5376,4 +5376,84 @@ mod tests {
         let v4 = VoteStateV4::deserialize(borrowed.get_data(), &node_pubkey).unwrap();
         assert_eq!(v4.bls_pubkey_compressed, Some(bls_b));
     }
+
+    #[test]
+    fn test_bls_pop_cryptographic_failures() {
+        // Invalid PoP scenarios: zero bytes, garbage bytes, and
+        // PoP bound to the wrong vote account.
+        let vote_pubkey = Pubkey::new_unique();
+        let vote_state = vote_state_new_for_test(&vote_pubkey, VoteStateTargetVersion::V4);
+        let withdrawer = *vote_state.authorized_withdrawer();
+        let serialized = vote_state.serialize();
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(serialized.len());
+        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
+        vote_account.set_data_from_slice(&serialized);
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let transaction_context = new_transaction_context(
+            vec![(id(), program_account), (vote_pubkey, vote_account)],
+            vec![InstructionAccount::new(1, false, true)],
+            &rent,
+        );
+        let ix = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed = ix.try_borrow_instruction_account(0).unwrap();
+        let signers: HashSet<Pubkey> = [withdrawer, Pubkey::new_unique()].into_iter().collect();
+        let clock = Clock::default();
+
+        // All-zero BLS pubkey + PoP.
+        assert_eq!(
+            authorize(
+                &mut borrowed,
+                VoteStateTargetVersion::V4,
+                &Pubkey::new_unique(),
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                    bls_proof_of_possession: [0u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+                }),
+                &signers,
+                &clock,
+                true,
+                || Ok(()),
+            ),
+            Err(InstructionError::InvalidArgument)
+        );
+
+        // Random garbage BLS pubkey + PoP.
+        assert_eq!(
+            authorize(
+                &mut borrowed,
+                VoteStateTargetVersion::V4,
+                &Pubkey::new_unique(),
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: [0xAB; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                    bls_proof_of_possession: [0xCD; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+                }),
+                &signers,
+                &clock,
+                true,
+                || Ok(()),
+            ),
+            Err(InstructionError::InvalidArgument)
+        );
+
+        // Valid BLS pubkey but PoP for wrong vote account.
+        let other_vote = Pubkey::new_unique();
+        let (bls_for_other, pop_for_other) = create_bls_pubkey_and_proof_of_possession(&other_vote);
+        assert_eq!(
+            authorize(
+                &mut borrowed,
+                VoteStateTargetVersion::V4,
+                &Pubkey::new_unique(),
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: bls_for_other,
+                    bls_proof_of_possession: pop_for_other,
+                }),
+                &signers,
+                &clock,
+                true,
+                || Ok(()),
+            ),
+            Err(InstructionError::InvalidArgument)
+        );
+    }
 }
