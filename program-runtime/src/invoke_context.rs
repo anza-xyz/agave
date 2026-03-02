@@ -470,11 +470,9 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             let mut instruction_accounts: Vec<InstructionAccount> =
                 Vec::with_capacity(instruction.accounts.len());
             for index_in_transaction in instruction.accounts.iter() {
-                debug_assert!((*index_in_transaction as usize) < transaction_callee_map.len());
-
                 let index_in_callee = transaction_callee_map
                     .get_mut(*index_in_transaction as usize)
-                    .unwrap();
+                    .expect("Invalid index in transaction");
 
                 if (*index_in_callee as usize) > instruction_accounts.len() {
                     *index_in_callee = instruction_accounts.len() as u16;

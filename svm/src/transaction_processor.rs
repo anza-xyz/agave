@@ -1105,8 +1105,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 .saturating_sub(transaction_context.number_of_cpis_in_trace());
             // This vector is a map between CPI number in trace (not counting top level
             // instructions) and the top level caller index.
-            // This mapping assumes that the caller instruction is always placed before the callee
-            // instruction in the trace.
+            // In TransactionContext, caller instructions always precede callee instructions, so
+            // we can use it to avoid backtracking on instructions callers to
+            // find the top level instruction that started the call chain.
             let mut parent_positions: Vec<usize> =
                 vec![usize::MAX; transaction_context.number_of_cpis_in_trace()];
             let (ix_trace, accounts, ix_data_trace) = transaction_context.take_instruction_trace();
@@ -1124,6 +1125,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                 // If the caller index is less than the number of top level instructions,
                 // it directly represents a top level instruction index.
+                // Top level instructions precede all CPIs in the instruction trace.
                 let outer_index = if (caller_ix as usize) < top_level_ixs_num {
                     *parent_positions.get_mut(cpi_num).unwrap() = caller_ix as usize;
                     caller_ix as usize
@@ -1139,6 +1141,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     *parent_positions.get_mut(cpi_num).unwrap() = caller_index;
                     caller_index
                 } else {
+                    // This case shall never happen. Program runtime always executes caller before
+                    // callees, so the if-statement can only be broken into two different cases:
+                    // 1. Top-level instructions doing a CPI
+                    // 2. A nested CPI.
                     debug_assert!(false);
                     usize::MAX
                 };
