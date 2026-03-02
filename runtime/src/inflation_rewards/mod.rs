@@ -743,36 +743,107 @@ mod tests {
     fn test_commission_split_bps() {
         // 0% commission
         assert_eq!(commission_split(0, 1), (0, 1, false));
+        assert_eq!(commission_split(0, 10), (0, 10, false));
+        assert_eq!(commission_split(0, 100), (0, 100, false));
+        assert_eq!(commission_split(0, 1_000), (0, 1_000, false));
+        assert_eq!(commission_split(0, u64::MAX), (0, u64::MAX, false));
 
         // 100% commission (10,000 bps)
         assert_eq!(commission_split(10_000, 1), (1, 0, false));
+        assert_eq!(commission_split(10_000, 10), (10, 0, false));
+        assert_eq!(commission_split(10_000, 100), (100, 0, false));
+        assert_eq!(commission_split(10_000, 1_000), (1_000, 0, false));
+        assert_eq!(commission_split(10_000, u64::MAX), (u64::MAX, 0, false));
 
         // Values > 10,000 bps are capped at 100%
         assert_eq!(commission_split(u16::MAX, 1), (1, 0, false));
+        assert_eq!(commission_split(u16::MAX, 10), (10, 0, false));
+        assert_eq!(commission_split(u16::MAX, 100), (100, 0, false));
+        assert_eq!(commission_split(u16::MAX, 1_000), (1_000, 0, false));
+        assert_eq!(commission_split(u16::MAX, u64::MAX), (u64::MAX, 0, false));
 
-        // 99% commission (9,900 bps) - voter gets floored 99% of 10 = 9
-        assert_eq!(commission_split(9_900, 10), (9, 0, true));
+        // 99% commission (9,900 bps)
+        assert_eq!(commission_split(9_900, 1), (0, 0, true)); // 1-lamport truncation
+        assert_eq!(commission_split(9_900, 10), (9, 0, true)); // 1-lamport truncation
+        assert_eq!(commission_split(9_900, 100), (99, 1, true));
+        assert_eq!(commission_split(9_900, 1_000), (990, 10, true));
+        assert_eq!(
+            commission_split(9_900, u64::MAX),
+            (
+                (u64::MAX as u128 * 9_900 / 10_000) as u64,
+                (u64::MAX as u128 * 100 / 10_000) as u64,
+                true
+            )
+        ); // 1-lamport truncation
 
-        // 1% commission (100 bps) - voter gets floored 1% of 10 = 0
-        assert_eq!(commission_split(100, 10), (0, 9, true));
+        // 99.99% commission (9,999 bps)
+        assert_eq!(commission_split(9_999, 1), (0, 0, true)); // 1-lamport truncation
+        assert_eq!(commission_split(9_999, 10), (9, 0, true)); // 1-lamport truncation
+        assert_eq!(commission_split(9_999, 100), (99, 0, true)); // 1-lamport truncation
+        assert_eq!(commission_split(9_999, 1_000), (999, 0, true)); // 1-lamport truncation
+        assert_eq!(
+            commission_split(9_999, u64::MAX),
+            (
+                (u64::MAX as u128 * 9_999 / 10_000) as u64,
+                (u64::MAX as u128 / 10_000) as u64,
+                true
+            )
+        ); // 1-lamport truncation
+
+        // 1% commission (100 bps)
+        assert_eq!(commission_split(100, 1), (0, 0, true)); // 1-lamport truncation
+        assert_eq!(commission_split(100, 10), (0, 9, true)); // 1-lamport truncation
+        assert_eq!(commission_split(100, 100), (1, 99, true));
+        assert_eq!(commission_split(100, 1_000), (10, 990, true));
+        assert_eq!(
+            commission_split(100, u64::MAX),
+            (
+                (u64::MAX as u128 * 100 / 10_000) as u64,
+                (u64::MAX as u128 * 9_900 / 10_000) as u64,
+                true
+            )
+        ); // 1-lamport truncation
 
         // 50% commission (5,000 bps)
-        let (voter_portion, staker_portion, was_split) = commission_split(5_000, 10);
-        assert_eq!((voter_portion, staker_portion, was_split), (5, 5, true));
-
-        // Test fractional bps: 12.34% = 1,234 bps
-        // voter gets 1234/10000 * 1000 = 123.4 -> 123
-        // staker gets 8766/10000 * 1000 = 876.6 -> 876
-        let (voter_portion, staker_portion, was_split) = commission_split(1_234, 1_000);
-        assert_eq!((voter_portion, staker_portion, was_split), (123, 876, true));
-
-        // Test another fractional: 33.33% = 3,333 bps on 10,000 rewards
-        // voter gets 3333/10000 * 10000 = 3333
-        // staker gets 6667/10000 * 10000 = 6667
-        let (voter_portion, staker_portion, was_split) = commission_split(3_333, 10_000);
+        assert_eq!(commission_split(5_000, 1), (0, 0, true)); // 1-lamport truncation
+        assert_eq!(commission_split(5_000, 10), (5, 5, true));
+        assert_eq!(commission_split(5_000, 100), (50, 50, true));
+        assert_eq!(commission_split(5_000, 1_000), (500, 500, true));
         assert_eq!(
-            (voter_portion, staker_portion, was_split),
-            (3_333, 6_667, true)
-        );
+            commission_split(5_000, u64::MAX),
+            (
+                (u64::MAX as u128 * 5_000 / 10_000) as u64,
+                (u64::MAX as u128 * 5_000 / 10_000) as u64,
+                true
+            )
+        ); // 1-lamport truncation
+
+        // 12.34% commission (1,234 bps)
+        assert_eq!(commission_split(1_234, 1), (0, 0, true)); // 1-lamport truncation
+        assert_eq!(commission_split(1_234, 10), (1, 8, true)); // 1-lamport truncation
+        assert_eq!(commission_split(1_234, 1_000), (123, 876, true)); // 1-lamport truncation
+        assert_eq!(commission_split(1_234, 10_000), (1_234, 8_766, true));
+        assert_eq!(
+            commission_split(1_234, u64::MAX),
+            (
+                (u64::MAX as u128 * 1_234 / 10_000) as u64,
+                (u64::MAX as u128 * 8_766 / 10_000) as u64,
+                true
+            )
+        ); // 1-lamport truncation
+
+        // 33.33% commission (3,333 bps)
+        assert_eq!(commission_split(3_333, 1), (0, 0, true)); // 1-lamport truncation
+        assert_eq!(commission_split(3_333, 10), (3, 6, true)); // 1-lamport truncation
+        assert_eq!(commission_split(3_333, 1_000), (333, 666, true)); // 1-lamport truncation
+        assert_eq!(commission_split(3_333, 10_000), (3_333, 6_667, true));
+        assert_eq!(
+            commission_split(3_333, u64::MAX),
+            (
+                (u64::MAX as u128 * 3_333 / 10_000) as u64,
+                (u64::MAX as u128 * 6_667 / 10_000) as u64,
+                true
+            )
+        ); // 1-lamport truncation
     }
 }
