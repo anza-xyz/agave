@@ -5,8 +5,8 @@
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entrypoint(_input: *mut u8, instruction_data_addr: *const u8) -> u64 {
-    let instruction_data_len = unsafe { *((instruction_data_addr as u64 - 8) as *const u64) };
     let instruction_data = unsafe {
+        let instruction_data_len = *((instruction_data_addr as u64 - 8) as *const u64);
         core::slice::from_raw_parts(instruction_data_addr, instruction_data_len as usize)
     };
 
