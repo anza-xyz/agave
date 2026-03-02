@@ -2,7 +2,7 @@ use {
     agave_votor_messages::{
         consensus_message::VoteMessage,
         reward_certificate::{
-            AddVoteMessage, BuildRewardCertsRequest, BuildRewardCertsRespError,
+            AddVoteMsg, BuildRewardCertsRequest, BuildRewardCertsRespError,
             BuildRewardCertsRespSucc, BuildRewardCertsResponse, NUM_SLOTS_FOR_REWARD,
         },
         vote::Vote,
@@ -72,8 +72,8 @@ struct ConsensusRewards {
     build_reward_certs_receiver: Receiver<BuildRewardCertsRequest>,
     /// Channel send the built reward certificates.
     reward_certs_sender: Sender<BuildRewardCertsResponse>,
-    /// Channel to receive verified votes.
-    votes_receiver: Receiver<AddVoteMessage>,
+    /// Channel to receive `AddVoteMsg` containing sig verified votes.
+    add_vote_msg_receiver: Receiver<AddVoteMsg>,
 }
 
 impl ConsensusRewards {
@@ -85,7 +85,7 @@ impl ConsensusRewards {
         exit: Arc<AtomicBool>,
         build_reward_certs_receiver: Receiver<BuildRewardCertsRequest>,
         reward_certs_sender: Sender<BuildRewardCertsResponse>,
-        votes_receiver: Receiver<AddVoteMessage>,
+        add_vote_msg_receiver: Receiver<AddVoteMsg>,
     ) -> Self {
         Self {
             votes: BTreeMap::default(),
@@ -95,7 +95,7 @@ impl ConsensusRewards {
             exit,
             build_reward_certs_receiver,
             reward_certs_sender,
-            votes_receiver,
+            add_vote_msg_receiver,
         }
     }
 
@@ -119,7 +119,7 @@ impl ConsensusRewards {
                         }
                     }
                 }
-                recv(self.votes_receiver) -> msg => {
+                recv(self.add_vote_msg_receiver) -> msg => {
                     match msg {
                         Ok(msg) => {
                             let bank = self.sharable_banks.root();
@@ -215,7 +215,7 @@ impl ConsensusRewardsService {
         leader_schedule: Arc<LeaderScheduleCache>,
         sharable_banks: SharableBanks,
         exit: Arc<AtomicBool>,
-        votes_receiver: Receiver<AddVoteMessage>,
+        add_vote_msg_receiver: Receiver<AddVoteMsg>,
         build_reward_certs_receiver: Receiver<BuildRewardCertsRequest>,
         reward_certs_sender: Sender<BuildRewardCertsResponse>,
     ) -> Self {
@@ -229,7 +229,7 @@ impl ConsensusRewardsService {
                     exit,
                     build_reward_certs_receiver,
                     reward_certs_sender,
-                    votes_receiver,
+                    add_vote_msg_receiver,
                 )
                 .run();
             })
