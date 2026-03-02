@@ -1,4 +1,6 @@
 #![cfg(feature = "agave-unstable-api")]
+
+pub mod bridge;
 pub mod error;
 pub mod thread_aware_account_locks;
 
