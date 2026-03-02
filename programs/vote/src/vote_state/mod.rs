@@ -5261,4 +5261,119 @@ mod tests {
         assert_eq!(deserialized.authorized_voters, authorized_voters);
         assert_eq!(deserialized.last_timestamp, last_timestamp);
     }
+
+    #[test]
+    fn test_bls_absent_after_v3_to_v4_migration() {
+        // V3 to V4 migration via get_vote_state_handler_checked must
+        // produce bls_pubkey_compressed = None.
+        let vote_pubkey = solana_pubkey::new_rand();
+        let v3 = VoteStateV3::new(
+            &VoteInit {
+                node_pubkey: solana_pubkey::new_rand(),
+                authorized_voter: solana_pubkey::new_rand(),
+                authorized_withdrawer: solana_pubkey::new_rand(),
+                commission: 10,
+            },
+            &Clock::default(),
+        );
+        let last_timestamp = v3.last_timestamp.clone();
+
+        // Serialize V3 into an account.
+        let buf_size = VoteStateV3::size_of();
+        let v3_versioned = VoteStateVersions::V3(Box::new(v3));
+        let mut vote_account_data = vec![0u8; buf_size];
+        bincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
+
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(buf_size) + 1_000_000;
+        let mut vote_account = AccountSharedData::new(lamports, buf_size, &id());
+        vote_account.set_data_from_slice(&vote_account_data);
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let transaction_context = new_transaction_context(
+            vec![(id(), program_account), (vote_pubkey, vote_account)],
+            vec![InstructionAccount::new(1, false, true)],
+            &rent,
+        );
+        let ix = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed = ix.try_borrow_instruction_account(0).unwrap();
+
+        // Drive conversion through the handler.
+        let vote_state =
+            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+        vote_state.set_vote_account_state(&mut borrowed).unwrap();
+
+        let v4 = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
+        assert_eq!(v4.bls_pubkey_compressed, None);
+        assert!(!v4.has_bls_pubkey());
+        assert_eq!(v4.last_timestamp, last_timestamp);
+    }
+
+    #[test]
+    fn test_bls_overwrite_via_voter_with_bls() {
+        // BLS pubkey set to A, then overwritten to B via VoterWithBLS.
+        let vote_pubkey = Pubkey::new_unique();
+        let (bls_a, pop_a) = create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+        let (bls_b, pop_b) = create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+
+        let vote_state = vote_state_new_for_test(&vote_pubkey, VoteStateTargetVersion::V4);
+        let withdrawer = *vote_state.authorized_withdrawer();
+        let node_pubkey = *vote_state.node_pubkey();
+        let serialized = vote_state.serialize();
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(serialized.len());
+        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
+        vote_account.set_data_from_slice(&serialized);
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let transaction_context = new_transaction_context(
+            vec![(id(), program_account), (vote_pubkey, vote_account)],
+            vec![InstructionAccount::new(1, false, true)],
+            &rent,
+        );
+        let ix = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed = ix.try_borrow_instruction_account(0).unwrap();
+
+        let signers: HashSet<Pubkey> = [withdrawer, Pubkey::new_unique()].into_iter().collect();
+
+        // Set BLS A.
+        authorize(
+            &mut borrowed,
+            VoteStateTargetVersion::V4,
+            &Pubkey::new_unique(),
+            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                bls_pubkey: bls_a,
+                bls_proof_of_possession: pop_a,
+            }),
+            &signers,
+            &Clock::default(),
+            true,
+            || Ok(()),
+        )
+        .unwrap();
+
+        let v4 = VoteStateV4::deserialize(borrowed.get_data(), &node_pubkey).unwrap();
+        assert_eq!(v4.bls_pubkey_compressed, Some(bls_a));
+
+        // Overwrite with BLS B.
+        let clock = Clock {
+            epoch: 3,
+            ..Clock::default()
+        };
+        authorize(
+            &mut borrowed,
+            VoteStateTargetVersion::V4,
+            &Pubkey::new_unique(),
+            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                bls_pubkey: bls_b,
+                bls_proof_of_possession: pop_b,
+            }),
+            &signers,
+            &clock,
+            true,
+            || Ok(()),
+        )
+        .unwrap();
+
+        let v4 = VoteStateV4::deserialize(borrowed.get_data(), &node_pubkey).unwrap();
+        assert_eq!(v4.bls_pubkey_compressed, Some(bls_b));
+    }
 }
