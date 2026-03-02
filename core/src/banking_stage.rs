@@ -92,9 +92,7 @@ pub mod unified_scheduler;
 #[cfg(not(feature = "dev-context-only-utils"))]
 pub(crate) mod unified_scheduler;
 
-#[cfg(unix)]
 mod progress_tracker;
-#[cfg(unix)]
 mod tpu_to_pack;
 
 /// The maximum number of worker threads that can be spawned by banking stage.
@@ -522,7 +520,6 @@ impl BankingStage {
                 }
                 BlockProductionMethod::UnifiedScheduler => self.spawn_internal_unified(),
             },
-            #[cfg(unix)]
             BankingControlMsg::External { session } => self.spawn_external(session),
         })?;
 
@@ -727,7 +724,6 @@ impl BankingStage {
     }
 }
 
-#[cfg(unix)]
 mod external {
     use {
         super::*,
@@ -848,7 +844,6 @@ pub enum BankingControlMsg {
         num_workers: NonZeroUsize,
         config: SchedulerConfig,
     },
-    #[cfg(unix)]
     External {
         session: agave_scheduling_utils::handshake::server::AgaveSession,
     },
