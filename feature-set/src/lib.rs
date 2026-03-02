@@ -1249,7 +1249,7 @@ pub mod enable_alt_bn128_g2_syscalls {
 }
 
 pub mod commission_rate_in_basis_points {
-    solana_pubkey::declare_id!("CommissionRate1nBasisPoints1111111111111111");
+    solana_pubkey::declare_id!("Eg7tXEwMZzS98xaZ1YHUbdRHsaYZiCsSaR6sKgxreoaj");
 }
 
 pub mod custom_commission_collector {
