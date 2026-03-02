@@ -24,7 +24,7 @@ use {
     solana_hash::Hash,
     solana_keypair::{Address, Keypair},
     solana_ledger::shred::Shred,
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_time_utils::timestamp,
@@ -232,16 +232,18 @@ impl CrdsGossip {
     pub fn generate_pull_responses(
         &self,
         requests: &[PullRequest],
-        output_size_limit: usize, // Limit number of crds values returned.
+        order: &[usize],
+        outbound_budget: &TokenBucket,
         now: u64,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
         try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool,
         stats: &GossipStats,
-    ) -> Vec<Vec<CrdsValue>> {
+    ) -> Vec<(SocketAddr, Vec<CrdsValue>)> {
         CrdsGossipPull::generate_pull_responses(
             &self.crds,
             requests,
-            output_size_limit,
+            order,
+            outbound_budget,
             now,
             should_retain_crds_value,
             try_consume_scan_budget,

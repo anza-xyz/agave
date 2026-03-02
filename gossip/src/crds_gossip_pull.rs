@@ -32,7 +32,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
@@ -338,24 +338,87 @@ impl CrdsGossipPull {
     }
 
     /// Create gossip responses to pull requests
+    ///
+    /// `order` holds indices into `requests` giving the order in which the
+    /// egress budget is spent.
+    /// Returns pairs (destination, missing CRDS values).
     pub(crate) fn generate_pull_responses(
         crds: &RwLock<Crds>,
         requests: &[PullRequest],
-        output_size_limit: usize, // Limit number of crds values returned.
+        order: &[usize],
+        outbound_budget: &TokenBucket,
         now: u64,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
         try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool,
         stats: &GossipStats,
-    ) -> Vec<Vec<CrdsValue>> {
-        Self::filter_crds_values(
-            crds,
-            requests,
-            output_size_limit,
-            now,
-            should_retain_crds_value,
-            try_consume_scan_budget,
-            stats,
-        )
+    ) -> Vec<(SocketAddr, Vec<CrdsValue>)> {
+        let msg_timeout = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
+        let jitter = rand::rng().random_range(0..msg_timeout / 4);
+        //skip filters from callers that are too old
+        let caller_wallclock_window =
+            now.saturating_sub(msg_timeout)..now.saturating_add(msg_timeout);
+        let mut dropped_requests = 0usize;
+        let mut total_skipped = 0usize;
+        let crds = crds.read().unwrap();
+        let mut ret = Vec::with_capacity(order.len());
+        for (batch_index, &next_index_to_serve) in order.iter().enumerate() {
+            let request = &requests[next_index_to_serve];
+            let filter = &request.filter;
+            let caller_wallclock = request.wallclock;
+            if !caller_wallclock_window.contains(&caller_wallclock) {
+                dropped_requests += 1;
+                continue;
+            }
+            // Charge the scan budget by the actual shard occupancy the filter will touch.
+            let scan_len = crds.filter_bitmask_scan_count(filter.mask, filter.mask_bits);
+            if !try_consume_scan_budget(request, scan_len) {
+                continue;
+            }
+            let caller_wallclock = caller_wallclock.checked_add(jitter).unwrap_or(0);
+            let pred = |entry: &&VersionedCrdsValue| {
+                debug_assert!(filter.test_mask(entry.value.hash()));
+                // Skip values that are too new.
+                if entry.value.wallclock() > caller_wallclock {
+                    total_skipped += 1;
+                    false
+                } else {
+                    !filter.filter_contains(entry.value.hash())
+                        && should_retain_crds_value(&entry.value)
+                }
+            };
+            let mut out_of_budget = false;
+            let out: Vec<_> = crds
+                .filter_bitmask(filter.mask, filter.mask_bits)
+                .filter(pred)
+                .map(|entry| entry.value.clone())
+                .take_while(|entry| {
+                    match outbound_budget.consume_tokens(entry.serialized_size() as u64) {
+                        Ok(_) => true,
+                        Err(_) => {
+                            out_of_budget = true;
+                            false
+                        }
+                    }
+                })
+                .collect();
+            if !out.is_empty() {
+                ret.push((request.addr, out));
+            }
+            // Break if we cannot fit any more responses into outbound_budget.
+            if out_of_budget {
+                stats
+                    .gossip_pull_request_no_budget
+                    .add_relaxed((order.len() - batch_index) as u64);
+                break;
+            }
+        }
+        stats
+            .filter_crds_values_dropped_requests
+            .add_relaxed(dropped_requests as u64);
+        stats
+            .filter_crds_values_dropped_values
+            .add_relaxed(total_skipped as u64);
+        ret
     }
 
     // Checks if responses should be inserted and
@@ -487,73 +550,6 @@ impl CrdsGossipPull {
         drop(crds);
         drop(failed_inserts);
         filters.into()
-    }
-
-    /// Filter values that fail the bloom filter up to `max_bytes`.
-    fn filter_crds_values(
-        crds: &RwLock<Crds>,
-        requests: &[PullRequest],
-        mut output_size_limit: usize, // Limit number of crds values returned.
-        now: u64,
-        // Predicate returning false if the CRDS value should be discarded.
-        should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
-        // False drops the request before scanning CRDS.
-        // Implementations may consume caller-owned scan budget.
-        try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool,
-        stats: &GossipStats,
-    ) -> Vec<Vec<CrdsValue>> {
-        let msg_timeout = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
-        let jitter = rand::rng().random_range(0..msg_timeout / 4);
-        //skip filters from callers that are too old
-        let caller_wallclock_window =
-            now.saturating_sub(msg_timeout)..now.saturating_add(msg_timeout);
-        let mut dropped_requests = 0usize;
-        let mut total_skipped = 0usize;
-        let crds = crds.read().unwrap();
-        let apply_filter = |request: &PullRequest| {
-            if output_size_limit == 0 {
-                return Vec::default();
-            }
-            let filter = &request.filter;
-            let caller_wallclock = request.wallclock;
-            if !caller_wallclock_window.contains(&caller_wallclock) {
-                dropped_requests += 1;
-                return Vec::default();
-            }
-            let scan_len = crds.filter_bitmask_scan_count(filter.mask, filter.mask_bits);
-            // Charge only requests that passed cheaper pre-scan checks.
-            if !try_consume_scan_budget(request, scan_len) {
-                return Vec::default();
-            }
-            let caller_wallclock = caller_wallclock.checked_add(jitter).unwrap_or(0);
-            let pred = |entry: &&VersionedCrdsValue| {
-                debug_assert!(filter.test_mask(entry.value.hash()));
-                // Skip values that are too new.
-                if entry.value.wallclock() > caller_wallclock {
-                    total_skipped += 1;
-                    false
-                } else {
-                    !filter.filter_contains(entry.value.hash())
-                        && should_retain_crds_value(&entry.value)
-                }
-            };
-            let out: Vec<_> = crds
-                .filter_bitmask(filter.mask, filter.mask_bits)
-                .filter(pred)
-                .map(|entry| entry.value.clone())
-                .take(output_size_limit)
-                .collect();
-            output_size_limit = output_size_limit.saturating_sub(out.len());
-            out
-        };
-        let ret: Vec<_> = requests.iter().map(apply_filter).collect();
-        stats
-            .filter_crds_values_dropped_requests
-            .add_relaxed(dropped_requests as u64);
-        stats
-            .filter_crds_values_dropped_values
-            .add_relaxed(total_skipped as u64);
-        ret
     }
 
     pub(crate) fn make_timeouts<'a>(
@@ -1116,6 +1112,10 @@ pub(crate) mod tests {
         assert!(count < 75, "count of peer != old: {count}");
     }
 
+    fn outbound_budget_for_tests() -> TokenBucket {
+        TokenBucket::new(u64::MAX, u64::MAX, 1.0)
+    }
+
     #[test]
     fn test_generate_pull_responses() {
         let now = timestamp();
@@ -1146,15 +1146,15 @@ pub(crate) mod tests {
         let rsp = CrdsGossipPull::generate_pull_responses(
             &dest_crds,
             &requests,
-            usize::MAX,
+            &[1, 0],
+            &outbound_budget_for_tests(),
             new_wallclock,
             |_| true,    // should_retain_crds_value
             |_, _| true, // try_consume_scan_budget
             &GossipStats::default(),
         );
-        assert_eq!(rsp.len(), 2);
-        assert!(rsp[0].is_empty());
-        assert_eq!(rsp[1], vec![new]);
+        assert_eq!(rsp.len(), 1, "Stale requests must be dropped");
+        assert_eq!(rsp[0].1, vec![new], "Valid request must be served");
     }
 
     #[test]
