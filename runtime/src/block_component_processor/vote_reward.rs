@@ -1,15 +1,13 @@
 use {
-    crate::bank::Bank,
+    crate::bank::{Bank, EpochInflationRewards},
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_clock::Slot,
+    solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_system_interface::program as system_program,
     std::sync::LazyLock,
     thiserror::Error,
     wincode::{SchemaRead, SchemaWrite},
 };
-#[cfg(test)]
-use {crate::bank::EpochInflationRewards, solana_clock::Epoch};
 
 /// The account address for the off curve account used to store metadata for calculating and
 /// paying voting rewards.
@@ -70,7 +68,7 @@ impl VoteRewardAccountState {
     /// such this function is called with [`additional_validator_rewards`] which should be the
     /// total rewards that will be paid by PER and we use the capitalization from the previous
     /// epoch plus this value to compute the vote rewards.
-    #[cfg(test)]
+    #[allow(dead_code)] // caller not yet upstreamed
     pub(crate) fn new_epoch_update_account(
         bank: &Bank,
         prev_epoch: Epoch,
@@ -89,6 +87,18 @@ impl VoteRewardAccountState {
             epoch_validator_rewards_lamports: validator_rewards_lamports,
         };
         state.set_state(bank);
+    }
+
+    /// Returns the amount of lamports needed to store this account.
+    #[cfg(test)]
+    pub(crate) fn rent_needed_for_account(bank: &Bank) -> u64 {
+        let state = Self {
+            epoch_validator_rewards_lamports: 0,
+        };
+        let account_size = wincode::serialized_size(&state).unwrap();
+        bank.rent_collector()
+            .rent
+            .minimum_balance(account_size as usize)
     }
 }
 
