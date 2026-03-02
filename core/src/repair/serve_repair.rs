@@ -1109,6 +1109,7 @@ impl ServeRepair {
             stats.processed += 1;
             let Some(rsp) = self.handle_repair(recycler, &from_addr, request, stats, ping_cache)
             else {
+                data_budget.add_tokens(max_response_cost as u64);
                 continue;
             };
             let num_response_packets = rsp.len();
