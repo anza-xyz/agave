@@ -2160,6 +2160,7 @@ mod tests {
         solana_clock::{MAX_PROCESSING_AGE, Slot},
         solana_genesis_config::GenesisConfig,
         solana_keypair::Keypair,
+        solana_leader_schedule::SlotLeader,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::{
             AddressLookupTableAccount, SimpleAddressLoader, VersionedMessage,
@@ -2220,7 +2221,7 @@ mod tests {
         // Warp to next epoch for MaxAge tests.
         let mut bank = Bank::new_from_parent(
             bank.clone(),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             bank.get_epoch_info().slots_in_epoch,
         );
         if !relax_intrabatch_account_locks {
