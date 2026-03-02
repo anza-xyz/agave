@@ -6161,10 +6161,10 @@ dependencies = [
 [[package]]
 name = "rts-alloc"
 version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a0d46bfcacc6e65b67c547e5083ffd549fe80dee8ec337507dd7f01d26763f4"
+source = "git+https://github.com/anza-xyz/rts-alloc?rev=f4634ad9e25cc6ce1abd7d80e1c72683b57df509#f4634ad9e25cc6ce1abd7d80e1c72683b57df509"
 dependencies = [
  "libc",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6728,10 +6728,10 @@ dependencies = [
 [[package]]
 name = "shaq"
 version = "1.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7ff8d8358f614b394c8011e4aca6eb9c0bba29bd73d16be593745bd47838cb8"
+source = "git+https://github.com/anza-xyz/shaq?rev=9e8c939e6149fb2e6a7570f84bef67f5421bbc68#9e8c939e6149fb2e6a7570f84bef67f5421bbc68"
 dependencies = [
  "libc",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

@@ -1,7 +1,7 @@
 use {
     crate::handshake::{
         ClientLogon,
-        shared::{GLOBAL_ALLOCATORS, LOGON_FAILURE, MAX_WORKERS, VERSION},
+        shared::{LOGON_FAILURE, MAX_WORKERS, VERSION},
     },
     agave_scheduler_bindings::{
         PackToWorkerMessage, ProgressMessage, TpuToPackMessage, WorkerToPackMessage,
@@ -146,17 +146,7 @@ pub fn setup_session(
 
     // Setup requested allocators.
     let allocators = (0..logon.allocator_handles)
-        .map(|offset| {
-            // NB: Server validates all requested counts are within expected bands so this should
-            // never panic.
-            let id = GLOBAL_ALLOCATORS
-                .checked_add(logon.worker_count)
-                .unwrap()
-                .checked_add(offset)
-                .unwrap();
-
-            unsafe { Allocator::join(&allocator_file, u32::try_from(id).unwrap()) }
-        })
+        .map(|_| Allocator::join(&allocator_file))
         .collect::<Result<Vec<_>, _>>()?;
 
     // Ensure worker_fds length matches expectations.
@@ -171,8 +161,10 @@ pub fn setup_session(
     // underlying object alive until process exit or munmap.
     let session = ClientSession {
         allocators,
-        tpu_to_pack: unsafe { shaq::Consumer::join(&File::from_raw_fd(tpu_to_pack_fd))? },
-        progress_tracker: unsafe { shaq::Consumer::join(&File::from_raw_fd(progress_tracker_fd))? },
+        tpu_to_pack: unsafe { shaq::spsc::Consumer::join(&File::from_raw_fd(tpu_to_pack_fd))? },
+        progress_tracker: unsafe {
+            shaq::spsc::Consumer::join(&File::from_raw_fd(progress_tracker_fd))?
+        },
         workers: worker_fds
             .chunks(2)
             .map(|window| {
@@ -182,10 +174,10 @@ pub fn setup_session(
 
                 Ok(ClientWorkerSession {
                     pack_to_worker: unsafe {
-                        shaq::Producer::join(&File::from_raw_fd(*pack_to_worker))?
+                        shaq::spsc::Producer::join(&File::from_raw_fd(*pack_to_worker))?
                     },
                     worker_to_pack: unsafe {
-                        shaq::Consumer::join(&File::from_raw_fd(*worker_to_pack))?
+                        shaq::spsc::Consumer::join(&File::from_raw_fd(*worker_to_pack))?
                     },
                 })
             })
@@ -198,15 +190,15 @@ pub fn setup_session(
 /// The complete initialized scheduling session.
 pub struct ClientSession {
     pub allocators: Vec<Allocator>,
-    pub tpu_to_pack: shaq::Consumer<TpuToPackMessage>,
-    pub progress_tracker: shaq::Consumer<ProgressMessage>,
+    pub tpu_to_pack: shaq::spsc::Consumer<TpuToPackMessage>,
+    pub progress_tracker: shaq::spsc::Consumer<ProgressMessage>,
     pub workers: Vec<ClientWorkerSession>,
 }
 
 /// An per worker scheduling session.
 pub struct ClientWorkerSession {
-    pub pack_to_worker: shaq::Producer<PackToWorkerMessage>,
-    pub worker_to_pack: shaq::Consumer<WorkerToPackMessage>,
+    pub pack_to_worker: shaq::spsc::Producer<PackToWorkerMessage>,
+    pub worker_to_pack: shaq::spsc::Consumer<WorkerToPackMessage>,
 }
 
 /// Potential errors that can occur during the client's side of the handshake.
