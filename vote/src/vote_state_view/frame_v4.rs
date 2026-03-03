@@ -271,4 +271,79 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_try_new_trailing_nonzero_bytes() {
+        let vote_state = VoteStateV4 {
+            authorized_voters: AuthorizedVoters::new(0, Pubkey::default()),
+            epoch_credits: vec![(1, 2, 3)],
+            bls_pubkey_compressed: Some([42; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
+            votes: VecDeque::from([LandedVote {
+                latency: 0,
+                lockout: Lockout::default(),
+            }]),
+            root_slot: Some(42),
+            ..VoteStateV4::default()
+        };
+        let versioned = VoteStateVersions::new_v4(vote_state);
+        let mut bytes = bincode::serialize(&versioned).unwrap();
+
+        // Append non-zero trailing garbage.
+        bytes.extend_from_slice(&[0xFF; 42]);
+
+        assert_eq!(
+            VoteStateFrameV4::try_new(&bytes),
+            Ok(VoteStateFrameV4 {
+                bls_pubkey_compressed_frame: BlsPubkeyCompressedFrame { has_pubkey: true },
+                votes_frame: LandedVotesListFrame { len: 1 },
+                root_slot_frame: RootSlotFrame {
+                    has_root_slot: true,
+                },
+                authorized_voters_frame: AuthorizedVotersListFrame { len: 1 },
+                epoch_credits_frame: EpochCreditsListFrame { len: 1 },
+            })
+        );
+    }
+
+    #[test]
+    fn test_frame_v4_field_offsets_match_sdk() {
+        // Verify frame offset calculations produce correct values by
+        // serializing a known VoteStateV4 and reading at computed offsets.
+        let node_pubkey = Pubkey::from([1; 32]);
+        let authorized_withdrawer = Pubkey::from([2; 32]);
+        let vote_state = VoteStateV4 {
+            node_pubkey,
+            authorized_withdrawer,
+            inflation_rewards_commission_bps: 5_000,
+            block_revenue_commission_bps: 7_500,
+            inflation_rewards_collector: Pubkey::from([3; 32]),
+            block_revenue_collector: Pubkey::from([4; 32]),
+            pending_delegator_rewards: 42,
+            ..VoteStateV4::default()
+        };
+        let versioned = VoteStateVersions::new_v4(vote_state);
+        let bytes = bincode::serialize(&versioned).unwrap();
+
+        // Read node_pubkey at its offset.
+        let offset = VoteStateFrameV4::node_pubkey_offset();
+        assert_eq!(&bytes[offset..offset + 32], &[1; 32]);
+
+        // Read authorized_withdrawer at its offset.
+        let offset = VoteStateFrameV4::authorized_withdrawer_offset();
+        assert_eq!(&bytes[offset..offset + 32], &[2; 32]);
+
+        // Read inflation_rewards_commission at its offset.
+        let offset = VoteStateFrameV4::inflation_rewards_commission_offset();
+        assert_eq!(
+            u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap()),
+            5_000
+        );
+
+        // Read block_revenue_commission at its offset.
+        let offset = VoteStateFrameV4::block_revenue_commission_offset();
+        assert_eq!(
+            u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap()),
+            7_500
+        );
+    }
 }
