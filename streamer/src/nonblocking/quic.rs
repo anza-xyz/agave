@@ -16,14 +16,11 @@ use {
     rand::{Rng, rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
-    solana_measure::measure::Measure,
     solana_net_utils::token_bucket::TokenBucket,
     solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{BytesPacket, PacketBatch},
     solana_pubkey::Pubkey,
-    solana_signature::Signature,
     solana_tls_utils::get_pubkey_from_tls_certificate,
-    solana_transaction_metrics_tracker::signature_if_should_track_packet,
     std::{
         array, fmt,
         iter::repeat_with,
@@ -98,7 +95,6 @@ struct PacketAccumulator {
     // the capacity here should match or exceed the capacity of the chunks
     // array used by handle_connection()
     pub chunks: SmallVec<[Bytes; 4]>,
-    pub start_time: Instant,
 }
 
 impl PacketAccumulator {
@@ -106,7 +102,6 @@ impl PacketAccumulator {
         Self {
             meta,
             chunks: SmallVec::default(),
-            start_time: Instant::now(),
         }
     }
 }
@@ -562,35 +557,6 @@ fn handle_connection_error(e: quinn::ConnectionError, stats: &StreamerStats, fro
     }
 }
 
-fn track_streamer_fetch_packet_performance(
-    packet_perf_measure: &[([u8; 64], Instant)],
-    stats: &StreamerStats,
-) {
-    if packet_perf_measure.is_empty() {
-        return;
-    }
-    let mut measure = Measure::start("track_perf");
-    let mut process_sampled_packets_us_hist = stats.process_sampled_packets_us_hist.lock().unwrap();
-
-    let now = Instant::now();
-    for (signature, start_time) in packet_perf_measure {
-        let duration = now.duration_since(*start_time);
-        debug!(
-            "QUIC streamer fetch stage took {duration:?} for transaction {:?}",
-            Signature::from(*signature)
-        );
-        process_sampled_packets_us_hist
-            .increment(duration.as_micros() as u64)
-            .unwrap();
-    }
-
-    drop(process_sampled_packets_us_hist);
-    measure.stop();
-    stats
-        .perf_track_overhead_us
-        .fetch_add(measure.as_us(), Ordering::Relaxed);
-}
-
 async fn handle_connection<Q, C>(
     packet_sender: Sender<PacketBatch>,
     remote_address: SocketAddr,
@@ -790,7 +756,7 @@ fn handle_chunks(
     // 14% of them come in multiple chunks. In that case, we copy
     // them into one `Bytes` buffer. We make a copy once, with
     // intention to not do it again.
-    let mut packet = if accum.chunks.len() == 1 {
+    let packet = if accum.chunks.len() == 1 {
         BytesPacket::new(
             accum.chunks.pop().expect("expected one chunk"),
             accum.meta.clone(),
@@ -805,12 +771,6 @@ fn handle_chunks(
 
     let packet_size = packet.meta().size;
 
-    let mut packet_perf_measure = None;
-    if let Some(signature) = signature_if_should_track_packet(&packet).ok().flatten() {
-        packet_perf_measure = Some((*signature, accum.start_time));
-        // we set the PERF_TRACK_PACKET on
-        packet.meta_mut().set_track_performance(true);
-    }
     let packet_batch = PacketBatch::Single(packet);
 
     if let Err(err) = packet_sender.try_send(packet_batch) {
@@ -831,10 +791,6 @@ fn handle_chunks(
         }
         trace!("packet batch send error {err:?}");
     } else {
-        if let Some(ppm) = &packet_perf_measure {
-            track_streamer_fetch_packet_performance(core::array::from_ref(ppm), stats);
-        }
-
         stats
             .total_bytes_sent_to_consumer
             .fetch_add(packet_size, Ordering::Relaxed);

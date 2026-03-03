@@ -9040,7 +9040,6 @@ dependencies = [
  "solana-time-utils",
  "solana-tls-utils",
  "solana-transaction-error",
- "solana-transaction-metrics-tracker",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util 0.7.18",
@@ -9460,20 +9459,6 @@ dependencies = [
  "serde_derive",
  "solana-instruction-error",
  "solana-sanitize",
-]
-
-[[package]]
-name = "solana-transaction-metrics-tracker"
-version = "4.1.0-alpha.0"
-dependencies = [
- "base64 0.22.1",
- "bincode",
- "log",
- "rand 0.9.2",
- "solana-packet 4.1.0",
- "solana-perf",
- "solana-short-vec",
- "solana-signature",
 ]
 
 [[package]]
