@@ -1322,6 +1322,33 @@ mod tests {
         let mut vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
 
         set_new_authorized_voter_and_assert(&mut vote_state, original_voter, epoch_offset, None);
+
+        // V4 removes the monotonicity constraint on target_epoch.
+        // V3 rejects non-monotonic target epochs; V4 allows them.
+        {
+            let voter_a = Pubkey::new_unique();
+            let voter_b = Pubkey::new_unique();
+
+            let mut v3 = VoteStateV3 {
+                authorized_voters: AuthorizedVoters::new(0, Pubkey::new_unique()),
+                ..Default::default()
+            };
+            v3.set_new_authorized_voter(&voter_a, 0, 10, None, |_| Ok(()))
+                .unwrap();
+            assert_eq!(
+                v3.set_new_authorized_voter(&voter_b, 0, 5, None, |_| Ok(())),
+                Err(InstructionError::InvalidAccountData)
+            );
+
+            let mut v4 = VoteStateV4 {
+                authorized_voters: AuthorizedVoters::new(0, Pubkey::new_unique()),
+                ..Default::default()
+            };
+            v4.set_new_authorized_voter(&voter_a, 0, 10, None, |_| Ok(()))
+                .unwrap();
+            v4.set_new_authorized_voter(&voter_b, 0, 5, None, |_| Ok(()))
+                .unwrap();
+        }
     }
 
     fn assert_authorized_voter_is_locked_within_epoch<T: VoteStateHandle>(
@@ -1550,6 +1577,35 @@ mod tests {
             new_authorized_voter
         );
         assert_eq!(vote_state.authorized_voters().len(), 1);
+
+        // V4 purge boundary: at epoch 11 with voter set at epoch 10,
+        // V4 retains epoch 10 (purge range 0..10) while V3 would not.
+        {
+            let voter_10 = Pubkey::new_unique();
+            let voter_15 = Pubkey::new_unique();
+            let mut v4 = VoteStateV4 {
+                authorized_voters: AuthorizedVoters::new(0, Pubkey::new_unique()),
+                ..Default::default()
+            };
+            v4.authorized_voters.insert(10, voter_10);
+            v4.authorized_voters.insert(15, voter_15);
+            let v4_voter = v4.get_and_update_authorized_voter(11).unwrap();
+            assert_eq!(v4_voter, voter_10);
+            // V4 purge range 0..10: epoch 10 retained.
+            assert!(v4.authorized_voters().get_authorized_voter(10).is_some());
+        }
+
+        // Epoch 0: saturating_sub(1) = 0, purge range 0..0 is empty.
+        {
+            let voter = Pubkey::new_unique();
+            let mut v4 = VoteStateV4 {
+                authorized_voters: AuthorizedVoters::new(0, voter),
+                ..Default::default()
+            };
+            let result = v4.get_and_update_authorized_voter(0).unwrap();
+            assert_eq!(result, voter);
+            assert!(!v4.authorized_voters().is_empty());
+        }
     }
 
     #[test_case(
@@ -2302,6 +2358,55 @@ mod tests {
 
             // Should be an exact copy.
             assert_eq!(vote_state_v4, initial_vote_state_v4);
+        }
+    }
+
+    #[test]
+    fn test_v4_migration_with_pre_existing_voters() {
+        // Verify V4 purge rules apply to the migrated voter map from
+        // both V1_14_11 and V3.
+        let vote_pubkey = Pubkey::new_unique();
+        let voter_5 = Pubkey::new_unique();
+        let voter_7 = Pubkey::new_unique();
+        let voter_9 = Pubkey::new_unique();
+
+        let build_voters = || {
+            let mut voters = AuthorizedVoters::new(0, Pubkey::new_unique());
+            voters.insert(5, voter_5);
+            voters.insert(7, voter_7);
+            voters.insert(9, voter_9);
+            voters
+        };
+
+        let assert_purge = |v4: &mut VoteStateV4| {
+            // Advance to epoch 10. V4 purge range 0..9.
+            let voter = v4.get_and_update_authorized_voter(10).unwrap();
+            assert_eq!(voter, voter_9);
+            assert!(v4.authorized_voters().get_authorized_voter(9).is_some());
+            assert!(v4.authorized_voters().get_authorized_voter(7).is_none());
+            assert!(v4.authorized_voters().get_authorized_voter(5).is_none());
+        };
+
+        // V1_14_11 → V4
+        {
+            let v1 = VoteState1_14_11 {
+                authorized_voters: build_voters(),
+                ..Default::default()
+            };
+            let versioned = VoteStateVersions::V1_14_11(Box::new(v1));
+            let mut v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
+            assert_purge(&mut v4);
+        }
+
+        // V3 → V4
+        {
+            let v3 = VoteStateV3 {
+                authorized_voters: build_voters(),
+                ..Default::default()
+            };
+            let versioned = VoteStateVersions::V3(Box::new(v3));
+            let mut v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
+            assert_purge(&mut v4);
         }
     }
 
