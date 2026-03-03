@@ -17,7 +17,7 @@ use {
         migration::MigrationStatus,
         reward_certificate::AddVoteMessage,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_bls_signatures::pubkey::Pubkey as BlsPubkey,
     solana_clock::Slot,
@@ -128,28 +128,13 @@ impl SigVerifier {
     }
 
     fn run(mut self, exit: Arc<AtomicBool>, packet_receiver: Receiver<PacketBatch>) {
-        const SOFT_RECEIVE_CAP: usize = 5000;
         while !exit.load(Ordering::Relaxed) {
-            let mut batches = Vec::with_capacity(SOFT_RECEIVE_CAP);
-            let mut num_batches = 0;
-            while num_batches < SOFT_RECEIVE_CAP {
-                match packet_receiver.recv_timeout(Duration::from_secs(1)) {
-                    Ok(b) => {
-                        batches.push(b);
-                        num_batches = num_batches.saturating_add(1);
-                    }
-                    Err(e) => match e {
-                        RecvTimeoutError::Timeout => break,
-                        RecvTimeoutError::Disconnected => {
-                            error!("packet_receiver disconnected:  Exiting.");
-                            return;
-                        }
-                    },
-                };
-            }
-
-            // Ignore packets if alpenglow is not active yet.
-            if self.migration_status.is_pre_feature_activation() {
+            const SOFT_RECEIVE_CAP: usize = 5000;
+            let Ok(batches) = recv_batches(&packet_receiver, SOFT_RECEIVE_CAP) else {
+                error!("packet_receiver disconnected:  Exiting.");
+                return;
+            };
+            if batches.is_empty() || self.migration_status.is_pre_feature_activation() {
                 continue;
             }
 
@@ -289,6 +274,40 @@ impl SigVerifier {
         self.stats.num_old_votes_received += 1;
         None
     }
+}
+
+/// Receives a `Vec<PacketBatch>` from the `receiver` while adhering to the `soft_receive_cap` limit.
+///
+/// Returns `Err(())` if the channel disconnected.
+fn recv_batches(
+    receiver: &Receiver<PacketBatch>,
+    soft_receive_cap: usize,
+) -> Result<Vec<PacketBatch>, ()> {
+    let batch = match receiver.recv_timeout(Duration::from_secs(1)) {
+        Ok(b) => b,
+        Err(e) => match e {
+            RecvTimeoutError::Timeout => {
+                return Ok(vec![]);
+            }
+            RecvTimeoutError::Disconnected => {
+                return Err(());
+            }
+        },
+    };
+    let mut batches = Vec::with_capacity(soft_receive_cap);
+    batches.push(batch);
+    while batches.len() < soft_receive_cap {
+        match receiver.try_recv() {
+            Ok(b) => {
+                batches.push(b);
+            }
+            Err(e) => match e {
+                TryRecvError::Empty => return Ok(batches),
+                TryRecvError::Disconnected => return Err(()),
+            },
+        }
+    }
+    Ok(batches)
 }
 
 #[cfg(test)]
