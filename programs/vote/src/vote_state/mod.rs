@@ -5263,6 +5263,195 @@ mod tests {
     }
 
     #[test]
+    fn test_v3_to_v4_trailing_bytes_shrink_and_regrow() {
+        // Exercises the full lifecycle of trailing-byte behavior in a
+        // fixed-size account buffer, driven through the program handlers
+        // `get_vote_state_handler_checked` and `set_vote_account_state`:
+        // * Step 1: Start with a max-size V3 state (all collections full).
+        // * Step 2: Convert V3 -> V4 via the handler. V4's serialized form
+        //           is smaller, leaving trailing garbage.
+        // * Step 3: Clear all votes, simulating the extreme case of a
+        //           validator whose entire tower has expired, which shrinks
+        //           the v4 vote state.
+        // * Step 4: Re-add votes incrementally, round-tripping through the
+        //           handler each time to verify the program handles the
+        //           growing serialized region over stale trailing bytes.
+
+        let vote_pubkey = solana_pubkey::new_rand();
+        let v3 = get_max_sized_vote_state_v3();
+        let node_pubkey = v3.node_pubkey;
+        let authorized_withdrawer = v3.authorized_withdrawer;
+        let commission = v3.commission;
+        let root_slot = v3.root_slot;
+        let votes = v3.votes.clone();
+        let epoch_credits = v3.epoch_credits.clone();
+        let authorized_voters = v3.authorized_voters.clone();
+        let last_timestamp = v3.last_timestamp.clone();
+
+        // Step 1: Populate V3 account and record V3 serialized size.
+        let buf_size = VoteStateV3::size_of();
+        let v3_versioned = VoteStateVersions::V3(Box::new(v3));
+        let v3_serialized_len = bincode::serialized_size(&v3_versioned).unwrap() as usize;
+        let mut vote_account_data = vec![0u8; buf_size];
+        bincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
+
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(buf_size) + 1_000_000;
+        let mut vote_account = AccountSharedData::new(lamports, buf_size, &id());
+        vote_account.set_data_from_slice(&vote_account_data);
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let transaction_context = new_transaction_context(
+            vec![(id(), program_account), (vote_pubkey, vote_account)],
+            vec![InstructionAccount::new(1, false, true)],
+            &rent,
+        );
+        let ix = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed = ix.try_borrow_instruction_account(0).unwrap();
+
+        // Step 2: V3 -> V4 conversion via the handler.
+        let vote_state =
+            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+        vote_state.set_vote_account_state(&mut borrowed).unwrap();
+
+        let v4_after_convert = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
+        let v4_serialized_len =
+            bincode::serialized_size(&VoteStateVersions::new_v4(v4_after_convert.clone())).unwrap()
+                as usize;
+
+        assert!(
+            v4_serialized_len < v3_serialized_len,
+            "v4 ({v4_serialized_len}) should be smaller than v3 ({v3_serialized_len})",
+        );
+        let trailing_len_after_convert = buf_size - v4_serialized_len;
+        assert!(
+            trailing_len_after_convert > 0,
+            "expected trailing bytes after v3 -> v4 conversion"
+        );
+
+        // Verify field-level correctness of the converted state.
+        assert_eq!(v4_after_convert.node_pubkey, node_pubkey);
+        assert_eq!(
+            v4_after_convert.authorized_withdrawer,
+            authorized_withdrawer
+        );
+        assert_eq!(v4_after_convert.root_slot, root_slot);
+        assert_eq!(v4_after_convert.votes, votes);
+        assert_eq!(v4_after_convert.epoch_credits, epoch_credits);
+        assert_eq!(v4_after_convert.authorized_voters, authorized_voters);
+        assert_eq!(
+            v4_after_convert.inflation_rewards_commission_bps,
+            commission as u16 * 100,
+        );
+        assert_eq!(v4_after_convert.last_timestamp, last_timestamp);
+
+        // Step 3a: Clear all votes, round-trip with resulting stale bytes.
+        let mut v4_empty_votes = v4_after_convert.clone();
+        v4_empty_votes.votes.clear();
+        let v4_empty_serialized_len =
+            bincode::serialized_size(&VoteStateVersions::new_v4(v4_empty_votes.clone())).unwrap()
+                as usize;
+        assert!(
+            v4_empty_serialized_len < v4_serialized_len,
+            "empty-votes v4 ({v4_empty_serialized_len}) should be smaller than full v4 \
+             ({v4_serialized_len})",
+        );
+
+        // Write the vote-cleared state. The trailing region now contains
+        // stale bytes from the previous (larger) V4 serialization.
+        borrowed
+            .set_state(&VoteStateVersions::new_v4(v4_empty_votes.clone()))
+            .unwrap();
+        let trailing_len_after_clear = buf_size - v4_empty_serialized_len;
+        assert!(
+            trailing_len_after_clear > trailing_len_after_convert,
+            "trailing region should grow after clearing votes: {trailing_len_after_clear} vs \
+             {trailing_len_after_convert}",
+        );
+
+        // Round-trip through the handler with the stale bytes.
+        let vote_state =
+            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+        vote_state.set_vote_account_state(&mut borrowed).unwrap();
+
+        let deserialized = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
+        assert!(deserialized.votes.is_empty(),);
+        assert_eq!(deserialized.epoch_credits.len(), MAX_EPOCH_CREDITS_HISTORY,);
+        assert_eq!(deserialized.authorized_voters, authorized_voters,);
+        assert_eq!(deserialized.last_timestamp, last_timestamp);
+
+        // Step 3b: Fill trailing with explicit garbage and round-trip again.
+        //
+        // Overwrite the trailing region with a non-zero pattern to verify
+        // the handler is not sensitive to arbitrary trailing content.
+        borrowed.get_data_mut().unwrap()[v4_empty_serialized_len..].fill(0xCD);
+
+        let vote_state =
+            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+        vote_state.set_vote_account_state(&mut borrowed).unwrap();
+
+        let deserialized = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
+        assert!(deserialized.votes.is_empty());
+        assert_eq!(deserialized.epoch_credits.len(), MAX_EPOCH_CREDITS_HISTORY);
+        assert_eq!(deserialized.authorized_voters, authorized_voters);
+        assert_eq!(deserialized.last_timestamp, last_timestamp);
+
+        // Step 4: Re-add votes, growing the serialized region.
+        //
+        // Incrementally add votes back, writing each state and filling
+        // trailing with garbage, then round-tripping through the handler
+        // to verify it handles the growing data region correctly.
+        let mut v4_regrowing = v4_empty_votes;
+        for i in 0..MAX_LOCKOUT_HISTORY {
+            v4_regrowing.votes.push_back(LandedVote {
+                latency: (i % 256) as u8,
+                lockout: Lockout::new_with_confirmation_count(
+                    root_slot.unwrap() + 1000 + i as u64,
+                    (MAX_LOCKOUT_HISTORY - i) as u32,
+                ),
+            });
+
+            // Write the updated state, fill trailing with garbage.
+            borrowed
+                .set_state(&VoteStateVersions::new_v4(v4_regrowing.clone()))
+                .unwrap();
+            let current_serialized_len =
+                bincode::serialized_size(&VoteStateVersions::new_v4(v4_regrowing.clone())).unwrap()
+                    as usize;
+            let current_trailing = buf_size - current_serialized_len;
+            assert!(
+                current_trailing < trailing_len_after_clear,
+                "trailing region should shrink as votes are added"
+            );
+            if current_serialized_len < buf_size {
+                borrowed.get_data_mut().unwrap()[current_serialized_len..].fill(0xEF);
+            }
+
+            // Round-trip through the handler to verify.
+            let vote_state =
+                get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4)
+                    .unwrap();
+            vote_state.set_vote_account_state(&mut borrowed).unwrap();
+
+            let deserialized = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
+            assert_eq!(
+                deserialized.votes.len(),
+                i + 1,
+                "expected {} votes after re-adding",
+                i + 1,
+            );
+            assert_eq!(deserialized, v4_regrowing);
+        }
+
+        // Final consistency check: all votes are back and all fields correct.
+        let final_deserialized =
+            VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
+        assert_eq!(final_deserialized.votes.len(), MAX_LOCKOUT_HISTORY);
+        assert_eq!(final_deserialized.epoch_credits, epoch_credits);
+        assert_eq!(final_deserialized.authorized_voters, authorized_voters);
+        assert_eq!(final_deserialized.last_timestamp, last_timestamp);
+    }
+
+    #[test]
     fn test_bls_absent_after_v3_to_v4_migration() {
         // V3 to V4 migration via get_vote_state_handler_checked must
         // produce bls_pubkey_compressed = None.
