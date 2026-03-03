@@ -7,7 +7,10 @@ use {
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
-    std::ops::{Range, RangeBounds},
+    std::{
+        fmt::Display,
+        ops::{Range, RangeBounds},
+    },
 };
 
 bitflags! {
@@ -631,6 +634,29 @@ impl OptimisticSlotMetaVersioned {
             OptimisticSlotMetaVersioned::V0(meta) => meta.timestamp,
         }
     }
+}
+
+/// Which column an associated block currently resides
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BlockLocation {
+    Original,
+    Alternate { block_id: Hash },
+}
+
+impl Display for BlockLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BlockLocation::Original => write!(f, "Original"),
+            BlockLocation::Alternate { block_id } => write!(f, "Alternate({block_id})"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ParentMeta {
+    pub parent_slot: Slot,
+    pub parent_block_id: Hash,
+    pub replay_fec_set_index: u32,
 }
 
 #[cfg(test)]
