@@ -1,5 +1,5 @@
 use {
-    dashmap::DashMap,
+    dashmap::{DashMap, mapref::entry::Entry as DashMapEntry},
     log::*,
     solana_pubkey::Pubkey,
     solana_time_utils::AtomicInterval,
@@ -207,24 +207,25 @@ impl<SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send>
 
     /// Removes `inner_key` from the secondary index.
     pub fn remove_by_inner_key(&self, inner_key: &Pubkey) {
-        // First go through the reverse-index and remove inner_key from all forward-indexes.
-        // Note: Always lock the reverse index first, so we synchronize with insert().
-        let mut num_removed = 0;
-        if let Some(reverse_index_entry) = self.reverse_index.get(inner_key) {
-            let mut outer_keys = reverse_index_entry.write().unwrap();
-            for outer_key in outer_keys.iter() {
-                num_removed += self.remove_index_entries(outer_key, inner_key) as u64;
-            }
-            outer_keys.clear();
-        }
+        // Note: Always lock the reverse-index first, so we synchronize with insert().
+        let DashMapEntry::Occupied(reverse_index_entry) = self.reverse_index.entry(*inner_key)
+        else {
+            // if inner_key doesn't exist in the reverse-index, nothing to do here
+            return;
+        };
 
-        // Then write-lock the reverse-index entry for inner_key.
-        // If its outer keys list is still empty, then remove the whole entry.
-        // However, foreground transaction processing may've inserted a value
-        // back into the index, which is fine.  In that case, do nothing.
-        self.reverse_index.remove_if(inner_key, |_, outer_keys| {
-            outer_keys.read().unwrap().is_empty()
-        });
+        // First go through the reverse-index and remove inner_key from all forward-indexes.
+        let num_removed = reverse_index_entry
+            .get()
+            .write()
+            .unwrap()
+            .drain(..)
+            .map(|outer_key| self.remove_index_entries(&outer_key, inner_key) as u64)
+            .sum();
+
+        // And now after removing inner_key from all forward-indexes,
+        // remove its entry from the reverse-index.
+        reverse_index_entry.remove();
 
         self.stats
             .num_inner_keys
