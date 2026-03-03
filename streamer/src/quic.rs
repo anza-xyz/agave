@@ -217,6 +217,10 @@ pub struct StreamerStats {
     pub(crate) total_unstaked_packets_sent_for_batching: AtomicUsize,
     pub(crate) throttled_staked_streams: AtomicUsize,
     pub(crate) throttled_unstaked_streams: AtomicUsize,
+    /// number of streams that got delayed beyond reasonable fragmentation delays
+    pub(crate) reassembly_delayed_streams: AtomicUsize,
+    /// total delay accumulated by delayed streams, in microseconds
+    pub(crate) reassembly_delayed_streams_cumulative_delay_us: AtomicUsize,
     // All connections in various states such as Incoming, Connecting, Connection
     pub(crate) open_connections: AtomicUsize,
     pub(crate) open_staked_connections: AtomicUsize,
@@ -461,6 +465,17 @@ impl StreamerStats {
             (
                 "stream_load_capacity_overflow",
                 self.stream_load_capacity_overflow.load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "reassembly_delayed_streams",
+                self.reassembly_delayed_streams.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "reassembly_delayed_streams_cumulative_delay_us",
+                self.reassembly_delayed_streams_cumulative_delay_us
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (

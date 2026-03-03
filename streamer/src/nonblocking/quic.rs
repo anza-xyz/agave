@@ -84,6 +84,13 @@ pub(crate) const MAX_RTT: Duration = Duration::from_millis(320);
 /// as this would break some BDP calculations and assign zero bandwidth
 pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
 
+/// How many RTTs worth of delay can we tolerate on stream reassembly
+/// before considering stream to be "too late". 1.5 RTT should be enough
+/// for any reasonable fragmentation to be resolved, so the only way
+/// a stream reassembly would be delayed more is when something
+/// extraordinary has occured (congestion control or flow control blocking)
+const LATE_REASSEMBLY_THRESHOLD: f32 = 1.5;
+
 // A struct to accumulate the bytes making up
 // a packet, along with their offsets, and the
 // packet metadata. We use this accumulator to avoid
@@ -95,6 +102,7 @@ struct PacketAccumulator {
     // the capacity here should match or exceed the capacity of the chunks
     // array used by handle_connection()
     pub chunks: SmallVec<[Bytes; 4]>,
+    pub start_time: Instant,
 }
 
 impl PacketAccumulator {
@@ -102,6 +110,7 @@ impl PacketAccumulator {
         Self {
             meta,
             chunks: SmallVec::default(),
+            start_time: Instant::now(),
         }
     }
 }
@@ -579,6 +588,10 @@ async fn handle_connection<Q, C>(
     );
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
 
+    // cache the RTT to avoid grabbing lock for every stream.
+    // we only use that for some stats here, so if it gets stale during connection lifetime
+    // it is not the end of the world.
+    let rtt = connection.rtt();
     'conn: loop {
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
         // the connection task.
@@ -652,6 +665,7 @@ async fn handle_connection<Q, C>(
                 // Bytes::clone() is a cheap atomic inc
                 chunks.iter().take(n_chunks).cloned(),
                 &mut accum,
+                rtt,
                 &packet_sender,
                 &stats,
                 peer_type,
@@ -707,6 +721,7 @@ enum StreamState {
 fn handle_chunks(
     chunks: impl ExactSizeIterator<Item = Bytes>,
     accum: &mut PacketAccumulator,
+    rtt: Duration,
     packet_sender: &Sender<PacketBatch>,
     stats: &StreamerStats,
     peer_type: ConnectionPeerType,
@@ -770,7 +785,16 @@ fn handle_chunks(
     };
 
     let packet_size = packet.meta().size;
-
+    let total_latency = accum.start_time.elapsed();
+    if total_latency > rtt.mul_f32(LATE_REASSEMBLY_THRESHOLD) {
+        debug!("Stream reassembly dealyed {}", total_latency.as_millis());
+        stats
+            .reassembly_delayed_streams
+            .fetch_add(1, Ordering::Relaxed);
+        stats
+            .reassembly_delayed_streams_cumulative_delay_us
+            .fetch_add(total_latency.as_micros() as usize, Ordering::Relaxed);
+    }
     let packet_batch = PacketBatch::Single(packet);
 
     if let Err(err) = packet_sender.try_send(packet_batch) {
