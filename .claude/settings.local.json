@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh api:*)",
+      "Bash(xargs grep:*)",
+      "Bash(gh issue:*)"
+    ]
+  }
+}
