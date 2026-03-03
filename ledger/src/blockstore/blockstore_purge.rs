@@ -143,12 +143,29 @@ impl Blockstore {
     /// that preserves `slot`'s `next_slots`. This ensures that `slot`'s fork is
     /// replayable upon repair of `slot`.
     pub(crate) fn purge_slot_cleanup_chaining(&self, slot: Slot) -> Result<()> {
+        self.do_purge_slot_cleanup_chaining(slot, /* purge_alt_columns */ true)
+    }
+
+    /// Like `purge_slot_cleanup_chaining` but preserves alternate block columns.
+    /// Used when switching from an alternate block to allow repair data to be retained.
+    #[allow(dead_code)]
+    pub(crate) fn purge_slot_cleanup_chaining_keep_alt(&self, slot: Slot) -> Result<()> {
+        self.do_purge_slot_cleanup_chaining(slot, /* purge_alt_columns */ false)
+    }
+
+    fn do_purge_slot_cleanup_chaining(&self, slot: Slot, purge_alt_columns: bool) -> Result<()> {
         let Some(mut slot_meta) = self.meta(slot)? else {
             return Err(BlockstoreError::SlotUnavailable);
         };
         let mut write_batch = self.get_write_batch()?;
 
-        self.purge_range(&mut write_batch, slot, slot, PurgeType::Exact)?;
+        self.purge_range(
+            &mut write_batch,
+            slot,
+            slot,
+            PurgeType::Exact,
+            purge_alt_columns,
+        )?;
 
         if let Some(parent_slot) = slot_meta.parent_slot {
             let parent_slot_meta = self.meta(parent_slot)?;
@@ -199,7 +216,13 @@ impl Blockstore {
         let mut write_batch = self.get_write_batch()?;
 
         let mut delete_range_timer = Measure::start("delete_range");
-        self.purge_range(&mut write_batch, from_slot, to_slot, purge_type)?;
+        self.purge_range(
+            &mut write_batch,
+            from_slot,
+            to_slot,
+            purge_type,
+            /* purge_alt_columns */ true,
+        )?;
         delete_range_timer.stop();
 
         let mut write_timer = Measure::start("write_batch");
@@ -241,6 +264,7 @@ impl Blockstore {
         from_slot: Slot,
         to_slot: Slot,
         purge_type: PurgeType,
+        purge_alt_columns: bool,
     ) -> Result<()> {
         self.meta_cf
             .delete_range_in_batch(write_batch, from_slot, to_slot)?;
@@ -274,6 +298,18 @@ impl Blockstore {
             .delete_range_in_batch(write_batch, from_slot, to_slot)?;
         self.merkle_root_meta_cf
             .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+
+        if purge_alt_columns {
+            // Purge all alternate columns
+            self.alt_meta_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            self.alt_index_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            self.alt_data_shred_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            self.alt_merkle_root_meta_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        }
 
         match purge_type {
             PurgeType::Exact => self.purge_special_columns_exact(write_batch, from_slot, to_slot),
@@ -312,6 +348,12 @@ impl Blockstore {
         self.optimistic_slots_cf
             .delete_file_in_range(from_slot, to_slot)?;
         self.merkle_root_meta_cf
+            .delete_file_in_range(from_slot, to_slot)?;
+        self.alt_meta_cf.delete_file_in_range(from_slot, to_slot)?;
+        self.alt_index_cf.delete_file_in_range(from_slot, to_slot)?;
+        self.alt_data_shred_cf
+            .delete_file_in_range(from_slot, to_slot)?;
+        self.alt_merkle_root_meta_cf
             .delete_file_in_range(from_slot, to_slot)
     }
 

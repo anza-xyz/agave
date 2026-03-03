@@ -7,7 +7,10 @@ use {
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
-    std::ops::{Range, RangeBounds},
+    std::{
+        fmt::Display,
+        ops::{Range, RangeBounds},
+    },
 };
 
 bitflags! {
@@ -237,6 +240,22 @@ pub struct DuplicateSlotProof {
     pub shred2: shred::Payload,
 }
 
+/// Which column an associated block currently resides
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BlockLocation {
+    Original,
+    Alternate { block_id: Hash },
+}
+
+impl Display for BlockLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BlockLocation::Original => write!(f, "Original"),
+            BlockLocation::Alternate { block_id } => write!(f, "Alternate({block_id})"),
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub enum FrozenHashVersioned {
     Current(FrozenHashStatus),
@@ -315,8 +334,7 @@ impl ShredIndex {
         }
     }
 
-    #[allow(unused)]
-    pub(crate) fn contains(&self, idx: u64) -> bool {
+    pub fn contains(&self, idx: u64) -> bool {
         self.index.contains(idx as usize)
     }
 
@@ -554,7 +572,7 @@ impl MerkleRootMeta {
         }
     }
 
-    pub(crate) fn merkle_root(&self) -> Option<Hash> {
+    pub fn merkle_root(&self) -> Option<Hash> {
         self.merkle_root
     }
 
