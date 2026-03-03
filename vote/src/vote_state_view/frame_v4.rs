@@ -123,28 +123,20 @@ impl VoteStateFrameV4 {
 mod tests {
     use {
         super::*,
-        serde::{Deserialize, Serialize},
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
-            state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, LandedVote, Lockout, VoteStateV4},
+            state::{
+                BLS_PUBLIC_KEY_COMPRESSED_SIZE, LandedVote, Lockout, VoteStateV4, VoteStateVersions,
+            },
         },
         std::collections::VecDeque,
     };
 
-    #[allow(clippy::large_enum_variant)]
-    #[derive(Debug, Clone, Deserialize, Serialize)]
-    enum TestVoteStateVersions {
-        V0_23_5,
-        V1_14_11,
-        V3,
-        V4(VoteStateV4),
-    }
-
     #[test]
     fn test_try_new_zeroed() {
         let target_vote_state = VoteStateV4::default();
-        let target_vote_state_versions = TestVoteStateVersions::V4(target_vote_state);
-        let mut bytes = bincode::serialize(&target_vote_state_versions).unwrap();
+        let versioned = VoteStateVersions::new_v4(target_vote_state);
+        let mut bytes = bincode::serialize(&versioned).unwrap();
 
         for i in 0..bytes.len() {
             let vote_state_frame = VoteStateFrameV4::try_new(&bytes[..i]);
@@ -187,8 +179,8 @@ mod tests {
             ..VoteStateV4::default()
         };
 
-        let target_vote_state_versions = TestVoteStateVersions::V4(target_vote_state);
-        let mut bytes = bincode::serialize(&target_vote_state_versions).unwrap();
+        let versioned = VoteStateVersions::new_v4(target_vote_state);
+        let mut bytes = bincode::serialize(&versioned).unwrap();
 
         for i in 0..bytes.len() {
             let vote_state_frame = VoteStateFrameV4::try_new(&bytes[..i]);

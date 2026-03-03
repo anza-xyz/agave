@@ -352,7 +352,6 @@ mod tests {
     use {
         super::*,
         arbitrary::{Arbitrary, Unstructured},
-        serde::{Deserialize, Serialize},
         solana_clock::Clock,
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
@@ -363,14 +362,6 @@ mod tests {
         },
         std::collections::VecDeque,
     };
-
-    #[derive(Debug, Clone, Deserialize, Serialize)]
-    enum TestVoteStateVersions {
-        V0_23_5,
-        V1_14_11,
-        V3,
-        V4(Box<VoteStateV4>),
-    }
 
     fn new_test_vote_state_v4() -> VoteStateV4 {
         let votes = (0..MAX_LOCKOUT_HISTORY)
@@ -435,8 +426,7 @@ mod tests {
     #[test]
     fn test_vote_state_view_v4() {
         let target_vote_state = new_test_vote_state_v4();
-        let target_vote_state_versions =
-            TestVoteStateVersions::V4(Box::new(target_vote_state.clone()));
+        let target_vote_state_versions = VoteStateVersions::new_v4(target_vote_state.clone());
         let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_v4(&vote_state_view, &target_vote_state);
@@ -445,8 +435,7 @@ mod tests {
     #[test]
     fn test_vote_state_view_v4_default() {
         let target_vote_state = VoteStateV4::default();
-        let target_vote_state_versions =
-            TestVoteStateVersions::V4(Box::new(target_vote_state.clone()));
+        let target_vote_state_versions = VoteStateVersions::new_v4(target_vote_state.clone());
         let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_v4(&vote_state_view, &target_vote_state);
@@ -470,8 +459,7 @@ mod tests {
                 continue;
             }
 
-            let target_vote_state_versions =
-                TestVoteStateVersions::V4(Box::new(target_vote_state.clone()));
+            let target_vote_state_versions = VoteStateVersions::new_v4(target_vote_state.clone());
             let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
             let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
             assert_eq_vote_state_v4(&vote_state_view, &target_vote_state);
