@@ -10,12 +10,28 @@ pub struct DataBudget {
 }
 
 impl DataBudget {
+    pub fn new(bytes: usize) -> Self {
+        Self {
+            bytes: AtomicUsize::new(bytes),
+            asof: AtomicU64::new(solana_time_utils::timestamp()),
+        }
+    }
+
     /// Create a data budget with max bytes, used for tests
     pub fn restricted() -> Self {
         Self {
             bytes: AtomicUsize::default(),
             asof: AtomicU64::new(u64::MAX),
         }
+    }
+
+    pub fn get(&self) -> usize {
+        self.bytes.load(Ordering::Relaxed)
+    }
+
+    /// Unconditionally adds size bytes to the budget
+    pub fn put(&self, size: usize) -> usize {
+        self.bytes.fetch_add(size, Ordering::Relaxed)
     }
 
     // If there are enough bytes in the budget, consumes from

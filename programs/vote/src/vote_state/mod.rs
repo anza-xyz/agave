@@ -1014,7 +1014,7 @@ pub fn deposit_delegator_rewards(
     }?;
 
     // CPI to System: Transfer from sender to vote account.
-    invoke_context.native_invoke(
+    invoke_context.native_invoke_signed(
         system_instruction::transfer(&source_address, &vote_address, deposit),
         &[],
     )?;
@@ -4703,7 +4703,7 @@ mod tests {
                 vec![
                     (id(), processor_account.clone()),
                     (vote_pubkey, vote_account.clone()),
-                    (new_collector, collector_account.clone()),
+                    (new_collector, collector_account),
                 ],
                 vec![
                     InstructionAccount::new(1, false, true),
@@ -4842,7 +4842,7 @@ mod tests {
                 AccountSharedData::new(collector_lamports, 0, &system_program::id());
             let transaction_context = new_transaction_context(
                 vec![
-                    (id(), processor_account.clone()),
+                    (id(), processor_account),
                     (vote_pubkey, vote_account.clone()),
                     (bad_collector, bad_collector_account),
                 ],

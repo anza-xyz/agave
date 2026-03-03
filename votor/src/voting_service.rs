@@ -375,7 +375,7 @@ mod tests {
         } = spawn_stake_wighted_qos_server(
             "AlpenglowLocalClusterTest",
             "voting_service_test",
-            [socket],
+            [socket.into()],
             &Keypair::new(),
             sender,
             staked_nodes,

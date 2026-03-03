@@ -700,7 +700,7 @@ mod tests {
         } = create_genesis_config(2);
         let hashes_per_tick = Some(DEFAULT_HASHES_PER_TICK);
         genesis_config.poh_config.hashes_per_tick = hashes_per_tick;
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let prev_hash = bank.last_blockhash();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
@@ -900,7 +900,7 @@ mod tests {
         } = create_genesis_config(2);
         let hashes_per_tick = Some(DEFAULT_HASHES_PER_TICK);
         genesis_config.poh_config.hashes_per_tick = hashes_per_tick;
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let prev_hash = bank.last_blockhash();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())

@@ -51,16 +51,6 @@ pub struct ExecutionFlags {
     pub all_or_nothing: bool,
 }
 
-#[allow(clippy::derivable_impls)]
-impl Default for ExecutionFlags {
-    fn default() -> Self {
-        Self {
-            drop_on_failure: false,
-            all_or_nothing: false,
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RetryableIndex {
     pub index: usize,
@@ -161,7 +151,10 @@ impl Consumer {
             bank,
             txs,
             check_results.into_iter(),
-            ExecutionFlags::default(),
+            ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing: false,
+            },
         );
 
         // Accumulate error counters from the initial checks into final results
@@ -526,7 +519,6 @@ impl Consumer {
         let (mut fee_payer_account, _slot) = bank
             .rc
             .accounts
-            .accounts_db
             .load_with_fixed_root(&bank.ancestors, fee_payer)
             .ok_or(TransactionError::AccountNotFound)?;
 
@@ -1119,7 +1111,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(lamports);
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         // set cost tracker limits to MAX so it will not filter out TXs
         bank.write_cost_tracker()
             .unwrap()
@@ -1386,7 +1378,7 @@ mod tests {
         let commit_results = status_batch
             .commit_results
             .into_iter()
-            .map(|r| r.unwrap().status.clone())
+            .map(|r| r.unwrap().status)
             .collect::<Vec<_>>();
         assert_eq!(
             commit_results,
@@ -1448,7 +1440,7 @@ mod tests {
 
         let tx = VersionedTransaction::try_new(message, &[&keypair]).unwrap();
         let sanitized_tx = RuntimeTransaction::try_create(
-            tx.clone(),
+            tx,
             MessageHash::Compute,
             Some(false),
             bank.as_ref(),

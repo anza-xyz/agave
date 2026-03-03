@@ -178,9 +178,10 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
 
         if !timed_out {
             while start.elapsed() < TIMEOUT && stats.num_received < PACKET_BURST_LIMIT {
+                let receive_start = Instant::now();
                 match self.receiver.try_recv() {
                     Ok(packet_batch_message) => {
-                        stats.receive_time_us += start.elapsed().as_micros() as u64;
+                        stats.receive_time_us += receive_start.elapsed().as_micros() as u64;
                         received_message = true;
                         let batch_stats = self.handle_packet_batch_message(
                             container,
@@ -604,7 +605,7 @@ mod tests {
             ..
         } = create_slow_genesis_config(u64::MAX);
 
-        let (_bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         (bank_forks, mint_keypair)
     }
 

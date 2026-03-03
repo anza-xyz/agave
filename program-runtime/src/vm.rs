@@ -64,7 +64,7 @@ pub fn create_vm<'a, 'b>(
         invoke_context.transaction_context,
         invoke_context
             .get_feature_set()
-            .stricter_abi_and_runtime_constraints,
+            .virtual_address_space_adjustments,
         invoke_context.get_feature_set().account_data_direct_mapping,
     )?;
     invoke_context.set_syscall_context(SyscallContext {
@@ -86,7 +86,7 @@ fn create_memory_mapping<'a, C: ContextObject>(
     heap: &'a mut [u8],
     additional_regions: Vec<MemoryRegion>,
     transaction_context: &TransactionContext,
-    stricter_abi_and_runtime_constraints: bool,
+    virtual_address_space_adjustments: bool,
     account_data_direct_mapping: bool,
 ) -> Result<MemoryMapping, Box<dyn std::error::Error>> {
     let config = executable.get_config();
@@ -113,7 +113,7 @@ fn create_memory_mapping<'a, C: ContextObject>(
         config,
         sbpf_version,
         transaction_context.access_violation_handler(
-            stricter_abi_and_runtime_constraints,
+            virtual_address_space_adjustments,
             account_data_direct_mapping,
         ),
     )?)
@@ -202,9 +202,9 @@ pub fn execute<'a, 'b: 'a>(
             let use_jit = executable.get_compiled_program().is_some();
         }
     }
-    let stricter_abi_and_runtime_constraints = invoke_context
+    let virtual_address_space_adjustments = invoke_context
         .get_feature_set()
-        .stricter_abi_and_runtime_constraints;
+        .virtual_address_space_adjustments;
     let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
     let provide_instruction_data_offset_in_vm_r2 = invoke_context
         .get_feature_set()
@@ -214,7 +214,7 @@ pub fn execute<'a, 'b: 'a>(
     let (parameter_bytes, regions, accounts_metadata, instruction_data_offset) =
         serialization::serialize_parameters(
             &instruction_context,
-            stricter_abi_and_runtime_constraints,
+            virtual_address_space_adjustments,
             account_data_direct_mapping,
         )?;
     serialize_time.stop();
@@ -315,7 +315,7 @@ pub fn execute<'a, 'b: 'a>(
                     invoke_context.consume(invoke_context.get_remaining());
                 }
 
-                if stricter_abi_and_runtime_constraints {
+                if virtual_address_space_adjustments {
                     if let EbpfError::SyscallError(err) = error {
                         error = err
                             .downcast::<EbpfError>()
@@ -325,7 +325,7 @@ pub fn execute<'a, 'b: 'a>(
                     if let EbpfError::AccessViolation(access_type, vm_addr, len, _section_name) =
                         error
                     {
-                        // If stricter_abi_and_runtime_constraints is enabled and a program tries to write to a readonly
+                        // If virtual_address_space_adjustments is enabled and a program tries to write to a readonly
                         // region we'll get a memory access violation. Map it to a more specific
                         // error so it's easier for developers to see what happened.
                         if let Some((instruction_account_index, vm_addr_range)) =
@@ -392,14 +392,14 @@ pub fn execute<'a, 'b: 'a>(
     fn deserialize_parameters(
         invoke_context: &mut InvokeContext,
         parameter_bytes: &[u8],
-        stricter_abi_and_runtime_constraints: bool,
+        virtual_address_space_adjustments: bool,
         account_data_direct_mapping: bool,
     ) -> Result<(), InstructionError> {
         serialization::deserialize_parameters(
             &invoke_context
                 .transaction_context
                 .get_current_instruction_context()?,
-            stricter_abi_and_runtime_constraints,
+            virtual_address_space_adjustments,
             account_data_direct_mapping,
             parameter_bytes,
             &invoke_context.get_syscall_context()?.accounts_metadata,
@@ -411,7 +411,7 @@ pub fn execute<'a, 'b: 'a>(
         deserialize_parameters(
             invoke_context,
             parameter_bytes.as_slice(),
-            stricter_abi_and_runtime_constraints,
+            virtual_address_space_adjustments,
             account_data_direct_mapping,
         )
         .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)

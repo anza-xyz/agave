@@ -259,3 +259,9 @@ impl ConsensusMessage {
         })
     }
 }
+
+impl From<Certificate> for ConsensusMessage {
+    fn from(cert: Certificate) -> Self {
+        Self::Certificate(cert)
+    }
+}

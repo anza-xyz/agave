@@ -5,7 +5,6 @@ use {
 };
 
 mod commands;
-mod common;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "Build tasks", version)]
@@ -22,11 +21,11 @@ enum Commands {
     #[command(about = "Hello")]
     Hello,
     #[command(about = "Bump version")]
-    BumpVersion(commands::bump_version::CommandArgs),
+    BumpVersion(xtask_shared::commands::bump_version::CommandArgs),
     #[command(about = "Update crate version")]
-    UpdateCrate(commands::update_crate::CommandArgs),
+    UpdateCrate(xtask_shared::commands::update_crate::CommandArgs),
     #[command(about = "Publish crates")]
-    Publish(commands::publish::CommandArgs),
+    Publish(xtask_shared::commands::publish::CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -66,13 +65,13 @@ async fn try_main(xtask: Xtask) -> Result<()> {
     match xtask.command {
         Commands::Hello => commands::hello::run()?,
         Commands::BumpVersion(args) => {
-            commands::bump_version::run(args)?;
+            xtask_shared::commands::bump_version::run(args)?;
         }
         Commands::UpdateCrate(args) => {
-            commands::update_crate::run(args)?;
+            xtask_shared::commands::update_crate::run(args)?;
         }
         Commands::Publish(args) => {
-            commands::publish::run(args)?;
+            xtask_shared::commands::publish::run(args)?;
         }
     }
 

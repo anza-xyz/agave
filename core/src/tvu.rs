@@ -291,7 +291,7 @@ impl Tvu {
                 spawn_simple_qos_server(
                     "solQuicBLS",
                     "quic_streamer_bls",
-                    vec![bls_socket],
+                    vec![bls_socket.into()],
                     &cluster_info.keypair(),
                     bls_packet_sender,
                     staked_nodes,
@@ -303,12 +303,12 @@ impl Tvu {
             };
 
             // sigverifier
-            let banks = bank_forks.read().unwrap().sharable_banks();
+            let sharable_banks = bank_forks.read().unwrap().sharable_banks();
             let bls_sigverifier_t = bls_sigverifier::spawn_service(
                 exit.clone(),
                 migration_status.clone(),
                 bls_packet_receiver,
-                banks,
+                sharable_banks,
                 verified_voter_slots_sender,
                 reward_votes_sender,
                 consensus_message_sender.clone(),

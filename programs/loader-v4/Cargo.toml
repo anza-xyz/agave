@@ -27,7 +27,6 @@ shuttle-test = [
 svm-internal = []
 
 [dependencies]
-log = { workspace = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-bpf-loader-program = { workspace = true, features = ["svm-internal"] }

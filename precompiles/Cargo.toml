@@ -38,7 +38,7 @@ agave-logger = { workspace = true }
 agave-precompiles = { path = ".", features = ["agave-unstable-api"] }
 bytemuck = { workspace = true }
 hex = { workspace = true }
-rand0-7 = { workspace = true }
+rand = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keccak-hasher = { workspace = true, features = ["sha3"] }
 solana-secp256k1-program = { workspace = true, features = ["bincode"] }

@@ -1,7 +1,0 @@
-[package]
-name = "e"
-version = { workspace = true }
-edition = { workspace = true }
-
-[dependencies]
-solana-frozen-abi = { version = "=3.0.0" }

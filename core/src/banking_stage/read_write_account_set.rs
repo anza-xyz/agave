@@ -174,7 +174,7 @@ mod tests {
 
     fn create_test_bank() -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
-        Bank::new_no_wallclock_throttle_for_tests(&genesis_config)
+        Bank::new_with_bank_forks_for_tests(&genesis_config)
     }
 
     // Helper function (could potentially use test_case in future).

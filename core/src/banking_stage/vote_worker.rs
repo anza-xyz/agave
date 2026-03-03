@@ -739,7 +739,7 @@ mod tests {
     #[test]
     fn test_has_reached_end_of_slot() {
         let GenesisConfigInfo { genesis_config, .. } = create_slow_genesis_config(10_000);
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         assert!(!has_reached_end_of_slot(false, &bank));
         assert!(has_reached_end_of_slot(true, &bank));
@@ -758,7 +758,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         // Sanity.
         assert!(!bank.is_complete());

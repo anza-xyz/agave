@@ -57,10 +57,6 @@ filter = 'package(solana-local-cluster) & test(/^test_cluster_partition_1_1_1$/)
 slow-timeout = { period = "60s", terminate-after = 4 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-local-cluster) & test(/^test_wait_for_max_stake$/)'
-slow-timeout = { period = "60s", terminate-after = 4 }
-
-[[profile.ci.overrides]]
 filter = 'package(solana-local-cluster) & test(/^test_snapshots_restart_validity$/)'
 slow-timeout = { period = "60s", terminate-after = 4 }
 

@@ -131,7 +131,10 @@
 /// ```
 use {
     crate::entry::{Entry, MaxDataShredsLen},
-    agave_votor_messages::consensus_message::{Certificate, CertificateType},
+    agave_votor_messages::{
+        consensus_message::{Certificate, CertificateType},
+        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
+    },
     solana_bls_signatures::{
         BlsError, Signature as BLSSignature, SignatureCompressed as BLSSignatureCompressed,
         signature::AsSignatureAffine,
@@ -148,18 +151,6 @@ use {
         len::{BincodeLen, FixIntLen},
     },
 };
-
-/// Placeholder for skip reward certificate.
-#[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
-pub struct SkipRewardCertificate {
-    pub data: Vec<u8>,
-}
-
-/// Placeholder for notar reward certificate.
-#[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
-pub struct NotarRewardCertificate {
-    pub data: Vec<u8>,
-}
 
 /// Wraps a value with a u16 length prefix for TLV-style serialization.
 ///

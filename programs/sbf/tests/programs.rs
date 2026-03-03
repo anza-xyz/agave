@@ -2846,13 +2846,14 @@ fn test_program_sbf_realloc() {
 
     let mint_pubkey = mint_keypair.pubkey();
     let signer = &[&mint_keypair];
-    for stricter_abi_and_runtime_constraints in [false, true] {
+    for virtual_address_space_adjustments in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -4148,7 +4149,7 @@ fn test_program_sbf_inner_instruction_alignment_checks() {
 fn test_cpi_account_ownership_writability() {
     agave_logger::setup();
 
-    for stricter_abi_and_runtime_constraints in [false, true] {
+    for virtual_address_space_adjustments in [false, true] {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -4157,8 +4158,9 @@ fn test_cpi_account_ownership_writability() {
 
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
 
@@ -4226,7 +4228,7 @@ fn test_cpi_account_ownership_writability() {
 
                 let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
 
-                if (byte_index as usize) < account_size || stricter_abi_and_runtime_constraints {
+                if (byte_index as usize) < account_size || virtual_address_space_adjustments {
                     assert_eq!(
                         result.unwrap_err().unwrap(),
                         TransactionError::InstructionError(
@@ -4235,7 +4237,7 @@ fn test_cpi_account_ownership_writability() {
                         )
                     );
                 } else {
-                    // without stricter_abi_and_runtime_constraints, changes to the realloc padding
+                    // without virtual_address_space_adjustments, changes to the realloc padding
                     // outside the account length are ignored
                     assert!(result.is_ok(), "{result:?}");
                 }
@@ -4243,11 +4245,11 @@ fn test_cpi_account_ownership_writability() {
         }
         // Test that the CPI code that updates `ref_to_len_in_vm` fails if we
         // make it write to an invalid location. This is the first variant which
-        // correctly triggers ExternalAccountDataModified when stricter_abi_and_runtime_constraints is
-        // disabled. When stricter_abi_and_runtime_constraints is enabled this tests fails early
+        // correctly triggers ExternalAccountDataModified when virtual_address_space_adjustments is
+        // disabled. When virtual_address_space_adjustments is enabled this tests fails early
         // because we move the account data pointer.
         // TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE is able to make more
-        // progress when stricter_abi_and_runtime_constraints is on.
+        // progress when virtual_address_space_adjustments is on.
         let account = AccountSharedData::new(42, 0, &invoke_program_id);
         bank.store_account(&account_keypair.pubkey(), &account);
         let instruction_data = vec![
@@ -4264,8 +4266,8 @@ fn test_cpi_account_ownership_writability() {
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         assert_eq!(
             result.unwrap_err().unwrap(),
-            if stricter_abi_and_runtime_constraints {
-                // We move the data pointer, stricter_abi_and_runtime_constraints doesn't allow it
+            if virtual_address_space_adjustments {
+                // We move the data pointer, virtual_address_space_adjustments doesn't allow it
                 // anymore so it errors out earlier. See
                 // test_cpi_invalid_account_info_pointers.
                 TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
@@ -4284,7 +4286,7 @@ fn test_cpi_account_ownership_writability() {
 
         for target_account in [1, account_metas.len() as u8 - 1] {
             // Similar to the test above where we try to make CPI write into account
-            // data. This variant is for when stricter_abi_and_runtime_constraints is enabled.
+            // data. This variant is for when virtual_address_space_adjustments is enabled.
             let account = AccountSharedData::new(42, 0, &invoke_program_id);
             bank.store_account(&account_keypair.pubkey(), &account);
             let account = AccountSharedData::new(42, 0, &invoke_program_id);
@@ -4303,7 +4305,7 @@ fn test_cpi_account_ownership_writability() {
             let message = Message::new(&[instruction], Some(&mint_pubkey));
             let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
             let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-            if stricter_abi_and_runtime_constraints {
+            if virtual_address_space_adjustments {
                 assert_eq!(
                     result.unwrap_err(),
                     TransactionError::InstructionError(
@@ -4345,7 +4347,7 @@ fn test_cpi_account_ownership_writability() {
 fn test_cpi_account_data_updates() {
     agave_logger::setup();
 
-    for (deprecated_callee, deprecated_caller, stricter_abi_and_runtime_constraints) in
+    for (deprecated_callee, deprecated_caller, virtual_address_space_adjustments) in
         [false, true].into_iter().flat_map(move |z| {
             [false, true]
                 .into_iter()
@@ -4359,8 +4361,9 @@ fn test_cpi_account_data_updates() {
         } = create_genesis_config(100_123_456_789);
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
 
@@ -4431,7 +4434,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if stricter_abi_and_runtime_constraints {
+                    if virtual_address_space_adjustments {
                         InstructionError::ProgramFailedToComplete
                     } else {
                         InstructionError::ModifiedProgramId
@@ -4470,7 +4473,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if stricter_abi_and_runtime_constraints {
+                    if virtual_address_space_adjustments {
                         InstructionError::InvalidRealloc
                     } else {
                         InstructionError::AccountDataSizeChanged
@@ -4494,7 +4497,7 @@ fn test_cpi_account_data_updates() {
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN,
-            stricter_abi_and_runtime_constraints as u8,
+            virtual_address_space_adjustments as u8,
         ];
         instruction_data.extend_from_slice(4usize.to_le_bytes().as_ref());
         let instruction = Instruction::new_with_bytes(
@@ -4513,7 +4516,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if stricter_abi_and_runtime_constraints && deprecated_callee {
+                    if virtual_address_space_adjustments && deprecated_callee {
                         InstructionError::InvalidRealloc
                     } else {
                         InstructionError::AccountDataSizeChanged
@@ -4536,7 +4539,7 @@ fn test_cpi_account_data_updates() {
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
-            stricter_abi_and_runtime_constraints as u8,
+            virtual_address_space_adjustments as u8,
         ];
         // realloc to "foobazbad" then shrink to "foobazb"
         instruction_data.extend_from_slice(7usize.to_le_bytes().as_ref());
@@ -4552,7 +4555,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if stricter_abi_and_runtime_constraints {
+                    if virtual_address_space_adjustments {
                         InstructionError::ProgramFailedToComplete
                     } else {
                         InstructionError::ModifiedProgramId
@@ -4573,7 +4576,7 @@ fn test_cpi_account_data_updates() {
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
-            stricter_abi_and_runtime_constraints as u8,
+            virtual_address_space_adjustments as u8,
         ];
         // realloc to "foobazbad" then shrink to "f"
         instruction_data.extend_from_slice(1usize.to_le_bytes().as_ref());
@@ -4589,7 +4592,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if stricter_abi_and_runtime_constraints {
+                    if virtual_address_space_adjustments {
                         InstructionError::ProgramFailedToComplete
                     } else {
                         InstructionError::ModifiedProgramId
@@ -4805,13 +4808,14 @@ fn test_deny_access_beyond_current_length() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    for stricter_abi_and_runtime_constraints in [false, true] {
+    for virtual_address_space_adjustments in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -4851,7 +4855,7 @@ fn test_deny_access_beyond_current_length() {
                 account_metas.clone(),
             );
             let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-            if stricter_abi_and_runtime_constraints {
+            if virtual_address_space_adjustments {
                 assert_eq!(
                     result.unwrap_err().unwrap(),
                     TransactionError::InstructionError(0, expected_error)
@@ -4874,13 +4878,14 @@ fn test_deny_executable_write() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    for stricter_abi_and_runtime_constraints in [false, true] {
+    for virtual_address_space_adjustments in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -4930,13 +4935,14 @@ fn test_update_callee_account() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    for stricter_abi_and_runtime_constraints in [false, true] {
+    for virtual_address_space_adjustments in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -4961,7 +4967,7 @@ fn test_update_callee_account() {
             AccountMeta::new_readonly(invoke_program_id, false),
         ];
 
-        // I. do CPI with account in read only (separate code path with stricter_abi_and_runtime_constraints)
+        // I. do CPI with account in read only (separate code path with virtual_address_space_adjustments)
         let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
         account.set_data(data);
@@ -5167,7 +5173,7 @@ fn test_update_callee_account() {
         );
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
 
-        if stricter_abi_and_runtime_constraints {
+        if virtual_address_space_adjustments {
             // changing the data pointer is not permitted
             assert!(result.is_err());
         } else {
@@ -5215,13 +5221,14 @@ fn test_account_info_in_account() {
     }
 
     for program in programs {
-        for stricter_abi_and_runtime_constraints in [false, true] {
+        for syscall_parameter_address_restrictions in [false, true] {
             let mut bank = Bank::new_for_tests(&genesis_config);
             let feature_set = Arc::make_mut(&mut bank.feature_set);
             // by default test banks have all features enabled, so we only need to
             // disable when needed
-            if !stricter_abi_and_runtime_constraints {
-                feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+            if !syscall_parameter_address_restrictions {
+                feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+                feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
                 feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
             }
 
@@ -5258,7 +5265,7 @@ fn test_account_info_in_account() {
             bank.store_account(&account_keypair.pubkey(), &account);
 
             let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-            if stricter_abi_and_runtime_constraints {
+            if syscall_parameter_address_restrictions {
                 assert!(result.is_err());
             } else {
                 assert!(result.is_ok());
@@ -5277,13 +5284,14 @@ fn test_account_info_rc_in_account() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    for stricter_abi_and_runtime_constraints in [false, true] {
+    for syscall_parameter_address_restrictions in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !syscall_parameter_address_restrictions {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
 
@@ -5325,7 +5333,7 @@ fn test_account_info_rc_in_account() {
         let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
         let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
 
-        if stricter_abi_and_runtime_constraints {
+        if syscall_parameter_address_restrictions {
             assert!(
                 logs.last().unwrap().ends_with(" failed: Invalid pointer"),
                 "{logs:?}"
@@ -5348,7 +5356,7 @@ fn test_account_info_rc_in_account() {
         let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
         let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
 
-        if stricter_abi_and_runtime_constraints {
+        if syscall_parameter_address_restrictions {
             assert!(
                 logs.last().unwrap().ends_with(" failed: Invalid pointer"),
                 "{logs:?}"
@@ -5374,7 +5382,8 @@ fn test_clone_account_data() {
     let mut bank = Bank::new_for_tests(&genesis_config);
     let feature_set = Arc::make_mut(&mut bank.feature_set);
 
-    feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+    feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+    feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
     feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
 
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -5714,7 +5723,7 @@ fn test_function_call_args() {
 fn test_mem_syscalls_overlap_account_begin_or_end() {
     agave_logger::setup();
 
-    for stricter_abi_and_runtime_constraints in [false, true] {
+    for virtual_address_space_adjustments in [false, true] {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -5723,8 +5732,9 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
 
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
 
@@ -5769,9 +5779,8 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
 
             for instr in 0..=15 {
                 println!(
-                    "Testing deprecated:{deprecated} \
-                     stricter_abi_and_runtime_constraints:{stricter_abi_and_runtime_constraints} \
-                     instruction:{instr}"
+                    "Testing deprecated:{deprecated} virtual_address_space_adjustments: \
+                     {virtual_address_space_adjustments} instruction:{instr}"
                 );
                 let instruction =
                     Instruction::new_with_bytes(program_id, &[instr], account_metas.clone());
@@ -5781,7 +5790,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
                 let last_line = logs.last().unwrap();
 
-                if stricter_abi_and_runtime_constraints {
+                if virtual_address_space_adjustments {
                     assert!(last_line.contains(" failed: Access violation"), "{logs:?}");
                 } else {
                     assert!(result.is_ok(), "{logs:?}");
@@ -5793,9 +5802,8 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
 
             for instr in 0..=15 {
                 println!(
-                    "Testing deprecated:{deprecated} \
-                     stricter_abi_and_runtime_constraints:{stricter_abi_and_runtime_constraints} \
-                     instruction:{instr} zero-length account"
+                    "Testing deprecated:{deprecated} virtual_address_space_adjustments: \
+                     {virtual_address_space_adjustments} instruction:{instr} zero-length account"
                 );
                 let instruction =
                     Instruction::new_with_bytes(program_id, &[instr, 0], account_metas.clone());
@@ -5805,7 +5813,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
                 let last_line = logs.last().unwrap();
 
-                if stricter_abi_and_runtime_constraints && (!deprecated || instr < 8) {
+                if virtual_address_space_adjustments && (!deprecated || instr < 8) {
                     assert!(
                         last_line.contains(" failed: account data too small")
                             || last_line.contains(" failed: Failed to reallocate account data")
@@ -5813,7 +5821,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                         "{logs:?}",
                     );
                 } else {
-                    // stricter_abi_and_runtime_constraints && deprecated && instr >= 8 succeeds with zero-length accounts
+                    // virtual_address_space_adjustments && deprecated && instr >= 8 succeeds with zero-length accounts
                     // because there is no MemoryRegion for the account,
                     // so there can be no error when leaving that non-existent region.
                     assert!(result.is_ok(), "{logs:?}");

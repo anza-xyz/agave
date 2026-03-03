@@ -596,7 +596,7 @@ fn nix_patch_bin_or_dylib(out: &Path, fname: &Path) {
             name = \"solana-sbf-dependencies\";
             paths = [
                 libedit
-                python310
+                python3
                 ncurses
                 zlib
                 xz.out

@@ -105,8 +105,10 @@ impl FeatureSet {
         SVMFeatureSet {
             move_precompile_verification_to_svm: self
                 .is_active(&move_precompile_verification_to_svm::id()),
-            stricter_abi_and_runtime_constraints: self
-                .is_active(&stricter_abi_and_runtime_constraints::id()),
+            syscall_parameter_address_restrictions: self
+                .is_active(&syscall_parameter_address_restrictions::id()),
+            virtual_address_space_adjustments: self
+                .is_active(&virtual_address_space_adjustments::id()),
             account_data_direct_mapping: self.is_active(&account_data_direct_mapping::id()),
             enable_bpf_loader_set_authority_checked_ix: self
                 .is_active(&enable_bpf_loader_set_authority_checked_ix::id()),
@@ -170,10 +172,10 @@ impl FeatureSet {
                 .is_active(&bls_pubkey_management_in_vote_account::id()),
             enable_alt_bn128_g2_syscalls: self.is_active(&enable_alt_bn128_g2_syscalls::id()),
             commission_rate_in_basis_points: self.is_active(&commission_rate_in_basis_points::id()),
-            custom_commission_collector: false, // Feature disabled for now.
+            custom_commission_collector: self.is_active(&custom_commission_collector::id()),
             enable_bls12_381_syscall: self.is_active(&enable_bls12_381_syscall::id()),
-            block_revenue_sharing: false, // Hard-coded as disabled for now. Not a fully-implemented feature yet.
-            vote_account_initialize_v2: false, // Feature disabled for now.
+            block_revenue_sharing: self.is_active(&block_revenue_sharing::id()),
+            vote_account_initialize_v2: self.is_active(&vote_account_initialize_v2::id()),
         }
     }
 }
@@ -768,12 +770,16 @@ pub mod apply_cost_tracker_during_replay {
     solana_pubkey::declare_id!("2ry7ygxiYURULZCrypHhveanvP5tzZ4toRwVp89oCNSj");
 }
 
-pub mod stricter_abi_and_runtime_constraints {
-    solana_pubkey::declare_id!("StricterAbiAndRuntimeConstraints11111111111");
+pub mod syscall_parameter_address_restrictions {
+    solana_pubkey::declare_id!("EDGMC5kxFxGk4ixsNkGt8bW7QL5hDMXnbwaZvYMwNfzF");
+}
+
+pub mod virtual_address_space_adjustments {
+    solana_pubkey::declare_id!("7VgiehxNxu53KdxgLspGQY8myE6f7UokaWa4jsGcaSz");
 }
 
 pub mod account_data_direct_mapping {
-    solana_pubkey::declare_id!("AccountDataDirectMapping1111111111111111111");
+    solana_pubkey::declare_id!("CR3dVN2Yoo95Y96kLSTaziWDAQT2MNEpiWh5cqVq2pNE");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
@@ -1243,11 +1249,11 @@ pub mod enable_alt_bn128_g2_syscalls {
 }
 
 pub mod commission_rate_in_basis_points {
-    solana_pubkey::declare_id!("Eg7tXEwMZzS98xaZ1YHUbdRHsaYZiCsSaR6sKgxreoaj");
+    solana_pubkey::declare_id!("CommissionRate1nBasisPoints1111111111111111");
 }
 
 pub mod custom_commission_collector {
-    solana_pubkey::declare_id!("GFZ5U5LUCWNecKMBJDuVR3vdepUMwSkwVUMxWKjJXkC4");
+    solana_pubkey::declare_id!("CustomCommissionCo11ector111111111111111111");
 }
 
 pub mod enable_bls12_381_syscall {
@@ -1285,8 +1291,8 @@ pub mod set_lamports_per_byte_to_696 {
     pub const LAMPORTS_PER_BYTE: u64 = 696;
 }
 
-pub mod stop_use_static_simple_vote_tx_cost {
-    solana_pubkey::declare_id!("NSVt1s8oP1A9NjEc6UNcj2voeCcfzHaq4jZTiUL2Mf5");
+pub mod remove_simple_vote_from_cost_model {
+    solana_pubkey::declare_id!("2GCrNXbzmt4xrwdcKS2RdsLzsgu4V5zHAemW57pcHT6a");
 }
 
 pub mod limit_instruction_accounts {
@@ -1294,15 +1300,19 @@ pub mod limit_instruction_accounts {
 }
 
 pub mod block_revenue_sharing {
-    solana_pubkey::declare_id!("HqUXZzYaxpbjHRCZHn8GLDCSecyCe2A7JD3An6asGdw4");
+    solana_pubkey::declare_id!("B1ockRevenueSharing111111111111111111111111");
 }
 
 pub mod vote_account_initialize_v2 {
-    solana_pubkey::declare_id!("9PtjteCDs5yLKwseLKVWgKwTBMfLBxZmTDBgmmws8vRt");
+    solana_pubkey::declare_id!("VoteAccount1nitia1izeV211111111111111111111");
 }
 
 pub mod validate_chained_block_id {
     solana_pubkey::declare_id!("vbiddkDHTSHSvL8B21AetWvTBLxxUZ1FmU6DFjztyRn");
+}
+
+pub mod validator_admission_ticket {
+    solana_pubkey::declare_id!("VATtb1DepUwdPh5bFVasdtkbeDNsftZSRzr2aKpKWJA");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -1672,10 +1682,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             enable_bpf_loader_extend_program_ix::id(),
             "enable bpf upgradeable loader ExtendProgram instruction #25234",
         ),
-        (
-            skip_rent_rewrites::id(),
-            "skip rewriting rent exempt accounts during rent collection #26491",
-        ),
+        (skip_rent_rewrites::id(), "SIMD-0183: Skip rent rewrites"),
         (
             enable_early_verification_of_account_modifications::id(),
             "enable early verification of account modifications #25899",
@@ -1876,8 +1883,12 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "checked arithmetic in fee validation #31273",
         ),
         (
-            stricter_abi_and_runtime_constraints::id(),
-            "SIMD-0219: Stricter ABI and Runtime Constraints",
+            syscall_parameter_address_restrictions::id(),
+            "SIMD-0459: Syscall Parameter Address Restrictions",
+        ),
+        (
+            virtual_address_space_adjustments::id(),
+            "SIMD-0460: Virtual Address Space Adjustments",
         ),
         (
             account_data_direct_mapping::id(),
@@ -1943,7 +1954,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             disable_rent_fees_collection::id(),
-            "Disable rent fees collection #33945",
+            "SIMD-0084: Disable rent fees collection",
         ),
         (
             enable_zk_transfer_with_fee::id(),
@@ -2013,7 +2024,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             reward_full_priority_fee::id(),
-            "Reward full priority fee to validators #34731",
+            "SIMD-0096: Reward full priority fee to validators",
         ),
         (
             abort_on_invalid_curve::id(),
@@ -2021,24 +2032,24 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             get_sysvar_syscall_enabled::id(),
-            "Enable syscall for fetching Sysvar bytes #615",
+            "SIMD-0127: Enable syscall for fetching Sysvar bytes",
         ),
         (
             migrate_feature_gate_program_to_core_bpf::id(),
-            "Migrate Feature Gate program to Core BPF (programify) #1003",
+            "SIMD-0089: Migrate Feature Gate program to Core BPF (programify)",
         ),
         (vote_only_full_fec_sets::id(), "vote only full fec sets"),
         (
             migrate_config_program_to_core_bpf::id(),
-            "Migrate Config program to Core BPF #1378",
+            "SIMD-0140: Migrate Config program to Core BPF",
         ),
         (
             enable_get_epoch_stake_syscall::id(),
-            "Enable syscall: sol_get_epoch_stake #884",
+            "SIMD-0133: Enable syscall: sol_get_epoch_stake",
         ),
         (
             migrate_address_lookup_table_program_to_core_bpf::id(),
-            "Migrate Address Lookup Table program to Core BPF #1651",
+            "SIMD-0128: Migrate Address Lookup Table program to Core BPF",
         ),
         (
             zk_elgamal_proof_program_enabled::id(),
@@ -2278,11 +2289,15 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             enable_alt_bn128_g2_syscalls::id(),
-            "SIMD-302: Add alt_bn128 G2 syscalls",
+            "SIMD-0302: Add alt_bn128 G2 syscalls",
         ),
         (
             commission_rate_in_basis_points::id(),
-            "SIMD-0291: Commission rate in basis points",
+            "SIMD-0291: Commission Rate in Basis Points",
+        ),
+        (
+            custom_commission_collector::id(),
+            "SIMD-0232: Custom Commission Collector",
         ),
         (
             enable_bls12_381_syscall::id(),
@@ -2309,12 +2324,16 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0437-5: Set lamports per byte to 696",
         ),
         (
-            stop_use_static_simple_vote_tx_cost::id(),
+            remove_simple_vote_from_cost_model::id(),
             "stop use static SimpleVote transaction cost, issue #10227",
         ),
         (
             limit_instruction_accounts::id(),
-            "SIMD-406: Maximum instruction accounts",
+            "SIMD-0406: Maximum instruction accounts",
+        ),
+        (
+            block_revenue_sharing::id(),
+            "SIMD-0123: Block Revenue Sharing",
         ),
         (
             vote_account_initialize_v2::id(),
@@ -2323,6 +2342,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             validate_chained_block_id::id(),
             "SIMD-0340: Validate chained block ID",
+        ),
+        (
+            validator_admission_ticket::id(),
+            "SIMD-0357: Alpenglow VAT implementation",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

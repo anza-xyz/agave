@@ -56,7 +56,7 @@ fn test_blake3_hasher() {
     assert_eq!(hashv(vals).as_bytes(), hash.as_bytes());
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     msg!("sha");
 

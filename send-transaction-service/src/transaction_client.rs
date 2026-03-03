@@ -182,6 +182,7 @@ impl TpuClientNextClient {
                 connect: leader_forward_count + 1,
                 send: leader_forward_count,
             },
+            override_initial_congestion_window: None,
         }
     }
 

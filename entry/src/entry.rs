@@ -12,6 +12,7 @@ use {
     solana_hash::Hash,
     solana_merkle_tree::MerkleTree,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_signature::Signature,
     solana_transaction::{
         Transaction, TransactionVerificationMode, versioned::VersionedTransaction,
     },
@@ -124,6 +125,53 @@ pub struct Entry {
     pub transactions: Vec<VersionedTransaction>,
 }
 
+// The data needed to verify an Entry.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EntryVerificationData {
+    pub num_hashes: u64,
+    pub hash: Hash,
+    pub num_transactions: usize,
+    pub signatures: Vec<Signature>,
+}
+
+impl From<&Entry> for EntryVerificationData {
+    fn from(entry: &Entry) -> Self {
+        Self {
+            num_hashes: entry.num_hashes,
+            hash: entry.hash,
+            num_transactions: entry.transactions.len(),
+            signatures: entry
+                .transactions
+                .iter()
+                .flat_map(|tx| tx.signatures.iter().copied())
+                .collect(),
+        }
+    }
+}
+
+impl EntryVerificationData {
+    pub fn verify(&self, start_hash: &Hash) -> bool {
+        let ref_hash = next_hash_with_signatures(
+            start_hash,
+            self.num_hashes,
+            self.num_transactions,
+            &self.signatures,
+        );
+        if self.hash != ref_hash {
+            warn!(
+                "next_hash is invalid expected: {:?} actual: {:?}",
+                self.hash, ref_hash
+            );
+            return false;
+        }
+        true
+    }
+}
+
+pub fn entries_to_verification_data(entries: &[Entry]) -> Vec<EntryVerificationData> {
+    entries.iter().map(Into::into).collect()
+}
+
 pub struct EntrySummary {
     pub num_hashes: u64,
     pub hash: Hash,
@@ -188,19 +236,20 @@ impl Entry {
     /// Verifies self.hash is the result of hashing a `start_hash` `self.num_hashes` times.
     /// If the transaction is not a Tick, then hash that as well.
     pub fn verify(&self, start_hash: &Hash) -> bool {
-        let ref_hash = next_hash(start_hash, self.num_hashes, &self.transactions);
-        if self.hash != ref_hash {
-            warn!(
-                "next_hash is invalid expected: {:?} actual: {:?}",
-                self.hash, ref_hash
-            );
-            return false;
-        }
-        true
+        EntryVerificationData::from(self).verify(start_hash)
     }
 
     pub fn is_tick(&self) -> bool {
         self.transactions.is_empty()
+    }
+}
+
+pub fn hash_signatures(signatures: &[impl AsRef<[u8]>]) -> Hash {
+    let merkle_tree = MerkleTree::new(signatures);
+    if let Some(root_hash) = merkle_tree.get_root() {
+        *root_hash
+    } else {
+        Hash::default()
     }
 }
 
@@ -210,34 +259,41 @@ pub fn hash_transactions(transactions: &[VersionedTransaction]) -> Hash {
         .iter()
         .flat_map(|tx| tx.signatures.iter())
         .collect();
-    let merkle_tree = MerkleTree::new(&signatures);
-    if let Some(root_hash) = merkle_tree.get_root() {
-        *root_hash
-    } else {
-        Hash::default()
-    }
+    hash_signatures(&signatures)
 }
 
-/// Creates the hash `num_hashes` after `start_hash`. If the transaction contains
-/// a signature, the final hash will be a hash of both the previous ID and
-/// the signature.  If num_hashes is zero and there's no transaction data,
-///  start_hash is returned.
-pub fn next_hash(
+fn next_hash_with_signatures(
     start_hash: &Hash,
     num_hashes: u64,
-    transactions: &[VersionedTransaction],
+    num_transactions: usize,
+    signatures: &[Signature],
 ) -> Hash {
-    if num_hashes == 0 && transactions.is_empty() {
+    if num_hashes == 0 && num_transactions == 0 {
         return *start_hash;
     }
 
     let mut poh = Poh::new(*start_hash, None);
     poh.hash(num_hashes.saturating_sub(1));
-    if transactions.is_empty() {
+    if num_transactions == 0 {
         poh.tick().unwrap().hash
     } else {
-        poh.record(hash_transactions(transactions)).unwrap().hash
+        poh.record(hash_signatures(signatures)).unwrap().hash
     }
+}
+
+/// Creates the hash `num_hashes` after `start_hash`. If the transaction contains a signature, the
+/// final hash will be a hash of both the previous ID and the signature.  If num_hashes is zero and
+/// there's no transaction data, start_hash is returned.
+pub fn next_hash(
+    start_hash: &Hash,
+    num_hashes: u64,
+    transactions: &[VersionedTransaction],
+) -> Hash {
+    let signatures: Vec<_> = transactions
+        .iter()
+        .flat_map(|tx| tx.signatures.iter().copied())
+        .collect();
+    next_hash_with_signatures(start_hash, num_hashes, transactions.len(), &signatures)
 }
 
 pub struct EntryVerificationState {
@@ -331,9 +387,9 @@ fn start_verify_transactions_cpu<Tx: TransactionWithMeta + Send + Sync + 'static
     })
 }
 
-fn compare_hashes(computed_hash: Hash, ref_entry: &Entry) -> bool {
-    let actual = if !ref_entry.transactions.is_empty() {
-        let tx_hash = hash_transactions(&ref_entry.transactions);
+fn compare_hashes(computed_hash: Hash, ref_entry: &EntryVerificationData) -> bool {
+    let actual = if ref_entry.num_transactions != 0 {
+        let tx_hash = hash_signatures(&ref_entry.signatures);
         let mut poh = Poh::new(computed_hash, None);
         poh.record(tx_hash).unwrap().hash
     } else if ref_entry.num_hashes > 0 {
@@ -343,6 +399,149 @@ fn compare_hashes(computed_hash: Hash, ref_entry: &Entry) -> bool {
         computed_hash
     };
     actual == ref_entry.hash
+}
+
+pub fn verify_entries_cpu_in_pool(
+    entries: &[EntryVerificationData],
+    start_hash: &Hash,
+    thread_pool: &ThreadPool,
+) -> EntryVerificationState {
+    thread_pool.install(|| verify_entries_cpu(entries, start_hash))
+}
+
+fn verify_entries_cpu_generic(
+    entries: &[EntryVerificationData],
+    start_hash: &Hash,
+) -> EntryVerificationState {
+    let now = Instant::now();
+    let genesis = [EntryVerificationData {
+        num_hashes: 0,
+        hash: *start_hash,
+        num_transactions: 0,
+        signatures: vec![],
+    }];
+    let entry_pairs = genesis.par_iter().chain(entries).zip(entries);
+    let res = entry_pairs.all(|(x0, x1)| {
+        let r = x1.verify(&x0.hash);
+        if !r {
+            warn!(
+                "entry invalid!: x0: {:?}, x1: {:?} num txs: {}",
+                x0.hash, x1.hash, x1.num_transactions
+            );
+        }
+        r
+    });
+    let poh_duration_us = now.elapsed().as_micros() as u64;
+    EntryVerificationState {
+        verification_status: res,
+        poh_duration_us,
+    }
+}
+
+fn verify_entries_cpu_x86_simd(
+    entries: &[EntryVerificationData],
+    start_hash: &Hash,
+    simd_len: usize,
+) -> EntryVerificationState {
+    use solana_hash::HASH_BYTES;
+    let now = Instant::now();
+    let genesis = [EntryVerificationData {
+        num_hashes: 0,
+        hash: *start_hash,
+        num_transactions: 0,
+        signatures: vec![],
+    }];
+
+    let aligned_len = entries.len().div_ceil(simd_len) * simd_len;
+    let mut hashes_bytes = vec![0u8; HASH_BYTES * aligned_len];
+    genesis
+        .iter()
+        .chain(entries)
+        .enumerate()
+        .for_each(|(i, entry)| {
+            if i < entries.len() {
+                let start = i * HASH_BYTES;
+                let end = start + HASH_BYTES;
+                hashes_bytes[start..end].copy_from_slice(&entry.hash.to_bytes());
+            }
+        });
+    let mut hashes_chunked: Vec<_> = hashes_bytes.chunks_mut(simd_len * HASH_BYTES).collect();
+
+    let mut num_hashes: Vec<u64> = entries
+        .iter()
+        .map(|entry| entry.num_hashes.saturating_sub(1))
+        .collect();
+    num_hashes.resize(aligned_len, 0);
+    let num_hashes: Vec<_> = num_hashes.chunks(simd_len).collect();
+
+    let res = hashes_chunked
+        .par_iter_mut()
+        .zip(num_hashes)
+        .enumerate()
+        .all(|(i, (chunk, num_hashes))| {
+            match simd_len {
+                8 => unsafe {
+                    (api().unwrap().poh_verify_many_simd_avx2)(
+                        chunk.as_mut_ptr(),
+                        num_hashes.as_ptr(),
+                    );
+                },
+                16 => unsafe {
+                    (api().unwrap().poh_verify_many_simd_avx512skx)(
+                        chunk.as_mut_ptr(),
+                        num_hashes.as_ptr(),
+                    );
+                },
+                _ => {
+                    panic!("unsupported simd len: {simd_len}");
+                }
+            }
+            let entry_start = i * simd_len;
+            // The last chunk may produce indexes larger than what we have in the reference entries
+            // because it is aligned to simd_len.
+            let entry_end = std::cmp::min(entry_start + simd_len, entries.len());
+            entries[entry_start..entry_end]
+                .iter()
+                .enumerate()
+                .all(|(j, ref_entry)| {
+                    let start = j * HASH_BYTES;
+                    let end = start + HASH_BYTES;
+                    let hash = <[u8; HASH_BYTES]>::try_from(&chunk[start..end])
+                        .map(Hash::new_from_array)
+                        .unwrap();
+                    compare_hashes(hash, ref_entry)
+                })
+        });
+    let poh_duration_us = now.elapsed().as_micros() as u64;
+    EntryVerificationState {
+        verification_status: res,
+        poh_duration_us,
+    }
+}
+
+pub fn verify_entries_cpu(
+    entries: &[EntryVerificationData],
+    start_hash: &Hash,
+) -> EntryVerificationState {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    let (has_avx2, has_avx512) = (
+        is_x86_feature_detected!("avx2"),
+        is_x86_feature_detected!("avx512f"),
+    );
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    let (has_avx2, has_avx512) = (false, false);
+
+    if api().is_some() {
+        if has_avx512 && entries.len() >= 128 {
+            verify_entries_cpu_x86_simd(entries, start_hash, 16)
+        } else if has_avx2 && entries.len() >= 48 {
+            verify_entries_cpu_x86_simd(entries, start_hash, 8)
+        } else {
+            verify_entries_cpu_generic(entries, start_hash)
+        }
+    } else {
+        verify_entries_cpu_generic(entries, start_hash)
+    }
 }
 
 // an EntrySlice is a slice of Entries
@@ -362,132 +561,23 @@ pub trait EntrySlice {
 
 impl EntrySlice for [Entry] {
     fn verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState {
-        thread_pool.install(|| self.verify_cpu(start_hash))
+        let verification_entries = entries_to_verification_data(self);
+        verify_entries_cpu_in_pool(&verification_entries, start_hash, thread_pool)
     }
 
     fn verify_cpu_generic(&self, start_hash: &Hash) -> EntryVerificationState {
-        let now = Instant::now();
-        let genesis = [Entry {
-            num_hashes: 0,
-            hash: *start_hash,
-            transactions: vec![],
-        }];
-        let entry_pairs = genesis.par_iter().chain(self).zip(self);
-        let res = entry_pairs.all(|(x0, x1)| {
-            let r = x1.verify(&x0.hash);
-            if !r {
-                warn!(
-                    "entry invalid!: x0: {:?}, x1: {:?} num txs: {}",
-                    x0.hash,
-                    x1.hash,
-                    x1.transactions.len()
-                );
-            }
-            r
-        });
-        let poh_duration_us = now.elapsed().as_micros() as u64;
-        EntryVerificationState {
-            verification_status: res,
-            poh_duration_us,
-        }
+        let verification_entries = entries_to_verification_data(self);
+        verify_entries_cpu_generic(&verification_entries, start_hash)
     }
 
     fn verify_cpu_x86_simd(&self, start_hash: &Hash, simd_len: usize) -> EntryVerificationState {
-        use solana_hash::HASH_BYTES;
-        let now = Instant::now();
-        let genesis = [Entry {
-            num_hashes: 0,
-            hash: *start_hash,
-            transactions: vec![],
-        }];
-
-        let aligned_len = self.len().div_ceil(simd_len) * simd_len;
-        let mut hashes_bytes = vec![0u8; HASH_BYTES * aligned_len];
-        genesis
-            .iter()
-            .chain(self)
-            .enumerate()
-            .for_each(|(i, entry)| {
-                if i < self.len() {
-                    let start = i * HASH_BYTES;
-                    let end = start + HASH_BYTES;
-                    hashes_bytes[start..end].copy_from_slice(&entry.hash.to_bytes());
-                }
-            });
-        let mut hashes_chunked: Vec<_> = hashes_bytes.chunks_mut(simd_len * HASH_BYTES).collect();
-
-        let mut num_hashes: Vec<u64> = self
-            .iter()
-            .map(|entry| entry.num_hashes.saturating_sub(1))
-            .collect();
-        num_hashes.resize(aligned_len, 0);
-        let num_hashes: Vec<_> = num_hashes.chunks(simd_len).collect();
-
-        let res = hashes_chunked
-            .par_iter_mut()
-            .zip(num_hashes)
-            .enumerate()
-            .all(|(i, (chunk, num_hashes))| {
-                match simd_len {
-                    8 => unsafe {
-                        (api().unwrap().poh_verify_many_simd_avx2)(
-                            chunk.as_mut_ptr(),
-                            num_hashes.as_ptr(),
-                        );
-                    },
-                    16 => unsafe {
-                        (api().unwrap().poh_verify_many_simd_avx512skx)(
-                            chunk.as_mut_ptr(),
-                            num_hashes.as_ptr(),
-                        );
-                    },
-                    _ => {
-                        panic!("unsupported simd len: {simd_len}");
-                    }
-                }
-                let entry_start = i * simd_len;
-                // The last chunk may produce indexes larger than what we have in the reference entries
-                // because it is aligned to simd_len.
-                let entry_end = std::cmp::min(entry_start + simd_len, self.len());
-                self[entry_start..entry_end]
-                    .iter()
-                    .enumerate()
-                    .all(|(j, ref_entry)| {
-                        let start = j * HASH_BYTES;
-                        let end = start + HASH_BYTES;
-                        let hash = <[u8; HASH_BYTES]>::try_from(&chunk[start..end])
-                            .map(Hash::new_from_array)
-                            .unwrap();
-                        compare_hashes(hash, ref_entry)
-                    })
-            });
-        let poh_duration_us = now.elapsed().as_micros() as u64;
-        EntryVerificationState {
-            verification_status: res,
-            poh_duration_us,
-        }
+        let verification_entries = entries_to_verification_data(self);
+        verify_entries_cpu_x86_simd(&verification_entries, start_hash, simd_len)
     }
 
     fn verify_cpu(&self, start_hash: &Hash) -> EntryVerificationState {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        let (has_avx2, has_avx512) = (
-            is_x86_feature_detected!("avx2"),
-            is_x86_feature_detected!("avx512f"),
-        );
-        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-        let (has_avx2, has_avx512) = (false, false);
-
-        if api().is_some() {
-            if has_avx512 && self.len() >= 128 {
-                self.verify_cpu_x86_simd(start_hash, 16)
-            } else if has_avx2 && self.len() >= 48 {
-                self.verify_cpu_x86_simd(start_hash, 8)
-            } else {
-                self.verify_cpu_generic(start_hash)
-            }
-        } else {
-            self.verify_cpu_generic(start_hash)
-        }
+        let verification_entries = entries_to_verification_data(self);
+        verify_entries_cpu(&verification_entries, start_hash)
     }
 
     fn verify_tick_hash_count(&self, tick_hash_count: &mut u64, hashes_per_tick: u64) -> bool {

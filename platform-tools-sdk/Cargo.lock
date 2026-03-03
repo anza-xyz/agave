@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "dummy-for-ci"
-version = "4.0.0-alpha.0"
+version = "4.1.0-alpha.0"
 
 [[package]]
 name = "ed25519"
@@ -2139,7 +2139,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cargo-build-sbf"
-version = "4.0.0-alpha.0"
+version = "4.1.0-alpha.0"
 dependencies = [
  "agave-logger",
  "assert_cmd",
@@ -2161,7 +2161,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cargo-test-sbf"
-version = "4.0.0-alpha.0"
+version = "4.1.0-alpha.0"
 dependencies = [
  "agave-logger",
  "cargo_metadata",

@@ -139,7 +139,7 @@ pub fn invoke_builtin_function(
     let (mut parameter_bytes, _regions, _account_lengths, _instruction_data_offset) =
         serialize_parameters(
             &instruction_context,
-            false, // There is no VM so stricter_abi_and_runtime_constraints can not be implemented here
+            false, // There is no VM so virtual_address_space_adjustments can not be implemented here
             false, // There is no VM so account_data_direct_mapping can not be implemented here
         )?;
 
