@@ -311,14 +311,19 @@ mod tests {
         // serializing a known VoteStateV4 and reading at computed offsets.
         let node_pubkey = Pubkey::from([1; 32]);
         let authorized_withdrawer = Pubkey::from([2; 32]);
+        let inflation_rewards_commission_bps = 5_000;
+        let block_revenue_commission_bps = 7_500;
+        let inflation_rewards_collector = Pubkey::from([3; 32]);
+        let block_revenue_collector = Pubkey::from([4; 32]);
+        let pending_delegator_rewards = 42;
         let vote_state = VoteStateV4 {
             node_pubkey,
             authorized_withdrawer,
-            inflation_rewards_commission_bps: 5_000,
-            block_revenue_commission_bps: 7_500,
-            inflation_rewards_collector: Pubkey::from([3; 32]),
-            block_revenue_collector: Pubkey::from([4; 32]),
-            pending_delegator_rewards: 42,
+            inflation_rewards_commission_bps,
+            block_revenue_commission_bps,
+            inflation_rewards_collector,
+            block_revenue_collector,
+            pending_delegator_rewards,
             ..VoteStateV4::default()
         };
         let versioned = VoteStateVersions::new_v4(vote_state);
@@ -326,24 +331,24 @@ mod tests {
 
         // Read node_pubkey at its offset.
         let offset = VoteStateFrameV4::node_pubkey_offset();
-        assert_eq!(&bytes[offset..offset + 32], &[1; 32]);
+        assert_eq!(&bytes[offset..offset + 32], node_pubkey.as_ref());
 
         // Read authorized_withdrawer at its offset.
         let offset = VoteStateFrameV4::authorized_withdrawer_offset();
-        assert_eq!(&bytes[offset..offset + 32], &[2; 32]);
+        assert_eq!(&bytes[offset..offset + 32], authorized_withdrawer.as_ref());
 
         // Read inflation_rewards_commission at its offset.
         let offset = VoteStateFrameV4::inflation_rewards_commission_offset();
         assert_eq!(
             u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap()),
-            5_000
+            inflation_rewards_commission_bps
         );
 
         // Read block_revenue_commission at its offset.
         let offset = VoteStateFrameV4::block_revenue_commission_offset();
         assert_eq!(
             u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap()),
-            7_500
+            block_revenue_commission_bps
         );
     }
 }
