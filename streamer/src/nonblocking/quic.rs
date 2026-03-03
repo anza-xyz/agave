@@ -12,7 +12,7 @@ use {
     crossbeam_channel::{Sender, TrySendError},
     futures::{Future, StreamExt as _, stream::FuturesUnordered},
     indexmap::map::{Entry, IndexMap},
-    quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime},
+    quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, RecvStream, TokioRuntime},
     rand::{Rng, rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
@@ -23,14 +23,15 @@ use {
     solana_tls_utils::get_pubkey_from_tls_certificate,
     std::{
         array, fmt,
+        future::poll_fn,
         iter::repeat_with,
         net::{IpAddr, SocketAddr},
-        pin::Pin,
+        pin::{Pin, pin},
         sync::{
             Arc, RwLock,
             atomic::{AtomicU64, Ordering},
         },
-        task::Poll,
+        task::{Context, Poll},
         time::{Duration, Instant},
     },
     tokio::{
@@ -112,6 +113,49 @@ impl PacketAccumulator {
             chunks: SmallVec::default(),
             start_time: Instant::now(),
         }
+    }
+}
+
+/// Maximum number of streams processed concurrently within a single connection task.
+/// Prevents one blocked stream (mostly due to packet loss) from stalling others
+/// on the same connection.
+const MAX_STREAMS_PER_CONNECTION: usize = 8;
+
+/// Per-stream state, pre-allocated once per connection.
+struct StreamSlot {
+    stream: Option<RecvStream>,
+    accum: PacketAccumulator,
+    chunks: [Bytes; 4],
+    /// Reusable buffer for coalescing multi-chunk payloads in handle_chunks().
+    coalesce_buf: BytesMut,
+    deadline: Instant,
+}
+
+impl StreamSlot {
+    fn new() -> Self {
+        Self {
+            stream: None,
+            accum: PacketAccumulator::new(Meta::default()),
+            chunks: array::from_fn(|_| Bytes::new()),
+            coalesce_buf: BytesMut::with_capacity(PACKET_DATA_SIZE),
+            deadline: Instant::now(),
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        self.stream.is_some()
+    }
+
+    fn activate(&mut self, stream: RecvStream, meta: Meta, wait_for_chunk_timeout: Duration) {
+        self.stream = Some(stream);
+        self.accum.meta = meta;
+        self.accum.start_time = Instant::now();
+        self.deadline = self.accum.start_time + wait_for_chunk_timeout;
+    }
+
+    fn deactivate(&mut self) {
+        self.stream = None;
+        self.accum.chunks.clear();
     }
 }
 
@@ -566,6 +610,42 @@ fn handle_connection_error(e: quinn::ConnectionError, stats: &StreamerStats, fro
     }
 }
 
+/// Result of polling a single active stream slot.
+/// The first parameter is the slot index.
+enum StreamEvent {
+    /// Data is available, and the specific number of chunks.
+    Data(usize, usize),
+    /// Stream received FIN.
+    Finished(usize),
+    /// Stream encoutered a read error.
+    ReadError(usize),
+}
+
+/// Polls active slots and returns on the first readable/finished/error stream.
+fn poll_stream_slots(
+    cx: &mut Context<'_>,
+    slots: &mut [StreamSlot; MAX_STREAMS_PER_CONNECTION],
+) -> Poll<StreamEvent> {
+    for (i, slot) in slots.iter_mut().enumerate() {
+        let Some(stream) = slot.stream.as_mut() else {
+            continue;
+        };
+        match pin!(stream.read_chunks(&mut slot.chunks)).poll(cx) {
+            Poll::Ready(Ok(Some(n_chunks))) if n_chunks > 0 => {
+                return Poll::Ready(StreamEvent::Data(i, n_chunks));
+            }
+            Poll::Ready(Ok(Some(_))) => {
+                debug_assert!(false, "read_chunks returned Some(0) unexpectedly");
+                return Poll::Ready(StreamEvent::ReadError(i));
+            }
+            Poll::Ready(Ok(None)) => return Poll::Ready(StreamEvent::Finished(i)),
+            Poll::Ready(Err(_)) => return Poll::Ready(StreamEvent::ReadError(i)),
+            Poll::Pending => {}
+        }
+    }
+    Poll::Pending
+}
+
 async fn handle_connection<Q, C>(
     packet_sender: Sender<PacketBatch>,
     remote_address: SocketAddr,
@@ -592,106 +672,179 @@ async fn handle_connection<Q, C>(
     // we only use that for some stats here, so if it gets stale during connection lifetime
     // it is not the end of the world.
     let rtt = connection.rtt();
+
+    // Pre-build a Meta template that is the same for every stream on this connection.
+    let mut meta_template = Meta::default();
+    meta_template.set_socket_addr(&remote_address);
+    meta_template.set_from_staked_node(matches!(peer_type, ConnectionPeerType::Staked(_)));
+    if let Some(pubkey) = context.remote_pubkey() {
+        meta_template.set_remote_pubkey(pubkey);
+    }
+
+    // Pre-allocate all stream slots. No per-stream allocation at runtime.
+    let mut slots: [StreamSlot; MAX_STREAMS_PER_CONNECTION] = array::from_fn(|_| StreamSlot::new());
+    let mut active_count: usize = 0;
+
+    // Single pre-allocated timer, reused via reset() for timeout tracking.
+    let timeout_sleep = tokio::time::sleep(wait_for_chunk_timeout);
+    tokio::pin!(timeout_sleep);
+
     'conn: loop {
-        // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
-        // the connection task.
-        let mut stream = select! {
-            stream = connection.accept_uni() => match stream {
-                Ok(stream) => stream,
-                Err(e) => {
-                    debug!("stream error: {e:?}");
-                    break;
-                }
-            },
-            _ = cancel.cancelled() => break,
-        };
-
-        qos.on_new_stream(&context).await;
-        qos.on_stream_accepted(&context);
-        stats.active_streams.fetch_add(1, Ordering::Relaxed);
-        stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
-
-        let mut meta = Meta::default();
-        meta.set_socket_addr(&remote_address);
-        meta.set_from_staked_node(matches!(peer_type, ConnectionPeerType::Staked(_)));
-        if let Some(pubkey) = context.remote_pubkey() {
-            meta.set_remote_pubkey(pubkey);
-        }
-
-        let mut accum = PacketAccumulator::new(meta);
-        // Virtually all small transactions will fit in 1 chunk. Larger transactions will fit in 1
-        // or 2 chunks if the first chunk starts towards the end of a datagram. A small number of
-        // transaction will have other protocol frames inserted in the middle. Empirically it's been
-        // observed that 4 is the maximum number of chunks txs get split into.
-        //
-        // Bytes values are small, so overall the array takes only 128 bytes, and the "cost" of
-        // overallocating a few bytes is negligible compared to the cost of having to do multiple
-        // read_chunks() calls.
-        let mut chunks: [Bytes; 4] = array::from_fn(|_| Bytes::new());
-
-        loop {
-            // Read the next chunks, waiting up to `wait_for_chunk_timeout`. If we don't get chunks
-            // before then, we assume the stream is dead. This can only happen if there's severe
-            // packet loss or the peer stops sending for whatever reason.
-            let n_chunks = match tokio::select! {
-                chunk = tokio::time::timeout(
-                    wait_for_chunk_timeout,
-                    stream.read_chunks(&mut chunks)) => chunk,
-
-                // If the peer gets disconnected stop the task right away.
-                _ = cancel.cancelled() => break,
-            } {
-                // read_chunk returned success
-                Ok(Ok(chunk)) => chunk.unwrap_or(0),
-                // read_chunk returned error
-                Ok(Err(e)) => {
-                    debug!("Received stream error: {e:?}");
-                    stats
-                        .total_stream_read_errors
-                        .fetch_add(1, Ordering::Relaxed);
-                    break;
-                }
-                // timeout elapsed
-                Err(_) => {
-                    debug!("Timeout in receiving on stream");
-                    stats
-                        .total_stream_read_timeouts
-                        .fetch_add(1, Ordering::Relaxed);
-                    break;
-                }
-            };
-
-            match handle_chunks(
-                // Bytes::clone() is a cheap atomic inc
-                chunks.iter().take(n_chunks).cloned(),
-                &mut accum,
-                rtt,
-                &packet_sender,
-                &stats,
-                peer_type,
-            ) {
-                // The stream is finished, break out of the loop and close the stream.
-                Ok(StreamState::Finished) => {
-                    qos.on_stream_finished(&context);
-                    break;
-                }
-                // The stream is still active, continue reading.
-                Ok(StreamState::Receiving) => {}
-                Err(_) => {
-                    // Disconnect peers that send invalid streams.
-                    connection.close(
-                        CONNECTION_CLOSE_CODE_INVALID_STREAM.into(),
-                        CONNECTION_CLOSE_REASON_INVALID_STREAM,
-                    );
-                    stats.active_streams.fetch_sub(1, Ordering::Relaxed);
-                    qos.on_stream_error(&context);
-                    break 'conn;
-                }
+        // Reset the timer to the earliest deadline among active streams.
+        if active_count > 0 {
+            if let Some(earliest) = slots
+                .iter()
+                .filter(|s| s.is_active())
+                .map(|s| s.deadline)
+                .min()
+            {
+                timeout_sleep.as_mut().reset(earliest.into());
             }
         }
 
-        stats.active_streams.fetch_sub(1, Ordering::Relaxed);
-        qos.on_stream_closed(&context);
+        tokio::select! {
+            biased;
+
+            // Priority 1: drain active streams to avoid per-connection HOL blocking.
+            event = poll_fn(|cx| poll_stream_slots(cx, &mut slots)),
+                if active_count > 0 =>
+            {
+                match event {
+                    StreamEvent::Finished(i) => {
+                        // Finalize packet assembly on FIN.
+                        match handle_chunks(
+                            std::iter::empty(),
+                            &mut slots[i].accum,
+                            rtt,
+                            &mut slots[i].coalesce_buf,
+                            &packet_sender,
+                            &stats,
+                            peer_type,
+                        ) {
+                            Ok(StreamState::Finished) => {
+                                qos.on_stream_finished(&context);
+                            }
+                            _ => {
+                                // Empty or otherwise invalid final state.
+                                connection.close(
+                                    CONNECTION_CLOSE_CODE_INVALID_STREAM.into(),
+                                    CONNECTION_CLOSE_REASON_INVALID_STREAM,
+                                );
+                                slots[i].deactivate();
+                                stats.active_streams.fetch_sub(1, Ordering::Relaxed);
+                                qos.on_stream_error(&context);
+                                break 'conn;
+                            }
+                        }
+                        slots[i].deactivate();
+                        active_count -= 1;
+                        stats.active_streams.fetch_sub(1, Ordering::Relaxed);
+                        qos.on_stream_closed(&context);
+                    }
+                    StreamEvent::Data(i, n_chunks) => {
+                        match handle_chunks(
+                            // std::mem::take moves each Bytes out of the array (replacing
+                            // with Bytes::new()) — avoids the atomic inc+dec of clone().
+                            slots[i].chunks.iter_mut().take(n_chunks).map(std::mem::take),
+                            &mut slots[i].accum,
+                            rtt,
+                            &mut slots[i].coalesce_buf,
+                            &packet_sender,
+                            &stats,
+                            peer_type,
+                        ) {
+                            Ok(StreamState::Finished) => {
+                                // Defensive: tolerate unexpected Finished-on-data.
+                                slots[i].deactivate();
+                                active_count -= 1;
+                                stats.active_streams.fetch_sub(1, Ordering::Relaxed);
+                                qos.on_stream_finished(&context);
+                                qos.on_stream_closed(&context);
+                            }
+                            Ok(StreamState::Receiving) => {
+                                // Data progressed, so extend timeout deadline.
+                                slots[i].deadline = Instant::now() + wait_for_chunk_timeout;
+                            }
+                            Err(_) => {
+                                // Invalid stream payload.
+                                connection.close(
+                                    CONNECTION_CLOSE_CODE_INVALID_STREAM.into(),
+                                    CONNECTION_CLOSE_REASON_INVALID_STREAM,
+                                );
+                                slots[i].deactivate();
+                                stats.active_streams.fetch_sub(1, Ordering::Relaxed);
+                                qos.on_stream_error(&context);
+                                break 'conn;
+                            }
+                        }
+                    }
+                    StreamEvent::ReadError(i) => {
+                        debug!("Received stream error on stream slot {i}");
+                        slots[i].deactivate();
+                        active_count -= 1;
+                        stats.active_streams.fetch_sub(1, Ordering::Relaxed);
+                        stats
+                            .total_stream_read_errors
+                            .fetch_add(1, Ordering::Relaxed);
+                        qos.on_stream_closed(&context);
+                    }
+                }
+            }
+
+            // Priority 2: reap timed-out streams.
+            _ = &mut timeout_sleep, if active_count > 0 => {
+                let now = Instant::now();
+                for (i, slot) in slots.iter_mut().enumerate() {
+                    if slot.is_active() && now >= slot.deadline {
+                        debug!("Timeout in receiving on stream slot {i}");
+                        slot.deactivate();
+                        active_count -= 1;
+                        stats.active_streams.fetch_sub(1, Ordering::Relaxed);
+                        stats
+                            .total_stream_read_timeouts
+                            .fetch_add(1, Ordering::Relaxed);
+                        qos.on_stream_closed(&context);
+                    }
+                }
+            }
+
+            // Priority 3: accept new streams when there is capacity.
+            stream = connection.accept_uni(),
+                if active_count < MAX_STREAMS_PER_CONNECTION =>
+            {
+                match stream {
+                    Ok(stream) => {
+                        qos.on_new_stream(&context).await;
+                        qos.on_stream_accepted(&context);
+                        stats.active_streams.fetch_add(1, Ordering::Relaxed);
+                        stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
+
+                        let slot = slots.iter_mut().find(|s| !s.is_active()).unwrap();
+                        slot.activate(
+                            stream,
+                            meta_template.clone(),
+                            wait_for_chunk_timeout,
+                        );
+                        active_count += 1;
+                    }
+                    Err(e) => {
+                        debug!("stream accept error: {e:?}");
+                        break;
+                    }
+                }
+            }
+
+            _ = cancel.cancelled() => break,
+        }
+    }
+
+    // Clean up any remaining active streams.
+    for slot in slots.iter_mut() {
+        if slot.is_active() {
+            slot.deactivate();
+            stats.active_streams.fetch_sub(1, Ordering::Relaxed);
+            qos.on_stream_closed(&context);
+        }
     }
 
     let removed_connection_count = qos.remove_connection(&context, connection).await;
@@ -722,6 +875,7 @@ fn handle_chunks(
     chunks: impl ExactSizeIterator<Item = Bytes>,
     accum: &mut PacketAccumulator,
     rtt: Duration,
+    coalesce_buf: &mut BytesMut,
     packet_sender: &Sender<PacketBatch>,
     stats: &StreamerStats,
     peer_type: ConnectionPeerType,
@@ -777,11 +931,16 @@ fn handle_chunks(
             accum.meta.clone(),
         )
     } else {
-        let mut buf = BytesMut::with_capacity(bytes_sent);
+        // Attempt to reclaim the coalesce buffer's full capacity. If the
+        // previously split-off Bytes has been dropped downstream, the Arc
+        // refcount is 1 and reserve() resets the position to 0 — no allocation.
+        // If still alive (consumer backed up), this allocates a fresh buffer.
+        coalesce_buf.clear();
+        coalesce_buf.reserve(bytes_sent);
         for chunk in &accum.chunks {
-            buf.put_slice(chunk);
+            coalesce_buf.put_slice(chunk);
         }
-        BytesPacket::new(buf.freeze(), accum.meta.clone())
+        BytesPacket::new(coalesce_buf.split().freeze(), accum.meta.clone())
     };
 
     let packet_size = packet.meta().size;
@@ -2002,6 +2161,38 @@ pub mod test {
             _ => panic!("unexpected close"),
         }
         assert_eq!(stats.invalid_stream_size.load(Ordering::Relaxed), 1);
+        cancel.cancel();
+        join_handle.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_client_connection_close_empty_stream() {
+        let SpawnTestServerResult {
+            join_handle,
+            server_address,
+            stats,
+            cancel,
+            ..
+        } = setup_quic_server(
+            None,
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
+        );
+
+        let client_connection = make_client_endpoint(&server_address, None).await;
+
+        // Open a stream and immediately finish it without writing any data.
+        let mut send_stream = client_connection.open_uni().await.unwrap();
+        send_stream.finish().unwrap();
+
+        match client_connection.closed().await {
+            ConnectionError::ApplicationClosed(ApplicationClose { error_code, reason }) => {
+                assert_eq!(error_code, CONNECTION_CLOSE_CODE_INVALID_STREAM.into());
+                assert_eq!(reason, CONNECTION_CLOSE_REASON_INVALID_STREAM);
+            }
+            _ => panic!("unexpected close"),
+        }
+        assert_eq!(stats.total_new_streams.load(Ordering::Relaxed), 1);
         cancel.cancel();
         join_handle.await.unwrap();
     }
