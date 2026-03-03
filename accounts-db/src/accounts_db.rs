@@ -38,9 +38,9 @@ use {
         account_storage_entry::AccountStorageEntry,
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
-            AccountsStats, CacheAccountStoreStats, CleanAccountsStats, FlushStats,
-            ObsoleteAccountsStats, PurgeStats, ShrinkAncientStats, ShrinkStats, ShrinkStatsSub,
-            StoreAccountsTiming,
+            AccountsStats, CleanAccountsStats, FlushStats, ObsoleteAccountsStats, PurgeStats,
+            ShrinkAncientStats, ShrinkStats, ShrinkStatsSub, StoreAccountsTiming,
+            StoreAccountsUnfrozenStats, WriteAccountsToCacheStats,
         },
         accounts_file::{AccountsFile, AccountsFileProvider, StorageAccess},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
@@ -937,6 +937,9 @@ pub struct AccountsDb {
 
     pub stats: AccountsStats,
 
+    /// Stats from storing accounts unfrozen
+    store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats,
+
     clean_accounts_stats: CleanAccountsStats,
 
     // Stats for purges called outside of clean_accounts()
@@ -1152,6 +1155,7 @@ impl AccountsDb {
             shrink_stats: ShrinkStats::default(),
             shrink_ancient_stats: ShrinkAncientStats::default(),
             stats: AccountsStats::default(),
+            store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats::default(),
             #[cfg(test)]
             load_delay: u64::default(),
             #[cfg(test)]
@@ -5467,49 +5471,46 @@ impl AccountsDb {
             return;
         }
 
-        let mut total_data = 0;
-        (0..accounts.len()).for_each(|index| {
-            total_data += accounts.data_len(index);
-        });
-
-        self.stats
-            .store_total_data
-            .fetch_add(total_data as u64, Ordering::Relaxed);
-
         // Store the accounts in the write cache
-        let mut store_accounts_time = Measure::start("store_accounts");
-        let (store_account, cache_account_store_stats) =
+        let write_accounts_time = Measure::start("write_accounts");
+        let (store_account, write_stats) =
             self.write_accounts_to_cache(accounts.target_slot(), &accounts, ancestors);
-        store_accounts_time.stop();
-        self.stats
-            .store_accounts_to_cache_us
-            .fetch_add(store_accounts_time.as_us(), Ordering::Relaxed);
+        let write_accounts_us = write_accounts_time.end_as_us();
 
         // Update the index
-        let mut update_index_time = Measure::start("update_index");
-
+        let update_index_time = Measure::start("update_index");
         self.update_index_cached_accounts(&accounts, &store_account, update_index_thread_selection);
+        let update_index_us = update_index_time.end_as_us();
 
-        update_index_time.stop();
-        self.stats
-            .store_update_index
-            .fetch_add(update_index_time.as_us(), Ordering::Relaxed);
-        self.stats.num_store_accounts_to_cache.fetch_add(
-            cache_account_store_stats.num_accounts_stored,
+        let stats = &self.store_accounts_unfrozen_stats;
+        stats
+            .write_to_cache_us
+            .fetch_add(write_accounts_us, Ordering::Relaxed);
+        stats
+            .update_index_us
+            .fetch_add(update_index_us, Ordering::Relaxed);
+        stats
+            .num_initial_accounts_to_store
+            .fetch_add(write_stats.num_initial_accounts_to_store, Ordering::Relaxed);
+        stats
+            .num_accounts_stored
+            .fetch_add(write_stats.num_accounts_stored, Ordering::Relaxed);
+        stats.num_duplicate_accounts_skipped.fetch_add(
+            write_stats.num_duplicate_accounts_skipped,
             Ordering::Relaxed,
         );
-        self.stats.num_ephemeral_accounts_skipped.fetch_add(
-            cache_account_store_stats.num_ephemeral_accounts_skipped,
+        stats.num_ephemeral_accounts_skipped.fetch_add(
+            write_stats.num_ephemeral_accounts_skipped,
             Ordering::Relaxed,
         );
-        self.stats.num_duplicate_accounts_skipped.fetch_add(
-            cache_account_store_stats.num_duplicate_accounts_skipped,
+        stats.num_ancestors_zero_lamport_skipped.fetch_add(
+            write_stats.num_ancestors_zero_lamport_skipped,
             Ordering::Relaxed,
         );
-        self.stats.num_ancestors_zero_lamport_skipped.fetch_add(
-            cache_account_store_stats.num_ancestors_zero_lamport_skipped,
-            Ordering::Relaxed,
-        );
+        stats
+            .account_data_bytes_stored
+            .fetch_add(write_stats.account_data_bytes_stored, Ordering::Relaxed);
+        stats.report();
         self.report_store_timings();
     }
 
@@ -5641,10 +5642,13 @@ impl AccountsDb {
         slot: Slot,
         accounts_and_meta_to_store: &impl StorableAccounts<'b>,
         ancestors: Option<&Ancestors>,
-    ) -> (BitVec, CacheAccountStoreStats) {
+    ) -> (BitVec, WriteAccountsToCacheStats) {
         let len = accounts_and_meta_to_store.len();
         let mut pubkey_set = HashSet::with_capacity_and_hasher(len, PubkeyHasherBuilder::default());
-        let mut cache_account_store_stats = CacheAccountStoreStats::default();
+        let mut stats = WriteAccountsToCacheStats {
+            num_initial_accounts_to_store: len as u64,
+            ..Default::default()
+        };
         let mut store_account = BitVec::new_fill(false, len as u64);
 
         (0..len).rev().for_each(|index| {
@@ -5654,7 +5658,7 @@ impl AccountsDb {
                 if is_duplicate_account {
                     // If the same account is written multiple times in the same batch,
                     // only store the latest version
-                    cache_account_store_stats.num_duplicate_accounts_skipped += 1;
+                    stats.num_duplicate_accounts_skipped += 1;
                     return;
                 }
                 if account.is_zero_lamport() {
@@ -5667,29 +5671,32 @@ impl AccountsDb {
                             |(_, account)| account.is_zero_lamport(),
                         ) {
                             if is_zero_lamport {
-                                cache_account_store_stats.num_ancestors_zero_lamport_skipped += 1;
+                                stats.num_ancestors_zero_lamport_skipped += 1;
                                 return;
                             }
                         } else {
-                            cache_account_store_stats.num_ephemeral_accounts_skipped += 1;
+                            stats.num_ephemeral_accounts_skipped += 1;
                             return;
                         }
                     } else if self
                         .accounts_index
                         .get_and_then(pubkey, |account| (true, account.is_none()))
                     {
-                        cache_account_store_stats.num_ephemeral_accounts_skipped += 1;
+                        stats.num_ephemeral_accounts_skipped += 1;
                         return;
                     }
                 }
 
-                self.accounts_cache
-                    .store(slot, pubkey, account.take_account());
+                let account_shared_data = account.take_account();
+                let account_data_len = account_shared_data.data().len();
+                self.accounts_cache.store(slot, pubkey, account_shared_data);
                 store_account.set(index as u64, true);
+                stats.num_accounts_stored += 1;
+                stats.account_data_bytes_stored += account_data_len as u64;
             })
         });
 
-        (store_account, cache_account_store_stats)
+        (store_account, stats)
     }
 
     fn write_accounts_to_storage<'a>(
@@ -5795,13 +5802,6 @@ impl AccountsDb {
             datapoint_info!(
                 "accounts_db_store_timings",
                 (
-                    "store_accounts_to_cache_us",
-                    self.stats
-                        .store_accounts_to_cache_us
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
                     "store_accounts_to_storage_us",
                     self.stats
                         .store_accounts_to_storage_us
@@ -5831,22 +5831,10 @@ impl AccountsDb {
                     i64
                 ),
                 (
-                    "num_store_accounts_to_cache",
-                    self.stats
-                        .num_store_accounts_to_cache
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
                     "num_store_accounts_to_storage",
                     self.stats
                         .num_store_accounts_to_storage
                         .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "total_data",
-                    self.stats.store_total_data.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -5940,27 +5928,6 @@ impl AccountsDb {
                     "num_zero_lamport_accounts_added",
                     self.stats
                         .num_zero_lamport_accounts_added
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "num_ephemeral_accounts_skipped",
-                    self.stats
-                        .num_ephemeral_accounts_skipped
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "num_duplicate_accounts_skipped",
-                    self.stats
-                        .num_duplicate_accounts_skipped
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "num_ancestors_zero_lamport_skipped",
-                    self.stats
-                        .num_ancestors_zero_lamport_skipped
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),

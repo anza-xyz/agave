@@ -5,21 +5,19 @@ use {
         iter::Sum,
         num::Saturating,
         sync::atomic::{AtomicU64, AtomicUsize, Ordering},
+        time::Duration,
     },
 };
 
 #[derive(Debug, Default)]
 pub struct AccountsStats {
     pub last_store_report: AtomicInterval,
-    pub store_accounts_to_cache_us: AtomicU64,
     pub store_accounts_to_storage_us: AtomicU64,
     pub store_update_index: AtomicU64,
     pub store_handle_reclaims: AtomicU64,
     pub store_append_accounts: AtomicU64,
     pub stakes_cache_check_and_store_us: AtomicU64,
-    pub num_store_accounts_to_cache: AtomicU64,
     pub num_store_accounts_to_storage: AtomicU64,
-    pub store_total_data: AtomicU64,
     pub num_reclaims: AtomicU64,
     pub create_store_count: AtomicU64,
     pub dropped_stores: AtomicU64,
@@ -30,9 +28,87 @@ pub struct AccountsStats {
     pub num_obsolete_bytes_removed: AtomicU64,
     pub add_zero_lamport_accounts_us: AtomicU64,
     pub num_zero_lamport_accounts_added: AtomicU64,
-    pub num_ephemeral_accounts_skipped: AtomicU64,
+}
+
+/// Stats from storing accounts unfrozen (i.e. to the write cache)
+#[derive(Debug, Default)]
+pub struct StoreAccountsUnfrozenStats {
+    pub last_report: AtomicInterval,
+    /// time spent writing accounts to the write cache
+    pub write_to_cache_us: AtomicU64,
+    /// time spend updating the accounts index
+    pub update_index_us: AtomicU64,
+    /// initial number of accounts to be stored
+    pub num_initial_accounts_to_store: AtomicU64,
+    /// number of accounts actually stored
+    pub num_accounts_stored: AtomicU64,
+    /// number of accounts *not* stored because they were duplicates
     pub num_duplicate_accounts_skipped: AtomicU64,
+    /// number of accounts *not* stored because they were ephemeral
+    pub num_ephemeral_accounts_skipped: AtomicU64,
+    /// number of accounts *not* stored because they had an ancestor with zero lamports
     pub num_ancestors_zero_lamport_skipped: AtomicU64,
+    /// number of bytes stored, from only account data
+    pub account_data_bytes_stored: AtomicU64,
+}
+
+impl StoreAccountsUnfrozenStats {
+    const REPORT_INTERVAL_MS: u64 = Duration::from_secs(1).as_millis() as u64;
+
+    pub fn report(&self) {
+        let should_report = self.last_report.should_update(Self::REPORT_INTERVAL_MS);
+        if !should_report {
+            return;
+        }
+
+        datapoint_info!(
+            "accounts_db_store_accounts_unfrozen",
+            (
+                "write_to_cache_us",
+                self.write_to_cache_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "update_index_us",
+                self.update_index_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_initial_accounts_to_store",
+                self.num_initial_accounts_to_store
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_accounts_stored",
+                self.num_accounts_stored.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_duplicate_accounts_skipped",
+                self.num_duplicate_accounts_skipped
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_ephemeral_accounts_skipped",
+                self.num_ephemeral_accounts_skipped
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_ancestors_zero_lamport_skipped",
+                self.num_ancestors_zero_lamport_skipped
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "account_data_bytes_stored",
+                self.account_data_bytes_stored.swap(0, Ordering::Relaxed),
+                i64
+            ),
+        );
+    }
 }
 
 #[derive(Debug, Default)]
@@ -787,10 +863,15 @@ impl Sum<Self> for ObsoleteAccountsStats {
     }
 }
 
+/// Stats from calling write_accounts_to_cache()
+///
+/// Refer to StoreAccountsUnfrozenStats for docs on each field.
 #[derive(Debug, Default)]
-pub struct CacheAccountStoreStats {
+pub struct WriteAccountsToCacheStats {
+    pub num_initial_accounts_to_store: u64,
     pub num_accounts_stored: u64,
-    pub num_ephemeral_accounts_skipped: u64,
     pub num_duplicate_accounts_skipped: u64,
+    pub num_ephemeral_accounts_skipped: u64,
     pub num_ancestors_zero_lamport_skipped: u64,
+    pub account_data_bytes_stored: u64,
 }
