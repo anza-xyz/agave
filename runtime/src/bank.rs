@@ -1426,8 +1426,10 @@ impl Bank {
                 let leader_schedule_epoch = new.epoch_schedule().get_leader_schedule_epoch(slot);
                 new.update_epoch_stakes(leader_schedule_epoch);
             }
-            new.distribute_partitioned_epoch_rewards();
         });
+
+        let (_, distribute_rewards_time_us) =
+            measure_us!(new.distribute_partitioned_epoch_rewards());
 
         let (_, cache_preparation_time_us) =
             measure_us!(new.prepare_program_cache_for_upcoming_feature_set());
@@ -1486,6 +1488,7 @@ impl Bank {
                 feature_set_time_us,
                 ancestors_time_us,
                 update_epoch_time_us,
+                distribute_rewards_time_us,
                 cache_preparation_time_us,
                 update_sysvars_time_us,
                 fill_sysvar_cache_time_us,
