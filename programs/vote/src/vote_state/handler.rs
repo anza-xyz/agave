@@ -1,14 +1,11 @@
 //! Vote state handler API.
 //!
 //! Wraps the vote state behind a "handler" API to support converting from an
-//! existing vote state version to whichever version is the target (or
-//! "current") vote state version.
+//! existing vote state version to VoteStateV4 (the current target version).
 //!
-//! The program must be generic over whichever vote state version is the
-//! target, since at compile time the target version is not known (can be
-//! changed with a feature gate). For this reason, the handler offers a
-//! getter and setter API around vote state, for all operations required by the
-//! vote program.
+//! In production, the handler always operates on VoteStateV4. The V3 code
+//! path is gated behind `cfg(any(test, feature = "dev-context-only-utils"))`
+//! to support parameterized testing and future vote state version transitions.
 
 use {
     solana_clock::{Clock, Epoch, Slot, UnixTimestamp},
@@ -260,6 +257,7 @@ pub trait VoteStateHandle {
     }
 }
 
+#[cfg(any(test, feature = "dev-context-only-utils"))]
 impl VoteStateHandle for VoteStateV3 {
     fn authorized_withdrawer(&self) -> &Pubkey {
         &self.authorized_withdrawer
@@ -680,6 +678,7 @@ impl VoteStateHandle for VoteStateV4 {
 /// The target version to convert all deserialized vote state into.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VoteStateTargetVersion {
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     V3,
     V4,
     // New vote state versions will be added here...
@@ -688,6 +687,7 @@ pub enum VoteStateTargetVersion {
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 enum TargetVoteState {
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     V3(VoteStateV3),
     V4(VoteStateV4),
     // New vote state versions will be added here...
@@ -706,6 +706,7 @@ pub struct VoteStateHandler {
 impl VoteStateHandle for VoteStateHandler {
     fn authorized_withdrawer(&self) -> &Pubkey {
         match &self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.authorized_withdrawer(),
             TargetVoteState::V4(v4) => v4.authorized_withdrawer(),
         }
@@ -713,6 +714,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey) {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.set_authorized_withdrawer(authorized_withdrawer),
             TargetVoteState::V4(v4) => v4.set_authorized_withdrawer(authorized_withdrawer),
         }
@@ -720,6 +722,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn authorized_voters(&self) -> &AuthorizedVoters {
         match &self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.authorized_voters(),
             TargetVoteState::V4(v4) => v4.authorized_voters(),
         }
@@ -737,6 +740,7 @@ impl VoteStateHandle for VoteStateHandler {
         F: Fn(Pubkey) -> Result<(), InstructionError>,
     {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.set_new_authorized_voter(
                 authorized_pubkey,
                 current_epoch,
@@ -759,6 +763,7 @@ impl VoteStateHandle for VoteStateHandler {
         current_epoch: Epoch,
     ) -> Result<Pubkey, InstructionError> {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.get_and_update_authorized_voter(current_epoch),
             TargetVoteState::V4(v4) => v4.get_and_update_authorized_voter(current_epoch),
         }
@@ -766,6 +771,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn commission(&self) -> u8 {
         match &self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.commission(),
             TargetVoteState::V4(v4) => v4.commission(),
         }
@@ -773,6 +779,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn set_commission(&mut self, commission: u8) {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.set_commission(commission),
             TargetVoteState::V4(v4) => v4.set_commission(commission),
         }
@@ -780,6 +787,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn set_inflation_rewards_commission_bps(&mut self, commission_bps: u16) {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.set_inflation_rewards_commission_bps(commission_bps),
             TargetVoteState::V4(v4) => v4.set_inflation_rewards_commission_bps(commission_bps),
         }
@@ -787,6 +795,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn set_block_revenue_commission_bps(&mut self, commission_bps: u16) {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.set_block_revenue_commission_bps(commission_bps),
             TargetVoteState::V4(v4) => v4.set_block_revenue_commission_bps(commission_bps),
         }
@@ -794,6 +803,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn node_pubkey(&self) -> &Pubkey {
         match &self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.node_pubkey(),
             TargetVoteState::V4(v4) => v4.node_pubkey(),
         }
@@ -801,6 +811,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey) {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.set_node_pubkey(node_pubkey),
             TargetVoteState::V4(v4) => v4.set_node_pubkey(node_pubkey),
         }
@@ -808,6 +819,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn set_inflation_rewards_collector(&mut self, collector: Pubkey) {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.set_inflation_rewards_collector(collector),
             TargetVoteState::V4(v4) => v4.set_inflation_rewards_collector(collector),
         }
@@ -815,6 +827,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn set_block_revenue_collector(&mut self, collector: Pubkey) {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.set_block_revenue_collector(collector),
             TargetVoteState::V4(v4) => v4.set_block_revenue_collector(collector),
         }
@@ -822,6 +835,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn pending_delegator_rewards(&self) -> u64 {
         match &self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.pending_delegator_rewards(),
             TargetVoteState::V4(v4) => v4.pending_delegator_rewards(),
         }
@@ -829,6 +843,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn add_pending_delegator_rewards(&mut self, amount: u64) -> Result<(), InstructionError> {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.add_pending_delegator_rewards(amount),
             TargetVoteState::V4(v4) => v4.add_pending_delegator_rewards(amount),
         }
@@ -836,6 +851,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn votes(&self) -> &VecDeque<LandedVote> {
         match &self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.votes(),
             TargetVoteState::V4(v4) => v4.votes(),
         }
@@ -843,6 +859,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn votes_mut(&mut self) -> &mut VecDeque<LandedVote> {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.votes_mut(),
             TargetVoteState::V4(v4) => v4.votes_mut(),
         }
@@ -850,6 +867,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn set_votes(&mut self, votes: VecDeque<LandedVote>) {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.set_votes(votes),
             TargetVoteState::V4(v4) => v4.set_votes(votes),
         }
@@ -857,6 +875,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn contains_slot(&self, candidate_slot: Slot) -> bool {
         match &self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.contains_slot(candidate_slot),
             TargetVoteState::V4(v4) => v4.contains_slot(candidate_slot),
         }
@@ -864,6 +883,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn last_lockout(&self) -> Option<&Lockout> {
         match &self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.last_lockout(),
             TargetVoteState::V4(v4) => v4.last_lockout(),
         }
@@ -871,6 +891,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn last_voted_slot(&self) -> Option<Slot> {
         match &self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.last_voted_slot(),
             TargetVoteState::V4(v4) => v4.last_voted_slot(),
         }
@@ -878,6 +899,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn root_slot(&self) -> Option<Slot> {
         match &self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.root_slot(),
             TargetVoteState::V4(v4) => v4.root_slot(),
         }
@@ -885,6 +907,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn set_root_slot(&mut self, root_slot: Option<Slot>) {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.set_root_slot(root_slot),
             TargetVoteState::V4(v4) => v4.set_root_slot(root_slot),
         }
@@ -892,6 +915,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn current_epoch(&self) -> Epoch {
         match &self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.current_epoch(),
             TargetVoteState::V4(v4) => v4.current_epoch(),
         }
@@ -899,6 +923,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
         match &self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.epoch_credits(),
             TargetVoteState::V4(v4) => v4.epoch_credits(),
         }
@@ -906,6 +931,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn epoch_credits_mut(&mut self) -> &mut Vec<(Epoch, u64, u64)> {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.epoch_credits_mut(),
             TargetVoteState::V4(v4) => v4.epoch_credits_mut(),
         }
@@ -913,6 +939,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn last_timestamp(&self) -> &BlockTimestamp {
         match &self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.last_timestamp(),
             TargetVoteState::V4(v4) => v4.last_timestamp(),
         }
@@ -920,6 +947,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
         match &mut self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.set_last_timestamp(timestamp),
             TargetVoteState::V4(v4) => v4.set_last_timestamp(timestamp),
         }
@@ -930,6 +958,7 @@ impl VoteStateHandle for VoteStateHandler {
         vote_account: &mut BorrowedInstructionAccount,
     ) -> Result<(), InstructionError> {
         match self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.set_vote_account_state(vote_account),
             TargetVoteState::V4(v4) => v4.set_vote_account_state(vote_account),
         }
@@ -937,6 +966,7 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn has_bls_pubkey(&self) -> bool {
         match &self.target_state {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             TargetVoteState::V3(v3) => v3.has_bls_pubkey(),
             TargetVoteState::V4(v4) => v4.has_bls_pubkey(),
         }
@@ -951,6 +981,7 @@ impl VoteStateHandler {
         target_version: VoteStateTargetVersion,
     ) -> Result<(), InstructionError> {
         match target_version {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             VoteStateTargetVersion::V3 => {
                 VoteStateV3::new(vote_init, clock).set_vote_account_state(vote_account)
             }
@@ -969,6 +1000,7 @@ impl VoteStateHandler {
         target_version: VoteStateTargetVersion,
     ) -> Result<(), InstructionError> {
         match target_version {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             VoteStateTargetVersion::V3 => {
                 // We should not be able to reach here because we only call this function
                 // when both Vote State V4 and BLS features are enabled.
@@ -987,6 +1019,7 @@ impl VoteStateHandler {
         target_version: VoteStateTargetVersion,
     ) -> Result<(), InstructionError> {
         match target_version {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             VoteStateTargetVersion::V3 => {
                 VoteStateV3::default().set_vote_account_state(vote_account)
             }
@@ -1004,6 +1037,7 @@ impl VoteStateHandler {
     ) -> Result<(), InstructionError> {
         let length = vote_account.get_data().len();
         let expected = match target_version {
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             VoteStateTargetVersion::V3 => VoteStateV3::size_of(),
             VoteStateTargetVersion::V4 => VoteStateV4::size_of(),
         };
@@ -1014,6 +1048,7 @@ impl VoteStateHandler {
         }
     }
 
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub(crate) fn new_v3(vote_state: VoteStateV3) -> Self {
         Self {
             target_state: TargetVoteState::V3(vote_state),

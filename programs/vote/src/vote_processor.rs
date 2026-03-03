@@ -95,10 +95,15 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     }
 
     // Determine the target vote state version to use for all operations.
-    let target_version = if invoke_context.get_feature_set().vote_state_v4 {
-        VoteStateTargetVersion::V4
-    } else {
-        VoteStateTargetVersion::V3
+    let target_version = {
+        #[cfg(any(test, feature = "dev-context-only-utils"))]
+        if !invoke_context.get_feature_set().vote_state_v4 {
+            VoteStateTargetVersion::V3
+        } else {
+            VoteStateTargetVersion::V4
+        }
+        #[cfg(not(any(test, feature = "dev-context-only-utils")))]
+        { VoteStateTargetVersion::V4 }
     };
 
     let signers = instruction_context.get_signers()?;
