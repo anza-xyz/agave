@@ -251,7 +251,7 @@ impl SnapshotRequestHandler {
         // Note `max_flush_root` could be larger than self.slot() if there are
         // `> MAX_CACHE_SLOT` cached and rooted slots which triggered earlier flushes.
         assert!(
-            snapshot_root_bank.slot()
+            snapshot_root_bank.slot() as i64
                 <= snapshot_root_bank
                     .rc
                     .accounts

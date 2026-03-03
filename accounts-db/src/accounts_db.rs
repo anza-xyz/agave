@@ -4497,7 +4497,7 @@ impl AccountsDb {
             }
         }
 
-        max_flush_root.inspect(|&root| self.accounts_cache.set_max_flush_root(root));
+        max_flush_root.inspect(|&root| self.accounts_cache.set_max_flush_root(root as i64));
 
         (num_new_roots, num_roots_flushed, flush_stats)
     }

@@ -9,7 +9,7 @@ use {
         ops::Deref,
         sync::{
             Arc, RwLock,
-            atomic::{AtomicBool, AtomicU64, Ordering},
+            atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
         },
     },
 };
@@ -145,17 +145,30 @@ impl CachedAccount {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct AccountsCache {
     cache: DashMap<Slot, Arc<SlotCache>, BuildNoHashHasher<Slot>>,
     // Queue of potentially unflushed roots. Random eviction + cache too large
     // could have triggered a flush of this slot already
     maybe_unflushed_roots: RwLock<BTreeSet<Slot>>,
-    max_flushed_root: AtomicU64,
+    max_flushed_root: AtomicI64,
     /// The size of account data stored in the whole AccountsCache, in bytes
     total_size: Arc<AtomicU64>,
     /// The number of accounts stored in the whole AccountsCache
     total_accounts_counts: Arc<AtomicU64>,
+}
+
+const NO_FLUSHED_ROOTS: i64 = -1;
+impl Default for AccountsCache {
+    fn default() -> Self {
+        Self {
+            cache: DashMap::with_capacity_and_hasher(1024, BuildNoHashHasher::default()),
+            maybe_unflushed_roots: RwLock::new(BTreeSet::new()),
+            max_flushed_root: AtomicI64::new(NO_FLUSHED_ROOTS),
+            total_size: Arc::new(AtomicU64::new(0)),
+            total_accounts_counts: Arc::new(AtomicU64::new(0)),
+        }
+    }
 }
 
 impl AccountsCache {
@@ -267,11 +280,11 @@ impl AccountsCache {
         self.cache.len()
     }
 
-    pub fn fetch_max_flush_root(&self) -> Slot {
+    pub fn fetch_max_flush_root(&self) -> i64 {
         self.max_flushed_root.load(Ordering::Acquire)
     }
 
-    pub fn set_max_flush_root(&self, root: Slot) {
+    pub fn set_max_flush_root(&self, root: i64) {
         self.max_flushed_root.fetch_max(root, Ordering::Release);
     }
 }
