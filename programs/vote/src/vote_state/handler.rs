@@ -2198,7 +2198,7 @@ mod tests {
         // Verify commission() returns the same value for equivalent V3
         // and V4 states, both directly and through migration.
         let vote_pubkey = Pubkey::new_unique();
-        for n in [0u8, 1, 50, 100] {
+        for n in [0u8, 1, 50, 100, 101, 255] {
             // Direct construction.
             let v3 = VoteStateV3 {
                 commission: n,
