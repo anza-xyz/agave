@@ -145,14 +145,6 @@ impl ShredFetchStage {
             // Filter out shreds that are way too far in the future to avoid the
             // overhead of having to hold onto them.
             let max_slot = last_slot + MAX_SHRED_DISTANCE_MINIMUM.max(2 * slots_per_epoch);
-            let enforce_fixed_fec_set = |shred_slot| {
-                check_feature_activation(
-                    &agave_feature_set::enforce_fixed_fec_set::id(),
-                    shred_slot,
-                    &feature_set,
-                    &epoch_schedule,
-                )
-            };
             let discard_unexpected_data_complete_shreds = |shred_slot| {
                 check_feature_activation(
                     &agave_feature_set::discard_unexpected_data_complete_shreds::id(),
@@ -169,7 +161,6 @@ impl ShredFetchStage {
                         last_root,
                         max_slot,
                         shred_version,
-                        enforce_fixed_fec_set,
                         discard_unexpected_data_complete_shreds,
                         &mut stats,
                     )
