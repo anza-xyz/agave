@@ -35,7 +35,6 @@ frozen-abi = [
     "solana-fee-calculator/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
-shuttle-test = ["dep:shuttle"]
 
 [dependencies]
 agave-fs = { workspace = true }
@@ -60,7 +59,6 @@ rand = { workspace = true }
 rayon = { workspace = true }
 seqlock = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
-shuttle = { workspace = true, optional = true }
 smallvec = { workspace = true, features = ["const_generics"] }
 solana-account = { workspace = true, features = ["serde"] }
 solana-address-lookup-table-interface = { workspace = true, features = [

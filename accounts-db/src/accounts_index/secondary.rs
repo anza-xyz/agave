@@ -257,7 +257,14 @@ impl<SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send>
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        std::{
+            iter,
+            sync::{Arc, atomic::AtomicBool},
+            thread,
+        },
+    };
 
     // Ensures remove_by_inner() enforces invariant that outer_key must
     // have an entry in forward index.
@@ -300,54 +307,52 @@ mod tests {
 
         secondary_index.remove_by_inner_key(&inner_key);
     }
-}
 
-#[cfg(all(test, feature = "shuttle-test"))]
-mod shuttle_tests {
-    use {
-        super::*,
-        shuttle::thread,
-        std::{iter, sync::Arc},
-    };
+    /// Ensures concurrent calls to insert() and remove_by_inner() don't race/panic.
+    #[test]
+    fn test_concurrent_insert_remove() {
+        const ITERATIONS: usize = 10_000;
+        let secondary_index = Arc::new(SecondaryIndex::<RwLockSecondaryIndexEntry>::new(""));
+        let outer_keys: Vec<_> = iter::repeat_with(Pubkey::new_unique).take(3).collect();
+        let inner_keys: Vec<_> = iter::repeat_with(Pubkey::new_unique).take(9).collect();
+        let mut handles = Vec::new();
+        let go = Arc::new(AtomicBool::new(false));
 
-    fn do_test_concurrent_insert_remove() {
-        let secondary_index = Arc::new(SecondaryIndex::<RwLockSecondaryIndexEntry>::new(
-            "test_secondary_index",
-        ));
-        let inner_keys: Vec<_> = iter::repeat_with(Pubkey::new_unique).take(4).collect();
-        let outer_keys: Vec<_> = iter::repeat_with(Pubkey::new_unique).take(2).collect();
-
-        let inserter = {
+        // spawn inserter threads
+        for outer_key in &outer_keys {
             let secondary_index = Arc::clone(&secondary_index);
+            let go = Arc::clone(&go);
+            let outer_key = *outer_key;
             let inner_keys = inner_keys.clone();
-            let outer_keys = outer_keys.clone();
-            thread::spawn(move || {
-                for outer_key in &outer_keys {
+            handles.push(thread::spawn(move || {
+                while !go.load(Ordering::Relaxed) {}
+                for _ in 0..ITERATIONS {
                     for inner_key in &inner_keys {
-                        secondary_index.insert(outer_key, inner_key);
-                        thread::yield_now();
-                        secondary_index.insert(outer_key, inner_key);
-                        thread::yield_now();
+                        secondary_index.insert(&outer_key, inner_key);
                     }
                 }
-            })
-        };
+            }));
+        }
 
-        let remover = {
+        // spawn remover thread
+        {
             let secondary_index = Arc::clone(&secondary_index);
+            let go = Arc::clone(&go);
             let inner_keys = inner_keys.clone();
-            thread::spawn(move || {
-                for _ in 0..3 {
+            handles.push(thread::spawn(move || {
+                while !go.load(Ordering::Relaxed) {}
+                for _ in 0..ITERATIONS {
                     for inner_key in &inner_keys {
                         secondary_index.remove_by_inner_key(inner_key);
-                        thread::yield_now();
                     }
                 }
-            })
-        };
+            }));
+        }
 
-        inserter.join().unwrap();
-        remover.join().unwrap();
+        go.store(true, Ordering::Relaxed);
+        for handle in handles {
+            handle.join().unwrap();
+        }
 
         // After all the concurrent insert/removals, try removing everything
         // and ensure final state is consistent.
@@ -362,17 +367,5 @@ mod shuttle_tests {
             secondary_index.stats.num_inner_keys.load(Ordering::Relaxed),
             0,
         );
-    }
-
-    #[test]
-    fn test_concurrent_insert_remove_random() {
-        const RANDOM_ITERATIONS: usize = 50_000;
-        shuttle::check_random(do_test_concurrent_insert_remove, RANDOM_ITERATIONS);
-    }
-
-    #[test]
-    fn test_concurrent_insert_remove_dfs() {
-        const DFS_ITERATIONS: Option<usize> = Some(50_000);
-        shuttle::check_dfs(do_test_concurrent_insert_remove, DFS_ITERATIONS);
     }
 }
