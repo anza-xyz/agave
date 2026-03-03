@@ -148,7 +148,7 @@ impl<SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send>
             outer_keys.push(*key);
         }
 
-        // explicityly drop the locks so we don't hold them while reporting metrics
+        // explicitly drop the locks so we don't hold them while reporting metrics
         drop(outer_keys);
         drop(reverse_index_entry);
 
