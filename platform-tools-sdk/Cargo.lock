@@ -1366,6 +1366,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pastey"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b867cad97c0791bbd3aaa6472142568c6c9e8f71937e98379f584cfb0cf35bec"
+
+[[package]]
 name = "pbkdf2"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1503,7 +1509,7 @@ dependencies = [
  "bytes",
  "getrandom 0.3.4",
  "lru-slab",
- "rand 0.9.2",
+ "rand",
  "ring",
  "rustc-hash",
  "rustls 0.23.36",
@@ -1546,33 +1552,12 @@ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
 name = "rand"
-version = "0.8.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
-dependencies = [
- "libc",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
-]
-
-[[package]]
-name = "rand"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
 dependencies = [
- "rand_chacha 0.9.0",
+ "rand_chacha",
  "rand_core 0.9.5",
-]
-
-[[package]]
-name = "rand_chacha"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
-dependencies = [
- "ppv-lite86",
- "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -2032,6 +2017,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha2-const-stable"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f179d4e11094a893b82fff208f74d448a7512f99f5a0acbd5c679b705f83ed9"
+
+[[package]]
 name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2110,17 +2101,18 @@ version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2ecac8e1b7f74c2baa9e774c42817e3e75b20787134b76cc4d45e8a604488f5"
 dependencies = [
- "solana-address 2.1.0",
+ "solana-address 2.2.0",
 ]
 
 [[package]]
 name = "solana-address"
-version = "2.1.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "998227476aed49e1c63dec0e89341b768a2cf3bd22913c3ed8baa985cda882c9"
+checksum = "68c5d02824391b072dc5cd0aaa85fb0af9784a21d23286a767994d1e8a322131"
 dependencies = [
  "five8",
  "five8_const",
+ "sha2-const-stable",
  "solana-atomic-u64",
  "solana-define-syscall 5.0.0",
  "solana-program-error",
@@ -2212,14 +2204,15 @@ dependencies = [
 
 [[package]]
 name = "solana-keypair"
-version = "3.1.0"
+version = "3.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ac8be597c9e231b0cab2928ce3bc3e4ee77d9c0ad92977b9d901f3879f25a7a"
+checksum = "263d614c12aa267a3278703175fd6440552ca61bc960b5a02a4482720c53438b"
 dependencies = [
  "ed25519-dalek",
  "five8",
- "rand 0.8.5",
- "solana-address 2.1.0",
+ "five8_core",
+ "rand",
+ "solana-address 2.2.0",
  "solana-seed-phrase",
  "solana-signature",
  "solana-signer",
@@ -2270,9 +2263,9 @@ dependencies = [
 
 [[package]]
 name = "solana-signature"
-version = "3.2.0"
+version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4028aeedd443d80f1dccbf64872593a80e6a9676ee9007f6eccb63b65983ebd"
+checksum = "132a93134f1262aa832f1849b83bec6c9945669b866da18661a427943b9e801e"
 dependencies = [
  "ed25519-dalek",
  "five8",
@@ -2338,9 +2331,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"
-version = "2.0.115"
+version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e614ed320ac28113fa64972c4262d5dbc89deacdfd00c34a3e4cea073243c12"
+checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2822,10 +2815,11 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "wincode"
-version = "0.2.5"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5cec722a3274e47d1524cbe2cea762f2c19d615bd9d73ada21db9066349d57e"
+checksum = "e9a7bf870d59e16860de785358c89e75cffd171c04fb5f93fba029a167cb0263"
 dependencies = [
+ "pastey",
  "proc-macro2",
  "quote",
  "thiserror 2.0.18",
@@ -2834,9 +2828,9 @@ dependencies = [
 
 [[package]]
 name = "wincode-derive"
-version = "0.2.3"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8961eb04054a1b2e026b5628e24da7e001350249a787e1a85aa961f33dc5f286"
+checksum = "fca057fc9a13dd19cdb64ef558635d43c42667c0afa1ae7915ea1fa66993fd1a"
 dependencies = [
  "darling",
  "proc-macro2",
