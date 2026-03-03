@@ -268,6 +268,10 @@ pub struct Blockstore {
     transaction_memos_cf: LedgerColumn<cf::TransactionMemos>,
     transaction_status_cf: LedgerColumn<cf::TransactionStatus>,
     transaction_status_index_cf: LedgerColumn<cf::TransactionStatusIndex>,
+    alt_meta_cf: LedgerColumn<cf::AlternateSlotMeta>,
+    alt_index_cf: LedgerColumn<cf::AlternateIndex>,
+    alt_data_shred_cf: LedgerColumn<cf::AlternateShredData>,
+    alt_merkle_root_meta_cf: LedgerColumn<cf::AlternateMerkleRootMeta>,
 
     highest_primary_index_slot: RwLock<Option<Slot>>,
     max_root: AtomicU64,
@@ -412,6 +416,10 @@ impl Blockstore {
         let transaction_memos_cf = db.column();
         let transaction_status_cf = db.column();
         let transaction_status_index_cf = db.column();
+        let alt_meta_cf = db.column();
+        let alt_index_cf = db.column();
+        let alt_data_shred_cf = db.column();
+        let alt_merkle_root_meta_cf = db.column();
 
         // Get max root or 0 if it doesn't exist
         let max_root = roots_cf
@@ -446,6 +454,11 @@ impl Blockstore {
             transaction_memos_cf,
             transaction_status_cf,
             transaction_status_index_cf,
+            alt_meta_cf,
+            alt_index_cf,
+            alt_data_shred_cf,
+            alt_merkle_root_meta_cf,
+
             highest_primary_index_slot: RwLock::<Option<Slot>>::default(),
             new_shreds_signals: Mutex::default(),
             completed_slots_senders: Mutex::default(),
@@ -558,6 +571,54 @@ impl Blockstore {
         self.meta_cf.get(slot)
     }
 
+    /// Returns the SlotMeta of the specified slot from the specified location
+    pub fn meta_from_location(
+        &self,
+        slot: Slot,
+        location: BlockLocation,
+    ) -> Result<Option<SlotMeta>> {
+        match location {
+            BlockLocation::Original => self.meta_cf.get(slot),
+            BlockLocation::Alternate { block_id } => self.alt_meta_cf.get((slot, block_id)),
+        }
+    }
+
+    /// Puts the SlotMeta of the specified slot in the column for the specified location
+    #[allow(dead_code)]
+    fn put_meta_in_batch(
+        &self,
+        write_batch: &mut WriteBatch,
+        slot: Slot,
+        location: BlockLocation,
+        meta: &SlotMeta,
+    ) -> Result<()> {
+        match location {
+            BlockLocation::Original => self.meta_cf.put_in_batch(write_batch, slot, meta),
+            BlockLocation::Alternate { block_id } => {
+                self.alt_meta_cf
+                    .put_in_batch(write_batch, (slot, block_id), meta)
+            }
+        }
+    }
+
+    /// Inserts a shred index into the alternate index for testing purposes.
+    /// This simulates receiving a data shred for an alternate block.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn insert_shred_index_for_alternate_block(
+        &self,
+        slot: Slot,
+        block_id: Hash,
+        shred_index: u32,
+    ) -> Result<()> {
+        use crate::blockstore_meta::Index;
+        let mut index = self
+            .alt_index_cf
+            .get((slot, block_id))?
+            .unwrap_or_else(|| Index::new(slot));
+        index.data_mut().insert(shred_index as u64);
+        self.alt_index_cf.put((slot, block_id), &index)
+    }
+
     /// Returns true if the specified slot is full.
     pub fn is_full(&self, slot: Slot) -> bool {
         if let Ok(Some(meta)) = self.meta_cf.get(slot) {
@@ -651,6 +712,46 @@ impl Blockstore {
 
     fn merkle_root_meta(&self, erasure_set: ErasureSetId) -> Result<Option<MerkleRootMeta>> {
         self.merkle_root_meta_cf.get(erasure_set.store_key())
+    }
+
+    #[allow(dead_code)]
+    fn merkle_root_meta_from_location(
+        &self,
+        erasure_set: ErasureSetId,
+        location: BlockLocation,
+    ) -> Result<Option<MerkleRootMeta>> {
+        match location {
+            BlockLocation::Original => self.merkle_root_meta_cf.get(erasure_set.store_key()),
+            BlockLocation::Alternate { block_id } => {
+                let (slot, fec_set_index) = erasure_set.store_key();
+                self.alt_merkle_root_meta_cf
+                    .get((slot, fec_set_index, block_id))
+            }
+        }
+    }
+
+    /// Puts the MerkleRootMeta of the specified erasure set in the column for the specified location
+    #[allow(dead_code)]
+    fn put_merkle_root_meta_in_batch(
+        &self,
+        write_batch: &mut WriteBatch,
+        erasure_set: ErasureSetId,
+        location: BlockLocation,
+        merkle_root_meta: &MerkleRootMeta,
+    ) -> Result<()> {
+        let (slot, fec_set_index) = erasure_set.store_key();
+        match location {
+            BlockLocation::Original => self.merkle_root_meta_cf.put_in_batch(
+                write_batch,
+                (slot, fec_set_index),
+                merkle_root_meta,
+            ),
+            BlockLocation::Alternate { block_id } => self.alt_merkle_root_meta_cf.put_in_batch(
+                write_batch,
+                (slot, fec_set_index, block_id),
+                merkle_root_meta,
+            ),
+        }
     }
 
     /// Check whether the specified slot is an orphan slot which does not
@@ -880,6 +981,10 @@ impl Blockstore {
         self.bank_hash_cf.submit_rocksdb_cf_metrics();
         self.optimistic_slots_cf.submit_rocksdb_cf_metrics();
         self.merkle_root_meta_cf.submit_rocksdb_cf_metrics();
+        self.alt_meta_cf.submit_rocksdb_cf_metrics();
+        self.alt_index_cf.submit_rocksdb_cf_metrics();
+        self.alt_data_shred_cf.submit_rocksdb_cf_metrics();
+        self.alt_merkle_root_meta_cf.submit_rocksdb_cf_metrics();
     }
 
     /// Attempts to insert shreds into blockstore and updates relevant metrics
@@ -1119,6 +1224,30 @@ impl Blockstore {
                 &mut shred_insertion_tracker.duplicate_shreds,
             );
         }
+    }
+
+    /// Gets the merkle root from the tracker if available, otherwise from the db.
+    #[allow(dead_code)]
+    fn get_merkle_root_from_tracker_or_db(
+        &self,
+        location: BlockLocation,
+        erasure_set: ErasureSetId,
+        merkle_root_metas: &HashMap<(BlockLocation, ErasureSetId), WorkingEntry<MerkleRootMeta>>,
+    ) -> Option<Hash> {
+        // First check the tracker
+        if let Some(working_entry) = merkle_root_metas.get(&(location, erasure_set)) {
+            return Some(
+                working_entry
+                    .as_ref()
+                    .merkle_root()
+                    .expect("No more legacy shreds"),
+            );
+        }
+
+        // Fall back to the db
+        self.merkle_root_meta_from_location(erasure_set, location)
+            .expect("Blockstore operations must succeed")
+            .map(|meta| meta.merkle_root().expect("No more legacy shreds"))
     }
 
     fn commit_updates_to_write_batch(
@@ -2319,16 +2448,7 @@ impl Blockstore {
     }
 
     pub fn get_data_shreds_for_slot(&self, slot: Slot, start_index: u64) -> Result<Vec<Shred>> {
-        self.slot_data_iterator(slot, start_index)
-            .expect("blockstore couldn't fetch iterator")
-            .map(|(_, bytes)| {
-                Shred::new_from_serialized_shred(Vec::from(bytes)).map_err(|err| {
-                    BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
-                        format!("Could not reconstruct shred from shred payload: {err:?}"),
-                    )))
-                })
-            })
-            .collect()
+        self.get_data_shreds_for_slot_from_location(slot, start_index, BlockLocation::Original)
     }
 
     #[cfg(test)]
@@ -2384,6 +2504,97 @@ impl Blockstore {
             .expect("blockstore couldn't fetch iterator")
             .map(|(_, bytes)| Shred::new_from_serialized_shred(Vec::from(bytes)))
             .collect()
+    }
+
+    pub fn get_data_shred_from_location(
+        &self,
+        slot: Slot,
+        index: u64,
+        location: BlockLocation,
+    ) -> Result<Option<Vec<u8>>> {
+        match location {
+            BlockLocation::Original => self.get_data_shred(slot, index),
+            BlockLocation::Alternate { block_id } => {
+                self.alt_data_shred_cf.get_bytes((slot, index, block_id))
+            }
+        }
+    }
+
+    /// Gets all data shreds for a slot from the specified location.
+    /// Returns shreds in index order starting from `start_index`.
+    pub fn get_data_shreds_for_slot_from_location(
+        &self,
+        slot: Slot,
+        start_index: u64,
+        location: BlockLocation,
+    ) -> Result<Vec<Shred>> {
+        // Get the index to determine capacity for pre-allocation
+        let Some(index) = self.get_index_from_location(slot, location)? else {
+            return Ok(Vec::new());
+        };
+        let num_shreds = index.data().num_shreds();
+        let mut shreds = Vec::with_capacity(num_shreds);
+
+        let shred_bytes_iter: Box<dyn Iterator<Item = Box<[u8]>>> = match location {
+            BlockLocation::Original => {
+                let iter = self
+                    .data_shred_cf
+                    .iter(IteratorMode::From(
+                        (slot, start_index),
+                        IteratorDirection::Forward,
+                    ))?
+                    .take_while(move |((shred_slot, _), _)| *shred_slot == slot)
+                    .map(|(_, bytes)| bytes);
+                Box::new(iter)
+            }
+            BlockLocation::Alternate { block_id } => {
+                let iter = self
+                    .alt_data_shred_cf
+                    .iter(IteratorMode::From(
+                        (slot, start_index, block_id),
+                        IteratorDirection::Forward,
+                    ))?
+                    .take_while(move |((shred_slot, _, shred_block_id), _)| {
+                        *shred_slot == slot && *shred_block_id == block_id
+                    })
+                    .map(|(_, bytes)| bytes);
+                Box::new(iter)
+            }
+        };
+
+        for bytes in shred_bytes_iter {
+            let shred = Shred::new_from_serialized_shred(Vec::from(bytes)).map_err(|err| {
+                BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(format!(
+                    "Could not reconstruct shred from shred payload: {err:?}"
+                ))))
+            })?;
+            shreds.push(shred);
+        }
+
+        Ok(shreds)
+    }
+
+    /// Puts the shred of the specified slot-index in the column for the specified location
+    #[allow(dead_code)]
+    fn put_data_shred_in_batch(
+        &self,
+        write_batch: &mut WriteBatch,
+        slot: Slot,
+        index: u64,
+        location: BlockLocation,
+        shred: &[u8],
+    ) -> Result<()> {
+        match location {
+            BlockLocation::Original => {
+                self.data_shred_cf
+                    .put_bytes_in_batch(write_batch, (slot, index), shred)
+            }
+            BlockLocation::Alternate { block_id } => self.alt_data_shred_cf.put_bytes_in_batch(
+                write_batch,
+                (slot, index, block_id),
+                shred,
+            ),
+        }
     }
 
     // Only used by tests
@@ -2475,6 +2686,35 @@ impl Blockstore {
 
     pub fn get_index(&self, slot: Slot) -> Result<Option<Index>> {
         self.index_cf.get(slot)
+    }
+
+    pub fn get_index_from_location(
+        &self,
+        slot: Slot,
+        location: BlockLocation,
+    ) -> Result<Option<Index>> {
+        match location {
+            BlockLocation::Original => self.get_index(slot),
+            BlockLocation::Alternate { block_id } => self.alt_index_cf.get((slot, block_id)),
+        }
+    }
+
+    /// Puts the Index of the specified erasure set in the column for the specified location
+    #[allow(dead_code)]
+    fn put_index_in_batch(
+        &self,
+        write_batch: &mut WriteBatch,
+        slot: Slot,
+        location: BlockLocation,
+        index: &Index,
+    ) -> Result<()> {
+        match location {
+            BlockLocation::Original => self.index_cf.put_in_batch(write_batch, slot, index),
+            BlockLocation::Alternate { block_id } => {
+                self.alt_index_cf
+                    .put_in_batch(write_batch, (slot, block_id), index)
+            }
+        }
     }
 
     /// Manually update the meta for a slot.
