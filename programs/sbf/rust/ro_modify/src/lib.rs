@@ -197,5 +197,5 @@ macro_rules! check {
 /// # Safety
 #[inline(never)]
 pub unsafe fn read_val<T: Copy>(ptr: *mut T) -> T {
-    *ptr
+    unsafe { *ptr }
 }

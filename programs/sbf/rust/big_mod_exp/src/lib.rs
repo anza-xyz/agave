@@ -83,7 +83,7 @@ fn big_mod_exp_test() {
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     msg!("big_mod_exp");
 

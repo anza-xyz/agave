@@ -90,7 +90,7 @@ fn test_secp256k1_recover_malleability() {
     assert_eq!(alt_recovered_pubkey.to_bytes(), pubkey_bytes);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     msg!("secp256k1_recover");
 

@@ -1,6 +1,6 @@
 use {
     crate::update_manifest::UpdateManifest,
-    serde::{Deserialize, Serialize},
+    serde::{Deserialize, Deserializer, Serialize},
     solana_pubkey::Pubkey,
     std::{
         fs::{File, create_dir_all},
@@ -9,10 +9,44 @@ use {
     },
 };
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Debug, PartialEq, Eq)]
 pub enum ExplicitRelease {
     Semver(String),
     Channel(String),
+}
+
+impl<'de> Deserialize<'de> for ExplicitRelease {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        enum TaggedExplicitRelease {
+            Semver(String),
+            Channel(String),
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum ExplicitReleaseRepr {
+            Tagged(TaggedExplicitRelease),
+            LegacySemver {
+                #[serde(rename = "Semver")]
+                semver: String,
+            },
+            LegacyChannel {
+                #[serde(rename = "Channel")]
+                channel: String,
+            },
+        }
+
+        match ExplicitReleaseRepr::deserialize(deserializer)? {
+            ExplicitReleaseRepr::Tagged(TaggedExplicitRelease::Semver(value))
+            | ExplicitReleaseRepr::LegacySemver { semver: value } => Ok(Self::Semver(value)),
+            ExplicitReleaseRepr::Tagged(TaggedExplicitRelease::Channel(value))
+            | ExplicitReleaseRepr::LegacyChannel { channel: value } => Ok(Self::Channel(value)),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
@@ -25,9 +59,6 @@ pub struct Config {
     pub releases_dir: PathBuf,
     active_release_dir: PathBuf,
 }
-
-const LEGACY_FMT_LOAD_ERR: &str =
-    "explicit_release: invalid type: map, expected a YAML tag starting with '!'";
 
 impl Config {
     pub fn new(
@@ -49,46 +80,7 @@ impl Config {
 
     fn _load(config_file: &str) -> Result<Self, io::Error> {
         let file = File::open(config_file)?;
-        serde_yaml::from_reader(file).or_else(|err| {
-            let err_string = format!("{err:?}");
-            if err_string.contains(LEGACY_FMT_LOAD_ERR) {
-                // looks like a config written by serde_yaml <0.9.0.
-                // let's try to upgrade it
-                Self::try_migrate_08(config_file).map_err(|_| io::Error::other(err_string))
-            } else {
-                Err(io::Error::other(err_string))
-            }
-        })
-    }
-
-    fn try_migrate_08(config_file: &str) -> Result<Self, io::Error> {
-        eprintln!("attempting to upgrade legacy config file");
-        let bak_filename = config_file.to_string() + ".bak";
-        std::fs::copy(config_file, &bak_filename)?;
-        let result = File::open(config_file).and_then(|file| {
-            serde_yaml_08::from_reader(file)
-                .map_err(|err| io::Error::other(format!("{err:?}")))
-                .and_then(|config_08: Self| {
-                    let save = config_08._save(config_file).map(|_| config_08);
-                    if save.is_ok() {
-                        let _ = std::fs::remove_file(&bak_filename);
-                    }
-                    save
-                })
-        });
-        if result.is_err() {
-            eprintln!("config upgrade failed! restoring original");
-            let restored = std::fs::copy(&bak_filename, config_file)
-                .and_then(|_| std::fs::remove_file(&bak_filename));
-            if restored.is_err() {
-                eprintln!("restoration failed! original: `{bak_filename}`");
-            } else {
-                eprintln!("restoration succeeded!");
-            }
-        } else {
-            eprintln!("config upgrade succeeded!");
-        }
-        result
+        serde_yaml::from_reader(file).map_err(|err| io::Error::other(format!("{err:?}")))
     }
 
     pub fn load(config_file: &str) -> Result<Self, String> {
