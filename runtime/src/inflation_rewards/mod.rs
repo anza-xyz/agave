@@ -276,6 +276,7 @@ mod tests {
     use {
         self::points::null_tracer,
         super::*,
+        proptest::prelude::*,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         solana_stake_interface::state::Delegation,
@@ -845,5 +846,67 @@ mod tests {
                 true
             )
         ); // 1-lamport truncation
+    }
+
+    proptest! {
+        #[test]
+        fn test_commission_split_properties(
+            commission_bps in 0..=u16::MAX,
+            rewards in 0..=u64::MAX,
+        ) {
+            let (voter, staker, was_split) = commission_split(commission_bps, rewards);
+
+            // Invariant 1: No overflow — voter + staker never exceeds rewards.
+            prop_assert!(voter + staker <= rewards);
+
+            // Invariant 2: At most 1 lamport lost to truncation.
+            prop_assert!(rewards - voter - staker <= 1);
+
+            // Invariant 3: was_split is false only at the 0% and 100% boundaries.
+            let effective_bps = commission_bps.min(10_000);
+            if effective_bps == 0 || effective_bps == 10_000 {
+                prop_assert!(!was_split);
+            } else {
+                prop_assert!(was_split);
+            }
+
+            // Invariant 4: Boundary — 0% commission gives everything to staker.
+            if effective_bps == 0 {
+                prop_assert_eq!(voter, 0);
+                prop_assert_eq!(staker, rewards);
+            }
+
+            // Invariant 5: Boundary — 100% commission gives everything to voter.
+            if effective_bps == 10_000 {
+                prop_assert_eq!(voter, rewards);
+                prop_assert_eq!(staker, 0);
+            }
+
+            // Invariant 6: Clamping — values above 10,000 bps behave as 10,000.
+            if commission_bps > 10_000 {
+                let (clamped_voter, clamped_staker, clamped_ws) =
+                    commission_split(10_000, rewards);
+                prop_assert_eq!(voter, clamped_voter);
+                prop_assert_eq!(staker, clamped_staker);
+                prop_assert_eq!(was_split, clamped_ws);
+            }
+
+            // Invariant 7: Monotonicity — higher commission means voter >= what
+            // they'd get with a lower commission (for the same rewards).
+            if commission_bps > 0 {
+                let lower_bps = commission_bps - 1;
+                let (lower_voter, _, _) = commission_split(lower_bps, rewards);
+                prop_assert!(voter >= lower_voter);
+            }
+
+            // Invariant 8: Exact split when bps divides evenly.
+            // voter == rewards * effective_bps / 10_000 (using u128 math).
+            let expected_voter =
+                (u128::from(rewards) * u128::from(effective_bps) / 10_000) as u64;
+            let expected_staker =
+                (u128::from(rewards) * u128::from(10_000 - effective_bps) / 10_000) as u64;
+            prop_assert_eq!(voter, expected_voter);
+            prop_assert_eq!(staker, expected_staker);
+        }
     }
 }
