@@ -34,7 +34,7 @@ pub enum InflationPointCalculationEvent {
     CalculatedPoints(u64, u128, u128, u128),
     SplitRewards(u64, u64, u64, PointValue),
     EffectiveStakeAtRewardedEpoch(u64),
-    RentExemptReserve(u64),
+    PriorTotalLamports(u64),
     Delegation(Delegation, Pubkey),
     /// Commission as a percentage (0-100).
     Commission(u8),
