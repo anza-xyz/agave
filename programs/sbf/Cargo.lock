@@ -8576,7 +8576,7 @@ dependencies = [
  "log",
  "miow",
  "net2",
- "solana-account 4.1.0",
+ "solana-account 3.4.0",
  "solana-account-decoder",
  "solana-account-info",
  "solana-accounts-db",
