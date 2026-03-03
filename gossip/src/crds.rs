@@ -498,46 +498,48 @@ impl Crds {
         }
     }
 
-    /// Find all the keys that are older or equal to the timeout.
-    /// * timeouts - Pubkey specific timeouts with Pubkey::default() as the default timeout.
-    pub fn find_old_labels(
+    /// Find all evictable labels in three steps
+    /// 1) ContactInfo does not exist in table, remove all associated labels for that pubkey
+    /// 2) ContactInfo exists and is not stale, do not remove anything
+    /// 3) ContactInfo exists but is stale, remove all associated labels for that pubkey
+    ///
+    /// Staleness: Determined by timeouts - Pubkey specific timeouts based on stake
+    pub fn find_evictable_labels(
         &self,
         thread_pool: &ThreadPool,
         now: u64,
         timeouts: &CrdsTimeouts,
     ) -> Vec<CrdsValueLabel> {
+        let labels_for_indices = |indices: &IndexSet<usize>| {
+            indices
+                .into_iter()
+                .map(|&ix| self.table.get_index(ix).unwrap().0)
+                .cloned()
+                .collect::<Vec<_>>()
+        };
         // Given an index of all crd values associated with a pubkey,
         // returns crds labels of old values to be evicted.
         let evict = |pubkey, index: &IndexSet<usize>| {
             let timeout = timeouts[pubkey];
+            let origin = CrdsValueLabel::ContactInfo(*pubkey);
+            let Some(origin) = self.table.get(&origin) else {
+                // Pubkey has no contact-info entry in the table. Drop all
+                // associated entries as orphan records.
+                return labels_for_indices(index);
+            };
             // If the origin's contact-info hasn't expired yet then preserve
             // all associated values.
-            let origin = CrdsValueLabel::ContactInfo(*pubkey);
-            if let Some(origin) = self.table.get(&origin)
-                && origin
-                    .value
-                    .wallclock()
-                    .min(origin.local_timestamp)
-                    .saturating_add(timeout)
-                    > now
+            if origin
+                .value
+                .wallclock()
+                .min(origin.local_timestamp)
+                .saturating_add(timeout)
+                > now
             {
                 return vec![];
             }
-            // Otherwise check each value's timestamp individually.
-            index
-                .into_iter()
-                .map(|&ix| self.table.get_index(ix).unwrap())
-                .filter(|(_, entry)| {
-                    entry
-                        .value
-                        .wallclock()
-                        .min(entry.local_timestamp)
-                        .saturating_add(timeout)
-                        <= now
-                })
-                .map(|(label, _)| label)
-                .cloned()
-                .collect::<Vec<_>>()
+            // Origin exists but is stale. Drop all associated values
+            labels_for_indices(index)
         };
         thread_pool.install(|| {
             self.records
@@ -890,7 +892,10 @@ mod tests {
             epoch_duration,
             &stakes,
         );
-        assert!(crds.find_old_labels(&thread_pool, 0, &timeouts).is_empty());
+        assert!(
+            crds.find_evictable_labels(&thread_pool, 0, &timeouts)
+                .is_empty()
+        );
         let timeouts = CrdsTimeouts::new(
             pubkey,
             1u64, // default_timeout,
@@ -898,7 +903,7 @@ mod tests {
             &stakes,
         );
         assert_eq!(
-            crds.find_old_labels(&thread_pool, 2, &timeouts),
+            crds.find_evictable_labels(&thread_pool, 2, &timeouts),
             vec![val.label()]
         );
         let timeouts = CrdsTimeouts::new(
@@ -908,16 +913,18 @@ mod tests {
             &stakes,
         );
         assert_eq!(
-            crds.find_old_labels(&thread_pool, 4, &timeouts),
+            crds.find_evictable_labels(&thread_pool, 4, &timeouts),
             vec![val.label()]
         );
     }
     #[test]
     fn test_find_old_records_with_override() {
         let thread_pool = ThreadPoolBuilder::new().build().unwrap();
-        let mut rng = rng();
         let mut crds = Crds::default();
-        let val = CrdsValue::new_rand(&mut rng, None);
+        let val = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
+            &Pubkey::new_unique(),
+            0,
+        )));
         let mut stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
@@ -929,7 +936,10 @@ mod tests {
             crds.insert(val.clone(), 0, GossipRoute::LocalMessage),
             Ok(())
         );
-        assert!(crds.find_old_labels(&thread_pool, 2, &timeouts).is_empty());
+        assert!(
+            crds.find_evictable_labels(&thread_pool, 2, &timeouts)
+                .is_empty()
+        );
         stakes.insert(val.pubkey(), 1u64);
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
@@ -938,7 +948,7 @@ mod tests {
             &stakes,
         );
         assert_eq!(
-            crds.find_old_labels(&thread_pool, 2, &timeouts),
+            crds.find_evictable_labels(&thread_pool, 2, &timeouts),
             vec![val.label()]
         );
         let timeouts = CrdsTimeouts::new(
@@ -947,14 +957,20 @@ mod tests {
             Duration::from_secs(48 * 3600), // epoch_duration
             &stakes,
         );
-        assert!(crds.find_old_labels(&thread_pool, 2, &timeouts).is_empty());
+        assert!(
+            crds.find_evictable_labels(&thread_pool, 2, &timeouts)
+                .is_empty()
+        );
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
             1,                              // default_timeout
             Duration::from_secs(48 * 3600), // epoch_duration
             &stakes,
         );
-        assert!(crds.find_old_labels(&thread_pool, 2, &timeouts).is_empty());
+        assert!(
+            crds.find_evictable_labels(&thread_pool, 2, &timeouts)
+                .is_empty()
+        );
         stakes.remove(&val.pubkey());
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
@@ -963,7 +979,7 @@ mod tests {
             &stakes,
         );
         assert_eq!(
-            crds.find_old_labels(&thread_pool, 2, &timeouts),
+            crds.find_evictable_labels(&thread_pool, 2, &timeouts),
             vec![val.label()]
         );
     }
@@ -985,54 +1001,114 @@ mod tests {
             &stakes,
         );
         assert_eq!(
-            crds.find_old_labels(&thread_pool, 2, &timeouts),
+            crds.find_evictable_labels(&thread_pool, 2, &timeouts),
             vec![val.label()]
         );
         crds.remove(&val.label(), /*now=*/ 0);
-        assert!(crds.find_old_labels(&thread_pool, 2, &timeouts).is_empty());
+        assert!(
+            crds.find_evictable_labels(&thread_pool, 2, &timeouts)
+                .is_empty()
+        );
     }
+
     #[test]
-    fn test_find_old_records_staked() {
+    fn test_find_evictable_labels_conditions() {
         let thread_pool = ThreadPoolBuilder::new().build().unwrap();
         let mut crds = Crds::default();
-        let val = {
-            let node = ContactInfo::new_localhost(&Pubkey::default(), /*now:*/ 1);
-            CrdsValue::new_unsigned(CrdsData::from(node))
-        };
+        let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
+        let timeouts = CrdsTimeouts::new(
+            Pubkey::new_unique(),
+            10,                             // default_timeout
+            Duration::from_secs(48 * 3600), // epoch_duration
+            &stakes,
+        );
+
+        // Find all evictable labels in three steps:
+        // 1) ContactInfo does not exist in table => remove associated labels.
+        let orphan_pubkey = Pubkey::new_unique();
+        let orphan_contact_info = CrdsValue::new_unsigned(CrdsData::from(
+            ContactInfo::new_localhost(&orphan_pubkey, 1),
+        ));
+        let orphan_accounts_hashes =
+            CrdsValue::new_unsigned(CrdsData::AccountsHashes(AccountsHashes {
+                from: orphan_pubkey,
+                hashes: vec![(0, Hash::new_unique())],
+                wallclock: 100,
+            }));
         assert_eq!(
-            crds.insert(val.clone(), 1, GossipRoute::LocalMessage),
+            crds.insert(orphan_contact_info.clone(), 1, GossipRoute::LocalMessage),
             Ok(())
         );
-        let mut stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
-        let timeouts = CrdsTimeouts::new(
-            Pubkey::new_unique(),
-            0,                              // default_timeout
-            Duration::from_secs(48 * 3600), // epoch_duration
-            &stakes,
-        );
-        //now < timestamp
-        assert!(crds.find_old_labels(&thread_pool, 0, &timeouts).is_empty());
-
-        //pubkey shouldn't expire since its timeout is MAX
-        stakes.insert(val.pubkey(), 1u64);
-        let timeouts = CrdsTimeouts::new(
-            Pubkey::new_unique(),
-            0,                              // default_timeout
-            Duration::from_secs(48 * 3600), // epoch_duration
-            &stakes,
-        );
-        assert!(crds.find_old_labels(&thread_pool, 2, &timeouts).is_empty());
-
-        let timeouts = CrdsTimeouts::new(
-            Pubkey::new_unique(),
-            0,                        // default_timeout
-            Duration::from_millis(2), // epoch_duration
-            &stakes,
-        );
-        assert!(crds.find_old_labels(&thread_pool, 2, &timeouts).is_empty());
         assert_eq!(
-            crds.find_old_labels(&thread_pool, 3, &timeouts),
-            vec![val.label()]
+            crds.insert(
+                orphan_accounts_hashes.clone(),
+                100,
+                GossipRoute::LocalMessage
+            ),
+            Ok(())
+        );
+        crds.remove(&orphan_contact_info.label(), /*now=*/ 2);
+        assert_eq!(
+            crds.find_evictable_labels(&thread_pool, 20, &timeouts),
+            vec![orphan_accounts_hashes.label()]
+        );
+        crds.remove(&orphan_accounts_hashes.label(), /*now=*/ 20);
+
+        // 2) ContactInfo exists and is not stale => do not remove anything.
+        let fresh_pubkey = Pubkey::new_unique();
+        let fresh_contact_info = CrdsValue::new_unsigned(CrdsData::from(
+            ContactInfo::new_localhost(&fresh_pubkey, 100),
+        ));
+        let fresh_accounts_hashes =
+            CrdsValue::new_unsigned(CrdsData::AccountsHashes(AccountsHashes {
+                from: fresh_pubkey,
+                hashes: vec![(0, Hash::new_unique())],
+                wallclock: 100,
+            }));
+        assert_eq!(
+            crds.insert(fresh_contact_info.clone(), 100, GossipRoute::LocalMessage),
+            Ok(())
+        );
+        assert_eq!(
+            crds.insert(
+                fresh_accounts_hashes.clone(),
+                100,
+                GossipRoute::LocalMessage
+            ),
+            Ok(())
+        );
+        assert!(
+            crds.find_evictable_labels(&thread_pool, 105, &timeouts)
+                .is_empty()
+        );
+        crds.remove(&fresh_contact_info.label(), /*now=*/ 106);
+        crds.remove(&fresh_accounts_hashes.label(), /*now=*/ 106);
+
+        // 3) ContactInfo exists but is stale => remove all associated labels.
+        let stale_pubkey = Pubkey::new_unique();
+        let stale_contact_info =
+            CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(&stale_pubkey, 1)));
+        let stale_accounts_hashes =
+            CrdsValue::new_unsigned(CrdsData::AccountsHashes(AccountsHashes {
+                from: stale_pubkey,
+                hashes: vec![(0, Hash::new_unique())],
+                wallclock: 100,
+            }));
+        assert_eq!(
+            crds.insert(stale_contact_info.clone(), 1, GossipRoute::LocalMessage),
+            Ok(())
+        );
+        assert_eq!(
+            crds.insert(
+                stale_accounts_hashes.clone(),
+                100,
+                GossipRoute::LocalMessage
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            crds.find_evictable_labels(&thread_pool, 20, &timeouts),
+            vec![stale_contact_info.label(), stale_accounts_hashes.label()]
         );
     }
 
@@ -1397,11 +1473,14 @@ mod tests {
             &stakes,
         );
         assert_eq!(
-            crds.find_old_labels(&thread_pool, 2, &timeouts),
+            crds.find_evictable_labels(&thread_pool, 2, &timeouts),
             vec![val.label()]
         );
         crds.remove(&val.label(), /*now=*/ 0);
-        assert!(crds.find_old_labels(&thread_pool, 2, &timeouts).is_empty());
+        assert!(
+            crds.find_evictable_labels(&thread_pool, 2, &timeouts)
+                .is_empty()
+        );
     }
 
     #[test]
