@@ -4721,7 +4721,7 @@ pub mod tests {
     declare_builtin_function!(
         TestBuiltinEntrypoint,
         fn rust(
-            invoke_context: &mut InvokeContext,
+            invoke_context: &mut InvokeContext<'_, '_>,
             _arg0: u64,
             _arg1: u64,
             _arg2: u64,
@@ -4740,7 +4740,7 @@ pub mod tests {
             solana_pubkey::pubkey!("TestProgram11111111111111111111111111111111");
 
         fn cache_entry() -> ProgramCacheEntry {
-            ProgramCacheEntry::new_builtin(0, Self::NAME.len(), Self::vm)
+            ProgramCacheEntry::new_builtin(0, Self::NAME.len(), (Self::vm, Self::codegen))
         }
 
         fn instruction(

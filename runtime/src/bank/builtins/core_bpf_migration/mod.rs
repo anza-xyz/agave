@@ -773,7 +773,10 @@ pub(crate) mod tests {
                 ProgramCacheEntry::new_builtin(
                     0,
                     builtin_name.len(),
-                    |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                    (
+                        |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                        |_| {},
+                    ),
                 ),
             );
             account
@@ -913,7 +916,10 @@ pub(crate) mod tests {
                 ProgramCacheEntry::new_builtin(
                     0,
                     builtin_name.len(),
-                    |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                    (
+                        |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                        |_| {},
+                    ),
                 ),
             );
             account
@@ -967,7 +973,10 @@ pub(crate) mod tests {
                 ProgramCacheEntry::new_builtin(
                     0,
                     builtin_name.len(),
-                    |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                    (
+                        |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                        |_| {},
+                    ),
                 ),
             );
             account
@@ -1021,7 +1030,10 @@ pub(crate) mod tests {
                 ProgramCacheEntry::new_builtin(
                     0,
                     builtin_name.len(),
-                    |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                    (
+                        |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                        |_| {},
+                    ),
                 ),
             );
             account
@@ -1434,7 +1446,11 @@ pub(crate) mod tests {
         root_bank.add_builtin(
             cpi_program_id,
             cpi_program_name,
-            ProgramCacheEntry::new_builtin(0, cpi_program_name.len(), cpi_mockup::Entrypoint::vm),
+            ProgramCacheEntry::new_builtin(
+                0,
+                cpi_program_name.len(),
+                (cpi_mockup::Entrypoint::vm, cpi_mockup::Entrypoint::codegen),
+            ),
         );
 
         let (builtin_id, config) = prototype.deconstruct();
@@ -1967,7 +1983,11 @@ pub(crate) mod tests {
         root_bank.add_builtin(
             cpi_program_id,
             cpi_program_name,
-            ProgramCacheEntry::new_builtin(0, cpi_program_name.len(), cpi_mockup::Entrypoint::vm),
+            ProgramCacheEntry::new_builtin(
+                0,
+                cpi_program_name.len(),
+                (cpi_mockup::Entrypoint::vm, cpi_mockup::Entrypoint::codegen),
+            ),
         );
 
         // Add the feature to the bank's inactive feature set.
@@ -2216,7 +2236,11 @@ pub(crate) mod tests {
         root_bank.add_builtin(
             cpi_program_id,
             cpi_program_name,
-            ProgramCacheEntry::new_builtin(0, cpi_program_name.len(), cpi_mockup::Entrypoint::vm),
+            ProgramCacheEntry::new_builtin(
+                0,
+                cpi_program_name.len(),
+                (cpi_mockup::Entrypoint::vm, cpi_mockup::Entrypoint::codegen),
+            ),
         );
 
         // Add the feature to the bank's inactive feature set.
@@ -2277,7 +2301,11 @@ pub(crate) mod tests {
         root_bank.add_builtin(
             cpi_program_id,
             cpi_program_name,
-            ProgramCacheEntry::new_builtin(0, cpi_program_name.len(), cpi_mockup::Entrypoint::vm),
+            ProgramCacheEntry::new_builtin(
+                0,
+                cpi_program_name.len(),
+                (cpi_mockup::Entrypoint::vm, cpi_mockup::Entrypoint::codegen),
+            ),
         );
 
         // Add the feature to the bank's inactive feature set.

@@ -3683,7 +3683,7 @@ pub mod tests {
         let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
             &genesis_config,
             mock_program_id,
-            MockBuiltinOk::vm,
+            (MockBuiltinOk::vm, MockBuiltinOk::codegen),
         );
 
         let tx = Transaction::new_signed_with_payer(
@@ -3727,7 +3727,7 @@ pub mod tests {
             let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
                 &genesis_config,
                 mock_program_id,
-                MockBuiltinErr::vm,
+                (MockBuiltinErr::vm, MockBuiltinErr::codegen),
             );
 
             let tx = Transaction::new_signed_with_payer(

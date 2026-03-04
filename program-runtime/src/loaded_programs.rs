@@ -1,5 +1,5 @@
 use {
-    crate::invoke_context::{BuiltinFunctionWithContext, InvokeContext},
+    crate::invoke_context::{BuiltinWithContext, InvokeContext},
     log::{debug, error, log_enabled, trace},
     percentage::PercentageInteger,
     solana_clock::{Epoch, Slot},
@@ -371,12 +371,7 @@ impl ProgramCacheEntry {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         #[cfg(feature = "metrics")]
         let load_elf_time = Measure::start("load_elf_time");
-
-        #[cfg_attr(
-            not(all(not(target_os = "windows"), target_arch = "x86_64")),
-            expect(unused_mut)
-        )]
-        let mut executable = Executable::load(elf_bytes, program_runtime_environment.clone())?;
+        let executable = Executable::load(elf_bytes, program_runtime_environment.clone())?;
 
         #[cfg(feature = "metrics")]
         {
@@ -441,7 +436,7 @@ impl ProgramCacheEntry {
     pub fn new_builtin(
         deployment_slot: Slot,
         account_size: usize,
-        builtin_function: BuiltinFunctionWithContext,
+        builtin_function: BuiltinWithContext,
     ) -> Self {
         let mut program = BuiltinProgram::new_builtin();
         program

@@ -536,7 +536,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             expected_result,
-            Entrypoint::vm,
+            (Entrypoint::vm, Entrypoint::codegen),
             |invoke_context| {
                 test_utils::load_all_invoked_programs(invoke_context);
             },

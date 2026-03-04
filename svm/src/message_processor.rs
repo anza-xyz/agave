@@ -189,7 +189,11 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             mock_system_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(
+                0,
+                0,
+                (MockBuiltin::vm, MockBuiltin::codegen),
+            )),
         );
         let account_keys = (0..transaction_context.get_number_of_accounts())
             .map(|index| {
@@ -435,7 +439,11 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             mock_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(
+                0,
+                0,
+                (MockBuiltin::vm, MockBuiltin::codegen),
+            )),
         );
         let account_metas = vec![
             AccountMeta::new(
@@ -674,7 +682,11 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             mock_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(
+                0,
+                0,
+                (MockBuiltin::vm, MockBuiltin::codegen),
+            )),
         );
 
         struct MockCallback {}

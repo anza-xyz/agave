@@ -39,7 +39,7 @@ use {
     solana_program_entrypoint::{SUCCESS, deserialize},
     solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
-        invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
+        invoke_context::BuiltinWithContext, loaded_programs::ProgramCacheEntry,
         serialization::serialize_parameters, stable_log, sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -206,18 +206,21 @@ pub fn invoke_builtin_function(
 /// use with `ProgramTest::add_program`
 #[macro_export]
 macro_rules! processor {
-    ($builtin_function:expr) => {
-        Some(|vm, _arg0, _arg1, _arg2, _arg3, _arg4| {
-            let vm = unsafe {
-                &mut *((vm as *mut u64).offset(-($crate::get_runtime_environment_key() as isize))
-                    as *mut $crate::EbpfVm<$crate::InvokeContext>)
+    ($builtin_function:expr) => {{
+        const CONVERTER: solana_program_runtime::invoke_context::BuiltinFunctionWithContext =
+            |vm, _arg0, _arg1, _arg2, _arg3, _arg4| {
+                let vm = unsafe {
+                    &mut *((vm as *mut u64)
+                        .offset(-($crate::get_runtime_environment_key() as isize))
+                        as *mut $crate::EbpfVm<$crate::InvokeContext>)
+                };
+                vm.program_result =
+                    $crate::invoke_builtin_function($builtin_function, vm.context_object_pointer)
+                        .map_err(|err| $crate::EbpfError::SyscallError(err))
+                        .into();
             };
-            vm.program_result =
-                $crate::invoke_builtin_function($builtin_function, vm.context_object_pointer)
-                    .map_err(|err| $crate::EbpfError::SyscallError(err))
-                    .into();
-        })
-    };
+        Some((CONVERTER, |jit| jit.emit_external_call(CONVERTER)))
+    }};
 }
 
 fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned + Clone>(
@@ -629,7 +632,7 @@ impl ProgramTest {
     pub fn new(
         program_name: &'static str,
         program_id: Pubkey,
-        builtin_function: Option<BuiltinFunctionWithContext>,
+        builtin_function: Option<BuiltinWithContext>,
     ) -> Self {
         let mut me = Self::default();
         me.add_program(program_name, program_id, builtin_function);
@@ -756,7 +759,7 @@ impl ProgramTest {
         &mut self,
         program_name: &'static str,
         program_id: Pubkey,
-        builtin_function: Option<BuiltinFunctionWithContext>,
+        builtin_function: Option<BuiltinWithContext>,
     ) {
         let add_bpf = |this: &mut ProgramTest, program_file: PathBuf| {
             let data = read_file(&program_file);
@@ -860,7 +863,7 @@ impl ProgramTest {
         &mut self,
         program_name: &'static str,
         program_id: Pubkey,
-        builtin_function: BuiltinFunctionWithContext,
+        builtin_function: BuiltinWithContext,
     ) {
         info!("\"{program_name}\" builtin program");
         self.builtin_programs.push((

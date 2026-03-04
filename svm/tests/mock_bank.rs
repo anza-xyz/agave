@@ -284,7 +284,10 @@ pub fn register_builtins(
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
             loader_v3_name.len(),
-            solana_bpf_loader_program::Entrypoint::vm,
+            (
+                solana_bpf_loader_program::Entrypoint::vm,
+                solana_bpf_loader_program::Entrypoint::codegen,
+            ),
         ),
     );
 
@@ -297,7 +300,10 @@ pub fn register_builtins(
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
             loader_v1_name.len(),
-            solana_bpf_loader_program::Entrypoint::vm,
+            (
+                solana_bpf_loader_program::Entrypoint::vm,
+                solana_bpf_loader_program::Entrypoint::codegen,
+            ),
         ),
     );
 
@@ -309,7 +315,10 @@ pub fn register_builtins(
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
             loader_v2_name.len(),
-            solana_bpf_loader_program::Entrypoint::vm,
+            (
+                solana_bpf_loader_program::Entrypoint::vm,
+                solana_bpf_loader_program::Entrypoint::codegen,
+            ),
         ),
     );
 
@@ -322,7 +331,10 @@ pub fn register_builtins(
             ProgramCacheEntry::new_builtin(
                 DEPLOYMENT_SLOT,
                 loader_v4_name.len(),
-                solana_loader_v4_program::Entrypoint::vm,
+                (
+                    solana_loader_v4_program::Entrypoint::vm,
+                    solana_loader_v4_program::Entrypoint::codegen,
+                ),
             ),
         );
     }
@@ -337,7 +349,10 @@ pub fn register_builtins(
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
             system_program_name.len(),
-            solana_system_program::system_processor::Entrypoint::vm,
+            (
+                solana_system_program::system_processor::Entrypoint::vm,
+                solana_system_program::system_processor::Entrypoint::codegen,
+            ),
         ),
     );
 
@@ -350,7 +365,10 @@ pub fn register_builtins(
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
             compute_budget_program_name.len(),
-            solana_compute_budget_program::Entrypoint::vm,
+            (
+                solana_compute_budget_program::Entrypoint::vm,
+                solana_compute_budget_program::Entrypoint::codegen,
+            ),
         ),
     );
 }
@@ -379,39 +397,60 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a, 'a>> {
     // need to be registered.
     let mut loader = BuiltinProgram::new_loader(vm_config);
     loader
-        .register_function("abort", SyscallAbort::vm)
+        .register_function("abort", (SyscallAbort::vm, SyscallAbort::codegen))
         .expect("Registration failed");
     loader
-        .register_function("sol_log_", SyscallLog::vm)
+        .register_function("sol_log_", (SyscallLog::vm, SyscallLog::codegen))
         .expect("Registration failed");
     loader
-        .register_function("sol_memcpy_", SyscallMemcpy::vm)
+        .register_function("sol_memcpy_", (SyscallMemcpy::vm, SyscallMemcpy::codegen))
         .expect("Registration failed");
     loader
-        .register_function("sol_memset_", SyscallMemset::vm)
+        .register_function("sol_memset_", (SyscallMemset::vm, SyscallMemset::codegen))
         .expect("Registration failed");
     loader
-        .register_function("sol_memcmp_", SyscallMemcmp::vm)
+        .register_function("sol_memcmp_", (SyscallMemcmp::vm, SyscallMemcmp::codegen))
         .expect("Registration failed");
     loader
-        .register_function("sol_memmove_", SyscallMemmove::vm)
+        .register_function(
+            "sol_memmove_",
+            (SyscallMemmove::vm, SyscallMemmove::codegen),
+        )
         .expect("Registration failed");
     loader
-        .register_function("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)
+        .register_function(
+            "sol_invoke_signed_rust",
+            (
+                SyscallInvokeSignedRust::vm,
+                SyscallInvokeSignedRust::codegen,
+            ),
+        )
         .expect("Registration failed");
     loader
-        .register_function("sol_set_return_data", SyscallSetReturnData::vm)
+        .register_function(
+            "sol_set_return_data",
+            (SyscallSetReturnData::vm, SyscallSetReturnData::codegen),
+        )
         .expect("Registration failed");
     loader
-        .register_function("sol_get_clock_sysvar", SyscallGetClockSysvar::vm)
+        .register_function(
+            "sol_get_clock_sysvar",
+            (SyscallGetClockSysvar::vm, SyscallGetClockSysvar::codegen),
+        )
         .expect("Registration failed");
     loader
-        .register_function("sol_get_rent_sysvar", SyscallGetRentSysvar::vm)
+        .register_function(
+            "sol_get_rent_sysvar",
+            (SyscallGetRentSysvar::vm, SyscallGetRentSysvar::codegen),
+        )
         .expect("Registration failed");
     loader
         .register_function(
             "sol_get_epoch_schedule_sysvar",
-            SyscallGetEpochScheduleSysvar::vm,
+            (
+                SyscallGetEpochScheduleSysvar::vm,
+                SyscallGetEpochScheduleSysvar::codegen,
+            ),
         )
         .expect("Registration failed");
     loader

@@ -184,7 +184,7 @@ fn process_instruction(
         transaction_accounts,
         instruction_accounts,
         expected_result,
-        Entrypoint::vm,
+        (Entrypoint::vm, Entrypoint::codegen),
         |_invoke_context| {},
         |_invoke_context| {},
     )
@@ -205,7 +205,7 @@ fn process_deprecated_instruction(
         transaction_accounts,
         instruction_accounts,
         expected_result,
-        Entrypoint::vm,
+        (Entrypoint::vm, Entrypoint::codegen),
         |_invoke_context| {},
         |_invoke_context| {},
         &deprecated_feature_set.runtime_features(),

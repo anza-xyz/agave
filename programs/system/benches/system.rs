@@ -488,7 +488,10 @@ impl TestSetup {
             self.transaction_accounts.clone(),
             self.instruction_accounts.clone(),
             Ok(()), //expected_result,
-            solana_system_program::system_processor::Entrypoint::vm,
+            (
+                solana_system_program::system_processor::Entrypoint::vm,
+                solana_system_program::system_processor::Entrypoint::codegen,
+            ),
             |_invoke_context| {},
             |_invoke_context| {},
         );

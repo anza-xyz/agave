@@ -148,7 +148,7 @@ impl TestSetup {
             self.transaction_accounts.clone(),
             self.instruction_accounts.clone(),
             Ok(()),
-            Entrypoint::vm,
+            (Entrypoint::vm, Entrypoint::codegen),
             |_invoke_context| {},
             |_invoke_context| {},
         );

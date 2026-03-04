@@ -117,7 +117,10 @@ fn bench_process_deprecated_vote_instruction(
             transaction_accounts.clone(),
             instruction_account_metas.clone(),
             Ok(()),
-            solana_vote_program::vote_processor::Entrypoint::vm,
+            (
+                solana_vote_program::vote_processor::Entrypoint::vm,
+                solana_vote_program::vote_processor::Entrypoint::codegen,
+            ),
             |_invoke_context| {},
             |_invoke_context| {},
             &deprecated_feature_set.runtime_features(),
@@ -139,7 +142,10 @@ fn bench_process_vote_instruction(
             transaction_accounts.clone(),
             instruction_account_metas.clone(),
             Ok(()),
-            solana_vote_program::vote_processor::Entrypoint::vm,
+            (
+                solana_vote_program::vote_processor::Entrypoint::vm,
+                solana_vote_program::vote_processor::Entrypoint::codegen,
+            ),
             |_invoke_context| {},
             |_invoke_context| {},
         );
