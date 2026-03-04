@@ -191,11 +191,14 @@ impl Tpu {
         // Streamer for Votes:
         let quic_vote_sockets: Vec<QuicSocket> =
             tpu_vote_quic_sockets.into_iter().map(Into::into).collect();
-        let SpawnServerResult {
-            endpoints: _,
-            thread: tpu_vote_quic_t,
-            key_updater: vote_streamer_key_updater,
-        } = spawn_simple_qos_server(
+        let (
+            SpawnServerResult {
+                endpoints: _,
+                thread: tpu_vote_quic_t,
+                key_updater: vote_streamer_key_updater,
+            },
+            _banlist,
+        ) = spawn_simple_qos_server(
             "solQuicTVo",
             "quic_streamer_tpu_vote",
             quic_vote_sockets,

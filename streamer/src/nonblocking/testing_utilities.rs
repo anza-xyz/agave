@@ -17,8 +17,8 @@ use {
     },
     solana_keypair::Keypair,
     solana_net_utils::sockets::{
-        SocketConfiguration as SocketConfig, bind_to_localhost_unique,
-        localhost_port_range_for_tests, multi_bind_in_range_with_config,
+        SocketConfiguration as SocketConfig, bind_to_with_config, localhost_port_range_for_tests,
+        multi_bind_in_range_with_config, unique_port_range_for_tests,
     },
     solana_perf::packet::PacketBatch,
     solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
@@ -161,7 +161,42 @@ pub async fn make_client_endpoint(
     addr: &SocketAddr,
     client_keypair: Option<&Keypair>,
 ) -> Connection {
-    let client_socket = bind_to_localhost_unique().expect("should bind - client");
+    make_client_endpoint_with_local_addr(
+        addr,
+        SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            unique_port_range_for_tests(1).start,
+        ),
+        client_keypair,
+    )
+    .await
+    .expect("Test server should be already listening on '{addr}'")
+}
+
+pub async fn make_client_endpoint_with_bind_ip(
+    addr: &SocketAddr,
+    bind_ip: IpAddr,
+    client_keypair: Option<&Keypair>,
+) -> Result<Connection, quinn::ConnectionError> {
+    make_client_endpoint_with_local_addr(
+        addr,
+        SocketAddr::new(bind_ip, unique_port_range_for_tests(1).start),
+        client_keypair,
+    )
+    .await
+}
+
+pub async fn make_client_endpoint_with_local_addr(
+    addr: &SocketAddr,
+    local_addr: SocketAddr,
+    client_keypair: Option<&Keypair>,
+) -> Result<Connection, quinn::ConnectionError> {
+    let client_socket = bind_to_with_config(
+        local_addr.ip(),
+        local_addr.port(),
+        SocketConfig::default().set_non_blocking(true),
+    )
+    .expect("should bind client socket with local addr");
     let mut endpoint = quinn::Endpoint::new(
         EndpointConfig::default(),
         None,
@@ -177,7 +212,6 @@ pub async fn make_client_endpoint(
         .connect(*addr, "localhost")
         .expect("Endpoint configuration should be correct")
         .await
-        .expect("Test server should be already listening on 'localhost'")
 }
 
 pub async fn check_multiple_streams(

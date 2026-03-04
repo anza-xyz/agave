@@ -3,7 +3,7 @@ use {
         nonblocking::{
             qos::{ConnectionContext, QosController},
             quic::{ALPN_TPU_PROTOCOL_ID, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
-            simple_qos::{SimpleQos, SimpleQosConfig},
+            simple_qos::{SimpleQos, SimpleQosBanlist, SimpleQosConfig},
             swqos::{SwQos, SwQosConfig},
         },
         quic_socket::QuicSocket,
@@ -193,6 +193,7 @@ pub struct StreamerStats {
     pub(crate) connection_add_failed_staked_node: AtomicUsize,
     pub(crate) connection_add_failed_unstaked_node: AtomicUsize,
     pub(crate) connection_add_failed_on_pruning: AtomicUsize,
+    pub(crate) connection_add_failed_banned: AtomicUsize,
     pub(crate) connection_setup_timeout: AtomicUsize,
     pub(crate) connection_setup_error: AtomicUsize,
     pub(crate) connection_setup_error_closed: AtomicUsize,
@@ -300,6 +301,11 @@ impl StreamerStats {
                 "connection_add_failed_on_pruning",
                 self.connection_add_failed_on_pruning
                     .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "connection_add_failed_banned",
+                self.connection_add_failed_banned.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -661,6 +667,8 @@ pub fn spawn_stake_weighted_qos_server(
 }
 
 /// Spawns a tokio runtime and a streamer instance inside it.
+///
+/// Additionally returns a banlist for control over connection admission
 pub fn spawn_simple_qos_server(
     thread_name: &'static str,
     metrics_name: &'static str,
@@ -671,14 +679,19 @@ pub fn spawn_simple_qos_server(
     quic_server_params: QuicStreamerConfig,
     qos_config: SimpleQosConfig,
     cancel: CancellationToken,
-) -> Result<SpawnServerResult, QuicServerError> {
+) -> Result<(SpawnServerResult, Arc<SimpleQosBanlist>), QuicServerError> {
+    let server_params = SimpleQosQuicStreamerConfig {
+        quic_streamer_config: quic_server_params,
+        qos_config,
+    };
     let stats = Arc::<StreamerStats>::default();
     let simple_qos = Arc::new(SimpleQos::new(
-        qos_config,
+        server_params.qos_config,
         stats.clone(),
         staked_nodes,
         cancel.clone(),
     ));
+    let banlist = simple_qos.banlist.clone();
 
     spawn_runtime_and_server(
         thread_name,
@@ -687,10 +700,11 @@ pub fn spawn_simple_qos_server(
         sockets,
         keypair,
         packet_sender,
-        quic_server_params,
+        server_params.quic_streamer_config,
         simple_qos,
         cancel,
     )
+    .map(|ssr| (ssr, banlist))
 }
 
 #[cfg(test)]
@@ -699,13 +713,20 @@ mod test {
         super::*,
         crate::nonblocking::{
             quic::test::*,
-            testing_utilities::{check_multiple_streams, make_client_endpoint},
+            testing_utilities::{
+                check_multiple_streams, make_client_endpoint, make_client_endpoint_with_bind_ip,
+            },
         },
         crossbeam_channel::{Receiver, unbounded},
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_pubkey::Pubkey,
         solana_signer::Signer,
-        std::{collections::HashMap, net::SocketAddr, time::Instant},
+        std::{
+            collections::HashMap,
+            net::{IpAddr, Ipv4Addr, SocketAddr},
+            sync::Arc,
+            time::Instant,
+        },
         tokio::time::sleep,
     };
 
@@ -724,17 +745,21 @@ mod test {
         crossbeam_channel::Receiver<PacketBatch>,
         SocketAddr,
         CancellationToken,
+        Arc<SimpleQosBanlist>,
     ) {
         let s = bind_to_localhost_unique().expect("should bind");
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let cancel = CancellationToken::new();
-        let SpawnServerResult {
-            endpoints: _,
-            thread: t,
-            key_updater: _,
-        } = spawn_simple_qos_server(
+        let (
+            SpawnServerResult {
+                endpoints: _,
+                thread: t,
+                key_updater: _,
+            },
+            banlist,
+        ) = spawn_simple_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [s.into()],
@@ -746,7 +771,7 @@ mod test {
             cancel.clone(),
         )
         .unwrap();
-        (t, receiver, server_address, cancel)
+        (t, receiver, server_address, cancel, banlist)
     }
 
     fn setup_swqos_quic_server() -> (
@@ -885,7 +910,7 @@ mod test {
             quic_streamer_config: server_params,
             qos_config,
         };
-        let (t, receiver, server_address, cancel) =
+        let (t, receiver, server_address, cancel, _banlist) =
             setup_simple_qos_quic_server(server_params, Arc::new(RwLock::new(staked_nodes)));
 
         let runtime = rt_for_test();
@@ -898,6 +923,93 @@ mod test {
             Some(&rich_node_keypair),
             num_expected_packets,
         ));
+        cancel.cancel();
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn test_simple_qos_banned_pubkey_rejected_across_source_ip() {
+        agave_logger::setup();
+        let client_keypair = Keypair::new();
+        let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
+            Arc::new(HashMap::from([(client_keypair.pubkey(), 1_000)])),
+            HashMap::<Pubkey, u64>::default(),
+        )));
+
+        let server_params = SimpleQosQuicStreamerConfig {
+            quic_streamer_config: QuicStreamerConfig::default_for_tests(),
+            qos_config: SimpleQosConfig {
+                max_connections_per_peer: 2,
+                max_streams_per_second: 20,
+                ..Default::default()
+            },
+        };
+        let (t, receiver, server_address, cancel, banlist) =
+            setup_simple_qos_quic_server(server_params, staked_nodes);
+
+        let runtime = rt_for_test();
+        runtime.block_on(async move {
+            let wait_for_packet = || async {
+                let start = Instant::now();
+                while start.elapsed().as_secs() < 3 {
+                    if let Ok(packet_batch) = receiver.try_recv() {
+                        return Some(packet_batch);
+                    }
+                    sleep(Duration::from_millis(25)).await;
+                }
+                None
+            };
+
+            // Pre-ban: same pubkey is accepted from different source IP addresses.
+            let connection = make_client_endpoint_with_bind_ip(
+                &server_address,
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                Some(&client_keypair),
+            )
+            .await
+            .expect("connection should succeed for staked client");
+            let mut stream = connection.open_uni().await.unwrap();
+            stream.write_all(&[9u8]).await.unwrap();
+            stream.finish().unwrap();
+            assert!(wait_for_packet().await.is_some());
+
+            let connection = make_client_endpoint_with_bind_ip(
+                &server_address,
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
+                Some(&client_keypair),
+            )
+            .await
+            .expect("connection should succeed for staked client");
+            let mut stream = connection.open_uni().await.unwrap();
+            stream.write_all(&[9u8]).await.unwrap();
+            stream.finish().unwrap();
+            let packet_batch = wait_for_packet().await.unwrap();
+            let remote_pubkey = packet_batch.get(0).unwrap().meta().remote_pubkey().unwrap();
+
+            // Ban the pubkey and ensure new connections are rejected.
+            banlist.ban(remote_pubkey, Duration::from_secs(30));
+            let post_ban = make_client_endpoint_with_bind_ip(
+                &server_address,
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3)),
+                Some(&client_keypair),
+            )
+            .await;
+
+            // Rejection can happen at handshake or when opening streams.
+            if let Ok(connection) = post_ban {
+                if let Ok(mut stream) = connection.open_uni().await {
+                    let _ = stream.write_all(&[7u8]).await;
+                    let _ = stream.finish();
+                }
+            }
+
+            // Ensure nothing from the post-ban attempt made it through.
+            let start = Instant::now();
+            while start.elapsed().as_secs() < 1 {
+                assert!(receiver.try_recv().is_err());
+                sleep(Duration::from_millis(25)).await;
+            }
+        });
         cancel.cancel();
         t.join().unwrap();
     }

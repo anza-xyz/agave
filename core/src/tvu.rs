@@ -263,12 +263,14 @@ impl Tvu {
         let bls_sigverify_threads = if let Some(bls_socket) = bls_socket {
             let (bls_packet_sender, bls_packet_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
 
-            // streamer
-            let SpawnServerResult {
-                endpoints: _,
-                thread: bls_streamer_t,
-                key_updater: bls_key_updater,
-            } = {
+            let (
+                SpawnServerResult {
+                    endpoints: _,
+                    thread: bls_streamer_t,
+                    key_updater: bls_key_updater,
+                },
+                _banlist,
+            ) = {
                 let quic_server_params = QuicStreamerConfig {
                     num_threads: NonZeroUsize::new(4.min(num_cpus::get())).unwrap(),
                     ..Default::default()
