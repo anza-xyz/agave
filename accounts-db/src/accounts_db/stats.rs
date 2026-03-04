@@ -12,22 +12,12 @@ use {
 #[derive(Debug, Default)]
 pub struct AccountsStats {
     pub last_store_report: AtomicInterval,
-    pub store_accounts_to_storage_us: AtomicU64,
-    pub store_update_index: AtomicU64,
-    pub store_handle_reclaims: AtomicU64,
-    pub store_append_accounts: AtomicU64,
     pub stakes_cache_check_and_store_us: AtomicU64,
-    pub num_store_accounts_to_storage: AtomicU64,
-    pub num_reclaims: AtomicU64,
     pub create_store_count: AtomicU64,
     pub dropped_stores: AtomicU64,
     pub handle_dead_keys_us: AtomicU64,
     pub purge_exact_us: AtomicU64,
     pub purge_exact_count: AtomicU64,
-    pub num_obsolete_slots_removed: AtomicUsize,
-    pub num_obsolete_bytes_removed: AtomicU64,
-    pub add_zero_lamport_accounts_us: AtomicU64,
-    pub num_zero_lamport_accounts_added: AtomicU64,
 }
 
 /// Stats from storing accounts unfrozen (i.e. to the write cache)
@@ -105,6 +95,89 @@ impl StoreAccountsUnfrozenStats {
             (
                 "account_data_bytes_stored",
                 self.account_data_bytes_stored.swap(0, Ordering::Relaxed),
+                i64
+            ),
+        );
+    }
+}
+
+/// Stats from storing accounts frozen (i.e. to an account storage file)
+#[derive(Debug, Default)]
+pub struct StoreAccountsFrozenStats {
+    pub last_report: AtomicInterval,
+    pub flush_read_cache_us: AtomicU64,
+    pub write_to_storage_us: AtomicU64,
+    pub update_index_us: AtomicU64,
+    pub mark_zero_lamport_single_ref_accounts_us: AtomicU64,
+    pub handle_reclaims_us: AtomicU64,
+    pub num_accounts_stored: AtomicU64,
+    pub num_zero_lamport_single_ref_accounts_marked: AtomicU64,
+    pub num_reclaims: AtomicU64,
+    pub num_obsolete_slots_removed: AtomicUsize,
+    pub num_obsolete_bytes_removed: AtomicU64,
+}
+
+impl StoreAccountsFrozenStats {
+    const REPORT_INTERVAL_MS: u64 = Duration::from_secs(1).as_millis() as u64;
+
+    pub fn report(&self) {
+        let should_report = self.last_report.should_update(Self::REPORT_INTERVAL_MS);
+        if !should_report {
+            return;
+        }
+
+        datapoint_info!(
+            "accounts_db_store_accounts_frozen",
+            (
+                "flush_read_cache_us",
+                self.flush_read_cache_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "write_to_storage_us",
+                self.write_to_storage_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "update_index_us",
+                self.update_index_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "mark_zero_lamport_single_ref_accounts_us",
+                self.mark_zero_lamport_single_ref_accounts_us
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "handle_reclaims_us",
+                self.handle_reclaims_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_accounts_stored",
+                self.num_accounts_stored.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_zero_lamport_single_ref_accounts_marked",
+                self.num_zero_lamport_single_ref_accounts_marked
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_reclaims",
+                self.num_reclaims.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_obsolete_slots_removed",
+                self.num_obsolete_slots_removed.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_obsolete_bytes_removed",
+                self.num_obsolete_bytes_removed.swap(0, Ordering::Relaxed),
                 i64
             ),
         );
