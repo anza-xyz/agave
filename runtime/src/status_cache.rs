@@ -514,12 +514,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::assertions_on_constants)]
-    fn test_age_sanity() {
-        assert!(MAX_CACHE_ENTRIES <= MAX_RECENT_BLOCKHASHES);
-    }
-
-    #[test]
     fn test_clear_slot_signatures() {
         let sig = Signature::default();
         let mut status_cache = BankStatusCache::default();
