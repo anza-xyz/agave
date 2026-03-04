@@ -241,7 +241,7 @@ bzip2 = "0.6.1"
 caps = "0.5.6"
 cfg-if = "1.0.4"
 cfg_eval = "0.1.2"
-chrono = { version = "0.4.43", default-features = false }
+chrono = { version = "0.4.44", default-features = false }
 chrono-humanize = "0.2.3"
 clap = "2.33.1"
 console = "0.16.2"
