@@ -39,7 +39,7 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_controller::SnapshotController,
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
-        vote_sender_types::ReplayVoteSender,
+        vote_sender_types::{ReplayVoteMessage, ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
@@ -174,6 +174,7 @@ pub fn execute_batch<'a>(
     bank: &'a Arc<Bank>,
     transaction_status_sender: Option<&'a TransactionStatusSender>,
     replay_vote_sender: Option<&'a ReplayVoteSender>,
+    replay_vote_send_type: ReplayVoteSendType,
     timings: &'a mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: Option<&'a PrioritizationFeeCache>,
@@ -283,6 +284,7 @@ pub fn execute_batch<'a>(
         batch.sanitized_transactions(),
         &commit_results,
         replay_vote_sender,
+        replay_vote_send_type,
     );
 
     if let Some(prioritization_fee_cache) = prioritization_fee_cache {
@@ -420,6 +422,10 @@ fn execute_batches_internal(
                     bank,
                     transaction_status_sender,
                     replay_vote_sender,
+                    ReplayVoteSendType::Executed {
+                        replay_bank_id: bank.bank_id(),
+                        replay_slot: bank.slot(),
+                    },
                     &mut timings,
                     log_messages_bytes_limit,
                     prioritization_fee_cache,
@@ -1111,6 +1117,16 @@ fn confirm_full_slot(
 ) -> result::Result<(), BlockstoreProcessorError> {
     let mut confirmation_timing = ConfirmationTiming::default();
     let skip_verification = !opts.run_verification;
+    let slot = bank.slot();
+    let bank_id = bank.bank_id();
+    defer! {
+        if let Some(replay_vote_sender) = replay_vote_sender {
+            let _ = replay_vote_sender.send(ReplayVoteMessage::BankComplete {
+                replay_bank_id: bank_id,
+                replay_slot: slot,
+            });
+        }
+    }
 
     confirm_slot(
         blockstore,
@@ -1786,7 +1802,20 @@ fn confirm_slot_entries(
             return Err(err.into());
         }
     };
-    if !skip_verification {
+    let bank_id = bank.bank_id();
+    if skip_verification {
+        if let Some(replay_vote_sender) = replay_vote_sender {
+            let verified_vote_signatures = unverified_signatures.vote_transaction_signatures();
+            if !verified_vote_signatures.is_empty() {
+                let _ = replay_vote_sender.send(ReplayVoteMessage::Verified {
+                    replay_bank_id: bank_id,
+                    replay_slot: slot,
+                    verified_signatures: verified_vote_signatures,
+                });
+            }
+        }
+    } else {
+        let replay_vote_sender = replay_vote_sender.cloned();
         progress.async_verification.spawn(
             replay_tx_thread_pool,
             poh_verify_elapsed,
@@ -1799,6 +1828,22 @@ fn confirm_slot_entries(
                     .err();
                 if let Some(err) = &error {
                     warn!("Ledger transaction signature verification failed at slot {slot}: {err}");
+                    if let Some(replay_vote_sender) = &replay_vote_sender {
+                        let _ = replay_vote_sender.send(ReplayVoteMessage::InvalidBank {
+                            replay_bank_id: bank_id,
+                            replay_slot: slot,
+                        });
+                    }
+                } else if let Some(replay_vote_sender) = &replay_vote_sender {
+                    let verified_vote_signatures =
+                        unverified_signatures.vote_transaction_signatures();
+                    if !verified_vote_signatures.is_empty() {
+                        let _ = replay_vote_sender.send(ReplayVoteMessage::Verified {
+                            replay_bank_id: bank_id,
+                            replay_slot: slot,
+                            verified_signatures: verified_vote_signatures,
+                        });
+                    }
                 }
                 AsyncVerificationResult {
                     poh_verify_elapsed: 0,
@@ -4743,7 +4788,16 @@ pub mod tests {
         );
         let successes: BTreeSet<Pubkey> = replay_vote_receiver
             .try_iter()
-            .map(|(vote_pubkey, ..)| vote_pubkey)
+            .filter_map(|replay_vote| match replay_vote {
+                ReplayVoteMessage::VerifiedExecuted((vote_pubkey, ..))
+                | ReplayVoteMessage::Executed {
+                    parsed_vote: (vote_pubkey, ..),
+                    ..
+                } => Some(vote_pubkey),
+                ReplayVoteMessage::Verified { .. }
+                | ReplayVoteMessage::InvalidBank { .. }
+                | ReplayVoteMessage::BankComplete { .. } => None,
+            })
             .collect();
         assert_eq!(successes, expected_successful_voter_pubkeys);
     }
@@ -5393,6 +5447,7 @@ pub mod tests {
                 dependency_tracker: None,
             }),
             None,
+            ReplayVoteSendType::VerifiedExecuted,
             &mut timing,
             None,
             None,

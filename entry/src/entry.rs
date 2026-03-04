@@ -195,6 +195,7 @@ pub enum EntryType<Tx: TransactionWithMeta> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TxVerificationData {
+    is_simple_vote: bool,
     signatures: SmallVec<[Signature; 2]>,
     signer_pubkeys: SmallVec<[Address; 2]>,
     serialized_message: Vec<u8>,
@@ -226,6 +227,14 @@ impl UnverifiedSignatures {
                 Err(TransactionError::SignatureFailure)
             }
         })
+    }
+
+    pub fn vote_transaction_signatures(&self) -> Vec<Signature> {
+        self.signatures
+            .iter()
+            .filter(|tx_signatures| tx_signatures.is_simple_vote)
+            .filter_map(|tx_signatures| tx_signatures.signatures.first().copied())
+            .collect()
     }
 }
 
@@ -377,6 +386,7 @@ where
             let serialized_message = versioned_tx.message.serialize();
             let verified_transaction = verify(versioned_tx, &serialized_message)?;
             unverified_signatures.signatures.push(TxVerificationData {
+                is_simple_vote: verified_transaction.is_simple_vote_transaction(),
                 signatures,
                 serialized_message,
                 signer_pubkeys,
