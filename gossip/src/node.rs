@@ -441,7 +441,7 @@ impl Node {
             tpu_transaction_forwarding_clients,
             rpc_sts_client,
         };
-        info!("Bound all network sockets as follows: {:#?}", &sockets);
+        info!("Bound all network sockets as follows: {:?}", &sockets);
         Node {
             info,
             sockets,
