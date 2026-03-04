@@ -28,8 +28,11 @@ use {
         time::Duration,
     },
     tokio::{
-        sync::{Mutex, MutexGuard},
-        time::sleep,
+        sync::{
+            Mutex, MutexGuard,
+            mpsc::{Receiver, Sender, channel, error::TrySendError},
+        },
+        time::{MissedTickBehavior, interval, sleep},
     },
     tokio_util::sync::CancellationToken,
 };
@@ -37,8 +40,90 @@ use {
 /// Allow for extra streams "in flight" on top of the nominal
 /// send rate in case of bursty traffic from the sender side.
 const STREAMS_IN_FLIGHT_MARGIN: u32 = 2;
+const BANLIST_PRUNE_INTERVAL: Duration = Duration::from_hours(1);
 
-pub type SimpleQosBanlist = Banlist<Pubkey>;
+/// For simple QoS we only ban staked connections.
+/// Overprovision at 2000 which assumes we ban every validator
+const MAX_IN_FLIGHT_EVICTIONS: usize = 2_000;
+
+pub struct SimpleQosBanlist {
+    banlist: Arc<Banlist<Pubkey>>,
+    eviction_sender: Sender<Pubkey>,
+}
+
+impl SimpleQosBanlist {
+    fn new() -> (Self, Receiver<Pubkey>) {
+        let (eviction_sender, eviction_receiver) = channel(MAX_IN_FLIGHT_EVICTIONS);
+        (
+            Self {
+                banlist: Arc::new(Banlist::default()),
+                eviction_sender,
+            },
+            eviction_receiver,
+        )
+    }
+
+    pub fn ban(&self, pubkey: Pubkey, timeout: Duration) {
+        self.banlist.ban(pubkey, timeout);
+        match self.eviction_sender.try_send(pubkey) {
+            Ok(()) => {}
+            Err(TrySendError::Full(pubkey)) => {
+                error!(
+                    "Simple QoS banlist eviction queue full, dropping eviction request for \
+                     {pubkey}"
+                );
+            }
+            Err(TrySendError::Closed(pubkey)) => {
+                info!(
+                    "Simple QoS banlist eviction queue closed, dropping eviction request for \
+                     {pubkey}"
+                );
+            }
+        }
+    }
+
+    pub fn is_banned(&self, pubkey: &Pubkey) -> bool {
+        self.banlist.is_banned(pubkey)
+    }
+
+    fn spawn_connection_evictor(
+        &self,
+        mut eviction_receiver: Receiver<Pubkey>,
+        staked_connection_table: Arc<Mutex<ConnectionTable<TokenBucket>>>,
+        stats: Arc<StreamerStats>,
+    ) {
+        let banlist = self.banlist.clone();
+        let _eviction_task = tokio::spawn(async move {
+            let mut prune_interval = interval(BANLIST_PRUNE_INTERVAL);
+            prune_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            prune_interval.tick().await;
+            loop {
+                tokio::select! {
+                    maybe_pubkey = eviction_receiver.recv() => {
+                        let Some(pubkey) = maybe_pubkey else {
+                            break;
+                        };
+                        let mut connection_table = staked_connection_table.lock().await;
+                        let removed_connection_count = connection_table
+                            .remove_connections_by_key(ConnectionTableKey::Pubkey(pubkey));
+                        if removed_connection_count > 0 {
+                            update_open_connections_stat(&stats, &connection_table);
+                            stats
+                                .connection_removed
+                                .fetch_add(removed_connection_count, Ordering::Relaxed);
+                            stats
+                                .connection_removed_banned
+                                .fetch_add(removed_connection_count, Ordering::Relaxed);
+                        }
+                    }
+                    _ = prune_interval.tick() => {
+                        banlist.prune();
+                    }
+                }
+            }
+        });
+    }
+}
 
 #[derive(Clone)]
 pub struct SimpleQosConfig {
@@ -65,6 +150,7 @@ pub struct SimpleQos {
     staked_connection_table: Arc<Mutex<ConnectionTable<TokenBucket>>>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     pub(crate) banlist: Arc<SimpleQosBanlist>,
+    banlist_eviction_receiver: Option<Receiver<Pubkey>>,
 }
 
 impl SimpleQos {
@@ -74,12 +160,14 @@ impl SimpleQos {
         staked_nodes: Arc<RwLock<StakedNodes>>,
         cancel: CancellationToken,
     ) -> Self {
-        let banlist = Arc::new(SimpleQosBanlist::default());
+        let (banlist, banlist_eviction_receiver) = SimpleQosBanlist::new();
+        let banlist = Arc::new(banlist);
         Self {
             config,
             stats,
             staked_nodes,
             banlist,
+            banlist_eviction_receiver: Some(banlist_eviction_receiver),
             staked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
                 ConnectionTableType::Staked,
                 cancel,
@@ -178,6 +266,18 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
             last_update: Arc::new(AtomicU64::new(timing::timestamp())),
             stream_counter: None,
         }
+    }
+
+    fn spawn_background_tasks(&mut self) {
+        let eviction_receiver = self
+            .banlist_eviction_receiver
+            .take()
+            .expect("Simple QoS banlist eviction task already spawned");
+        self.banlist.spawn_connection_evictor(
+            eviction_receiver,
+            self.staked_connection_table.clone(),
+            self.stats.clone(),
+        );
     }
 
     #[allow(clippy::manual_async_fn)]

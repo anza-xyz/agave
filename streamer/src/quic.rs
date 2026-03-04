@@ -203,6 +203,7 @@ pub struct StreamerStats {
     pub(crate) connection_setup_error_reset: AtomicUsize,
     pub(crate) connection_setup_error_locally_closed: AtomicUsize,
     pub(crate) connection_removed: AtomicUsize,
+    pub(crate) connection_removed_banned: AtomicUsize,
     pub(crate) connection_remove_failed: AtomicUsize,
     // Number of connections to the endpoint exceeding the allowed limit
     // regardless of the source IP address.
@@ -311,6 +312,11 @@ impl StreamerStats {
             (
                 "connection_removed",
                 self.connection_removed.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "connection_removed_banned",
+                self.connection_removed_banned.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -956,26 +962,26 @@ mod test {
             };
 
             // Pre-ban: same pubkey is accepted from different source IP addresses.
-            let connection = make_client_endpoint_with_bind_ip(
+            let connection1 = make_client_endpoint_with_bind_ip(
                 &server_address,
                 IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                 Some(&client_keypair),
             )
             .await
             .expect("connection should succeed for staked client");
-            let mut stream = connection.open_uni().await.unwrap();
+            let mut stream = connection1.open_uni().await.unwrap();
             stream.write_all(&[9u8]).await.unwrap();
             stream.finish().unwrap();
             assert!(wait_for_packet().await.is_some());
 
-            let connection = make_client_endpoint_with_bind_ip(
+            let connection2 = make_client_endpoint_with_bind_ip(
                 &server_address,
                 IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
                 Some(&client_keypair),
             )
             .await
             .expect("connection should succeed for staked client");
-            let mut stream = connection.open_uni().await.unwrap();
+            let mut stream = connection2.open_uni().await.unwrap();
             stream.write_all(&[9u8]).await.unwrap();
             stream.finish().unwrap();
             let packet_batch = wait_for_packet().await.unwrap();
@@ -983,6 +989,19 @@ mod test {
 
             // Ban the pubkey and ensure new connections are rejected.
             banlist.ban(remote_pubkey, Duration::from_secs(30));
+
+            // Existing connections from this pubkey should be actively evicted.
+            let start = Instant::now();
+            let mut existing_connection_closed = false;
+            while start.elapsed().as_secs() < 3 {
+                if connection1.close_reason().is_some() {
+                    existing_connection_closed = true;
+                    break;
+                }
+                sleep(Duration::from_millis(25)).await;
+            }
+            assert!(existing_connection_closed);
+
             let post_ban = make_client_endpoint_with_bind_ip(
                 &server_address,
                 IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3)),
