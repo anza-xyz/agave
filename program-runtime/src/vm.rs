@@ -9,7 +9,6 @@ use {
         mem_pool::VmMemoryPool,
         serialization, stable_log,
     },
-    cfg_if::cfg_if,
     solana_instruction::error::InstructionError,
     solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_sbpf::{
@@ -17,7 +16,7 @@ use {
         elf::Executable,
         error::{EbpfError, ProgramResult},
         memory_region::{AccessType, MemoryMapping, MemoryRegion},
-        vm::{ContextObject, EbpfVm},
+        vm::{ContextObject, EbpfVm, ExecutionMode},
     },
     solana_sdk_ids::bpf_loader_deprecated,
     solana_svm_log_collector::ic_logger_msg,
@@ -171,37 +170,6 @@ pub fn execute<'a, 'b: 'a>(
     let program_id = *instruction_context.get_program_key()?;
     let is_loader_deprecated =
         instruction_context.get_program_owner()? == bpf_loader_deprecated::id();
-    cfg_if! {
-        if #[cfg(any(
-            target_os = "windows",
-            not(target_arch = "x86_64"),
-            feature = "sbpf-debugger"
-        ))] {
-            let use_jit = false;
-            #[cfg(feature = "sbpf-debugger")]
-            let (debug_port, debug_metadata) = (
-                invoke_context.debug_port,
-                format!(
-                    "program_id={};cpi_level={};caller={}",
-                    program_id,
-                    instruction_context.get_stack_height().saturating_sub(1),
-                    invoke_context
-                        .get_stack_height()
-                        .checked_sub(2)
-                        .and_then(|nesting_level| {
-                            transaction_context
-                                .get_instruction_context_at_nesting_level(nesting_level)
-                                .ok()
-                        })
-                        .and_then(|ctx| ctx.get_program_key().ok())
-                        .map(|key| key.to_string())
-                        .unwrap_or_else(|| "none".into())
-                ),
-            );
-        } else {
-            let use_jit = executable.get_compiled_program().is_some();
-        }
-    }
     let virtual_address_space_adjustments = invoke_context
         .get_feature_set()
         .virtual_address_space_adjustments;
@@ -242,6 +210,32 @@ pub fn execute<'a, 'b: 'a>(
 
     let mut create_vm_time = Measure::start("create_vm");
     let execution_result = {
+        #[cfg_attr(feature = "sbpf-debugger", expect(unused_assignments))]
+        let mut execution_mode = ExecutionMode::PreferJit;
+        #[cfg(feature = "sbpf-debugger")]
+        let (debug_port, debug_metadata) = {
+            execution_mode = ExecutionMode::Interpreted;
+            (
+                invoke_context.debug_port,
+                format!(
+                    "program_id={};cpi_level={};caller={}",
+                    program_id,
+                    instruction_context.get_stack_height().saturating_sub(1),
+                    invoke_context
+                        .get_stack_height()
+                        .checked_sub(2)
+                        .and_then(|nesting_level| {
+                            transaction_context
+                                .get_instruction_context_at_nesting_level(nesting_level)
+                                .ok()
+                        })
+                        .and_then(|ctx| ctx.get_program_key().ok())
+                        .map(|key| key.to_string())
+                        .unwrap_or_else(|| "none".into())
+                ),
+            )
+        };
+
         let compute_meter_prev = invoke_context.get_remaining();
         create_vm!(vm, executable, regions, accounts_metadata, invoke_context);
         let (mut vm, stack, heap) = match vm {
@@ -252,7 +246,6 @@ pub fn execute<'a, 'b: 'a>(
             }
         };
         create_vm_time.stop();
-
         #[cfg(feature = "sbpf-debugger")]
         {
             vm.debug_port = debug_port;
@@ -265,7 +258,7 @@ pub fn execute<'a, 'b: 'a>(
         if provide_instruction_data_offset_in_vm_r2 {
             vm.registers[2] = instruction_data_offset as u64;
         }
-        let (compute_units_consumed, result) = vm.execute_program(executable, !use_jit);
+        let (compute_units_consumed, result) = vm.execute_program(executable, &mut execution_mode);
         let register_trace = std::mem::take(&mut vm.register_trace);
         MEMORY_POOL.with_borrow_mut(|memory_pool| {
             memory_pool.put_stack(stack);

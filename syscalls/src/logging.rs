@@ -6,7 +6,7 @@ declare_builtin_function!(
     /// Log a user's info message
     SyscallLog,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         addr: u64,
         len: u64,
         _arg3: u64,
@@ -38,7 +38,7 @@ declare_builtin_function!(
     /// Log 5 64-bit values
     SyscallLogU64,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         arg1: u64,
         arg2: u64,
         arg3: u64,
@@ -61,7 +61,7 @@ declare_builtin_function!(
     /// Log current compute consumption
     SyscallLogBpfComputeUnits,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         _arg1: u64,
         _arg2: u64,
         _arg3: u64,
@@ -85,7 +85,7 @@ declare_builtin_function!(
     /// Log a [`Pubkey`] as a base58 string
     SyscallLogPubkey,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         pubkey_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -110,7 +110,7 @@ declare_builtin_function!(
     /// Log data handling
     SyscallLogData,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         addr: u64,
         len: u64,
         _arg3: u64,

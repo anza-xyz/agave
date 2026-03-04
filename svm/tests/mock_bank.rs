@@ -24,6 +24,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
+    solana_sbpf::program::BuiltinFunctionDefinition,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, compute_budget, loader_v4},
     solana_svm::transaction_processor::TransactionBatchProcessor,
     solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
@@ -284,7 +285,7 @@ pub fn register_builtins(
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
             loader_v3_name.len(),
-            solana_bpf_loader_program::Entrypoint::vm,
+            solana_bpf_loader_program::Entrypoint::register,
         ),
     );
 
@@ -297,7 +298,7 @@ pub fn register_builtins(
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
             loader_v1_name.len(),
-            solana_bpf_loader_program::Entrypoint::vm,
+            solana_bpf_loader_program::Entrypoint::register,
         ),
     );
 
@@ -309,7 +310,7 @@ pub fn register_builtins(
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
             loader_v2_name.len(),
-            solana_bpf_loader_program::Entrypoint::vm,
+            solana_bpf_loader_program::Entrypoint::register,
         ),
     );
 
@@ -322,7 +323,7 @@ pub fn register_builtins(
             ProgramCacheEntry::new_builtin(
                 DEPLOYMENT_SLOT,
                 loader_v4_name.len(),
-                solana_loader_v4_program::Entrypoint::vm,
+                solana_loader_v4_program::Entrypoint::register,
             ),
         );
     }
@@ -337,7 +338,7 @@ pub fn register_builtins(
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
             system_program_name.len(),
-            solana_system_program::system_processor::Entrypoint::vm,
+            solana_system_program::system_processor::Entrypoint::register,
         ),
     );
 
@@ -350,7 +351,7 @@ pub fn register_builtins(
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
             compute_budget_program_name.len(),
-            solana_compute_budget_program::Entrypoint::vm,
+            solana_compute_budget_program::Entrypoint::register,
         ),
     );
 }
@@ -378,41 +379,21 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a, 'a>> {
     // These functions are system calls the compile contract calls during execution, so they
     // need to be registered.
     let mut loader = BuiltinProgram::new_loader(vm_config);
-    loader
-        .register_function("abort", SyscallAbort::vm)
+    SyscallAbort::register(&mut loader, "abort").expect("Registration failed");
+    SyscallLog::register(&mut loader, "sol_log_").expect("Registration failed");
+    SyscallMemcpy::register(&mut loader, "sol_memcpy_").expect("Registration failed");
+    SyscallMemset::register(&mut loader, "sol_memset_").expect("Registration failed");
+    SyscallMemcmp::register(&mut loader, "sol_memcmp_").expect("Registration failed");
+    SyscallMemmove::register(&mut loader, "sol_memmove_").expect("Registration failed");
+    SyscallInvokeSignedRust::register(&mut loader, "sol_invoke_signed_rust")
         .expect("Registration failed");
-    loader
-        .register_function("sol_log_", SyscallLog::vm)
+    SyscallSetReturnData::register(&mut loader, "sol_set_return_data")
         .expect("Registration failed");
-    loader
-        .register_function("sol_memcpy_", SyscallMemcpy::vm)
+    SyscallGetClockSysvar::register(&mut loader, "sol_get_clock_sysvar")
         .expect("Registration failed");
-    loader
-        .register_function("sol_memset_", SyscallMemset::vm)
+    SyscallGetRentSysvar::register(&mut loader, "sol_get_rent_sysvar")
         .expect("Registration failed");
-    loader
-        .register_function("sol_memcmp_", SyscallMemcmp::vm)
-        .expect("Registration failed");
-    loader
-        .register_function("sol_memmove_", SyscallMemmove::vm)
-        .expect("Registration failed");
-    loader
-        .register_function("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)
-        .expect("Registration failed");
-    loader
-        .register_function("sol_set_return_data", SyscallSetReturnData::vm)
-        .expect("Registration failed");
-    loader
-        .register_function("sol_get_clock_sysvar", SyscallGetClockSysvar::vm)
-        .expect("Registration failed");
-    loader
-        .register_function("sol_get_rent_sysvar", SyscallGetRentSysvar::vm)
-        .expect("Registration failed");
-    loader
-        .register_function(
-            "sol_get_epoch_schedule_sysvar",
-            SyscallGetEpochScheduleSysvar::vm,
-        )
+    SyscallGetEpochScheduleSysvar::register(&mut loader, "sol_get_epoch_schedule_sysvar")
         .expect("Registration failed");
     loader
 }

@@ -127,7 +127,7 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
-        invoke_context::BuiltinFunctionWithContext,
+        invoke_context::BuiltinFunctionRegisterer,
         loaded_programs::{ProgramCacheEntry, ProgramRuntimeEnvironment},
     },
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
@@ -5401,15 +5401,11 @@ impl Bank {
         !self.is_delta.load(Relaxed)
     }
 
-    pub fn add_mockup_builtin(
-        &mut self,
-        program_id: Pubkey,
-        builtin_function: BuiltinFunctionWithContext,
-    ) {
+    pub fn add_mockup_builtin(&mut self, program_id: Pubkey, builtin: BuiltinFunctionRegisterer) {
         self.add_builtin(
             program_id,
             "mockup",
-            ProgramCacheEntry::new_builtin(self.slot, 0, builtin_function),
+            ProgramCacheEntry::new_builtin(self.slot, 0, builtin),
         );
     }
 
@@ -5686,7 +5682,7 @@ impl Bank {
                         ProgramCacheEntry::new_builtin(
                             self.feature_set.activated_slot(&feature_id).unwrap_or(0),
                             builtin.name.len(),
-                            builtin.entrypoint,
+                            builtin.register_fn,
                         ),
                     );
                 }
@@ -5844,7 +5840,7 @@ impl Bank {
                     ProgramCacheEntry::new_builtin(
                         activation_slot,
                         builtin.name.len(),
-                        builtin.entrypoint,
+                        builtin.register_fn,
                     ),
                 );
             }
@@ -6146,10 +6142,10 @@ impl Bank {
     pub fn new_with_mockup_builtin_for_tests(
         genesis_config: &GenesisConfig,
         program_id: Pubkey,
-        builtin_function: BuiltinFunctionWithContext,
+        builtin: BuiltinFunctionRegisterer,
     ) -> (Arc<Self>, Arc<RwLock<BankForks>>) {
         let mut bank = Self::new_for_tests(genesis_config);
-        bank.add_mockup_builtin(program_id, builtin_function);
+        bank.add_mockup_builtin(program_id, builtin);
         bank.wrap_with_bank_forks_for_tests()
     }
 

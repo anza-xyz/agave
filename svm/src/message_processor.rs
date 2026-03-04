@@ -98,6 +98,7 @@ mod tests {
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
+        solana_sbpf::program::BuiltinFunctionDefinition,
         solana_sdk_ids::{ed25519_program, native_loader, secp256k1_program, system_program},
         solana_secp256k1_program::{
             eth_address_from_pubkey, new_secp256k1_instruction_with_signature,
@@ -189,7 +190,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             mock_system_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register)),
         );
         let account_keys = (0..transaction_context.get_number_of_accounts())
             .map(|index| {
@@ -435,7 +436,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             mock_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register)),
         );
         let account_metas = vec![
             AccountMeta::new(
@@ -674,7 +675,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             mock_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register)),
         );
 
         struct MockCallback {}

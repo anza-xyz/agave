@@ -25,7 +25,7 @@ pub fn new_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
             Arc::new(ProgramCacheEntry::new_builtin(
                 0u64,
                 builtin.name.len(),
-                builtin.entrypoint,
+                builtin.register_fn,
             )),
         );
     }

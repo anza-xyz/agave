@@ -24,10 +24,10 @@ use {
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
-        elf::Executable as GenericExecutable,
+        elf::{ElfError, Executable as GenericExecutable},
         error::{EbpfError, ProgramResult},
         memory_region::MemoryMapping,
-        program::{BuiltinFunction, SBPFVersion},
+        program::{BuiltinProgram, SBPFVersion},
         vm::{Config, ContextObject, EbpfVm},
     },
     solana_sdk_ids::{
@@ -52,7 +52,8 @@ use {
     },
 };
 
-pub type BuiltinFunctionWithContext = BuiltinFunction<InvokeContext<'static, 'static>>;
+pub type BuiltinFunctionRegisterer =
+    fn(&mut BuiltinProgram<InvokeContext<'static, 'static>>, &str) -> Result<(), ElfError>;
 pub type Executable = GenericExecutable<InvokeContext<'static, 'static>>;
 pub type RegisterTrace<'a> = &'a [[u64; 12]];
 
@@ -63,14 +64,14 @@ macro_rules! declare_process_instruction {
         $crate::solana_sbpf::declare_builtin_function!(
             $process_instruction,
             fn rust(
-                invoke_context: &mut $crate::invoke_context::InvokeContext,
+                invoke_context: &mut $crate::invoke_context::InvokeContext<'_, '_>,
                 _arg0: u64,
                 _arg1: u64,
                 _arg2: u64,
                 _arg3: u64,
                 _arg4: u64,
                 _memory_mapping: &mut $crate::solana_sbpf::memory_region::MemoryMapping,
-            ) -> std::result::Result<u64, Box<dyn std::error::Error>> {
+            ) -> Result<u64, Box<dyn std::error::Error>> {
                 fn process_instruction_inner(
                     $invoke_context: &mut $crate::invoke_context::InvokeContext,
                 ) -> std::result::Result<(), $crate::__private::InstructionError>
@@ -570,7 +571,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             ProgramCacheEntryType::Builtin(program) => program
                 .get_function_registry()
                 .lookup_by_key(ENTRYPOINT_KEY)
-                .map(|(_name, function)| function),
+                .map(|(_name, (function, _codegen))| function),
             _ => None,
         }
         .ok_or(InstructionError::UnsupportedProgramId)?;
@@ -969,7 +970,7 @@ pub fn mock_process_instruction_with_feature_set<
     mut accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     expected_result: Result<(), InstructionError>,
-    builtin_function: BuiltinFunctionWithContext,
+    builtin: BuiltinFunctionRegisterer,
     mut pre_adjustments: F,
     mut post_adjustments: G,
     feature_set: &SVMFeatureSet,
@@ -1013,7 +1014,7 @@ pub fn mock_process_instruction_with_feature_set<
         } else {
             program_owner
         },
-        Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin_function)),
+        Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin)),
     );
     program_cache_for_tx_batch.set_slot_for_tests(
         invoke_context
@@ -1059,7 +1060,7 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
     accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     expected_result: Result<(), InstructionError>,
-    builtin_function: BuiltinFunctionWithContext,
+    builtin: BuiltinFunctionRegisterer,
     pre_adjustments: F,
     post_adjustments: G,
 ) -> Vec<AccountSharedData> {
@@ -1069,7 +1070,7 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
         accounts,
         instruction_account_metas,
         expected_result,
-        builtin_function,
+        builtin,
         pre_adjustments,
         post_adjustments,
         &SVMFeatureSet::all_enabled(),
@@ -1085,6 +1086,7 @@ mod tests {
         solana_account::Account,
         solana_keypair::Keypair,
         solana_rent::Rent,
+        solana_sbpf::program::BuiltinFunctionDefinition,
         solana_sdk_ids::system_program,
         solana_signer::Signer,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
@@ -1391,7 +1393,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             callee_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::register)),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
@@ -1446,7 +1448,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             callee_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::register)),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
@@ -1530,7 +1532,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             program_key,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register)),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
@@ -1818,7 +1820,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             TEST_CALLEE_PROGRAM_ID,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::register)),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 

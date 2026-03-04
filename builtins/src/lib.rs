@@ -19,6 +19,7 @@ use {
         prototype::{BuiltinPrototype, StatelessBuiltinPrototype},
     },
     agave_feature_set as feature_set,
+    solana_program_runtime::solana_sbpf::program::BuiltinFunctionDefinition,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
 };
 
@@ -56,63 +57,63 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
         name: system_program,
         enable_feature_id: None,
         program_id: solana_system_program::id(),
-        entrypoint: solana_system_program::system_processor::Entrypoint::vm,
+        register_fn: solana_system_program::system_processor::Entrypoint::register,
     }),
     testable_prototype!(BuiltinPrototype {
         core_bpf_migration_config: None,
         name: vote_program,
         enable_feature_id: None,
         program_id: solana_vote_program::id(),
-        entrypoint: solana_vote_program::vote_processor::Entrypoint::vm,
+        register_fn: solana_vote_program::vote_processor::Entrypoint::register
     }),
     testable_prototype!(BuiltinPrototype {
         core_bpf_migration_config: None,
         name: solana_bpf_loader_deprecated_program,
         enable_feature_id: None,
         program_id: bpf_loader_deprecated::id(),
-        entrypoint: solana_bpf_loader_program::Entrypoint::vm,
+        register_fn: solana_bpf_loader_program::Entrypoint::register
     }),
     testable_prototype!(BuiltinPrototype {
         core_bpf_migration_config: None,
         name: solana_bpf_loader_program,
         enable_feature_id: None,
         program_id: bpf_loader::id(),
-        entrypoint: solana_bpf_loader_program::Entrypoint::vm,
+        register_fn: solana_bpf_loader_program::Entrypoint::register
     }),
     testable_prototype!(BuiltinPrototype {
         core_bpf_migration_config: None,
         name: solana_bpf_loader_upgradeable_program,
         enable_feature_id: None,
         program_id: bpf_loader_upgradeable::id(),
-        entrypoint: solana_bpf_loader_program::Entrypoint::vm,
+        register_fn: solana_bpf_loader_program::Entrypoint::register
     }),
     testable_prototype!(BuiltinPrototype {
         core_bpf_migration_config: None,
         name: compute_budget_program,
         enable_feature_id: None,
         program_id: solana_sdk_ids::compute_budget::id(),
-        entrypoint: solana_compute_budget_program::Entrypoint::vm,
+        register_fn: solana_compute_budget_program::Entrypoint::register,
     }),
     testable_prototype!(BuiltinPrototype {
         core_bpf_migration_config: None,
         name: zk_token_proof_program,
         enable_feature_id: Some(feature_set::zk_token_sdk_enabled::id()),
         program_id: solana_sdk_ids::zk_token_proof_program::id(),
-        entrypoint: solana_zk_token_proof_program::Entrypoint::vm,
+        register_fn: solana_zk_token_proof_program::Entrypoint::register,
     }),
     testable_prototype!(BuiltinPrototype {
         core_bpf_migration_config: None,
         name: loader_v4,
         enable_feature_id: Some(feature_set::enable_loader_v4::id()),
         program_id: solana_sdk_ids::loader_v4::id(),
-        entrypoint: solana_loader_v4_program::Entrypoint::vm,
+        register_fn: solana_loader_v4_program::Entrypoint::register,
     }),
     testable_prototype!(BuiltinPrototype {
         core_bpf_migration_config: None,
         name: zk_elgamal_proof_program,
         enable_feature_id: Some(feature_set::zk_elgamal_proof_program_enabled::id()),
         program_id: solana_sdk_ids::zk_elgamal_proof_program::id(),
-        entrypoint: solana_zk_elgamal_proof_program::Entrypoint::vm,
+        register_fn: solana_zk_elgamal_proof_program::Entrypoint::register,
     }),
 ];
 
