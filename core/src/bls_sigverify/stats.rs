@@ -17,12 +17,7 @@ pub(super) struct SigVerifierStats {
     pub(super) verify_and_send_batch_us: Histogram,
     /// Stats on how long [`extract_and_filter_msgs`] took.
     pub(super) extract_filter_msgs_us: Histogram,
-    /// Number of `PacketBatch`es received.
-    pub(super) num_batches: Histogram,
     /// Number of packets received.
-    ///
-    /// At the time of writing, each batch contains exactly one packet so this metric should be
-    /// the same as [`Self::num_batches`].  Tracking it still just to support future implementations.
     pub(super) num_pkts: Histogram,
     /// Number of discarded packets received from the streamer.
     pub(super) num_discarded_pkts: u64,
@@ -57,7 +52,6 @@ impl Default for SigVerifierStats {
             num_old_certs_received: 0,
             num_verified_certs_received: 0,
             verify_and_send_batch_us: Histogram::default(),
-            num_batches: Histogram::default(),
             last_report: Instant::now(),
         }
     }
@@ -78,7 +72,6 @@ impl SigVerifierStats {
             discard_vote_invalid_rank,
             discard_vote_no_epoch_stakes,
             verify_and_send_batch_us,
-            num_batches,
             last_report,
         } = self;
         if last_report.elapsed() < STATS_INTERVAL_DURATION {
@@ -139,15 +132,6 @@ impl SigVerifierStats {
                 verify_and_send_batch_us.entries(),
                 i64
             ),
-            (
-                "num_batches_90pct",
-                num_batches.percentile(90.0).unwrap_or(0),
-                i64
-            ),
-            ("num_batches_min", num_batches.minimum().unwrap_or(0), i64),
-            ("num_batches_max", num_batches.maximum().unwrap_or(0), i64),
-            ("num_batches_mean", num_batches.mean().unwrap_or(0), i64),
-            ("num_batches_count", num_batches.entries(), i64),
             (
                 "num_pkts_90pct",
                 num_pkts.percentile(90.0).unwrap_or(0),

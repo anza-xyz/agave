@@ -138,10 +138,6 @@ impl SigVerifier {
                 continue;
             }
 
-            self.stats
-                .num_batches
-                .increment(batches.len() as u64)
-                .unwrap();
             let (verify_res, verify_time_us) = measure_us!(self.verify_and_send_batches(batches));
             self.stats
                 .verify_and_send_batch_us
