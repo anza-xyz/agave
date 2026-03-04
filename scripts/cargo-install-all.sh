@@ -36,6 +36,7 @@ usage: $0 [+<cargo version>] [options] <install directory>
     --debug                     Build with debug profile instead of release profile.
     --release-with-debug        Build with release-with-debug profile instead of release profile.
     --release-with-lto          Build with release-with-lto profile instead of release profile.
+    --native                    Compile the chosen profile to the native CPU instruction set.
     --no-build-dcou-bins        Do not build DCOU binaries.
     --no-build-deprecated-bins  Do not build deprecated binaries.
     --no-build-dev-bins         Do not build development binaries.
@@ -50,6 +51,7 @@ EOF
 }
 
 maybeRustVersion=
+RUSTFLAGS="-C target-cpu=native"
 installDir=
 # buildProfileArg and buildProfile duplicate some information because cargo
 # doesn't allow '--profile debug' but we still need to know that the binaries
@@ -80,6 +82,9 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --release-with-lto ]]; then
       buildProfileArg='--profile release-with-lto'
       buildProfile='release-with-lto'
+      shift
+    elif [[ $1 = --native ]]; then
+      export RUSTFLAGS
       shift
     elif [[ $1 = --no-build-dcou-bins ]]; then
       noBuildDCOUBins=true
