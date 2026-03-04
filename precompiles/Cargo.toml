@@ -31,6 +31,7 @@ solana-precompile-error = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-secp256k1-program = { workspace = true, features = ["serde"] }
+solana-secp256k1-recover = { workspace = true }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 
 [dev-dependencies]

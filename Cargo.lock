@@ -248,6 +248,7 @@ dependencies = [
  "solana-pubkey 4.0.0",
  "solana-sdk-ids",
  "solana-secp256k1-program",
+ "solana-secp256k1-recover",
  "solana-secp256r1-program",
 ]
 
