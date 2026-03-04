@@ -15,41 +15,22 @@ use {
 };
 
 /// Tracks the maximum flushed root slot.
-#[derive(Debug)]
+///
+/// Internally stores `slot + 1` so that the default value of `0` naturally
+/// represents "no flushed roots".
+#[derive(Debug, Default)]
 struct MaxFlushedRoot(AtomicU64);
 
 impl MaxFlushedRoot {
-    // Sentinel value indicating no flushed roots. Any real slot will replace this value.
-    const NO_FLUSHED_ROOTS: u64 = u64::MAX;
-
-    fn new() -> Self {
-        Self(AtomicU64::new(Self::NO_FLUSHED_ROOTS))
-    }
-
+    /// Returns the current max flushed root, or `None` if no root has been flushed.
     fn get(&self) -> Option<Slot> {
-        match self.0.load(Ordering::Acquire) {
-            u64::MAX => None,
-            slot => Some(slot),
-        }
+        self.0.load(Ordering::Acquire).checked_sub(1)
     }
 
     /// Atomically update to the maximum of the current value and `slot`.
-    /// Any real slot replaces the sentinel; between two real slots, the max wins.
+    /// Stores `slot + 1` internally so 0 can represent no slots flushed
     fn fetch_max(&self, slot: Slot) {
-        assert_ne!(slot, Self::NO_FLUSHED_ROOTS);
-        loop {
-            let current = self.0.load(Ordering::Acquire);
-            if current != Self::NO_FLUSHED_ROOTS && current >= slot {
-                return;
-            }
-            if self
-                .0
-                .compare_exchange_weak(current, slot, Ordering::Release, Ordering::Relaxed)
-                .is_ok()
-            {
-                return;
-            }
-        }
+        self.0.fetch_max(slot + 1, Ordering::Release);
     }
 }
 
@@ -184,7 +165,7 @@ impl CachedAccount {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct AccountsCache {
     cache: DashMap<Slot, Arc<SlotCache>, BuildNoHashHasher<Slot>>,
     // Queue of potentially unflushed roots. Random eviction + cache too large
@@ -195,18 +176,6 @@ pub struct AccountsCache {
     total_size: Arc<AtomicU64>,
     /// The number of accounts stored in the whole AccountsCache
     total_accounts_counts: Arc<AtomicU64>,
-}
-
-impl Default for AccountsCache {
-    fn default() -> Self {
-        Self {
-            cache: DashMap::with_capacity_and_hasher(1024, BuildNoHashHasher::default()),
-            maybe_unflushed_roots: RwLock::new(BTreeSet::new()),
-            max_flushed_root: MaxFlushedRoot::new(),
-            total_size: Arc::new(AtomicU64::new(0)),
-            total_accounts_counts: Arc::new(AtomicU64::new(0)),
-        }
-    }
 }
 
 impl AccountsCache {
@@ -386,8 +355,11 @@ mod tests {
 
     #[test]
     fn test_max_flushed_root_fetch_max() {
-        let root = MaxFlushedRoot::new();
+        let root = MaxFlushedRoot::default();
         assert_eq!(root.get(), None);
+
+        root.fetch_max(0);
+        assert_eq!(root.get(), Some(0));
 
         // first real slot replaces sentinel
         root.fetch_max(10);
@@ -402,18 +374,5 @@ mod tests {
         assert_eq!(root.get(), Some(20));
         root.fetch_max(20);
         assert_eq!(root.get(), Some(20));
-    }
-
-    #[test]
-    #[should_panic(expected = "assertion")]
-    fn test_max_flushed_root_rejects_sentinel() {
-        MaxFlushedRoot::new().fetch_max(u64::MAX);
-    }
-
-    #[test]
-    fn test_max_flushed_root_slot_zero() {
-        let root = MaxFlushedRoot::new();
-        root.fetch_max(0);
-        assert_eq!(root.get(), Some(0));
     }
 }
