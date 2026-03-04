@@ -1,8 +1,6 @@
 /// Utilities for querying filesystem metadata, including direct I/O support.
-#[cfg(all(target_os = "linux", not(target_env = "musl")))]
-use std::{ffi::CString, mem};
 #[cfg(target_os = "linux")]
-use std::{fs, path::PathBuf};
+use std::{ffi::CString, fs, mem, path::PathBuf};
 use std::{io, path::Path};
 
 /// Returns whether `path` (a file or directory) resides on a filesystem that supports
@@ -20,14 +18,10 @@ pub fn check_direct_io_capability(path: impl AsRef<Path>) -> io::Result<Option<b
     let Some(file) = find_any_file_under_path(path.as_ref())? else {
         return Ok(None);
     };
-    // statx with STATX_DIOALIGN is the preferred check, but libc does not expose
-    // statx on musl (requires musl >= 1.2.3), so skip it there.
-    #[cfg(not(target_env = "musl"))]
-    {
-        let statx_result = check_direct_io_via_statx(&file);
-        if !matches!(&statx_result, Ok(None)) {
-            return statx_result;
-        }
+    // statx with STATX_DIOALIGN is the preferred check.
+    let statx_result = check_direct_io_via_statx(&file);
+    if !matches!(&statx_result, Ok(None)) {
+        return statx_result;
     }
     Ok(check_direct_io_via_open_probe(&file))
 }
@@ -43,7 +37,7 @@ pub fn check_direct_io_capability(_path: impl AsRef<Path>) -> io::Result<Option<
 /// Returns `Ok(Some(true))` when `stx_dio_mem_align != 0` (DIO supported),
 /// `Ok(Some(false))` when `STATX_DIOALIGN` is set but DIO is not supported, or
 /// `Ok(None)` when the kernel did not populate `STATX_DIOALIGN` fields (kernel < 6.1).
-#[cfg(all(target_os = "linux", not(target_env = "musl")))]
+#[cfg(target_os = "linux")]
 fn check_direct_io_via_statx(path: &Path) -> io::Result<Option<bool>> {
     let path_cstr = CString::new(path.as_os_str().as_encoded_bytes())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains a null byte"))?;
