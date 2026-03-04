@@ -5044,13 +5044,6 @@ impl Bank {
         Ok(sanitized_tx)
     }
 
-    pub fn fully_verify_transaction(
-        &self,
-        tx: VersionedTransaction,
-    ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        self.verify_transaction(tx, TransactionVerificationMode::FullVerification)
-    }
-
     /// Checks if the transaction violates the bank's reserved keys.
     /// This needs to be checked upon epoch boundary crosses because the
     /// reserved key set may have changed since the initial sanitization.
