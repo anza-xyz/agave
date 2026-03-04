@@ -155,7 +155,7 @@ solana-vote = { path = "../vote", version = "=4.1.0-alpha.0", features = ["agave
 solana-vote-program = { path = "../programs/vote", version = "=4.1.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 tempfile = "3.23.0"
 thiserror = "2.0.17"
-tokio = "1.48.0"
+tokio = "1.50.0"
 
 [profile.dev]
 debug = "line-tables-only"
