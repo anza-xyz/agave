@@ -857,41 +857,6 @@ pub struct ProcessOptions {
     pub no_block_cost_limits: bool,
 }
 
-pub fn test_process_blockstore(
-    genesis_config: &GenesisConfig,
-    blockstore: &Blockstore,
-    opts: &ProcessOptions,
-    exit: Arc<AtomicBool>,
-) -> (Arc<RwLock<BankForks>>, LeaderScheduleCache) {
-    let (bank_forks, _) = crate::bank_forks_utils::load_bank_forks_from_genesis(
-        genesis_config,
-        blockstore,
-        Vec::new(),
-        opts,
-        None,
-        None,
-        None,
-        exit,
-    )
-    .unwrap();
-
-    let leader_schedule_cache =
-        LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
-
-    process_blockstore_from_root(
-        blockstore,
-        &bank_forks,
-        &leader_schedule_cache,
-        opts,
-        None,
-        None,
-        None, // snapshots are disabled
-    )
-    .unwrap();
-
-    (bank_forks, leader_schedule_cache)
-}
-
 pub(crate) fn process_blockstore_for_bank_0(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
@@ -2550,6 +2515,41 @@ pub mod tests {
         test_case::{test_case, test_matrix},
         trees::tr,
     };
+
+    fn test_process_blockstore(
+        genesis_config: &GenesisConfig,
+        blockstore: &Blockstore,
+        opts: &ProcessOptions,
+        exit: Arc<AtomicBool>,
+    ) -> (Arc<RwLock<BankForks>>, LeaderScheduleCache) {
+        let (bank_forks, _) = crate::bank_forks_utils::load_bank_forks_from_genesis(
+            genesis_config,
+            blockstore,
+            Vec::new(),
+            opts,
+            None,
+            None,
+            None,
+            exit,
+        )
+        .unwrap();
+
+        let leader_schedule_cache =
+            LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
+
+        process_blockstore_from_root(
+            blockstore,
+            &bank_forks,
+            &leader_schedule_cache,
+            opts,
+            None,
+            None,
+            None, // snapshots are disabled
+        )
+        .unwrap();
+
+        (bank_forks, leader_schedule_cache)
+    }
 
     // Convenience wrapper to optionally process blockstore with ReadOnly access.
     //
