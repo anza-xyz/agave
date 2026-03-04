@@ -29,7 +29,7 @@ impl MaxFlushedRoot {
 
     /// Atomically update to the maximum of the current value and `slot`.
     /// Stores `slot + 1` internally so 0 can represent no slots flushed
-    /// Note: Will overflow at u64::MAX - 1, but realistically should never get that high
+    /// Note: Will overflow at u64::MAX, but realistically should never get that high
     fn fetch_max(&self, slot: Slot) {
         self.0.fetch_max(slot + 1, Ordering::Release);
     }
