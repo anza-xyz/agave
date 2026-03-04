@@ -9,10 +9,49 @@ use {
         ops::Deref,
         sync::{
             Arc, RwLock,
-            atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
 };
+
+/// Tracks the maximum flushed root slot.
+#[derive(Debug)]
+struct MaxFlushedRoot(AtomicU64);
+
+impl MaxFlushedRoot {
+    // Sentinel value indicating no flushed roots. Any real slot will replace this value.
+    const NO_FLUSHED_ROOTS: u64 = u64::MAX;
+
+    fn new() -> Self {
+        Self(AtomicU64::new(Self::NO_FLUSHED_ROOTS))
+    }
+
+    fn get(&self) -> Option<Slot> {
+        match self.0.load(Ordering::Acquire) {
+            u64::MAX => None,
+            slot => Some(slot),
+        }
+    }
+
+    /// Atomically update to the maximum of the current value and `slot`.
+    /// Any real slot replaces the sentinel; between two real slots, the max wins.
+    fn fetch_max(&self, slot: Slot) {
+        assert_ne!(slot, Self::NO_FLUSHED_ROOTS);
+        loop {
+            let current = self.0.load(Ordering::Acquire);
+            if current != Self::NO_FLUSHED_ROOTS && current >= slot {
+                return;
+            }
+            if self
+                .0
+                .compare_exchange_weak(current, slot, Ordering::Release, Ordering::Relaxed)
+                .is_ok()
+            {
+                return;
+            }
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct SlotCache {
@@ -151,20 +190,19 @@ pub struct AccountsCache {
     // Queue of potentially unflushed roots. Random eviction + cache too large
     // could have triggered a flush of this slot already
     maybe_unflushed_roots: RwLock<BTreeSet<Slot>>,
-    max_flushed_root: AtomicI64,
+    max_flushed_root: MaxFlushedRoot,
     /// The size of account data stored in the whole AccountsCache, in bytes
     total_size: Arc<AtomicU64>,
     /// The number of accounts stored in the whole AccountsCache
     total_accounts_counts: Arc<AtomicU64>,
 }
 
-const NO_FLUSHED_ROOTS: i64 = -1;
 impl Default for AccountsCache {
     fn default() -> Self {
         Self {
             cache: DashMap::with_capacity_and_hasher(1024, BuildNoHashHasher::default()),
             maybe_unflushed_roots: RwLock::new(BTreeSet::new()),
-            max_flushed_root: AtomicI64::new(NO_FLUSHED_ROOTS),
+            max_flushed_root: MaxFlushedRoot::new(),
             total_size: Arc::new(AtomicU64::new(0)),
             total_accounts_counts: Arc::new(AtomicU64::new(0)),
         }
@@ -280,12 +318,12 @@ impl AccountsCache {
         self.cache.len()
     }
 
-    pub fn fetch_max_flush_root(&self) -> i64 {
-        self.max_flushed_root.load(Ordering::Acquire)
+    pub fn fetch_max_flush_root(&self) -> Option<u64> {
+        self.max_flushed_root.get()
     }
 
-    pub fn set_max_flush_root(&self, root: i64) {
-        self.max_flushed_root.fetch_max(root, Ordering::Release);
+    pub fn set_max_flush_root(&self, root: u64) {
+        self.max_flushed_root.fetch_max(root);
     }
 }
 
@@ -344,5 +382,38 @@ mod tests {
         cache.slot_cache(inserted_slot).unwrap().mark_slot_frozen();
         // If the cache is told the size limit is 0, it should return the one frozen slot
         assert_eq!(cache.cached_frozen_slots(), vec![inserted_slot]);
+    }
+
+    #[test]
+    fn test_max_flushed_root_fetch_max() {
+        let root = MaxFlushedRoot::new();
+        assert_eq!(root.get(), None);
+
+        // first real slot replaces sentinel
+        root.fetch_max(10);
+        assert_eq!(root.get(), Some(10));
+
+        // larger slot wins
+        root.fetch_max(20);
+        assert_eq!(root.get(), Some(20));
+
+        // smaller and equal slots are ignored
+        root.fetch_max(5);
+        assert_eq!(root.get(), Some(20));
+        root.fetch_max(20);
+        assert_eq!(root.get(), Some(20));
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion")]
+    fn test_max_flushed_root_rejects_sentinel() {
+        MaxFlushedRoot::new().fetch_max(u64::MAX);
+    }
+
+    #[test]
+    fn test_max_flushed_root_slot_zero() {
+        let root = MaxFlushedRoot::new();
+        root.fetch_max(0);
+        assert_eq!(root.get(), Some(0));
     }
 }

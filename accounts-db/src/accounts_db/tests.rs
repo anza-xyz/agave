@@ -3822,8 +3822,11 @@ fn test_accounts_db_cache_clean_dead_slots() {
     accounts_db.flush_accounts_cache(true, None);
     assert_eq!(accounts_db.accounts_cache.num_slots(), 0);
     assert_eq!(
-        accounts_db.accounts_cache.fetch_max_flush_root(),
-        alive_slot as i64,
+        accounts_db
+            .accounts_cache
+            .fetch_max_flush_root()
+            .expect("Roots have been flushed"),
+        alive_slot,
     );
 
     // Specifying a max_root < alive_slot, should not return any more entries,
@@ -3866,8 +3869,11 @@ fn test_accounts_db_cache_clean() {
     accounts_db.flush_accounts_cache(true, None);
     assert_eq!(accounts_db.accounts_cache.num_slots(), 0);
     assert_eq!(
-        accounts_db.accounts_cache.fetch_max_flush_root(),
-        *slots.last().unwrap() as i64
+        accounts_db
+            .accounts_cache
+            .fetch_max_flush_root()
+            .expect("Roots have been flushed"),
+        *slots.last().unwrap()
     );
 
     // Each slot should only have one entry in the storage, since all other accounts were
@@ -3924,8 +3930,11 @@ fn run_test_accounts_db_cache_clean_max_root(
     };
 
     assert_eq!(
-        accounts_db.accounts_cache.fetch_max_flush_root(),
-        expected_max_flushed_root as i64,
+        accounts_db
+            .accounts_cache
+            .fetch_max_flush_root()
+            .expect("Roots have been flushed"),
+        expected_max_flushed_root,
     );
 
     for slot in &slots {
