@@ -3020,7 +3020,7 @@ fn program_cache_stats() {
         .unwrap();
 
     assert_eq!(
-        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_entry.stats.uses.load(Ordering::Relaxed),
         noop_tx_usage,
         "noop_tx_usage matches"
     );
@@ -3031,7 +3031,7 @@ fn program_cache_stats() {
         .unwrap();
 
     assert_eq!(
-        system_entry.tx_usage_counter.load(Ordering::Relaxed),
+        system_entry.stats.uses.load(Ordering::Relaxed),
         system_tx_usage,
         "system_tx_usage matches"
     );
@@ -3093,7 +3093,7 @@ fn program_cache_stats() {
         .unwrap();
 
     assert_eq!(
-        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_entry.stats.uses.load(Ordering::Relaxed),
         noop_tx_usage,
         "noop_tx_usage matches"
     );
@@ -3128,7 +3128,7 @@ fn program_cache_stats() {
         .unwrap();
 
     assert_eq!(
-        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_entry.stats.uses.load(Ordering::Relaxed),
         noop_tx_usage,
         "noop_tx_usage matches"
     );

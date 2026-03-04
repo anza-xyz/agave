@@ -135,7 +135,17 @@ pub(crate) fn process_instruction_inner<'a>(
             ic_logger_msg!(log_collector, "Program is not deployed");
             Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>)
         }
-        ProgramCacheEntryType::Loaded(executable) => execute(executable, invoke_context),
+        ProgramCacheEntryType::Loaded(executable) => {
+            let mut timer = Measure::start("execute");
+            let result = execute(executable, invoke_context);
+            timer.stop();
+            if executable.get_compiled_program().is_some() {
+                executor.stats.jit_executed(timer.as_us());
+            } else {
+                executor.stats.interpreter_executed(timer.as_us());
+            }
+            result
+        }
         _ => Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>),
     }
     .map(|_| 0)
@@ -1229,8 +1239,8 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_instruction::{AccountMeta, error::InstructionError},
         solana_program_runtime::{
-            invoke_context::mock_process_instruction, vm::calculate_heap_cost,
-            with_mock_invoke_context,
+            invoke_context::mock_process_instruction, loaded_programs::ProgramStatistics,
+            vm::calculate_heap_cost, with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
@@ -3435,13 +3445,17 @@ mod tests {
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
         let env = Arc::new(BuiltinProgram::new_mock());
+        let stats = ProgramStatistics {
+            uses: 100.into(),
+            ..Default::default()
+        };
         let program = ProgramCacheEntry {
             program: ProgramCacheEntryType::Unloaded(env),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             account_size: 0,
             deployment_slot: 0,
             effective_slot: 0,
-            tx_usage_counter: Arc::new(AtomicU64::new(100)),
+            stats: stats.into(),
             latest_access_slot: AtomicU64::new(0),
         };
         invoke_context
@@ -3462,10 +3476,7 @@ mod tests {
             .expect("Didn't find upgraded program in the cache");
 
         assert_eq!(updated_program.deployment_slot, 2);
-        assert_eq!(
-            updated_program.tx_usage_counter.load(Ordering::Relaxed),
-            100
-        );
+        assert_eq!(updated_program.stats.uses.load(Ordering::Relaxed), 100);
     }
 
     #[test]
@@ -3477,13 +3488,17 @@ mod tests {
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
         let env = Arc::new(BuiltinProgram::new_mock());
+        let stats = ProgramStatistics {
+            uses: 100.into(),
+            ..Default::default()
+        };
         let program = ProgramCacheEntry {
             program: ProgramCacheEntryType::Unloaded(env),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             account_size: 0,
             deployment_slot: 0,
             effective_slot: 0,
-            tx_usage_counter: Arc::new(AtomicU64::new(100)),
+            stats: stats.into(),
             latest_access_slot: AtomicU64::new(0),
         };
         invoke_context
@@ -3505,6 +3520,6 @@ mod tests {
             .expect("Didn't find upgraded program in the cache");
 
         assert_eq!(program2.deployment_slot, 2);
-        assert_eq!(program2.tx_usage_counter.load(Ordering::Relaxed), 0);
+        assert_eq!(program2.stats.uses.load(Ordering::Relaxed), 0);
     }
 }
