@@ -5411,15 +5411,13 @@ impl AccountsDb {
 
         // If there are any reclaims then they should be handled. Reclaims affect
         // all storages, and may result in the removal of dead storages.
-        let mut handle_reclaims_us = 0;
-
         // since reclaims only contains non-empty SlotList<AccountInfo>, we
         // should skip handle_reclaims only when reclaims is empty. No need to
         // check the elements of reclaims are empty.
+        let handle_reclaims_time = Measure::start("handle_reclaims");
         if !reclaims.is_empty() {
             let reclaims_len = reclaims.iter().map(|r| r.len()).sum::<usize>();
             let purge_stats = PurgeStats::default();
-            let handle_reclaims_time = Measure::start("handle_reclaims");
             self.handle_reclaims(
                 reclaims.iter().flatten(),
                 None,
@@ -5427,7 +5425,6 @@ impl AccountsDb {
                 &purge_stats,
                 MarkAccountsObsolete::Yes(slot),
             );
-            handle_reclaims_us = handle_reclaims_time.end_as_us();
             stats.num_obsolete_slots_removed.fetch_add(
                 purge_stats.num_stored_slots_removed.load(Ordering::Relaxed),
                 Ordering::Relaxed,
@@ -5441,10 +5438,8 @@ impl AccountsDb {
             stats
                 .num_reclaims
                 .fetch_add(reclaims_len as u64, Ordering::Relaxed);
-            stats
-                .handle_reclaims_us
-                .fetch_add(handle_reclaims_us, Ordering::Relaxed);
         }
+        let handle_reclaims_us = handle_reclaims_time.end_as_us();
 
         stats
             .write_to_storage_us
@@ -5455,6 +5450,9 @@ impl AccountsDb {
         stats
             .mark_zero_lamport_single_ref_accounts_us
             .fetch_add(mark_zero_lamport_us, Ordering::Relaxed);
+        stats
+            .handle_reclaims_us
+            .fetch_add(handle_reclaims_us, Ordering::Relaxed);
         stats
             .num_accounts_stored
             .fetch_add(num_accounts_stored as u64, Ordering::Relaxed);
