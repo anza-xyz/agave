@@ -66,27 +66,27 @@ solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
-agave-reserved-account-keys = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 itertools = { workspace = true }
 rand = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-compute-budget-instruction = { workspace = true, features = [
+solana-compute-budget-instruction = { path = "../compute-budget-instruction", features = [
     "dev-context-only-utils",
 ] }
 solana-compute-budget-interface = { workspace = true }
-solana-compute-budget-program = { workspace = true }
+solana-compute-budget-program = { path = "../programs/compute-budget", features = ["agave-unstable-api"] }
 solana-cost-model = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-runtime-transaction = { workspace = true, features = [
+solana-runtime-transaction = { path = "../runtime-transaction", features = [
     "dev-context-only-utils",
 ] }
 solana-signer = { workspace = true }
-solana-system-program = { workspace = true }
+solana-system-program = { path = "../programs/system", features = ["agave-unstable-api"] }
 solana-system-transaction = { workspace = true }
-solana-vote = { workspace = true }
+solana-vote = { path = "../vote", features = ["agave-unstable-api"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 

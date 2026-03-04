@@ -103,7 +103,7 @@ tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["codec", "compat"] }
 
 [dev-dependencies]
-agave-reserved-account-keys = { workspace = true }
+agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 serial_test = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-cluster-type = { workspace = true }
@@ -111,22 +111,22 @@ solana-compute-budget-interface = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-instruction = { workspace = true }
-solana-net-utils = { workspace = true }
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-program-option = { workspace = true }
-solana-program-runtime = { workspace = true }
+solana-program-runtime = { path = "../program-runtime", features = ["agave-unstable-api"] }
 solana-rent = { workspace = true }
 solana-rpc = { path = ".", features = ["dev-context-only-utils"] }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-runtime-transaction = { workspace = true, features = [
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }
+solana-runtime-transaction = { path = "../runtime-transaction", features = [
     "dev-context-only-utils",
 ] }
 solana-sdk-ids = { workspace = true }
-solana-send-transaction-service = { workspace = true, features = ["dev-context-only-utils"] }
+solana-send-transaction-service = { path = "../send-transaction-service", features = ["dev-context-only-utils"] }
 solana-sha256-hasher = { workspace = true }
 solana-stake-interface = { workspace = true }
-solana-svm-log-collector = { workspace = true }
+solana-svm-log-collector = { path = "../svm-log-collector", features = ["agave-unstable-api"] }
 solana-vote-interface = { workspace = true }
 spl-pod = { workspace = true }
 symlink = { workspace = true }

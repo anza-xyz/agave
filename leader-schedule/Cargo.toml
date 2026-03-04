@@ -32,7 +32,7 @@ bs58 = { workspace = true, features = ["alloc"] }
 rand = { workspace = true }
 sha2 = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-vote = { workspace = true, features = ["dev-context-only-utils"] }
+solana-vote = { path = "../vote", features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [lints]

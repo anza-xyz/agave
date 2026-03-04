@@ -42,8 +42,8 @@ tokio = { workspace = true, features = ["full"] }
 tokio-serde = { workspace = true, features = ["bincode"] }
 
 [dev-dependencies]
-solana-banks-server = { workspace = true }
+solana-banks-server = { path = "../banks-server", features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }

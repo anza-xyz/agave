@@ -90,9 +90,9 @@ assert_matches = { workspace = true }
 fs_extra = { workspace = true }
 gag = { workspace = true }
 serial_test = { workspace = true }
-solana-core = { workspace = true, features = ["dev-context-only-utils"] }
-solana-download-utils = { workspace = true }
-solana-genesis-utils = { workspace = true }
-solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
+solana-core = { path = "../core", features = ["dev-context-only-utils"] }
+solana-download-utils = { path = "../download-utils", features = ["agave-unstable-api"] }
+solana-genesis-utils = { path = "../genesis-utils", features = ["agave-unstable-api"] }
+solana-ledger = { path = "../ledger", features = ["dev-context-only-utils"] }
 solana-local-cluster = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }

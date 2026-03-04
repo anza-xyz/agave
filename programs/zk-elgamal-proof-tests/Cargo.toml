@@ -13,11 +13,11 @@ agave-unstable-api = []
 [dev-dependencies]
 bytemuck = { workspace = true }
 solana-account = { workspace = true }
-solana-compute-budget = { workspace = true }
+solana-compute-budget = { path = "../../compute-budget", features = ["agave-unstable-api"] }
 solana-compute-budget-interface = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
-solana-program-test = { workspace = true }
+solana-program-test = { path = "../../program-test", features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }

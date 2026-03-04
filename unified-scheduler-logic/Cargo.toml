@@ -24,7 +24,7 @@ unwrap_none = { workspace = true }
 [dev-dependencies]
 solana-instruction = { workspace = true }
 solana-message = { workspace = true }
-solana-runtime-transaction = { workspace = true, features = [
+solana-runtime-transaction = { path = "../runtime-transaction", features = [
     "dev-context-only-utils",
 ] }
 test-case = { workspace = true }
