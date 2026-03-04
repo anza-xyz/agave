@@ -52,6 +52,7 @@ EOF
 
 maybeRustVersion=
 RUSTFLAGS="-C target-cpu=native"
+RUST_REED_SOLOMON_ERASURE_ARCH="native"
 installDir=
 # buildProfileArg and buildProfile duplicate some information because cargo
 # doesn't allow '--profile debug' but we still need to know that the binaries
@@ -85,6 +86,7 @@ while [[ -n $1 ]]; do
       shift
     elif [[ $1 = --native ]]; then
       export RUSTFLAGS
+      export RUST_REED_SOLOMON_ERASURE_ARCH
       shift
     elif [[ $1 = --no-build-dcou-bins ]]; then
       noBuildDCOUBins=true
