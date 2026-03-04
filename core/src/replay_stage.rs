@@ -87,7 +87,7 @@ use {
         leader_schedule_utils::first_of_consecutive_leader_slots,
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_controller::SnapshotController,
-        vote_sender_types::ReplayVoteSender,
+        vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
     solana_signer::Signer,
     solana_svm_timings::ExecuteTimings,
@@ -3307,6 +3307,7 @@ impl ReplayStage {
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
         transaction_status_sender: Option<&TransactionStatusSender>,
+        replay_vote_sender: &ReplayVoteSender,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
         rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
@@ -3408,6 +3409,12 @@ impl ReplayStage {
                     }
                     res
                 };
+                // we send this whether the block was valid or not. It's only
+                // used to release buffered votes if any.
+                let _ = replay_vote_sender.send(ReplayVoteMessage::BankComplete {
+                    replay_bank_id: bank.bank_id(),
+                    replay_slot: bank.slot(),
+                });
                 if let Err(err) = replay_err.or(verify_err) {
                     let root = bank_forks.read().unwrap().root();
                     Self::mark_dead_slot(
@@ -3426,7 +3433,6 @@ impl ReplayStage {
                     // don't try to run the remaining normal processing for the completed bank
                     continue;
                 }
-
                 let is_leader_block = bank.leader_id() == my_pubkey;
                 let block_id = if !is_leader_block {
                     // If the block does not have at least DATA_SHREDS_PER_FEC_BLOCK correctly retransmitted
@@ -3735,6 +3741,7 @@ impl ReplayStage {
             bank_forks,
             progress,
             transaction_status_sender,
+            replay_vote_sender,
             bank_notification_sender,
             rpc_subscriptions,
             slot_status_notifier,
