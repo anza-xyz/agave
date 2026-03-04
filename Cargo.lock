@@ -144,7 +144,6 @@ name = "agave-install"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-logger",
- "atty",
  "bincode",
  "bzip2",
  "chrono",
