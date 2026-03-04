@@ -27,6 +27,8 @@ dlopen2 = { workspace = true }
 log = { workspace = true }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
+smallvec = { workspace = true }
+solana-address = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
 solana-hash = { workspace = true, features = ["wincode"] }

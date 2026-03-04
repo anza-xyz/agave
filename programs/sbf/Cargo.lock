@@ -6764,6 +6764,8 @@ dependencies = [
  "log",
  "num_cpus",
  "rayon",
+ "smallvec",
+ "solana-address 2.2.0",
  "solana-bls-signatures",
  "solana-clock",
  "solana-hash 4.2.0",
