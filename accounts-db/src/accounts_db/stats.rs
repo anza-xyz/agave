@@ -105,6 +105,7 @@ impl StoreAccountsUnfrozenStats {
 #[derive(Debug, Default)]
 pub struct StoreAccountsFrozenStats {
     pub last_report: AtomicInterval,
+    pub flush_read_cache_us: AtomicU64,
     pub write_to_storage_us: AtomicU64,
     pub update_index_us: AtomicU64,
     pub mark_zero_lamport_single_ref_accounts_us: AtomicU64,
@@ -127,6 +128,11 @@ impl StoreAccountsFrozenStats {
 
         datapoint_info!(
             "accounts_db_store_accounts_frozen",
+            (
+                "flush_read_cache_us",
+                self.flush_read_cache_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
             (
                 "write_to_storage_us",
                 self.write_to_storage_us.swap(0, Ordering::Relaxed),

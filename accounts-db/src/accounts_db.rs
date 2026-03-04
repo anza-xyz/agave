@@ -5376,6 +5376,7 @@ impl AccountsDb {
         let stats = &self.store_accounts_frozen_stats;
 
         // Flush the read cache if necessary. This will occur during shrink or clean
+        let flush_read_cache_time = Measure::start("flush_read_cache");
         if self.read_only_accounts_cache.can_slot_be_in_cache(slot) {
             (0..accounts.len()).for_each(|index| {
                 // based on the patterns of how a validator writes accounts, it is almost always the case that there is no read only cache entry
@@ -5384,6 +5385,7 @@ impl AccountsDb {
                     .remove_assume_not_present(accounts.pubkey(index));
             });
         }
+        let flush_read_cache_us = flush_read_cache_time.end_as_us();
 
         // Write the accounts to storage
         let write_accounts_time = Measure::start("write_accounts");
@@ -5441,6 +5443,9 @@ impl AccountsDb {
         }
         let handle_reclaims_us = handle_reclaims_time.end_as_us();
 
+        stats
+            .flush_read_cache_us
+            .fetch_add(flush_read_cache_us, Ordering::Relaxed);
         stats
             .write_to_storage_us
             .fetch_add(write_accounts_us, Ordering::Relaxed);
