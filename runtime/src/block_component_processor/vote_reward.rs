@@ -68,7 +68,6 @@ impl VoteRewardAccountState {
     /// such this function is called with [`additional_validator_rewards`] which should be the
     /// total rewards that will be paid by PER and we use the capitalization from the previous
     /// epoch plus this value to compute the vote rewards.
-    #[allow(dead_code)] // TODO(akhi): caller not yet upstreamed
     pub(crate) fn new_epoch_update_account(
         bank: &Bank,
         prev_epoch: Epoch,
@@ -90,7 +89,6 @@ impl VoteRewardAccountState {
     }
 
     /// Returns the amount of lamports needed to store this account.
-    #[allow(dead_code)] // TODO(akhi): caller not yet upstreamed
     #[cfg(test)]
     pub(crate) fn rent_needed_for_account(bank: &Bank) -> u64 {
         let state = Self {

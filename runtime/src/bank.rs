@@ -43,6 +43,7 @@ use {
             },
         },
         bank_forks::BankForks,
+        block_component_processor::vote_reward::VoteRewardAccountState,
         epoch_stakes::{
             BLSPubkeyToRankMap, DeserializableVersionedEpochStakes, NodeVoteAccounts,
             VersionedEpochStakes,
@@ -1424,6 +1425,7 @@ impl Bank {
                     parent.epoch(),
                     parent.slot(),
                     parent.block_height(),
+                    parent.capitalization(),
                     reward_calc_tracer,
                 );
             } else {
@@ -1715,6 +1717,7 @@ impl Bank {
         &mut self,
         parent_epoch: Epoch,
         parent_slot: Slot,
+        parent_capitalization: u64,
         parent_height: u64,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
     ) {
@@ -1755,12 +1758,19 @@ impl Bank {
 
         // Distribute rewards commission to vote accounts and cache stake rewards
         // for partitioned distribution in the upcoming slots.
-        self.begin_partitioned_rewards(
+        let epoch_validator_rewards = self.begin_partitioned_rewards(
             parent_epoch,
             parent_slot,
             parent_height,
             &rewards_calculation,
             &rewards_metrics,
+        );
+
+        VoteRewardAccountState::new_epoch_update_account(
+            self,
+            parent_epoch,
+            parent_capitalization,
+            epoch_validator_rewards,
         );
 
         report_new_epoch_metrics(

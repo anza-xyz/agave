@@ -825,7 +825,8 @@ where
     let paid_rewards = bank2.capitalization()
         - bank0.capitalization()
         - bank1_sysvar_delta()
-        - bank2_sysvar_delta();
+        - bank2_sysvar_delta()
+        - VoteRewardAccountState::rent_needed_for_account(&bank2);
 
     // this assumes that no new builtins or precompiles were activated in bank1 or bank2
     let EpochInflationRewards {
@@ -5416,7 +5417,7 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "HvCfM9MQCvCDH4zW39G7UqKDB4PLR5GaqVSf9Jfe5XnS"
+                    "6YZHxunbw5NzawDhMohwXw6HbbufyvHehByuMQrXm7nH"
                 } else {
                     "6h1KzSuTW6MwkgjtEbrv6AyUZ2NHtSxCQi8epjHDFYh8"
                 },
@@ -5427,7 +5428,7 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "GS2G4uVus4U97woniYLW1f2BWqoZFGFrpSQXto7PnjTT"
+                    "HvAzBS4rCKzcMFFVgKQ1embzxQBx5w8z7c3qp56knJrW"
                 } else {
                     "4GX3883TVK7SQfbPUHem4HXcqdHU2DZVAB6yEXspn2qe"
                 },
