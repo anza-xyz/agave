@@ -48,20 +48,22 @@ impl<W: io::Write> SizeLimitedWriter<W> {
 }
 
 impl<W: io::Write> io::Write for SizeLimitedWriter<W> {
-    #[allow(clippy::arithmetic_side_effects)]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let attempted_size = self.bytes_written + buf.len() as FileSize;
-        if attempted_size > self.limit {
+        let attempted_size = self.bytes_written.checked_add(buf.len() as FileSize);
+        if attempted_size.is_none_or(|size| size > self.limit) {
             return Err(io::Error::new(
                 io::ErrorKind::FileTooLarge,
                 format!(
-                    "attempted to write {attempted_size} bytes, which exceeds the limit of {}",
-                    self.limit
+                    "write of {} bytes would exceed limit of {} ({} already written)",
+                    buf.len(),
+                    self.limit,
+                    self.bytes_written,
                 ),
             ));
         }
         let n = self.inner.write(buf)?;
-        self.bytes_written += n as FileSize;
+        // `n` should never be > buf.len() per `write` contract and overflow was already checked above
+        self.bytes_written = self.bytes_written.wrapping_add(n as FileSize);
         Ok(n)
     }
     fn flush(&mut self) -> io::Result<()> {
