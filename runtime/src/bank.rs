@@ -4335,6 +4335,7 @@ impl Bank {
         self.ns_per_slot = self
             .ns_per_slot
             .saturating_div(u128::from(HALVE_SLOT_TIMES_DIVISOR));
+        self.blockhash_queue.write().unwrap().double_max_age();
         self.slots_per_year *= HALVE_SLOT_TIMES_MULTIPLIER;
         self.rent_collector.slots_per_year *= HALVE_SLOT_TIMES_MULTIPLIER;
         if let Some(hashes_per_tick) = self.hashes_per_tick {

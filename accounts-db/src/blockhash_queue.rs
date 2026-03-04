@@ -144,6 +144,10 @@ impl BlockhashQueue {
         #[allow(deprecated)]
         self.max_age
     }
+
+    pub fn double_max_age(&mut self) {
+        self.max_age = self.max_age.saturating_mul(2);
+    }
 }
 #[cfg(test)]
 mod tests {
