@@ -29,6 +29,7 @@ impl MaxFlushedRoot {
 
     /// Atomically update to the maximum of the current value and `slot`.
     /// Stores `slot + 1` internally so 0 can represent no slots flushed
+    /// Note: Will overflow at u64::MAX - 1, but realistically should never get that high
     fn fetch_max(&self, slot: Slot) {
         self.0.fetch_max(slot + 1, Ordering::Release);
     }
@@ -287,11 +288,11 @@ impl AccountsCache {
         self.cache.len()
     }
 
-    pub fn fetch_max_flush_root(&self) -> Option<u64> {
+    pub fn fetch_max_flush_root(&self) -> Option<Slot> {
         self.max_flushed_root.get()
     }
 
-    pub fn set_max_flush_root(&self, root: u64) {
+    pub fn set_max_flush_root(&self, root: Slot) {
         self.max_flushed_root.fetch_max(root);
     }
 }
