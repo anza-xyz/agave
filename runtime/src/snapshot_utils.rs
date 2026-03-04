@@ -709,7 +709,7 @@ fn serialize_obsolete_accounts(
 
     serde_snapshot::serialize_into(&mut file_stream, obsolete_accounts_map).map_err(|err| {
         IoError::other(format!(
-            "unable to serialize obsolete accounts to file ('{}') due to {err}",
+            "unable to serialize obsolete accounts to file '{}': {err}",
             obsolete_accounts_path.display(),
         ))
     })?;
@@ -799,7 +799,7 @@ where
         SizeLimitedWriter::new(large_file_buf_writer(data_file_path)?, maximum_file_size);
     serializer(&mut data_file_stream).map_err(|err| {
         IoError::other(format!(
-            "unable to serialize snapshot data to file ('{}') due to {err}",
+            "unable to serialize snapshot data to file '{}': {err}",
             data_file_path.display(),
         ))
     })?;
@@ -1831,7 +1831,7 @@ mod tests {
                 Ok(())
             },
         );
-        assert_matches!(result, Err(SnapshotError::Io(ref message)) if message.to_string().contains("exceeds the limit of"));
+        assert_matches!(result, Err(SnapshotError::Io(ref message)) if message.to_string().contains("bytes would exceed limit of"));
     }
 
     #[test]
@@ -2656,7 +2656,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "exceeds the limit of 100")]
+    #[should_panic(expected = "bytes would exceed limit of 100")]
     fn test_serialize_obsolete_accounts_too_large_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let bank_snapshot_dir = temp_dir.path();
