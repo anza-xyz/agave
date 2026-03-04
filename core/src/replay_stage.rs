@@ -3391,13 +3391,21 @@ impl ReplayStage {
                     Ok(())
                 };
                 let verify_err = {
-                    let mut elapsed = 0;
+                    let mut poh_verify_elapsed = 0;
+                    let mut tx_verify_elapsed = 0;
                     let res = bank_progress
                         .replay_progress
                         .write()
                         .unwrap()
-                        .wait_for_all_verification_results(&mut elapsed);
-                    replay_stats.write().unwrap().poh_verify_elapsed += elapsed;
+                        .wait_for_all_verification_results(
+                            &mut poh_verify_elapsed,
+                            &mut tx_verify_elapsed,
+                        );
+                    {
+                        let mut stats = replay_stats.write().unwrap();
+                        stats.poh_verify_elapsed += poh_verify_elapsed;
+                        stats.transaction_verify_elapsed += tx_verify_elapsed;
+                    }
                     res
                 };
                 if let Err(err) = replay_err.or(verify_err) {
@@ -5427,17 +5435,21 @@ pub(crate) mod tests {
                 &MigrationStatus::default(),
             )
             .and_then(|replay_tx_count| {
-                let mut elapsed = 0;
+                let mut poh_verify_elapsed = 0;
+                let mut tx_verify_elapsed = 0;
                 bank1_progress
                     .replay_progress
                     .write()
                     .unwrap()
-                    .wait_for_all_verification_results(&mut elapsed)?;
-                bank1_progress
-                    .replay_stats
-                    .write()
-                    .unwrap()
-                    .poh_verify_elapsed += elapsed;
+                    .wait_for_all_verification_results(
+                        &mut poh_verify_elapsed,
+                        &mut tx_verify_elapsed,
+                    )?;
+                {
+                    let mut stats = bank1_progress.replay_stats.write().unwrap();
+                    stats.poh_verify_elapsed += poh_verify_elapsed;
+                    stats.transaction_verify_elapsed += tx_verify_elapsed;
+                }
                 Ok(replay_tx_count)
             });
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
