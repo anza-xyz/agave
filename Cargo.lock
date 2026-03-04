@@ -11701,7 +11701,6 @@ dependencies = [
  "solana-svm-feature-set",
  "solana-system-interface 3.1.0",
  "solana-system-program",
- "solana-transaction",
  "solana-transaction-context",
  "solana-vote-interface",
  "solana-vote-program",

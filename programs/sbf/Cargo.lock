@@ -10374,7 +10374,6 @@ dependencies = [
  "solana-sdk-ids",
  "solana-slot-hashes",
  "solana-system-interface 3.1.0",
- "solana-transaction",
  "solana-transaction-context",
  "solana-vote-interface",
 ]

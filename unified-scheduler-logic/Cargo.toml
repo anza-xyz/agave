@@ -17,7 +17,7 @@ assert_matches = { workspace = true }
 solana-clock = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime-transaction = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["wincode"] }
 static_assertions = { workspace = true }
 unwrap_none = { workspace = true }
 
