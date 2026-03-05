@@ -3,7 +3,7 @@ use {
         ArchiveFormat, Result, SnapshotArchiveKind, error::ArchiveSnapshotPackageError, paths,
         snapshot_archive_info::SnapshotArchiveInfo, snapshot_hash::SnapshotHash,
     },
-    agave_fs::buffered_writer::large_file_buf_writer,
+    agave_fs::buffered_writer::{AtomicPathFinalizer, large_file_buf_writer},
     log::info,
     solana_accounts_db::{
         account_storage::AccountStoragesOrderer, account_storage_entry::AccountStorageEntry,
@@ -88,7 +88,7 @@ pub fn archive_snapshot(
     ));
 
     {
-        let archive_writer = large_file_buf_writer(&staging_archive_path)
+        let archive_writer = AtomicPathFinalizer::new(&staging_archive_path, large_file_buf_writer)
             .map_err(|err| E::CreateArchiveFile(err, staging_archive_path.clone()))?;
 
         let do_archive_files = |encoder: &mut dyn Write| -> std::result::Result<(), E> {
