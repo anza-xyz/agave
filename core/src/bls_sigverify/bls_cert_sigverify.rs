@@ -75,7 +75,7 @@ fn verify_certs(
     let verified = certs
         .into_par_iter()
         .filter_map(|cert| {
-            if root_bank.slot().saturating_add(NUM_SLOTS_FOR_VERIFY) <= cert.cert_type.slot() {
+            if cert.cert_type.slot() <= root_bank.slot().saturating_add(NUM_SLOTS_FOR_VERIFY) {
                 let res = verify_cert(&cert, root_bank);
                 Some((cert, res))
             } else {

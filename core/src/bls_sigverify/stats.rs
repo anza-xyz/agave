@@ -8,6 +8,7 @@ use {
 const STATS_INTERVAL_DURATION: Duration = Duration::from_secs(1);
 
 /// Stats for the sigverifier.
+#[derive(Debug)]
 pub(super) struct SigVerifierStats {
     /// Stats for sigverifying votes.
     pub(super) vote_stats: SigVerifyVoteStats,
@@ -147,7 +148,7 @@ impl SigVerifierStats {
 }
 
 /// Stats from sigverifying certs.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(super) struct SigVerifyCertStats {
     /// Number of certs [`verify_and_send_certificates`] was requested to verify the signature of.
     pub(super) certs_to_sig_verify: u64,
@@ -232,7 +233,7 @@ impl SigVerifyCertStats {
 }
 
 /// Stats from sigverifying votes.
-#[derive(Default)]
+#[derive(Debug, Default)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(super) struct SigVerifyVoteStats {
     /// Number of votes [`verify_and_send_votes`] was requested to verify the signature of.
