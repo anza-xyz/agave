@@ -3,8 +3,12 @@ use qualifier_attr::qualifiers;
 use {
     super::{errors::SigVerifyVoteError, stats::SigVerifyVoteStats},
     crate::{
-        bls_sigverify::utils::{
-            send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
+        bls_sigverify::{
+            bls_sigverifier::NUM_SLOTS_FOR_VERIFY,
+            utils::{
+                send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair,
+                send_votes_to_rewards,
+            },
         },
         cluster_info_vote_listener::VerifiedVoterSlotsSender,
     },
@@ -27,7 +31,7 @@ use {
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
-    solana_measure::measure::Measure,
+    solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     std::collections::HashMap,
@@ -76,7 +80,7 @@ pub(super) fn verify_and_send_votes(
         return Ok(stats);
     }
     stats.votes_to_sig_verify += votes_to_verify.len() as u64;
-    let verified_votes = verify_votes(votes_to_verify, &mut stats);
+    let verified_votes = verify_votes(root_bank, votes_to_verify, &mut stats);
     stats.sig_verified_votes += verified_votes.len() as u64;
 
     let (votes_for_pool, msgs_for_repair, msg_for_reward, msg_for_metrics) =
@@ -169,23 +173,37 @@ fn process_verified_votes(
 
 /// Sig verifies `votes_to_verify` and returns a `Vec` of votes that passed verification.
 fn verify_votes(
+    root_bank: &Bank,
     votes_to_verify: Vec<VotePayload>,
     stats: &mut SigVerifyVoteStats,
 ) -> Vec<VotePayload> {
+    // Filter votes too far in the future.
+    let len_before = votes_to_verify.len();
+    let votes_to_verify = votes_to_verify
+        .into_iter()
+        .filter(|v| {
+            v.vote_message.vote.slot() <= root_bank.slot().saturating_add(NUM_SLOTS_FOR_VERIFY)
+        })
+        .collect::<Vec<_>>();
+    let num_discarded = len_before - votes_to_verify.len();
+    stats.too_far_in_future = stats.too_far_in_future.saturating_add(num_discarded as u64);
+
     // Try optimistic verification - fast to verify, but cannot identify invalid votes
     if verify_votes_optimistic(&votes_to_verify, stats) {
         return votes_to_verify;
     }
 
     // Fallback to individual verification
-    verify_individual_votes(votes_to_verify, stats)
+    let (verified_votes, time_us) = measure_us!(verify_individual_votes(votes_to_verify));
+    stats
+        .fn_verify_individual_votes_stats
+        .increment(time_us)
+        .unwrap();
+    verified_votes
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-fn verify_votes_optimistic(
-    votes_to_verify: &[VotePayload],
-    stats: &mut SigVerifyVoteStats,
-) -> bool {
+fn verify_votes_optimistic(votes: &[VotePayload], stats: &mut SigVerifyVoteStats) -> bool {
     let mut measure = Measure::start("verify_votes_optimistic");
 
     // For BLS verification, minimizing the expensive pairing operation is key.
@@ -201,8 +219,8 @@ fn verify_votes_optimistic(
     // Assuming that sigverifier's dedicated thread pool was used to call this function, the
     // following should run on that thread pool.
     let (signature_result, (distinct_payloads, pubkeys_result)) = rayon::join(
-        || aggregate_signatures(votes_to_verify),
-        || aggregate_pubkeys_by_payload(votes_to_verify, stats),
+        || aggregate_signatures(votes),
+        || aggregate_pubkeys_by_payload(votes, stats),
     );
 
     let Ok(aggregate_signature) = signature_result else {
@@ -295,23 +313,11 @@ fn aggregate_pubkeys_by_payload(
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-fn verify_individual_votes(
-    votes_to_verify: Vec<VotePayload>,
-    stats: &mut SigVerifyVoteStats,
-) -> Vec<VotePayload> {
-    let mut measure = Measure::start("verify_individual_votes");
-
+fn verify_individual_votes(votes_to_verify: Vec<VotePayload>) -> Vec<VotePayload> {
     // Assuming that sigverifier's dedicated thread pool was used to call this function, the
     // following should run on that thread pool.
-    let verified_votes = votes_to_verify
+    votes_to_verify
         .into_par_iter()
         .filter_map(|vote| vote.verify())
-        .collect();
-
-    measure.stop();
-    stats
-        .fn_verify_individual_votes_stats
-        .increment(measure.as_us())
-        .unwrap();
-    verified_votes
+        .collect()
 }

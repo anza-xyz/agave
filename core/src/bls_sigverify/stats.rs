@@ -158,6 +158,8 @@ pub(super) struct SigVerifyCertStats {
     pub(super) stake_verification_failed: u64,
     /// Number of times signature verification failed on a cert.
     pub(super) signature_verification_failed: u64,
+    /// Number of times the cert was too far in the future and discarded.
+    pub(super) too_far_in_future: u64,
 
     /// Number of votes sent successfully over the channel to consensus pool.
     pub(super) pool_sent: u64,
@@ -175,6 +177,7 @@ impl SigVerifyCertStats {
             sig_verified_certs,
             stake_verification_failed,
             signature_verification_failed,
+            too_far_in_future,
             pool_sent,
             pool_channel_full,
             fn_verify_and_send_certs_stats,
@@ -183,6 +186,7 @@ impl SigVerifyCertStats {
         self.sig_verified_certs += sig_verified_certs;
         self.stake_verification_failed += stake_verification_failed;
         self.signature_verification_failed += signature_verification_failed;
+        self.too_far_in_future += too_far_in_future;
         self.pool_sent += pool_sent;
         self.pool_channel_full += pool_channel_full;
         self.fn_verify_and_send_certs_stats
@@ -195,6 +199,7 @@ impl SigVerifyCertStats {
             sig_verified_certs,
             stake_verification_failed,
             signature_verification_failed,
+            too_far_in_future,
             pool_sent,
             pool_channel_full,
             fn_verify_and_send_certs_stats,
@@ -209,6 +214,7 @@ impl SigVerifyCertStats {
                 *signature_verification_failed,
                 i64
             ),
+            ("too_far_in_future", *too_far_in_future, i64),
             ("pool_sent", *pool_sent, i64),
             ("pool_channel_full", *pool_channel_full, i64),
             (
@@ -233,6 +239,9 @@ pub(super) struct SigVerifyVoteStats {
     pub(super) votes_to_sig_verify: u64,
     /// Number of votes [`verify_and_send_votes`] successfully verified the signature of.
     pub(super) sig_verified_votes: u64,
+
+    /// Number of times the cert was too far in the future and discarded.
+    pub(super) too_far_in_future: u64,
 
     /// Number of votes sent successfully over the channel to metrics.
     pub(super) metrics_sent: u64,
@@ -265,8 +274,9 @@ pub(super) struct SigVerifyVoteStats {
 impl SigVerifyVoteStats {
     pub(super) fn merge(&mut self, other: Self) {
         let Self {
-            votes_to_sig_verify: votes_to_verify,
-            sig_verified_votes: verified_votes,
+            votes_to_sig_verify,
+            sig_verified_votes,
+            too_far_in_future,
             metrics_sent,
             metrics_channel_full,
             rewards_sent,
@@ -277,11 +287,12 @@ impl SigVerifyVoteStats {
             pool_channel_full,
             fn_verify_and_send_votes_stats,
             fn_verify_votes_optimistic_stats,
-            fn_verify_individual_votes_stats: fn_verify_individual_votes,
+            fn_verify_individual_votes_stats,
             distinct_votes_stats,
         } = other;
-        self.votes_to_sig_verify += votes_to_verify;
-        self.sig_verified_votes += verified_votes;
+        self.votes_to_sig_verify += votes_to_sig_verify;
+        self.sig_verified_votes += sig_verified_votes;
+        self.too_far_in_future += too_far_in_future;
         self.metrics_sent += metrics_sent;
         self.metrics_channel_full += metrics_channel_full;
         self.rewards_sent += rewards_sent;
@@ -295,7 +306,7 @@ impl SigVerifyVoteStats {
         self.fn_verify_votes_optimistic_stats
             .merge(&fn_verify_votes_optimistic_stats);
         self.fn_verify_individual_votes_stats
-            .merge(&fn_verify_individual_votes);
+            .merge(&fn_verify_individual_votes_stats);
         self.distinct_votes_stats.merge(&distinct_votes_stats);
     }
 
@@ -303,6 +314,7 @@ impl SigVerifyVoteStats {
         let Self {
             votes_to_sig_verify,
             sig_verified_votes,
+            too_far_in_future,
             metrics_sent,
             metrics_channel_full,
             rewards_sent,
@@ -320,6 +332,7 @@ impl SigVerifyVoteStats {
             "bls_vote_sigverify_stats",
             ("votes_to_sig_verify", *votes_to_sig_verify, i64),
             ("sig_verified_votes", *sig_verified_votes, i64),
+            ("too_far_in_future", *too_far_in_future, i64),
             ("metrics_sent", *metrics_sent, i64),
             ("metrics_channel_full", *metrics_channel_full, i64),
             ("rewards_sent", *rewards_sent, i64),

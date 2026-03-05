@@ -1,6 +1,6 @@
 use {
     super::{errors::SigVerifyCertError, stats::SigVerifyCertStats},
-    crate::bls_sigverify::utils::send_certs_to_pool,
+    crate::bls_sigverify::{bls_sigverifier::NUM_SLOTS_FOR_VERIFY, utils::send_certs_to_pool},
     agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
     agave_votor_messages::{
         consensus_message::{Certificate, CertificateType, ConsensusMessage},
@@ -35,7 +35,7 @@ enum CertVerifyError {
 pub(super) fn verify_and_send_certificates(
     verified_certs_set: &mut HashSet<CertificateType>,
     certs: Vec<Certificate>,
-    bank: &Bank,
+    root_bank: &Bank,
     channel_to_pool: &Sender<Vec<ConsensusMessage>>,
 ) -> Result<SigVerifyCertStats, SigVerifyCertError> {
     for cert in certs.iter() {
@@ -49,7 +49,7 @@ pub(super) fn verify_and_send_certificates(
     }
 
     stats.certs_to_sig_verify += certs.len() as u64;
-    let messages = verify_certs(certs, bank, verified_certs_set, &mut stats);
+    let messages = verify_certs(certs, root_bank, verified_certs_set, &mut stats);
     stats.sig_verified_certs += messages.len() as u64;
     send_certs_to_pool(messages, channel_to_pool, &mut stats)?;
 
@@ -67,17 +67,24 @@ pub(super) fn verify_and_send_certificates(
 /// Returns a Vec of [`ConsensusMessage`] constructed from the valid certs.
 fn verify_certs(
     certs: Vec<Certificate>,
-    bank: &Bank,
+    root_bank: &Bank,
     verified_certs_set: &mut HashSet<CertificateType>,
     stats: &mut SigVerifyCertStats,
 ) -> Vec<ConsensusMessage> {
+    let len_before = certs.len();
     let verified = certs
         .into_par_iter()
-        .map(|cert| {
-            let res = verify_cert(&cert, bank);
-            (cert, res)
+        .filter_map(|cert| {
+            if root_bank.slot().saturating_add(NUM_SLOTS_FOR_VERIFY) <= cert.cert_type.slot() {
+                let res = verify_cert(&cert, root_bank);
+                Some((cert, res))
+            } else {
+                None
+            }
         })
         .collect::<Vec<_>>();
+    let num_discarded = len_before - verified.len();
+    stats.too_far_in_future = stats.too_far_in_future.saturating_add(num_discarded as u64);
 
     verified
         .into_iter()
@@ -100,8 +107,8 @@ fn verify_certs(
         .collect()
 }
 
-fn verify_cert(cert: &Certificate, bank: &Bank) -> Result<(), CertVerifyError> {
-    let (aggregate_stake, total_stake) = bank.verify_certificate(cert)?;
+fn verify_cert(cert: &Certificate, root_bank: &Bank) -> Result<(), CertVerifyError> {
+    let (aggregate_stake, total_stake) = root_bank.verify_certificate(cert)?;
     debug_assert!(aggregate_stake <= total_stake);
     verify_stake(cert, aggregate_stake, total_stake)
 }

@@ -158,13 +158,12 @@ fn bench_verify_individual_votes(c: &mut Criterion) {
     for &batch_size in BATCH_SIZES {
         // Distinctness doesn't affect the cost of N individual verifications.
         let votes = generate_test_data(1, batch_size);
-        let mut stats = SigVerifyVoteStats::default();
         let label = format!("batch_{batch_size}");
 
         group.bench_function(&label, |b| {
             b.iter_batched(
                 || votes.clone(),
-                |votes| verify_individual_votes(black_box(votes), black_box(&mut stats)),
+                |votes| verify_individual_votes(black_box(votes)),
                 BatchSize::SmallInput,
             )
         });
