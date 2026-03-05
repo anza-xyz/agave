@@ -474,7 +474,6 @@ pub struct BankFieldsToDeserialize {
     pub(crate) block_height: u64,
     pub(crate) leader_id: Pubkey,
     pub(crate) fee_rate_governor: FeeRateGovernor,
-    pub(crate) rent_collector: RentCollector,
     pub(crate) epoch_schedule: EpochSchedule,
     pub(crate) inflation: Inflation,
     pub(crate) stakes: DeserializableStakes<Delegation>,
@@ -1881,6 +1880,17 @@ impl Bank {
             !epoch_stakes.is_empty(),
             "should be populated (from fields.versioned_epoch_stakes)"
         );
+        // The serialized rent collector is deprecated. Instead, reconstruct from fields plus
+        // the rent sysvar account state.
+        let rent = {
+            let rent_sysvar = bank_rc
+                .accounts
+                .load_with_fixed_root_do_not_populate_read_cache(&ancestors, &sysvar::rent::id())
+                .expect("snapshot must contain rent sysvar account")
+                .0;
+            from_account::<sysvar::rent::Rent, _>(&rent_sysvar)
+                .expect("snapshot must contain well-formed rent sysvar account")
+        };
         let stakes_accounts_load_duration = now.elapsed();
         let mut bank = Self {
             rc: bank_rc,
@@ -1911,8 +1921,12 @@ impl Bank {
             block_height: fields.block_height,
             leader_id: fields.leader_id,
             fee_rate_governor: fields.fee_rate_governor,
-            // clone()-ing is needed to consider a gated behavior in rent_collector
-            rent_collector: Self::get_rent_collector_from(&fields.rent_collector, fields.epoch),
+            rent_collector: RentCollector::new(
+                fields.epoch,
+                fields.epoch_schedule.clone(),
+                fields.slots_per_year,
+                rent,
+            ),
             epoch_schedule: fields.epoch_schedule,
             inflation: Arc::new(RwLock::new(fields.inflation)),
             stakes_cache: StakesCache::new(stakes),

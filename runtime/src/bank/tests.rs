@@ -6,6 +6,7 @@ use {
     },
     crate::{
         accounts_background_service::{PrunedBanksRequestHandler, SendDroppedBankCallback},
+        bank::BankRc,
         bank_client::BankClient,
         bank_forks::BankForks,
         genesis_utils::{
@@ -15,6 +16,8 @@ use {
             create_lockup_stake_account, genesis_sysvar_and_builtin_program_lamports,
             minimum_vote_account_balance_for_vat,
         },
+        runtime_config::RuntimeConfig,
+        serde_snapshot::fields_from_stream,
         stake_history::StakeHistory,
         stake_utils,
         stakes::InvalidCacheEntryReason,
@@ -129,7 +132,7 @@ use {
         collections::{BTreeMap, HashMap, HashSet},
         convert::TryInto,
         fs::File,
-        io::Read,
+        io::{Cursor, Read},
         str::FromStr,
         sync::{
             Arc,
@@ -12694,4 +12697,56 @@ fn test_temporary_account_recreated_execute_and_commit() {
 
     // Verify account exists with correct balance
     assert_eq!(bank.get_balance(&temp_account_pubkey), transfer_amount - 1);
+}
+
+/// Test that when loading a bank from snapshot, the rent in the rent collector
+/// is set from the rent sysvar account, not from the serialized bank fields.
+#[test]
+fn test_new_from_snapshot_uses_rent_from_sysvar() {
+    let (genesis_config, _mint_keypair) = create_genesis_config(100_000);
+    let expected_rent = genesis_config.rent.clone();
+    let wrong_rent = Rent {
+        lamports_per_byte: expected_rent.lamports_per_byte + 999_999,
+        ..Rent::default()
+    };
+
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.rent_collector.rent = wrong_rent.clone();
+
+    // Serialize bank to snapshot
+    let snapshot_storages = bank.get_snapshot_storages(None);
+    let mut buf = vec![];
+    crate::serde_snapshot::bank_to_stream(
+        &mut std::io::BufWriter::new(Cursor::new(&mut buf)),
+        &bank,
+        &snapshot_storages,
+    )
+    .unwrap();
+
+    // Deserialize fields and corrupt the rent
+    let mut reader = std::io::BufReader::new(Cursor::new(&buf));
+    let (mut fields, _accounts_db_fields) = fields_from_stream(&mut reader).unwrap();
+    let epoch_stakes = std::mem::take(&mut fields.versioned_epoch_stakes)
+        .into_iter()
+        .map(|(epoch, stakes)| (epoch, stakes.into()))
+        .collect();
+
+    // Reconstruct bank from corrupted fields
+    let new_bank = Bank::new_from_snapshot(
+        BankRc {
+            accounts: Arc::clone(&bank.rc.accounts),
+            parent: RwLock::new(None),
+            bank_id_generator: Arc::clone(&bank.rc.bank_id_generator),
+        },
+        &genesis_config,
+        Arc::new(RuntimeConfig::default()),
+        fields,
+        None,
+        bank.load_accounts_data_size(),
+        epoch_stakes,
+    );
+
+    // Verify the bank's rent matches the sysvar, NOT the corrupted fields
+    assert_eq!(new_bank.rent_collector.rent, expected_rent);
+    assert_ne!(new_bank.rent_collector.rent, wrong_rent);
 }
