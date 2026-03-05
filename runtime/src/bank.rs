@@ -1766,12 +1766,19 @@ impl Bank {
             &rewards_metrics,
         );
 
-        VoteRewardAccountState::new_epoch_update_account(
-            self,
-            parent_epoch,
-            parent_capitalization,
-            epoch_validator_rewards,
-        );
+        // the vote reward account state should be created at the epoch boundary in which we
+        // activate alpenglow as it will need info from the previous epoch.
+        if self
+            .feature_set
+            .is_active(&agave_feature_set::alpenglow::id())
+        {
+            VoteRewardAccountState::new_epoch_update_account(
+                self,
+                parent_epoch,
+                parent_capitalization,
+                epoch_validator_rewards,
+            );
+        }
 
         report_new_epoch_metrics(
             epoch,
