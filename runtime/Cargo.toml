@@ -20,7 +20,6 @@ name = "solana_runtime"
 agave-unstable-api = []
 dev-context-only-utils = [
     "agave-votor-messages/dev-context-only-utils",
-    "dep:solana-system-program",
     "solana-accounts-db/dev-context-only-utils",
     "solana-svm/dev-context-only-utils",
     "solana-runtime-transaction/dev-context-only-utils",
@@ -67,8 +66,6 @@ arrayref = { workspace = true }
 assert_matches = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
-blake3 = { workspace = true }
-bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api", "serde"] }
@@ -76,14 +73,10 @@ im = { workspace = true, features = ["rayon", "serde"] }
 itertools = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
-lz4 = { workspace = true }
-memmap2 = { workspace = true }
 mockall = { workspace = true }
-modular-bitfield = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
 num_cpus = { workspace = true }
-num_enum = { workspace = true }
 percentage = { workspace = true }
 qualifier_attr = { workspace = true }
 rand = { workspace = true }
@@ -100,8 +93,6 @@ solana-account-info = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bls-signatures = { workspace = true }
-solana-bpf-loader-program = { workspace = true }
-solana-bucket-map = { workspace = true }
 solana-builtins = { workspace = true }
 solana-client-traits = { workspace = true }
 solana-clock = { workspace = true }
@@ -142,7 +133,6 @@ solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
-solana-nohash-hasher = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-packet = { workspace = true }
@@ -170,7 +160,6 @@ solana-svm-callback = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-system-program = { workspace = true, optional = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
