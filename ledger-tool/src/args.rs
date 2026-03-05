@@ -4,12 +4,13 @@ use {
     log::*,
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
-        accounts_db::AccountsDbConfig,
+        accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
         accounts_index::{
             AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT,
             IndexLimit, IndexLimitThreshold, ScanFilter,
         },
+        partitioned_rewards::PartitionedEpochRewardsConfig,
     },
     solana_clap_utils::{
         hidden_unless_forced,
@@ -351,7 +352,13 @@ pub fn get_accounts_db_config(
 
     AccountsDbConfig {
         index: Some(accounts_index_config),
+        account_indexes: None,
         bank_hash_details_dir: ledger_tool_ledger_path,
+        shrink_paths: None,
+        shrink_ratio: AccountShrinkThreshold::default(),
+        read_cache_limit_bytes: None,
+        read_cache_evict_sample_size: None,
+        write_cache_limit_bytes: None,
         ancient_append_vec_offset: value_t!(arg_matches, "accounts_db_ancient_append_vecs", i64)
             .ok(),
         ancient_storage_ideal_size: value_t!(
@@ -363,12 +370,16 @@ pub fn get_accounts_db_config(
         max_ancient_storages: value_t!(arg_matches, "accounts_db_max_ancient_storages", usize).ok(),
         exhaustively_verify_refcounts: arg_matches.is_present("accounts_db_verify_refcounts"),
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
+        partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         storage_access,
         scan_filter_for_shrinking,
+        mark_obsolete_accounts: MarkObsoleteAccounts::default(),
+        num_background_threads: None,
+        num_foreground_threads: None,
         use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
             solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
         ),
-        ..AccountsDbConfig::default()
+        snapshots_use_direct_io: false,
     }
 }
 
