@@ -8810,7 +8810,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-direct-account-pointers"
-version = "4.1.0-alpha.0"
+version = "4.0.0-beta.0"
 dependencies = [
  "solana-account-view",
  "solana-address 2.2.0",
