@@ -17,12 +17,7 @@ use {
     },
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    std::{
-        collections::{HashMap, HashSet},
-        path::PathBuf,
-        sync::{Arc, RwLock},
-        thread::Builder,
-    },
+    std::{collections::HashSet, path::PathBuf, sync::Arc, thread::Builder},
     test::Bencher,
 };
 
@@ -146,60 +141,6 @@ fn bench_concurrent_scan_write(bencher: &mut Bencher) {
                     )
                     .unwrap(),
             );
-        }
-    })
-}
-
-#[bench]
-#[ignore]
-fn bench_dashmap_single_reader_with_n_writers(bencher: &mut Bencher) {
-    let num_readers = 5;
-    let num_keys = 10000;
-    let map = Arc::new(DashMap::new());
-    for i in 0..num_keys {
-        map.insert(i, i);
-    }
-    for _ in 0..num_readers {
-        let map = map.clone();
-        Builder::new()
-            .name("readers".to_string())
-            .spawn(move || {
-                loop {
-                    test::black_box(map.entry(5).or_insert(2));
-                }
-            })
-            .unwrap();
-    }
-    bencher.iter(|| {
-        for _ in 0..num_keys {
-            test::black_box(map.get(&5).unwrap().value());
-        }
-    })
-}
-
-#[bench]
-#[ignore]
-fn bench_rwlock_hashmap_single_reader_with_n_writers(bencher: &mut Bencher) {
-    let num_readers = 5;
-    let num_keys = 10000;
-    let map = Arc::new(RwLock::new(HashMap::new()));
-    for i in 0..num_keys {
-        map.write().unwrap().insert(i, i);
-    }
-    for _ in 0..num_readers {
-        let map = map.clone();
-        Builder::new()
-            .name("readers".to_string())
-            .spawn(move || {
-                loop {
-                    test::black_box(map.write().unwrap().get(&5));
-                }
-            })
-            .unwrap();
-    }
-    bencher.iter(|| {
-        for _ in 0..num_keys {
-            test::black_box(map.read().unwrap().get(&5));
         }
     })
 }
