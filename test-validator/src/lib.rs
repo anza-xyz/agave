@@ -14,7 +14,8 @@ use {
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_accounts_db::{
-        accounts_db::AccountsDbConfig, accounts_index::AccountsIndexConfig,
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
+        accounts_index::{AccountsIndexConfig, ScanFilter},
         utils::create_accounts_run_and_snapshot_dirs,
     },
     solana_cli_output::CliAccount,
@@ -1165,7 +1166,10 @@ impl TestValidator {
         let accounts_db_config = AccountsDbConfig {
             index: Some(AccountsIndexConfig::default()),
             account_indexes: Some(config.rpc_config.account_indexes.clone()),
-            ..AccountsDbConfig::default()
+            scan_filter_for_shrinking: ScanFilter::All,
+            use_registered_io_uring_buffers: false,
+            snapshots_use_direct_io: false,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
 
         let runtime_config = RuntimeConfig {
