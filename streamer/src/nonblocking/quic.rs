@@ -142,7 +142,7 @@ pub(crate) fn spawn_server<Q, C>(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
-    qos: Arc<Q>,
+    qos: Q,
     cancel: CancellationToken,
 ) -> Result<SpawnNonBlockingServerResult, QuicServerError>
 where
@@ -169,22 +169,15 @@ where
 
     let max_concurrent_connections = qos.max_concurrent_connections();
     let handle = tokio::spawn({
-        let endpoints = endpoints.clone();
-        let stats = stats.clone();
-        async move {
-            let tasks = run_server(
-                name,
-                endpoints.clone(),
-                packet_sender,
-                stats.clone(),
-                quic_server_params,
-                cancel,
-                qos,
-            )
-            .await;
-            tasks.close();
-            tasks.wait().await;
-        }
+        run_server(
+            name,
+            endpoints.clone(),
+            packet_sender,
+            stats.clone(),
+            quic_server_params,
+            cancel,
+            qos,
+        )
     });
 
     Ok(SpawnNonBlockingServerResult {
@@ -248,8 +241,8 @@ async fn run_server<Q, C>(
     stats: Arc<StreamerStats>,
     quic_server_params: QuicStreamerConfig,
     cancel: CancellationToken,
-    qos: Arc<Q>,
-) -> TaskTracker
+    qos: Q,
+) -> ()
 where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
@@ -286,7 +279,7 @@ where
             })
         })
         .collect::<FuturesUnordered<_>>();
-
+    let qos = Arc::new(qos);
     let tasks = TaskTracker::new();
     loop {
         let timeout_connection = select! {
@@ -386,7 +379,8 @@ where
             debug!("accept(): Timed out waiting for connection");
         }
     }
-    tasks
+    tasks.close();
+    tasks.wait().await;
 }
 
 pub fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {

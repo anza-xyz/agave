@@ -594,7 +594,7 @@ fn spawn_runtime_and_server<Q, C>(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
-    qos: Arc<Q>,
+    qos: Q,
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError>
 where
@@ -647,12 +647,7 @@ pub fn spawn_stake_weighted_qos_server(
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
-    let swqos = Arc::new(SwQos::new(
-        qos_config,
-        stats.clone(),
-        staked_nodes,
-        cancel.clone(),
-    ));
+    let swqos = SwQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
     spawn_runtime_and_server(
         thread_name,
         metrics_name,
@@ -685,12 +680,12 @@ pub fn spawn_simple_qos_server(
         qos_config,
     };
     let stats = Arc::<StreamerStats>::default();
-    let simple_qos = Arc::new(SimpleQos::new(
+    let simple_qos = SimpleQos::new(
         server_params.qos_config,
         stats.clone(),
         staked_nodes,
         cancel.clone(),
-    ));
+    );
     let banlist = simple_qos.banlist.clone();
 
     spawn_runtime_and_server(
