@@ -1,6 +1,6 @@
 # populate this on the stable branch
-cargoBuildSbfVersion=4.0.0
-cargoTestSbfVersion=4.0.0
+cargoBuildSbfVersion=
+cargoTestSbfVersion=
 
 maybeCargoBuildSbfVersionArg=
 if [[ -n "$cargoBuildSbfVersion" ]]; then
