@@ -118,8 +118,9 @@ fn bench_serialize_unaligned(c: &mut Criterion) {
         b.iter(|| {
             let _ = serialize_parameters(
                 &instruction_context,
-                true, // stricter_abi_and_runtime_constraints
-                true, // account_data_direct_mapping
+                true,  // virtual_address_space_adjustments
+                true,  // account_data_direct_mapping
+                false, // direct_account_pointers_in_program_input
             )
             .unwrap();
         });
@@ -135,8 +136,9 @@ fn bench_serialize_unaligned_copy_account_data(c: &mut Criterion) {
         b.iter(|| {
             let _ = serialize_parameters(
                 &instruction_context,
-                false, // stricter_abi_and_runtime_constraints
+                false, // virtual_address_space_adjustments
                 false, // account_data_direct_mapping
+                false, // direct_account_pointers_in_program_input
             )
             .unwrap();
         });
@@ -153,8 +155,9 @@ fn bench_serialize_aligned(c: &mut Criterion) {
         b.iter(|| {
             let _ = serialize_parameters(
                 &instruction_context,
-                true, // stricter_abi_and_runtime_constraints
+                true, // virtual_address_space_adjustments
                 true, // account_data_direct_mapping
+                true, // direct_account_pointers_in_program_input
             )
             .unwrap();
         });
@@ -171,8 +174,9 @@ fn bench_serialize_aligned_copy_account_data(c: &mut Criterion) {
         b.iter(|| {
             let _ = serialize_parameters(
                 &instruction_context,
-                false, // stricter_abi_and_runtime_constraints
+                false, // virtual_address_space_adjustments
                 false, // account_data_direct_mapping
+                false, // direct_account_pointers_in_program_input
             )
             .unwrap();
         });
@@ -189,8 +193,9 @@ fn bench_serialize_unaligned_max_accounts(c: &mut Criterion) {
         b.iter(|| {
             let _ = serialize_parameters(
                 &instruction_context,
-                true, // stricter_abi_and_runtime_constraints
+                true, // virtual_address_space_adjustments
                 true, // account_data_direct_mapping
+                true, // direct_account_pointers_in_program_input
             )
             .unwrap();
         });
@@ -207,8 +212,9 @@ fn bench_serialize_aligned_max_accounts(c: &mut Criterion) {
         b.iter(|| {
             let _ = serialize_parameters(
                 &instruction_context,
-                true, // stricter_abi_and_runtime_constraints
+                true, // virtual_address_space_adjustments
                 true, // account_data_direct_mapping
+                true, // direct_account_pointers_in_program_input
             )
             .unwrap();
         });

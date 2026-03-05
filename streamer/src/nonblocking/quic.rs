@@ -16,14 +16,11 @@ use {
     rand::{Rng, rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
-    solana_measure::measure::Measure,
     solana_net_utils::token_bucket::TokenBucket,
     solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{BytesPacket, PacketBatch},
     solana_pubkey::Pubkey,
-    solana_signature::Signature,
     solana_tls_utils::get_pubkey_from_tls_certificate,
-    solana_transaction_metrics_tracker::signature_if_should_track_packet,
     std::{
         array, fmt,
         iter::repeat_with,
@@ -86,6 +83,13 @@ pub(crate) const MAX_RTT: Duration = Duration::from_millis(320);
 /// Prevent connections from having 0 RTT when RTT is too small,
 /// as this would break some BDP calculations and assign zero bandwidth
 pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
+
+/// How many RTTs worth of delay can we tolerate on stream reassembly
+/// before considering stream to be "too late". 1.5 RTT should be enough
+/// for any reasonable fragmentation to be resolved, so the only way
+/// a stream reassembly would be delayed more is when something
+/// extraordinary has occured (congestion control or flow control blocking)
+const LATE_REASSEMBLY_THRESHOLD: f32 = 1.5;
 
 // A struct to accumulate the bytes making up
 // a packet, along with their offsets, and the
@@ -562,35 +566,6 @@ fn handle_connection_error(e: quinn::ConnectionError, stats: &StreamerStats, fro
     }
 }
 
-fn track_streamer_fetch_packet_performance(
-    packet_perf_measure: &[([u8; 64], Instant)],
-    stats: &StreamerStats,
-) {
-    if packet_perf_measure.is_empty() {
-        return;
-    }
-    let mut measure = Measure::start("track_perf");
-    let mut process_sampled_packets_us_hist = stats.process_sampled_packets_us_hist.lock().unwrap();
-
-    let now = Instant::now();
-    for (signature, start_time) in packet_perf_measure {
-        let duration = now.duration_since(*start_time);
-        debug!(
-            "QUIC streamer fetch stage took {duration:?} for transaction {:?}",
-            Signature::from(*signature)
-        );
-        process_sampled_packets_us_hist
-            .increment(duration.as_micros() as u64)
-            .unwrap();
-    }
-
-    drop(process_sampled_packets_us_hist);
-    measure.stop();
-    stats
-        .perf_track_overhead_us
-        .fetch_add(measure.as_us(), Ordering::Relaxed);
-}
-
 async fn handle_connection<Q, C>(
     packet_sender: Sender<PacketBatch>,
     remote_address: SocketAddr,
@@ -613,6 +588,10 @@ async fn handle_connection<Q, C>(
     );
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
 
+    // cache the RTT to avoid grabbing lock for every stream.
+    // we only use that for some stats here, so if it gets stale during connection lifetime
+    // it is not the end of the world.
+    let rtt = connection.rtt();
     'conn: loop {
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
         // the connection task.
@@ -686,6 +665,7 @@ async fn handle_connection<Q, C>(
                 // Bytes::clone() is a cheap atomic inc
                 chunks.iter().take(n_chunks).cloned(),
                 &mut accum,
+                rtt,
                 &packet_sender,
                 &stats,
                 peer_type,
@@ -741,6 +721,7 @@ enum StreamState {
 fn handle_chunks(
     chunks: impl ExactSizeIterator<Item = Bytes>,
     accum: &mut PacketAccumulator,
+    rtt: Duration,
     packet_sender: &Sender<PacketBatch>,
     stats: &StreamerStats,
     peer_type: ConnectionPeerType,
@@ -790,7 +771,7 @@ fn handle_chunks(
     // 14% of them come in multiple chunks. In that case, we copy
     // them into one `Bytes` buffer. We make a copy once, with
     // intention to not do it again.
-    let mut packet = if accum.chunks.len() == 1 {
+    let packet = if accum.chunks.len() == 1 {
         BytesPacket::new(
             accum.chunks.pop().expect("expected one chunk"),
             accum.meta.clone(),
@@ -804,12 +785,15 @@ fn handle_chunks(
     };
 
     let packet_size = packet.meta().size;
-
-    let mut packet_perf_measure = None;
-    if let Some(signature) = signature_if_should_track_packet(&packet).ok().flatten() {
-        packet_perf_measure = Some((*signature, accum.start_time));
-        // we set the PERF_TRACK_PACKET on
-        packet.meta_mut().set_track_performance(true);
+    let total_latency = accum.start_time.elapsed();
+    if total_latency > rtt.mul_f32(LATE_REASSEMBLY_THRESHOLD) {
+        debug!("Stream reassembly dealyed {}", total_latency.as_millis());
+        stats
+            .reassembly_delayed_streams
+            .fetch_add(1, Ordering::Relaxed);
+        stats
+            .reassembly_delayed_streams_cumulative_delay_us
+            .fetch_add(total_latency.as_micros() as usize, Ordering::Relaxed);
     }
     let packet_batch = PacketBatch::Single(packet);
 
@@ -831,10 +815,6 @@ fn handle_chunks(
         }
         trace!("packet batch send error {err:?}");
     } else {
-        if let Some(ppm) = &packet_perf_measure {
-            track_streamer_fetch_packet_performance(core::array::from_ref(ppm), stats);
-        }
-
         stats
             .total_bytes_sent_to_consumer
             .fetch_add(packet_size, Ordering::Relaxed);

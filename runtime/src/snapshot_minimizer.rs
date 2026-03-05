@@ -13,9 +13,7 @@ use {
     solana_account::{ReadableAccount, state_traits::StateMut},
     solana_accounts_db::{
         account_storage_entry::AccountStorageEntry,
-        accounts_db::{
-            AccountsDb, GetUniqueAccountsResult, UpdateIndexThreadSelection, stats::PurgeStats,
-        },
+        accounts_db::{AccountsDb, GetUniqueAccountsResult, UpdateIndexThreadSelection},
         storable_accounts::StorableAccountsBySlot,
     },
     solana_clock::Slot,
@@ -344,9 +342,8 @@ impl<'a> SnapshotMinimizer<'a> {
 
     /// Purge dead slots from storage and cache
     fn purge_dead_slots(&self, dead_slots: Vec<Slot>) {
-        let stats = PurgeStats::default();
         self.accounts_db()
-            .purge_slots_from_cache_and_store(dead_slots.iter(), &stats);
+            .purge_slots_for_snapshot_minimizer(dead_slots.iter());
     }
 
     /// Convenience function for getting accounts_db

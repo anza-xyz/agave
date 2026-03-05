@@ -63,6 +63,3 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["verify"] }
-
-[[bench]]
-name = "entry_sigverify"

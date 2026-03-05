@@ -282,16 +282,22 @@ EOF
       - command: "ci/docker-run-default-image.sh ci/coverage/part-1.sh"
         name: "coverage-1"
         timeout_in_minutes: 60
+        env:
+          FETCH_CODECOV_ENVS: true
         agents:
           queue: "default"
       - command: "ci/docker-run-default-image.sh ci/coverage/part-2.sh"
         name: "coverage-2"
         timeout_in_minutes: 60
+        env:
+          FETCH_CODECOV_ENVS: true
         agents:
           queue: "default"
       - command: "ci/docker-run-default-image.sh ci/coverage/part-3.sh"
         name: "coverage-3"
         timeout_in_minutes: 60
+        env:
+          FETCH_CODECOV_ENVS: true
         agents:
           queue: "default"
 EOF

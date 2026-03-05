@@ -1641,6 +1641,7 @@ pub fn confirm_slot(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn confirm_slot_entries(
     bank: &BankWithScheduler,
     replay_tx_thread_pool: &ThreadPool,

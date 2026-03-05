@@ -1067,9 +1067,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "Sets the memory limit for the accounts index. The size options will limit the \
                  accounts index memory to the specified value. E.g. \"50GB\" means the accounts \
                  index may use up to 50 GB of memory. The \"unlimited\" option keeps the entire \
-                 accounts index in memory. The \"minimal\" option reduces memory usage as much as \
-                 possible. All index entries that are not in memory are kept in the disk-backed \
-                 index. The disk-backed index has lower performance; prefer higher limits here.",
+                 accounts index in memory. All index entries that are not in memory are kept in \
+                 the disk-backed index. The disk-backed index has lower performance; prefer \
+                 higher explicit limits here.",
             ),
     )
     .arg(

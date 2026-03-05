@@ -7098,8 +7098,7 @@ pub mod tests {
             ..
         } = create_genesis_config(TEST_MINT_LAMPORTS);
 
-        genesis_config.rent.lamports_per_byte_year = 50;
-        genesis_config.rent.exemption_threshold = 2.0;
+        genesis_config.rent.lamports_per_byte = 100;
         genesis_config.epoch_schedule =
             EpochSchedule::custom(TEST_SLOTS_PER_EPOCH, TEST_SLOTS_PER_EPOCH, false);
         genesis_config.fee_rate_governor = FeeRateGovernor::new(TEST_SIGNATURE_FEE, 0);

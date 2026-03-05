@@ -233,6 +233,7 @@ enum ScanTypes<R: RangeBounds<Pubkey>> {
 #[derive(Debug, Clone)]
 pub enum IndexLimit {
     /// use disk index while keeping a minimal amount in-mem
+    /// deprecated in v4.1.0
     Minimal,
     /// in-mem-only was specified, no disk index
     InMemOnly,

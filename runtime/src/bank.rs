@@ -171,7 +171,7 @@ use {
     solana_transaction::{
         Transaction, TransactionVerificationMode,
         sanitized::{MAX_TX_ACCOUNT_LOCKS, MessageHash, SanitizedTransaction},
-        versioned::VersionedTransaction,
+        versioned::{TransactionVersion, VersionedTransaction},
     },
     solana_transaction_context::{
         transaction::TransactionReturnData, transaction_accounts::KeyedAccountSharedData,
@@ -978,15 +978,15 @@ impl Default for BankTestConfig {
 }
 
 /// Data returned from [`Bank::calculate_epoch_inflation_rewards()`].
-struct EpochInflationRewards {
+pub(crate) struct EpochInflationRewards {
     /// Amount of rewards a validator should get if it voted in every slot in
     /// the epoch and its stake is equal to the network capitalization i.e.
     /// the total supply.
-    validator_rewards_lamports: u64,
+    pub(crate) validator_rewards_lamports: u64,
     /// The current inflation rate for the validators.
-    validator_rate: f64,
+    pub(crate) validator_rate: f64,
     /// The current inflation rate for the foundation.
-    foundation_rate: f64,
+    pub(crate) foundation_rate: f64,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -1164,7 +1164,7 @@ impl Bank {
         bank
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new_from_genesis(
         genesis_config: &GenesisConfig,
         runtime_config: Arc<RuntimeConfig>,
@@ -1172,10 +1172,15 @@ impl Bank {
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
         accounts_db_config: AccountsDbConfig,
         accounts_update_notifier: Option<AccountsUpdateNotifier>,
-        #[allow(unused)] leader_id_for_tests: Option<Pubkey>,
+        #[cfg_attr(not(feature = "dev-context-only-utils"), expect(unused))]
+        leader_id_for_tests: Option<Pubkey>,
         exit: Arc<AtomicBool>,
-        #[allow(unused)] genesis_hash: Option<Hash>,
-        #[allow(unused)] feature_set: Option<FeatureSet>,
+        #[cfg_attr(not(feature = "dev-context-only-utils"), expect(unused))] genesis_hash: Option<
+            Hash,
+        >,
+        #[cfg_attr(not(feature = "dev-context-only-utils"), expect(unused))] feature_set: Option<
+            FeatureSet,
+        >,
     ) -> Self {
         let accounts_db =
             AccountsDb::new_with_config(paths, accounts_db_config, accounts_update_notifier, exit);
@@ -2086,7 +2091,7 @@ impl Bank {
         }
 
         let mut ancestors: Vec<_> = roots.into_iter().collect();
-        #[allow(clippy::stable_sort_primitive)]
+        #[expect(clippy::stable_sort_primitive)]
         ancestors.sort();
         ancestors
     }
@@ -2479,7 +2484,7 @@ impl Bank {
     }
 
     /// For a given [`capitalization`] (total_supply in lamports) and [`epoch`], calculates various inflation related info.
-    fn calculate_epoch_inflation_rewards(
+    pub(crate) fn calculate_epoch_inflation_rewards(
         &self,
         capitalization: u64,
         epoch: Epoch,
@@ -2559,7 +2564,7 @@ impl Bank {
     }
 
     fn update_recent_blockhashes_locked(&self, locked_blockhash_queue: &BlockhashQueue) {
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         self.update_sysvar_account(&sysvar::recent_blockhashes::id(), |account| {
             let recent_blockhash_iter = locked_blockhash_queue.get_recent_blockhashes();
             recent_blockhashes_account::create_account_with_data_and_fields(
@@ -2863,6 +2868,7 @@ impl Bank {
         self.store_account_and_update_capitalization(program_id, &account);
     }
 
+    #[allow(deprecated)]
     pub fn set_rent_burn_percentage(&mut self, burn_percent: u8) {
         self.rent_collector.rent.burn_percent = burn_percent;
     }
@@ -4317,7 +4323,7 @@ impl Bank {
 
     /// Technically this issues (or even burns!) new lamports,
     /// so be extra careful for its usage
-    fn store_account_and_update_capitalization(
+    pub(crate) fn store_account_and_update_capitalization(
         &self,
         pubkey: &Pubkey,
         new_account: &AccountSharedData,
@@ -4997,6 +5003,11 @@ impl Bank {
             .feature_set
             .is_active(&agave_feature_set::limit_instruction_accounts::id());
 
+        // Discard v1 transactions until support is added.
+        if tx.version() == TransactionVersion::Number(1) {
+            return Err(TransactionError::UnsupportedVersion);
+        }
+
         let sanitized_tx = {
             let size =
                 bincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
@@ -5029,13 +5040,6 @@ impl Bank {
         }?;
 
         Ok(sanitized_tx)
-    }
-
-    pub fn fully_verify_transaction(
-        &self,
-        tx: VersionedTransaction,
-    ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        self.verify_transaction(tx, TransactionVerificationMode::FullVerification)
     }
 
     /// Checks if the transaction violates the bank's reserved keys.
@@ -5634,22 +5638,20 @@ impl Bank {
         ];
         for (feature_id, lamports_per_byte_year) in rent_feature_gates {
             if new_feature_activations.contains(&feature_id) {
-                self.rent_collector.rent.lamports_per_byte_year = lamports_per_byte_year;
+                self.rent_collector.rent.lamports_per_byte = lamports_per_byte_year;
                 self.update_rent();
             }
         }
 
         if new_feature_activations.contains(&feature_set::pico_inflation::id()) {
             *self.inflation.write().unwrap() = Inflation::pico();
-            self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT; // 50% fee burn
-            self.rent_collector.rent.burn_percent = 50; // 50% rent burn
+            self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT;
         }
 
         if !new_feature_activations.is_disjoint(&self.feature_set.full_inflation_features_enabled())
         {
             *self.inflation.write().unwrap() = Inflation::full();
-            self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT; // 50% fee burn
-            self.rent_collector.rent.burn_percent = 50; // 50% rent burn
+            self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT;
         }
 
         self.apply_new_builtin_program_feature_transitions(&new_feature_activations);

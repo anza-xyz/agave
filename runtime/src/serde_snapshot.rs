@@ -432,7 +432,7 @@ struct ExtraFieldsToDeserialize {
     /// Hence the annotation to allow dead code.
     /// This code is not truly dead though, as it enables newer versions to
     /// populate this field and have older versions still load the snapshot.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     #[serde(deserialize_with = "default_on_eof")]
     block_id: Option<Hash>,
 }
@@ -786,9 +786,11 @@ pub(crate) struct ReconstructedBankInfo {
     /// The accounts lt hash calculated during index generation.
     /// Will be used when verifying accounts, after rebuilding a Bank.
     pub(crate) calculated_accounts_lt_hash: AccountsLtHash,
+    /// The capitalization, in lamports, calculated during index generation.
+    pub(crate) calculated_capitalization: u64,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn reconstruct_bank_from_fields<E>(
     bank_fields: SnapshotBankFields,
     snapshot_accounts_db_fields: SnapshotAccountsDbFields<E>,
@@ -848,6 +850,7 @@ where
         bank,
         ReconstructedBankInfo {
             calculated_accounts_lt_hash: reconstructed_accounts_db_info.calculated_accounts_lt_hash,
+            calculated_capitalization: reconstructed_accounts_db_info.calculated_capitalization,
         },
     ))
 }
@@ -1003,10 +1006,11 @@ pub struct ReconstructedAccountsDbInfo {
     /// The accounts lt hash calculated during index generation.
     /// Will be used when verifying accounts, after rebuilding a Bank.
     pub calculated_accounts_lt_hash: AccountsLtHash,
+    /// The capitalization, in lamports, calculated during index generation.
+    pub calculated_capitalization: u64,
     pub bank_hash_stats: BankHashStats,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn reconstruct_accountsdb_from_fields<E>(
     snapshot_accounts_db_fields: SnapshotAccountsDbFields<E>,
     account_paths: &[PathBuf],
@@ -1063,6 +1067,7 @@ where
     let IndexGenerationInfo {
         accounts_data_len,
         calculated_accounts_lt_hash,
+        calculated_capitalization,
     } = accounts_db.generate_index(limit_load_slot_count_from_snapshot, verify_index);
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
@@ -1071,6 +1076,7 @@ where
         ReconstructedAccountsDbInfo {
             accounts_data_len,
             calculated_accounts_lt_hash,
+            calculated_capitalization,
             bank_hash_stats: snapshot_bank_hash_info.stats,
         },
     ))

@@ -19,6 +19,8 @@ Release channels have their own copy of this changelog:
 #### Changes
 ### Validator
 #### Breaking
+#### Deprecations
+* Using `minimal` for `--accounts-index-limit` is now deprecated.
 #### Changes
 
 ## 4.0.0

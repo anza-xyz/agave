@@ -8,7 +8,6 @@ use {
     dlopen2::symbor::{Container, SymBorApi, Symbol},
     log::*,
     rayon::{ThreadPool, prelude::*},
-    serde::{Deserialize, Serialize},
     solana_hash::Hash,
     solana_merkle_tree::MerkleTree,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -110,7 +109,7 @@ pub type MaxDataShredsLen = BincodeLen<MAX_DATA_SHREDS_SIZE>;
 /// transaction, or read by one or more transactions, but not both.
 /// This enforcement is done via a call to `solana_runtime::accounts::Accounts::lock_accounts()`
 /// with the `txs` argument holding all the `transactions` in the `Entry`.
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq, Clone, SchemaWrite, SchemaRead)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, SchemaWrite, SchemaRead)]
 pub struct Entry {
     /// The number of hashes since the previous Entry ID.
     pub num_hashes: u64,
@@ -121,7 +120,7 @@ pub struct Entry {
     /// An unordered list of transactions that were observed before the Entry ID was
     /// generated. They may have been observed before a previous Entry ID but were
     /// pushed back into this list to ensure deterministic interpretation of the ledger.
-    #[wincode(with = "WincodeVec<crate::wincode::VersionedTransaction, MaxDataShredsLen>")]
+    #[wincode(with = "WincodeVec<VersionedTransaction, MaxDataShredsLen>")]
     pub transactions: Vec<VersionedTransaction>,
 }
 

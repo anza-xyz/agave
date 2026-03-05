@@ -338,6 +338,7 @@ fn rent_exempt_check(stake_lamports: u64, exempt: u64) -> io::Result<()> {
     }
 }
 
+#[allow(deprecated)]
 #[allow(clippy::cognitive_complexity)]
 fn main() -> Result<(), Box<dyn error::Error>> {
     let default_faucet_pubkey = solana_cli_config::Config::default().keypair_path;
@@ -355,14 +356,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     };
 
     let rent = Rent::default();
-    let (
-        default_lamports_per_byte_year,
-        default_rent_exemption_threshold,
-        default_rent_burn_percentage,
-    ) = {
+    let (default_lamports_per_byte, default_rent_exemption_threshold, default_rent_burn_percentage) = {
         (
-            &rent.lamports_per_byte_year.to_string(),
-            &rent.exemption_threshold.to_string(),
+            &rent.lamports_per_byte.to_string(),
+            &f64::from_le_bytes(rent.exemption_threshold).to_string(),
             &rent.burn_percent.to_string(),
         )
     };
@@ -483,15 +480,27 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 ),
         )
         .arg(
+            Arg::with_name("lamports_per_byte")
+                .long("lamports-per-byte")
+                .value_name("LAMPORTS")
+                .takes_value(true)
+                .default_value(default_lamports_per_byte)
+                .help(
+                    "The cost in lamports that the cluster will charge per byte for accounts with \
+                     data",
+                ),
+        )
+        .arg(
             Arg::with_name("lamports_per_byte_year")
                 .long("lamports-per-byte-year")
                 .value_name("LAMPORTS")
                 .takes_value(true)
-                .default_value(default_lamports_per_byte_year)
+                .default_value(default_lamports_per_byte)
                 .help(
-                    "The cost in lamports that the cluster will charge per byte per year for \
-                     accounts with data",
-                ),
+                    "The cost in lamports that the cluster will charge per byte for accounts with \
+                     data",
+                )
+                .conflicts_with("lamports_per_byte"),
         )
         .arg(
             Arg::with_name("rent_exemption_threshold")
@@ -686,9 +695,24 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 
+    if matches.is_present("lamports_per_byte_year") {
+        eprintln!("lamports_per_byte_year is deprecated and will be removed in a future release");
+    }
+    if matches.is_present("rent_exemption_threshold") {
+        eprintln!("rent_exemption_threshold is deprecated and will be removed in a future release");
+    }
+    if matches.is_present("rent_burn_percentage") {
+        eprintln!("rent_burn_percentage is deprecated and will be removed in a future release");
+    }
+
     let rent = Rent {
-        lamports_per_byte_year: value_t_or_exit!(matches, "lamports_per_byte_year", u64),
-        exemption_threshold: value_t_or_exit!(matches, "rent_exemption_threshold", f64),
+        lamports_per_byte: if matches.is_present("lamports_per_byte_year") {
+            value_t_or_exit!(matches, "lamports_per_byte_year", u64)
+        } else {
+            value_t_or_exit!(matches, "lamports_per_byte", u64)
+        },
+        exemption_threshold: value_t_or_exit!(matches, "rent_exemption_threshold", f64)
+            .to_le_bytes(),
         burn_percent: value_t_or_exit!(matches, "rent_burn_percentage", u8),
     };
 

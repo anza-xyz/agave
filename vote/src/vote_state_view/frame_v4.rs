@@ -123,28 +123,20 @@ impl VoteStateFrameV4 {
 mod tests {
     use {
         super::*,
-        serde::{Deserialize, Serialize},
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
-            state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, LandedVote, Lockout, VoteStateV4},
+            state::{
+                BLS_PUBLIC_KEY_COMPRESSED_SIZE, LandedVote, Lockout, VoteStateV4, VoteStateVersions,
+            },
         },
         std::collections::VecDeque,
     };
 
-    #[allow(clippy::large_enum_variant)]
-    #[derive(Debug, Clone, Deserialize, Serialize)]
-    enum TestVoteStateVersions {
-        V0_23_5,
-        V1_14_11,
-        V3,
-        V4(VoteStateV4),
-    }
-
     #[test]
     fn test_try_new_zeroed() {
         let target_vote_state = VoteStateV4::default();
-        let target_vote_state_versions = TestVoteStateVersions::V4(target_vote_state);
-        let mut bytes = bincode::serialize(&target_vote_state_versions).unwrap();
+        let versioned = VoteStateVersions::new_v4(target_vote_state);
+        let mut bytes = bincode::serialize(&versioned).unwrap();
 
         for i in 0..bytes.len() {
             let vote_state_frame = VoteStateFrameV4::try_new(&bytes[..i]);
@@ -187,8 +179,8 @@ mod tests {
             ..VoteStateV4::default()
         };
 
-        let target_vote_state_versions = TestVoteStateVersions::V4(target_vote_state);
-        let mut bytes = bincode::serialize(&target_vote_state_versions).unwrap();
+        let versioned = VoteStateVersions::new_v4(target_vote_state);
+        let mut bytes = bincode::serialize(&versioned).unwrap();
 
         for i in 0..bytes.len() {
             let vote_state_frame = VoteStateFrameV4::try_new(&bytes[..i]);
@@ -278,5 +270,85 @@ mod tests {
                 Err(VoteStateViewError::InvalidEpochCreditsLength)
             );
         }
+    }
+
+    #[test]
+    fn test_try_new_trailing_nonzero_bytes() {
+        let vote_state = VoteStateV4 {
+            authorized_voters: AuthorizedVoters::new(0, Pubkey::default()),
+            epoch_credits: vec![(1, 2, 3)],
+            bls_pubkey_compressed: Some([42; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
+            votes: VecDeque::from([LandedVote {
+                latency: 0,
+                lockout: Lockout::default(),
+            }]),
+            root_slot: Some(42),
+            ..VoteStateV4::default()
+        };
+        let versioned = VoteStateVersions::new_v4(vote_state);
+        let mut bytes = bincode::serialize(&versioned).unwrap();
+
+        // Append non-zero trailing garbage.
+        bytes.extend_from_slice(&[0xFF; 42]);
+
+        assert_eq!(
+            VoteStateFrameV4::try_new(&bytes),
+            Ok(VoteStateFrameV4 {
+                bls_pubkey_compressed_frame: BlsPubkeyCompressedFrame { has_pubkey: true },
+                votes_frame: LandedVotesListFrame { len: 1 },
+                root_slot_frame: RootSlotFrame {
+                    has_root_slot: true,
+                },
+                authorized_voters_frame: AuthorizedVotersListFrame { len: 1 },
+                epoch_credits_frame: EpochCreditsListFrame { len: 1 },
+            })
+        );
+    }
+
+    #[test]
+    fn test_frame_v4_field_offsets_match_sdk() {
+        // Verify frame offset calculations produce correct values by
+        // serializing a known VoteStateV4 and reading at computed offsets.
+        let node_pubkey = Pubkey::from([1; 32]);
+        let authorized_withdrawer = Pubkey::from([2; 32]);
+        let inflation_rewards_commission_bps = 5_000;
+        let block_revenue_commission_bps = 7_500;
+        let inflation_rewards_collector = Pubkey::from([3; 32]);
+        let block_revenue_collector = Pubkey::from([4; 32]);
+        let pending_delegator_rewards = 42;
+        let vote_state = VoteStateV4 {
+            node_pubkey,
+            authorized_withdrawer,
+            inflation_rewards_commission_bps,
+            block_revenue_commission_bps,
+            inflation_rewards_collector,
+            block_revenue_collector,
+            pending_delegator_rewards,
+            ..VoteStateV4::default()
+        };
+        let versioned = VoteStateVersions::new_v4(vote_state);
+        let bytes = bincode::serialize(&versioned).unwrap();
+
+        // Read node_pubkey at its offset.
+        let offset = VoteStateFrameV4::node_pubkey_offset();
+        assert_eq!(&bytes[offset..offset + 32], node_pubkey.as_ref());
+
+        // Read authorized_withdrawer at its offset.
+        let offset = VoteStateFrameV4::authorized_withdrawer_offset();
+        assert_eq!(&bytes[offset..offset + 32], authorized_withdrawer.as_ref());
+
+        // Read inflation_rewards_commission at its offset.
+        let offset = VoteStateFrameV4::inflation_rewards_commission_offset();
+        assert_eq!(
+            u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap()),
+            inflation_rewards_commission_bps
+        );
+
+        // Read block_revenue_commission at its offset.
+        let offset = VoteStateFrameV4::block_revenue_commission_offset();
+        assert_eq!(
+            u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap()),
+            block_revenue_commission_bps
+        );
     }
 }
