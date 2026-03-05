@@ -406,8 +406,8 @@ pub struct RpcVoteAccountInfo {
     /// The current stake, in lamports, delegated to this vote account
     pub activated_stake: u64,
 
-    /// An 8-bit integer used as a fraction (commission/MAX_U8) for rewards payout
-    pub commission: u8,
+    /// A 16-bit integer used as a fraction (commission_bps/10_000) for rewards payout
+    pub inflation_rewards_commission_bps: u16,
 
     /// Whether this account is staked for the current epoch
     pub epoch_vote_account: bool,
