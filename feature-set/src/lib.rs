@@ -1296,7 +1296,7 @@ pub mod remove_simple_vote_from_cost_model {
 }
 
 pub mod limit_instruction_accounts {
-    solana_pubkey::declare_id!("DqbnFPASg7tHmZ6qfpdrt2M6MWoSeiicWPXxPhxqFCQ");
+    solana_pubkey::declare_id!("6aHuNsUmwSzCEMjrBzBCYaxHAyAcQBjVES92JigHBDuC");
 }
 
 pub mod block_revenue_sharing {
