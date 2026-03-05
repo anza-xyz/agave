@@ -45,6 +45,7 @@ jobs:
       image: ${{ matrix.os.container }}
     env:
       RUSTFLAGS: ${{ matrix.os.rustflags }}
+      RUST_LIBC_UNSTABLE_MUSL_V1_2_3: true
     steps:
       # Alpine container needs:
       # * `bash`, to run the scripts.
