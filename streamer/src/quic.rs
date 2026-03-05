@@ -629,7 +629,7 @@ where
 
 /// Spawns a tokio runtime and a streamer instance inside it.
 /// Uses Stake Weighted QoS
-pub fn spawn_stake_wighted_qos_server(
+pub fn spawn_stake_weighted_qos_server(
     thread_name: &'static str,
     metrics_name: &'static str,
     sockets: impl IntoIterator<Item = QuicSocket>,
@@ -767,7 +767,7 @@ mod test {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = spawn_stake_wighted_qos_server(
+        } = spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [s.into()],
@@ -823,7 +823,7 @@ mod test {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = spawn_stake_wighted_qos_server(
+        } = spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [s.into()],
@@ -915,7 +915,7 @@ mod test {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = spawn_stake_wighted_qos_server(
+        } = spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [s.into()],

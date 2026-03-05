@@ -74,7 +74,7 @@ mod tests {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = solana_streamer::quic::spawn_stake_wighted_qos_server(
+        } = solana_streamer::quic::spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             vec![s.try_clone().unwrap().into()],
@@ -214,7 +214,7 @@ mod tests {
             endpoints: request_recv_endpoints,
             thread: request_recv_thread,
             key_updater: _,
-        } = solana_streamer::quic::spawn_stake_wighted_qos_server(
+        } = solana_streamer::quic::spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [request_recv_socket.try_clone().unwrap().into()],
@@ -239,7 +239,7 @@ mod tests {
             endpoints: mut response_recv_endpoints,
             thread: response_recv_thread,
             key_updater: _,
-        } = solana_streamer::quic::spawn_stake_wighted_qos_server(
+        } = solana_streamer::quic::spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [response_recv_socket.into()],
