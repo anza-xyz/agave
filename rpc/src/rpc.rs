@@ -42,7 +42,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError, SignatureInfosForAddress},
-        blockstore_meta::{PerfSample, PerfSampleV1, PerfSampleV2},
+        blockstore_meta::PerfSample,
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_message::{AddressLoader, SanitizedMessage},
@@ -4321,30 +4321,12 @@ pub mod rpc_full {
 }
 
 fn rpc_perf_sample_from_perf_sample(slot: u64, sample: PerfSample) -> RpcPerfSample {
-    match sample {
-        PerfSample::V1(PerfSampleV1 {
-            num_transactions,
-            num_slots,
-            sample_period_secs,
-        }) => RpcPerfSample {
-            slot,
-            num_transactions,
-            num_non_vote_transactions: None,
-            num_slots,
-            sample_period_secs,
-        },
-        PerfSample::V2(PerfSampleV2 {
-            num_transactions,
-            num_non_vote_transactions,
-            num_slots,
-            sample_period_secs,
-        }) => RpcPerfSample {
-            slot,
-            num_transactions,
-            num_non_vote_transactions: Some(num_non_vote_transactions),
-            num_slots,
-            sample_period_secs,
-        },
+    RpcPerfSample {
+        slot,
+        num_transactions: sample.num_transactions,
+        num_non_vote_transactions: Some(sample.num_non_vote_transactions),
+        num_slots: sample.num_slots,
+        sample_period_secs: sample.sample_period_secs,
     }
 }
 
@@ -4551,7 +4533,7 @@ pub mod tests {
         solana_instruction::{AccountMeta, Instruction, error::InstructionError},
         solana_keypair::Keypair,
         solana_ledger::{
-            blockstore_meta::PerfSampleV2,
+            blockstore_meta::PerfSample,
             blockstore_processor::fill_blockstore_slot_with_ticks,
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path,
@@ -5221,7 +5203,7 @@ pub mod tests {
         rpc.blockstore
             .write_perf_sample(
                 slot,
-                &PerfSampleV2 {
+                &PerfSample {
                     num_slots,
                     num_transactions,
                     num_non_vote_transactions,

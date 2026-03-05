@@ -74,7 +74,7 @@ use {
         convert::TryInto,
         fmt::Write,
         fs::{self, File},
-        io::{Error as IoError, ErrorKind},
+        io::Error as IoError,
         ops::{Bound, Range},
         path::{Path, PathBuf},
         rc::Rc,
@@ -3539,30 +3539,17 @@ impl Blockstore {
                 .iter(IteratorMode::End)?
                 .take(num)
                 .map(|(slot, data)| {
-                    deserialize::<PerfSampleV2>(&data)
-                        .map(|sample| (slot, sample.into()))
-                        .or_else(|err| {
-                            match &*err {
-                                bincode::ErrorKind::Io(io_err)
-                                    if matches!(io_err.kind(), ErrorKind::UnexpectedEof) =>
-                                {
-                                    // Not enough bytes to deserialize as `PerfSampleV2`.
-                                }
-                                _ => return Err(err),
-                            }
-
-                            deserialize::<PerfSampleV1>(&data).map(|sample| (slot, sample.into()))
-                        })
+                    deserialize::<PerfSample>(&data)
+                        .map(|sample| (slot, sample))
                         .map_err(Into::into)
                 });
 
         samples.collect()
     }
 
-    pub fn write_perf_sample(&self, index: Slot, perf_sample: &PerfSampleV2) -> Result<()> {
+    pub fn write_perf_sample(&self, index: Slot, perf_sample: &PerfSample) -> Result<()> {
         // Always write as the current version.
-        let bytes =
-            serialize(&perf_sample).expect("`PerfSampleV2` can be serialized with `bincode`");
+        let bytes = serialize(&perf_sample).expect("`PerfSample` can be serialized with `bincode`");
         self.perf_samples_cf.put_bytes(index, &bytes)
     }
 
@@ -9861,120 +9848,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_get_recent_perf_samples_v1_only() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        let num_entries: usize = 10;
-
-        let slot_sample = |i: u64| PerfSampleV1 {
-            num_transactions: 1406 + i,
-            num_slots: 34 + i / 2,
-            sample_period_secs: (40 + i / 5) as u16,
-        };
-
-        let mut perf_samples: Vec<(Slot, PerfSample)> = vec![];
-        for i in 0..num_entries {
-            let slot = (i + 1) as u64 * 50;
-            let sample = slot_sample(i as u64);
-
-            let bytes = serialize(&sample).unwrap();
-            blockstore.perf_samples_cf.put_bytes(slot, &bytes).unwrap();
-            perf_samples.push((slot, sample.into()));
-        }
-
-        for i in 0..num_entries {
-            let mut expected_samples = perf_samples[num_entries - 1 - i..].to_vec();
-            expected_samples.sort_by_key(|b| cmp::Reverse(b.0));
-            assert_eq!(
-                blockstore.get_recent_perf_samples(i + 1).unwrap(),
-                expected_samples
-            );
-        }
-    }
-
-    #[test]
-    fn test_get_recent_perf_samples_v2_only() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        let num_entries: usize = 10;
-
-        let slot_sample = |i: u64| PerfSampleV2 {
-            num_transactions: 2495 + i,
-            num_slots: 167 + i / 2,
-            sample_period_secs: (37 + i / 5) as u16,
-            num_non_vote_transactions: 1672 + i,
-        };
-
-        let mut perf_samples: Vec<(Slot, PerfSample)> = vec![];
-        for i in 0..num_entries {
-            let slot = (i + 1) as u64 * 50;
-            let sample = slot_sample(i as u64);
-
-            let bytes = serialize(&sample).unwrap();
-            blockstore.perf_samples_cf.put_bytes(slot, &bytes).unwrap();
-            perf_samples.push((slot, sample.into()));
-        }
-
-        for i in 0..num_entries {
-            let mut expected_samples = perf_samples[num_entries - 1 - i..].to_vec();
-            expected_samples.sort_by_key(|b| cmp::Reverse(b.0));
-            assert_eq!(
-                blockstore.get_recent_perf_samples(i + 1).unwrap(),
-                expected_samples
-            );
-        }
-    }
-
-    #[test]
-    fn test_get_recent_perf_samples_v1_and_v2() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        let num_entries: usize = 10;
-
-        let slot_sample_v1 = |i: u64| PerfSampleV1 {
-            num_transactions: 1599 + i,
-            num_slots: 123 + i / 2,
-            sample_period_secs: (42 + i / 5) as u16,
-        };
-
-        let slot_sample_v2 = |i: u64| PerfSampleV2 {
-            num_transactions: 5809 + i,
-            num_slots: 81 + i / 2,
-            sample_period_secs: (35 + i / 5) as u16,
-            num_non_vote_transactions: 2209 + i,
-        };
-
-        let mut perf_samples: Vec<(Slot, PerfSample)> = vec![];
-        for i in 0..num_entries {
-            let slot = (i + 1) as u64 * 50;
-
-            if i % 3 == 0 {
-                let sample = slot_sample_v1(i as u64);
-                let bytes = serialize(&sample).unwrap();
-                blockstore.perf_samples_cf.put_bytes(slot, &bytes).unwrap();
-                perf_samples.push((slot, sample.into()));
-            } else {
-                let sample = slot_sample_v2(i as u64);
-                let bytes = serialize(&sample).unwrap();
-                blockstore.perf_samples_cf.put_bytes(slot, &bytes).unwrap();
-                perf_samples.push((slot, sample.into()));
-            }
-        }
-
-        for i in 0..num_entries {
-            let mut expected_samples = perf_samples[num_entries - 1 - i..].to_vec();
-            expected_samples.sort_by_key(|b| cmp::Reverse(b.0));
-            assert_eq!(
-                blockstore.get_recent_perf_samples(i + 1).unwrap(),
-                expected_samples
-            );
-        }
-    }
-
-    #[test]
     fn test_write_perf_samples() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
@@ -9983,7 +9856,7 @@ pub mod tests {
         let mut perf_samples: Vec<(Slot, PerfSample)> = vec![];
         for x in 1..num_entries + 1 {
             let slot = x as u64 * 50;
-            let sample = PerfSampleV2 {
+            let sample = PerfSample {
                 num_transactions: 1000 + x as u64,
                 num_slots: 50,
                 sample_period_secs: 20,
@@ -9991,7 +9864,7 @@ pub mod tests {
             };
 
             blockstore.write_perf_sample(slot, &sample).unwrap();
-            perf_samples.push((slot, PerfSample::V2(sample)));
+            perf_samples.push((slot, sample));
         }
 
         for x in 0..num_entries {
