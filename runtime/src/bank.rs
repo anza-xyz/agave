@@ -1424,8 +1424,8 @@ impl Bank {
                 new.process_new_epoch(
                     parent.epoch(),
                     parent.slot(),
-                    parent.block_height(),
                     parent.capitalization(),
+                    parent.block_height(),
                     reward_calc_tracer,
                 );
             } else {
