@@ -55,7 +55,7 @@ const REFERENCE_RTT_MS: u32 = 50;
 const MAX_RTT_MS: u32 = 350;
 
 #[derive(Clone)]
-pub struct SwQosConfig {
+pub struct SwQosSleepConfig {
     pub max_streams_per_ms: u64,
     pub max_staked_connections: usize,
     pub max_unstaked_connections: usize,
@@ -63,9 +63,9 @@ pub struct SwQosConfig {
     pub max_connections_per_unstaked_peer: usize,
 }
 
-impl Default for SwQosConfig {
+impl Default for SwQosSleepConfig {
     fn default() -> Self {
-        SwQosConfig {
+        SwQosSleepConfig {
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
             max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
@@ -75,7 +75,7 @@ impl Default for SwQosConfig {
     }
 }
 
-impl SwQosConfig {
+impl SwQosSleepConfig {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn default_for_tests() -> Self {
         Self {
@@ -87,7 +87,7 @@ impl SwQosConfig {
 }
 
 pub struct SwQos {
-    config: SwQosConfig,
+    config: SwQosSleepConfig,
     staked_stream_load_ema: Arc<StakedStreamLoadEMA>,
     stats: Arc<StreamerStats>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
@@ -119,7 +119,7 @@ impl ConnectionContext for SwQosConnectionContext {
 
 impl SwQos {
     pub fn new(
-        config: SwQosConfig,
+        config: SwQosSleepConfig,
         stats: Arc<StreamerStats>,
         staked_nodes: Arc<RwLock<StakedNodes>>,
         cancel: CancellationToken,

@@ -12,7 +12,7 @@ use {
     crossbeam_channel::{Sender, TrySendError},
     futures::{Future, StreamExt as _, stream::FuturesUnordered},
     indexmap::map::{Entry, IndexMap},
-    quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime},
+    quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime, VarInt},
     rand::{Rng, rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
@@ -51,6 +51,9 @@ use {
 
 pub const DEFAULT_WAIT_FOR_CHUNK_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Re-check interval for parked (zero-credit) connections.
+const PARK_RECHECK_INTERVAL: Duration = Duration::from_millis(10);
+
 pub const ALPN_TPU_PROTOCOL_ID: &[u8] = b"solana-tpu";
 
 const CONNECTION_CLOSE_CODE_DROPPED_ENTRY: u32 = 1;
@@ -76,13 +79,6 @@ const MAX_CONNECTION_BURST: u64 = 1000;
 /// Timeout for connection handshake. Timer starts once we get Initial from the
 /// peer, and is canceled when we get a Handshake packet from them.
 const QUIC_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// Absolute max RTT to allow for a legitimate connection.
-/// Enough to cover any non-malicious link on Earth.
-pub(crate) const MAX_RTT: Duration = Duration::from_millis(320);
-/// Prevent connections from having 0 RTT when RTT is too small,
-/// as this would break some BDP calculations and assign zero bandwidth
-pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
 
 /// How many RTTs worth of delay can we tolerate on stream reassembly
 /// before considering stream to be "too late". 1.5 RTT should be enough
@@ -306,6 +302,7 @@ where
         };
 
         if last_datapoint.elapsed().as_secs() >= 5 {
+            qos.pull_stats(&stats, last_datapoint.elapsed());
             stats.report(name);
             last_datapoint = Instant::now();
         }
@@ -589,6 +586,21 @@ async fn handle_connection<Q, C>(
     // it is not the end of the world.
     let rtt = connection.rtt();
     'conn: loop {
+        if let Some(max_streams) =
+            qos.compute_max_streams(&context, &connection, qos.is_saturated())
+        {
+            connection.set_max_concurrent_uni_streams(VarInt::from_u32(max_streams));
+
+            if max_streams == 0 {
+                // Park: don't accept streams, wait for load to drop
+                stats.parked_streams.fetch_add(1, Ordering::Relaxed);
+                select! {
+                    _ = tokio::time::sleep(PARK_RECHECK_INTERVAL) => continue,
+                    _ = cancel.cancelled() => break,
+                }
+            }
+        }
+
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
         // the connection task.
         let mut stream = select! {
@@ -1111,13 +1123,16 @@ impl Future for EndpointAccept<'_> {
 pub mod test {
     use {
         super::*,
-        crate::nonblocking::{
-            qos::NullStreamerCounter,
-            swqos::SwQosConfig,
-            testing_utilities::{
-                SpawnTestServerResult, check_multiple_streams, get_client_config,
-                make_client_endpoint, setup_quic_server, spawn_stake_weighted_qos_server,
+        crate::{
+            nonblocking::{
+                qos::NullStreamerCounter,
+                swqos_max_streams::SwQosMaxStreamsConfig,
+                testing_utilities::{
+                    SpawnTestServerResult, check_multiple_streams, get_client_config,
+                    make_client_endpoint, setup_quic_server, spawn_stake_weighted_qos_server,
+                },
             },
+            quic::SwQosConfig,
         },
         assert_matches::assert_matches,
         crossbeam_channel::{Receiver, unbounded},
@@ -1373,10 +1388,10 @@ pub mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig {
+            SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
                 max_connections_per_unstaked_peer: 2,
-                ..SwQosConfig::default_for_tests()
-            },
+                ..SwQosMaxStreamsConfig::default_for_tests()
+            }),
         );
 
         let client_socket = bind_to_localhost_unique().expect("should bind - client");
@@ -1585,10 +1600,10 @@ pub mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig {
+            SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
                 max_unstaked_connections: 0, // Do not allow any connection from unstaked clients/nodes
                 ..Default::default()
-            },
+            }),
             cancel.clone(),
         )
         .unwrap();
@@ -1621,10 +1636,10 @@ pub mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig {
+            SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
                 max_connections_per_unstaked_peer: 2,
                 ..Default::default()
-            },
+            }),
             cancel.clone(),
         )
         .unwrap();
@@ -2024,7 +2039,6 @@ pub mod test {
             stats.total_new_streams.load(Ordering::Relaxed),
             expected_num_txs
         );
-        assert!(stats.throttled_unstaked_streams.load(Ordering::Relaxed) > 0);
     }
 
     #[test]

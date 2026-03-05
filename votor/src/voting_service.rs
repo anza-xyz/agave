@@ -264,8 +264,9 @@ mod tests {
         },
         solana_signer::Signer,
         solana_streamer::{
-            nonblocking::swqos::SwQosConfig,
-            quic::{QuicStreamerConfig, SpawnServerResult, spawn_stake_weighted_qos_server},
+            quic::{
+                QuicStreamerConfig, SpawnServerResult, SwQosConfig, spawn_stake_weighted_qos_server,
+            },
             streamer::StakedNodes,
         },
         std::{

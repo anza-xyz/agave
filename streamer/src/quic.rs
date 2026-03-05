@@ -1,10 +1,12 @@
 use {
     crate::{
         nonblocking::{
+            load_debt_tracker::LoadDebtTracker,
             qos::{ConnectionContext, QosController},
             quic::{ALPN_TPU_PROTOCOL_ID, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
             simple_qos::{SimpleQos, SimpleQosBanlist, SimpleQosConfig},
-            swqos::{SwQos, SwQosConfig},
+            swqos::{SwQos, SwQosSleepConfig},
+            swqos_max_streams::{SwQosMaxStreams, SwQosMaxStreamsConfig},
         },
         quic_socket::QuicSocket,
         streamer::StakedNodes,
@@ -24,7 +26,7 @@ use {
         num::NonZeroUsize,
         sync::{
             Arc, RwLock,
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicU64, AtomicUsize, Ordering},
         },
         thread::{self},
         time::Duration,
@@ -215,6 +217,7 @@ pub struct StreamerStats {
     pub(crate) stream_load_ema: AtomicUsize,
     pub(crate) stream_load_ema_overflow: AtomicUsize,
     pub(crate) stream_load_capacity_overflow: AtomicUsize,
+    pub(crate) parked_streams: AtomicUsize,
     pub(crate) total_staked_packets_sent_for_batching: AtomicUsize,
     pub(crate) total_unstaked_packets_sent_for_batching: AtomicUsize,
     pub(crate) throttled_staked_streams: AtomicUsize,
@@ -233,9 +236,65 @@ pub struct StreamerStats {
     pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
     pub(crate) total_incoming_connection_attempts: AtomicUsize,
     pub(crate) quic_endpoints_count: AtomicUsize,
+    /// Unsaturated→saturated transitions since last report.
+    pub(crate) transitions_to_saturated: AtomicU64,
+    /// Saturated→unsaturated transitions since last report.
+    pub(crate) transitions_to_unsaturated: AtomicU64,
+    /// Microseconds spent in saturated state since last report.
+    pub(crate) saturated_us: AtomicU64,
+    /// Percentage of time spent saturated (0–100, integer).
+    pub(crate) saturated_pct: AtomicU64,
 }
 
 impl StreamerStats {
+    /// Pull saturation counters from the LoadDebtTracker. Call before `report()`.
+    pub fn pull_saturation_stats(&self, tracker: &LoadDebtTracker, elapsed: Duration) {
+        self.transitions_to_saturated
+            .store(tracker.take_transitions_to_saturated(), Ordering::Relaxed);
+        self.transitions_to_unsaturated
+            .store(tracker.take_transitions_to_unsaturated(), Ordering::Relaxed);
+        let sat_nanos = tracker.take_saturated_nanos();
+        self.saturated_us
+            .store(sat_nanos / 1_000, Ordering::Relaxed);
+        let elapsed_nanos = elapsed.as_nanos() as u64;
+        let pct = if elapsed_nanos > 0 {
+            sat_nanos * 100 / elapsed_nanos
+        } else {
+            0
+        };
+        self.saturated_pct.store(pct, Ordering::Relaxed);
+    }
+
+    pub fn total_new_streams(&self) -> usize {
+        self.total_new_streams.load(Ordering::Relaxed)
+    }
+
+    pub fn parked_streams(&self) -> usize {
+        self.parked_streams.load(Ordering::Relaxed)
+    }
+
+    pub fn total_packets_sent_to_consumer(&self) -> usize {
+        self.total_packets_sent_to_consumer.load(Ordering::Relaxed)
+    }
+
+    pub fn connection_added_from_staked_peer(&self) -> usize {
+        self.connection_added_from_staked_peer
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn connection_added_from_unstaked_peer(&self) -> usize {
+        self.connection_added_from_unstaked_peer
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn saturated_pct(&self) -> u64 {
+        self.saturated_pct.load(Ordering::Relaxed)
+    }
+
+    pub fn transitions_to_saturated(&self) -> u64 {
+        self.transitions_to_saturated.load(Ordering::Relaxed)
+    }
+
     pub fn report(&self, name: &'static str) {
         datapoint_info!(
             name,
@@ -544,6 +603,31 @@ impl StreamerStats {
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
+            (
+                "parked_streams",
+                self.parked_streams.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "transitions_to_saturated",
+                self.transitions_to_saturated.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "transitions_to_unsaturated",
+                self.transitions_to_unsaturated.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "saturated_us",
+                self.saturated_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "saturated_pct",
+                self.saturated_pct.swap(0, Ordering::Relaxed),
+                i64
+            ),
         );
     }
 }
@@ -553,6 +637,25 @@ pub struct QuicStreamerConfig {
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
     pub num_threads: NonZeroUsize,
+}
+
+#[derive(Clone)]
+pub enum SwQosConfig {
+    Sleep(SwQosSleepConfig),
+    MaxStreams(SwQosMaxStreamsConfig),
+}
+
+impl Default for SwQosConfig {
+    fn default() -> Self {
+        SwQosConfig::Sleep(SwQosSleepConfig::default())
+    }
+}
+
+impl SwQosConfig {
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn default_for_tests() -> Self {
+        SwQosConfig::Sleep(SwQosSleepConfig::default_for_tests())
+    }
 }
 
 #[derive(Clone)]
@@ -653,18 +756,36 @@ pub fn spawn_stake_weighted_qos_server(
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
-    let swqos = SwQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
-    spawn_runtime_and_server(
-        thread_name,
-        metrics_name,
-        stats,
-        sockets,
-        keypair,
-        packet_sender,
-        quic_server_params,
-        swqos,
-        cancel,
-    )
+    match qos_config {
+        SwQosConfig::Sleep(config) => {
+            let qos = SwQos::new(config, stats.clone(), staked_nodes, cancel.clone());
+            spawn_runtime_and_server(
+                thread_name,
+                metrics_name,
+                stats,
+                sockets,
+                keypair,
+                packet_sender,
+                quic_server_params,
+                qos,
+                cancel,
+            )
+        }
+        SwQosConfig::MaxStreams(config) => {
+            let qos = SwQosMaxStreams::new(config, stats.clone(), staked_nodes, cancel.clone());
+            spawn_runtime_and_server(
+                thread_name,
+                metrics_name,
+                stats,
+                sockets,
+                keypair,
+                packet_sender,
+                quic_server_params,
+                qos,
+                cancel,
+            )
+        }
+    }
 }
 
 /// Spawns a tokio runtime and a streamer instance inside it.
@@ -801,7 +922,7 @@ mod test {
             sender,
             staked_nodes,
             server_params,
-            SwQosConfig::default_for_tests(),
+            SwQosConfig::MaxStreams(SwQosMaxStreamsConfig::default_for_tests()),
             cancel.clone(),
         )
         .unwrap();
@@ -859,10 +980,10 @@ mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig {
+            SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
                 max_connections_per_unstaked_peer: 2,
                 ..Default::default()
-            },
+            }),
             cancel.clone(),
         )
         .unwrap();
@@ -1051,10 +1172,10 @@ mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig {
+            SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
                 max_unstaked_connections: 0,
                 ..Default::default()
-            },
+            }),
             cancel.clone(),
         )
         .unwrap();

@@ -12,8 +12,8 @@ mod tests {
         solana_perf::packet::PacketBatch,
         solana_quic_client::nonblocking::quic_client::{QuicClient, QuicLazyInitializedEndpoint},
         solana_streamer::{
-            nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
-            quic::{QuicStreamerConfig, SpawnServerResult},
+            nonblocking::quic::SpawnNonBlockingServerResult,
+            quic::{QuicStreamerConfig, SpawnServerResult, SwQosConfig},
             streamer::StakedNodes,
         },
         solana_tls_utils::{QuicClientCertificate, new_dummy_x509_certificate},
