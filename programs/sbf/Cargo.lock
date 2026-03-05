@@ -7293,9 +7293,9 @@ dependencies = [
 
 [[package]]
 name = "solana-hard-forks"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0abacc4b66ce471f135f48f22facf75cbbb0f8a252fbe2c1e0aa59d5b203f519"
+checksum = "50c19418921b9369092a9583120dbbccbcc2d92bd0c6bf5adb5f80ffd4ea4c69"
 dependencies = [
  "serde",
  "serde_derive",
