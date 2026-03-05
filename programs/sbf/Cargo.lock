@@ -8108,7 +8108,6 @@ version = "4.1.0-alpha.0"
 dependencies = [
  "crossbeam-channel",
  "futures-util",
- "http 0.2.12",
  "log",
  "semver",
  "serde",

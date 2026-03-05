@@ -9765,7 +9765,6 @@ dependencies = [
  "anyhow",
  "crossbeam-channel",
  "futures-util",
- "http 0.2.12",
  "log",
  "semver 1.0.27",
  "serde",

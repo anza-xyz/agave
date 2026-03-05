@@ -18,7 +18,6 @@ agave-unstable-api = []
 [dependencies]
 crossbeam-channel = { workspace = true }
 futures-util = { workspace = true }
-http = { workspace = true }
 log = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
