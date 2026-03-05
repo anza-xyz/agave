@@ -141,7 +141,7 @@ pub(crate) fn post_process(
 
     create_folders(config, &sbf_out_dir, &sbf_debug_dir);
 
-    let target_build_directory = if config.debug {
+    let target_build_directory = if config.debug && !config.cargo_args.contains(&"--release") {
         target_directory.join(&target_triple).join("debug")
     } else {
         target_directory.join(&target_triple).join("release")
