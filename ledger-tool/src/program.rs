@@ -509,6 +509,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 .unwrap(),
             false, // virtual_address_space_adjustments
             false, // account_data_direct_mapping
+            false, // direct_account_pointers_in_program_input
         )
         .unwrap();
 

@@ -17,7 +17,6 @@ agave-unstable-api = []
 
 [dependencies]
 agave-logger = { workspace = true }
-atty = { workspace = true }
 bincode = { workspace = true }
 bzip2 = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
