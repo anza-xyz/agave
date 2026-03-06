@@ -17,11 +17,11 @@ use {
     },
     solana_signature::Signature,
     std::{
-        collections::{hash_map::Entry, HashMap},
+        collections::{HashMap, hash_map::Entry},
         net::SocketAddr,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         time::{Duration, Instant},
     },
