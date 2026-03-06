@@ -175,8 +175,6 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 }
 
-#[allow(dead_code)]
-#[cfg(unix)]
 pub(crate) mod external {
     use {
         super::*,
@@ -231,7 +229,7 @@ pub(crate) mod external {
     pub(crate) struct ExternalWorker {
         exit: Arc<AtomicBool>,
         consumer: Consumer,
-        sender: shaq::Producer<WorkerToPackMessage>,
+        sender: shaq::spsc::Producer<WorkerToPackMessage>,
         allocator: rts_alloc::Allocator,
 
         shared_leader_state: SharedLeaderState,
@@ -247,7 +245,7 @@ pub(crate) mod external {
             id: u32,
             exit: Arc<AtomicBool>,
             consumer: Consumer,
-            sender: shaq::Producer<WorkerToPackMessage>,
+            sender: shaq::spsc::Producer<WorkerToPackMessage>,
             allocator: rts_alloc::Allocator,
             shared_leader_state: SharedLeaderState,
             sharable_banks: SharableBanks,
@@ -269,7 +267,7 @@ pub(crate) mod external {
 
         pub fn run(
             mut self,
-            mut receiver: shaq::Consumer<PackToWorkerMessage>,
+            mut receiver: shaq::spsc::Consumer<PackToWorkerMessage>,
         ) -> Result<(), ExternalConsumeWorkerError> {
             let mut should_drain_executes = false;
             let mut did_work = false;
