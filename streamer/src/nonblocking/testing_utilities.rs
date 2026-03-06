@@ -2,11 +2,8 @@
 use {
     super::quic::{ALPN_TPU_PROTOCOL_ID, SpawnNonBlockingServerResult},
     crate::{
-        nonblocking::{
-            quic::spawn_server,
-            swqos::{SwQos, SwQosConfig},
-        },
-        quic::{QUIC_MAX_TIMEOUT, QuicServerError, QuicStreamerConfig, StreamerStats},
+        nonblocking::{quic::spawn_server, swqos::SwQos, swqos_max_streams::SwQosMaxStreams},
+        quic::{QUIC_MAX_TIMEOUT, QuicServerError, QuicStreamerConfig, StreamerStats, SwQosConfig},
         quic_socket::QuicSocket,
         streamer::StakedNodes,
     },
@@ -46,23 +43,37 @@ pub fn spawn_stake_weighted_qos_server(
     quic_server_params: QuicStreamerConfig,
     qos_config: SwQosConfig,
     cancel: CancellationToken,
-) -> Result<SpawnNonBlockingServerResult, QuicServerError>
-where
-{
+) -> Result<SpawnNonBlockingServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
 
-    let swqos = SwQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
-
-    spawn_server(
-        name,
-        stats,
-        sockets,
-        keypair,
-        packet_sender,
-        quic_server_params,
-        swqos,
-        cancel,
-    )
+    match qos_config {
+        SwQosConfig::Sleep(config) => {
+            let qos = SwQos::new(config, stats.clone(), staked_nodes, cancel.clone());
+            spawn_server(
+                name,
+                stats,
+                sockets,
+                keypair,
+                packet_sender,
+                quic_server_params,
+                qos,
+                cancel,
+            )
+        }
+        SwQosConfig::MaxStreams(config) => {
+            let qos = SwQosMaxStreams::new(config, stats.clone(), staked_nodes, cancel.clone());
+            spawn_server(
+                name,
+                stats,
+                sockets,
+                keypair,
+                packet_sender,
+                quic_server_params,
+                qos,
+                cancel,
+            )
+        }
+    }
 }
 
 pub fn get_client_config(keypair: &Keypair) -> ClientConfig {

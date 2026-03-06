@@ -9,15 +9,18 @@
 
 use {
     chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc},
-    clap::Parser,
+    clap::{Parser, ValueEnum},
     crossbeam_channel::bounded,
     log::{debug, info},
     solana_keypair::Keypair,
     solana_net_utils::sockets::{SocketConfiguration, bind_to_with_config},
     solana_pubkey::Pubkey,
     solana_streamer::{
-        nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
-        quic::QuicStreamerConfig,
+        nonblocking::{
+            quic::SpawnNonBlockingServerResult, swqos::SwQosSleepConfig,
+            swqos_max_streams::SwQosMaxStreamsConfig,
+        },
+        quic::{QuicStreamerConfig, SwQosConfig},
         streamer::StakedNodes,
     },
     std::{
@@ -37,6 +40,12 @@ fn parse_duration(arg: &str) -> Result<std::time::Duration, std::num::ParseFloat
     let seconds = arg.parse()?;
     Ok(std::time::Duration::from_secs_f64(seconds))
 }
+#[derive(Debug, Clone, ValueEnum)]
+enum SwQosMode {
+    Sleep,
+    MaxStreams,
+}
+
 const LAMPORTS_PER_SOL: u64 = 1000000000;
 
 pub fn load_staked_nodes_overrides(path: &String) -> anyhow::Result<HashMap<Pubkey, u64>> {
@@ -84,6 +93,9 @@ struct Cli {
 
     #[arg(short, long)]
     stake_amounts: String,
+
+    #[arg(long, value_enum, default_value_t = SwQosMode::Sleep)]
+    swqos_mode: SwQosMode,
 }
 
 // number of threads as in fn default_num_tpu_transaction_forward_receive_threads
@@ -110,6 +122,24 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let cancel = CancellationToken::new();
+    let quic_server_params = QuicStreamerConfig {
+        ..QuicStreamerConfig::default()
+    };
+
+    // Spawn the server with the selected SwQoS mode.
+    let qos_config = match cli.swqos_mode {
+        SwQosMode::MaxStreams => SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+            max_connections_per_staked_peer: cli.max_connections_per_staked_peer,
+            max_connections_per_unstaked_peer: cli.max_connections_per_unstaked_peer,
+            ..Default::default()
+        }),
+        SwQosMode::Sleep => SwQosConfig::Sleep(SwQosSleepConfig {
+            max_connections_per_staked_peer: cli.max_connections_per_staked_peer,
+            max_connections_per_unstaked_peer: cli.max_connections_per_unstaked_peer,
+            ..Default::default()
+        }),
+    };
+
     let SpawnNonBlockingServerResult {
         endpoints,
         stats,
@@ -121,14 +151,8 @@ async fn main() -> anyhow::Result<()> {
         &keypair,
         sender,
         staked_nodes,
-        QuicStreamerConfig {
-            ..QuicStreamerConfig::default()
-        },
-        SwQosConfig {
-            max_connections_per_staked_peer: cli.max_connections_per_staked_peer,
-            max_connections_per_unstaked_peer: cli.max_connections_per_unstaked_peer,
-            ..Default::default()
-        },
+        quic_server_params,
+        qos_config,
         cancel.clone(),
     )?;
     info!("Server listening on {}", socket.local_addr()?);

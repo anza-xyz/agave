@@ -1,7 +1,7 @@
 use {
     crate::nonblocking::quic::{ClientConnectionTracker, ConnectionPeerType},
     quinn::Connection,
-    std::future::Future,
+    std::{future::Future, time::Duration},
     tokio_util::sync::CancellationToken,
 };
 
@@ -51,6 +51,26 @@ pub(crate) trait QosController<C: ConnectionContext> {
         context: &C,
         connection: Connection,
     ) -> impl Future<Output = usize> + Send;
+
+    /// Whether the system is globally saturated.
+    fn is_saturated(&self) -> bool {
+        false
+    }
+
+    /// Desired max concurrent uni streams. `Some(0)` parks the connection;
+    /// `None` means this QoS implementation does not manage MAX_STREAMS.
+    fn compute_max_streams(
+        &self,
+        context: &C,
+        connection: &Connection,
+        saturated: bool,
+    ) -> Option<u32> {
+        let _ = (context, connection, saturated);
+        None
+    }
+
+    /// Pull QoS-specific metrics into StreamerStats before reporting.
+    fn pull_stats(&self, _stats: &crate::quic::StreamerStats, _elapsed: Duration) {}
 
     /// How many concurrent
     fn max_concurrent_connections(&self) -> usize;
