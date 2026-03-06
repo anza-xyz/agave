@@ -58,6 +58,11 @@ echo "Size: $SYMBOL_SIZE bytes"
 echo "File Offset (Dec): $FILE_OFFSET_DEC"
 echo "----------------------"
 
+if [ $((FILE_OFFSET_DEC % 4)) -ne 0 ]; then
+  echo "Error: ELF not aligned to 4-byte boundary, which is required be eBPF" >&2
+  exit 5
+fi
+
 # dd command to extract and hash the content
 echo -n "Hash (SHA256): "
 dd if="$ELF_FILE" bs=1 skip="$FILE_OFFSET_DEC" count="$SYMBOL_SIZE" status=none 2>/dev/null | sha256sum | awk '{print $1}'
