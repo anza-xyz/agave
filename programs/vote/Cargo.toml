@@ -24,6 +24,7 @@ frozen-abi = [
     "dep:solana-frozen-abi-macro",
     "solana-program-runtime/frozen-abi",
     "solana-vote-interface/frozen-abi",
+    "solana-hash/atomic",
 ]
 
 [dependencies]
