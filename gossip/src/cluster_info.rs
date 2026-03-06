@@ -34,9 +34,8 @@ use {
         ping_pong::Pong,
         protocol::{
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, MAX_INCREMENTAL_SNAPSHOT_HASHES,
-            MAX_PRUNE_DATA_NODES, PULL_RESPONSE_MAX_PAYLOAD_SIZE,
-            PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache,
-            Protocol, PruneData, split_gossip_messages,
+            MAX_PRUNE_DATA_NODES, PULL_RESPONSE_MAX_PAYLOAD_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE,
+            Ping, PingCache, Protocol, PruneData, split_gossip_messages,
         },
         weighted_shuffle::WeightedShuffle,
     },
@@ -53,10 +52,10 @@ use {
         PortRange, SocketAddrSpace, VALIDATOR_PORT_RANGE, bind_in_range,
         multihomed_sockets::BindIpAddrs,
         sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
+        token_bucket::TokenBucket,
     },
-    solana_perf::{
-        data_budget::DataBudget,
-        packet::{Packet, PacketBatch, PacketBatchRecycler, PacketRef, RecycledPacketBatch},
+    solana_perf::packet::{
+        Packet, PacketBatch, PacketBatchRecycler, PacketRef, RecycledPacketBatch,
     },
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
@@ -133,6 +132,11 @@ pub const DEFAULT_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = MINIMUM_NUM_TVU_RECEIV
 pub const MINIMUM_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 pub const DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(12).unwrap();
 
+/// Allow 1 MB burst of pull responses
+const PULL_RESPONSE_SERVICE_BURST_BYTES: u64 = 1024 * 1024;
+/// Allow at most 5 MB per second of pull responses
+const PULL_RESPONSE_SERVICE_RATE_BYTES_PER_SECOND: f64 = 5.0 * 1024.0 * 1024.0;
+
 #[derive(Debug, PartialEq, Eq, Error)]
 pub enum ClusterInfoError {
     #[error("NoPeers")]
@@ -154,7 +158,7 @@ pub struct ClusterInfo {
     keypair: ArcSwap<Keypair>,
     /// Network entrypoints
     entrypoints: RwLock<Vec<ContactInfo>>,
-    outbound_budget: DataBudget,
+    outbound_budget: TokenBucket,
     my_contact_info: RwLock<ContactInfo>,
     ping_cache: Mutex<PingCache>,
     pub(crate) stats: GossipStats,
@@ -177,7 +181,11 @@ impl ClusterInfo {
             gossip: CrdsGossip::default(),
             keypair: ArcSwap::from(keypair),
             entrypoints: RwLock::default(),
-            outbound_budget: DataBudget::default(),
+            outbound_budget: TokenBucket::new(
+                PULL_RESPONSE_SERVICE_BURST_BYTES,
+                PULL_RESPONSE_SERVICE_BURST_BYTES,
+                PULL_RESPONSE_SERVICE_RATE_BYTES_PER_SECOND,
+            ),
             my_contact_info: RwLock::new(contact_info),
             ping_cache: Mutex::new(PingCache::new(
                 &mut rand::rng(),
@@ -1534,21 +1542,6 @@ impl ClusterInfo {
         }
     }
 
-    fn update_data_budget(&self, num_staked: usize) -> usize {
-        const INTERVAL_MS: u64 = 100;
-        // epoch slots + votes ~= 1.5kB/slot ~= 4kB/s
-        // Allow 10kB/s per staked validator.
-        const BYTES_PER_INTERVAL: usize = 1024;
-        const MAX_BUDGET_MULTIPLE: usize = 5; // allow budget build-up to 5x the interval default
-        let num_staked = num_staked.max(2);
-        self.outbound_budget.update(INTERVAL_MS, |bytes| {
-            std::cmp::min(
-                bytes + num_staked * BYTES_PER_INTERVAL,
-                MAX_BUDGET_MULTIPLE * num_staked * BYTES_PER_INTERVAL,
-            )
-        })
-    }
-
     // Returns a predicate checking if the pull request is from a valid
     // address, and if the address have responded to a ping request. Also
     // appends ping packets for the addresses which need to be (re)verified.
@@ -1599,8 +1592,6 @@ impl ClusterInfo {
         stakes: &HashMap<Pubkey, u64>,
     ) -> RecycledPacketBatch {
         const DEFAULT_EPOCH_DURATION_MS: u64 = DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT;
-        let output_size_limit =
-            self.update_data_budget(stakes.len()) / PULL_RESPONSE_MIN_SERIALIZED_SIZE;
         let mut packet_batch =
             RecycledPacketBatch::new_with_recycler(recycler, 64, "handle_pull_requests");
         let mut rng = rand::rng();
@@ -1615,7 +1606,7 @@ impl ClusterInfo {
             self.gossip.generate_pull_responses(
                 thread_pool,
                 &requests,
-                output_size_limit,
+                &self.outbound_budget,
                 now,
                 |value| {
                     should_retain_crds_value(
@@ -1668,7 +1659,11 @@ impl ClusterInfo {
                 Some((packet, num_values))
             })
             .take_while(|(packet, _)| {
-                if self.outbound_budget.take(packet.meta().size) {
+                if self
+                    .outbound_budget
+                    .consume_tokens(packet.meta().size as u64)
+                    .is_ok()
+                {
                     true
                 } else {
                     self.stats.gossip_pull_request_no_budget.add_relaxed(1);
