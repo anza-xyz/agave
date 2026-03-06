@@ -385,7 +385,12 @@ impl ReadOnlyAccountsCache {
                     .choose(rng)
                     .expect("number of shards should be greater than zero");
                 let shard = shard.read();
-                for (key, entry) in shard.iter().choose_multiple(rng, remaining_samples) {
+                // Safety: iteration is done before shard is dropped (iter isn't lifetime bound to it)
+                let iter = unsafe { shard.iter() };
+                for bucket in iter.choose_multiple(rng, remaining_samples) {
+                    // Safety: element is not ZST and iteration is over read-locked view of the table,
+                    // so all buckets (pointers) are valid
+                    let (key, entry) = unsafe { bucket.as_ref() };
                     let last_update_time = entry.get().last_update_time.load(Ordering::Relaxed);
                     if last_update_time < min_update_time {
                         min_update_time = last_update_time;
