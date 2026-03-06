@@ -26,7 +26,6 @@ use {
     agave_feature_set::FeatureSet,
     agave_snapshots::unpack_genesis_archive,
     assert_matches::debug_assert_matches,
-    bincode::{deserialize, serialize},
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
     dashmap::DashSet,
     itertools::Itertools,
@@ -74,7 +73,7 @@ use {
         convert::TryInto,
         fmt::Write,
         fs::{self, File},
-        io::{Error as IoError, ErrorKind},
+        io::Error as IoError,
         ops::{Bound, Range},
         path::{Path, PathBuf},
         rc::Rc,
@@ -635,7 +634,7 @@ impl Blockstore {
         let candidate_fec_set_index = u32::try_from(candidate_fec_set_index)
             .expect("fec_set_index from a previously inserted shred should fit in u32");
         let candidate_erasure_set = ErasureSetId::new(slot, candidate_fec_set_index);
-        let candidate_erasure_meta: ErasureMeta = deserialize(candidate_erasure_meta.as_ref())?;
+        let candidate_erasure_meta = cf::ErasureMeta::deserialize(candidate_erasure_meta.as_ref())?;
 
         // Check if this is actually the consecutive erasure set
         let Some(next_fec_set_index) = candidate_erasure_meta.next_fec_set_index() else {
@@ -754,7 +753,7 @@ impl Blockstore {
     ) -> Result<impl Iterator<Item = (Slot, Hash, UnixTimestamp)> + '_> {
         let iter = self.optimistic_slots_cf.iter(IteratorMode::End)?;
         Ok(iter.map(|(slot, bytes)| {
-            let meta: OptimisticSlotMetaVersioned = deserialize(&bytes).unwrap();
+            let meta = cf::OptimisticSlots::deserialize(&bytes).unwrap();
             (slot, meta.hash(), meta.timestamp())
         }))
     }
@@ -2892,7 +2891,7 @@ impl Blockstore {
         let iterator = self.transaction_status_index_cf.iter(IteratorMode::Start)?;
         let mut highest_primary_index_slot = None;
         for (_, data) in iterator {
-            let meta: TransactionStatusIndexMeta = deserialize(&data).unwrap();
+            let meta = cf::TransactionStatusIndex::deserialize(&data).unwrap();
             if highest_primary_index_slot.is_none()
                 || highest_primary_index_slot.is_some_and(|slot| slot < meta.max_slot)
             {
@@ -3539,21 +3538,7 @@ impl Blockstore {
                 .iter(IteratorMode::End)?
                 .take(num)
                 .map(|(slot, data)| {
-                    deserialize::<PerfSampleV2>(&data)
-                        .map(|sample| (slot, sample.into()))
-                        .or_else(|err| {
-                            match &*err {
-                                bincode::ErrorKind::Io(io_err)
-                                    if matches!(io_err.kind(), ErrorKind::UnexpectedEof) =>
-                                {
-                                    // Not enough bytes to deserialize as `PerfSampleV2`.
-                                }
-                                _ => return Err(err),
-                            }
-
-                            deserialize::<PerfSampleV1>(&data).map(|sample| (slot, sample.into()))
-                        })
-                        .map_err(Into::into)
+                    cf::PerfSamples::deserialize(&data).map(|sample| (slot, sample.into()))
                 });
 
         samples.collect()
@@ -3561,8 +3546,8 @@ impl Blockstore {
 
     pub fn write_perf_sample(&self, index: Slot, perf_sample: &PerfSampleV2) -> Result<()> {
         // Always write as the current version.
-        let bytes =
-            serialize(&perf_sample).expect("`PerfSampleV2` can be serialized with `bincode`");
+        let bytes = cf::PerfSamples::serialize(perf_sample)
+            .expect("`PerfSampleV2` can be serialized with `bincode`");
         self.perf_samples_cf.put_bytes(index, &bytes)
     }
 
@@ -4130,8 +4115,9 @@ impl Blockstore {
             .duplicate_slots_cf
             .iter(IteratorMode::From(0, IteratorDirection::Forward))
             .unwrap();
-        iter.next()
-            .map(|(slot, proof_bytes)| (slot, deserialize(&proof_bytes).unwrap()))
+        iter.next().map(|(slot, proof_bytes)| {
+            (slot, cf::DuplicateSlots::deserialize(&proof_bytes).unwrap())
+        })
     }
 
     pub fn store_duplicate_slot<S, T>(&self, slot: Slot, shred1: S, shred2: T) -> Result<()>
