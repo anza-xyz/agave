@@ -5,7 +5,6 @@ use {
         },
         transaction_client::TransactionClient,
     },
-    crossbeam_channel::Receiver as CrossbeamReceiver,
     itertools::Itertools,
     log::*,
     solana_hash::Hash,
@@ -62,9 +61,6 @@ pub const MAX_RETRY_SLEEP_MS: u64 = 1000;
 
 /// The minimum duration the retry task will sleep between retries.
 const MIN_RETRY_SLEEP_MS: u64 = 100;
-
-/// Buffer size for the crossbeam-to-tokio bridge channel.
-const BRIDGE_CHANNEL_SIZE: usize = 1000;
 
 pub struct SendTransactionService {
     receive_txn_task: JoinHandle<()>,
@@ -165,28 +161,17 @@ impl Default for Config {
 impl SendTransactionService {
     pub fn new<Client: TransactionClient + Clone + Send + 'static>(
         bank_forks: &Arc<RwLock<BankForks>>,
-        crossbeam_receiver: CrossbeamReceiver<TransactionInfo>,
+        receiver: mpsc::Receiver<TransactionInfo>,
         client: Client,
         config: Config,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let (tokio_sender, tokio_receiver) = mpsc::channel(BRIDGE_CHANNEL_SIZE);
-
-        std::thread::spawn(move || {
-            while let Ok(transaction_info) = crossbeam_receiver.recv() {
-                if tokio_sender.blocking_send(transaction_info).is_err() {
-                    break;
-                }
-            }
-            debug!("Crossbeam-to-tokio bridge terminated");
-        });
-
         let stats_report = Arc::new(SendTransactionServiceStatsReport::default());
 
         let (retry_sender, retry_receiver) = mpsc::channel(config.retry_pool_max_size);
 
         let receive_txn_task = Self::receive_txn_task(
-            tokio_receiver,
+            receiver,
             client.clone(),
             retry_sender,
             config.clone(),
@@ -601,7 +586,6 @@ mod test {
     use {
         super::*,
         crate::test_utils::create_client_for_tests,
-        crossbeam_channel::bounded,
         solana_account::AccountSharedData,
         solana_genesis_config::create_genesis_config,
         solana_nonce::{self as nonce, state::DurableNonce},
@@ -616,10 +600,10 @@ mod test {
     const TEST_RETRY_RATE_MS: u64 = 100;
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn crossbeam_bridge_compatibility() {
+    async fn service_channel_closed() {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
-        let (sender, receiver) = bounded(1);
+        let (sender, receiver) = mpsc::channel(1);
 
         let client =
             create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
@@ -644,7 +628,7 @@ mod test {
     async fn service_exit() {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
-        let (sender, receiver) = bounded(1);
+        let (sender, receiver) = mpsc::channel(1);
 
         let client =
             create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
@@ -669,7 +653,7 @@ mod test {
     async fn validator_exit() {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
-        let (sender, receiver) = bounded(1);
+        let (sender, receiver) = mpsc::channel(1);
 
         let dummy_tx_info = || TransactionInfo {
             message_hash: Hash::default(),
@@ -698,10 +682,10 @@ mod test {
             exit.clone(),
         );
 
-        sender.send(dummy_tx_info()).unwrap();
+        sender.send(dummy_tx_info()).await.unwrap();
 
         for _ in 0..5 {
-            let _ = sender.send(dummy_tx_info());
+            let _ = sender.try_send(dummy_tx_info());
         }
 
         exit.store(true, Ordering::Relaxed);
