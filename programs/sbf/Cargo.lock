@@ -7963,9 +7963,9 @@ dependencies = [
 
 [[package]]
 name = "solana-program-option"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e7b4ddb464f274deb4a497712664c3b612e3f5f82471d4e47710fc4ab1c3095"
+checksum = "362279f6e8020e4cf11313233789bf619420ad8835ebc91963ee5cec91bb05da"
 
 [[package]]
 name = "solana-program-pack"
