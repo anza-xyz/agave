@@ -53,14 +53,8 @@ fn stake_weighted_slot_leaders(
     let mut seed = [0u8; 32];
     seed[0..8].copy_from_slice(&epoch.to_le_bytes());
     let rng = &mut ChaChaRng::from_seed(seed);
-    let mut current_slot_leader = SlotLeader::default();
-    (0..len)
-        .map(|i| {
-            if i % repeat == 0 {
-                current_slot_leader = slot_leaders[weighted_index.sample(rng)];
-            }
-            current_slot_leader
-        })
+    (0..len / repeat)
+        .map(|_| slot_leaders[weighted_index.sample(rng)])
         .collect()
 }
 
@@ -95,7 +89,7 @@ mod tests {
         let schedule: Vec<_> = repeat_with(|| unique_leaders[rng.random_range(0..3)])
             .take(19)
             .collect();
-        let schedule = LeaderSchedule::new_from_schedule(schedule);
+        let schedule = LeaderSchedule::new_from_schedule(schedule, 1);
         let leaders = (0..NUM_SLOTS)
             .map(|i| (schedule[i as u64].id, i))
             .into_group_map();
@@ -152,9 +146,9 @@ mod tests {
     }
 
     #[test_case(1, &[10, 20, 30], 12, 1, &[1, 1, 2, 1, 1, 0, 0, 1, 2, 1, 0, 1])]
-    #[test_case(1, &[10, 20, 30], 12, 2, &[1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 0, 0])]
+    #[test_case(1, &[10, 20, 30], 12, 2, &[1, 1, 2, 1, 1, 0])]
     #[test_case(1, &[30, 10, 20], 12, 1, &[2, 2, 0, 2, 2, 1, 1, 2, 0, 2, 1, 2])]
-    #[test_case(1, &[30, 10, 20], 12, 2, &[2, 2, 2, 2, 0, 0, 2, 2, 2, 2, 1,1])]
+    #[test_case(1, &[30, 10, 20], 12, 2, &[2, 2, 0, 2, 2, 1])]
     #[test_case(1, &[10, 20, 25, 30], 12, 1, &[2, 2, 3, 1, 2, 0, 1, 1, 3, 2, 1, 2])]
     #[test_case(1, &[10, 20, 25, 30, 35, 40, 100], 15, 1,
                 &[4, 5, 6, 3, 4, 1, 2, 3, 6, 4, 2, 4, 5, 6, 6])]
@@ -165,13 +159,13 @@ mod tests {
     #[test_case(1, &[10, 20, 25, 30, 35, 40, 100, 1000, 10_000], 25, 1,
                 &[8, 8, 8, 8, 8, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 8, 8])]
     #[test_case(457468, &[10, 20, 30], 12, 1, &[2, 2, 0, 1, 0, 2, 1, 2, 1, 2, 2, 2])]
-    #[test_case(457468, &[10, 20, 30], 12, 2, &[2, 2, 2, 2, 0, 0, 1, 1, 0, 0, 2, 2])]
+    #[test_case(457468, &[10, 20, 30], 12, 2, &[2, 2, 0, 1, 0, 2])]
     #[test_case(457469, &[10, 20, 30], 12, 1, &[1, 2, 2, 2, 2, 2, 2, 1, 0, 2, 2, 0])]
     #[test_case(457470, &[10, 20, 30], 12, 1, &[2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 0, 2])]
     #[test_case(3466545, &[10, 20, 30], 12, 1, &[2, 2, 0, 0, 2, 1, 1, 1, 0, 0, 2, 2])]
     #[test_case(3466545, &[10, 20, 30], 13, 1, &[2, 2, 0, 0, 2, 1, 1, 1, 0, 0, 2, 2, 1])]
     #[test_case(3466545, &[10, 20, 30], 14, 1, &[2, 2, 0, 0, 2, 1, 1, 1, 0, 0, 2, 2, 1, 2])]
-    #[test_case(3466545, &[10, 20, 30], 14, 2, &[2, 2, 2, 2, 0, 0, 0, 0, 2, 2, 1, 1, 1, 1])]
+    #[test_case(3466545, &[10, 20, 30], 14, 2, &[2, 2, 0, 0, 2, 1, 1])]
     fn test_stake_leader_schedule_exact_order(
         epoch: u64,
         stakes: &[u64],

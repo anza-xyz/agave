@@ -1804,16 +1804,12 @@ mod tests {
         let leader_b = SlotLeader::new_unique();
         let leader_c = SlotLeader::new_unique();
         let leader_d = SlotLeader::new_unique();
-        let consecutive_leader_slots = NUM_CONSECUTIVE_LEADER_SLOTS as usize;
-        let mut slot_leaders = Vec::with_capacity(consecutive_leader_slots * 3);
-        slot_leaders.extend(std::iter::repeat_n(leader_a, consecutive_leader_slots));
-        slot_leaders.extend(std::iter::repeat_n(leader_b, consecutive_leader_slots));
-        slot_leaders.extend(std::iter::repeat_n(leader_c, consecutive_leader_slots));
-        slot_leaders.extend(std::iter::repeat_n(leader_d, consecutive_leader_slots));
+        let slot_leaders = vec![leader_a, leader_b, leader_c, leader_d];
         let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
         let fixed_schedule = solana_leader_schedule::FixedSchedule {
             leader_schedule: Arc::new(solana_leader_schedule::LeaderSchedule::new_from_schedule(
                 slot_leaders,
+                NUM_CONSECUTIVE_LEADER_SLOTS,
             )),
         };
         leader_schedule_cache.set_fixed_leader_schedule(Some(fixed_schedule));
