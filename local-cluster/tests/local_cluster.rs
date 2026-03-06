@@ -2596,10 +2596,6 @@ fn test_restart_tower_rollback() {
 #[test]
 #[serial]
 fn test_run_test_load_program_accounts_partition_root() {
-    run_test_load_program_accounts_partition(CommitmentConfig::finalized());
-}
-
-fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
     let num_slots_per_validator = 8;
     let partitions: [usize; 2] = [1, 1];
     let (leader_schedule, validator_keys) = create_custom_leader_schedule_with_random_keys(&[
@@ -2614,7 +2610,7 @@ fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
     let (t_update, t_scan, additional_accounts) = setup_transfer_scan_threads(
         100,
         exit.clone(),
-        scan_commitment,
+        CommitmentConfig::finalized(),
         update_client_receiver,
         scan_client_receiver,
     );
