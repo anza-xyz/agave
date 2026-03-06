@@ -3451,6 +3451,35 @@ impl ReplayStage {
                     None
                 };
                 bank.set_block_id(block_id);
+
+                // Verify and process block components (e.g., header, footer) before freezing.
+                // Only verify blocks that were replayed from blockstore (not leader blocks).
+                if !is_leader_block {
+                    if let Err(err) = bank
+                        .block_component_processor
+                        .read()
+                        .unwrap()
+                        .on_final(migration_status, bank_slot)
+                    {
+                        warn!("Block component processing failed for slot {bank_slot}: {err:?}",);
+                        let root = bank_forks.read().unwrap().root();
+                        Self::mark_dead_slot(
+                            blockstore,
+                            bank,
+                            root,
+                            &BlockstoreProcessorError::BlockComponentProcessor(err),
+                            rpc_subscriptions,
+                            slot_status_notifier,
+                            progress,
+                            duplicate_slots_to_repair,
+                            ancestor_hashes_replay_update_sender,
+                            purge_repair_slot_counter,
+                            &mut tbft_structs,
+                        );
+                        continue;
+                    }
+                }
+
                 // Freeze the bank before sending to any auxiliary threads
                 // that may expect to be operating on a frozen bank
                 bank.freeze();
