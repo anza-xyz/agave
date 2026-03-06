@@ -23,28 +23,31 @@ macro_rules! align_pointer {
     };
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn entrypoint(program_input: *mut u8, instruction_data: *mut u8) -> u64 {
     // First 8-bytes of program_input contains the number of accounts.
     let accounts = program_input as *mut u64;
 
-    // The 8-bytes before the instruction data contains the length of
-    // the instruction data, even if the instruction data is empty.
-    let ix_data_len = *(instruction_data.sub(size_of::<u64>()) as *mut u64) as usize;
+    let (program_id, accounts, instruction_data) = unsafe {
+        // The 8-bytes before the instruction data contains the length of
+        // the instruction data, even if the instruction data is empty.
+        let ix_data_len = *(instruction_data.sub(size_of::<u64>()) as *mut u64) as usize;
 
-    // The program_id is located right after the instruction data.
-    let program_id = &*(instruction_data.add(ix_data_len) as *const Address);
+        // The program_id is located right after the instruction data.
+        let program_id = &*(instruction_data.add(ix_data_len) as *const Address);
 
-    // The slice of account pointers is located right after the program_id.
-    let slice_ptr = instruction_data.add(ix_data_len + size_of::<Address>());
-    let accounts = from_raw_parts(
-        align_pointer!(slice_ptr) as *const AccountView,
-        *accounts as usize,
-    );
+        // The slice of account pointers is located right after the program_id.
+        let slice_ptr = instruction_data.add(ix_data_len + size_of::<Address>());
+        let accounts = from_raw_parts(
+            align_pointer!(slice_ptr) as *const AccountView,
+            *accounts as usize,
+        );
 
-    // The instruction data slice.
-    let instruction_data = from_raw_parts(instruction_data, ix_data_len);
+        // The instruction data slice.
+        let instruction_data = from_raw_parts(instruction_data, ix_data_len);
 
+        (program_id, accounts, instruction_data)
+    };
     match process_instruction(program_id, accounts, instruction_data) {
         Ok(_) => solana_program_entrypoint::SUCCESS,
         Err(e) => e.into(),
