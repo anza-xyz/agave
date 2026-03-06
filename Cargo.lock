@@ -10218,7 +10218,7 @@ dependencies = [
  "bytemuck",
  "crossbeam-channel",
  "dashmap",
- "im",
+ "imbl",
  "itertools 0.14.0",
  "libc",
  "libsecp256k1",

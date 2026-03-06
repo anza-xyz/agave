@@ -69,7 +69,7 @@ bincode = { workspace = true }
 bytemuck = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api", "serde"] }
-im = { workspace = true, features = ["rayon", "serde"] }
+imbl = { workspace = true, features = ["rayon", "serde"] }
 itertools = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }

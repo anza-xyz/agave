@@ -177,7 +177,7 @@ impl VersionedEpochStakes {
             SerdeStakesToStakeFormat::Account(crate::stakes::Stakes::new_for_tests(
                 0,
                 solana_vote::vote_account::VoteAccounts::from(Arc::new(vote_accounts_hash_map)),
-                im::HashMap::default(),
+                imbl::HashMap::default(),
             )),
             leader_schedule_epoch,
         )
