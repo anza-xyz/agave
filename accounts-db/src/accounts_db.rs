@@ -250,13 +250,6 @@ impl<'a> ShrinkCollectRefs<'a> for ShrinkCollectAliveSeparatedByRefs<'a> {
     }
 }
 
-pub enum StoreReclaims {
-    /// normal reclaim mode
-    Default,
-    /// do not return reclaims from accounts index upsert
-    Ignore,
-}
-
 #[derive(Debug)]
 pub(crate) struct ShrinkCollect<'a, T: ShrinkCollectRefs<'a>> {
     pub(crate) slot: Slot,
