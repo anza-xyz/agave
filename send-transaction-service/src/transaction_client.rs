@@ -28,9 +28,9 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-/// How many connections to maintain the tpu-client-next cache. The value is
-/// chosen to match MAX_CONNECTIONS from ConnectionCache
-const MAX_CONNECTIONS: usize = 1024;
+/// How many connections to maintain the tpu-client-next cache.
+/// Size 64 covers 64*4 slots which corresponds to ~100sec.
+const MAX_CONNECTIONS: usize = 64;
 
 // Alias trait to shorten function definitions.
 pub trait TpuInfoWithSendStatic: TpuInfo + std::marker::Send + 'static {}
