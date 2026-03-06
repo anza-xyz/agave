@@ -22,7 +22,7 @@ use {
     rocksdb::{
         self, ColumnFamily, ColumnFamilyDescriptor, CompactionDecision, DB, DBCompressionType,
         DBIterator, DBPinnableSlice, DBRawIterator, IteratorMode as RocksIteratorMode, LiveFile,
-        Options, WriteBatch as RWriteBatch,
+        Options, ReadOptions, WriteBatch as RWriteBatch,
         compaction_filter::CompactionFilter,
         compaction_filter_factory::{CompactionFilterContext, CompactionFilterFactory},
         properties as RocksProperties,
@@ -363,8 +363,13 @@ impl Rocks {
         K: AsRef<[u8]> + 'a + ?Sized,
         I: IntoIterator<Item = &'a K>,
     {
+        let mut read_options = ReadOptions::default();
+        #[cfg(target_os = "linux")]
+        {
+            read_options.set_async_io(true);
+        }
         self.db
-            .batched_multi_get_cf(cf, keys, /*sorted_input:*/ false)
+            .batched_multi_get_cf_opt(cf, keys, false, &read_options)
             .into_iter()
             .map(|out| out.map_err(BlockstoreError::RocksDb))
     }
@@ -390,11 +395,21 @@ impl Rocks {
         cf: &ColumnFamily,
         iterator_mode: RocksIteratorMode,
     ) -> DBIterator<'_> {
-        self.db.iterator_cf(cf, iterator_mode)
+        let mut read_options = ReadOptions::default();
+        #[cfg(target_os = "linux")]
+        {
+            read_options.set_async_io(true);
+        }
+        self.db.iterator_cf_opt(cf, read_options, iterator_mode)
     }
 
     pub(crate) fn raw_iterator_cf(&self, cf: &ColumnFamily) -> Result<DBRawIterator<'_>> {
-        Ok(self.db.raw_iterator_cf(cf))
+        let mut read_options = ReadOptions::default();
+        #[cfg(target_os = "linux")]
+        {
+            read_options.set_async_io(true);
+        }
+        Ok(self.db.raw_iterator_cf_opt(cf, read_options))
     }
 
     pub(crate) fn batch(&self) -> Result<WriteBatch> {
