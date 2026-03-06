@@ -32,9 +32,8 @@ use {
         CliStakeType, OutputFormat, ReturnSignersConfig, display::BuildBalanceMessageConfig,
         return_signers_with_config,
     },
-    solana_clock::{Clock, Epoch, SECONDS_PER_DAY, UnixTimestamp},
+    solana_clock::{Clock, Epoch, UnixTimestamp},
     solana_commitment_config::CommitmentConfig,
-    solana_epoch_schedule::EpochSchedule,
     solana_message::Message,
     solana_native_token::Sol,
     solana_pubkey::Pubkey,
@@ -2566,48 +2565,13 @@ pub(crate) fn check_current_authority(
     }
 }
 
-pub async fn get_epoch_boundary_timestamps(
-    rpc_client: &RpcClient,
-    reward: &RpcInflationReward,
-    epoch_schedule: &EpochSchedule,
-) -> Result<(UnixTimestamp, UnixTimestamp), Box<dyn std::error::Error>> {
-    let epoch_end_time = rpc_client.get_block_time(reward.effective_slot).await?;
-    let mut epoch_start_slot = epoch_schedule.get_first_slot_in_epoch(reward.epoch);
-    let epoch_start_time = loop {
-        if epoch_start_slot >= reward.effective_slot {
-            return Err("epoch_start_time not found".to_string().into());
-        }
-        match rpc_client.get_block_time(epoch_start_slot).await {
-            Ok(block_time) => {
-                break block_time;
-            }
-            Err(_) => {
-                // TODO This is wrong.  We should not just increase the slot index if the RPC
-                // request failed.  It could have failed for a number of reasons, including, for
-                // example a network failure.
-                epoch_start_slot = epoch_start_slot
-                    .checked_add(1)
-                    .ok_or("Reached last slot that fits into u64")?;
-            }
-        }
-    };
-    Ok((epoch_start_time, epoch_end_time))
-}
-
 pub fn make_cli_reward(
     reward: &RpcInflationReward,
     block_time: UnixTimestamp,
-    epoch_start_time: UnixTimestamp,
-    epoch_end_time: UnixTimestamp,
 ) -> Option<CliEpochReward> {
-    let wallclock_epoch_duration = epoch_end_time.checked_sub(epoch_start_time)?;
     if reward.post_balance > reward.amount {
         let rate_change =
             reward.amount as f64 / (reward.post_balance.saturating_sub(reward.amount)) as f64;
-
-        let wallclock_epochs_per_year =
-            (SECONDS_PER_DAY * 365) as f64 / wallclock_epoch_duration as f64;
-        let apr = rate_change * wallclock_epochs_per_year;
 
         Some(CliEpochReward {
             epoch: reward.epoch,
@@ -2615,7 +2579,6 @@ pub fn make_cli_reward(
             amount: reward.amount,
             post_balance: reward.post_balance,
             percent_change: rate_change * 100.0,
-            apr: Some(apr * 100.0),
             commission: reward.commission,
             block_time,
         })
@@ -2631,7 +2594,6 @@ pub(crate) async fn fetch_epoch_rewards(
     starting_epoch: Option<u64>,
 ) -> Result<Vec<CliEpochReward>, Box<dyn std::error::Error>> {
     let mut all_epoch_rewards = vec![];
-    let epoch_schedule = rpc_client.get_epoch_schedule().await?;
     let mut rewards_epoch = if let Some(epoch) = starting_epoch {
         epoch
     } else {
@@ -2648,12 +2610,8 @@ pub(crate) async fn fetch_epoch_rewards(
             .await
         {
             if let Some(reward) = &rewards[0] {
-                let (epoch_start_time, epoch_end_time) =
-                    get_epoch_boundary_timestamps(rpc_client, reward, &epoch_schedule).await?;
                 let block_time = rpc_client.get_block_time(reward.effective_slot).await?;
-                if let Some(cli_reward) =
-                    make_cli_reward(reward, block_time, epoch_start_time, epoch_end_time)
-                {
+                if let Some(cli_reward) = make_cli_reward(reward, block_time) {
                     all_epoch_rewards.push(cli_reward);
                 }
             }
