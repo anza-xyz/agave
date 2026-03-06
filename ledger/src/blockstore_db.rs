@@ -1151,6 +1151,13 @@ fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
     options.create_if_missing(true);
     options.create_missing_column_families(true);
 
+    // Direct io
+    #[cfg(target_os = "linux")]
+    {
+        options.set_use_direct_io_for_flush_and_compaction(true);
+        options.set_use_direct_reads(true);
+    }
+
     // rocksdb builds two threadpools: low and high priority. The low priority
     // pool is used for compactions whereas the high priority pool is used for
     // memtable flushes. Separate pools are created so that compactions are
