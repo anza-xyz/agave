@@ -1238,6 +1238,7 @@ mod tests {
             let _validator = Validator::new(
                 validator_node,
                 Arc::new(validator_keypair),
+                None, // block_producer_keypair
                 &validator_ledger_path,
                 &voting_pubkey,
                 authorized_voter_keypairs,

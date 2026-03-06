@@ -235,7 +235,7 @@ impl BroadcastStage {
     ) -> BroadcastStageReturnType {
         loop {
             let res = broadcast_stage_run.run(
-                &cluster_info.keypair(),
+                &cluster_info.block_producer_keypair(),
                 blockstore,
                 receiver,
                 socket_sender,
