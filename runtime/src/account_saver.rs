@@ -2,6 +2,7 @@
 use qualifier_attr::qualifiers;
 use {
     core::borrow::Borrow,
+    itertools::Either,
     solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
     solana_svm::{
@@ -52,7 +53,7 @@ fn max_number_of_accounts_to_collect(
 // be useless.
 pub fn collect_accounts_to_store<'a, T: SVMMessage>(
     txs: &'a [T],
-    txs_refs: &'a Option<Vec<impl Borrow<SanitizedTransaction>>>,
+    txs_refs: Option<&'a Vec<impl Borrow<SanitizedTransaction>>>,
     processing_results: &'a [TransactionProcessingResult],
 ) -> (
     Vec<(&'a Pubkey, &'a AccountSharedData)>,
@@ -70,81 +71,76 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
             continue;
         };
 
-        let transaction_ref = txs_refs.as_ref().map(|txs_refs| txs_refs[index].borrow());
-        match processed_tx {
-            ProcessedTransaction::Executed(executed_tx) => {
-                if executed_tx.execution_details.status.is_ok() {
-                    collect_accounts_for_successful_tx(
-                        &mut accounts,
-                        &mut transactions,
-                        transaction,
-                        transaction_ref,
-                        &executed_tx.loaded_transaction.accounts,
-                    );
-                } else {
-                    collect_accounts_for_failed_tx(
-                        &mut accounts,
-                        &mut transactions,
-                        transaction_ref,
-                        &executed_tx.loaded_transaction.rollback_accounts,
-                    );
+        collect_accounts_to_store_for_tx(transaction, processed_tx).for_each(
+            |(pubkey, account)| {
+                accounts.push((pubkey, account));
+                if let Some(transactions) = transactions.as_mut() {
+                    let tx_ref = txs_refs
+                        .as_ref()
+                        .map(|txs_refs| txs_refs[index].borrow())
+                        .expect("transaction ref must exist if collecting");
+                    transactions.push(tx_ref);
                 }
-            }
-            ProcessedTransaction::FeesOnly(fees_only_tx) => {
-                collect_accounts_for_failed_tx(
-                    &mut accounts,
-                    &mut transactions,
-                    transaction_ref,
-                    &fees_only_tx.rollback_accounts,
-                );
-            }
-        }
+            },
+        );
     }
     (accounts, transactions)
 }
 
-fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
-    collected_accounts: &mut Vec<(&'a Pubkey, &'a AccountSharedData)>,
-    collected_account_transactions: &mut Option<Vec<&'a SanitizedTransaction>>,
+fn collect_accounts_to_store_for_tx<'a, T: SVMMessage>(
     transaction: &'a T,
-    transaction_ref: Option<&'a SanitizedTransaction>,
-    transaction_accounts: &'a [KeyedAccountSharedData],
-) {
-    for (i, (address, account)) in (0..transaction.account_keys().len()).zip(transaction_accounts) {
-        if !transaction.is_writable(i) {
-            continue;
+    processed_transaction: &'a ProcessedTransaction,
+) -> impl Iterator<Item = (&'a Pubkey, &'a AccountSharedData)> + 'a {
+    match processed_transaction {
+        ProcessedTransaction::Executed(executed_tx) => {
+            if executed_tx.execution_details.status.is_ok() {
+                Either::Left(collect_accounts_for_successful_tx(
+                    transaction,
+                    &executed_tx.loaded_transaction.accounts,
+                ))
+            } else {
+                Either::Right(collect_accounts_for_failed_tx(
+                    &executed_tx.loaded_transaction.rollback_accounts,
+                ))
+            }
         }
-
-        // Accounts that are invoked and also not passed as an instruction
-        // account to a program don't need to be stored because it's assumed
-        // to be impossible for a committable transaction to modify an
-        // invoked account if said account isn't passed to some program.
-        if transaction.is_invoked(i) && !transaction.is_instruction_account(i) {
-            continue;
-        }
-
-        collected_accounts.push((address, account));
-        if let Some(collected_account_transactions) = collected_account_transactions {
-            collected_account_transactions
-                .push(transaction_ref.expect("transaction ref must exist if collecting"));
-        }
+        ProcessedTransaction::FeesOnly(fees_only_tx) => Either::Right(
+            collect_accounts_for_failed_tx(&fees_only_tx.rollback_accounts),
+        ),
     }
 }
 
+fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
+    transaction: &'a T,
+    transaction_accounts: &'a [KeyedAccountSharedData],
+) -> impl Iterator<Item = (&'a Pubkey, &'a AccountSharedData)> {
+    (0..transaction.account_keys().len())
+        .zip(transaction_accounts)
+        .filter_map(|(i, keyed_account)| {
+            if !transaction.is_writable(i) {
+                return None;
+            }
+
+            // Accounts that are invoked and also not passed as an instruction
+            // account to a program don't need to be stored because it's assumed
+            // to be impossible for a committable transaction to modify an
+            // invoked account if said account isn't passed to some program.
+            if transaction.is_invoked(i) && !transaction.is_instruction_account(i) {
+                return None;
+            }
+
+            let (pubkey, account) = keyed_account;
+            Some((pubkey, account))
+        })
+}
+
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-fn collect_accounts_for_failed_tx<'a>(
-    collected_accounts: &mut Vec<(&'a Pubkey, &'a AccountSharedData)>,
-    collected_account_transactions: &mut Option<Vec<&'a SanitizedTransaction>>,
-    transaction_ref: Option<&'a SanitizedTransaction>,
-    rollback_accounts: &'a RollbackAccounts,
-) {
-    for (address, account) in rollback_accounts {
-        collected_accounts.push((address, account));
-        if let Some(collected_account_transactions) = collected_account_transactions {
-            collected_account_transactions
-                .push(transaction_ref.expect("transaction ref must exist if collecting"));
-        }
-    }
+fn collect_accounts_for_failed_tx(
+    rollback_accounts: &RollbackAccounts,
+) -> impl Iterator<Item = (&Pubkey, &AccountSharedData)> {
+    rollback_accounts
+        .iter()
+        .map(|(pubkey, account)| (pubkey, account))
 }
 
 #[cfg(test)]
@@ -279,7 +275,7 @@ mod tests {
         for collect_transactions in [false, true] {
             let transaction_refs = collect_transactions.then(|| txs.iter().collect::<Vec<_>>());
             let (collected_accounts, transactions) =
-                collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
+                collect_accounts_to_store(&txs, transaction_refs.as_ref(), &processing_results);
             assert_eq!(collected_accounts.len(), 2);
             assert!(
                 collected_accounts
@@ -346,7 +342,7 @@ mod tests {
         for collect_transactions in [false, true] {
             let transaction_refs = collect_transactions.then(|| txs.iter().collect::<Vec<_>>());
             let (collected_accounts, transactions) =
-                collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
+                collect_accounts_to_store(&txs, transaction_refs.as_ref(), &processing_results);
             assert_eq!(collected_accounts.len(), 1);
             assert_eq!(
                 collected_accounts
@@ -437,7 +433,7 @@ mod tests {
         for collect_transactions in [false, true] {
             let transaction_refs = collect_transactions.then(|| txs.iter().collect::<Vec<_>>());
             let (collected_accounts, transactions) =
-                collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
+                collect_accounts_to_store(&txs, transaction_refs.as_ref(), &processing_results);
             assert_eq!(collected_accounts.len(), 2);
             assert_eq!(
                 collected_accounts
@@ -543,7 +539,7 @@ mod tests {
         for collect_transactions in [false, true] {
             let transaction_refs = collect_transactions.then(|| txs.iter().collect::<Vec<_>>());
             let (collected_accounts, transactions) =
-                collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
+                collect_accounts_to_store(&txs, transaction_refs.as_ref(), &processing_results);
             assert_eq!(collected_accounts.len(), 1);
             let collected_nonce_account = collected_accounts
                 .iter()
@@ -602,7 +598,7 @@ mod tests {
         for collect_transactions in [false, true] {
             let transaction_refs = collect_transactions.then(|| txs.iter().collect::<Vec<_>>());
             let (collected_accounts, transactions) =
-                collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
+                collect_accounts_to_store(&txs, transaction_refs.as_ref(), &processing_results);
             assert_eq!(collected_accounts.len(), 1);
             assert_eq!(
                 collected_accounts

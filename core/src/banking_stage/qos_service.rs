@@ -213,6 +213,7 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
+        solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_runtime::genesis_utils::{GenesisConfigInfo, create_genesis_config},
@@ -325,11 +326,12 @@ mod tests {
         // calculate their costs, apply to cost_tracker
         let transaction_count = 5;
         let keypair = Keypair::new();
+        let recipient = solana_pubkey::Pubkey::new_unique();
         let loaded_accounts_data_size: u32 = 1_000_000;
         let transaction = solana_transaction::Transaction::new_unsigned(solana_message::Message::new(
             &[
                 solana_compute_budget_interface::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(loaded_accounts_data_size),
-                solana_system_interface::instruction::transfer(&keypair.pubkey(), &solana_pubkey::Pubkey::new_unique(), 1),
+                solana_system_interface::instruction::transfer(&keypair.pubkey(), &recipient, 1),
             ],
             Some(&keypair.pubkey()),
         ));
@@ -362,6 +364,22 @@ mod tests {
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
             );
+            assert_eq!(
+                transaction_count as usize,
+                bank.read_cost_tracker()
+                    .unwrap()
+                    .in_flight_transaction_count()
+            );
+            // select_transactions_per_cost doesn't consider write_lock_accounts in the
+            // cost tracker (only occurs post commit), so size and count should be 0 at
+            // this point
+            assert_eq!(
+                0,
+                bank.read_cost_tracker()
+                    .unwrap()
+                    .write_lock_accounts_data_size()
+            );
+
             // all transactions are committed with actual units more than estimated
             let committed_status: Vec<CommitTransactionDetails> = qos_cost_results
                 .iter()
@@ -432,10 +450,22 @@ mod tests {
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
             );
+            assert_eq!(
+                0,
+                bank.read_cost_tracker()
+                    .unwrap()
+                    .write_lock_accounts_data_size()
+            );
 
             QosService::remove_or_update_costs(qos_cost_results.iter(), None, &bank);
             assert_eq!(0, bank.read_cost_tracker().unwrap().block_cost());
             assert_eq!(0, bank.read_cost_tracker().unwrap().transaction_count());
+            assert_eq!(
+                0,
+                bank.read_cost_tracker()
+                    .unwrap()
+                    .write_lock_accounts_data_size()
+            );
         }
     }
 
@@ -449,11 +479,12 @@ mod tests {
         // calculate their costs, apply to cost_tracker
         let transaction_count = 5;
         let keypair = Keypair::new();
+        let recipient = solana_pubkey::Pubkey::new_unique();
         let loaded_accounts_data_size: u32 = 1_000_000;
         let transaction = solana_transaction::Transaction::new_unsigned(solana_message::Message::new(
             &[
                 solana_compute_budget_interface::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(loaded_accounts_data_size),
-                solana_system_interface::instruction::transfer(&keypair.pubkey(), &solana_pubkey::Pubkey::new_unique(), 1),
+                solana_system_interface::instruction::transfer(&keypair.pubkey(), &recipient, 1),
             ],
             Some(&keypair.pubkey()),
         ));
@@ -484,6 +515,12 @@ mod tests {
             assert_eq!(
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
+            );
+            assert_eq!(
+                0,
+                bank.read_cost_tracker()
+                    .unwrap()
+                    .write_lock_accounts_data_size()
             );
             // Half of transactions are not committed, the rest with cost adjustment
             let committed_status: Vec<CommitTransactionDetails> = qos_cost_results

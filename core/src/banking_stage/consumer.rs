@@ -367,6 +367,14 @@ impl Consumer {
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
 
+        // hold onto the staged updates so they can be applied if Record is successful
+        let staged_account_size_updates = bank
+            .try_stage_cost_tracker_account_size_updates(
+                batch.sanitized_transactions(),
+                &processing_results,
+            )
+            .expect("staging cost tracker account size updates should not fail");
+
         let reserved_bytes =
             bank.entry_bytes_budget()
                 .reserve(entry_bytes)
@@ -416,6 +424,10 @@ impl Consumer {
             };
         }
 
+        // it's now safe to apply the staged changes to the cost tracker
+        bank.write_cost_tracker()
+            .unwrap()
+            .apply_staged_account_size_updates(staged_account_size_updates);
         let (commit_time_us, commit_transaction_statuses) =
             if processed_counts.processed_transactions_count != 0 {
                 self.committer.commit_transactions(
@@ -506,16 +518,20 @@ mod tests {
         super::*,
         crate::banking_stage::tests::{create_slow_genesis_config, sanitize_transactions},
         agave_reserved_account_keys::ReservedAccountKeys,
+        ahash::AHashMap,
         crossbeam_channel::unbounded,
-        solana_account::{AccountSharedData, state_traits::StateMut},
+        solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
             state::{AddressLookupTable, LookupTableMeta},
         },
-        solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
+        solana_cost_model::{
+            cost_model::CostModel, cost_tracker_post_analysis::CostTrackerPostAnalysis,
+            transaction_cost::TransactionCost,
+        },
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
-        solana_instruction::error::InstructionError,
+        solana_instruction::{Instruction, error::InstructionError},
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
         solana_ledger::{
@@ -526,7 +542,7 @@ mod tests {
             },
         },
         solana_message::{
-            MessageHeader, VersionedMessage,
+            Message, MessageHeader, VersionedMessage,
             v0::{self, MessageAddressTableLookup},
         },
         solana_nonce::{self as nonce, state::DurableNonce},
@@ -536,7 +552,7 @@ mod tests {
         solana_runtime::bank_forks::BankForks,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
-        solana_system_interface::program as system_program,
+        solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_system_transaction as system_transaction,
         solana_transaction::{
             Transaction, sanitized::MessageHash, versioned::VersionedTransaction,
@@ -646,6 +662,26 @@ mod tests {
         bank.store_account(&account_address, &account);
 
         account
+    }
+
+    fn create_account_transaction(
+        bank: &Bank,
+        payer: &Keypair,
+        new_account: &Keypair,
+        space: u64,
+    ) -> Transaction {
+        Transaction::new_signed_with_payer(
+            &[system_instruction::create_account(
+                &payer.pubkey(),
+                &new_account.pubkey(),
+                bank.get_minimum_balance_for_rent_exemption(space as usize),
+                space,
+                &system_program::id(),
+            )],
+            Some(&payer.pubkey()),
+            &[payer, new_account],
+            bank.last_blockhash(),
+        )
     }
 
     #[test]
@@ -852,6 +888,80 @@ mod tests {
     }
 
     #[test]
+    fn test_bank_process_and_record_transactions_cost_tracker_fees_only() {
+        let TestFrame {
+            mint_keypair,
+            bank,
+            bank_forks: _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(None);
+
+        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
+        let nonce_hash = *durable_nonce.as_hash();
+        let nonce_pubkey = Pubkey::new_unique();
+        let nonce_state = nonce::state::State::Initialized(nonce::state::Data {
+            authority: mint_keypair.pubkey(),
+            durable_nonce,
+            fee_calculator: FeeCalculator::new(5000),
+        });
+        store_nonce_account(&bank, nonce_pubkey, nonce_state);
+
+        let missing_program_id = Pubkey::new_unique();
+        let transaction = {
+            let message = Message::new_with_blockhash(
+                &[
+                    system_instruction::advance_nonce_account(
+                        &nonce_pubkey,
+                        &mint_keypair.pubkey(),
+                    ),
+                    Instruction::new_with_bincode(missing_program_id, &0, vec![]),
+                ],
+                Some(&mint_keypair.pubkey()),
+                &nonce_hash,
+            );
+            let mut transaction = Transaction::new_unsigned(message);
+            transaction.sign(&[&mint_keypair], nonce_hash);
+            transaction
+        };
+        let transactions = sanitize_transactions(vec![transaction]);
+
+        let process_transactions_batch_output =
+            consumer.process_and_record_transactions(&bank, &transactions);
+        let ExecuteAndCommitTransactionsOutput {
+            transaction_counts,
+            commit_transactions_result,
+            ..
+        } = process_transactions_batch_output.execute_and_commit_transactions_output;
+
+        assert_eq!(
+            transaction_counts,
+            LeaderProcessedTransactionCounts {
+                attempted_processing_count: 1,
+                processed_count: 1,
+                processed_with_successful_result_count: 0,
+            }
+        );
+        assert!(commit_transactions_result.is_ok());
+
+        let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
+        let writable_accounts_map = bank
+            .read_cost_tracker()
+            .unwrap()
+            .get_cost_by_writable_accounts()
+            .iter()
+            .map(|(pubkey, costs)| (*pubkey, costs.data_size))
+            .collect::<AHashMap<_, _>>();
+        assert_eq!(
+            AHashMap::from_iter([
+                (mint_keypair.pubkey(), 0),
+                (nonce_pubkey, nonce_account.data().len()),
+            ]),
+            writable_accounts_map,
+        );
+    }
+
+    #[test]
     fn test_bank_process_and_record_transactions_cost_tracker() {
         let TestFrame {
             mint_keypair,
@@ -979,6 +1089,62 @@ mod tests {
         assert_eq!(get_tx_count(), 2);
     }
 
+    #[test]
+    fn test_bank_process_and_record_transactions_cost_tracker_post_commit_updates() {
+        let TestFrame {
+            mint_keypair,
+            bank,
+            bank_forks: _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(None);
+
+        let second_payer = Keypair::new();
+        bank.store_account(
+            &second_payer.pubkey(),
+            &AccountSharedData::new(1_000_000, 0, &system_program::id()),
+        );
+
+        let first_created_account = Keypair::new();
+        let second_created_account = Keypair::new();
+        let transactions = sanitize_transactions(vec![
+            create_account_transaction(&bank, &mint_keypair, &first_created_account, 8),
+            create_account_transaction(&bank, &second_payer, &second_created_account, 16),
+        ]);
+
+        let process_transactions_batch_output =
+            consumer.process_and_record_transactions(&bank, &transactions);
+        assert!(
+            process_transactions_batch_output
+                .execute_and_commit_transactions_output
+                .commit_transactions_result
+                .is_ok()
+        );
+        assert_eq!(
+            24,
+            bank.read_cost_tracker()
+                .unwrap()
+                .write_lock_accounts_data_size()
+        );
+
+        let writable_accounts_map = bank
+            .read_cost_tracker()
+            .unwrap()
+            .get_cost_by_writable_accounts()
+            .iter()
+            .map(|(pubkey, costs)| (*pubkey, costs.data_size))
+            .collect::<AHashMap<_, _>>();
+        assert_eq!(
+            AHashMap::from_iter([
+                (mint_keypair.pubkey(), 0),
+                (first_created_account.pubkey(), 8),
+                (second_payer.pubkey(), 0),
+                (second_created_account.pubkey(), 16),
+            ]),
+            writable_accounts_map,
+        );
+    }
+
     #[test_case(false; "locked")]
     #[test_case(true; "duplicate")]
     fn test_bank_process_and_record_transactions_account_in_use(use_duplicate_transaction: bool) {
@@ -1081,7 +1247,7 @@ mod tests {
         let ProcessTransactionBatchOutput {
             execute_and_commit_transactions_output,
             ..
-        } = execute_transactions_for_test(bank, transactions);
+        } = execute_transactions_for_test(bank.clone(), transactions);
 
         // All the transactions should have been replayed
         assert_eq!(

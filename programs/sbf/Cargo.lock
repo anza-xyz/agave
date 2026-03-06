@@ -10070,6 +10070,7 @@ name = "solana-unified-scheduler-pool"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
+ "ahash 0.8.12",
  "aquamarine",
  "assert_matches",
  "crossbeam-channel",
@@ -10081,6 +10082,7 @@ dependencies = [
  "solana-clock",
  "solana-cost-model",
  "solana-ledger",
+ "solana-message",
  "solana-metrics",
  "solana-poh",
  "solana-pubkey 4.2.0",
@@ -10088,6 +10090,7 @@ dependencies = [
  "solana-runtime-transaction",
  "solana-svm",
  "solana-svm-timings",
+ "solana-system-interface 3.2.0",
  "solana-transaction",
  "solana-transaction-error",
  "solana-unified-scheduler-logic",

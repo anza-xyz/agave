@@ -75,7 +75,7 @@ pub struct CostTracker {
     vote_cost_limit: u64,
     // Maximum new account allocation data per block in bytes.
     allocated_data_size_limit: u64,
-    cost_by_writable_accounts: HashMap<Pubkey, u64, ahash::RandomState>,
+    costs_by_writable_accounts: HashMap<Pubkey, WritableAccountCosts, ahash::RandomState>,
     block_cost: SharedBlockCost,
     vote_cost: u64,
     transaction_count: Saturating<u64>,
@@ -88,6 +88,7 @@ pub struct CostTracker {
     /// removal if the transaction does not end up getting committed.
     in_flight_transaction_count: Saturating<usize>,
     secp256r1_instruction_signature_count: Saturating<u64>,
+    write_lock_accounts_data_size: Saturating<u64>,
 }
 
 impl Default for CostTracker {
@@ -100,7 +101,7 @@ impl Default for CostTracker {
             block_cost_limit: MAX_BLOCK_UNITS,
             vote_cost_limit: MAX_VOTE_UNITS,
             allocated_data_size_limit: MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA,
-            cost_by_writable_accounts: HashMap::with_capacity_and_hasher(
+            costs_by_writable_accounts: HashMap::with_capacity_and_hasher(
                 WRITABLE_ACCOUNTS_PER_BLOCK,
                 ahash::RandomState::new(),
             ),
@@ -113,6 +114,7 @@ impl Default for CostTracker {
             ed25519_instruction_signature_count: Saturating(0),
             in_flight_transaction_count: Saturating(0),
             secp256r1_instruction_signature_count: Saturating(0),
+            write_lock_accounts_data_size: Saturating(0),
         }
     }
 }
@@ -219,6 +221,30 @@ impl CostTracker {
         }
     }
 
+    pub fn try_stage_account_size_updates<'a>(
+        &self,
+        updates: Vec<(&'a Pubkey, usize)>,
+    ) -> Result<StagedAccountSizeUpdates<'a>, CostTrackerError> {
+        // if/when a block constraint for writable account data size is introduced,
+        // it will be enforced here
+        Ok(StagedAccountSizeUpdates(updates))
+    }
+
+    pub fn apply_staged_account_size_updates<'a>(
+        &mut self,
+        staged_updates: StagedAccountSizeUpdates<'a>,
+    ) {
+        staged_updates.0.into_iter().for_each(|(pubkey, new_size)| {
+            let old_costs = self.costs_by_writable_accounts.entry(*pubkey).or_default();
+            self.write_lock_accounts_data_size.0 = self
+                .write_lock_accounts_data_size
+                .0
+                .saturating_sub(old_costs.data_size as u64)
+                .saturating_add(new_size as u64);
+            old_costs.data_size = new_size;
+        });
+    }
+
     pub fn remove(&mut self, tx_cost: &TransactionCost<impl TransactionWithMeta>) {
         self.remove_transaction_cost(tx_cost);
     }
@@ -237,6 +263,10 @@ impl CostTracker {
 
     pub fn transaction_count(&self) -> u64 {
         self.transaction_count.0
+    }
+
+    pub fn write_lock_accounts_data_size(&self) -> u64 {
+        self.write_lock_accounts_data_size.0
     }
 
     pub fn report_stats(
@@ -297,14 +327,19 @@ impl CostTracker {
             ("total_transaction_fee", total_transaction_fee, i64),
             ("total_priority_fee", total_priority_fee, i64),
             ("number_of_contended_accounts", number_of_contended_accounts, i64),
+            (
+                "write_lock_accounts_data_size",
+                self.write_lock_accounts_data_size.0,
+                i64
+            ),
         );
     }
 
     fn find_costliest_account(&self) -> (Pubkey, u64) {
-        self.cost_by_writable_accounts
+        self.costs_by_writable_accounts
             .iter()
-            .max_by_key(|(_, cost)| **cost)
-            .map(|(&pubkey, &cost)| (pubkey, cost))
+            .max_by_key(|(_, costs)| costs.execution_cost)
+            .map(|(&pubkey, costs)| (pubkey, costs.execution_cost))
             .unwrap_or_default()
     }
 
@@ -315,9 +350,9 @@ impl CostTracker {
             .saturating_mul(95)
             .saturating_div(100);
 
-        self.cost_by_writable_accounts
+        self.costs_by_writable_accounts
             .values()
-            .filter(|&&cost| cost >= contended_cost_mark)
+            .filter(|costs| costs.execution_cost >= contended_cost_mark)
             .count()
     }
 
@@ -353,9 +388,9 @@ impl CostTracker {
 
         // check each account against account_cost_limit,
         for account_key in tx_cost.writable_accounts() {
-            match self.cost_by_writable_accounts.get(account_key) {
+            match self.costs_by_writable_accounts.get(account_key) {
                 Some(chained_cost) => {
-                    if chained_cost.saturating_add(cost) > self.account_cost_limit {
+                    if chained_cost.execution_cost.saturating_add(cost) > self.account_cost_limit {
                         return Err(CostTrackerError::WouldExceedAccountMaxLimit);
                     } else {
                         continue;
@@ -403,12 +438,12 @@ impl CostTracker {
     ) -> u64 {
         let mut costliest_account_cost = 0;
         for account_key in tx_cost.writable_accounts() {
-            let account_cost = self
-                .cost_by_writable_accounts
+            let account_costs = self
+                .costs_by_writable_accounts
                 .entry(*account_key)
-                .or_insert(0);
-            *account_cost = account_cost.saturating_add(adjustment);
-            costliest_account_cost = costliest_account_cost.max(*account_cost);
+                .or_default();
+            account_costs.execution_cost = account_costs.execution_cost.saturating_add(adjustment);
+            costliest_account_cost = costliest_account_cost.max(account_costs.execution_cost);
         }
         self.block_cost.fetch_add(adjustment);
         if tx_cost.should_track_as_simple_vote() {
@@ -425,11 +460,11 @@ impl CostTracker {
         adjustment: u64,
     ) {
         for account_key in tx_cost.writable_accounts() {
-            let account_cost = self
-                .cost_by_writable_accounts
+            let account_costs = self
+                .costs_by_writable_accounts
                 .entry(*account_key)
-                .or_insert(0);
-            *account_cost = account_cost.saturating_sub(adjustment);
+                .or_default();
+            account_costs.execution_cost = account_costs.execution_cost.saturating_sub(adjustment);
         }
         self.block_cost.fetch_sub(adjustment);
         if tx_cost.should_track_as_simple_vote() {
@@ -439,9 +474,9 @@ impl CostTracker {
 
     /// count number of none-zero CU accounts
     fn number_of_accounts(&self) -> usize {
-        self.cost_by_writable_accounts
+        self.costs_by_writable_accounts
             .values()
-            .filter(|units| **units > 0)
+            .filter(|account_costs| account_costs.execution_cost > 0)
             .count()
     }
 }
@@ -450,10 +485,23 @@ impl CostTracker {
 /// This is only used for post-analysis to avoid lock contention
 /// Do not use in the hot path
 impl CostTrackerPostAnalysis for CostTracker {
-    fn get_cost_by_writable_accounts(&self) -> &HashMap<Pubkey, u64, ahash::RandomState> {
-        &self.cost_by_writable_accounts
+    fn get_cost_by_writable_accounts(
+        &self,
+    ) -> &HashMap<Pubkey, WritableAccountCosts, ahash::RandomState> {
+        &self.costs_by_writable_accounts
     }
 }
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct WritableAccountCosts {
+    pub execution_cost: u64,
+    // note: data_size is only captured for accounts that need to be stored.
+    // e.g. for a failed but committed transaction, this is only captured for
+    // fee payer and nonce accounts. If not captured, the default of 0 is used.
+    pub data_size: usize,
+}
+
+pub struct StagedAccountSizeUpdates<'a>(Vec<(&'a Pubkey, usize)>);
 
 /// Wrapper around blockcost to allow fast sharing of the value without locking.
 /// Value is read-only outside of cost-tracker.
@@ -568,7 +616,7 @@ mod tests {
         assert_eq!(10, testee.account_cost_limit);
         assert_eq!(11, testee.block_cost_limit);
         assert_eq!(8, testee.vote_cost_limit);
-        assert_eq!(0, testee.cost_by_writable_accounts.len());
+        assert_eq!(0, testee.costs_by_writable_accounts.len());
         assert_eq!(0, testee.block_cost());
     }
 
@@ -654,7 +702,7 @@ mod tests {
             testee.add_transaction_cost(&tx_cost2);
         }
         assert_eq!(cost1 + cost2, testee.block_cost());
-        assert_eq!(1, testee.cost_by_writable_accounts.len());
+        assert_eq!(1, testee.costs_by_writable_accounts.len());
         let (_ccostliest_account, costliest_account_cost) = testee.find_costliest_account();
         assert_eq!(cost1 + cost2, costliest_account_cost);
     }
@@ -683,7 +731,7 @@ mod tests {
             testee.add_transaction_cost(&tx_cost2);
         }
         assert_eq!(cost1 + cost2, testee.block_cost());
-        assert_eq!(2, testee.cost_by_writable_accounts.len());
+        assert_eq!(2, testee.costs_by_writable_accounts.len());
         let (_ccostliest_account, costliest_account_cost) = testee.find_costliest_account();
         assert_eq!(std::cmp::max(cost1, cost2), costliest_account_cost);
     }
@@ -883,7 +931,7 @@ mod tests {
             assert!(testee.try_add(&tx_cost).is_ok());
             let (_costliest_account, costliest_account_cost) = testee.find_costliest_account();
             assert_eq!(cost, testee.block_cost());
-            assert_eq!(3, testee.cost_by_writable_accounts.len());
+            assert_eq!(3, testee.costs_by_writable_accounts.len());
             assert_eq!(cost, costliest_account_cost);
         }
 
@@ -898,7 +946,7 @@ mod tests {
             assert!(testee.try_add(&tx_cost).is_ok());
             let (costliest_account, costliest_account_cost) = testee.find_costliest_account();
             assert_eq!(cost * 2, testee.block_cost());
-            assert_eq!(3, testee.cost_by_writable_accounts.len());
+            assert_eq!(3, testee.costs_by_writable_accounts.len());
             assert_eq!(cost * 2, costliest_account_cost);
             assert_eq!(acct2, costliest_account);
         }
@@ -915,7 +963,7 @@ mod tests {
             assert!(testee.try_add(&tx_cost).is_err());
             let (costliest_account, costliest_account_cost) = testee.find_costliest_account();
             assert_eq!(cost * 2, testee.block_cost());
-            assert_eq!(3, testee.cost_by_writable_accounts.len());
+            assert_eq!(3, testee.costs_by_writable_accounts.len());
             assert_eq!(cost * 2, costliest_account_cost);
             assert_eq!(acct2, costliest_account);
         }
@@ -939,10 +987,10 @@ mod tests {
         assert_eq!(expected_block_cost, testee.block_cost());
         assert_eq!(expected_tx_count, testee.transaction_count());
         testee
-            .cost_by_writable_accounts
+            .costs_by_writable_accounts
             .iter()
             .for_each(|(_key, units)| {
-                assert_eq!(expected_block_cost, *units);
+                assert_eq!(expected_block_cost, units.execution_cost);
             });
 
         // adjust up
@@ -953,10 +1001,10 @@ mod tests {
             assert_eq!(expected_block_cost, testee.block_cost());
             assert_eq!(expected_tx_count, testee.transaction_count());
             testee
-                .cost_by_writable_accounts
+                .costs_by_writable_accounts
                 .iter()
                 .for_each(|(_key, units)| {
-                    assert_eq!(expected_block_cost, *units);
+                    assert_eq!(expected_block_cost, units.execution_cost);
                 });
         }
 
@@ -968,10 +1016,10 @@ mod tests {
             assert_eq!(expected_block_cost, testee.block_cost());
             assert_eq!(expected_tx_count, testee.transaction_count());
             testee
-                .cost_by_writable_accounts
+                .costs_by_writable_accounts
                 .iter()
                 .for_each(|(_key, units)| {
-                    assert_eq!(expected_block_cost, *units);
+                    assert_eq!(expected_block_cost, units.execution_cost);
                 });
         }
     }
@@ -1024,10 +1072,10 @@ mod tests {
                 assert_eq!(0, cost_tracker.vote_cost);
                 assert_eq!(
                     number_writeble_accounts,
-                    cost_tracker.cost_by_writable_accounts.len()
+                    cost_tracker.costs_by_writable_accounts.len()
                 );
-                for writable_account_cost in cost_tracker.cost_by_writable_accounts.values() {
-                    assert_eq!(expected_cost, *writable_account_cost);
+                for writable_account_cost in cost_tracker.costs_by_writable_accounts.values() {
+                    assert_eq!(expected_cost, writable_account_cost.execution_cost);
                 }
                 assert_eq!(1, cost_tracker.transaction_count.0);
             };
@@ -1041,6 +1089,156 @@ mod tests {
         test_update_cost_tracker(-9, 0);
         test_update_cost_tracker(-9, 9);
         test_update_cost_tracker(-9, -9);
+    }
+
+    #[test]
+    fn test_update_execution_cost_applies_write_lock_account_data_size_updates() {
+        let mint_keypair = test_setup();
+        let mint_pubkey = mint_keypair.pubkey();
+        let other_pubkey = Pubkey::new_unique();
+        let transaction = build_simple_transaction(&mint_keypair);
+        let tx_cost = TransactionCost::Transaction(simple_usage_cost_details(&transaction, 100));
+        let mut cost_tracker = CostTracker::default();
+
+        assert!(cost_tracker.try_add(&tx_cost).is_ok());
+        assert_eq!(0, cost_tracker.write_lock_accounts_data_size.0);
+
+        cost_tracker.update_execution_cost(&tx_cost, 100, 0);
+        cost_tracker.apply_staged_account_size_updates(
+            cost_tracker
+                .try_stage_account_size_updates(vec![(&mint_pubkey, 10)])
+                .unwrap(),
+        );
+        assert_eq!(10, cost_tracker.write_lock_accounts_data_size.0);
+        assert_eq!(
+            Some(10),
+            cost_tracker
+                .costs_by_writable_accounts
+                .get(&mint_pubkey)
+                .map(|costs| costs.data_size)
+        );
+
+        cost_tracker.update_execution_cost(&tx_cost, 100, 0);
+        cost_tracker.apply_staged_account_size_updates(
+            cost_tracker
+                .try_stage_account_size_updates(vec![(&mint_pubkey, 20), (&other_pubkey, 5)])
+                .unwrap(),
+        );
+
+        assert_eq!(25, cost_tracker.write_lock_accounts_data_size.0);
+        assert_eq!(
+            Some(20),
+            cost_tracker
+                .costs_by_writable_accounts
+                .get(&mint_pubkey)
+                .map(|costs| costs.data_size)
+        );
+        assert_eq!(
+            Some(5),
+            cost_tracker
+                .costs_by_writable_accounts
+                .get(&other_pubkey)
+                .map(|costs| costs.data_size)
+        );
+    }
+
+    #[test]
+    fn test_apply_post_commit_updates_replaces_existing_sizes() {
+        let mut cost_tracker = CostTracker::default();
+        let first_pubkey = Pubkey::new_unique();
+        let second_pubkey = Pubkey::new_unique();
+
+        cost_tracker.apply_staged_account_size_updates(
+            cost_tracker
+                .try_stage_account_size_updates(vec![
+                    (&first_pubkey, 10),
+                    (&second_pubkey, 20),
+                    (&first_pubkey, 15),
+                ])
+                .unwrap(),
+        );
+
+        assert_eq!(35, cost_tracker.write_lock_accounts_data_size());
+        assert_eq!(
+            Some(15),
+            cost_tracker
+                .costs_by_writable_accounts
+                .get(&first_pubkey)
+                .map(|costs| costs.data_size)
+        );
+        assert_eq!(
+            Some(20),
+            cost_tracker
+                .costs_by_writable_accounts
+                .get(&second_pubkey)
+                .map(|costs| costs.data_size)
+        );
+    }
+
+    #[test]
+    fn test_staged_account_size_updates_can_be_dropped_or_applied() {
+        let mut cost_tracker = CostTracker::default();
+        let first_pubkey = Pubkey::new_unique();
+        let second_pubkey = Pubkey::new_unique();
+
+        cost_tracker.apply_staged_account_size_updates(
+            cost_tracker
+                .try_stage_account_size_updates(vec![(&first_pubkey, 7)])
+                .unwrap(),
+        );
+        let staged_updates = cost_tracker
+            .try_stage_account_size_updates(vec![
+                (&first_pubkey, 10),
+                (&second_pubkey, 20),
+                (&first_pubkey, 11),
+            ])
+            .unwrap();
+
+        // staging alone should not affect the live value
+        assert_eq!(7, cost_tracker.write_lock_accounts_data_size());
+
+        drop(staged_updates);
+
+        assert_eq!(7, cost_tracker.write_lock_accounts_data_size());
+        assert_eq!(
+            Some(7),
+            cost_tracker
+                .costs_by_writable_accounts
+                .get(&first_pubkey)
+                .map(|costs| costs.data_size)
+        );
+        assert_eq!(
+            None,
+            cost_tracker
+                .costs_by_writable_accounts
+                .get(&second_pubkey)
+                .map(|costs| costs.data_size)
+        );
+
+        let staged_updates = cost_tracker
+            .try_stage_account_size_updates(vec![
+                (&first_pubkey, 10),
+                (&second_pubkey, 20),
+                (&first_pubkey, 11),
+            ])
+            .unwrap();
+        cost_tracker.apply_staged_account_size_updates(staged_updates);
+
+        assert_eq!(31, cost_tracker.write_lock_accounts_data_size());
+        assert_eq!(
+            Some(11),
+            cost_tracker
+                .costs_by_writable_accounts
+                .get(&first_pubkey)
+                .map(|costs| costs.data_size)
+        );
+        assert_eq!(
+            Some(20),
+            cost_tracker
+                .costs_by_writable_accounts
+                .get(&second_pubkey)
+                .map(|costs| costs.data_size)
+        );
     }
 
     #[test]
@@ -1074,12 +1272,19 @@ mod tests {
         let transaction = WritableKeysTransaction::new(vec![Pubkey::new_unique()]);
         let tx_cost = simple_transaction_cost(&transaction, cost);
         cost_tracker.add_transaction_cost(&tx_cost);
-        let cost_by_writable_accounts = cost_tracker.get_cost_by_writable_accounts();
-        assert_eq!(1, cost_by_writable_accounts.len());
-        assert_eq!(cost, *cost_by_writable_accounts.values().next().unwrap());
+        let costs_by_writable_accounts = cost_tracker.get_cost_by_writable_accounts();
+        assert_eq!(1, costs_by_writable_accounts.len());
         assert_eq!(
-            *cost_by_writable_accounts,
-            cost_tracker.cost_by_writable_accounts
+            cost,
+            costs_by_writable_accounts
+                .values()
+                .next()
+                .unwrap()
+                .execution_cost
+        );
+        assert_eq!(
+            *costs_by_writable_accounts,
+            cost_tracker.costs_by_writable_accounts
         );
     }
 }

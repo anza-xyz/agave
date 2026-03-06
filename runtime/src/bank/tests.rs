@@ -11529,7 +11529,7 @@ fn test_temporary_account_recreated_execute_and_commit() {
         &payer_pubkey,
         &AccountSharedData::new(initial_payer_balance, 0, &system_program::id()),
     );
-    let temp_account_rent = bank.get_minimum_balance_for_rent_exemption(0);
+    let temp_account_rent = bank.get_minimum_balance_for_rent_exemption(10);
     let fee_amount = fee_calculator.lamports_per_signature;
     let transfer_amount = temp_account_rent + 10_000;
     let tx1 = {
@@ -11548,10 +11548,11 @@ fn test_temporary_account_recreated_execute_and_commit() {
         )
     };
     let tx1 = RuntimeTransaction::from_transaction_for_tests(tx1);
+    let recipient = Pubkey::new_unique();
     let tx2 = {
         let instruction = system_instruction::transfer(
             &temp_account_pubkey,
-            &Pubkey::new_unique(),
+            &recipient,
             transfer_amount.checked_sub(fee_amount).unwrap(), // drain temp account
         );
         let message = Message::new(&[instruction], Some(&temp_account_pubkey));
@@ -11563,7 +11564,7 @@ fn test_temporary_account_recreated_execute_and_commit() {
             &payer_pubkey,
             &temp_account_pubkey,
             transfer_amount - 1, // fund temp account again with different amount
-            0,
+            10,
             &system_program::id(),
         );
         let message = Message::new(&[instruction], Some(&payer_pubkey));
@@ -11588,7 +11589,6 @@ fn test_temporary_account_recreated_execute_and_commit() {
     assert!(commit_results[0].is_ok());
     assert!(commit_results[1].is_ok());
     assert!(commit_results[2].is_ok());
-
     // Verify account exists with correct balance
     assert_eq!(bank.get_balance(&temp_account_pubkey), transfer_amount - 1);
 }
