@@ -10906,12 +10906,10 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 16);
     let current_env = bank
         .transaction_processor
-        .get_environments_for_epoch(0)
-        .program_runtime_v1;
+        .program_runtime_environment_for_epoch(0);
     let upcoming_env = bank
         .transaction_processor
-        .get_environments_for_epoch(1)
-        .program_runtime_v1;
+        .program_runtime_environment_for_epoch(1);
 
     // Advance the bank to recompile the program.
     {
@@ -11025,19 +11023,19 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
 
     {
         // Prune for rerooting and thus finishing the recompilation phase.
-        let upcoming_environments = bank
+        let upcoming_environment = bank
             .transaction_processor
             .epoch_boundary_preparation
             .write()
             .unwrap()
             .reroot(bank.epoch());
-        assert!(upcoming_environments.is_some());
+        assert!(upcoming_environment.is_some());
         let mut program_cache = bank
             .transaction_processor
             .global_program_cache
             .write()
             .unwrap();
-        program_cache.prune(bank.slot(), upcoming_environments);
+        program_cache.prune(bank.slot(), upcoming_environment);
 
         // Unload all (which is only the entry with the new environment)
         program_cache.sort_and_unload(percentage::Percentage::from(0));
