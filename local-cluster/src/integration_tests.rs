@@ -221,6 +221,11 @@ pub fn ms_for_n_slots(num_blocks: u64, ticks_per_slot: u64) -> u64 {
     (ticks_per_slot * DEFAULT_MS_PER_SLOT * num_blocks).div_ceil(DEFAULT_TICKS_PER_SLOT)
 }
 
+// Test runner that performs the following steps:
+// 1) Defines validator stake partitions based on input parameters
+// 2) Defines leader schedule based on input parameters
+// 3) Appends routine to kill specified validators on partition start
+// 4) Runs cluster partition
 pub fn run_kill_partition_switch_threshold<C>(
     stakes_to_kill: &[(usize, usize)],
     alive_stakes: &[(usize, usize)],
@@ -235,20 +240,14 @@ pub fn run_kill_partition_switch_threshold<C>(
     static_assertions::const_assert!(SWITCH_FORK_THRESHOLD >= 1f64 / 3f64);
     info!("stakes_to_kill: {stakes_to_kill:?}, alive_stakes: {alive_stakes:?}");
 
-    // This test:
-    // 1) Spins up three partitions
-    // 2) Kills the first partition with the stake `failures_stake`
-    // 5) runs `on_partition_resolved`
-    let partitions: Vec<(usize, usize)> = stakes_to_kill
-        .iter()
-        .cloned()
-        .chain(alive_stakes.iter().cloned())
-        .collect();
-
-    let stake_partitions: Vec<usize> = partitions.iter().map(|(stake, _)| *stake).collect();
-    let num_slots_per_validator: Vec<usize> =
-        partitions.iter().map(|(_, num_slots)| *num_slots).collect();
-
+    // Define validator stake partitions and leader schedule from input
+    // parameters.
+    let mut stake_partitions = Vec::with_capacity(stakes_to_kill.len() + alive_stakes.len());
+    let mut num_slots_per_validator = Vec::with_capacity(stakes_to_kill.len() + alive_stakes.len());
+    for (stake, num_slots) in stakes_to_kill.iter().chain(alive_stakes.iter()) {
+        stake_partitions.push(*stake);
+        num_slots_per_validator.push(*num_slots);
+    }
     let (leader_schedule, validator_keys) =
         create_custom_leader_schedule_with_random_keys(&num_slots_per_validator);
 
@@ -257,6 +256,8 @@ pub fn run_kill_partition_switch_threshold<C>(
         .map(|k| k.node_keypair.pubkey())
         .collect();
     info!("Validator ids: {validator_pubkeys:?}");
+
+    // Append routine to kill the specified validators on partition start.
     let on_partition_start = |cluster: &mut LocalCluster, partition_context: &mut C| {
         let dead_validator_infos: Vec<ClusterValidatorInfo> = validator_pubkeys
             [0..stakes_to_kill.len()]
@@ -273,6 +274,8 @@ pub fn run_kill_partition_switch_threshold<C>(
             partition_context,
         );
     };
+
+    // Spin up cluster and execute partition.
     run_cluster_partition(
         &stake_partitions,
         Some((leader_schedule, validator_keys)),
