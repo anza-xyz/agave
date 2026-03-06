@@ -104,19 +104,16 @@ pub fn generate_durable_nonce_accounts<T: 'static + TpsClient + Send + Sync + ?S
     let nonce_rent = client
         .get_minimum_balance_for_rent_exemption(State::size())
         .unwrap();
-
     let seed_keypair = &authority_keypairs[0];
     let count = authority_keypairs.len();
     let (mut nonce_keypairs, _extra) = generate_keypairs(seed_keypair, count as u64);
     nonce_keypairs.truncate(count);
-
     info!("Creating {count} nonce accounts...");
     let to_fund: Vec<NonceCreateSigners> = authority_keypairs
         .iter()
         .zip(nonce_keypairs.iter())
         .map(|x| NonceCreateSigners(x.0, x.1))
         .collect();
-
     to_fund.chunks(FUND_CHUNK_LEN).for_each(|chunk| {
         NonceCreateContainer::with_capacity(chunk.len())
             .create_accounts(&client, chunk, nonce_rent);

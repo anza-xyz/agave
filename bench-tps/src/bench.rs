@@ -1232,6 +1232,11 @@ mod tests {
         solana_runtime::{bank::Bank, bank_client::BankClient, bank_forks::BankForks},
     };
 
+    // Just a handful of txs to make sure the general flow works.
+    const BENCH_TPS_TX_COUNT: usize = 10;
+    // Just a short amount of runtime to make sure things don't crash.
+    const BENCH_TPS_DURATION: Duration = Duration::from_secs(5);
+
     fn bank_with_all_features(
         genesis_config: &GenesisConfig,
     ) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
@@ -1248,8 +1253,56 @@ mod tests {
 
         let config = Config {
             id,
-            tx_count: 10,
-            duration: Duration::from_secs(5),
+            tx_count: BENCH_TPS_TX_COUNT,
+            duration: BENCH_TPS_DURATION,
+            ..Config::default()
+        };
+
+        let keypair_count = config.tx_count * config.keypair_multiplier;
+        let keypairs =
+            generate_and_fund_keypairs(client.clone(), &config.id, keypair_count, 20, false, false)
+                .unwrap();
+
+        do_bench_tps(client, config, keypairs, None);
+    }
+
+    #[test]
+    fn test_bench_tps_bank_client_nonce() {
+        let (genesis_config, id) = create_genesis_config(10_000 * LAMPORTS_PER_SOL);
+        let (bank, _bank_forks) = bank_with_all_features(&genesis_config);
+        let client = Arc::new(BankClient::new_shared(bank));
+
+        let config = Config {
+            id,
+            tx_count: BENCH_TPS_TX_COUNT,
+            duration: BENCH_TPS_DURATION,
+            use_durable_nonce: true,
+            ..Config::default()
+        };
+
+        let keypair_count = config.tx_count * config.keypair_multiplier;
+        let keypairs =
+            generate_and_fund_keypairs(client.clone(), &config.id, keypair_count, 1_000_000_000, false, false)
+                .unwrap();
+        let nonce_keypairs = Some(generate_durable_nonce_accounts(client.clone(), &keypairs));
+
+        do_bench_tps(client, config, keypairs, nonce_keypairs);
+    }
+
+    #[test]
+    fn test_bench_tps_bank_client_with_padding() {
+        let (genesis_config, id) = create_genesis_config(10_000 * LAMPORTS_PER_SOL);
+        let (bank, _bank_forks) = bank_with_all_features(&genesis_config);
+        let client = Arc::new(BankClient::new_shared(bank));
+
+        let config = Config {
+            id,
+            tx_count: BENCH_TPS_TX_COUNT,
+            duration: BENCH_TPS_DURATION,
+            instruction_padding_config: Some(InstructionPaddingConfig {
+                program_id: spl_instruction_padding_interface::ID,
+                data_size: 0,
+            }),
             ..Config::default()
         };
 
