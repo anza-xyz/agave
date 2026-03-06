@@ -3,9 +3,11 @@ use {
     lru::LruCache,
     rand::{Rng, rng},
     solana_ledger::shred::Nonce,
+    std::num::NonZeroUsize,
 };
 
 pub const DEFAULT_REQUEST_EXPIRATION_MS: u64 = 60_000;
+const OUTSTANDING_REQUESTS_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(16 * 1024).unwrap();
 
 pub struct OutstandingRequests<T> {
     requests: LruCache<Nonce, RequestStatus<T>>,
@@ -71,7 +73,7 @@ where
 impl<T> Default for OutstandingRequests<T> {
     fn default() -> Self {
         Self {
-            requests: LruCache::new(16 * 1024),
+            requests: LruCache::new(OUTSTANDING_REQUESTS_CACHE_CAPACITY),
         }
     }
 }

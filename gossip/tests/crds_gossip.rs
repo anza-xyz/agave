@@ -28,6 +28,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         net::{Ipv4Addr, SocketAddr},
+        num::NonZeroUsize,
         ops::Deref,
         sync::{Arc, Mutex},
         time::{Duration, Instant},
@@ -665,7 +666,7 @@ fn new_ping_cache() -> Mutex<PingCache> {
         Instant::now(),
         Duration::from_secs(20 * 60),      // ttl
         Duration::from_secs(20 * 60) / 64, // rate_limit_delay
-        2048,                              // capacity
+        NonZeroUsize::new(2048).unwrap(),  // capacity
     );
     Mutex::new(ping_cache)
 }

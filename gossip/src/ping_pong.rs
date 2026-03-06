@@ -15,6 +15,7 @@ use {
         borrow::Cow,
         hash::{Hash as _, Hasher},
         net::{IpAddr, SocketAddr},
+        num::NonZeroUsize,
         time::{Duration, Instant},
     },
 };
@@ -159,7 +160,7 @@ impl<const N: usize> PingCache<N> {
         now: Instant,
         ttl: Duration,
         rate_limit_delay: Duration,
-        cap: usize,
+        cap: NonZeroUsize,
     ) -> Self {
         // Sanity check ttl/rate_limit_delay
         assert!(rate_limit_delay <= ttl / 2);
@@ -327,7 +328,13 @@ mod tests {
         let mut rng = rand::rng();
         let ttl = Duration::from_millis(256);
         let delay = ttl / 64;
-        let mut cache = PingCache::new(&mut rng, Instant::now(), ttl, delay, /*cap=*/ 1000);
+        let mut cache = PingCache::new(
+            &mut rng,
+            Instant::now(),
+            ttl,
+            delay,
+            /*cap=*/ NonZeroUsize::new(1000).unwrap(),
+        );
         let this_node = Keypair::new();
         let sockets: Vec<_> = (1u8..=3)
             .map(|i| {
@@ -456,7 +463,13 @@ mod tests {
         let ttl = Duration::from_secs(20 * 60); // 20 minutes
         let delay = ttl / 64;
         let mut now = Instant::now();
-        let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 1000);
+        let mut cache = PingCache::<32>::new(
+            &mut rng,
+            now,
+            ttl,
+            delay,
+            /*cap=*/ NonZeroUsize::new(1000).unwrap(),
+        );
 
         // Add a pong for the remote node
         cache.mock_pong(remote_node.0, remote_node.1, now);

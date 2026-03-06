@@ -8,6 +8,7 @@ use {
     std::{
         collections::HashMap,
         net::SocketAddr,
+        num::NonZeroUsize,
         sync::{Arc, RwLock},
         time::{Duration, Instant},
     },
@@ -52,7 +53,7 @@ impl StakedValidatorsCache {
     pub fn new(
         bank_forks: Arc<RwLock<BankForks>>,
         ttl: Duration,
-        max_cache_size: usize,
+        max_cache_size: NonZeroUsize,
         include_self: bool,
         alpenglow_port_override: Option<AlpenglowPortOverride>,
     ) -> Self {
@@ -247,11 +248,14 @@ mod tests {
         std::{
             collections::HashMap,
             net::{Ipv4Addr, SocketAddr},
+            num::NonZeroUsize,
             sync::{Arc, RwLock},
             time::{Duration, Instant},
         },
         test_case::test_case,
     };
+
+    const TEST_MAX_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(5).unwrap();
 
     fn update_cluster_info(
         cluster_info: &mut ClusterInfo,
@@ -370,7 +374,13 @@ mod tests {
             create_bank_forks_and_cluster_info(num_nodes, num_zero_stake_nodes, slot_num);
 
         // Create our staked validators cache
-        let mut svc = StakedValidatorsCache::new(bank_forks, Duration::from_secs(5), 5, true, None);
+        let mut svc = StakedValidatorsCache::new(
+            bank_forks,
+            Duration::from_secs(5),
+            TEST_MAX_CACHE_SIZE,
+            true,
+            None,
+        );
 
         let now = Instant::now();
 
@@ -445,7 +455,13 @@ mod tests {
         let (bank_forks, cluster_info, _) = create_bank_forks_and_cluster_info(50, 7, base_slot);
 
         // Create our staked validators cache
-        let mut svc = StakedValidatorsCache::new(bank_forks, Duration::from_secs(5), 5, true, None);
+        let mut svc = StakedValidatorsCache::new(
+            bank_forks,
+            Duration::from_secs(5),
+            TEST_MAX_CACHE_SIZE,
+            true,
+            None,
+        );
 
         assert_eq!(0, svc.len());
         assert!(svc.is_empty());
@@ -511,7 +527,13 @@ mod tests {
             create_bank_forks_and_cluster_info(num_nodes, num_zero_stake_nodes, slot_num);
 
         // Create our staked validators cache
-        let mut svc = StakedValidatorsCache::new(bank_forks, Duration::from_secs(5), 5, true, None);
+        let mut svc = StakedValidatorsCache::new(
+            bank_forks,
+            Duration::from_secs(5),
+            TEST_MAX_CACHE_SIZE,
+            true,
+            None,
+        );
 
         let now = Instant::now();
 
@@ -540,8 +562,13 @@ mod tests {
             .unwrap();
 
         // Create our staked validators cache - set include_self to true
-        let mut svc =
-            StakedValidatorsCache::new(bank_forks.clone(), Duration::from_secs(5), 5, true, None);
+        let mut svc = StakedValidatorsCache::new(
+            bank_forks.clone(),
+            Duration::from_secs(5),
+            TEST_MAX_CACHE_SIZE,
+            true,
+            None,
+        );
 
         let (sockets, _) =
             svc.get_staked_validators_by_slot(slot_num, &cluster_info, Instant::now());
@@ -549,8 +576,13 @@ mod tests {
         assert!(sockets.contains(&my_socket_addr));
 
         // Create our staked validators cache - set include_self to false
-        let mut svc =
-            StakedValidatorsCache::new(bank_forks, Duration::from_secs(5), 5, false, None);
+        let mut svc = StakedValidatorsCache::new(
+            bank_forks,
+            Duration::from_secs(5),
+            TEST_MAX_CACHE_SIZE,
+            false,
+            None,
+        );
 
         let (sockets, _) =
             svc.get_staked_validators_by_slot(slot_num, &cluster_info, Instant::now());
@@ -572,7 +604,7 @@ mod tests {
         let mut svc = StakedValidatorsCache::new(
             bank_forks,
             Duration::from_secs(5),
-            5,
+            TEST_MAX_CACHE_SIZE,
             false,
             Some(alpenglow_port_override.clone()),
         );

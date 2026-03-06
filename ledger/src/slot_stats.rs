@@ -3,10 +3,10 @@ use {
     bitflags::bitflags,
     lru::LruCache,
     solana_clock::Slot,
-    std::{collections::HashMap, sync::Mutex},
+    std::{collections::HashMap, num::NonZeroUsize, sync::Mutex},
 };
 
-const SLOTS_STATS_CACHE_CAPACITY: usize = 300;
+const SLOTS_STATS_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(300).unwrap();
 
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum ShredSource {

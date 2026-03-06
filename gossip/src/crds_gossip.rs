@@ -411,7 +411,9 @@ pub(crate) fn maybe_ping_gossip_addresses<R: Rng + CryptoRng>(
 
 #[cfg(test)]
 mod test {
-    use {super::*, solana_sha256_hasher::hash, solana_time_utils::timestamp};
+    use {
+        super::*, solana_sha256_hasher::hash, solana_time_utils::timestamp, std::num::NonZeroUsize,
+    };
 
     #[test]
     fn test_prune_errors() {
@@ -435,7 +437,7 @@ mod test {
             Instant::now(),
             Duration::from_secs(20 * 60),      // ttl
             Duration::from_secs(20 * 60) / 64, // rate_limit_delay
-            128,                               // capacity
+            NonZeroUsize::new(128).unwrap(),   // capacity
         );
         let ping_cache = Mutex::new(ping_cache);
         crds_gossip.refresh_push_active_set(

@@ -48,6 +48,7 @@ use {
     std::{
         cmp::Ordering,
         collections::{BTreeMap, HashMap, VecDeque, hash_map},
+        num::NonZeroUsize,
         ops::{Bound, Index, IndexMut},
         sync::Mutex,
     },
@@ -55,7 +56,7 @@ use {
 
 const CRDS_SHARDS_BITS: u32 = 12;
 // Number of vote slots to track in an lru-cache for metrics.
-const VOTE_SLOTS_METRICS_CAP: usize = 100;
+const VOTE_SLOTS_METRICS_CAP: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 // Required number of leading zero bits for crds signature to get reported to influx
 // mean new CrdsValues received per minute per node
 //      testnet/mainnet: ~680k as of 2025-06-06

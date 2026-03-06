@@ -57,6 +57,7 @@ use {
         cmp::Reverse,
         collections::{HashMap, HashSet},
         net::{SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -70,7 +71,7 @@ use {
 /// the number of slots to respond with when responding to `Orphan` requests
 pub const MAX_ORPHAN_REPAIR_RESPONSES: usize = 11;
 // Number of slots to cache their respective repair peers and sampling weights.
-pub(crate) const REPAIR_PEERS_CACHE_CAPACITY: usize = 128;
+pub(crate) const REPAIR_PEERS_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(128).unwrap();
 // Limit cache entries ttl in order to avoid re-using outdated data.
 const REPAIR_PEERS_CACHE_TTL: Duration = Duration::from_secs(10);
 
@@ -86,7 +87,7 @@ pub const MAX_ANCESTOR_RESPONSES: usize =
     MAX_ANCESTOR_BYTES_IN_PACKET / std::mem::size_of::<(Slot, Hash)>();
 /// Number of bytes in the randomly generated token sent with ping messages.
 const REPAIR_PING_TOKEN_SIZE: usize = HASH_BYTES;
-pub const REPAIR_PING_CACHE_CAPACITY: usize = 65536;
+const REPAIR_PING_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(65536).unwrap();
 pub const REPAIR_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
 const REPAIR_PING_CACHE_RATE_LIMIT_DELAY: Duration = Duration::from_secs(2);
 pub(crate) const REPAIR_RESPONSE_SERIALIZED_PING_BYTES: usize =
@@ -1453,6 +1454,9 @@ mod tests {
         std::{io::Cursor, net::Ipv4Addr},
     };
 
+    const TEST_REPAIR_PEERS_CACHE_CAPACITY: NonZeroUsize =
+        NonZeroUsize::new(100).unwrap();
+
     #[test]
     fn test_serialized_ping_size() {
         let mut rng = rand::rng();
@@ -1991,7 +1995,7 @@ mod tests {
         let rv = serve_repair.repair_request(
             &cluster_slots,
             ShredRepairType::Shred(0, 0),
-            &mut LruCache::new(100),
+            &mut LruCache::new(TEST_REPAIR_PEERS_CACHE_CAPACITY),
             &mut RepairStats::default(),
             &None,
             &mut outstanding_requests,
@@ -2019,7 +2023,7 @@ mod tests {
             .repair_request(
                 &cluster_slots,
                 ShredRepairType::Shred(0, 0),
-                &mut LruCache::new(100),
+                &mut LruCache::new(TEST_REPAIR_PEERS_CACHE_CAPACITY),
                 &mut RepairStats::default(),
                 &None,
                 &mut outstanding_requests,
@@ -2055,7 +2059,7 @@ mod tests {
                 .repair_request(
                     &cluster_slots,
                     ShredRepairType::Shred(0, 0),
-                    &mut LruCache::new(100),
+                    &mut LruCache::new(TEST_REPAIR_PEERS_CACHE_CAPACITY),
                     &mut RepairStats::default(),
                     &None,
                     &mut outstanding_requests,
@@ -2301,7 +2305,7 @@ mod tests {
                 serve_repair.repair_request(
                     &cluster_slots,
                     ShredRepairType::Shred(0, 0),
-                    &mut LruCache::new(100),
+                    &mut LruCache::new(TEST_REPAIR_PEERS_CACHE_CAPACITY),
                     &mut RepairStats::default(),
                     &known_validators,
                     &mut OutstandingShredRepairs::default(),
@@ -2323,7 +2327,7 @@ mod tests {
             serve_repair.repair_request(
                 &cluster_slots,
                 ShredRepairType::Shred(0, 0),
-                &mut LruCache::new(100),
+                &mut LruCache::new(TEST_REPAIR_PEERS_CACHE_CAPACITY),
                 &mut RepairStats::default(),
                 &known_validators,
                 &mut OutstandingShredRepairs::default(),
@@ -2348,7 +2352,7 @@ mod tests {
             serve_repair.repair_request(
                 &cluster_slots,
                 ShredRepairType::Shred(0, 0),
-                &mut LruCache::new(100),
+                &mut LruCache::new(TEST_REPAIR_PEERS_CACHE_CAPACITY),
                 &mut RepairStats::default(),
                 &None,
                 &mut OutstandingShredRepairs::default(),

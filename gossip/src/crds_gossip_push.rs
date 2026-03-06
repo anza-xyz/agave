@@ -291,7 +291,10 @@ mod tests {
     use {
         super::*,
         crate::{contact_info::ContactInfo, crds_data::CrdsData},
-        std::time::{Duration, Instant},
+        std::{
+            num::NonZeroUsize,
+            time::{Duration, Instant},
+        },
     };
 
     fn new_ping_cache() -> PingCache {
@@ -300,7 +303,7 @@ mod tests {
             Instant::now(),
             Duration::from_secs(20 * 60),      // ttl
             Duration::from_secs(20 * 60) / 64, // rate_limit_delay
-            128,                               // capacity
+            NonZeroUsize::new(128).unwrap(),   // capacity
         )
     }
 

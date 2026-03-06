@@ -16,6 +16,7 @@ use {
     std::{
         collections::HashMap,
         net::SocketAddr,
+        num::NonZeroUsize,
         sync::{Arc, RwLock},
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -23,7 +24,7 @@ use {
 };
 
 const STAKED_VALIDATORS_CACHE_TTL_S: u64 = 5;
-const STAKED_VALIDATORS_CACHE_NUM_EPOCH_CAP: usize = 5;
+const STAKED_VALIDATORS_CACHE_NUM_EPOCH_CAP: NonZeroUsize = NonZeroUsize::new(5).unwrap();
 
 #[derive(Debug)]
 pub enum BLSOp {

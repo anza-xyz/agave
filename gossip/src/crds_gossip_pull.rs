@@ -683,6 +683,7 @@ pub(crate) mod tests {
         solana_time_utils::timestamp,
         std::{
             net::{IpAddr, Ipv6Addr},
+            num::NonZeroUsize,
             time::Instant,
         },
         test_case::test_case,
@@ -744,7 +745,7 @@ pub(crate) mod tests {
             Instant::now(),
             Duration::from_secs(20 * 60),      // ttl
             Duration::from_secs(20 * 60) / 64, // rate_limit_delay
-            128,                               // capacity
+            NonZeroUsize::new(128).unwrap(),   // capacity
         )
     }
 
