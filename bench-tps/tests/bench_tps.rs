@@ -68,7 +68,8 @@ fn create_local_cluster_and_client() -> (
             .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
             .unwrap_or_else(|err| {
                 panic!("Could not create TpuClient with Quic Cache {err:?}");
-            }));
+            }),
+    );
 
     (cluster, client)
 }
@@ -120,9 +121,7 @@ fn create_test_validator_and_client() -> (
     )
 }
 
-fn run_bench_tps(
-    client: Arc<TpuClient<QuicPool, QuicConnectionManager, QuicConfig>>,
-) {
+fn run_bench_tps(client: Arc<TpuClient<QuicPool, QuicConnectionManager, QuicConfig>>) {
     let config = Config {
         tx_count: 100,
         duration: Duration::from_secs(5),

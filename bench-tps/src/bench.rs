@@ -1249,9 +1249,15 @@ mod tests {
         let client = Arc::new(BankClient::new_shared(bank));
 
         let keypair_count = config.tx_count * config.keypair_multiplier;
-        let keypairs =
-            generate_and_fund_keypairs(client.clone(), &config.id, keypair_count, 1_000_000_000, false, false)
-                .unwrap();
+        let keypairs = generate_and_fund_keypairs(
+            client.clone(),
+            &config.id,
+            keypair_count,
+            1_000_000_000,
+            false,
+            false,
+        )
+        .unwrap();
         let nonce_keypairs = if config.use_durable_nonce {
             Some(generate_durable_nonce_accounts(client.clone(), &keypairs))
         } else {
