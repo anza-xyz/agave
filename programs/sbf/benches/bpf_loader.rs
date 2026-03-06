@@ -12,7 +12,7 @@ use {solana_keypair::Keypair, std::slice};
 extern crate test;
 
 use {
-    agave_syscalls::create_program_runtime_environment_v1,
+    agave_syscalls::create_program_runtime_environment,
     byteorder::{ByteOrder, LittleEndian, WriteBytesExt},
     solana_account::AccountSharedData,
     solana_client_traits::SyncClient,
@@ -80,7 +80,7 @@ fn bench_program_create_executable(bencher: &mut Bencher) {
     let elf = load_program_from_file("bench_alu");
 
     let feature_set = SVMFeatureSet::default();
-    let program_runtime_environment = create_program_runtime_environment_v1(
+    let program_runtime_environment = create_program_runtime_environment(
         &feature_set,
         &SVMTransactionExecutionBudget::new_with_defaults(feature_set.raise_cpi_nesting_limit_to_8),
         true,
@@ -107,7 +107,7 @@ fn bench_program_alu(bencher: &mut Bencher) {
     with_mock_invoke_context!(invoke_context, bpf_loader::id(), 10000001);
 
     let feature_set = invoke_context.get_feature_set();
-    let program_runtime_environment = create_program_runtime_environment_v1(
+    let program_runtime_environment = create_program_runtime_environment(
         feature_set,
         &SVMTransactionExecutionBudget::new_with_defaults(feature_set.raise_cpi_nesting_limit_to_8),
         true,
@@ -239,7 +239,7 @@ fn bench_create_vm(bencher: &mut Bencher) {
     let raise_cpi_nesting_limit_to_8 = invoke_context
         .get_feature_set()
         .raise_cpi_nesting_limit_to_8;
-    let program_runtime_environment = create_program_runtime_environment_v1(
+    let program_runtime_environment = create_program_runtime_environment(
         invoke_context.get_feature_set(),
         &SVMTransactionExecutionBudget::new_with_defaults(raise_cpi_nesting_limit_to_8),
         true,
@@ -303,7 +303,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
     .unwrap();
 
     let feature_set = invoke_context.get_feature_set();
-    let program_runtime_environment = create_program_runtime_environment_v1(
+    let program_runtime_environment = create_program_runtime_environment(
         feature_set,
         &SVMTransactionExecutionBudget::new_with_defaults(feature_set.raise_cpi_nesting_limit_to_8),
         true,

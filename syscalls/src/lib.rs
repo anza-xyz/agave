@@ -288,7 +288,7 @@ macro_rules! register_feature_gated_function {
     };
 }
 
-pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
+pub fn create_program_runtime_environment<'a, 'ix_data>(
     feature_set: &SVMFeatureSet,
     compute_budget: &SVMTransactionExecutionBudget,
     reject_deployment_of_broken_elfs: bool,
@@ -6027,14 +6027,14 @@ mod tests {
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
         let feature_set = SVMFeatureSet::default();
-        let program_runtime_environments = get_mock_program_runtime_environments();
+        let program_runtime_environment = get_mock_program_runtime_environment();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
-            &program_runtime_environments,
+            &program_runtime_environment,
+            &program_runtime_environment,
             &sysvar_cache,
         );
         invoke_context.mock_set_remaining(compute_budget.compute_unit_limit);
@@ -6093,14 +6093,14 @@ mod tests {
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
         let feature_set = SVMFeatureSet::default();
-        let program_runtime_environments = get_mock_program_runtime_environments();
+        let program_runtime_environment = get_mock_program_runtime_environment();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
-            &program_runtime_environments,
+            &program_runtime_environment,
+            &program_runtime_environment,
             &sysvar_cache,
         );
 

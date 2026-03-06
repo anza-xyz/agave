@@ -160,14 +160,14 @@ impl SvmTestEnvironment<'_> {
 
         let processing_environment = TransactionProcessingEnvironment {
             blockhash: LAST_BLOCKHASH,
-            feature_set: test_entry.feature_set,
             blockhash_lamports_per_signature: LAMPORTS_PER_SIGNATURE,
-            program_runtime_environments_for_execution: batch_processor
-                .get_environments_for_epoch(EXECUTION_EPOCH),
-            program_runtime_environments_for_deployment: batch_processor
-                .get_environments_for_epoch(EXECUTION_EPOCH),
+            epoch_total_stake: 0,
+            feature_set: test_entry.feature_set,
+            program_runtime_environment_for_execution: batch_processor
+                .program_runtime_environment_for_epoch(EXECUTION_EPOCH),
+            program_runtime_environment_for_deployment: batch_processor
+                .program_runtime_environment_for_epoch(EXECUTION_EPOCH),
             rent: test_entry.rent.clone(),
-            ..TransactionProcessingEnvironment::default()
         };
 
         Self {
@@ -328,7 +328,7 @@ impl SvmTestEnvironment<'_> {
                         .write()
                         .unwrap()
                         .merge(
-                            &self.batch_processor.environments,
+                            &self.batch_processor.program_runtime_environment,
                             self.batch_processor.slot,
                             programs_modified_by_tx,
                         );

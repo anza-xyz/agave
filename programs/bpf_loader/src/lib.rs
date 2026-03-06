@@ -1144,7 +1144,7 @@ mod test_utils {
     use solana_program_runtime::loaded_programs::LoadProgramMetrics;
     #[cfg(feature = "svm-internal")]
     use {
-        super::*, agave_syscalls::create_program_runtime_environment_v1,
+        super::*, agave_syscalls::create_program_runtime_environment,
         solana_account::ReadableAccount, solana_loader_v4_interface::state::LoaderV4State,
         solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
         solana_sdk_ids::loader_v4,
@@ -1161,7 +1161,7 @@ mod test_utils {
     #[cfg(feature = "svm-internal")]
     #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
     fn load_all_invoked_programs(invoke_context: &mut InvokeContext) {
-        let program_runtime_environment = create_program_runtime_environment_v1(
+        let program_runtime_environment = create_program_runtime_environment(
             invoke_context.get_feature_set(),
             invoke_context.get_compute_budget(),
             false, /* deployment */

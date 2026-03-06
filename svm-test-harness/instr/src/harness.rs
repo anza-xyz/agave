@@ -2,7 +2,7 @@
 
 use {
     crate::fixture::{instr_context::InstrContext, instr_effects::InstrEffects},
-    agave_syscalls::create_program_runtime_environment_v1,
+    agave_syscalls::create_program_runtime_environment,
     solana_account::{AccountSharedData, WritableAccount},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction::Instruction,
@@ -10,7 +10,7 @@ use {
     solana_message::{LegacyMessage, Message, SanitizedMessage},
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+        loaded_programs::ProgramCacheForTxBatch,
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -108,18 +108,15 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         sanitized_message.num_instructions(),
     );
 
-    let environments = ProgramRuntimeEnvironments {
-        program_runtime_v1: Arc::new(
-            create_program_runtime_environment_v1(
-                &input.feature_set,
-                &compute_budget.to_budget(),
-                false, /* deployment */
-                false, /* debugging_features */
-            )
-            .unwrap(),
-        ),
-        ..ProgramRuntimeEnvironments::default()
-    };
+    let environment = Arc::new(
+        create_program_runtime_environment(
+            &input.feature_set,
+            &compute_budget.to_budget(),
+            false, /* deployment */
+            false, /* debugging_features */
+        )
+        .unwrap(),
+    );
 
     let result = {
         #[expect(deprecated)]
@@ -138,8 +135,8 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
                 blockhash_lamports_per_signature,
                 callback,
                 &feature_set,
-                &environments,
-                &environments,
+                &environment,
+                &environment,
                 sysvar_cache,
             ),
             Some(log_collector.clone()),
@@ -358,18 +355,15 @@ mod tests {
         // Create Program Cache
         let mut program_cache = crate::program_cache::new_with_builtins(slot);
 
-        let environments = ProgramRuntimeEnvironments {
-            program_runtime_v1: Arc::new(
-                create_program_runtime_environment_v1(
-                    &context.feature_set,
-                    &compute_budget.to_budget(),
-                    false, /* deployment */
-                    false, /* debugging_features */
-                )
-                .unwrap(),
-            ),
-            ..ProgramRuntimeEnvironments::default()
-        };
+        let environments = Arc::new(
+            create_program_runtime_environment(
+                &context.feature_set,
+                &compute_budget.to_budget(),
+                false, /* deployment */
+                false, /* debugging_features */
+            )
+            .unwrap(),
+        );
 
         crate::program_cache::fill_from_accounts(
             &mut program_cache,

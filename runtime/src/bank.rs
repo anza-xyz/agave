@@ -71,7 +71,7 @@ use {
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::snapshot_hash::SnapshotHash,
-    agave_syscalls::create_program_runtime_environment_v1,
+    agave_syscalls::create_program_runtime_environment,
     agave_votor_messages::{
         consensus_message::Certificate, migration::GENESIS_CERTIFICATE_ACCOUNT,
     },
@@ -125,7 +125,7 @@ use {
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext,
-        loaded_programs::{ProgramCacheEntry, ProgramRuntimeEnvironments},
+        loaded_programs::{ProgramCacheEntry, ProgramRuntimeEnvironment},
     },
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_rent::Rent,
@@ -1541,10 +1541,9 @@ impl Bank {
             .write()
             .unwrap();
 
-        if let Some(upcoming_environments) =
-            epoch_boundary_preparation.upcoming_environments.as_ref()
+        if let Some(upcoming_environment) = epoch_boundary_preparation.upcoming_environment.as_ref()
         {
-            let upcoming_environments = upcoming_environments.clone();
+            let upcoming_environment = upcoming_environment.clone();
             if let Some((key, program_to_recompile)) =
                 epoch_boundary_preparation.programs_to_recompile.pop()
             {
@@ -1552,7 +1551,7 @@ impl Bank {
                 drop(program_cache);
                 if let Some((recompiled, last_modification_slot)) = load_program_with_pubkey(
                     self,
-                    &upcoming_environments,
+                    &upcoming_environment,
                     &key,
                     self.slot,
                     &mut ExecuteTimings::default(),
@@ -1569,7 +1568,7 @@ impl Bank {
                         .write()
                         .unwrap();
                     program_cache.assign_program(
-                        &upcoming_environments,
+                        &upcoming_environment,
                         key,
                         last_modification_slot,
                         recompiled,
@@ -1579,21 +1578,14 @@ impl Bank {
         } else if slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch {
             // Anticipate the upcoming program runtime environment for the next epoch,
             // so we can try to recompile loaded programs before the feature transition hits.
-            let new_environments = self.create_program_runtime_environments(&upcoming_feature_set);
-            let mut upcoming_environments = self.transaction_processor.environments.clone();
-            let changed_program_runtime_v1 =
-                *upcoming_environments.program_runtime_v1 != *new_environments.program_runtime_v1;
-            let changed_program_runtime_v2 =
-                *upcoming_environments.program_runtime_v2 != *new_environments.program_runtime_v2;
-            if changed_program_runtime_v1 {
-                upcoming_environments.program_runtime_v1 = new_environments.program_runtime_v1;
-            }
-            if changed_program_runtime_v2 {
-                upcoming_environments.program_runtime_v2 = new_environments.program_runtime_v2;
-            }
-            epoch_boundary_preparation.upcoming_epoch = self.epoch.saturating_add(1);
-            epoch_boundary_preparation.upcoming_environments = Some(upcoming_environments);
-            if changed_program_runtime_v1 {
+            let new_environment = self.create_program_runtime_environment(&upcoming_feature_set);
+            let mut upcoming_environment = self
+                .transaction_processor
+                .program_runtime_environment
+                .clone();
+            let changed_program_runtime_environment = *upcoming_environment != *new_environment;
+            if changed_program_runtime_environment {
+                upcoming_environment = new_environment;
                 epoch_boundary_preparation.programs_to_recompile = program_cache
                     .get_flattened_entries()
                     .into_iter()
@@ -1605,11 +1597,13 @@ impl Bank {
             } else {
                 epoch_boundary_preparation.programs_to_recompile.clear();
             }
+            epoch_boundary_preparation.upcoming_epoch = self.epoch.saturating_add(1);
+            epoch_boundary_preparation.upcoming_environment = Some(upcoming_environment);
         }
     }
 
     pub fn prune_program_cache(&self, new_root_slot: Slot, new_root_epoch: Epoch) {
-        let upcoming_environments = self
+        let upcoming_environment = self
             .transaction_processor
             .epoch_boundary_preparation
             .write()
@@ -1619,7 +1613,7 @@ impl Bank {
             .global_program_cache
             .write()
             .unwrap()
-            .prune(new_root_slot, upcoming_environments);
+            .prune(new_root_slot, upcoming_environment);
     }
 
     pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {
@@ -1773,9 +1767,10 @@ impl Bank {
             rewards_metrics,
         );
 
-        let new_environments = self.create_program_runtime_environments(&self.feature_set);
+        let program_runtime_environment =
+            self.create_program_runtime_environment(&self.feature_set);
         self.transaction_processor
-            .set_environments(new_environments);
+            .set_program_runtime_environment(program_runtime_environment);
     }
 
     pub fn byte_limit_for_scans(&self) -> Option<usize> {
@@ -3591,13 +3586,13 @@ impl Bank {
             blockhash_lamports_per_signature,
             epoch_total_stake: self.get_current_epoch_total_stake(),
             feature_set: self.feature_set.runtime_features(),
-            program_runtime_environments_for_execution: self
+            program_runtime_environment_for_execution: self
                 .transaction_processor
-                .environments
+                .program_runtime_environment
                 .clone(),
-            program_runtime_environments_for_deployment: self
+            program_runtime_environment_for_deployment: self
                 .transaction_processor
-                .get_environments_for_epoch(effective_epoch_of_deployments),
+                .program_runtime_environment_for_epoch(effective_epoch_of_deployments),
             rent: self.rent_collector.rent.clone(),
         };
 
@@ -3949,7 +3944,7 @@ impl Bank {
                                     .unwrap()
                             })
                             .merge(
-                                &self.transaction_processor.environments,
+                                &self.transaction_processor.program_runtime_environment,
                                 self.slot,
                                 programs_modified_by_tx,
                             );
@@ -4419,7 +4414,8 @@ impl Bank {
 
         self.apply_simd_0339_invoke_cost_changes();
 
-        let environments = self.create_program_runtime_environments(&self.feature_set);
+        let program_runtime_environment =
+            self.create_program_runtime_environment(&self.feature_set);
         self.transaction_processor
             .global_program_cache
             .write()
@@ -4430,32 +4426,28 @@ impl Bank {
             .write()
             .unwrap()
             .upcoming_epoch = self.epoch;
-        self.transaction_processor.environments = environments;
+        self.transaction_processor.program_runtime_environment = program_runtime_environment;
     }
 
-    fn create_program_runtime_environments(
+    fn create_program_runtime_environment(
         &self,
         feature_set: &FeatureSet,
-    ) -> ProgramRuntimeEnvironments {
+    ) -> ProgramRuntimeEnvironment {
         let simd_0268_active = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
         let compute_budget = self
             .compute_budget()
             .as_ref()
             .unwrap_or(&ComputeBudget::new_with_defaults(simd_0268_active))
             .to_budget();
-        let program_runtime_environment = Arc::new(
-            create_program_runtime_environment_v1(
+        Arc::new(
+            create_program_runtime_environment(
                 &feature_set.runtime_features(),
                 &compute_budget,
                 false, /* deployment */
                 false, /* debugging_features */
             )
             .unwrap(),
-        );
-        ProgramRuntimeEnvironments {
-            program_runtime_v1: program_runtime_environment.clone(),
-            program_runtime_v2: program_runtime_environment,
-        }
+        )
     }
 
     pub fn set_tick_height(&self, tick_height: u64) {
@@ -6278,7 +6270,7 @@ impl Bank {
     ) -> Option<Arc<ProgramCacheEntry>> {
         let environments = self
             .transaction_processor
-            .get_environments_for_epoch(effective_epoch);
+            .program_runtime_environment_for_epoch(effective_epoch);
         load_program_with_pubkey(
             self,
             &environments,

@@ -12,7 +12,7 @@ use {
     crate::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         loaded_programs::{
-            ProgramCacheEntryType, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
+            ProgramCacheEntryType, ProgramCacheForTxBatch, ProgramRuntimeEnvironment,
         },
         stable_log,
         sysvar_cache::SysvarCache,
@@ -146,8 +146,8 @@ pub struct EnvironmentConfig<'a> {
     pub blockhash_lamports_per_signature: u64,
     epoch_stake_callback: &'a dyn InvokeContextCallback,
     feature_set: &'a SVMFeatureSet,
-    pub program_runtime_environments_for_execution: &'a ProgramRuntimeEnvironments,
-    pub program_runtime_environments_for_deployment: &'a ProgramRuntimeEnvironments,
+    pub program_runtime_environment_for_execution: &'a ProgramRuntimeEnvironment,
+    pub program_runtime_environment_for_deployment: &'a ProgramRuntimeEnvironment,
     sysvar_cache: &'a SysvarCache,
 }
 impl<'a> EnvironmentConfig<'a> {
@@ -156,8 +156,8 @@ impl<'a> EnvironmentConfig<'a> {
         blockhash_lamports_per_signature: u64,
         epoch_stake_callback: &'a dyn InvokeContextCallback,
         feature_set: &'a SVMFeatureSet,
-        program_runtime_environments_for_execution: &'a ProgramRuntimeEnvironments,
-        program_runtime_environments_for_deployment: &'a ProgramRuntimeEnvironments,
+        program_runtime_environment_for_execution: &'a ProgramRuntimeEnvironment,
+        program_runtime_environment_for_deployment: &'a ProgramRuntimeEnvironment,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
         Self {
@@ -165,8 +165,8 @@ impl<'a> EnvironmentConfig<'a> {
             blockhash_lamports_per_signature,
             epoch_stake_callback,
             feature_set,
-            program_runtime_environments_for_execution,
-            program_runtime_environments_for_deployment,
+            program_runtime_environment_for_execution,
+            program_runtime_environment_for_deployment,
             sysvar_cache,
         }
     }
@@ -585,8 +585,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             MemoryMapping::new(Vec::new(), &mock_config, SBPFVersion::V0).unwrap();
         let mut vm = EbpfVm::new(
             self.environment_config
-                .program_runtime_environments_for_execution
-                .program_runtime_v1
+                .program_runtime_environment_for_execution
                 .clone(),
             SBPFVersion::V0,
             // Removes lifetime tracking
@@ -668,9 +667,9 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         self.environment_config.feature_set
     }
 
-    pub fn get_program_runtime_environments_for_deployment(&self) -> &ProgramRuntimeEnvironments {
+    pub fn get_program_runtime_environment_for_deployment(&self) -> &ProgramRuntimeEnvironment {
         self.environment_config
-            .program_runtime_environments_for_deployment
+            .program_runtime_environment_for_deployment
     }
 
     pub fn is_stake_raise_minimum_delegation_to_1_sol_active(&self) -> bool {
@@ -807,7 +806,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
-                loaded_programs::{ProgramCacheForTxBatch, get_mock_program_runtime_environments},
+                loaded_programs::{ProgramCacheForTxBatch, get_mock_program_runtime_environment},
                 sysvar_cache::SysvarCache,
             },
         };
@@ -843,14 +842,14 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 }
             }
         });
-        let program_runtime_environments = get_mock_program_runtime_environments();
+        let program_runtime_environment = get_mock_program_runtime_environment();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockInvokeContextCallback {},
             $feature_set,
-            &program_runtime_environments,
-            &program_runtime_environments,
+            &program_runtime_environment,
+            &program_runtime_environment,
             &sysvar_cache,
         );
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();

@@ -23,7 +23,7 @@ use {
     std::{cell::RefCell, rc::Rc},
 };
 
-fn morph_into_deployment_environment_v1<'a>(
+fn morph_into_deployment_environment<'a>(
     from: Arc<BuiltinProgram<InvokeContext<'a, 'a>>>,
 ) -> Result<BuiltinProgram<InvokeContext<'a, 'a>>, ElfError> {
     let mut config = from.get_config().clone();
@@ -62,7 +62,7 @@ pub fn deploy_program(
     #[cfg(feature = "metrics")]
     let mut register_syscalls_time = Measure::start("register_syscalls_time");
     let deployment_program_runtime_environment =
-        morph_into_deployment_environment_v1(program_runtime_environment.clone()).map_err(|e| {
+        morph_into_deployment_environment(program_runtime_environment.clone()).map_err(|e| {
             ic_logger_msg!(log_collector, "Failed to register syscalls: {}", e);
             InstructionError::ProgramEnvironmentSetupFailure
         })?;
@@ -145,8 +145,7 @@ macro_rules! deploy_program {
             &mut load_program_metrics,
             $invoke_context.program_cache_for_tx_batch,
             $invoke_context
-                .get_program_runtime_environments_for_deployment()
-                .program_runtime_v1
+                .get_program_runtime_environment_for_deployment()
                 .clone(),
             $program_id,
             $loader_key,

@@ -4,7 +4,7 @@ use {
     agave_snapshots::{
         SnapshotInterval, paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig,
     },
-    agave_syscalls::create_program_runtime_environment_v1,
+    agave_syscalls::create_program_runtime_environment,
     arc_swap::ArcSwap,
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::Receiver,
@@ -946,7 +946,7 @@ impl TestValidator {
         }
 
         let runtime_features = feature_set.runtime_features();
-        let program_runtime_environment = create_program_runtime_environment_v1(
+        let program_runtime_environment = create_program_runtime_environment(
             &runtime_features,
             &SVMTransactionExecutionBudget::new_with_defaults(
                 runtime_features.raise_cpi_nesting_limit_to_8,

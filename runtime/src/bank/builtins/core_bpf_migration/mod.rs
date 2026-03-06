@@ -137,9 +137,9 @@ impl Bank {
         // Set up the two `LoadedProgramsForTxBatch` instances, as if
         // processing a new transaction batch.
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
-        let program_runtime_environments = self
+        let program_runtime_environment = self
             .transaction_processor
-            .get_environments_for_epoch(self.epoch);
+            .program_runtime_environment_for_epoch(self.epoch);
 
         // Configure a dummy `InvokeContext` from the runtime's current
         // environment, as well as the two `ProgramCacheForTxBatch`
@@ -176,8 +176,8 @@ impl Bank {
                     0,
                     &MockCallback {},
                     &feature_set,
-                    &program_runtime_environments,
-                    &program_runtime_environments,
+                    &program_runtime_environment,
+                    &program_runtime_environment,
                     &sysvar_cache,
                 ),
                 None,
@@ -190,7 +190,7 @@ impl Bank {
                 dummy_invoke_context.get_log_collector(),
                 &mut load_program_metrics,
                 dummy_invoke_context.program_cache_for_tx_batch,
-                program_runtime_environments.program_runtime_v1.clone(),
+                program_runtime_environment.clone(),
                 program_id,
                 &bpf_loader_upgradeable::id(),
                 // The size of the program cache entry is the size of the program account
@@ -209,7 +209,7 @@ impl Bank {
             .write()
             .unwrap()
             .merge(
-                &self.transaction_processor.environments,
+                &self.transaction_processor.program_runtime_environment,
                 self.slot,
                 &program_cache_for_tx_batch.drain_modified_entries(),
             );
@@ -2172,7 +2172,9 @@ pub(crate) mod tests {
             .unwrap();
 
         program_cache.assign_program(
-            &roundtrip_bank.transaction_processor.environments,
+            &roundtrip_bank
+                .transaction_processor
+                .program_runtime_environment,
             bpf_loader_v2_program_address,
             upgrade_slot,
             entry,
