@@ -156,54 +156,10 @@ fn test_local_cluster_start_and_exit_with_config() {
 
 #[test]
 #[serial]
-fn test_spend_and_verify_all_nodes_1() {
+fn test_spend_and_verify_all_nodes() {
     agave_logger::setup_with_default(RUST_LOG_FILTER);
-    error!("test_spend_and_verify_all_nodes_1");
-    let num_nodes = 1;
-    let local = LocalCluster::new_with_equal_stakes(
-        num_nodes,
-        DEFAULT_MINT_LAMPORTS,
-        DEFAULT_NODE_STAKE,
-        SocketAddrSpace::Unspecified,
-    );
-    cluster_tests::spend_and_verify_all_nodes(
-        &local.entry_point_info,
-        &local.funding_keypair,
-        num_nodes,
-        HashSet::new(),
-        SocketAddrSpace::Unspecified,
-        &local.connection_cache,
-    );
-}
-
-#[test]
-#[serial]
-fn test_spend_and_verify_all_nodes_2() {
-    agave_logger::setup_with_default(RUST_LOG_FILTER);
-    error!("test_spend_and_verify_all_nodes_2");
-    let num_nodes = 2;
-    let local = LocalCluster::new_with_equal_stakes(
-        num_nodes,
-        DEFAULT_MINT_LAMPORTS,
-        DEFAULT_NODE_STAKE,
-        SocketAddrSpace::Unspecified,
-    );
-    cluster_tests::spend_and_verify_all_nodes(
-        &local.entry_point_info,
-        &local.funding_keypair,
-        num_nodes,
-        HashSet::new(),
-        SocketAddrSpace::Unspecified,
-        &local.connection_cache,
-    );
-}
-
-#[test]
-#[serial]
-fn test_spend_and_verify_all_nodes_3() {
-    agave_logger::setup_with_default(RUST_LOG_FILTER);
-    error!("test_spend_and_verify_all_nodes_3");
     let num_nodes = 3;
+    info!("test_spend_and_verify_all_nodes with {num_nodes} nodes");
     let local = LocalCluster::new_with_equal_stakes(
         num_nodes,
         DEFAULT_MINT_LAMPORTS,
