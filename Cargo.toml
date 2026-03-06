@@ -555,7 +555,7 @@ solana-tpu-client = { path = "tpu-client", version = "=4.1.0-alpha.0", default-f
 solana-tpu-client-next = { path = "tpu-client-next", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-transaction = "4.0.0"
 solana-transaction-context = { path = "transaction-context", version = "=4.1.0-alpha.0", features = ["agave-unstable-api", "bincode"] }
-solana-transaction-error = "3.0.0"
+solana-transaction-error = "3.1.0"
 solana-transaction-status = { path = "transaction-status", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-turbine = { path = "turbine", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
