@@ -1321,6 +1321,10 @@ pub mod direct_account_pointers_in_program_input {
     solana_pubkey::declare_id!("ptrXWLkSDMZZmZN8GAT6W5yW4EvYByfw6cRRHbXwQNS");
 }
 
+pub mod integer_inflation_rewards {
+    solana_pubkey::declare_id!("iiiiizJfxinmojuyTqKwoHp61ti6RGTkreBhU7SuNGb");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2356,6 +2360,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             direct_account_pointers_in_program_input::id(),
             "SIMD-0449: Direct Account Pointers in Program Input",
+        ),
+        (
+            integer_inflation_rewards::id(),
+            "use integer math for inflation reward calculations",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
