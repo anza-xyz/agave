@@ -1,14 +1,17 @@
 use {
     crate::{
         bit_vec::BitVec,
+        blockstore::BlockstoreError,
         shred::{self, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, Shred, ShredType},
     },
+    bincode::Options,
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
     std::{
         collections::BTreeSet,
+        fmt::Display,
         ops::{Range, RangeBounds},
     },
 };
@@ -218,6 +221,30 @@ pub type SlotMeta = SlotMetaV2;
 pub type CompletedDataIndexes = CompletedDataIndexesV2;
 pub type SlotMetaFallback = SlotMetaV1;
 
+pub(crate) fn deserialize_slot_meta(data: &[u8]) -> Result<SlotMeta, BlockstoreError> {
+    // SlotMeta is being migrated to a new `completed_data_indexes` format.
+    //
+    // Ensure that reject trailing bytes is enabled to prevent false postivies in deserialization.
+    let config = bincode::DefaultOptions::new()
+        // `bincode::serialize` uses fixint encoding by default, so we need to use the same here
+        .with_fixint_encoding()
+        .reject_trailing_bytes();
+
+    // Migration strategy for new column format:
+    // 1. Release 1: Add ability to read new format as fallback, keep writing old format
+    // 2. Release 2: Switch to writing new format, keep reading old format as fallback
+    // 3. Release 3: Remove old format support once stable
+    // This allows safe downgrade to Release 1 since it can read both formats
+    let index: bincode::Result<SlotMeta> = config.deserialize(data);
+    match index {
+        Ok(index) => Ok(index),
+        Err(_) => {
+            let index: SlotMetaFallback = config.deserialize(data)?;
+            Ok(index.into())
+        }
+    }
+}
+
 // Serde implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
 mod serde_compat {
@@ -246,6 +273,28 @@ pub type ShredIndex = ShredIndexV2;
 /// See https://github.com/anza-xyz/agave/issues/3570.
 pub type IndexFallback = IndexV1;
 pub type ShredIndexFallback = ShredIndexV1;
+
+pub(crate) fn deserialize_index(data: &[u8]) -> Result<Index, BlockstoreError> {
+    let config = bincode::DefaultOptions::new()
+        // `bincode::serialize` uses fixint encoding by default, so we need to use the same here
+        .with_fixint_encoding()
+        .reject_trailing_bytes();
+
+    // Migration strategy for new column format:
+    // 1. Release 1: Add ability to read new format as fallback, keep writing old format
+    // 2. Release 2: Switch to writing new format, keep reading old format as fallback
+    // 3. Release 3: Remove old format support once stable
+    // This allows safe downgrade to Release 1 since it can read both formats
+    // https://github.com/anza-xyz/agave/issues/3570
+    let index: bincode::Result<Index> = config.deserialize(data);
+    match index {
+        Ok(index) => Ok(index),
+        Err(_) => {
+            let index: IndexFallback = config.deserialize(data)?;
+            Ok(index.into())
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 /// Index recording presence/absence of shreds
@@ -366,6 +415,22 @@ pub struct DuplicateSlotProof {
     pub shred1: shred::Payload,
     #[serde(with = "shred::serde_bytes_payload")]
     pub shred2: shred::Payload,
+}
+
+/// Which column an associated block currently resides
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BlockLocation {
+    Original,
+    Alternate { block_id: Hash },
+}
+
+impl Display for BlockLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BlockLocation::Original => write!(f, "Original"),
+            BlockLocation::Alternate { block_id } => write!(f, "Alternate({block_id})"),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
@@ -511,8 +576,7 @@ impl ShredIndexV2 {
         }
     }
 
-    #[allow(unused)]
-    pub(crate) fn contains(&self, idx: u64) -> bool {
+    pub fn contains(&self, idx: u64) -> bool {
         self.index.contains(idx as usize)
     }
 
@@ -776,7 +840,7 @@ impl MerkleRootMeta {
         }
     }
 
-    pub(crate) fn merkle_root(&self) -> Option<Hash> {
+    pub fn merkle_root(&self) -> Option<Hash> {
         self.merkle_root
     }
 
