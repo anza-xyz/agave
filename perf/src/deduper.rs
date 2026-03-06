@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn test_dedup_saturated() {
         // Use smaller value to saturate the deduper quicker.
-        const NUM_BITS: u64 = 10_000_000;
+        const NUM_BITS: u64 = 1_000_000;
         const FALSE_POSITIVE_RATE: f64 = 0.001;
         let mut rng = rand::rng();
         let mut filter = Deduper::<2, [u8]>::new(&mut rng, NUM_BITS);
