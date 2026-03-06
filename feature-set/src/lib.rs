@@ -176,6 +176,8 @@ impl FeatureSet {
             enable_bls12_381_syscall: self.is_active(&enable_bls12_381_syscall::id()),
             block_revenue_sharing: self.is_active(&block_revenue_sharing::id()),
             vote_account_initialize_v2: self.is_active(&vote_account_initialize_v2::id()),
+            direct_account_pointers_in_program_input: self
+                .is_active(&direct_account_pointers_in_program_input::id()),
         }
     }
 }
@@ -1315,6 +1317,10 @@ pub mod validator_admission_ticket {
     solana_pubkey::declare_id!("VATtb1DepUwdPh5bFVasdtkbeDNsftZSRzr2aKpKWJA");
 }
 
+pub mod direct_account_pointers_in_program_input {
+    solana_pubkey::declare_id!("ptrXWLkSDMZZmZN8GAT6W5yW4EvYByfw6cRRHbXwQNS");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2346,6 +2352,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             validator_admission_ticket::id(),
             "SIMD-0357: Alpenglow VAT implementation",
+        ),
+        (
+            direct_account_pointers_in_program_input::id(),
+            "SIMD-0449: Direct Account Pointers in Program Input",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
