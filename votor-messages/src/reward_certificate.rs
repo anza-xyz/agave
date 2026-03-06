@@ -116,7 +116,7 @@ impl NotarRewardCertificate {
 
 /// Message to add votes to the rewards container.
 #[derive(Debug)]
-pub struct AddVoteMessage {
+pub struct AddVoteMsg {
     /// List of [`VoteMessage`]s.
     pub votes: Vec<VoteMessage>,
 }

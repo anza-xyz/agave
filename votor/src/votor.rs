@@ -60,7 +60,7 @@ use {
     },
     agave_votor_messages::{
         consensus_message::ConsensusMessage,
-        reward_certificate::{AddVoteMessage, BuildRewardCertsRequest, BuildRewardCertsResponse},
+        reward_certificate::{AddVoteMsg, BuildRewardCertsRequest, BuildRewardCertsResponse},
     },
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
@@ -121,7 +121,7 @@ pub struct VotorConfig {
     pub event_receiver: VotorEventReceiver,
     pub consensus_message_receiver: Receiver<Vec<ConsensusMessage>>,
     pub consensus_metrics_receiver: ConsensusMetricsEventReceiver,
-    pub reward_votes_receiver: Receiver<AddVoteMessage>,
+    pub reward_add_vote_msg_receiver: Receiver<AddVoteMsg>,
     pub build_reward_certs_receiver: Receiver<BuildRewardCertsRequest>,
 }
 
@@ -172,7 +172,7 @@ impl Votor {
             consensus_message_receiver,
             consensus_metrics_sender,
             consensus_metrics_receiver,
-            reward_votes_receiver,
+            reward_add_vote_msg_receiver,
             build_reward_certs_receiver,
             reward_certs_sender,
         } = config;
@@ -260,7 +260,7 @@ impl Votor {
             leader_schedule_cache,
             sharable_banks,
             exit,
-            reward_votes_receiver,
+            reward_add_vote_msg_receiver,
             build_reward_certs_receiver,
             reward_certs_sender,
         );
