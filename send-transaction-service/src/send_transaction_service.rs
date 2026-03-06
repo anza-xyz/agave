@@ -60,6 +60,12 @@ pub const MAX_BATCH_SEND_RATE_MS: usize = 100_000;
 /// processing the transactions that need to be retried.
 pub const MAX_RETRY_SLEEP_MS: u64 = 1000;
 
+/// The minimum duration the retry task will sleep between retries.
+const MIN_RETRY_SLEEP_MS: u64 = 100;
+
+/// Buffer size for the crossbeam-to-tokio bridge channel.
+const BRIDGE_CHANNEL_SIZE: usize = 1000;
+
 pub struct SendTransactionService {
     receive_txn_task: JoinHandle<()>,
     retry_task: JoinHandle<()>,
@@ -164,7 +170,7 @@ impl SendTransactionService {
         config: Config,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let (tokio_sender, tokio_receiver) = mpsc::channel(1000);
+        let (tokio_sender, tokio_receiver) = mpsc::channel(BRIDGE_CHANNEL_SIZE);
 
         std::thread::spawn(move || {
             while let Ok(transaction_info) = crossbeam_receiver.recv() {
@@ -411,7 +417,7 @@ impl SendTransactionService {
                                 .unwrap_or(0),
                         )
                         .unwrap_or(retry_interval_ms_default)
-                        .max(100);
+                        .max(MIN_RETRY_SLEEP_MS);
 
                     retry_interval.reset_after(Duration::from_millis(retry_interval_ms));
                 }
