@@ -14,7 +14,14 @@ use {
 };
 
 pub async fn setup_test_context() -> ProgramTestContext {
-    let program_test = ProgramTest::new("", id(), Some(solana_bpf_loader_program::Entrypoint::vm));
+    let program_test = ProgramTest::new(
+        "",
+        id(),
+        Some((
+            solana_bpf_loader_program::Entrypoint::vm,
+            solana_bpf_loader_program::Entrypoint::codegen,
+        )),
+    );
     program_test.start_with_context().await
 }
 

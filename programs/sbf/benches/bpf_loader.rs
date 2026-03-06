@@ -7,7 +7,7 @@
     allow(dead_code, unused_imports)
 )]
 
-use {solana_keypair::Keypair, std::slice};
+use {solana_keypair::Keypair, solana_sbpf::vm::ExecutionMode, std::slice};
 
 extern crate test;
 
@@ -96,6 +96,8 @@ fn bench_program_create_executable(bencher: &mut Bencher) {
 #[bench]
 #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
 fn bench_program_alu(bencher: &mut Bencher) {
+    use solana_sbpf::vm::ExecutionMode;
+
     let ns_per_s = 1000000000;
     let one_million = 1000000;
     let mut inner_iter = vec![];
@@ -113,7 +115,7 @@ fn bench_program_alu(bencher: &mut Bencher) {
         true,
         false,
     );
-    let mut executable =
+    let executable =
         Executable::<InvokeContext>::from_elf(&elf, Arc::new(program_runtime_environment.unwrap()))
             .unwrap();
 
@@ -132,7 +134,7 @@ fn bench_program_alu(bencher: &mut Bencher) {
     println!("Interpreted:");
     vm.context_object_pointer
         .mock_set_remaining(i64::MAX as u64);
-    let (instructions, result) = vm.execute_program(&executable, true);
+    let (instructions, result) = vm.execute_program(&executable, &mut ExecutionMode::Interpreted);
     assert_eq!(SUCCESS, result.unwrap());
     assert_eq!(ARMSTRONG_LIMIT, LittleEndian::read_u64(&inner_iter));
     assert_eq!(
@@ -143,7 +145,9 @@ fn bench_program_alu(bencher: &mut Bencher) {
     bencher.iter(|| {
         vm.context_object_pointer
             .mock_set_remaining(i64::MAX as u64);
-        vm.execute_program(&executable, true).1.unwrap();
+        vm.execute_program(&executable, &mut ExecutionMode::Interpreted)
+            .1
+            .unwrap();
     });
     let summary = bencher.bench(|_bencher| Ok(())).unwrap().unwrap();
     println!("  {:?} instructions", instructions);
@@ -157,7 +161,12 @@ fn bench_program_alu(bencher: &mut Bencher) {
     );
 
     println!("JIT to native:");
-    assert_eq!(SUCCESS, vm.execute_program(&executable, false).1.unwrap());
+    assert_eq!(
+        SUCCESS,
+        vm.execute_program(&executable, &mut ExecutionMode::Jit)
+            .1
+            .unwrap()
+    );
     assert_eq!(ARMSTRONG_LIMIT, LittleEndian::read_u64(&inner_iter));
     assert_eq!(
         ARMSTRONG_EXPECTED,
@@ -167,7 +176,9 @@ fn bench_program_alu(bencher: &mut Bencher) {
     bencher.iter(|| {
         vm.context_object_pointer
             .mock_set_remaining(i64::MAX as u64);
-        vm.execute_program(&executable, false).1.unwrap();
+        vm.execute_program(&executable, &mut ExecutionMode::Jit)
+            .1
+            .unwrap();
     });
     let summary = bencher.bench(|_bencher| Ok(())).unwrap().unwrap();
     println!("  {:?} instructions", instructions);
@@ -325,7 +336,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
     let (mut vm, _, _) = vm.unwrap();
 
     let mut measure = Measure::start("tune");
-    let (instructions, _result) = vm.execute_program(&executable, true);
+    let (instructions, _result) = vm.execute_program(&executable, &mut ExecutionMode::Interpreted);
     measure.stop();
 
     assert_eq!(

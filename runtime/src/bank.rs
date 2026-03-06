@@ -126,7 +126,7 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
-        invoke_context::BuiltinFunctionWithContext,
+        invoke_context::BuiltinWithContext,
         loaded_programs::{ProgramCacheEntry, ProgramRuntimeEnvironments},
     },
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
@@ -5429,11 +5429,7 @@ impl Bank {
         !self.is_delta.load(Relaxed)
     }
 
-    pub fn add_mockup_builtin(
-        &mut self,
-        program_id: Pubkey,
-        builtin_function: BuiltinFunctionWithContext,
-    ) {
+    pub fn add_mockup_builtin(&mut self, program_id: Pubkey, builtin_function: BuiltinWithContext) {
         self.add_builtin(
             program_id,
             "mockup",
@@ -6192,7 +6188,7 @@ impl Bank {
     pub fn new_with_mockup_builtin_for_tests(
         genesis_config: &GenesisConfig,
         program_id: Pubkey,
-        builtin_function: BuiltinFunctionWithContext,
+        builtin_function: BuiltinWithContext,
     ) -> (Arc<Self>, Arc<RwLock<BankForks>>) {
         let mut bank = Self::new_for_tests(genesis_config);
         bank.add_mockup_builtin(program_id, builtin_function);

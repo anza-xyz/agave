@@ -546,7 +546,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             expected_result,
-            Entrypoint::vm,
+            (Entrypoint::vm, Entrypoint::codegen),
             |invoke_context| {
                 // Register system program for CPI support.
                 invoke_context.program_cache_for_tx_batch.replenish(
@@ -554,7 +554,10 @@ mod tests {
                     Arc::new(ProgramCacheEntry::new_builtin(
                         0,
                         0,
-                        solana_system_program::system_processor::Entrypoint::vm,
+                        (
+                            solana_system_program::system_processor::Entrypoint::vm,
+                            solana_system_program::system_processor::Entrypoint::codegen,
+                        ),
                     )),
                 );
                 *cu_consumed.borrow_mut() = invoke_context.get_remaining();

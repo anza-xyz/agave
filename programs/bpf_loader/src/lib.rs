@@ -1255,7 +1255,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             expected_result,
-            Entrypoint::vm,
+            (Entrypoint::vm, Entrypoint::codegen),
             |invoke_context| {
                 test_utils::load_all_invoked_programs(invoke_context);
             },
@@ -1343,7 +1343,7 @@ mod tests {
             vec![(program_id, program_account)],
             Vec::new(),
             Err(InstructionError::ProgramFailedToComplete),
-            Entrypoint::vm,
+            (Entrypoint::vm, Entrypoint::codegen),
             |invoke_context| {
                 invoke_context.mock_set_remaining(0);
                 test_utils::load_all_invoked_programs(invoke_context);
@@ -1359,7 +1359,7 @@ mod tests {
             vec![(program_id, parameter_account.clone())],
             Vec::new(),
             Err(InstructionError::UnsupportedProgramId),
-            Entrypoint::vm,
+            (Entrypoint::vm, Entrypoint::codegen),
             |invoke_context| {
                 test_utils::load_all_invoked_programs(invoke_context);
             },
@@ -1901,7 +1901,7 @@ mod tests {
                 transaction_accounts,
                 instruction_accounts,
                 expected_result,
-                Entrypoint::vm,
+                (Entrypoint::vm, Entrypoint::codegen),
                 |_invoke_context| {},
                 |_invoke_context| {},
             )
@@ -2051,7 +2051,7 @@ mod tests {
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(InstructionError::InvalidAccountData),
-            Entrypoint::vm,
+            (Entrypoint::vm, Entrypoint::codegen),
             |invoke_context| {
                 test_utils::load_all_invoked_programs(invoke_context);
             },

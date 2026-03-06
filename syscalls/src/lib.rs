@@ -351,42 +351,78 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
     let mut result = BuiltinProgram::new_loader(config);
 
     // Abort
-    result.register_function("abort", SyscallAbort::vm)?;
+    result.register_function("abort", (SyscallAbort::vm, SyscallAbort::codegen))?;
 
     // Panic
-    result.register_function("sol_panic_", SyscallPanic::vm)?;
+    result.register_function("sol_panic_", (SyscallPanic::vm, SyscallPanic::codegen))?;
 
     // Logging
-    result.register_function("sol_log_", SyscallLog::vm)?;
-    result.register_function("sol_log_64_", SyscallLogU64::vm)?;
-    result.register_function("sol_log_pubkey", SyscallLogPubkey::vm)?;
-    result.register_function("sol_log_compute_units_", SyscallLogBpfComputeUnits::vm)?;
+    result.register_function("sol_log_", (SyscallLog::vm, SyscallLog::codegen))?;
+    result.register_function("sol_log_64_", (SyscallLogU64::vm, SyscallLogU64::codegen))?;
+    result.register_function(
+        "sol_log_pubkey",
+        (SyscallLogPubkey::vm, SyscallLogPubkey::codegen),
+    )?;
+    result.register_function(
+        "sol_log_compute_units_",
+        (
+            SyscallLogBpfComputeUnits::vm,
+            SyscallLogBpfComputeUnits::codegen,
+        ),
+    )?;
 
     // Program defined addresses (PDA)
     result.register_function(
         "sol_create_program_address",
-        SyscallCreateProgramAddress::vm,
+        (
+            SyscallCreateProgramAddress::vm,
+            SyscallCreateProgramAddress::codegen,
+        ),
     )?;
     result.register_function(
         "sol_try_find_program_address",
-        SyscallTryFindProgramAddress::vm,
+        (
+            SyscallTryFindProgramAddress::vm,
+            SyscallTryFindProgramAddress::codegen,
+        ),
     )?;
 
     // Sha256
-    result.register_function("sol_sha256", SyscallHash::vm::<Sha256Hasher>)?;
+    result.register_function(
+        "sol_sha256",
+        (
+            SyscallHash::<Sha256Hasher>::vm,
+            SyscallHash::<Sha256Hasher>::codegen,
+        ),
+    )?;
 
     // Keccak256
-    result.register_function("sol_keccak256", SyscallHash::vm::<Keccak256Hasher>)?;
+    result.register_function(
+        "sol_keccak256",
+        (
+            SyscallHash::<Keccak256Hasher>::vm,
+            SyscallHash::<Keccak256Hasher>::codegen,
+        ),
+    )?;
 
     // Secp256k1 Recover
-    result.register_function("sol_secp256k1_recover", SyscallSecp256k1Recover::vm)?;
+    result.register_function(
+        "sol_secp256k1_recover",
+        (
+            SyscallSecp256k1Recover::vm,
+            SyscallSecp256k1Recover::codegen,
+        ),
+    )?;
 
     // Blake3
     register_feature_gated_function!(
         result,
         blake3_syscall_enabled,
         "sol_blake3",
-        SyscallHash::vm::<Blake3Hasher>,
+        (
+            SyscallHash::<Blake3Hasher>::vm,
+            SyscallHash::<Blake3Hasher>::codegen
+        ),
     )?;
 
     // Elliptic Curve Operations
@@ -394,88 +430,133 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         curve25519_syscall_enabled,
         "sol_curve_validate_point",
-        SyscallCurvePointValidation::vm,
+        (
+            SyscallCurvePointValidation::vm,
+            SyscallCurvePointValidation::codegen
+        ),
     )?;
     register_feature_gated_function!(
         result,
         curve25519_syscall_enabled,
         "sol_curve_group_op",
-        SyscallCurveGroupOps::vm,
+        (SyscallCurveGroupOps::vm, SyscallCurveGroupOps::codegen),
     )?;
     register_feature_gated_function!(
         result,
         curve25519_syscall_enabled,
         "sol_curve_multiscalar_mul",
-        SyscallCurveMultiscalarMultiplication::vm,
+        (
+            SyscallCurveMultiscalarMultiplication::vm,
+            SyscallCurveMultiscalarMultiplication::codegen
+        ),
     )?;
     register_feature_gated_function!(
         result,
         enable_bls12_381_syscall,
         "sol_curve_decompress",
-        SyscallCurveDecompress::vm,
+        (SyscallCurveDecompress::vm, SyscallCurveDecompress::codegen),
     )?;
     register_feature_gated_function!(
         result,
         enable_bls12_381_syscall,
         "sol_curve_pairing_map",
-        SyscallCurvePairingMap::vm,
+        (SyscallCurvePairingMap::vm, SyscallCurvePairingMap::codegen),
     )?;
 
     // Sysvars
-    result.register_function("sol_get_clock_sysvar", SyscallGetClockSysvar::vm)?;
+    result.register_function(
+        "sol_get_clock_sysvar",
+        (SyscallGetClockSysvar::vm, SyscallGetClockSysvar::codegen),
+    )?;
     result.register_function(
         "sol_get_epoch_schedule_sysvar",
-        SyscallGetEpochScheduleSysvar::vm,
+        (
+            SyscallGetEpochScheduleSysvar::vm,
+            SyscallGetEpochScheduleSysvar::codegen,
+        ),
     )?;
     register_feature_gated_function!(
         result,
         !disable_fees_sysvar,
         "sol_get_fees_sysvar",
-        SyscallGetFeesSysvar::vm,
+        (SyscallGetFeesSysvar::vm, SyscallGetFeesSysvar::codegen),
     )?;
-    result.register_function("sol_get_rent_sysvar", SyscallGetRentSysvar::vm)?;
+    result.register_function(
+        "sol_get_rent_sysvar",
+        (SyscallGetRentSysvar::vm, SyscallGetRentSysvar::codegen),
+    )?;
 
     register_feature_gated_function!(
         result,
         last_restart_slot_syscall_enabled,
         "sol_get_last_restart_slot",
-        SyscallGetLastRestartSlotSysvar::vm,
+        (
+            SyscallGetLastRestartSlotSysvar::vm,
+            SyscallGetLastRestartSlotSysvar::codegen
+        ),
     )?;
 
     result.register_function(
         "sol_get_epoch_rewards_sysvar",
-        SyscallGetEpochRewardsSysvar::vm,
+        (
+            SyscallGetEpochRewardsSysvar::vm,
+            SyscallGetEpochRewardsSysvar::codegen,
+        ),
     )?;
 
     // Memory ops
-    result.register_function("sol_memcpy_", SyscallMemcpy::vm)?;
-    result.register_function("sol_memmove_", SyscallMemmove::vm)?;
-    result.register_function("sol_memset_", SyscallMemset::vm)?;
-    result.register_function("sol_memcmp_", SyscallMemcmp::vm)?;
+    result.register_function("sol_memcpy_", (SyscallMemcpy::vm, SyscallMemcpy::codegen))?;
+    result.register_function(
+        "sol_memmove_",
+        (SyscallMemmove::vm, SyscallMemmove::codegen),
+    )?;
+    result.register_function("sol_memset_", (SyscallMemset::vm, SyscallMemset::codegen))?;
+    result.register_function("sol_memcmp_", (SyscallMemcmp::vm, SyscallMemcmp::codegen))?;
 
     // Processed sibling instructions
     result.register_function(
         "sol_get_processed_sibling_instruction",
-        SyscallGetProcessedSiblingInstruction::vm,
+        (
+            SyscallGetProcessedSiblingInstruction::vm,
+            SyscallGetProcessedSiblingInstruction::codegen,
+        ),
     )?;
 
     // Stack height
-    result.register_function("sol_get_stack_height", SyscallGetStackHeight::vm)?;
+    result.register_function(
+        "sol_get_stack_height",
+        (SyscallGetStackHeight::vm, SyscallGetStackHeight::codegen),
+    )?;
 
     // Return data
-    result.register_function("sol_set_return_data", SyscallSetReturnData::vm)?;
-    result.register_function("sol_get_return_data", SyscallGetReturnData::vm)?;
+    result.register_function(
+        "sol_set_return_data",
+        (SyscallSetReturnData::vm, SyscallSetReturnData::codegen),
+    )?;
+    result.register_function(
+        "sol_get_return_data",
+        (SyscallGetReturnData::vm, SyscallGetReturnData::codegen),
+    )?;
 
     // Cross-program invocation
-    result.register_function("sol_invoke_signed_c", SyscallInvokeSignedC::vm)?;
-    result.register_function("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)?;
+    result.register_function(
+        "sol_invoke_signed_c",
+        (SyscallInvokeSignedC::vm, SyscallInvokeSignedC::codegen),
+    )?;
+    result.register_function(
+        "sol_invoke_signed_rust",
+        (
+            SyscallInvokeSignedRust::vm,
+            SyscallInvokeSignedRust::codegen,
+        ),
+    )?;
 
     // Memory allocator
     register_feature_gated_function!(
         result,
         !disable_deploy_of_alloc_free_syscall,
         "sol_alloc_free_",
-        SyscallAllocFree::vm,
+        (SyscallAllocFree::vm, SyscallAllocFree::codegen),
     )?;
 
     // Alt_bn128
@@ -483,7 +564,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         enable_alt_bn128_syscall,
         "sol_alt_bn128_group_op",
-        SyscallAltBn128::vm,
+        (SyscallAltBn128::vm, SyscallAltBn128::codegen),
     )?;
 
     // Big_mod_exp
@@ -491,7 +572,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         enable_big_mod_exp_syscall,
         "sol_big_mod_exp",
-        SyscallBigModExp::vm,
+        (SyscallBigModExp::vm, SyscallBigModExp::codegen),
     )?;
 
     // Poseidon
@@ -499,7 +580,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         enable_poseidon_syscall,
         "sol_poseidon",
-        SyscallPoseidon::vm,
+        (SyscallPoseidon::vm, SyscallPoseidon::codegen),
     )?;
 
     // Accessing remaining compute units
@@ -507,7 +588,10 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         remaining_compute_units_syscall_enabled,
         "sol_remaining_compute_units",
-        SyscallRemainingComputeUnits::vm
+        (
+            SyscallRemainingComputeUnits::vm,
+            SyscallRemainingComputeUnits::codegen
+        )
     )?;
 
     // Alt_bn128_compression
@@ -515,7 +599,10 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         enable_alt_bn128_compression_syscall,
         "sol_alt_bn128_compression",
-        SyscallAltBn128Compression::vm,
+        (
+            SyscallAltBn128Compression::vm,
+            SyscallAltBn128Compression::codegen
+        ),
     )?;
 
     // Sysvar getter
@@ -523,7 +610,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         get_sysvar_syscall_enabled,
         "sol_get_sysvar",
-        SyscallGetSysvar::vm,
+        (SyscallGetSysvar::vm, SyscallGetSysvar::codegen),
     )?;
 
     // Get Epoch Stake
@@ -531,11 +618,14 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         enable_get_epoch_stake_syscall,
         "sol_get_epoch_stake",
-        SyscallGetEpochStake::vm,
+        (SyscallGetEpochStake::vm, SyscallGetEpochStake::codegen),
     )?;
 
     // Log data
-    result.register_function("sol_log_data", SyscallLogData::vm)?;
+    result.register_function(
+        "sol_log_data",
+        (SyscallLogData::vm, SyscallLogData::codegen),
+    )?;
 
     Ok(result)
 }
@@ -725,7 +815,7 @@ declare_builtin_function!(
     /// Causes the SBF program to be halted immediately
     SyscallAbort,
     fn rust(
-        _invoke_context: &mut InvokeContext,
+        _invoke_context: &mut InvokeContext<'_, '_>,
         _arg1: u64,
         _arg2: u64,
         _arg3: u64,
@@ -742,7 +832,7 @@ declare_builtin_function!(
     /// Causes the SBF program to be halted immediately
     SyscallPanic,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         file: u64,
         len: u64,
         line: u64,
@@ -771,7 +861,7 @@ declare_builtin_function!(
     /// to the VM to use for enforcement.
     SyscallAllocFree,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         size: u64,
         free_addr: u64,
         _arg3: u64,
@@ -829,7 +919,7 @@ declare_builtin_function!(
     /// Create a program address
     SyscallCreateProgramAddress,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         seeds_addr: u64,
         seeds_len: u64,
         program_id_addr: u64,
@@ -867,7 +957,7 @@ declare_builtin_function!(
     /// Create a program address
     SyscallTryFindProgramAddress,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         seeds_addr: u64,
         seeds_len: u64,
         program_id_addr: u64,
@@ -919,7 +1009,7 @@ declare_builtin_function!(
     /// secp256k1_recover
     SyscallSecp256k1Recover,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         hash_addr: u64,
         recovery_id_val: u64,
         signature_addr: u64,
@@ -981,7 +1071,7 @@ declare_builtin_function!(
     // - BLS12-381
     SyscallCurvePointValidation,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
         point_addr: u64,
         _arg3: u64,
@@ -1115,7 +1205,7 @@ declare_builtin_function!(
     // - BLS12-381
     SyscallCurveDecompress,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
         point_addr: u64,
         result_addr: u64,
@@ -1213,7 +1303,7 @@ declare_builtin_function!(
     // - BLS12-381
     SyscallCurveGroupOps,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
         group_op: u64,
         left_input_addr: u64,
@@ -1683,7 +1773,7 @@ declare_builtin_function!(
     // - Curve25519 Edwards and Ristretto representations
     SyscallCurveMultiscalarMultiplication,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
         scalars_addr: u64,
         points_addr: u64,
@@ -1801,7 +1891,7 @@ declare_builtin_function!(
     // - BLS12-381
     SyscallCurvePairingMap,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
         num_pairs: u64,
         g1_points_addr: u64,
@@ -1877,7 +1967,7 @@ declare_builtin_function!(
     /// Set return data
     SyscallSetReturnData,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         addr: u64,
         len: u64,
         _arg3: u64,
@@ -1925,7 +2015,7 @@ declare_builtin_function!(
     /// Get return data
     SyscallGetReturnData,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         return_data_addr: u64,
         length: u64,
         program_id_addr: u64,
@@ -1973,7 +2063,7 @@ declare_builtin_function!(
     /// Get a processed sigling instruction
     SyscallGetProcessedSiblingInstruction,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         index: u64,
         meta_addr: u64,
         program_id_addr: u64,
@@ -2073,7 +2163,7 @@ declare_builtin_function!(
     /// Get current call stack height
     SyscallGetStackHeight,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         _arg1: u64,
         _arg2: u64,
         _arg3: u64,
@@ -2093,7 +2183,7 @@ declare_builtin_function!(
     /// alt_bn128 group operations
     SyscallAltBn128,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         group_op: u64,
         input_addr: u64,
         input_size: u64,
@@ -2266,7 +2356,7 @@ declare_builtin_function!(
     /// Big integer modular exponentiation
     SyscallBigModExp,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         params: u64,
         return_value: u64,
         _arg3: u64,
@@ -2341,7 +2431,7 @@ declare_builtin_function!(
     // Poseidon
     SyscallPoseidon,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         parameters: u64,
         endianness: u64,
         vals_addr: u64,
@@ -2407,7 +2497,7 @@ declare_builtin_function!(
     /// Read remaining compute units
     SyscallRemainingComputeUnits,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         _arg1: u64,
         _arg2: u64,
         _arg3: u64,
@@ -2427,7 +2517,7 @@ declare_builtin_function!(
     /// alt_bn128 g1 and g2 compression and decompression
     SyscallAltBn128Compression,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         op: u64,
         input_addr: u64,
         input_size: u64,
@@ -2559,7 +2649,7 @@ declare_builtin_function!(
     // Generic Hashing Syscall
     SyscallHash<H: HasherImpl>,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         vals_addr: u64,
         vals_len: u64,
         result_addr: u64,
@@ -2621,7 +2711,7 @@ declare_builtin_function!(
     // Get Epoch Stake Syscall
     SyscallGetEpochStake,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -3355,7 +3445,7 @@ mod tests {
                 * 4,
         );
 
-        let result = SyscallHash::rust::<Sha256Hasher>(
+        let result = SyscallHash::<Sha256Hasher>::rust(
             &mut invoke_context,
             ro_va,
             ro_len,
@@ -3368,7 +3458,7 @@ mod tests {
 
         let hash_local = hashv(&[bytes1.as_ref(), bytes2.as_ref()]).to_bytes();
         assert_eq!(hash_result, hash_local);
-        let result = SyscallHash::rust::<Sha256Hasher>(
+        let result = SyscallHash::<Sha256Hasher>::rust(
             &mut invoke_context,
             ro_va - 1, // AccessViolation
             ro_len,
@@ -3378,7 +3468,7 @@ mod tests {
             &mut memory_mapping,
         );
         assert_access_violation!(result, ro_va - 1, 32);
-        let result = SyscallHash::rust::<Sha256Hasher>(
+        let result = SyscallHash::<Sha256Hasher>::rust(
             &mut invoke_context,
             ro_va,
             ro_len + 1, // AccessViolation
@@ -3388,7 +3478,7 @@ mod tests {
             &mut memory_mapping,
         );
         assert_access_violation!(result, ro_va, 48);
-        let result = SyscallHash::rust::<Sha256Hasher>(
+        let result = SyscallHash::<Sha256Hasher>::rust(
             &mut invoke_context,
             ro_va,
             ro_len,
@@ -3398,7 +3488,7 @@ mod tests {
             &mut memory_mapping,
         );
         assert_access_violation!(result, rw_va - 1, HASH_BYTES as u64);
-        let result = SyscallHash::rust::<Sha256Hasher>(
+        let result = SyscallHash::<Sha256Hasher>::rust(
             &mut invoke_context,
             ro_va,
             ro_len,

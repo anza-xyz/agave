@@ -2093,7 +2093,10 @@ mod tests {
         let program = ProgramCacheEntry::new_builtin(
             0,
             name.len(),
-            |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+            (
+                |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                |_| {},
+            ),
         );
 
         batch_processor.add_builtin(key, program);
@@ -2118,7 +2121,10 @@ mod tests {
         let program = ProgramCacheEntry::new_builtin(
             0,
             name.len(),
-            |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+            (
+                |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                |_| {},
+            ),
         );
         assert_eq!(entry, Arc::new(program));
     }

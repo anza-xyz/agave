@@ -26,7 +26,7 @@ use {
     solana_runtime::bank::Bank,
     solana_sbpf::{
         assembler::assemble, ebpf::MM_INPUT_START, elf::Executable, static_analysis::Analysis,
-        verifier::RequisiteVerifier,
+        verifier::RequisiteVerifier, vm::ExecutionMode,
     },
     solana_sdk_ids::{bpf_loader_upgradeable, sysvar},
     solana_transaction_context::{
@@ -472,7 +472,6 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         sysvar::epoch_schedule::id(),
         create_account_shared_data_for_test(bank.epoch_schedule()),
     ));
-    let interpreted = matches.value_of("mode").unwrap() != "jit";
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
     let provide_instruction_data_offset_in_vm_r2 = invoke_context
@@ -524,16 +523,23 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     );
     let (mut vm, _, _) = vm.unwrap();
     let start_time = Instant::now();
-    if matches.value_of("mode").unwrap() == "debugger" {
+
+    let mode = matches.value_of("mode").unwrap();
+    let mut execution_mode = if mode == "jit" {
+        ExecutionMode::Jit
+    } else if mode == "debugger" {
         vm.debug_port = Some(matches.value_of("port").unwrap().parse::<u16>().unwrap());
-    }
+        ExecutionMode::Interpreted
+    } else {
+        ExecutionMode::Interpreted
+    };
     vm.registers[1] = MM_INPUT_START;
 
     // SIMD-0321: Provide offset to instruction data in VM register 2.
     if provide_instruction_data_offset_in_vm_r2 {
         vm.registers[2] = instruction_data_offset as u64;
     }
-    let (instruction_count, result) = vm.execute_program(&verified_executable, interpreted);
+    let (instruction_count, result) = vm.execute_program(&verified_executable, &mut execution_mode);
     let duration = Instant::now() - start_time;
     if let Some(trace_option) = matches.value_of("trace") {
         vm.context_object_pointer.iterate_vm_traces(
