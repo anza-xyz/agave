@@ -17,7 +17,7 @@ use {
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{_SC_PAGESIZE, sysconf},
     std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
         thread,
         time::Duration,
     },
@@ -215,11 +215,21 @@ pub struct TxLoop<U: Umem> {
     completion: TxCompletionRing,
 }
 
+/// [`Request`] represents a request to transmit a packet via XDP to list of addresses with the
+/// provided `payload`. It optiona allows overriding the source address of the packet.
+pub trait Request {
+    type Addrs: AsRef<[SocketAddr]>;
+    type Payload: AsRef<[u8]>;
+    fn addrs(&self) -> &Self::Addrs;
+    fn payload(&self) -> &Self::Payload;
+    fn src_address(&self) -> Option<SocketAddrV4>;
+}
+
 impl<U: Umem> TxLoop<U> {
-    pub fn run<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<NextHop>>(
+    pub fn run<T: Request, R: Fn(&IpAddr) -> Option<NextHop>>(
         self,
-        receiver: Receiver<(A, T)>,
-        drop_sender: Sender<(A, T)>,
+        receiver: Receiver<T>,
+        drop_sender: Sender<T>,
         route_fn: R,
     ) {
         // How long we sleep waiting to receive shreds from the channel.
@@ -259,9 +269,9 @@ impl<U: Umem> TxLoop<U> {
         let mut timeouts = 0;
         loop {
             match receiver.try_recv() {
-                Ok((addrs, payload)) => {
-                    batched_packets += addrs.as_ref().len();
-                    batched_items.push((addrs, payload));
+                Ok(request) => {
+                    batched_packets += request.addrs().as_ref().len();
+                    batched_items.push(request);
                     timeouts = 0;
                     if batched_packets < BATCH_SIZE {
                         continue;
@@ -290,8 +300,14 @@ impl<U: Umem> TxLoop<U> {
             // necessary
             let mut chunk_remaining = BATCH_SIZE.min(batched_packets);
 
-            for (addrs, payload) in batched_items.drain(..) {
-                for addr in addrs.as_ref() {
+            for request in batched_items.drain(..) {
+                let (src_ip, src_port) = if let Some(src_addr) = request.src_address() {
+                    (*src_addr.ip(), src_addr.port())
+                } else {
+                    (src_ip, src_port)
+                };
+
+                for addr in request.addrs().as_ref() {
                     if ring.available() == 0 || umem.available() == 0 {
                         // loop until we have space for the next packet
                         loop {
@@ -322,7 +338,7 @@ impl<U: Umem> TxLoop<U> {
                         panic!("IPv6 not supported");
                     };
 
-                    let len = payload.as_ref().len();
+                    let len = request.payload().as_ref().len();
 
                     let dst = addr.ip();
                     let Some(next_hop) = route_fn(&dst) else {
@@ -344,7 +360,7 @@ impl<U: Umem> TxLoop<U> {
                             &dst_ip,
                             src_port,
                             addr.port(),
-                            payload.as_ref(),
+                            request.payload().as_ref(),
                             &gre.tunnel_info,
                         ) {
                             log::warn!("dropping packet: {err}");
@@ -371,7 +387,8 @@ impl<U: Umem> TxLoop<U> {
                         let packet = umem.map_frame_mut(&frame);
 
                         // write the payload first as it's needed for checksum calculation (if enabled)
-                        packet[PACKET_HEADER_SIZE..][..len].copy_from_slice(payload.as_ref());
+                        packet[PACKET_HEADER_SIZE..][..len]
+                            .copy_from_slice(request.payload().as_ref());
 
                         write_eth_header(packet, &src_mac.0, &dest_mac.0);
 
@@ -411,7 +428,7 @@ impl<U: Umem> TxLoop<U> {
                         kick(&ring);
                     }
                 }
-                let _ = drop_sender.try_send((addrs, payload));
+                let _ = drop_sender.try_send(request);
             }
             debug_assert_eq!(batched_packets, 0);
         }
