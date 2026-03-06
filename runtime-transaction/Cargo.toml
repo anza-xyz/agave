@@ -26,7 +26,7 @@ log = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-hash = { workspace = true }
-solana-message = { workspace = true, features = ["blake3"] }
+solana-message = { workspace = true, features = ["blake3", "wincode"] }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
