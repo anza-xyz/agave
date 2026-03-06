@@ -2889,7 +2889,7 @@ fn main() {
                             voter_owner: Pubkey,
                             current_effective_stake: u64,
                             total_stake: u64,
-                            rent_exempt_reserve: u64,
+                            prior_total_lamports: u64,
                             points: Vec<PointDetail>,
                             base_rewards: u64,
                             commission_bps: u16,
@@ -2960,8 +2960,8 @@ fn main() {
                                 InflationPointCalculationEvent::CommissionBps(commission_bps) => {
                                     detail.commission_bps = *commission_bps;
                                 }
-                                InflationPointCalculationEvent::RentExemptReserve(reserve) => {
-                                    detail.rent_exempt_reserve = *reserve;
+                                InflationPointCalculationEvent::PriorTotalLamports(lamports) => {
+                                    detail.prior_total_lamports = *lamports;
                                 }
                                 InflationPointCalculationEvent::CreditsObserved(
                                     old_credits_observed,
@@ -3118,7 +3118,7 @@ fn main() {
                                         delegation_owner: String,
                                         effective_stake: String,
                                         delegated_stake: String,
-                                        rent_exempt_reserve: String,
+                                        prior_total_lamports: String,
                                         activation_epoch: String,
                                         deactivation_epoch: String,
                                         earned_epochs: String,
@@ -3178,8 +3178,8 @@ fn main() {
                                             delegated_stake: format_or_na(
                                                 detail.map(|d| d.total_stake),
                                             ),
-                                            rent_exempt_reserve: format_or_na(
-                                                detail.map(|d| d.rent_exempt_reserve),
+                                            prior_total_lamports: format_or_na(
+                                                detail.map(|d| d.prior_total_lamports),
                                             ),
                                             activation_epoch: format_or_na(detail.map(|d| {
                                                 if d.activation_epoch < Epoch::MAX {

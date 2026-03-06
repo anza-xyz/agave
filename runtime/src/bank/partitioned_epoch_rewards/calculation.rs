@@ -496,6 +496,7 @@ impl Bank {
             reward_calc_tracer,
             new_rate_activation_epoch,
             commission_rate_in_basis_points,
+            stake_account.lamports(),
         ) {
             Ok((stake_reward, commission_lamports, stake)) => {
                 let stake_reward = PartitionedStakeReward {
