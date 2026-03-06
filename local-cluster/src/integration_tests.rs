@@ -316,12 +316,12 @@ pub fn create_custom_leader_schedule_with_random_keys(
 }
 
 /// This function runs a network, initiates a partition based on a
-/// configuration, resolve the partition, then checks that the network continues
-/// to achieve consensus.
+/// configuration, resolves the partition, then checks that the network
+/// continues to achieve consensus.
 ///
 /// # Arguments:
 /// * `partitions` - A slice of partition configurations, where each partition
-///   configuration is a usize representing a node's stake
+///   configuration is a usize representing a node's relative stake
 /// * `leader_schedule` - An option that specifies whether the cluster should
 ///   run with a fixed, predetermined leader schedule
 /// * `no_wait_for_vote_to_start_leader` - provide option to only allow the
@@ -387,6 +387,7 @@ pub fn run_cluster_partition<C>(
                 iter::repeat_with(ValidatorKeys::new)
                     .take(partitions.len())
                     .collect(),
+                // Approximately enough time to run through a leader span for all nodes
                 Duration::from_secs(10),
             )
         }
@@ -442,7 +443,7 @@ pub fn run_cluster_partition<C>(
     )
     .unwrap();
 
-    // Check epochs have correct number of slots
+    // Check each node reports epochs that have correct number of slots
     info!("PARTITION_TEST sleeping until partition starting condition",);
     for node in &cluster_nodes {
         let node_client = RpcClient::new_socket(node.rpc().unwrap());
@@ -462,13 +463,7 @@ pub fn run_cluster_partition<C>(
 
     // Give partitions time to propagate their blocks from during the partition
     // after the partition resolves
-    let timeout_duration = Duration::from_secs(10);
-    let propagation_duration = partition_duration;
-    info!(
-        "PARTITION_TEST resolving partition. sleeping {} ms",
-        timeout_duration.as_millis()
-    );
-    sleep(timeout_duration);
+    let propagation_duration = partition_duration + Duration::from_secs(5);
     info!(
         "PARTITION_TEST waiting for blocks to propagate after partition {}ms",
         propagation_duration.as_millis()
