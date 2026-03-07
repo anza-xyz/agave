@@ -7030,6 +7030,7 @@ dependencies = [
  "rayon",
  "seqlock",
  "serde",
+ "serde_bytes",
  "smallvec",
  "solana-account 4.1.0",
  "solana-accounts-db",
