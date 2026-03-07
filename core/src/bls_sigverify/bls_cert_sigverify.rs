@@ -7,7 +7,10 @@ use {
         fraction::Fraction,
     },
     crossbeam_channel::Sender,
-    rayon::iter::{IntoParallelIterator, ParallelIterator},
+    rayon::{
+        ThreadPool,
+        iter::{IntoParallelIterator, ParallelIterator},
+    },
     solana_measure::measure::Measure,
     solana_runtime::bank::Bank,
     std::{collections::HashSet, num::NonZeroU64},
@@ -37,6 +40,7 @@ pub(super) fn verify_and_send_certificates(
     certs: Vec<Certificate>,
     root_bank: &Bank,
     channel_to_pool: &Sender<Vec<ConsensusMessage>>,
+    thread_pool: &ThreadPool,
 ) -> Result<SigVerifyCertStats, SigVerifyCertError> {
     for cert in certs.iter() {
         debug_assert!(!verified_certs_set.contains(&cert.cert_type));
@@ -49,7 +53,13 @@ pub(super) fn verify_and_send_certificates(
     }
 
     stats.certs_to_sig_verify += certs.len() as u64;
-    let messages = verify_certs(certs, root_bank, verified_certs_set, &mut stats);
+    let messages = verify_certs(
+        certs,
+        root_bank,
+        verified_certs_set,
+        &mut stats,
+        thread_pool,
+    );
     stats.sig_verified_certs += messages.len() as u64;
     send_certs_to_pool(messages, channel_to_pool, &mut stats)?;
 
@@ -70,19 +80,22 @@ fn verify_certs(
     root_bank: &Bank,
     verified_certs_set: &mut HashSet<CertificateType>,
     stats: &mut SigVerifyCertStats,
+    thread_pool: &ThreadPool,
 ) -> Vec<ConsensusMessage> {
     let len_before = certs.len();
-    let verified = certs
-        .into_par_iter()
-        .filter_map(|cert| {
-            if cert.cert_type.slot() <= root_bank.slot().saturating_add(NUM_SLOTS_FOR_VERIFY) {
-                let res = verify_cert(&cert, root_bank);
-                Some((cert, res))
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
+    let verified = thread_pool.install(|| {
+        certs
+            .into_par_iter()
+            .filter_map(|cert| {
+                if cert.cert_type.slot() <= root_bank.slot().saturating_add(NUM_SLOTS_FOR_VERIFY) {
+                    let res = verify_cert(&cert, root_bank);
+                    Some((cert, res))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+    });
     let num_discarded = len_before - verified.len();
     stats.too_far_in_future = stats.too_far_in_future.saturating_add(num_discarded as u64);
 

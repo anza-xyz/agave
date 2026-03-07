@@ -180,6 +180,7 @@ impl SigVerifier {
                     &self.channel_to_repair,
                     &self.channel_to_reward,
                     &self.channel_to_metrics,
+                    &self.thread_pool,
                 )
             },
             || {
@@ -188,6 +189,7 @@ impl SigVerifier {
                     certs_to_verify,
                     &root_bank,
                     &self.channel_to_pool,
+                    &self.thread_pool,
                 )
             },
         );
