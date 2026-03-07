@@ -21,7 +21,6 @@ clap = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
-solana-account-decoder = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-client = { workspace = true }
@@ -57,5 +56,4 @@ solana-faucet = { workspace = true, features = ["dev-context-only-utils"] }
 solana-local-cluster = { workspace = true, features = ["dev-context-only-utils"] }
 solana-native-token = { workspace = true }
 solana-poh-config = { workspace = true }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-test-validator = { workspace = true }

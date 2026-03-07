@@ -22,8 +22,6 @@ dev-context-only-utils = ["solana-compute-budget-instruction/dev-context-only-ut
 
 [dependencies]
 agave-transaction-view = { workspace = true }
-log = { workspace = true }
-solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-hash = { workspace = true }
 solana-message = { workspace = true, features = ["blake3"] }
@@ -34,14 +32,12 @@ solana-svm-transaction = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
-thiserror = { workspace = true }
 
 [dev-dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 bincode = { workspace = true }
 criterion = { workspace = true }
-rand = { workspace = true }
 solana-compute-budget-instruction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-compute-budget-interface = { workspace = true }
 solana-instruction = { workspace = true }

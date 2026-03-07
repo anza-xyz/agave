@@ -20,10 +20,7 @@ solana-keypair = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-streamer = { workspace = true }
 solana-transaction-error = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
-solana-packet = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }

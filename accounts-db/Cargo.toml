@@ -42,18 +42,12 @@ ahash = { workspace = true }
 bincode = { workspace = true }
 blake3 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
-bytemuck = { workspace = true }
-bytemuck_derive = { workspace = true }
-crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
-indexmap = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
-lz4 = { workspace = true }
 memmap2 = { workspace = true }
 modular-bitfield = { workspace = true }
 num_cpus = { workspace = true }
-num_enum = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true }
 rayon = { workspace = true }
@@ -75,7 +69,6 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-genesis-config = { workspace = true, features = ["serde"] }
 solana-hash = { workspace = true, features = ["serde"] }
 solana-keypair = { workspace = true, optional = true }
 solana-lattice-hash = { workspace = true }
@@ -109,18 +102,14 @@ agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
-libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
 rand_chacha = { workspace = true }
-serde_bytes = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-compute-budget = { workspace = true }
 solana-instruction = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-slot-history = { workspace = true }
-solana-svm = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }

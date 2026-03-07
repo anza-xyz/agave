@@ -21,11 +21,7 @@ frozen-abi = [
 
 [dependencies]
 agave-feature-set = { workspace = true }
-agave-logger = { workspace = true }
-bitvec = { workspace = true }
-bytemuck = { workspace = true }
 log = { workspace = true }
-num_enum = { workspace = true }
 serde = { workspace = true }
 solana-address = { workspace = true, features = ["curve25519"] }
 solana-bls-signatures = { workspace = true, features = [
@@ -46,8 +42,6 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-votor-messages = { path = ".", features = ["dev-context-only-utils"] }
-tempfile = { workspace = true }
 
 [lints]
 workspace = true

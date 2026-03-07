@@ -119,11 +119,12 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-genesis-config = { workspace = true }
+solana-genesis-config = { workspace = true, features = ["serde"] }
 solana-hard-forks = { workspace = true, features = ["serde"] }
 solana-hash = { workspace = true }
 solana-inflation = { workspace = true }
 solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-keypair = { workspace = true, features = ["seed-derivable"] }
 solana-lattice-hash = { workspace = true }
 solana-leader-schedule = { workspace = true }
@@ -141,7 +142,6 @@ solana-poh-config = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true }
 solana-reward-info = { workspace = true }
 solana-runtime-transaction = { workspace = true }
@@ -187,11 +187,9 @@ agave-logger = { workspace = true }
 agave-transaction-view = { workspace = true }
 bitvec = { workspace = true }
 libsecp256k1 = { workspace = true }
-memoffset = { workspace = true }
 proptest = { workspace = true }
 solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
 solana-builtins = { workspace = true, features = ["dev-context-only-utils"] }
-solana-instruction-error = { workspace = true }
 solana-program-binaries = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }

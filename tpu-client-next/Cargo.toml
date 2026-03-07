@@ -28,7 +28,6 @@ quinn = { workspace = true }
 rustls = { workspace = true }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
-solana-epoch-schedule = { workspace = true }
 solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true, optional = true }
@@ -49,8 +48,6 @@ tracing = { workspace = true, optional = true }
 [dev-dependencies]
 crossbeam-channel = { workspace = true }
 futures = { workspace = true }
-serde_json = { workspace = true }
-solana-cli-config = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true }

@@ -19,7 +19,6 @@ agave-unstable-api = []
 crossbeam-channel = { workspace = true }
 futures-util = { workspace = true }
 log = { workspace = true }
-semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
@@ -35,6 +34,4 @@ tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 url = { workspace = true }
 
 [dev-dependencies]
-anyhow = { workspace = true }
-solana-commitment-config = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
