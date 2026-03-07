@@ -1153,7 +1153,7 @@ impl AccountsDb {
             accounts_file_provider: AccountsFileProvider::default(),
             latest_full_snapshot_slot: SeqLock::new(None),
             best_ancient_slots_to_shrink: RwLock::default(),
-            mark_obsolete_accounts: accounts_db_config.mark_obsolete_accounts,
+            mark_obsolete_accounts: MarkObsoleteAccounts::Enabled,
         };
 
         {
