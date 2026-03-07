@@ -7964,6 +7964,7 @@ name = "solana-core"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
+ "agave-bls-cert-verify",
  "agave-feature-set",
  "agave-logger",
  "agave-reserved-account-keys",
@@ -7983,6 +7984,7 @@ dependencies = [
  "base64 0.22.1",
  "bencher",
  "bincode",
+ "bitvec",
  "bs58",
  "bytemuck",
  "bytes",
@@ -8022,6 +8024,7 @@ dependencies = [
  "solana-address-lookup-table-interface",
  "solana-bincode",
  "solana-bloom",
+ "solana-bls-signatures",
  "solana-bpf-loader-program",
  "solana-builtins-default-costs",
  "solana-client",
@@ -8081,6 +8084,7 @@ dependencies = [
  "solana-shred-version",
  "solana-signature",
  "solana-signer",
+ "solana-signer-store",
  "solana-slot-hashes",
  "solana-slot-history",
  "solana-streamer",
@@ -8118,6 +8122,7 @@ dependencies = [
  "tokio",
  "tokio-util 0.7.18",
  "trees",
+ "wincode",
 ]
 
 [[package]]
