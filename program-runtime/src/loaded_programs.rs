@@ -1304,8 +1304,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             let mut rng = rng();
             // gen_range is deprecated in favor of random_range in rand>=0.9, but we also get
             // rnd() from shuttle, which doesn't yet support rand 0.9 APIs
-            #[expect(deprecated)]
+            #[cfg(feature = "shuttle-test")]
             let index = rng.gen_range(0..candidates.len());
+            #[cfg(not(feature = "shuttle-test"))]
+            let index = rng.random_range(0..candidates.len());
             let usage_counter = candidates
                 .get(index)
                 .expect("Failed to get cached entry")
