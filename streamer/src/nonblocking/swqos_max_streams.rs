@@ -43,7 +43,7 @@ const MAX_RTT: Duration = Duration::from_millis(200);
 const MIN_RTT: Duration = Duration::from_millis(1);
 
 /// Base MAX_STREAMS at REFERENCE_RTT. Scales linearly with RTT via BDP.
-const DEFAULT_BASE_MAX_STREAMS: u32 = 2048;
+const DEFAULT_BASE_MAX_STREAMS_STAKED: u32 = 2048;
 const DEFAULT_BASE_MAX_STREAMS_UNSTAKED: u32 = 20;
 
 /// Per-key connection counter so compute_max_streams can divide quota evenly.
@@ -59,9 +59,10 @@ pub struct SwQosMaxStreamsConfig {
     pub max_unstaked_connections: usize,
     pub max_connections_per_staked_peer: usize,
     pub max_connections_per_unstaked_peer: usize,
-    pub base_max_streams: u32,
+    pub base_max_streams_staked: u32,
     pub base_max_streams_unstaked: u32,
     /// Per-peer RTT overrides (testing only). Bypasses `connection.rtt()`.
+    /// Used by out-of-tree SwQoS test suite.
     pub rtt_overrides: HashMap<solana_pubkey::Pubkey, Duration>,
 }
 
@@ -73,7 +74,7 @@ impl Default for SwQosMaxStreamsConfig {
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_connections_per_staked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
             max_connections_per_unstaked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER,
-            base_max_streams: DEFAULT_BASE_MAX_STREAMS,
+            base_max_streams_staked: DEFAULT_BASE_MAX_STREAMS_STAKED,
             base_max_streams_unstaked: DEFAULT_BASE_MAX_STREAMS_UNSTAKED,
             rtt_overrides: HashMap::new(),
         }
@@ -165,10 +166,10 @@ impl SwQosMaxStreams {
     ) -> Option<u32> {
         let rtt = rtt.clamp(MIN_RTT, MAX_RTT);
 
-        // BDP-scaled generous credit: at REFERENCE_RTT -> base_max_streams,
+        // BDP-scaled generous credit: at REFERENCE_RTT -> base_max_streams_staked,
         // scales linearly with RTT.
         let rtt_scale = rtt.as_secs_f64() / REFERENCE_RTT.as_secs_f64();
-        let staked_unsat_max = (self.config.base_max_streams as f64 * rtt_scale) as u32;
+        let staked_unsat_max = (self.config.base_max_streams_staked as f64 * rtt_scale) as u32;
         let unstaked_unsat_max = (self.config.base_max_streams_unstaked as f64 * rtt_scale) as u32;
 
         if saturated {
@@ -449,16 +450,12 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
         }
     }
 
-    fn is_saturated(&self) -> bool {
-        self.load_tracker.is_saturated()
-    }
-
     fn compute_max_streams(
         &self,
         context: &SwQosMaxStreamsConnectionContext,
         connection: &Connection,
-        saturated: bool,
     ) -> Option<u32> {
+        let saturated = self.load_tracker.is_saturated();
         let rtt = context
             .remote_pubkey
             .and_then(|pk| self.config.rtt_overrides.get(&pk).copied())
@@ -659,11 +656,11 @@ pub mod test {
     #[test]
     fn test_unsaturated_base_at_reference_rtt() {
         let swqos = make_swqos(SwQosMaxStreamsConfig {
-            base_max_streams: 2048,
+            base_max_streams_staked: 2048,
             ..SwQosMaxStreamsConfig::default()
         });
         let ctx = staked_context(1_000, 100_000, 1);
-        // At REFERENCE_RTT (100ms): rtt_scale=1.0 -> base_max_streams
+        // At REFERENCE_RTT (100ms): rtt_scale=1.0 -> base_max_streams_staked
         assert_eq!(
             swqos.compute_max_streams_for_rtt(&ctx, REFERENCE_RTT, false),
             Some(2048),
@@ -673,7 +670,7 @@ pub mod test {
     #[test]
     fn test_unsaturated_scales_linearly_with_rtt() {
         let swqos = make_swqos(SwQosMaxStreamsConfig {
-            base_max_streams: 2048,
+            base_max_streams_staked: 2048,
             ..SwQosMaxStreamsConfig::default()
         });
         let ctx = staked_context(1_000, 100_000, 1);
@@ -693,7 +690,7 @@ pub mod test {
     #[test]
     fn test_unsaturated_low_rtt_scales_down() {
         let swqos = make_swqos(SwQosMaxStreamsConfig {
-            base_max_streams: 2048,
+            base_max_streams_staked: 2048,
             ..SwQosMaxStreamsConfig::default()
         });
         let ctx = staked_context(1_000, 100_000, 1);
@@ -708,7 +705,7 @@ pub mod test {
     #[test]
     fn test_unsaturated_rtt_clamped_at_max() {
         let swqos = make_swqos(SwQosMaxStreamsConfig {
-            base_max_streams: 2048,
+            base_max_streams_staked: 2048,
             ..SwQosMaxStreamsConfig::default()
         });
         let ctx = staked_context(1_000, 100_000, 1);
@@ -723,7 +720,7 @@ pub mod test {
     fn test_unsaturated_ignores_stake() {
         // In unsaturated mode, quota depends only on RTT, not stake
         let swqos = make_swqos(SwQosMaxStreamsConfig {
-            base_max_streams: 2048,
+            base_max_streams_staked: 2048,
             ..SwQosMaxStreamsConfig::default()
         });
         let rtt = Duration::from_millis(100);
@@ -756,7 +753,7 @@ pub mod test {
         // 100% stake at 50ms: proportional = 25000, capped at unsaturated max = 1024.
         let swqos = make_swqos(SwQosMaxStreamsConfig {
             max_streams_per_ms: 500,
-            base_max_streams: 2048,
+            base_max_streams_staked: 2048,
             ..SwQosMaxStreamsConfig::default()
         });
         let ctx = staked_context(1_000_000, 1_000_000, 1);
@@ -771,7 +768,7 @@ pub mod test {
         // 1% stake at 50ms RTT: quota = 5000 * 0.05 = 250 (unchanged).
         let swqos = make_swqos(SwQosMaxStreamsConfig {
             max_streams_per_ms: 500,
-            base_max_streams: 2048,
+            base_max_streams_staked: 2048,
             ..SwQosMaxStreamsConfig::default()
         });
         let ctx = staked_context(1_000, 100_000, 1);

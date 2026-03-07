@@ -237,10 +237,6 @@ pub struct StreamerStats {
     pub(crate) quic_endpoints_count: AtomicUsize,
     /// Unsaturated→saturated transitions since last report.
     pub(crate) transitions_to_saturated: AtomicU64,
-    /// Saturated→unsaturated transitions since last report.
-    pub(crate) transitions_to_unsaturated: AtomicU64,
-    /// Microseconds spent in saturated state since last report.
-    pub(crate) saturated_us: AtomicU64,
     /// Percentage of time spent saturated (0–100, integer).
     pub(crate) saturated_pct: AtomicU64,
 }
@@ -250,11 +246,7 @@ impl StreamerStats {
     pub fn pull_saturation_stats(&self, tracker: &LoadDebtTracker, elapsed: Duration) {
         self.transitions_to_saturated
             .store(tracker.take_transitions_to_saturated(), Ordering::Relaxed);
-        self.transitions_to_unsaturated
-            .store(tracker.take_transitions_to_unsaturated(), Ordering::Relaxed);
         let sat_nanos = tracker.take_saturated_nanos();
-        self.saturated_us
-            .store(sat_nanos / 1_000, Ordering::Relaxed);
         let elapsed_nanos = elapsed.as_nanos() as u64;
         let pct = if elapsed_nanos > 0 {
             sat_nanos * 100 / elapsed_nanos
@@ -286,10 +278,12 @@ impl StreamerStats {
             .load(Ordering::Relaxed)
     }
 
+    /// Used by out-of-tree SwQoS test suite.
     pub fn saturated_pct(&self) -> u64 {
         self.saturated_pct.load(Ordering::Relaxed)
     }
 
+    /// Used by out-of-tree SwQoS test suite.
     pub fn transitions_to_saturated(&self) -> u64 {
         self.transitions_to_saturated.load(Ordering::Relaxed)
     }
@@ -605,16 +599,6 @@ impl StreamerStats {
             (
                 "transitions_to_saturated",
                 self.transitions_to_saturated.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "transitions_to_unsaturated",
-                self.transitions_to_unsaturated.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "saturated_us",
-                self.saturated_us.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
