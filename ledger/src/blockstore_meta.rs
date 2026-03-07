@@ -653,7 +653,7 @@ impl SlotMeta {
         self.next_slots = old.next_slots;
     }
 
-    pub(crate) fn new(slot: Slot, parent_slot: Option<Slot>) -> Self {
+    pub fn new(slot: Slot, parent_slot: Option<Slot>) -> Self {
         let connected_flags = if slot == 0 {
             // Slot 0 is the start, mark it as having its' parent connected
             // such that slot 0 becoming full will be updated as connected
