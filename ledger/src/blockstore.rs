@@ -4753,6 +4753,20 @@ impl Blockstore {
     pub fn write_batch(&self, write_batch: WriteBatch) -> Result<()> {
         self.db.write(write_batch)
     }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn insert_simple_slot_with_meta(&self, slot: Slot, parent_slot: Slot) {
+        let entries = create_ticks(42, 1, Hash::new_unique());
+        let shreds = entries_to_test_shreds(&entries, slot, parent_slot, true, 0);
+        let num_shreds = shreds.len() as u64;
+        self.insert_shreds(shreds, None, false).unwrap();
+        let mut meta = SlotMeta::new(slot, Some(0));
+        meta.consumed = num_shreds;
+        meta.received = num_shreds;
+        meta.last_index = Some(num_shreds - 1);
+        meta.completed_data_indexes.insert(num_shreds as u32 - 1);
+        self.put_meta(slot, &meta).unwrap();
+    }
 }
 
 // Updates the `completed_data_indexes` with a new shred `new_shred_index`.
