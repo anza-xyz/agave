@@ -1,6 +1,6 @@
 use {
     crate::{
-        duplicate_shred::{self, DuplicateShred, Error},
+        duplicate_shred::{self, DuplicateShred, Error, MAX_DUPLICATE_SHRED_CHUNKS},
         duplicate_shred_listener::DuplicateShredHandlerTrait,
     },
     crossbeam_channel::Sender,
@@ -16,14 +16,11 @@ use {
     },
 };
 
-// Normally num_chunks is 3, because there are two shreds (each is one packet)
-// and meta data. So we discard anything larger than 3 chunks.
-const MAX_NUM_CHUNKS: usize = 3;
 // Limit number of entries per node.
 const MAX_NUM_ENTRIES_PER_PUBKEY: usize = 128;
 const BUFFER_CAPACITY: usize = 512 * MAX_NUM_ENTRIES_PER_PUBKEY;
 
-type BufferEntry = [Option<DuplicateShred>; MAX_NUM_CHUNKS];
+type BufferEntry = [Option<DuplicateShred>; MAX_DUPLICATE_SHRED_CHUNKS];
 
 pub struct DuplicateShredHandler {
     // Because we use UDP for packet transfer, we can normally only send ~1500 bytes
@@ -121,7 +118,7 @@ impl DuplicateShredHandler {
         let slot = chunk.slot;
         let num_chunks = chunk.num_chunks();
         let chunk_index = chunk.chunk_index();
-        if usize::from(num_chunks) > MAX_NUM_CHUNKS || chunk_index >= num_chunks {
+        if usize::from(num_chunks) > MAX_DUPLICATE_SHRED_CHUNKS || chunk_index >= num_chunks {
             return Err(Error::InvalidChunkIndex {
                 chunk_index,
                 num_chunks,

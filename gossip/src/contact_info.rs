@@ -77,6 +77,14 @@ pub enum Error {
     UnusedIpAddr(IpAddr),
 }
 
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi),
+    frozen_abi(
+        api_digest = "D6wJ6cDvcUSPMNGvWrTXkMtaQkXDhzW6WMaCDsQmCPi2",
+        abi_digest = "2F7oQi2DHFHBBBKkjfbkmsD6xeEPPsJouc8j3wPWWjBD"
+    )
+)]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ContactInfo {
     pubkey: Pubkey,
@@ -668,6 +676,53 @@ impl solana_frozen_abi::abi_example::AbiExample for ContactInfo {
             extensions: vec![],
             cache: EMPTY_SOCKET_ADDR_CACHE,
         }
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<ContactInfo>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> ContactInfo {
+        use Protocol::{QUIC, UDP};
+        let version =
+            <solana_version::Version as solana_frozen_abi::abi_example::AbiExample>::example();
+        let mut node = ContactInfo {
+            pubkey: Pubkey::new_from_array(rng.random()),
+            wallclock: rng.random(),
+            outset: rng.random(),
+            shred_version: rng.random(),
+            version,
+            addrs: Vec::default(),
+            sockets: Vec::default(),
+            extensions: Vec::default(),
+            cache: EMPTY_SOCKET_ADDR_CACHE,
+        };
+        let random_ip = |rng: &mut R| {
+            Ipv4Addr::new(
+                rng.random_range(1..=223),
+                rng.random(),
+                rng.random(),
+                rng.random_range(1..=254),
+            )
+        };
+        let random_port = |rng: &mut R| rng.random_range(1024..=u16::MAX);
+        let ip1 = random_ip(rng);
+        let ip2 = random_ip(rng);
+        node.set_gossip((ip1, random_port(rng))).unwrap();
+        node.set_tvu(UDP, (ip1, random_port(rng))).unwrap();
+        node.set_tpu(QUIC, (ip1, random_port(rng))).unwrap();
+        node.set_tpu_forwards(QUIC, (ip1, random_port(rng)))
+            .unwrap();
+        node.set_tpu_vote(UDP, (ip1, random_port(rng))).unwrap();
+        node.set_tpu_vote(QUIC, (ip1, random_port(rng))).unwrap();
+        node.set_rpc((ip2, random_port(rng))).unwrap();
+        node.set_rpc_pubsub((ip2, random_port(rng))).unwrap();
+        node.set_serve_repair(UDP, (ip2, random_port(rng))).unwrap();
+        node.set_serve_repair(QUIC, (ip2, random_port(rng)))
+            .unwrap();
+        node.set_alpenglow((ip2, random_port(rng))).unwrap();
+        node
     }
 }
 

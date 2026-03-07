@@ -19,11 +19,17 @@ bench = false
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
+    "dep:solana-message",
     "solana-bloom/frozen-abi",
+    "solana-hash/frozen-abi",
     "solana-ledger/frozen-abi",
+    "solana-message/frozen-abi",
     "solana-perf/frozen-abi",
+    "solana-pubkey/frozen-abi",
     "solana-runtime/frozen-abi",
     "solana-short-vec/frozen-abi",
+    "solana-signature/frozen-abi",
+    "solana-transaction/frozen-abi",
     "solana-version/frozen-abi",
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
@@ -71,6 +77,7 @@ solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
+solana-message = { workspace = true, optional = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }

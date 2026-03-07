@@ -1,5 +1,6 @@
 use std::fmt;
 
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClientId {
     SolanaLabs,
