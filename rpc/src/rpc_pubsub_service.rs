@@ -545,8 +545,7 @@ mod tests {
         // Setup pubsub service.
         let port = solana_net_utils::sockets::unique_port_range_for_tests(1).start;
         let pubsub_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
+        let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
         let bank_slot = bank.slot();
         let bank_forks = BankForks::new_rw_arc(bank);
         let blockstore =
@@ -559,11 +558,14 @@ mod tests {
             Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests())),
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
         ));
-        let config = PubSubConfig {
-            enable_block_subscription: true,
-            ..Default::default()
-        };
-        let (trigger, _pubsub_service) = PubSubService::new(config, &subscriptions, pubsub_addr);
+        let (trigger, _pubsub_service) = PubSubService::new(
+            PubSubConfig {
+                enable_block_subscription: true,
+                ..Default::default()
+            },
+            &subscriptions,
+            pubsub_addr,
+        );
 
         // Wait for pubsub service to spin up.
         while TcpStream::connect((pubsub_addr.ip(), pubsub_addr.port())).is_err() {
@@ -576,10 +578,7 @@ mod tests {
             RpcBlockSubscribeFilter::All,
             Some(RpcBlockSubscribeConfig {
                 commitment: Some(CommitmentConfig::finalized()),
-                encoding: None,
-                transaction_details: None,
-                show_rewards: None,
-                max_supported_transaction_version: None,
+                ..Default::default()
             }),
         )
         .unwrap();
@@ -588,11 +587,10 @@ mod tests {
         blockstore.insert_simple_slot_with_meta(bank_slot, 0);
 
         // Trigger the block update.
-        let commitment_slots = CommitmentSlots {
+        subscriptions.notify_subscribers(CommitmentSlots {
             slot: 0,
             ..CommitmentSlots::default()
-        };
-        subscriptions.notify_subscribers(commitment_slots);
+        });
 
         // Wait to receive a block update.
         let deadline = Instant::now() + Duration::from_secs(10);
