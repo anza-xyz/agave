@@ -2520,8 +2520,8 @@ pub mod tests {
         genesis_config: &GenesisConfig,
         blockstore: &Blockstore,
         opts: &ProcessOptions,
-        exit: Arc<AtomicBool>,
     ) -> (Arc<RwLock<BankForks>>, LeaderScheduleCache) {
+        let exit = Arc::default();
         let (bank_forks, _) = crate::bank_forks_utils::load_bank_forks_from_genesis(
             genesis_config,
             blockstore,
@@ -2567,7 +2567,7 @@ pub mod tests {
             AccessType::Primary | AccessType::PrimaryForMaintenance => {
                 // Attempting to open a second Primary access would fail, so
                 // just pass the original session if it is a Primary variant
-                test_process_blockstore(genesis_config, blockstore, opts, Arc::default())
+                test_process_blockstore(genesis_config, blockstore, opts)
             }
             AccessType::ReadOnly => {
                 let read_only_blockstore = Blockstore::open_with_options(
@@ -2578,7 +2578,7 @@ pub mod tests {
                     },
                 )
                 .expect("Unable to open access to blockstore");
-                test_process_blockstore(genesis_config, &read_only_blockstore, opts, Arc::default())
+                test_process_blockstore(genesis_config, &read_only_blockstore, opts)
             }
         }
     }
@@ -2699,7 +2699,6 @@ pub mod tests {
                 run_verification: true,
                 ..ProcessOptions::default()
             },
-            Arc::default(),
         );
         assert_eq!(frozen_bank_slots(&bank_forks.read().unwrap()), vec![0]);
 
@@ -2714,7 +2713,6 @@ pub mod tests {
                 run_verification: true,
                 ..ProcessOptions::default()
             },
-            Arc::default(),
         );
 
         // One valid fork, one bad fork.  process_blockstore() should only return the valid fork
@@ -2768,8 +2766,7 @@ pub mod tests {
             run_verification: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, ..) =
-            test_process_blockstore(&genesis_config, &blockstore, &opts, Arc::default());
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, &opts);
         assert_eq!(frozen_bank_slots(&bank_forks.read().unwrap()), vec![0]);
     }
 
@@ -2832,8 +2829,7 @@ pub mod tests {
             run_verification: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, ..) =
-            test_process_blockstore(&genesis_config, &blockstore, &opts, Arc::default());
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, &opts);
 
         assert_eq!(frozen_bank_slots(&bank_forks.read().unwrap()), vec![0]); // slot 1 isn't "full", we stop at slot zero
 
@@ -2851,8 +2847,7 @@ pub mod tests {
         };
         fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 3, 0, blockhash);
         // Slot 0 should not show up in the ending bank_forks_info
-        let (bank_forks, ..) =
-            test_process_blockstore(&genesis_config, &blockstore, &opts, Arc::default());
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, &opts);
 
         // slot 1 isn't "full", we stop at slot zero
         assert_eq!(frozen_bank_slots(&bank_forks.read().unwrap()), vec![0, 3]);
@@ -2917,8 +2912,7 @@ pub mod tests {
             run_verification: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, ..) =
-            test_process_blockstore(&genesis_config, &blockstore, &opts, Arc::default());
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, &opts);
         let bank_forks = bank_forks.read().unwrap();
 
         // One fork, other one is ignored b/c not a descendant of the root
@@ -2998,8 +2992,7 @@ pub mod tests {
             run_verification: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, ..) =
-            test_process_blockstore(&genesis_config, &blockstore, &opts, Arc::default());
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, &opts);
         let bank_forks = bank_forks.read().unwrap();
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![1, 2, 3, 4]);
@@ -3055,12 +3048,8 @@ pub mod tests {
         blockstore.set_dead_slot(2).unwrap();
         fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 3, 1, slot1_blockhash);
 
-        let (bank_forks, ..) = test_process_blockstore(
-            &genesis_config,
-            &blockstore,
-            &ProcessOptions::default(),
-            Arc::default(),
-        );
+        let (bank_forks, ..) =
+            test_process_blockstore(&genesis_config, &blockstore, &ProcessOptions::default());
         let bank_forks = bank_forks.read().unwrap();
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0, 1, 3]);
@@ -3104,12 +3093,8 @@ pub mod tests {
         blockstore.set_dead_slot(4).unwrap();
         fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 3, 1, slot1_blockhash);
 
-        let (bank_forks, ..) = test_process_blockstore(
-            &genesis_config,
-            &blockstore,
-            &ProcessOptions::default(),
-            Arc::default(),
-        );
+        let (bank_forks, ..) =
+            test_process_blockstore(&genesis_config, &blockstore, &ProcessOptions::default());
         let bank_forks = bank_forks.read().unwrap();
 
         // Should see the parent of the dead child
@@ -3156,12 +3141,8 @@ pub mod tests {
         fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 2, 0, blockhash);
         blockstore.set_dead_slot(1).unwrap();
         blockstore.set_dead_slot(2).unwrap();
-        let (bank_forks, ..) = test_process_blockstore(
-            &genesis_config,
-            &blockstore,
-            &ProcessOptions::default(),
-            Arc::default(),
-        );
+        let (bank_forks, ..) =
+            test_process_blockstore(&genesis_config, &blockstore, &ProcessOptions::default());
         let bank_forks = bank_forks.read().unwrap();
 
         // Should see only the parent of the dead children
@@ -3211,8 +3192,7 @@ pub mod tests {
             run_verification: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, ..) =
-            test_process_blockstore(&genesis_config, &blockstore, &opts, Arc::default());
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, &opts);
         let bank_forks = bank_forks.read().unwrap();
 
         // There is one fork, head is last_slot + 1
@@ -3357,8 +3337,7 @@ pub mod tests {
             run_verification: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, ..) =
-            test_process_blockstore(&genesis_config, &blockstore, &opts, Arc::default());
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, &opts);
         let bank_forks = bank_forks.read().unwrap();
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0, 1]);
@@ -3387,8 +3366,7 @@ pub mod tests {
             run_verification: true,
             ..ProcessOptions::default()
         };
-        let (bank_forks, ..) =
-            test_process_blockstore(&genesis_config, &blockstore, &opts, Arc::default());
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, &opts);
         let bank_forks = bank_forks.read().unwrap();
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
@@ -4340,8 +4318,7 @@ pub mod tests {
             halt_at_slot: Some(0),
             ..ProcessOptions::default()
         };
-        let (bank_forks, ..) =
-            test_process_blockstore(&genesis_config, &blockstore, &opts, Arc::default());
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, &opts);
         let bank_forks = bank_forks.read().unwrap();
 
         // Should be able to fetch slot 0 because we specified halting at slot 0, even
