@@ -1,6 +1,7 @@
 use {
     super::*,
     crate::cluster_nodes::ClusterNodesCache,
+    solana_entry::block_component::BlockComponent,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
@@ -100,9 +101,10 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
         )
         .expect("Expected to create a new shredder");
 
-        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
+        let component = BlockComponent::EntryBatch(receive_results.entries);
+        let (data_shreds, coding_shreds) = shredder.component_to_merkle_shreds_for_tests(
             keypair,
-            &receive_results.entries,
+            &component,
             last_tick_height == bank.max_tick_height() && last_entries.is_none(),
             self.chained_merkle_root,
             self.next_shred_index,

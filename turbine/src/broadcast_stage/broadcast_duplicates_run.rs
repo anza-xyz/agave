@@ -5,7 +5,7 @@ use {
     agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
     itertools::Itertools,
-    solana_entry::entry::Entry,
+    solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
@@ -192,9 +192,10 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         )
         .expect("Expected to create a new shredder");
 
-        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
+        let component = BlockComponent::EntryBatch(receive_results.entries);
+        let (data_shreds, coding_shreds) = shredder.component_to_merkle_shreds_for_tests(
             keypair,
-            &receive_results.entries,
+            &component,
             last_tick_height == bank.max_tick_height() && last_entries.is_none(),
             self.chained_merkle_root,
             self.next_shred_index,
@@ -211,9 +212,9 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         }
         let last_shreds =
             last_entries.map(|(original_last_entry, duplicate_extra_last_entries)| {
-                let (original_last_data_shred, _) = shredder.entries_to_merkle_shreds_for_tests(
+                let (original_last_data_shred, _) = shredder.component_to_merkle_shreds_for_tests(
                     keypair,
-                    &[original_last_entry],
+                    &BlockComponent::EntryBatch(vec![original_last_entry]),
                     true,
                     self.chained_merkle_root,
                     self.next_shred_index,
@@ -224,9 +225,9 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 // Don't mark the last shred as last so that validators won't
                 // know that they've gotten all the shreds, and will continue
                 // trying to repair.
-                let (partition_last_data_shred, _) = shredder.entries_to_merkle_shreds_for_tests(
+                let (partition_last_data_shred, _) = shredder.component_to_merkle_shreds_for_tests(
                     keypair,
-                    &duplicate_extra_last_entries,
+                    &BlockComponent::EntryBatch(duplicate_extra_last_entries),
                     true,
                     self.chained_merkle_root,
                     self.next_shred_index,

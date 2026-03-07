@@ -1596,23 +1596,8 @@ pub fn confirm_slot(
         load_result
     }?;
 
-    // Process block components for Alpenglow slots. Note that we don't need to run migration checks
-    // for BlockMarkers here, despite BlockMarkers only being active post-Alpenglow. Here's why:
-    //
-    // Post-Alpenglow migration - validators that have Alpenglow enabled can parse BlockComponents.
-    // Things just work.
-    //
-    // Pre-Alpenglow migration, suppose a validator receives a BlockMarker:
-    //
-    // (1) validators *incapable* of processing BlockMarkers will mark the slot as dead on shred
-    //     ingest in blockstore.
-    //
-    // (2) validators *capable* of processing BlockMarkers will store the BlockMarkers in shred
-    //     ingest, run through this verifying code here, and then error out when processing a
-    //     BlockMarker, resulting in the slot being marked as dead.
     let mut processor = bank.block_component_processor.write().unwrap();
 
-    // Find the index of the last EntryBatch in slot_components
     let last_entry_batch_index = slot_components
         .iter()
         .rposition(|bc| matches!(bc, BlockComponent::EntryBatch(_)));
@@ -1623,12 +1608,13 @@ pub fn confirm_slot(
         .enumerate()
     {
         let num_shreds = completed_range.end - completed_range.start;
+        let is_final = slot_full && ix == completed_ranges.len() - 1;
 
         match component {
             BlockComponent::EntryBatch(entries) => {
                 let slot_full = slot_full && ix == last_entry_batch_index.unwrap();
 
-                processor.on_entry_batch(migration_status)?;
+                processor.on_entry_batch(migration_status, slot)?;
 
                 confirm_slot_entries(
                     bank,
@@ -1646,7 +1632,6 @@ pub fn confirm_slot(
                 )?;
             }
             BlockComponent::BlockMarker(marker) => {
-                // Skip verification for the genesis block
                 if let Some(parent_bank) = bank.parent() {
                     processor.on_marker(
                         bank.clone_without_scheduler(),
@@ -1658,6 +1643,12 @@ pub fn confirm_slot(
                 }
                 progress.num_shreds += num_shreds as u64;
             }
+        }
+
+        // Skip block component validation for genesis block. Slot 0 is handled specially,
+        // since it won't have the required block markers.
+        if is_final && slot != 0 {
+            processor.on_final(migration_status, slot)?;
         }
     }
 
