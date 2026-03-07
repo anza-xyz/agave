@@ -324,8 +324,6 @@ impl SendTransactionService {
                 }
 
                 tokio::select! {
-                    biased;
-
                     msg = retry_receiver.recv() => {
                         match msg {
                             Some(transaction_info) => {
