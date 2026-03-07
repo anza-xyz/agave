@@ -499,7 +499,7 @@ mod tests {
             rpc_config::{RpcBlockSubscribeConfig, RpcBlockSubscribeFilter},
         },
         solana_commitment_config::CommitmentConfig,
-        solana_ledger::blockstore::{Blockstore, SlotMeta, make_slot_entries},
+        solana_ledger::blockstore::Blockstore,
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -565,7 +565,7 @@ mod tests {
         };
         let (trigger, _pubsub_service) = PubSubService::new(config, &subscriptions, pubsub_addr);
 
-        // Wait for pub sub service to spin up.
+        // Wait for pubsub service to spin up.
         while TcpStream::connect((pubsub_addr.ip(), pubsub_addr.port())).is_err() {
             sleep(Duration::from_millis(100));
         }
@@ -585,15 +585,7 @@ mod tests {
         .unwrap();
 
         // Put the block into blockstore.
-        let (shreds, _) = make_slot_entries(bank_slot, 0, 42);
-        let num_shreds = shreds.len() as u64;
-        blockstore.insert_shreds(shreds, None, false).unwrap();
-        let mut meta = SlotMeta::new(bank_slot, Some(0));
-        meta.consumed = num_shreds;
-        meta.received = num_shreds;
-        meta.last_index = Some(num_shreds - 1);
-        meta.completed_data_indexes.insert(num_shreds as u32 - 1);
-        blockstore.put_meta(bank_slot, &meta).unwrap();
+        blockstore.insert_simple_slot_with_meta(bank_slot, 0);
 
         // Trigger the block update.
         let commitment_slots = CommitmentSlots {
