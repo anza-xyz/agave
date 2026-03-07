@@ -18,6 +18,7 @@ fn main() -> Result<(), std::io::Error> {
     for proto_file in &proto_files {
         let proto = proto_base_path.join(proto_file);
         println!("cargo:rerun-if-changed={}", proto.display());
+        println!("cargo:rerun-if-changed=build.rs");
         protos.push(proto);
     }
 
