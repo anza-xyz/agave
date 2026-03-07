@@ -284,7 +284,7 @@ impl<'a> SnapshotMinimizer<'a> {
                 if self.minimized_account_set.contains(account.pubkey()) {
                     chunk_bytes += account.stored_size();
                     keep_accounts.push(account);
-                } else if self.accounts_db().accounts_index.contains(account.pubkey()) {
+                } else if self.accounts_db().contains(account.pubkey()) {
                     purge_pubkeys.push(account.pubkey());
                 }
             });

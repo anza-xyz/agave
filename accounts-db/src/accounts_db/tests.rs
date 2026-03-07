@@ -759,7 +759,7 @@ fn run_test_remove_unrooted_slot(is_cached: bool, db: AccountsDb) {
     let key = Pubkey::default();
     let account0 = AccountSharedData::new(1, 0, &key);
     let ancestors = Ancestors::from(vec![unrooted_slot]);
-    assert!(!db.accounts_index.contains(&key));
+    assert!(!db.contains(&key));
     if is_cached {
         db.store_for_tests((unrooted_slot, &[(&key, &account0)][..]));
         assert!(db.accounts_cache.contains(unrooted_slot));
@@ -774,7 +774,7 @@ fn run_test_remove_unrooted_slot(is_cached: bool, db: AccountsDb) {
         assert!(db.storage.get_slot_storage_entry(unrooted_slot).is_some());
     }
     assert!(!db.accounts_index.is_alive_root(unrooted_slot));
-    assert!(db.accounts_index.contains(&key));
+    assert!(db.contains(&key));
     db.assert_load_account(unrooted_slot, key, 1);
 
     // Purge the slot
@@ -782,7 +782,7 @@ fn run_test_remove_unrooted_slot(is_cached: bool, db: AccountsDb) {
     assert!(db.load_without_fixed_root(&ancestors, &key).is_none());
     assert!(db.accounts_cache.slot_cache(unrooted_slot).is_none());
     assert!(db.storage.get_slot_storage_entry(unrooted_slot).is_none());
-    assert!(!db.accounts_index.contains(&key));
+    assert!(!db.contains(&key));
 
     // Test we can store for the same slot again and get the right information
     let account0 = AccountSharedData::new(2, 0, &key);
@@ -1294,20 +1294,16 @@ fn test_shrink_zero_lamport_single_ref_account() {
         );
 
         let expected_alive_count = if latest_full_snapshot_slot.unwrap_or(Slot::MAX) < slot {
-            // zero lamport account should NOT be dead in the index
+            // zero lamport account should NOT be dead in the database
             assert!(
-                accounts
-                    .accounts_index
-                    .contains_with(&pubkey_zero, None, None),
+                accounts.contains(&pubkey_zero),
                 "{latest_full_snapshot_slot:?}"
             );
             2
         } else {
-            // zero lamport account should be dead in the index
+            // zero lamport account should be dead in the database
             assert!(
-                !accounts
-                    .accounts_index
-                    .contains_with(&pubkey_zero, None, None),
+                !accounts.contains(&pubkey_zero),
                 "{latest_full_snapshot_slot:?}"
             );
             // the zero lamport account should be marked as dead
@@ -1321,10 +1317,7 @@ fn test_shrink_zero_lamport_single_ref_account() {
         );
 
         // other account should still be alive
-        assert!(
-            accounts.accounts_index.contains_with(&pubkey2, None, None),
-            "{latest_full_snapshot_slot:?}"
-        );
+        assert!(accounts.contains(&pubkey2), "{latest_full_snapshot_slot:?}");
         assert!(
             accounts.storage.get_slot_storage_entry(slot).is_some(),
             "{latest_full_snapshot_slot:?}"
@@ -1415,9 +1408,9 @@ fn test_clean_zero_lamport_and_old_roots() {
     // storage entries
     assert_eq!(accounts.alive_account_count_in_slot(1), 0);
 
-    // zero lamport account, should no longer exist in accounts index
+    // zero lamport account, should no longer exist in accounts database
     // because it has been removed
-    assert!(!accounts.accounts_index.contains_with(&pubkey, None, None));
+    assert!(!accounts.contains(&pubkey));
 }
 
 #[test]
@@ -1542,9 +1535,9 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
     assert_eq!(accounts.alive_account_count_in_slot(1), 0);
     assert_eq!(accounts.alive_account_count_in_slot(2), 1);
 
-    // `pubkey1`, a zero lamport account, should no longer exist in accounts index
+    // `pubkey1`, a zero lamport account, should no longer exist in accounts database
     // because it has been removed by the clean
-    assert!(!accounts.accounts_index.contains_with(&pubkey1, None, None));
+    assert!(!accounts.contains(&pubkey1));
 
     // Secondary index should have purged `pubkey1` as well
     let mut found_accounts = vec![];
@@ -1580,16 +1573,16 @@ fn test_clean_max_slot_zero_lamport_account() {
     accounts.add_root_and_flush_write_cache(1);
 
     assert_eq!(accounts.alive_account_count_in_slot(1), 1);
-    assert!(accounts.accounts_index.contains_with(&pubkey, None, None));
+    assert!(accounts.contains(&pubkey));
 
     // Now the account can be cleaned up
     accounts.clean_accounts(Some(1), false);
     assert_eq!(accounts.alive_account_count_in_slot(0), 0);
     assert_eq!(accounts.alive_account_count_in_slot(1), 0);
 
-    // The zero lamport account, should no longer exist in accounts index
+    // The zero lamport account, should no longer exist in accounts database
     // because it has been removed
-    assert!(!accounts.accounts_index.contains_with(&pubkey, None, None));
+    assert!(!accounts.contains(&pubkey));
 }
 
 fn assert_no_stores(accounts: &AccountsDb, slot: Slot) {
@@ -1722,8 +1715,8 @@ fn test_accounts_db_purge1() {
 
     accounts.print_accounts_stats("post_purge");
 
-    // Make sure the index is for pubkey cleared
-    assert!(!accounts.accounts_index.contains(&pubkey));
+    // Make sure the database is cleared for the pubkey
+    assert!(!accounts.contains(&pubkey));
 
     // slot 1 & 2 should not have any stores
     assert_no_stores(&accounts, 1);
@@ -2888,7 +2881,7 @@ fn test_flush_accounts_cache() {
         db.load_without_fixed_root(&ancestors, &unrooted_key)
             .is_some()
     );
-    assert!(db.accounts_index.contains(&unrooted_key));
+    assert!(db.contains(&unrooted_key));
     assert_eq!(db.accounts_cache.num_slots(), 1);
     assert!(db.accounts_cache.slot_cache(unrooted_slot).is_some());
     assert_eq!(
@@ -4707,7 +4700,7 @@ define_accounts_db_test!(test_purge_alive_unrooted_slots_after_clean, |accounts|
     // as there are no rooted ancestors
     // The key itself cannot be purged as it is still contained in the unrooted slot
     accounts.clean_accounts_for_tests();
-    assert!(accounts.accounts_index.contains(&shared_key));
+    assert!(accounts.contains(&shared_key));
 
     // Account now has a reference count of zero as it is not contained in any storages
     assert_eq!(
@@ -4718,8 +4711,8 @@ define_accounts_db_test!(test_purge_alive_unrooted_slots_after_clean, |accounts|
     // Simulate purge_slot() all from AccountsBackgroundService
     accounts.purge_slot(slot0, 0, true);
 
-    // Now the key and slot are purged from the index
-    assert!(!accounts.accounts_index.contains(&shared_key));
+    // Now the key and slot are purged from the database
+    assert!(!accounts.contains(&shared_key));
     assert_no_storages_at_slot(&accounts, slot0);
 });
 
@@ -6206,7 +6199,7 @@ fn test_new_zero_lamport_accounts_skipped() {
 
     // 2. Insert a zero-lamport (pubkey1) together with non-zero lamport accounts
     //    (pubkey2, pubkey3) in the same slot and verify only the non-zero lamport pubkeys are
-    //    indexed.
+    //    stored.
     accounts_db.store_accounts_unfrozen(
         (
             slot,
@@ -6253,20 +6246,14 @@ fn test_new_zero_lamport_accounts_skipped() {
         None,
     );
     assert!(accounts_db.accounts_index.contains(&pubkey2));
-    assert!(
-        accounts_db
-            .accounts_cache
-            .slot_cache(slot)
-            .unwrap()
-            .contains_key(&pubkey2)
-    );
+    assert!(accounts_db.accounts_cache.contains_pubkey(&pubkey2));
 
     // 4. Flush the slot to simulate write-cache -> storage transition and verify
     //    pubkey1 is still not present while pubkey2 remains indexed but is now zero-lamport.
     accounts_db.add_root_and_flush_write_cache(slot);
-    assert!(!accounts_db.accounts_index.contains(&pubkey1));
-    assert!(accounts_db.accounts_index.contains(&pubkey2));
-    assert!(accounts_db.accounts_index.contains(&pubkey3));
+    assert!(!accounts_db.contains(&pubkey1));
+    assert!(accounts_db.contains(&pubkey2));
+    assert!(accounts_db.contains(&pubkey3));
 
     // Verify pubkey2 is present in slot in the index with a zero-lamport AccountInfo.
     assert!(accounts_db.accounts_index.get_and_then(&pubkey2, |entry| {

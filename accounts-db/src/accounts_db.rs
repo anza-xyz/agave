@@ -6647,6 +6647,11 @@ impl AccountsDb {
         assert!(load.is_none(), "{load:?}");
     }
 
+    /// Is `pubkey` in the db?
+    pub fn contains(&self, pubkey: &Pubkey) -> bool {
+        self.accounts_cache.contains_pubkey(pubkey) || self.accounts_index.contains(pubkey)
+    }
+
     pub fn check_accounts(&self, pubkeys: &[Pubkey], slot: Slot, num: usize, count: usize) {
         let ancestors = Ancestors::from(vec![slot]);
         for _ in 0..num {

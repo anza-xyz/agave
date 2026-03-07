@@ -457,6 +457,10 @@ impl AccountsCache {
         self.cache.contains_key(&slot)
     }
 
+    pub fn contains_pubkey(&self, pubkey: &Pubkey) -> bool {
+        self.index.entries.contains_key(pubkey)
+    }
+
     pub fn num_slots(&self) -> usize {
         self.cache.len()
     }

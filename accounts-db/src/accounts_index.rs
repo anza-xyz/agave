@@ -847,13 +847,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     }
 
     /// Is `pubkey` in the index?
-    pub fn contains(&self, pubkey: &Pubkey) -> bool {
+    pub(crate) fn contains(&self, pubkey: &Pubkey) -> bool {
         self.get_and_then(pubkey, |entry| (false, entry.is_some()))
     }
 
     /// Is `pubkey`, with `ancestors` and `max_root`, in the index?
     #[cfg(test)]
-    pub(crate) fn contains_with(
+    fn contains_with(
         &self,
         pubkey: &Pubkey,
         ancestors: Option<&Ancestors>,
