@@ -43,6 +43,7 @@ extern crate solana_metrics;
 mod access_token;
 mod bigtable;
 mod compression;
+mod proxy_connector;
 mod root_ca_certificate;
 
 #[derive(Debug, Error)]

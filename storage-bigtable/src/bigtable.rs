@@ -5,6 +5,7 @@ use {
         CredentialType,
         access_token::{AccessToken, Scope},
         compression::{compress_best, decompress},
+        proxy_connector::ProxyConnector,
         root_ca_certificate,
     },
     log::*,
@@ -19,6 +20,12 @@ use {
 
 #[allow(clippy::all)]
 mod google {
+    mod r#type {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            concat!("/proto/google.r#type.rs")
+        ));
+    }
     mod rpc {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -220,21 +227,16 @@ impl BigTableConnection {
                     }
                 };
 
-                let mut http = hyper::client::HttpConnector::new();
+                let mut http = hyper_util::client::legacy::connect::HttpConnector::new();
                 http.enforce_http(false);
                 http.set_nodelay(true);
                 let channel = match std::env::var("BIGTABLE_PROXY") {
                     Ok(proxy_uri) => {
-                        let proxy = hyper_proxy::Proxy::new(
-                            hyper_proxy::Intercept::All,
-                            proxy_uri
-                                .parse::<http::Uri>()
-                                .map_err(|err| Error::InvalidUri(proxy_uri, err.to_string()))?,
-                        );
-                        let mut proxy_connector =
-                            hyper_proxy::ProxyConnector::from_proxy(http, proxy)?;
-                        // tonic handles TLS as a separate layer
-                        proxy_connector.set_tls(None);
+                        let proxy_connector =
+                            ProxyConnector::new(proxy_uri.parse::<http::Uri>().map_err(|err| {
+                                Error::InvalidUri(proxy_uri.clone(), err.to_string())
+                            })?)
+                            .map_err(|err| Error::InvalidUri(proxy_uri, err))?;
                         endpoint.connect_with_connector_lazy(proxy_connector)
                     }
                     _ => endpoint.connect_with_connector_lazy(http),
@@ -512,6 +514,8 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                     }),
                     request_stats_view: 0,
                     reversed: false,
+                    authorized_view_name: String::new(),
+                    materialized_view_name: String::new(),
                 },
             )
             .await?
@@ -541,6 +545,8 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                     }),
                     request_stats_view: 0,
                     reversed: false,
+                    authorized_view_name: String::new(),
+                    materialized_view_name: String::new(),
                 },
             )
             .await?
@@ -597,6 +603,8 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                     }),
                     request_stats_view: 0,
                     reversed: false,
+                    authorized_view_name: String::new(),
+                    materialized_view_name: String::new(),
                 },
             )
             .await?
@@ -633,6 +641,8 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                     }),
                     request_stats_view: 0,
                     reversed: false,
+                    authorized_view_name: String::new(),
+                    materialized_view_name: String::new(),
                 },
             )
             .await?
@@ -670,6 +680,8 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                     }),
                     request_stats_view: 0,
                     reversed: false,
+                    authorized_view_name: String::new(),
+                    materialized_view_name: String::new(),
                 },
             )
             .await?
@@ -695,6 +707,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                         mutation::DeleteFromRow {},
                     )),
                 }],
+                idempotency: None,
             });
         }
 
@@ -704,6 +717,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                 table_name: format!("{}{}", self.table_prefix, table_name),
                 app_profile_id: self.app_profile_id.clone(),
                 entries,
+                authorized_view_name: String::new(),
             })
             .await?
             .into_inner();
@@ -749,6 +763,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
             entries.push(mutate_rows_request::Entry {
                 row_key: (*row_key).clone().into_bytes(),
                 mutations,
+                idempotency: None,
             });
         }
 
@@ -758,6 +773,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                 table_name: format!("{}{}", self.table_prefix, table_name),
                 app_profile_id: self.app_profile_id.clone(),
                 entries,
+                authorized_view_name: String::new(),
             })
             .await?
             .into_inner();
