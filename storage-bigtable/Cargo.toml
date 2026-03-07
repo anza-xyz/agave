@@ -21,6 +21,7 @@ agave-unstable-api = []
 
 [dependencies]
 agave-reserved-account-keys = { workspace = true }
+base64 = { workspace = true }
 bincode = { workspace = true }
 bzip2 = { workspace = true }
 enum-iterator = { workspace = true }
@@ -28,8 +29,7 @@ flate2 = { workspace = true }
 futures = { workspace = true }
 goauth = { workspace = true }
 http = { workspace = true }
-hyper = { workspace = true }
-hyper-proxy = { workspace = true }
+hyper-util = { workspace = true, features = ["client-legacy"] }
 log = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }
@@ -48,7 +48,8 @@ solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-tonic = { workspace = true, features = ["tls", "transport"] }
+tonic = { workspace = true, features = ["tls-ring", "transport"] }
+tonic-prost = { workspace = true }
 zstd = { workspace = true }
 
 [dev-dependencies]
