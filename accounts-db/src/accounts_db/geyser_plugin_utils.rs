@@ -30,7 +30,6 @@ mod tests {
         super::*,
         crate::{
             accounts::Accounts,
-            accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig, MarkObsoleteAccounts},
             accounts_update_notifier_interface::{
                 AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
             },
@@ -42,7 +41,6 @@ mod tests {
             Arc,
             atomic::{AtomicBool, Ordering},
         },
-        test_case::test_case,
     };
 
     impl AccountsDb {
@@ -97,18 +95,9 @@ mod tests {
         }
     }
 
-    #[test_case(MarkObsoleteAccounts::Enabled)]
-    #[test_case(MarkObsoleteAccounts::Disabled)]
-    fn test_notify_account_restore_from_snapshot(mark_obsolete_accounts: MarkObsoleteAccounts) {
-        let mut accounts_db = AccountsDb::new_with_config(
-            Vec::new(),
-            AccountsDbConfig {
-                mark_obsolete_accounts,
-                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            },
-            None,
-            Arc::default(),
-        );
+    #[test]
+    fn test_notify_account_restore_from_snapshot() {
+        let mut accounts_db = AccountsDb::new_single_for_tests();
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
         let account = AccountSharedData::new(1, 0, &Pubkey::default());
