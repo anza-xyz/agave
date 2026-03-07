@@ -678,6 +678,7 @@ impl JsonRpcService {
             Arc::clone(&runtime),
         );
 
+        let _guard = runtime.enter();
         let _send_transaction_service = Arc::new(SendTransactionService::new(
             &bank_forks,
             receiver,
