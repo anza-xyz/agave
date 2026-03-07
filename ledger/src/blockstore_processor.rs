@@ -21,7 +21,10 @@ use {
     },
     solana_clock::{MAX_PROCESSING_AGE, Slot},
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
-    solana_entry::entry::{self, Entry, EntrySlice, EntryType, create_ticks},
+    solana_entry::{
+        block_component::BlockComponent,
+        entry::{self, Entry, EntrySlice, EntryType, create_ticks},
+    },
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -32,6 +35,7 @@ use {
         bank::{Bank, PreCommitResult, TransactionBalancesSet},
         bank_forks::BankForks,
         bank_utils,
+        block_component_processor::BlockComponentProcessorError,
         commitment::VOTE_THRESHOLD_SIZE,
         dependency_tracker::DependencyTracker,
         installed_scheduler_pool::BankWithScheduler,
@@ -826,6 +830,9 @@ pub enum BlockstoreProcessorError {
 
     #[error("invalid parent -> child chained merkle root at slot {0} parent {1}")]
     ChainedBlockIdFailure(Slot, Slot),
+
+    #[error("block component processor error: {0}")]
+    BlockComponentProcessor(#[from] BlockComponentProcessorError),
 }
 
 /// Callback for accessing bank state after each slot is confirmed while
@@ -1575,10 +1582,10 @@ pub fn confirm_slot(
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
 
-    let slot_entries_load_result = {
+    let (slot_components, completed_ranges, slot_full) = {
         let mut load_elapsed = Measure::start("load_elapsed");
         let load_result = blockstore
-            .get_slot_entries_with_shred_info(slot, progress.num_shreds, allow_dead_slots)
+            .get_slot_components_with_shred_info(slot, progress.num_shreds, allow_dead_slots)
             .map_err(BlockstoreProcessorError::FailedToLoadEntries);
         load_elapsed.stop();
         if load_result.is_err() {
@@ -1589,20 +1596,67 @@ pub fn confirm_slot(
         load_result
     }?;
 
-    confirm_slot_entries(
-        bank,
-        replay_tx_thread_pool,
-        slot_entries_load_result,
-        timing,
-        progress,
-        skip_verification,
-        transaction_status_sender,
-        entry_notification_sender,
-        replay_vote_sender,
-        log_messages_bytes_limit,
-        prioritization_fee_cache,
-        migration_status,
-    )
+    let mut processor = bank.block_component_processor.write().unwrap();
+
+    let last_entry_batch_index = slot_components
+        .iter()
+        .rposition(|bc| matches!(bc, BlockComponent::EntryBatch(_)));
+
+    for (ix, (completed_range, component)) in completed_ranges
+        .iter()
+        .zip(slot_components.into_iter())
+        .enumerate()
+    {
+        let num_shreds = completed_range.end - completed_range.start;
+        let is_final = slot_full && ix == completed_ranges.len() - 1;
+
+        match component {
+            BlockComponent::EntryBatch(entries) => {
+                let slot_full = slot_full && ix == last_entry_batch_index.unwrap();
+
+                // Skip block component validation for genesis block. Slot 0 is handled specially,
+                // since it won't have the required block markers.
+                if slot != 0 {
+                    processor.on_entry_batch(migration_status)?;
+                }
+
+                confirm_slot_entries(
+                    bank,
+                    replay_tx_thread_pool,
+                    (entries, num_shreds as u64, slot_full),
+                    timing,
+                    progress,
+                    skip_verification,
+                    transaction_status_sender,
+                    entry_notification_sender,
+                    replay_vote_sender,
+                    log_messages_bytes_limit,
+                    prioritization_fee_cache,
+                    migration_status,
+                )?;
+            }
+            BlockComponent::BlockMarker(marker) => {
+                if let Some(parent_bank) = bank.parent() {
+                    processor.on_marker(
+                        bank.clone_without_scheduler(),
+                        parent_bank,
+                        marker,
+                        None,
+                        migration_status,
+                    )?;
+                }
+                progress.num_shreds += num_shreds as u64;
+            }
+        }
+
+        // Skip block component validation for genesis block. Slot 0 is handled specially,
+        // since it won't have the required block markers.
+        if is_final && slot != 0 {
+            processor.on_final(migration_status, slot)?;
+        }
+    }
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
