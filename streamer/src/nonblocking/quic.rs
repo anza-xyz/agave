@@ -586,9 +586,7 @@ async fn handle_connection<Q, C>(
     // it is not the end of the world.
     let rtt = connection.rtt();
     'conn: loop {
-        if let Some(max_streams) =
-            qos.compute_max_streams(&context, &connection, qos.is_saturated())
-        {
+        if let Some(max_streams) = qos.compute_max_streams(&context, &connection) {
             connection.set_max_concurrent_uni_streams(VarInt::from_u32(max_streams));
 
             if max_streams == 0 {
