@@ -393,7 +393,7 @@ mod tests {
         agave_snapshots::snapshot_config::SnapshotConfig,
         solana_account::{ReadableAccount as _, WritableAccount as _},
         solana_accounts_db::{
-            accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig, MarkObsoleteAccounts},
+            accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
             accounts_index::{ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountsIndexConfig, IndexLimit},
         },
         solana_fee_calculator::FeeRateGovernor,
@@ -776,13 +776,11 @@ mod tests {
 
     #[test_matrix(
         [Features::None, Features::All],
-        [IndexLimit::Minimal, IndexLimit::InMemOnly],
-        [MarkObsoleteAccounts::Disabled, MarkObsoleteAccounts::Enabled]
+        [IndexLimit::Minimal, IndexLimit::InMemOnly]
     )]
     fn test_verify_accounts_lt_hash_at_startup(
         features: Features,
         accounts_index_limit: IndexLimit,
-        mark_obsolete_accounts: MarkObsoleteAccounts,
     ) {
         let (mut genesis_config, mint_keypair) = genesis_config_with(features);
         // This test requires zero fees so that we can easily transfer an account's entire balance.
@@ -873,7 +871,6 @@ mod tests {
         };
         let accounts_db_config = AccountsDbConfig {
             index: Some(accounts_index_config),
-            mark_obsolete_accounts,
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
         let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(

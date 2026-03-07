@@ -18,7 +18,7 @@ use {
     log::*,
     rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
-        accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
+        accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
         accounts_file::StorageAccess,
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
@@ -667,20 +667,6 @@ pub fn execute(
         })
         .unwrap_or_default();
 
-    let mark_obsolete_accounts = matches
-        .value_of("accounts_db_mark_obsolete_accounts")
-        .map(|mark_obsolete_accounts| {
-            match mark_obsolete_accounts {
-                "enabled" => MarkObsoleteAccounts::Enabled,
-                "disabled" => MarkObsoleteAccounts::Disabled,
-                _ => {
-                    // clap will enforce one of the above values is given
-                    unreachable!("invalid value given to accounts_db_mark_obsolete_accounts")
-                }
-            }
-        })
-        .unwrap_or_default();
-
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
         account_indexes: Some(account_indexes.clone()),
@@ -707,7 +693,6 @@ pub fn execute(
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
-        mark_obsolete_accounts,
         use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
             solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
         ),

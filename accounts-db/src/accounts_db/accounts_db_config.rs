@@ -1,6 +1,6 @@
 use {
     super::{
-        AccountShrinkThreshold, DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION, MarkObsoleteAccounts,
+        AccountShrinkThreshold, DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
     },
     crate::{
         accounts_file::StorageAccess,
@@ -39,7 +39,6 @@ pub struct AccountsDbConfig {
     pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
     pub storage_access: StorageAccess,
     pub scan_filter_for_shrinking: ScanFilter,
-    pub mark_obsolete_accounts: MarkObsoleteAccounts,
     /// Number of threads for background operations (`thread_pool_background')
     pub num_background_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool_foreground`)
@@ -69,7 +68,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalTest,
-    mark_obsolete_accounts: MarkObsoleteAccounts::Enabled,
     num_background_threads: None,
     num_foreground_threads: None,
     use_registered_io_uring_buffers: true,
@@ -93,7 +91,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
-    mark_obsolete_accounts: MarkObsoleteAccounts::Enabled,
     num_background_threads: None,
     num_foreground_threads: None,
     use_registered_io_uring_buffers: true,
