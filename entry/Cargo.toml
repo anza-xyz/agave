@@ -38,7 +38,7 @@ solana-perf = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signature = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["wincode"] }
 solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }
