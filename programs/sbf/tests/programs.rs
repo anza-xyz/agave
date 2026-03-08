@@ -291,7 +291,7 @@ fn test_program_sbf_sanity() {
 
         let accounts = vec![(pubkey1, Account::default()), (pubkey2, Account::default())];
 
-        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let compute_budget = ComputeBudget::new_with_defaults(false);
         let mut program_cache = default_program_cache_with_program(
             &program_id,
             &program_elf,
@@ -349,7 +349,7 @@ fn test_program_sbf_loader_deprecated() {
             ..SVMFeatureSet::all_enabled()
         };
 
-        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let compute_budget = ComputeBudget::new_with_defaults(false);
 
         let pubkey = Pubkey::new_unique();
         let accounts = vec![
@@ -405,7 +405,7 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     let authority_pubkey = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     // Create a retracted program account with LoaderV4State header + ELF bytes.
     let loader_state = LoaderV4State {
@@ -480,7 +480,7 @@ fn test_program_sbf_duplicate_accounts() {
         let program_elf = harness::file::load_program_elf(program);
         let program_id = Pubkey::new_unique();
         let feature_set = SVMFeatureSet::all_enabled();
-        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let compute_budget = ComputeBudget::new_with_defaults(false);
         let mut program_cache = default_program_cache_with_program(
             &program_id,
             &program_elf,
@@ -600,7 +600,7 @@ fn test_program_sbf_error_handling() {
 
         let accounts = vec![(pubkey1, Account::default())];
 
-        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let compute_budget = ComputeBudget::new_with_defaults(false);
         let mut program_cache = default_program_cache_with_program(
             &program_id,
             &program_elf,
@@ -690,7 +690,7 @@ fn test_return_data_and_log_data_syscall() {
         let program_id = Pubkey::new_unique();
 
         let feature_set = SVMFeatureSet::all_enabled();
-        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let compute_budget = ComputeBudget::new_with_defaults(false);
 
         let pubkey = Pubkey::new_unique();
         let accounts = vec![(pubkey, Account::default())];
@@ -1426,7 +1426,7 @@ fn test_program_sbf_program_id_spoofing() {
     let malicious_system_pubkey = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     let from_pubkey = Pubkey::new_unique();
     let to_pubkey = Pubkey::new_unique();
@@ -1501,7 +1501,7 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
     let caller2_pubkey = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     let accounts = vec![
         (caller_pubkey, Account::new(0, 0, &loader_v4::id())),
@@ -1555,7 +1555,7 @@ fn test_program_sbf_ro_modify() {
     let program_id = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     let test_pubkey = Pubkey::new_unique();
     let accounts = vec![
@@ -1606,7 +1606,7 @@ fn test_program_sbf_call_depth() {
     let program_id = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     let mut program_cache = default_program_cache_with_program(
         &program_id,
@@ -1644,7 +1644,7 @@ fn test_program_sbf_compute_budget() {
     let program_id = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let mut compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let mut compute_budget = ComputeBudget::new_with_defaults(false);
     compute_budget.compute_unit_limit = 0;
 
     let accounts = vec![(program_id, Account::new(0, 0, &loader_v4::id()))];
@@ -1719,7 +1719,7 @@ fn assert_instruction_count() {
     }
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let compute_budget = ComputeBudget::new_with_defaults(false);
     let sysvar_cache = default_sysvar_cache();
 
     println!("\n  {:36} expected actual  diff", "SBF program");
@@ -1844,7 +1844,7 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
     let program_id = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     let mut program_cache = default_program_cache_with_program(
         &program_id,
@@ -2395,7 +2395,7 @@ fn test_program_sbf_disguised_as_sbf_loader() {
             remove_bpf_loader_incorrect_program_id: false,
             ..SVMFeatureSet::all_enabled()
         };
-        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let compute_budget = ComputeBudget::new_with_defaults(false);
 
         let mut program_cache = default_program_cache();
         harness::program_cache::add_program(
@@ -2434,7 +2434,7 @@ fn test_program_reads_from_program_account() {
     let program_id = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     let mut program_cache = harness::program_cache::new_with_builtins(0);
     harness::program_cache::add_program(
@@ -2494,7 +2494,7 @@ fn test_program_sbf_c_dup() {
     let program_id = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let compute_budget = ComputeBudget::new_with_defaults(false);
     let mut program_cache = harness::program_cache::new_with_builtins(0);
     harness::program_cache::add_program(
         &mut program_cache,
@@ -2738,7 +2738,7 @@ fn test_program_sbf_ro_account_modify() {
     let program_id = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     let mut program_cache = default_program_cache_with_program(
         &program_id,
@@ -4705,7 +4705,7 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
 
     let feature_set = SVMFeatureSet::all_enabled();
     let compute_budget = {
-        let mut budget = ComputeBudget::new_with_defaults(false, false);
+        let mut budget = ComputeBudget::new_with_defaults(false);
         budget.compute_unit_limit = 10_000u64;
         budget
     };
@@ -5786,7 +5786,7 @@ fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data
     let program_id = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     let mut program_cache = default_program_cache_with_program(
         &program_id,
