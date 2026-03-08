@@ -22,7 +22,6 @@ agave-unstable-api = []
 [dependencies]
 agave-reserved-account-keys = { workspace = true }
 bincode = { workspace = true }
-bytes = { workspace = true }
 bzip2 = { workspace = true }
 enum-iterator = { workspace = true }
 flate2 = { workspace = true }
@@ -32,9 +31,6 @@ http = { workspace = true }
 hyper = { workspace = true }
 hyper-proxy = { workspace = true }
 log = { workspace = true }
-# openssl is a dependency of the goauth and smpl_jwt crates, but explicitly
-# declare it here as well to activate the "vendored" feature that builds OpenSSL
-openssl = { workspace = true, features = ["vendored"] }
 prost = { workspace = true }
 prost-types = { workspace = true }
 serde = { workspace = true }

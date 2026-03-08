@@ -18,7 +18,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 agave-unstable-api = []
 
 [dependencies]
-agave-geyser-plugin-interface = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor = { workspace = true }
@@ -36,7 +35,6 @@ jsonrpc-core-client = { workspace = true, features = ["ipc"] }
 jsonrpc-derive = { workspace = true }
 jsonrpc-ipc-server = { workspace = true }
 libc = { workspace = true }
-libloading = { workspace = true }
 log = { workspace = true }
 num_cpus = { workspace = true }
 qualifier_attr = { workspace = true }
@@ -69,7 +67,6 @@ solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
-solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true }

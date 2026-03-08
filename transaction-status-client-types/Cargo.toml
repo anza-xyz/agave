@@ -25,7 +25,6 @@ solana-account-decoder-client-types = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-instruction = { workspace = true }
 solana-message = { workspace = true }
-solana-pubkey = { workspace = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
 solana-signature = { workspace = true, default-features = false }
 solana-transaction = { workspace = true, features = ["serde"] }

@@ -32,13 +32,13 @@ serde_json = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-clap-v3-utils = { workspace = true }
 solana-cli-config = { workspace = true }
-solana-derivation-path = "=3.0.0"
+solana-derivation-path = { workspace = true }
 solana-instruction = { version = "=3.2.0", features = ["bincode"] }
 solana-keypair = "=3.1.2"
 solana-message = { version = "=4.0.0", features = ["wincode"] }
 solana-pubkey = { version = "=4.1.0", default-features = false }
 solana-remote-wallet = { workspace = true }
-solana-seed-derivable = "=3.0.0"
+solana-seed-derivable = { workspace = true }
 solana-signer = "=3.0.0"
 solana-version = { workspace = true }
 tiny-bip39 = { workspace = true }
