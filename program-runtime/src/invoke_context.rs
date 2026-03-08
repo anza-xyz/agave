@@ -912,13 +912,11 @@ macro_rules! with_mock_invoke_context {
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-#[expect(clippy::too_many_arguments)]
 pub fn mock_process_instruction_with_feature_set<
     F: FnMut(&mut InvokeContext),
     G: FnMut(&mut InvokeContext),
 >(
-    loader_id: &Pubkey,
-    program_index: Option<IndexOfAccount>,
+    program_id: &Pubkey,
     instruction_data: &[u8],
     mut transaction_accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
@@ -943,13 +941,18 @@ pub fn mock_process_instruction_with_feature_set<
         ));
     }
 
-    let program_index = if let Some(index) = program_index {
-        index
-    } else {
-        let processor_account = AccountSharedData::new(0, 0, &native_loader::id());
-        transaction_accounts.push((*loader_id, processor_account));
-        transaction_accounts.len().saturating_sub(1) as IndexOfAccount
-    };
+    let (program_index, program_owner, pop_program_account) = transaction_accounts
+        .iter()
+        .enumerate()
+        .find(|(_, (key, _))| key == program_id)
+        .map(|(i, (_, acct))| (i, *acct.owner(), false))
+        .unwrap_or_else(|| {
+            let owner = native_loader::id();
+            transaction_accounts.push((*program_id, AccountSharedData::new(0, 0, &owner)));
+            (transaction_accounts.len().saturating_sub(1), owner, true)
+        });
+    let is_builtin = native_loader::check_id(&program_owner);
+
     let pop_epoch_schedule_account = if !transaction_accounts
         .iter()
         .any(|(key, _)| *key == sysvar::epoch_schedule::id())
@@ -970,7 +973,11 @@ pub fn mock_process_instruction_with_feature_set<
     );
     let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
     program_cache_for_tx_batch.replenish(
-        *loader_id,
+        if is_builtin {
+            *program_id
+        } else {
+            program_owner
+        },
         Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin_function)),
     );
     program_cache_for_tx_batch.set_slot_for_tests(
@@ -985,7 +992,7 @@ pub fn mock_process_instruction_with_feature_set<
     invoke_context
         .transaction_context
         .configure_top_level_instruction_for_tests(
-            program_index,
+            program_index as IndexOfAccount,
             instruction_accounts,
             instruction_data.to_vec(),
         )
@@ -997,14 +1004,15 @@ pub fn mock_process_instruction_with_feature_set<
     if pop_epoch_schedule_account {
         transaction_accounts.pop();
     }
-    transaction_accounts.pop();
+    if pop_program_account {
+        transaction_accounts.pop();
+    }
     transaction_accounts
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut InvokeContext)>(
-    loader_id: &Pubkey,
-    program_index: Option<IndexOfAccount>,
+    program_id: &Pubkey,
     instruction_data: &[u8],
     transaction_accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
@@ -1014,8 +1022,7 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
     post_adjustments: G,
 ) -> Vec<AccountSharedData> {
     mock_process_instruction_with_feature_set(
-        loader_id,
-        program_index,
+        program_id,
         instruction_data,
         transaction_accounts,
         instruction_account_metas,

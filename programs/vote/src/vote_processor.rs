@@ -541,7 +541,6 @@ mod tests {
         let cu_consumed = RefCell::new(0u64);
         let accounts = mock_process_instruction_with_feature_set(
             &id(),
-            None,
             instruction_data,
             transaction_accounts,
             instruction_accounts,
