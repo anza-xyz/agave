@@ -11,6 +11,7 @@ use {
         ThreadPool,
         iter::{IntoParallelIterator, ParallelIterator},
     },
+    solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_runtime::bank::Bank,
     std::{collections::HashSet, num::NonZeroU64},
@@ -27,6 +28,8 @@ enum CertVerifyError {
         cert_fraction: Fraction,
         required_fraction: Fraction,
     },
+    #[error("discarding cert with slot {cert_slot} too far in future from root slot {root_slot}")]
+    TooFarInFuture { cert_slot: Slot, root_slot: Slot },
 }
 
 /// Verifies certs and sends the verified certs to the consensus pool.
@@ -82,22 +85,15 @@ fn verify_certs(
     stats: &mut SigVerifyCertStats,
     thread_pool: &ThreadPool,
 ) -> Vec<ConsensusMessage> {
-    let len_before = certs.len();
     let verified = thread_pool.install(|| {
         certs
             .into_par_iter()
-            .filter_map(|cert| {
-                if cert.cert_type.slot() <= root_bank.slot().saturating_add(NUM_SLOTS_FOR_VERIFY) {
-                    let res = verify_cert(&cert, root_bank);
-                    Some((cert, res))
-                } else {
-                    None
-                }
+            .map(|cert| {
+                let res = verify_cert(&cert, root_bank);
+                (cert, res)
             })
             .collect::<Vec<_>>()
     });
-    let num_discarded = len_before - verified.len();
-    stats.too_far_in_future = stats.too_far_in_future.saturating_add(num_discarded as u64);
 
     verified
         .into_iter()
@@ -115,12 +111,24 @@ fn verify_certs(
                     stats.signature_verification_failed += 1;
                     None
                 }
+                CertVerifyError::TooFarInFuture { .. } => {
+                    stats.too_far_in_future += 1;
+                    None
+                }
             },
         })
         .collect()
 }
 
 fn verify_cert(cert: &Certificate, root_bank: &Bank) -> Result<(), CertVerifyError> {
+    let cert_slot = cert.cert_type.slot();
+    let root_slot = root_bank.slot();
+    if cert_slot > root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY) {
+        return Err(CertVerifyError::TooFarInFuture {
+            cert_slot,
+            root_slot,
+        });
+    }
     let (aggregate_stake, total_stake) = root_bank.verify_certificate(cert)?;
     debug_assert!(aggregate_stake <= total_stake);
     verify_stake(cert, aggregate_stake, total_stake)

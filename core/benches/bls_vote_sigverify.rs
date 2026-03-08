@@ -1,9 +1,7 @@
 /*
     To run this benchmark:
-    `cargo bench --bench bls_vote_sigverify --features dev-context-only-utils`
+    `cargo bench --bench bls_vote_sigverify`
 */
-
-#![allow(clippy::arithmetic_side_effects)]
 
 use {
     agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
@@ -55,7 +53,7 @@ fn generate_test_data(num_distinct_messages: usize, batch_size: usize) -> Vec<Vo
     // Pre-calculate the payloads to ensure exact distinctness
     let base_payloads: Vec<Arc<Vec<u8>>> = (0..num_distinct_messages)
         .map(|i| {
-            let slot = (i as u64) + 100;
+            let slot = (i as u64).saturating_add(100);
             let vote = Vote::new_notarization_vote(slot, Hash::new_unique());
             Arc::new(bincode::serialize(&vote).unwrap())
         })
@@ -64,7 +62,7 @@ fn generate_test_data(num_distinct_messages: usize, batch_size: usize) -> Vec<Vo
     let mut votes_to_verify = Vec::with_capacity(batch_size);
 
     for i in 0..batch_size {
-        let payload = &base_payloads[i % num_distinct_messages];
+        let payload = &base_payloads[i.rem_euclid(num_distinct_messages)];
 
         let bls_keypair = BLSKeypair::new();
         let vote: Vote = bincode::deserialize(payload).unwrap();
