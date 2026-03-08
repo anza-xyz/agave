@@ -1,6 +1,5 @@
 #![allow(clippy::arithmetic_side_effects)]
 #![feature(test)]
-extern crate solana_ledger;
 extern crate test;
 
 use {
