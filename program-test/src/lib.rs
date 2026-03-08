@@ -5,9 +5,7 @@
 // Export tokio for test clients
 pub use tokio;
 use {
-    agave_feature_set::{
-        FEATURE_NAMES, FeatureSet, increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8,
-    },
+    agave_feature_set::{FEATURE_NAMES, FeatureSet, raise_cpi_nesting_limit_to_8},
     async_trait::async_trait,
     base64::{Engine, prelude::BASE64_STANDARD},
     chrono_humanize::{Accuracy, HumanTime, Tense},
@@ -955,9 +953,6 @@ impl ProgramTest {
                         genesis_config
                             .accounts
                             .contains_key(&raise_cpi_nesting_limit_to_8::id()),
-                        genesis_config
-                            .accounts
-                            .contains_key(&increase_cpi_account_info_limit::id()),
                     )
                 }),
                 transaction_account_lock_limit: self.transaction_account_lock_limit,

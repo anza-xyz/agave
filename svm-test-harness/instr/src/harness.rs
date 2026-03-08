@@ -346,7 +346,7 @@ mod tests {
 
         // Set up the Compute Budget.
         let compute_budget = {
-            let mut budget = ComputeBudget::new_with_defaults(false, false);
+            let mut budget = ComputeBudget::new_with_defaults(false);
             budget.compute_unit_limit = cu_avail;
             budget
         };

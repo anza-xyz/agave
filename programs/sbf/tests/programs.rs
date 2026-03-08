@@ -1029,25 +1029,6 @@ fn test_program_sbf_invoke_sanity() {
         let bank = bank_with_feature_deactivated(
             &bank_forks,
             bank,
-            &feature_set::increase_cpi_account_info_limit::id(),
-        );
-
-        assert!(
-            !bank
-                .feature_set
-                .is_active(&feature_set::increase_cpi_account_info_limit::id())
-        );
-
-        do_invoke_success(
-            TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_SIMD_0339,
-            &[],
-            std::slice::from_ref(&invoked_program_id),
-            &bank,
-        );
-
-        let bank = bank_with_feature_deactivated(
-            &bank_forks,
-            bank,
             &feature_set::increase_tx_account_lock_limit::id(),
         );
         assert!(
@@ -1073,16 +1054,6 @@ fn test_program_sbf_invoke_sanity() {
                 .is_active(&feature_set::increase_tx_account_lock_limit::id())
         );
 
-        let bank = bank_with_feature_activated(
-            &bank_forks,
-            bank,
-            &feature_set::increase_cpi_account_info_limit::id(),
-        );
-
-        assert!(
-            bank.feature_set
-                .is_active(&feature_set::increase_cpi_account_info_limit::id())
-        );
         // failure cases
 
         let do_invoke_failure_test_local_with_compute_check =
@@ -1246,35 +1217,6 @@ fn test_program_sbf_invoke_sanity() {
                 format!(
                     "Program {invoke_program_id} failed: Invoked an instruction with too many \
                      account info's (256 > 255)"
-                ),
-            ]),
-            &bank,
-        );
-
-        let bank = bank_with_feature_deactivated(
-            &bank_forks,
-            bank,
-            &feature_set::increase_cpi_account_info_limit::id(),
-        );
-
-        assert!(
-            !bank
-                .feature_set
-                .is_active(&feature_set::increase_cpi_account_info_limit::id())
-        );
-
-        do_invoke_failure_test_local(
-            TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_SIMD_0339,
-            TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
-            &[],
-            Some(vec![
-                format!("Program {invoke_program_id} invoke [1]"),
-                format!("Program log: invoke {program_lang} program"),
-                "Program log: Test max account infos exceeded before SIMD-0339".into(),
-                "skip".into(), // don't compare compute consumption logs
-                format!(
-                    "Program {invoke_program_id} failed: Invoked an instruction with too many \
-                     account info's (129 > 128)"
                 ),
             ]),
             &bank,

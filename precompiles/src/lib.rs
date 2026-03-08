@@ -1,11 +1,8 @@
 #![cfg(feature = "agave-unstable-api")]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 use {
-    agave_feature_set::{FeatureSet, enable_secp256r1_precompile},
-    solana_message::compiled_instruction::CompiledInstruction,
-    solana_precompile_error::PrecompileError,
-    solana_pubkey::Pubkey,
-    std::sync::LazyLock,
+    agave_feature_set::FeatureSet, solana_message::compiled_instruction::CompiledInstruction,
+    solana_precompile_error::PrecompileError, solana_pubkey::Pubkey, std::sync::LazyLock,
 };
 
 pub mod ed25519;
@@ -68,7 +65,7 @@ static PRECOMPILES: LazyLock<Vec<Precompile>> = LazyLock::new(|| {
         ),
         Precompile::new(
             solana_sdk_ids::secp256r1_program::id(),
-            Some(enable_secp256r1_precompile::id()),
+            None, // always enabled
             secp256r1::verify,
         ),
     ]

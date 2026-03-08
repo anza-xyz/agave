@@ -65,8 +65,8 @@ use {
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
     agave_bls_cert_verify::cert_verify::{self, Error as CertVerifyError},
     agave_feature_set::{
-        self as feature_set, FeatureSet, increase_cpi_account_info_limit,
-        raise_cpi_nesting_limit_to_8, relax_programdata_account_check_migration,
+        self as feature_set, FeatureSet, raise_cpi_nesting_limit_to_8,
+        relax_programdata_account_check_migration,
     },
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
@@ -2230,44 +2230,37 @@ impl Bank {
     }
 
     pub fn update_last_restart_slot(&self) {
-        let feature_flag = self
-            .feature_set
-            .is_active(&feature_set::last_restart_slot_sysvar::id());
+        // First, see what the currently stored last restart slot is.
+        let current_last_restart_slot = self
+            .get_account(&sysvar::last_restart_slot::id())
+            .and_then(|account| {
+                let lrs: Option<LastRestartSlot> = from_account(&account);
+                lrs
+            })
+            .map(|account| account.last_restart_slot);
 
-        if feature_flag {
-            // First, see what the currently stored last restart slot is. This
-            // account may not exist yet if the feature was just activated.
-            let current_last_restart_slot = self
-                .get_account(&sysvar::last_restart_slot::id())
-                .and_then(|account| {
-                    let lrs: Option<LastRestartSlot> = from_account(&account);
-                    lrs
-                })
-                .map(|account| account.last_restart_slot);
+        let last_restart_slot = {
+            let slot = self.slot;
+            let hard_forks_r = self.hard_forks.read().unwrap();
 
-            let last_restart_slot = {
-                let slot = self.slot;
-                let hard_forks_r = self.hard_forks.read().unwrap();
+            // Only consider hard forks <= this bank's slot to avoid prematurely applying
+            // a hard fork that is set to occur in the future.
+            hard_forks_r
+                .iter()
+                .rev()
+                .find(|(hard_fork, _)| *hard_fork <= slot)
+                .map(|(slot, _)| *slot)
+                .unwrap_or(0)
+        };
 
-                // Only consider hard forks <= this bank's slot to avoid prematurely applying
-                // a hard fork that is set to occur in the future.
-                hard_forks_r
-                    .iter()
-                    .rev()
-                    .find(|(hard_fork, _)| *hard_fork <= slot)
-                    .map(|(slot, _)| *slot)
-                    .unwrap_or(0)
-            };
-
-            // Only need to write if the last restart has changed
-            if current_last_restart_slot != Some(last_restart_slot) {
-                self.update_sysvar_account(&sysvar::last_restart_slot::id(), |account| {
-                    create_account(
-                        &LastRestartSlot { last_restart_slot },
-                        self.inherit_specially_retained_account_fields(account),
-                    )
-                });
-            }
+        // Only need to write if the last restart has changed
+        if current_last_restart_slot != Some(last_restart_slot) {
+            self.update_sysvar_account(&sysvar::last_restart_slot::id(), |account| {
+                create_account(
+                    &LastRestartSlot { last_restart_slot },
+                    self.inherit_specially_retained_account_fields(account),
+                )
+            });
         }
     }
 
@@ -2618,8 +2611,7 @@ impl Bank {
             slot_duration,
             epoch_start_timestamp,
             max_allowable_drift,
-            self.feature_set
-                .is_active(&feature_set::warp_timestamp_again::id()),
+            true,
         );
         get_timestamp_estimate_time.stop();
         datapoint_info!(
@@ -3226,9 +3218,6 @@ impl Bank {
         &self,
         txs: Vec<VersionedTransaction>,
     ) -> Result<TransactionBatch<'_, '_, RuntimeTransaction<SanitizedTransaction>>> {
-        let enable_static_instruction_limit = self
-            .feature_set
-            .is_active(&agave_feature_set::static_instruction_limit::id());
         let enable_instruction_account_limit = self
             .feature_set
             .is_active(&agave_feature_set::limit_instruction_accounts::id());
@@ -3241,7 +3230,6 @@ impl Bank {
                     None,
                     self,
                     self.get_reserved_account_keys(),
-                    enable_static_instruction_limit,
                     enable_instruction_account_limit,
                 )
             })
@@ -4400,16 +4388,10 @@ impl Bank {
         let simd_0268_active = self
             .feature_set
             .is_active(&raise_cpi_nesting_limit_to_8::id());
-        let simd_0339_active = self
-            .feature_set
-            .is_active(&increase_cpi_account_info_limit::id());
         let compute_budget = self
             .compute_budget()
             .as_ref()
-            .unwrap_or(&ComputeBudget::new_with_defaults(
-                simd_0268_active,
-                simd_0339_active,
-            ))
+            .unwrap_or(&ComputeBudget::new_with_defaults(simd_0268_active))
             .to_cost();
 
         self.transaction_processor
@@ -4443,19 +4425,8 @@ impl Bank {
             cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
         }
 
-        if self
-            .feature_set
-            .is_active(&feature_set::raise_account_cu_limit::id())
-        {
-            self.apply_simd_0306_cost_tracker_changes();
-        }
-
-        if self
-            .feature_set
-            .is_active(&feature_set::increase_cpi_account_info_limit::id())
-        {
-            self.apply_simd_0339_invoke_cost_changes();
-        }
+        self.apply_simd_0306_cost_tracker_changes();
+        self.apply_simd_0339_invoke_cost_changes();
 
         let environments = self.create_program_runtime_environments(&self.feature_set);
         self.transaction_processor
@@ -4476,14 +4447,10 @@ impl Bank {
         feature_set: &FeatureSet,
     ) -> ProgramRuntimeEnvironments {
         let simd_0268_active = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
-        let simd_0339_active = feature_set.is_active(&increase_cpi_account_info_limit::id());
         let compute_budget = self
             .compute_budget()
             .as_ref()
-            .unwrap_or(&ComputeBudget::new_with_defaults(
-                simd_0268_active,
-                simd_0339_active,
-            ))
+            .unwrap_or(&ComputeBudget::new_with_defaults(simd_0268_active))
             .to_budget();
         ProgramRuntimeEnvironments {
             program_runtime_v1: Arc::new(
@@ -5010,9 +4977,6 @@ impl Bank {
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        let enable_static_instruction_limit = self
-            .feature_set
-            .is_active(&agave_feature_set::static_instruction_limit::id());
         let enable_instruction_account_limit = self
             .feature_set
             .is_active(&agave_feature_set::limit_instruction_accounts::id());
@@ -5031,9 +4995,8 @@ impl Bank {
             let message_hash = if verification_mode == TransactionVerificationMode::FullVerification
             {
                 // SIMD-0160, check instruction limit before signature verificaton
-                if enable_static_instruction_limit
-                    && tx.message.instructions().len()
-                        > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
+                if tx.message.instructions().len()
+                    > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
                 {
                     return Err(solana_transaction_error::TransactionError::SanitizeFailure);
                 }
@@ -5048,7 +5011,6 @@ impl Bank {
                 None,
                 self,
                 self.get_reserved_account_keys(),
-                enable_static_instruction_limit,
                 enable_instruction_account_limit,
             )
         }?;
@@ -5677,16 +5639,6 @@ impl Bank {
             let vote_cost_limit = cost_tracker.get_vote_limit();
             cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
             drop(cost_tracker);
-
-            if self
-                .feature_set
-                .is_active(&feature_set::raise_account_cu_limit::id())
-            {
-                self.apply_simd_0306_cost_tracker_changes();
-            }
-        }
-
-        if new_feature_activations.contains(&feature_set::raise_account_cu_limit::id()) {
             self.apply_simd_0306_cost_tracker_changes();
         }
 
@@ -5699,10 +5651,6 @@ impl Bank {
                 error!("Failed to upgrade Core BPF Stake program: {e}");
             }
         }
-        if new_feature_activations.contains(&feature_set::increase_cpi_account_info_limit::id()) {
-            self.apply_simd_0339_invoke_cost_changes();
-        }
-
         if new_feature_activations.contains(&feature_set::replace_spl_token_with_p_token::id()) {
             if let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
                 &feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID,

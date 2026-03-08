@@ -62,18 +62,20 @@ pub fn bootstrap_validator_stake_lamports() -> u64 {
 // Number of lamports automatically used for genesis accounts
 pub const fn genesis_sysvar_and_builtin_program_lamports() -> u64 {
     const NUM_BUILTIN_PROGRAMS: u64 = 6;
-    const NUM_PRECOMPILES: u64 = 2;
+    const NUM_PRECOMPILES: u64 = 3;
     const STAKE_HISTORY_MIN_BALANCE: u64 = 114_979_200;
     const CLOCK_SYSVAR_MIN_BALANCE: u64 = 1_169_280;
     const RENT_SYSVAR_MIN_BALANCE: u64 = 1_009_200;
     const EPOCH_SCHEDULE_SYSVAR_MIN_BALANCE: u64 = 1_120_560;
     const RECENT_BLOCKHASHES_SYSVAR_MIN_BALANCE: u64 = 42_706_560;
+    const LAST_RESTART_SLOT_SYSVAR_MIN_BALANCE: u64 = 946_560;
 
     STAKE_HISTORY_MIN_BALANCE
         + CLOCK_SYSVAR_MIN_BALANCE
         + RENT_SYSVAR_MIN_BALANCE
         + EPOCH_SCHEDULE_SYSVAR_MIN_BALANCE
         + RECENT_BLOCKHASHES_SYSVAR_MIN_BALANCE
+        + LAST_RESTART_SLOT_SYSVAR_MIN_BALANCE
         + NUM_BUILTIN_PROGRAMS
         + NUM_PRECOMPILES
 }

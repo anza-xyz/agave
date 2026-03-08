@@ -467,7 +467,6 @@ fn compute_slot_cost(
                     None,
                     SimpleAddressLoader::Disabled,
                     &reserved_account_keys.active,
-                    feature_set.is_active(&agave_feature_set::static_instruction_limit::id()),
                     feature_set.is_active(&agave_feature_set::limit_instruction_accounts::id()),
                 )
                 .map_err(|err| {

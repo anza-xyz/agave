@@ -1,9 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_feature_set::{
-        FEATURE_NAMES, FeatureSet, alpenglow, increase_cpi_account_info_limit,
-        raise_cpi_nesting_limit_to_8,
-    },
+    agave_feature_set::{FEATURE_NAMES, FeatureSet, alpenglow, raise_cpi_nesting_limit_to_8},
     agave_snapshots::{
         SnapshotInterval, paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig,
     },
@@ -1181,9 +1178,6 @@ impl TestValidator {
                         !config
                             .deactivate_feature_set
                             .contains(&raise_cpi_nesting_limit_to_8::id()),
-                        !config
-                            .deactivate_feature_set
-                            .contains(&increase_cpi_account_info_limit::id()),
                     )
                 }),
             log_messages_bytes_limit: config.log_messages_bytes_limit,

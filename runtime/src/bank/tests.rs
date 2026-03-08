@@ -56,9 +56,7 @@ use {
         compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
     },
     solana_compute_budget_interface::ComputeBudgetInstruction,
-    solana_cost_model::block_cost_limits::{
-        MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0286, MAX_WRITABLE_ACCOUNT_UNITS,
-    },
+    solana_cost_model::block_cost_limits::{MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0286},
     solana_cpi::MAX_RETURN_DATA,
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
     solana_feature_gate_interface::{self as feature, Feature},
@@ -5546,7 +5544,7 @@ fn test_shrink_candidate_slots_cached() {
     // No more slots should be shrunk
     assert_eq!(bank2.shrink_candidate_slots(), 0);
     // alive_counts represents the count of alive accounts in the three slots 0,1,2
-    assert_eq!(alive_counts, vec![12, 1, 6]);
+    assert_eq!(alive_counts, vec![14, 1, 6]);
 }
 
 #[test]
@@ -6880,14 +6878,9 @@ fn test_block_limits() {
         MAX_BLOCK_UNITS,
         "before activating the feature, bank should have old/default limit"
     );
-    assert!(
-        !bank
-            .feature_set
-            .is_active(&feature_set::raise_account_cu_limit::id())
-    );
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_account_limit(),
-        MAX_WRITABLE_ACCOUNT_UNITS,
+        MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_FIRST,
         "before activating the feature, bank should have old/default limit"
     );
 
@@ -6911,91 +6904,18 @@ fn test_block_limits() {
         MAX_BLOCK_UNITS_SIMD_0286,
         "after activating the feature, bank should have new limit"
     );
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_account_limit(),
-        MAX_WRITABLE_ACCOUNT_UNITS,
-        "after activating the feature, bank should have new limit"
-    );
-
-    // Make sure the limits propagate to the child-bank.
-    let mut bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), 2);
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_block_limit(),
-        MAX_BLOCK_UNITS_SIMD_0286,
-        "child bank should have new limit"
-    );
-
-    // Activate `raise_account_cu_limit` feature
-    bank.store_account(
-        &feature_set::raise_account_cu_limit::id(),
-        &feature::create_account(&Feature::default(), 42),
-    );
-
-    // compute_and_apply_features_after_snapshot_restore will not cause the block limit to be updated
-    bank.compute_and_apply_features_after_snapshot_restore();
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_account_limit(),
-        MAX_WRITABLE_ACCOUNT_UNITS,
-        "before activating the feature, bank should have old/default limit"
-    );
-
-    // compute_and_apply_new_feature_activations will cause feature to be activated
-    bank.compute_and_apply_new_feature_activations();
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_account_limit(),
         MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_SECOND,
         "after activating the feature, bank should have new limit"
     );
 
-    // Test SIMD-0306 getting activated first
-    let (bank0, _bank_forks) = create_simple_test_arc_bank(100_000);
-    let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
-
-    // Activate `raise_account_cu_limit` feature
-    bank.store_account(
-        &feature_set::raise_account_cu_limit::id(),
-        &feature::create_account(&Feature::default(), 42),
-    );
-    // compute_and_apply_features_after_snapshot_restore will not cause the block limit to be updated
-    bank.compute_and_apply_features_after_snapshot_restore();
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_account_limit(),
-        MAX_WRITABLE_ACCOUNT_UNITS,
-        "before activating the feature, bank should have old/default limit"
-    );
-
-    // compute_and_apply_new_feature_activations will cause feature to be activated
-    bank.compute_and_apply_new_feature_activations();
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_block_limit(),
-        MAX_BLOCK_UNITS,
-        "after activating the feature, bank should have new limit"
-    );
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_account_limit(),
-        MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_FIRST,
-        "after activating the feature, bank should have new limit"
-    );
-
-    // Activate `raise_block_limits_to_100m` feature
-    bank.store_account(
-        &feature_set::raise_block_limits_to_100m::id(),
-        &feature::create_account(&Feature::default(), 42),
-    );
-    // compute_and_apply_features_after_snapshot_restore will not cause the block limit to be updated
-    bank.compute_and_apply_features_after_snapshot_restore();
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_block_limit(),
-        MAX_BLOCK_UNITS,
-        "before activating the feature, bank should have old/default limit"
-    );
-
-    // compute_and_apply_new_feature_activations will cause feature to be activated
-    bank.compute_and_apply_new_feature_activations();
+    // Make sure the limits propagate to the child-bank.
+    let bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), 2);
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_block_limit(),
         MAX_BLOCK_UNITS_SIMD_0286,
-        "after activating the feature, bank should have new limit"
+        "child bank should have new limit"
     );
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_account_limit(),
@@ -7014,7 +6934,7 @@ fn test_block_limits() {
     );
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_account_limit(),
-        MAX_WRITABLE_ACCOUNT_UNITS,
+        MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_FIRST,
         "before activating the feature, bank should have old/default limit"
     );
 
@@ -7033,15 +6953,7 @@ fn test_block_limits() {
         "bank created from genesis config should have new limit"
     );
 
-    activate_feature(
-        &mut genesis_config,
-        feature_set::raise_account_cu_limit::id(),
-    );
     let bank = Bank::new_for_tests(&genesis_config);
-    assert!(
-        bank.feature_set
-            .is_active(&feature_set::raise_account_cu_limit::id())
-    );
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_account_limit(),
         MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_SECOND,
@@ -8964,9 +8876,6 @@ fn test_compute_budget_program_noop() {
                     invoke_context
                         .get_feature_set()
                         .raise_cpi_nesting_limit_to_8,
-                    invoke_context
-                        .get_feature_set()
-                        .increase_cpi_account_info_limit
                 )
             }
         );
@@ -9019,9 +8928,6 @@ fn test_compute_request_instruction() {
                     invoke_context
                         .get_feature_set()
                         .raise_cpi_nesting_limit_to_8,
-                    invoke_context
-                        .get_feature_set()
-                        .increase_cpi_account_info_limit
                 )
             }
         );
@@ -9081,9 +8987,6 @@ fn test_failed_compute_request_instruction() {
                     invoke_context
                         .get_feature_set()
                         .raise_cpi_nesting_limit_to_8,
-                    invoke_context
-                        .get_feature_set()
-                        .increase_cpi_account_info_limit
                 )
             }
         );
@@ -9231,15 +9134,11 @@ fn test_verify_transactions_packet_data_size() {
     }
 }
 
-#[test_case(false; "pre_simd160_static_instruction_limit")]
-#[test_case(true; "simd160_static_instruction_limit")]
-fn test_verify_transactions_instruction_limit(simd_0160_enabled: bool) {
+#[test]
+fn test_verify_transactions_instruction_limit() {
     let GenesisConfigInfo { genesis_config, .. } =
         create_genesis_config_with_leader(42, &solana_pubkey::new_rand(), 42);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    if !simd_0160_enabled {
-        bank.deactivate_feature(&feature_set::static_instruction_limit::id());
-    }
+    let bank = Bank::new_for_tests(&genesis_config);
 
     let recent_blockhash = Hash::new_unique();
     let keypair = Keypair::new();
@@ -9264,17 +9163,10 @@ fn test_verify_transactions_instruction_limit(simd_0160_enabled: bool) {
 
     assert!(bincode::serialized_size(&tx).unwrap() <= PACKET_DATA_SIZE as u64);
 
-    if simd_0160_enabled {
-        assert_matches!(
-            bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
-            Err(TransactionError::SanitizeFailure)
-        );
-    } else {
-        assert!(
-            bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification)
-                .is_ok()
-        );
-    }
+    assert_matches!(
+        bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
+        Err(TransactionError::SanitizeFailure)
+    );
 }
 
 #[test_case(false; "pre_simd406_limit_instruction_accounts")]
@@ -11469,54 +11361,33 @@ fn test_last_restart_slot() {
     let mint_lamports = 100;
     let validator_stake_lamports = 10;
     let leader_pubkey = Pubkey::default();
-    let GenesisConfigInfo {
-        mut genesis_config, ..
-    } = create_genesis_config_with_leader(mint_lamports, &leader_pubkey, validator_stake_lamports);
-    // Remove last restart slot account so we can simluate its' activation
-    genesis_config
-        .accounts
-        .remove(&feature_set::last_restart_slot_sysvar::id())
-        .unwrap();
+    let GenesisConfigInfo { genesis_config, .. } =
+        create_genesis_config_with_leader(mint_lamports, &leader_pubkey, validator_stake_lamports);
 
     let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
     // Register a hard fork in the future so last restart slot will update
-    bank0.register_hard_fork(6);
-    assert!(!last_restart_slot_dirty(&bank0));
-    assert_eq!(get_last_restart_slot(&bank0), None);
-
-    let mut bank1 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 1));
-    assert!(!last_restart_slot_dirty(&bank1));
-    assert_eq!(get_last_restart_slot(&bank1), None);
-
-    // Activate the feature in slot 1, it will get initialized in slot 1's children
-    Arc::get_mut(&mut bank1)
-        .unwrap()
-        .activate_feature(&feature_set::last_restart_slot_sysvar::id());
-    let bank2 = Arc::new(Bank::new_from_parent(bank1.clone(), &Pubkey::default(), 2));
-    assert!(last_restart_slot_dirty(&bank2));
-    assert_eq!(get_last_restart_slot(&bank2), Some(0));
-    let bank3 = Arc::new(Bank::new_from_parent(bank1, &Pubkey::default(), 3));
-    assert!(last_restart_slot_dirty(&bank3));
-    assert_eq!(get_last_restart_slot(&bank3), Some(0));
+    bank0.register_hard_fork(3);
+    assert!(last_restart_slot_dirty(&bank0));
+    assert_eq!(get_last_restart_slot(&bank0), Some(0));
 
     // Not dirty in children where the last restart slot has not changed
-    let bank4 = Arc::new(Bank::new_from_parent(bank2, &Pubkey::default(), 4));
-    assert!(!last_restart_slot_dirty(&bank4));
-    assert_eq!(get_last_restart_slot(&bank4), Some(0));
-    let bank5 = Arc::new(Bank::new_from_parent(bank3, &Pubkey::default(), 5));
-    assert!(!last_restart_slot_dirty(&bank5));
-    assert_eq!(get_last_restart_slot(&bank5), Some(0));
+    let bank1 = Arc::new(Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1));
+    assert!(!last_restart_slot_dirty(&bank1));
+    assert_eq!(get_last_restart_slot(&bank1), Some(0));
+    let bank2 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 2));
+    assert!(!last_restart_slot_dirty(&bank2));
+    assert_eq!(get_last_restart_slot(&bank2), Some(0));
 
     // Last restart slot has now changed so it will be dirty again
-    let bank6 = Arc::new(Bank::new_from_parent(bank4, &Pubkey::default(), 6));
-    assert!(last_restart_slot_dirty(&bank6));
-    assert_eq!(get_last_restart_slot(&bank6), Some(6));
+    let bank3 = Arc::new(Bank::new_from_parent(bank2, &Pubkey::default(), 3));
+    assert!(last_restart_slot_dirty(&bank3));
+    assert_eq!(get_last_restart_slot(&bank3), Some(3));
 
     // Last restart will not change for a hard fork that has not occurred yet
-    bank6.register_hard_fork(10);
-    let bank7 = Arc::new(Bank::new_from_parent(bank6, &Pubkey::default(), 7));
-    assert!(!last_restart_slot_dirty(&bank7));
-    assert_eq!(get_last_restart_slot(&bank7), Some(6));
+    bank3.register_hard_fork(6);
+    let bank4 = Arc::new(Bank::new_from_parent(bank3, &Pubkey::default(), 4));
+    assert!(!last_restart_slot_dirty(&bank4));
+    assert_eq!(get_last_restart_slot(&bank4), Some(3));
 }
 
 /// Test that simulations report the compute units of failed transactions

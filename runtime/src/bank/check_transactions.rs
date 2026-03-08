@@ -214,10 +214,7 @@ impl Bank {
         &self,
         message: &impl SVMMessage,
     ) -> Option<(Pubkey, NonceData)> {
-        let require_static_nonce_account = self
-            .feature_set
-            .is_active(&agave_feature_set::require_static_nonce_account::id());
-        let nonce_address = message.get_durable_nonce(require_static_nonce_account)?;
+        let nonce_address = message.get_durable_nonce(true)?;
         let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
         let nonce_data =
             nonce_account::verify_nonce_account(&nonce_account, message.recent_blockhash())?;
@@ -301,7 +298,6 @@ mod tests {
             program as system_program,
         },
         std::collections::HashSet,
-        test_case::test_case,
     };
 
     #[test]
@@ -468,14 +464,8 @@ mod tests {
         );
     }
 
-    #[test_case(true; "test_check_nonce_transaction_validity_nonce_is_alt_disallowed")]
-    #[test_case(false; "test_check_nonce_transaction_validity_nonce_is_alt_allowed")]
-    fn test_check_nonce_transaction_validity_nonce_is_alt(require_static_nonce_account: bool) {
-        let feature_set = if require_static_nonce_account {
-            FeatureSet::all_enabled()
-        } else {
-            FeatureSet::default()
-        };
+    #[test]
+    fn test_check_nonce_transaction_validity_nonce_is_alt() {
         let nonce_authority = Pubkey::new_unique();
         let (bank, _mint_keypair, _custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
             10_000_000,
@@ -483,7 +473,7 @@ mod tests {
             5_000_000,
             250_000,
             Some(nonce_authority),
-            feature_set,
+            FeatureSet::default(),
         )
         .unwrap();
 
@@ -528,9 +518,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
-                .is_none(),
-            require_static_nonce_account,
+            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce()),
+            None,
         );
     }
 }
