@@ -279,16 +279,6 @@ impl StreamerStats {
             .load(Ordering::Relaxed)
     }
 
-    /// Used by out-of-tree SwQoS test suite.
-    pub fn saturated_pct(&self) -> u64 {
-        self.saturated_pct.load(Ordering::Relaxed)
-    }
-
-    /// Used by out-of-tree SwQoS test suite.
-    pub fn transitions_to_saturated(&self) -> u64 {
-        self.transitions_to_saturated.load(Ordering::Relaxed)
-    }
-
     pub fn report(&self, name: &'static str) {
         datapoint_info!(
             name,

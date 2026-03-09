@@ -21,7 +21,6 @@ use {
     quinn::Connection,
     solana_time_utils as timing,
     std::{
-        collections::HashMap,
         future::Future,
         sync::{
             Arc, RwLock,
@@ -61,9 +60,6 @@ pub struct SwQosMaxStreamsConfig {
     pub max_connections_per_unstaked_peer: usize,
     pub base_max_streams_staked: u32,
     pub base_max_streams_unstaked: u32,
-    /// Per-peer RTT overrides (testing only). Bypasses `connection.rtt()`.
-    /// Used by out-of-tree SwQoS test suite.
-    pub rtt_overrides: HashMap<solana_pubkey::Pubkey, Duration>,
 }
 
 impl Default for SwQosMaxStreamsConfig {
@@ -76,7 +72,6 @@ impl Default for SwQosMaxStreamsConfig {
             max_connections_per_unstaked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER,
             base_max_streams_staked: DEFAULT_BASE_MAX_STREAMS_STAKED,
             base_max_streams_unstaked: DEFAULT_BASE_MAX_STREAMS_UNSTAKED,
-            rtt_overrides: HashMap::new(),
         }
     }
 }
@@ -456,10 +451,7 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
         connection: &Connection,
     ) -> Option<u32> {
         let saturated = self.load_tracker.is_saturated();
-        let rtt = context
-            .remote_pubkey
-            .and_then(|pk| self.config.rtt_overrides.get(&pk).copied())
-            .unwrap_or_else(|| connection.rtt());
+        let rtt = connection.rtt();
         self.compute_max_streams_for_rtt(context, rtt, saturated)
     }
 
