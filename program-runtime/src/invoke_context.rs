@@ -574,8 +574,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         let logger = self.get_log_collector();
         stable_log::program_invoke(&logger, &program_id, self.get_stack_height());
         let pre_remaining_units = self.get_remaining();
-        // In program-runtime v2 we will create this VM instance only once per transaction.
-        // `program_runtime_environment_v2.get_config()` will be used instead of `mock_config`.
         // For now, only built-ins are invoked from here, so the VM and its Config are irrelevant.
         let mock_config = Config::default();
         let empty_memory_mapping =
@@ -583,7 +581,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         let mut vm = EbpfVm::new(
             self.environment_config
                 .program_runtime_environments_for_execution
-                .program_runtime_v2
+                .program_runtime_v1
                 .clone(),
             SBPFVersion::V0,
             // Removes lifetime tracking
