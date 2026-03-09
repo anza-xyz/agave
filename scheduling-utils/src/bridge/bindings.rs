@@ -14,7 +14,6 @@ use {
     agave_transaction_view::{
         result::TransactionViewError, transaction_view::SanitizedTransactionView,
     },
-    metrics::{Counter, Gauge, counter, gauge},
     rts_alloc::Allocator,
     slotmap::SlotMap,
     solana_fee::FeeFeatures,
@@ -32,8 +31,6 @@ pub struct SchedulerBindingsBridge<M> {
     progress: ProgressMessage,
     runtime: RuntimeState,
     state: SlotMap<TransactionKey, TransactionState>,
-
-    metrics: SchedulerBindingsMetrics,
 
     _marker: core::marker::PhantomData<M>,
 }
@@ -83,18 +80,16 @@ where
             },
             state: SlotMap::default(),
 
-            metrics: SchedulerBindingsMetrics::new(),
             _marker: core::marker::PhantomData,
         }
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub(crate) fn allocator(&self) -> &Allocator {
+    pub fn allocator(&self) -> &Allocator {
         &self.allocator
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub(crate) fn state(&self) -> &SlotMap<TransactionKey, TransactionState> {
+    pub fn state(&self) -> &SlotMap<TransactionKey, TransactionState> {
         &self.state
     }
 
@@ -147,7 +142,6 @@ where
                     data: tx,
                     keys: None,
                 });
-                self.metrics.state_len.set(self.state.len() as f64);
 
                 Ok(key)
             }
@@ -170,7 +164,6 @@ where
         match self.state[key].borrows {
             0 => {
                 let state = self.state.remove(key).unwrap();
-                self.metrics.state_len.set(self.state.len() as f64);
 
                 if let Some(keys) = state.keys {
                     // SAFETY
@@ -213,10 +206,11 @@ where
         &mut self,
         mut callback: impl FnMut(&mut Self, TransactionKey) -> TxDecision,
         max_count: usize,
-    ) {
+    ) -> usize {
         self.tpu_to_pack.sync();
 
         let additional = std::cmp::min(self.tpu_to_pack.len(), max_count);
+        let mut sanitize_failures = 0usize;
         for _ in 0..additional {
             let msg = self.tpu_to_pack.try_read().unwrap();
 
@@ -239,7 +233,7 @@ where
                     self.allocator.free_offset(msg.transaction.offset);
                 }
 
-                self.metrics.recv_tpu_err_sanitize.increment(1);
+                sanitize_failures = sanitize_failures.wrapping_add(1);
 
                 continue;
             };
@@ -252,14 +246,12 @@ where
                 data: tx,
                 keys: None,
             });
-            self.metrics.state_len.set(self.state.len() as f64);
 
             // Remove & free the TX if the scheduler doesn't want it.
             if callback(self, key) == TxDecision::Drop {
                 let state = self.state.remove(key).unwrap();
                 assert!(state.keys.is_none());
                 assert_eq!(state.borrows, 0);
-                self.metrics.state_len.set(self.state.len() as f64);
 
                 // SAFETY:
                 // - We own `tx` exclusively.
@@ -268,6 +260,8 @@ where
         }
 
         self.tpu_to_pack.finalize();
+
+        sanitize_failures
     }
 
     pub fn worker_drain(
@@ -523,20 +517,6 @@ where
 
                 decision
             }
-        }
-    }
-}
-
-struct SchedulerBindingsMetrics {
-    state_len: Gauge,
-    recv_tpu_err_sanitize: Counter,
-}
-
-impl SchedulerBindingsMetrics {
-    fn new() -> Self {
-        Self {
-            state_len: gauge!("container_len", "label" => "state"),
-            recv_tpu_err_sanitize: counter!("recv_tpu", "label" => "err", "err" => "sanitize"),
         }
     }
 }
