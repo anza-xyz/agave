@@ -2230,44 +2230,37 @@ impl Bank {
     }
 
     pub fn update_last_restart_slot(&self) {
-        let feature_flag = self
-            .feature_set
-            .is_active(&feature_set::last_restart_slot_sysvar::id());
+        // First, see what the currently stored last restart slot is.
+        let current_last_restart_slot = self
+            .get_account(&sysvar::last_restart_slot::id())
+            .and_then(|account| {
+                let lrs: Option<LastRestartSlot> = from_account(&account);
+                lrs
+            })
+            .map(|account| account.last_restart_slot);
 
-        if feature_flag {
-            // First, see what the currently stored last restart slot is. This
-            // account may not exist yet if the feature was just activated.
-            let current_last_restart_slot = self
-                .get_account(&sysvar::last_restart_slot::id())
-                .and_then(|account| {
-                    let lrs: Option<LastRestartSlot> = from_account(&account);
-                    lrs
-                })
-                .map(|account| account.last_restart_slot);
+        let last_restart_slot = {
+            let slot = self.slot;
+            let hard_forks_r = self.hard_forks.read().unwrap();
 
-            let last_restart_slot = {
-                let slot = self.slot;
-                let hard_forks_r = self.hard_forks.read().unwrap();
+            // Only consider hard forks <= this bank's slot to avoid prematurely applying
+            // a hard fork that is set to occur in the future.
+            hard_forks_r
+                .iter()
+                .rev()
+                .find(|(hard_fork, _)| *hard_fork <= slot)
+                .map(|(slot, _)| *slot)
+                .unwrap_or(0)
+        };
 
-                // Only consider hard forks <= this bank's slot to avoid prematurely applying
-                // a hard fork that is set to occur in the future.
-                hard_forks_r
-                    .iter()
-                    .rev()
-                    .find(|(hard_fork, _)| *hard_fork <= slot)
-                    .map(|(slot, _)| *slot)
-                    .unwrap_or(0)
-            };
-
-            // Only need to write if the last restart has changed
-            if current_last_restart_slot != Some(last_restart_slot) {
-                self.update_sysvar_account(&sysvar::last_restart_slot::id(), |account| {
-                    create_account(
-                        &LastRestartSlot { last_restart_slot },
-                        self.inherit_specially_retained_account_fields(account),
-                    )
-                });
-            }
+        // Only need to write if the last restart has changed
+        if current_last_restart_slot != Some(last_restart_slot) {
+            self.update_sysvar_account(&sysvar::last_restart_slot::id(), |account| {
+                create_account(
+                    &LastRestartSlot { last_restart_slot },
+                    self.inherit_specially_retained_account_fields(account),
+                )
+            });
         }
     }
 
