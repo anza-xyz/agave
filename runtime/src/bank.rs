@@ -470,7 +470,6 @@ pub struct BankFieldsToDeserialize {
     pub(crate) genesis_creation_time: UnixTimestamp,
     pub(crate) slots_per_year: f64,
     pub(crate) slot: Slot,
-    pub(crate) epoch: Epoch,
     pub(crate) block_height: u64,
     pub(crate) leader_id: Pubkey,
     pub(crate) fee_rate_governor: FeeRateGovernor,
@@ -1843,6 +1842,7 @@ impl Bank {
     ) -> Self {
         let now = Instant::now();
         let slot = fields.slot;
+        let epoch = fields.epoch_schedule.get_epoch(slot);
         let ancestors = Ancestors::from(vec![slot]);
         // For backward compatibility, we can only serialize and deserialize
         // Stakes<Delegation> in BankFieldsTo{Serialize,Deserialize}. But Bank
@@ -1912,12 +1912,12 @@ impl Bank {
             slots_per_year: fields.slots_per_year,
             slot,
             bank_id: 0,
-            epoch: fields.epoch,
+            epoch,
             block_height: fields.block_height,
             leader_id: fields.leader_id,
             fee_rate_governor: fields.fee_rate_governor,
             rent_collector: RentCollector::new(
-                fields.epoch,
+                epoch,
                 fields.epoch_schedule.clone(),
                 fields.slots_per_year,
                 rent,
@@ -1986,7 +1986,6 @@ impl Bank {
             )
         );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
-        assert_eq!(bank.epoch, bank.epoch_schedule.get_epoch(bank.slot));
 
         bank.initialize_after_snapshot_restore(|| {
             ThreadPoolBuilder::new()
