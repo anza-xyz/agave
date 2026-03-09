@@ -56,7 +56,9 @@ use {
         compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
     },
     solana_compute_budget_interface::ComputeBudgetInstruction,
-    solana_cost_model::block_cost_limits::{MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0286},
+    solana_cost_model::block_cost_limits::{
+        MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0286, MAX_WRITABLE_ACCOUNT_UNITS,
+    },
     solana_cpi::MAX_RETURN_DATA,
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
     solana_feature_gate_interface::{self as feature, Feature},
@@ -6862,7 +6864,6 @@ fn test_reserved_account_keys() {
 
 #[test]
 fn test_block_limits() {
-    const MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_DISABLED: u64 = 24_000_000;
     const MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_ENABLED: u64 = 40_000_000;
     let (bank0, _bank_forks) = create_simple_test_arc_bank(100_000);
     let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
@@ -6880,7 +6881,7 @@ fn test_block_limits() {
     );
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_account_limit(),
-        MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_DISABLED,
+        MAX_WRITABLE_ACCOUNT_UNITS,
         "before activating the feature, bank should have old/default limit"
     );
 
@@ -6934,7 +6935,7 @@ fn test_block_limits() {
     );
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_account_limit(),
-        MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_DISABLED,
+        MAX_WRITABLE_ACCOUNT_UNITS,
         "before activating the feature, bank should have old/default limit"
     );
 
