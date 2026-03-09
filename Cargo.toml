@@ -380,7 +380,7 @@ siphasher = "1.0.2"
 slab = "0.4.12"
 smallvec = { version = "1.15.1", default-features = false, features = ["union"] }
 smpl_jwt = "0.9.0"
-socket2 = "0.6.2"
+socket2 = "0.6.3"
 soketto = "0.8"
 solana-account = "4.1.0"
 solana-account-decoder = { path = "account-decoder", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
