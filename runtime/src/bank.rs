@@ -2618,8 +2618,6 @@ impl Bank {
             slot_duration,
             epoch_start_timestamp,
             max_allowable_drift,
-            self.feature_set
-                .is_active(&feature_set::warp_timestamp_again::id()),
         );
         get_timestamp_estimate_time.stop();
         datapoint_info!(
