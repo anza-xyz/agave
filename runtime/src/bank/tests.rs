@@ -4016,7 +4016,6 @@ pub(in crate::bank) fn setup_nonce_with_bank<F>(
     custodian_lamports: u64,
     nonce_lamports: u64,
     nonce_authority: Option<Pubkey>,
-    feature_set: FeatureSet,
 ) -> Result<NonceSetup>
 where
     F: FnMut(&mut GenesisConfig),
@@ -4024,8 +4023,7 @@ where
     let (mut genesis_config, mint_keypair) = create_genesis_config(supply_lamports);
     genesis_config.rent.lamports_per_byte = 0;
     genesis_cfg_fn(&mut genesis_config);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.feature_set = Arc::new(feature_set);
+    let bank = Bank::new_for_tests(&genesis_config);
     let (mut bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     // Banks 0 and 1 have no fees, wait two blocks before
@@ -4122,15 +4120,7 @@ fn test_nonce_must_be_advanceable() {
 #[test]
 fn test_nonce_transaction() {
     let (mut bank, _mint_keypair, custodian_keypair, nonce_keypair, bank_forks) =
-        setup_nonce_with_bank(
-            10_000_000,
-            |_| {},
-            5_000_000,
-            250_000,
-            None,
-            FeatureSet::all_enabled(),
-        )
-        .unwrap();
+        setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
     let alice_keypair = Keypair::new();
     let alice_pubkey = alice_keypair.pubkey();
     let custodian_pubkey = custodian_keypair.pubkey();
@@ -4255,9 +4245,8 @@ fn test_nonce_transaction() {
 
 #[test]
 fn test_nonce_transaction_with_tx_wide_caps() {
-    let feature_set = FeatureSet::all_enabled();
     let (mut bank, _mint_keypair, custodian_keypair, nonce_keypair, bank_forks) =
-        setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None, feature_set).unwrap();
+        setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
     let alice_keypair = Keypair::new();
     let alice_pubkey = alice_keypair.pubkey();
     let custodian_pubkey = custodian_keypair.pubkey();
@@ -4384,15 +4373,7 @@ fn test_nonce_transaction_with_tx_wide_caps() {
 fn test_nonce_authority() {
     agave_logger::setup();
     let (mut bank, _mint_keypair, custodian_keypair, nonce_keypair, bank_forks) =
-        setup_nonce_with_bank(
-            10_000_000,
-            |_| {},
-            5_000_000,
-            250_000,
-            None,
-            FeatureSet::all_enabled(),
-        )
-        .unwrap();
+        setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
     let alice_keypair = Keypair::new();
     let alice_pubkey = alice_keypair.pubkey();
     let custodian_pubkey = custodian_keypair.pubkey();
@@ -4446,15 +4427,7 @@ fn test_nonce_payer() {
     agave_logger::setup();
     let nonce_starting_balance = 250_000;
     let (mut bank, _mint_keypair, custodian_keypair, nonce_keypair, bank_forks) =
-        setup_nonce_with_bank(
-            10_000_000,
-            |_| {},
-            5_000_000,
-            nonce_starting_balance,
-            None,
-            FeatureSet::all_enabled(),
-        )
-        .unwrap();
+        setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, nonce_starting_balance, None).unwrap();
     let alice_keypair = Keypair::new();
     let alice_pubkey = alice_keypair.pubkey();
     let custodian_pubkey = custodian_keypair.pubkey();
@@ -4510,17 +4483,8 @@ fn test_nonce_payer_tx_wide_cap() {
     agave_logger::setup();
     let nonce_starting_balance =
         250_000 + FeeStructure::default().compute_fee_bins.last().unwrap().fee;
-    let feature_set = FeatureSet::all_enabled();
     let (mut bank, _mint_keypair, custodian_keypair, nonce_keypair, bank_forks) =
-        setup_nonce_with_bank(
-            10_000_000,
-            |_| {},
-            5_000_000,
-            nonce_starting_balance,
-            None,
-            feature_set,
-        )
-        .unwrap();
+        setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, nonce_starting_balance, None).unwrap();
     let alice_keypair = Keypair::new();
     let alice_pubkey = alice_keypair.pubkey();
     let custodian_pubkey = custodian_keypair.pubkey();
@@ -4703,15 +4667,7 @@ fn test_nonce_fee_calculator_updates_tx_wide_cap() {
 #[test]
 fn test_check_ro_durable_nonce_fails() {
     let (mut bank, _mint_keypair, custodian_keypair, nonce_keypair, bank_forks) =
-        setup_nonce_with_bank(
-            10_000_000,
-            |_| {},
-            5_000_000,
-            250_000,
-            None,
-            FeatureSet::all_enabled(),
-        )
-        .unwrap();
+        setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
     let custodian_pubkey = custodian_keypair.pubkey();
     let nonce_pubkey = nonce_keypair.pubkey();
 
