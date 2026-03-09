@@ -157,6 +157,18 @@ the no-Alpenglow code path remain in scope
   * Those requiring calls from multiple clients
   * Those impacting getProgramAccounts, et. al without secondary indexes enabled and/or
     unfiltered requests, which are known to be slow on clusters with large accounts sets
+* Snapshots are inherently trusted. As such, downloading or loading
+  corrupt snapshots may cause a node to diverge and/or crash.
+  The following classes of issues are out of scope (but not limited to):
+  * Remote data accessed to initialize a node, where the operator can
+    omit the nonconforming source via configuration
+  * The snapshots are unloadable and/or cause the node to crash
+    (e.g. download failed, or node ran out of disk)
+  * Snapshot verification fails
+    (e.g. due to corrupt data, missing/truncated data, or additional data)
+  * The node diverges
+    (e.g. cluster/protocol values are invalid)
+  * Performance degradations
 
 ### Eligibility:
 * Submissions _MUST_ include an exploit proof-of-concept to be considered eligible
