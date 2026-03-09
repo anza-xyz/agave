@@ -1124,7 +1124,7 @@ pub mod test {
         crate::{
             nonblocking::{
                 qos::NullStreamerCounter,
-                swqos_max_streams::SwQosMaxStreamsConfig,
+                swqos::SwQosSleepConfig,
                 testing_utilities::{
                     SpawnTestServerResult, check_multiple_streams, get_client_config,
                     make_client_endpoint, setup_quic_server, spawn_stake_weighted_qos_server,
@@ -1386,9 +1386,9 @@ pub mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+            SwQosConfig::Sleep(SwQosSleepConfig {
                 max_connections_per_unstaked_peer: 2,
-                ..SwQosMaxStreamsConfig::default_for_tests()
+                ..SwQosSleepConfig::default_for_tests()
             }),
         );
 
@@ -1598,7 +1598,7 @@ pub mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+            SwQosConfig::Sleep(SwQosSleepConfig {
                 max_unstaked_connections: 0, // Do not allow any connection from unstaked clients/nodes
                 ..Default::default()
             }),
@@ -1634,7 +1634,7 @@ pub mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+            SwQosConfig::Sleep(SwQosSleepConfig {
                 max_connections_per_unstaked_peer: 2,
                 ..Default::default()
             }),

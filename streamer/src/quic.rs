@@ -896,7 +896,7 @@ mod test {
             sender,
             staked_nodes,
             server_params,
-            SwQosConfig::MaxStreams(SwQosMaxStreamsConfig::default_for_tests()),
+            SwQosConfig::default_for_tests(),
             cancel.clone(),
         )
         .unwrap();
@@ -954,7 +954,7 @@ mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+            SwQosConfig::Sleep(SwQosSleepConfig {
                 max_connections_per_unstaked_peer: 2,
                 ..Default::default()
             }),
@@ -1146,7 +1146,7 @@ mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+            SwQosConfig::Sleep(SwQosSleepConfig {
                 max_unstaked_connections: 0,
                 ..Default::default()
             }),

@@ -137,7 +137,7 @@ use {
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
     solana_streamer::{
-        nonblocking::{simple_qos::SimpleQosConfig, swqos_max_streams::SwQosMaxStreamsConfig},
+        nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosSleepConfig},
         quic::{
             QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosConfig, SwQosQuicStreamerConfig,
         },
@@ -610,7 +610,7 @@ impl ValidatorTpuConfig {
                 max_connections_per_ipaddr_per_min: 32,
                 ..Default::default()
             },
-            qos_config: SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+            qos_config: SwQosConfig::Sleep(SwQosSleepConfig {
                 max_unstaked_connections: 0,
                 ..Default::default()
             }),

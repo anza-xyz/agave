@@ -9,7 +9,7 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         nonblocking::{
-            swqos_max_streams::SwQosMaxStreamsConfig,
+            swqos::SwQosSleepConfig,
             testing_utilities::{SpawnTestServerResult, make_client_endpoint, setup_quic_server},
         },
         packet::PacketBatch,
@@ -293,7 +293,7 @@ async fn test_connection_denied_until_allowed() {
     } = setup_quic_server(
         None,
         QuicStreamerConfig::default_for_tests(),
-        SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+        SwQosConfig::Sleep(SwQosSleepConfig {
             // To prevent server from accepting a new connection, we
             // set max_connections_per_peer == 1
             max_connections_per_unstaked_peer: 1,
@@ -370,7 +370,7 @@ async fn test_connection_pruned_and_reopened() {
         QuicStreamerConfig {
             ..QuicStreamerConfig::default_for_tests()
         },
-        SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+        SwQosConfig::Sleep(SwQosSleepConfig {
             max_connections_per_unstaked_peer: 100,
             max_unstaked_connections: 1,
             ..Default::default()
@@ -429,7 +429,7 @@ async fn test_staked_connection() {
         QuicStreamerConfig {
             ..QuicStreamerConfig::default()
         },
-        SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+        SwQosConfig::Sleep(SwQosSleepConfig {
             // Must use at least the number of endpoints (10) because
             // `max_staked_connections` and `max_unstaked_connections` are
             // cumulative for all the endpoints.
@@ -583,7 +583,7 @@ async fn test_rate_limiting() {
             max_connections_per_ipaddr_per_min: 1,
             ..QuicStreamerConfig::default_for_tests()
         },
-        SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+        SwQosConfig::Sleep(SwQosSleepConfig {
             max_connections_per_unstaked_peer: 100,
             ..Default::default()
         }),
@@ -647,7 +647,7 @@ async fn test_rate_limiting_establish_connection() {
             max_connections_per_ipaddr_per_min: 1,
             ..QuicStreamerConfig::default_for_tests()
         },
-        SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+        SwQosConfig::Sleep(SwQosSleepConfig {
             max_connections_per_unstaked_peer: 100,
             ..Default::default()
         }),
@@ -730,7 +730,7 @@ async fn test_update_identity() {
         QuicStreamerConfig {
             ..QuicStreamerConfig::default_for_tests()
         },
-        SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+        SwQosConfig::Sleep(SwQosSleepConfig {
             // Must use at least the number of endpoints (10) because
             // `max_staked_connections` and `max_unstaked_connections` are
             // cumulative for all the endpoints.
@@ -796,7 +796,7 @@ async fn test_proactive_connection_close_detection() {
         QuicStreamerConfig {
             ..QuicStreamerConfig::default_for_tests()
         },
-        SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
+        SwQosConfig::Sleep(SwQosSleepConfig {
             max_connections_per_unstaked_peer: 1,
             max_unstaked_connections: 1,
             ..Default::default()
