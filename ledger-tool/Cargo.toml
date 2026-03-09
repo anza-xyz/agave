@@ -64,7 +64,7 @@ solana-loader-v3-interface = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
-solana-program-runtime = { workspace = true, features = ["metrics"] }
+solana-program-runtime = { workspace = true, features = ["dev-context-only-utils", "metrics"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }

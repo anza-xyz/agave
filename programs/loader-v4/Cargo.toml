@@ -46,4 +46,5 @@ solana-transaction-context = { workspace = true }
 [dev-dependencies]
 bincode = { workspace = true }
 solana-clock = { workspace = true }
+solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sysvar = { workspace = true }
