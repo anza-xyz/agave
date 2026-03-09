@@ -72,10 +72,9 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
 
     let feature_set = &instr_context.feature_set;
     let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
-    let simd_0339_active = feature_set.increase_cpi_account_info_limit;
 
     let compute_budget = {
-        let mut budget = ComputeBudget::new_with_defaults(simd_0268_active, simd_0339_active);
+        let mut budget = ComputeBudget::new_with_defaults(simd_0268_active);
         budget.compute_unit_limit = cu_avail;
         budget
     };
