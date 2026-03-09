@@ -117,7 +117,6 @@ use {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SchedulingMode {
     BlockVerification,
-    BlockProduction,
 }
 
 #[derive(Debug)]

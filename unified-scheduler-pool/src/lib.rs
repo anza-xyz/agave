@@ -25,12 +25,11 @@ use {
     log::*,
     scopeguard::defer,
     solana_clock::{Epoch, Slot},
-    solana_cost_model::cost_model::CostModel,
     solana_ledger::blockstore_processor::{
         TransactionBatchWithIndexes, TransactionStatusSender, execute_batch,
     },
     solana_metrics::datapoint_info,
-    solana_poh::transaction_recorder::{RecordTransactionsSummary, TransactionRecorder},
+    solana_poh::transaction_recorder::TransactionRecorder,
     solana_pubkey::Pubkey,
     solana_runtime::{
         installed_scheduler_pool::{
@@ -48,7 +47,7 @@ use {
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{
         BlockSize, Capability, OrderedTaskId,
-        SchedulingMode::{self, BlockProduction, BlockVerification},
+        SchedulingMode::{self, BlockVerification},
         SchedulingStateMachine, Task, UsageQueue,
     },
     static_assertions::const_assert_eq,
@@ -67,14 +66,7 @@ use {
     unwrap_none::UnwrapNone,
 };
 
-// For now, cap bandwidth use to just half of 1 Gbps link, which should be pretty conservative
-// assumption these days...
-const MAX_BLOCK_SIZE_THRESHOLD: BlockSize = 20 * 1024 * 1024;
-
-// This const is intentionally aligned with central scheduler's corresponding const called
-// TOTAL_BUFFERED_PACKETS.
-const MAX_UNIQUE_ACTIVE_TASK_COUNT: usize = 100_000;
-
+#[allow(non_upper_case_globals)]
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
 
@@ -123,7 +115,7 @@ impl SupportedSchedulingMode {
 
     #[cfg(feature = "dev-context-only-utils")]
     fn with_production() -> Self {
-        Self::Either(BlockProduction)
+        Self::with_verification()
     }
 }
 
@@ -256,7 +248,6 @@ pub struct HandlerContext {
     #[debug("{banking_packet_handler:p}")]
     banking_packet_handler: Box<dyn BankingPacketHandler>,
     banking_stage_helper: Option<Arc<BankingStageHelper>>,
-    transaction_recorder: Option<TransactionRecorder>,
 }
 
 impl HandlerContext {
@@ -269,10 +260,6 @@ impl HandlerContext {
                 banking_stage_helper: helper,
             },
         }
-    }
-
-    fn banking_stage_helper(&self) -> &BankingStageHelper {
-        self.banking_stage_helper.as_ref().unwrap()
     }
 
     fn clone_for_scheduler_thread(&self) -> Self {
@@ -305,7 +292,6 @@ impl CommonHandlerContext {
         banking_packet_receiver: BankingPacketReceiver,
         banking_packet_handler: Box<dyn BankingPacketHandler>,
         banking_stage_helper: Option<Arc<BankingStageHelper>>,
-        transaction_recorder: Option<TransactionRecorder>,
     ) -> HandlerContext {
         let Self {
             log_messages_bytes_limit,
@@ -323,18 +309,15 @@ impl CommonHandlerContext {
             banking_packet_receiver,
             banking_packet_handler,
             banking_stage_helper,
-            transaction_recorder,
         }
     }
 }
 
 #[derive(derive_more::Debug)]
 struct BankingStageHandlerContext {
-    banking_thread_count: CountOrDefault,
     banking_packet_receiver: BankingPacketReceiver,
     #[debug("{banking_packet_handler:p}")]
     banking_packet_handler: Box<dyn BankingPacketHandler>,
-    transaction_recorder: TransactionRecorder,
     banking_stage_monitor: Box<dyn BankingStageMonitor>,
 }
 
@@ -378,14 +361,6 @@ pub struct BankingStageHelper {
 const BANKING_STAGE_MAX_TASK_ID: usize = usize::MAX / 2;
 
 impl BankingStageHelper {
-    fn new(new_task_sender: Sender<NewTaskPayload>) -> Self {
-        Self {
-            usage_queue_loader: UsageQueueLoaderInner::new(Capability::PriorityQueueing),
-            next_task_id: AtomicUsize::default(),
-            new_task_sender,
-        }
-    }
-
     /// Generate batched task ids for the given number of tasks
     ///
     /// We assign task ids for the entire batch at once in the hope of alleviating cache-line
@@ -424,21 +399,6 @@ impl BankingStageHelper {
         )
     }
 
-    fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
-        let new_task_id = self.regenerated_task_id(executed_task.task.task_id());
-        let consumed_block_size = executed_task.consumed_block_size();
-        let sanitized_epoch = executed_task.sanitized_epoch();
-        let alt_invalidation_slot = executed_task.alt_invalidation_slot();
-        let transaction = executed_task.into_transaction();
-        self.create_new_task(
-            transaction,
-            new_task_id,
-            consumed_block_size,
-            sanitized_epoch,
-            alt_invalidation_slot,
-        )
-    }
-
     pub fn send_new_task(&self, task: Task) {
         self.new_task_sender
             .send(NewTaskPayload::Payload(task))
@@ -450,11 +410,6 @@ impl BankingStageHelper {
         // Actually won't ever wrap, thanks to MAX.
         let reversed_priority = u64::MAX.wrapping_sub(priority) as OrderedTaskId;
         (reversed_priority << const { OrderedTaskId::BITS / 2 }) | (task_id as OrderedTaskId)
-    }
-
-    fn regenerated_task_id(&self, executed_task_id: OrderedTaskId) -> OrderedTaskId {
-        const REVERSED_PRIORITY_MASK: OrderedTaskId = 0xffff_ffff_ffff_ffff_0000_0000_0000_0000;
-        (executed_task_id & REVERSED_PRIORITY_MASK) | (self.generate_task_ids(1) as OrderedTaskId)
     }
 }
 
@@ -829,39 +784,13 @@ where
 
         assert_matches!(result_with_timings, (Ok(_), _));
 
-        match context.mode() {
-            BlockVerification => {
-                // pop is intentional for filo, expecting relatively warmed-up scheduler due to
-                // having been returned recently
-                if let Some((inner, _pooled_at)) =
-                    self.scheduler_inners.lock().expect("not poisoned").pop()
-                {
-                    Some(S::from_inner(inner, context, result_with_timings))
-                } else {
-                    Some(S::spawn(self.self_arc(), context, result_with_timings))
-                }
-            }
-            BlockProduction => {
-                // Grab this lock early so that following banking_stage_status() (i.e. the
-                // is_unified AtomicBool load) is synchronized well.
-                let mut block_production_scheduler_inner = self
-                    .block_production_scheduler_inner
-                    .lock()
-                    .expect("not poisoned");
-
-                if matches!(
-                    self.banking_stage_status()
-                        .expect("register_banking_stage() isn't called yet"),
-                    BankingStageStatus::Disabled
-                ) {
-                    return None;
-                }
-
-                // There must be a pooled block-production scheduler at this point because prior
-                // register_banking_stage() invocation should have spawned such one.
-                let inner = block_production_scheduler_inner.take_pooled();
-                Some(S::from_inner(inner, context, result_with_timings))
-            }
+        // pop is intentional for filo, expecting relatively warmed-up scheduler due to
+        // having been returned recently
+        if let Some((inner, _pooled_at)) = self.scheduler_inners.lock().expect("not poisoned").pop()
+        {
+            Some(S::from_inner(inner, context, result_with_timings))
+        } else {
+            Some(S::spawn(self.self_arc(), context, result_with_timings))
         }
     }
 
@@ -871,27 +800,22 @@ where
     }
 
     pub fn block_production_supported(&self) -> bool {
-        self.supported_scheduling_mode.is_supported(BlockProduction)
+        false
     }
 
     pub fn register_banking_stage(
         &self,
-        banking_thread_count: CountOrDefault,
+        _banking_thread_count: CountOrDefault,
         banking_packet_receiver: BankingPacketReceiver,
         banking_packet_handler: Box<dyn BankingPacketHandler>,
-        transaction_recorder: TransactionRecorder,
+        _transaction_recorder: TransactionRecorder,
         banking_stage_monitor: Box<dyn BankingStageMonitor>,
     ) {
         *self.banking_stage_handler_context.lock().unwrap() = Some(BankingStageHandlerContext {
-            banking_thread_count,
             banking_packet_receiver,
             banking_packet_handler,
-            transaction_recorder,
             banking_stage_monitor,
         });
-        // Immediately start a block production scheduler, so that the scheduler can start
-        // buffering tasks, which are preprocessed as much as possible.
-        assert!(self.toggle_block_production_mode(true));
     }
 
     fn unregister_banking_stage(&self) {
@@ -928,44 +852,25 @@ where
         mode: SchedulingMode,
         new_task_sender: &Sender<NewTaskPayload>,
     ) -> HandlerContext {
+        let _ = mode;
+        let _ = new_task_sender;
         let (
             thread_count,
             banking_packet_receiver,
             banking_packet_handler,
             banking_stage_helper,
-            transaction_recorder,
         ): (
             _,
             _,
             Box<dyn BankingPacketHandler>, /* to aid type inference */
             _,
-            _,
-        ) = match mode {
-            BlockVerification => {
-                (
-                    self.block_verification_handler_count,
-                    // Return various type-specific no-op values.
-                    never(),
-                    Box::new(|_, _| {
-                        unreachable!("paired with never() receiver, this cannot be called")
-                    }),
-                    None,
-                    None,
-                )
-            }
-            BlockProduction => {
-                let handler_context = self.banking_stage_handler_context.lock().unwrap();
-                let handler_context = handler_context.as_ref().unwrap();
-
-                (
-                    handler_context.banking_thread_count,
-                    handler_context.banking_packet_receiver.clone(),
-                    handler_context.banking_packet_handler.clone(),
-                    Some(Arc::new(BankingStageHelper::new(new_task_sender.clone()))),
-                    Some(handler_context.transaction_recorder.clone()),
-                )
-            }
-        };
+        ) = (
+            self.block_verification_handler_count,
+            // Return various type-specific no-op values.
+            never(),
+            Box::new(|_, _| unreachable!("paired with never() receiver, this cannot be called")),
+            None,
+        );
         let thread_count = thread_count.unwrap_or(Self::default_handler_count());
         assert!(thread_count >= 1);
         self.common_handler_context.clone().into_handler_context(
@@ -973,7 +878,6 @@ where
             banking_packet_receiver,
             banking_packet_handler,
             banking_stage_helper,
-            transaction_recorder,
         )
     }
 
@@ -1149,134 +1053,18 @@ impl TaskHandler for DefaultTaskHandler {
         let transaction = task.transaction();
         let task_id = task.task_id();
 
-        let batch = match scheduling_context.mode() {
-            BlockVerification => {
-                // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
-                // responsible for locking.
-                bank.prepare_unlocked_batch_from_single_tx(transaction)
-            }
-            BlockProduction => {
-                if let Err(error) = bank.resanitize_transaction_minimally(
-                    transaction,
-                    task.sanitized_epoch(),
-                    task.alt_invalidation_slot(),
-                ) {
-                    *result = Err(error);
-                    return;
-                }
-
-                // Due to the probable presence of an independent banking thread (like the jito
-                // thread), we are forced to lock the addresses unlike block verification. The
-                // scheduling thread isn't appropriate for these kinds of work; so, instead do that
-                // by one of handler threads.
-                //
-                // Assuming the banking thread isn't tightly integrated and thus it's rather opaque
-                // to the unified scheduler, there's no proper way to be race-free other than
-                // actually locking the accounts.
-                //
-                // That means there's also no proper signalling mechanism among them after
-                // unlocking as well. So, we resort to spin lock here with mercy of slight
-                // humbleness (100us sleep per retry).
-                //
-                // Note that this is quite coarse/suboptimal solution to the above problem.
-                // Ideally, this should be handled more gracefully. As for the worst case analysis,
-                // this will indeed create a rather noisy lock contention. However, this is already
-                // the case as well for the other block producing method (CentralScheduler). So,
-                // this could be justified here, hopefully...
-                let mut batch;
-                let started = Instant::now();
-                loop {
-                    batch = bank.prepare_locked_batch_from_single_tx(transaction);
-                    let lock_result = &batch.lock_results()[0];
-                    if let Ok(()) = lock_result {
-                        break;
-                    }
-                    assert_matches!(lock_result, Err(TransactionError::AccountInUse));
-                    if started.elapsed() > Duration::from_millis(400) {
-                        *result = Err(TransactionError::CommitCancelled);
-                        return;
-                    }
-                    sleep(Duration::from_micros(100));
-                }
-                batch
-            }
-        };
-        let transaction_indexes = match scheduling_context.mode() {
-            BlockVerification => {
-                // Block verification's task_id should always be within usize.
-                vec![task_id.try_into().unwrap()]
-            }
-            BlockProduction => {
-                // Create a placeholder vec, which will be populated later if
-                // transaction_status_sender is Some(_).
-                // transaction_status_sender is usually None for staked nodes because it's only
-                // used for RPC-related additional data recording. However, a staked node could
-                // also be running with rpc functionalities during development. So, we need to
-                // correctly support the use case for produced blocks as well, like verified blocks
-                // via the replaying stage.
-                // Refer `record_token_balances` in `execute_batch()` as this treatment is mirrored
-                // from it.
-                // This is code path is directly corresponds to the pre_commit_callback in
-                // execute_batch().
-                vec![]
-            }
-        };
+        // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
+        // responsible for locking.
+        let batch = bank.prepare_unlocked_batch_from_single_tx(transaction);
+        // Block verification's task_id should always be within usize.
+        let transaction_indexes = vec![task_id.try_into().unwrap()];
         let batch_with_indexes = TransactionBatchWithIndexes {
             batch,
             transaction_indexes,
         };
 
-        let pre_commit_callback = match scheduling_context.mode() {
-            BlockVerification => None,
-            BlockProduction => Some(|processing_result: &'_ Result<ProcessedTransaction>| {
-                let Ok(processed_transaction) = processing_result else {
-                    return Err(processing_result.as_ref().unwrap_err().clone());
-                };
-
-                // Now it's the procrastinated time of _optimistic_ provisioning of block cost at the
-                // basis of actual executed units!
-                // Block cost limits aren't provisioned upfront in block-producing unified
-                // scheduler at all to avoid locking cost_tracker twice (for post-execution
-                // adjustment) per transaction in almost all task handling. The only exception is
-                // the unfortunate ones at the end of slot due to poh or cost limits. For the poh
-                // case only, we have to suffer from twice locking, but it's very transitory,
-                // considering unified scheduler immediately transitions to buffering, waiting for
-                // next fresh bank.
-                // In other words, unified scheduler doesn't try to populate the almost-filled bank
-                // with next-higher-paying transactions. This behavior isn't perfect for profit
-                // maximization; priority adherence is preferred here.
-                let cost = CostModel::calculate_cost_for_executed_transaction(
-                    transaction,
-                    processed_transaction.executed_units(),
-                    processed_transaction.loaded_accounts_data_size(),
-                    &bank.feature_set,
-                );
-                // Note that we're about to partially commit side effects to bank in _pre commit_
-                // callback. Extra care must be taken in the case of poh failure just below;
-                bank.write_cost_tracker().unwrap().try_add(&cost)?;
-
-                let RecordTransactionsSummary {
-                    result,
-                    starting_transaction_index,
-                    ..
-                } = handler_context
-                    .transaction_recorder
-                    .as_ref()
-                    .unwrap()
-                    .record_transactions(
-                        bank.bank_id(),
-                        vec![transaction.to_versioned_transaction()],
-                    );
-                match result {
-                    Ok(()) => Ok(starting_transaction_index),
-                    Err(_) => {
-                        // Poh failed; need to revert the committed cost state change.
-                        bank.write_cost_tracker().unwrap().remove(&cost);
-                        Err(TransactionError::CommitCancelled)
-                    }
-                }
-            }),
-        };
+        let pre_commit_callback =
+            Option::<fn(&Result<ProcessedTransaction>) -> Result<Option<usize>>>::None;
 
         *result = execute_batch(
             &batch_with_indexes,
@@ -1307,18 +1095,6 @@ impl ExecutedTask {
 
     fn consumed_block_size(&self) -> BlockSize {
         self.task.consumed_block_size()
-    }
-
-    fn sanitized_epoch(&self) -> Epoch {
-        self.task.sanitized_epoch()
-    }
-
-    fn alt_invalidation_slot(&self) -> Slot {
-        self.task.alt_invalidation_slot()
-    }
-
-    fn into_transaction(self) -> RuntimeTransaction<SanitizedTransaction> {
-        self.task.into_transaction()
     }
 }
 
@@ -1798,74 +1574,16 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     }
 
     fn max_running_task_count(mode: SchedulingMode, thread_count: usize) -> Option<usize> {
-        match mode {
-            BlockVerification => {
-                // Unlike block production, there is no agony for block verification with regards
-                // to max_running_task_count. Its responsibility is to execute all transactions by
-                // _the pre-determined order_ and no reprioritization or interruption whatsoever.
-                // So, just specify no limit and buffer everything as much as possible at the
-                // runnable task channel.
-                None
-            }
-            BlockProduction => {
-                // Unlike block verification, it's desired for block production to be safely
-                // interrupted as soon as possible after session is ending. Thus, don't take
-                // unbounded number of non-conflicting tasks out of SchedulingStateMachine, which
-                // all needs to be descheduled before finishing session.
-                //
-                // That said, max_running_task_count shouldn't naively be matched to
-                // thread_count (i.e. the number of handler threads). Actually, it should account
-                // for some extra queue depth to avoid depletions at the runnable task channel.
-                // Otherwise, handler thread could be busy-looping at best or stalled on syscall at
-                // worst for the next runnable task to be scheduled by the scheduler thread even
-                // though there are actually more runnable tasks at hand in fact. That would
-                // significantly hurt concurrency, and eventually throughput. While throughput
-                // isn't the primary design target (= low latency) of unified scheduler, this
-                // warrants some compromise here. Note that increasing the buffering at crossbeam
-                // channels hampers timing sensitivity of task reprioritization on higher-paying
-                // transaction arrival at the middle of slot, which is selling point of unified
-                // scheduler to recite. This is because there is no efficient way to selectively
-                // remove messages from them. Put differently, sent tasks aren't interruptible.
-                //
-                // So, all in all, we need to strike some nuanced balance here. Currently, this has
-                // not rigidly been tested yet; but capping to 2x of handler thread should be
-                // enough, because unified scheduler is latency optimized... This means each thread
-                // has extra pseudo task queue entry.
-                const MAX_RUNNING_TASK_COUNT_FACTOR: usize = 2;
-
-                Some(
-                    thread_count
-                        .checked_mul(MAX_RUNNING_TASK_COUNT_FACTOR)
-                        .unwrap(),
-                )
-            }
-        }
+        let _ = mode;
+        let _ = thread_count;
+        // Its responsibility is to execute all transactions by the pre-determined order with no
+        // reprioritization or interruption.
+        None
     }
 
     fn max_unique_active_task_count(mode: SchedulingMode) -> Option<usize> {
-        match mode {
-            BlockVerification => {
-                // We can't silently drop block verification tasks by imposing some arbitrary limit
-                // here; otherwise same transactions could be allowed in the same block!
-                // The block size (i.e. shred count) limit is already enforced before unified
-                // scheduler.
-                None
-            }
-            BlockProduction => {
-                // Unlike BlockVerification, we need to cap the maximum number of tasks at hand at
-                // any given moment, in order to avoid unbounded memory consumption, which is
-                // remotely controllable. Also, drop duplicate tasks to make better use of the now
-                // constrained space.
-                // Note that this deduplication isn't perfect because it searches duplicates only
-                // among the _current_ active task set, allowing false negatives (i.e. failure of
-                // duplicate detection) in the already handled tasks. However, it's effective
-                // enough, given that significant buffering just before the first leader slot.
-                // This naive impl is chosen; otherwise proper eviction would rather be hard here,
-                // considering the existence of transaction retires (same tx but with different
-                // task id).
-                Some(MAX_UNIQUE_ACTIVE_TASK_COUNT)
-            }
-        }
+        let _ = mode;
+        None
     }
 
     fn can_receive_unblocked_task(
@@ -1873,19 +1591,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         mode: SchedulingMode,
         state_machine: &SchedulingStateMachine,
     ) -> bool {
-        match mode {
-            BlockVerification => {
-                // Always take as much as possible out of SchedulingStateMachine to avoid crossbeam
-                // channel internal message buffering depletion with much relaxed condition than
-                // block production.
-                state_machine.has_unblocked_task()
-            }
-            BlockProduction => {
-                // Much like max_running_task_count() reasonings, stop taking runnable and
-                // unblocked tasks out of SchedulingStateMachine as soon as session is ending.
-                !session_ending && state_machine.has_runnable_task()
-            }
-        }
+        let _ = session_ending;
+        let _ = mode;
+        state_machine.has_unblocked_task()
     }
 
     fn can_finish_session(
@@ -1893,19 +1601,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         mode: SchedulingMode,
         state_machine: &SchedulingStateMachine,
     ) -> bool {
-        match mode {
-            BlockVerification => {
-                // It's needed to wait to execute all active tasks without any short-circuiting,
-                // even if the session has been signalled for ending; otherwise verification
-                // outcome could differ.
-                session_ending && state_machine.has_no_active_task()
-            }
-            BlockProduction => {
-                // No need to wait to execute all active tasks unlike block verification. Just wind
-                // down all tasks which has already been passed down to handler threads.
-                session_ending && state_machine.has_no_running_task()
-            }
-        }
+        let _ = mode;
+        session_ending && state_machine.has_no_active_task()
     }
 
     /// Returns `true` if the caller should abort.
@@ -1925,100 +1622,28 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         ));
         timings.accumulate(&executed_task.result_with_timings.1);
 
-        match mode {
-            BlockVerification => match executed_task.result_with_timings.0 {
-                Ok(()) => {
-                    // The most normal case
-                    // This is only for block production.
-                    assert_eq!(executed_task.consumed_block_size(), 0);
-
-                    false
-                }
-                // This should never be observed because the scheduler thread makes all running
-                // tasks are conflict-free
-                Err(TransactionError::AccountInUse)
-                // These should have been validated by blockstore by now
-                | Err(TransactionError::AccountLoadedTwice)
-                | Err(TransactionError::TooManyAccountLocks)
-                // Block verification should never see this:
-                | Err(TransactionError::CommitCancelled) => {
-                    unreachable!()
-                }
-                Err(error) => {
-                    error!("error is detected while accumulating....: {error:?}");
-                    *result = Err(error);
-                    true
-                }
-            },
-            BlockProduction => {
-                match executed_task.result_with_timings.0 {
-                    Ok(()) => {
-                        // The most normal case
-                        *block_size_estimate = block_size_estimate
-                            .checked_add(executed_task.consumed_block_size())
-                            .unwrap();
-
-                        // Avoid too large blocks in byte wise, which could destabilize the
-                        // cluster.
-                        //
-                        // While this check is very light-weight, it isn't rigid nor deterministic.
-                        // That's why it's called an estimate-based _threshold_, not _limit_ to
-                        // indicate these implications. This lenient behavior is acceptable.
-                        if *block_size_estimate > MAX_BLOCK_SIZE_THRESHOLD {
-                            sleepless_testing::at(CheckPoint::SessionEnding);
-                            *session_ending = true;
-                        }
-                    }
-                    Err(TransactionError::CommitCancelled)
-                    | Err(TransactionError::WouldExceedMaxBlockCostLimit)
-                    | Err(TransactionError::WouldExceedMaxVoteCostLimit)
-                    | Err(TransactionError::WouldExceedMaxAccountCostLimit)
-                    | Err(TransactionError::WouldExceedAccountDataBlockLimit) => {
-                        // Treat these errors as indication of block full signal while retrying the
-                        // task at the same time.
-                        Self::rebuffer_task_for_next_session(
-                            executed_task,
-                            state_machine,
-                            session_ending,
-                            handler_context,
-                        );
-                    }
-                    // This should never be observed because the scheduler thread makes all running
-                    // tasks are conflict-free; Furthermore, block producing scheduler should be
-                    // prepared for the probable presence of an independent banking thread (like
-                    // the jito thread). This is addressed by the TaskHandler::handle().
-                    Err(TransactionError::AccountInUse)
-                    // These should have been validated by banking_packet_handler by now
-                    | Err(TransactionError::AccountLoadedTwice)
-                    | Err(TransactionError::TooManyAccountLocks) => {
-                        unreachable!();
-                    }
-                    Err(ref error) => {
-                        // The other errors; just discard tasks. These are permanently
-                        // not-committable worthless tasks.
-                        debug!("error is detected while accumulating....: {error:?}");
-                    }
-                };
-                // Don't abort at all in block production unlike block verification
+        let _ = mode;
+        let _ = state_machine;
+        let _ = block_size_estimate;
+        let _ = session_ending;
+        let _ = handler_context;
+        match executed_task.result_with_timings.0 {
+            Ok(()) => {
+                assert_eq!(executed_task.consumed_block_size(), 0);
                 false
             }
+            Err(TransactionError::AccountInUse)
+            | Err(TransactionError::AccountLoadedTwice)
+            | Err(TransactionError::TooManyAccountLocks)
+            | Err(TransactionError::CommitCancelled) => {
+                unreachable!()
+            }
+            Err(error) => {
+                error!("error is detected while accumulating....: {error:?}");
+                *result = Err(error);
+                true
+            }
         }
-    }
-
-    fn rebuffer_task_for_next_session(
-        executed_task: Box<ExecutedTask>,
-        state_machine: &mut SchedulingStateMachine,
-        session_ending: &mut bool,
-        handler_context: &HandlerContext,
-    ) {
-        let task = handler_context
-            .banking_stage_helper()
-            .recreate_task(executed_task);
-        state_machine.buffer_task(task);
-
-        // Now, new session is desired, start session_ending.
-        sleepless_testing::at(CheckPoint::SessionEnding);
-        *session_ending = true;
     }
 
     fn take_session_result_with_timings(&mut self) -> ResultWithTimings {
@@ -2044,12 +1669,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         let scheduling_mode = context.mode();
         let mut current_slot = context.slot();
         let mut block_size_estimate = 0;
-        let (mut is_finished, mut session_ending) = match scheduling_mode {
-            BlockVerification => (false, false),
-            BlockProduction => {
-                assert!(context.is_preallocated());
-                (true, true)
-            }
+        let (mut is_finished, mut session_ending) = if context.is_preallocated() {
+            (true, true)
+        } else {
+            (false, false)
         };
 
         // Firstly, setup bi-directional messaging between the scheduler and handlers to pass
@@ -2268,7 +1891,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 runnable_task_sender.send_payload(task).unwrap();
                             },
                             recv(new_task_receiver) -> message => {
-                                assert!(scheduling_mode == BlockProduction || !session_ending);
+                                assert!(!session_ending);
 
                                 match message {
                                     Ok(NewTaskPayload::Payload(task)) => {
@@ -2335,27 +1958,18 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         .send(result_with_timings)
                         .expect("always outlived receiver");
 
-                    if matches!(scheduling_mode, BlockProduction) {
-                        datapoint_info!(
-                            "unified_scheduler-bp_session_stats",
-                            ("slot", current_slot.unwrap_or_default(), i64),
-                            ("block_size_estimate", block_size_estimate, i64),
-                            ("total_task_count", state_machine.total_task_count(), i64),
-                            (
-                                "peak_active_task_count",
-                                state_machine.peak_active_task_count(),
-                                i64
-                            ),
-                            (
-                                "dropped_task_count",
-                                state_machine.dropped_task_count(),
-                                i64
-                            ),
-                        );
-                    }
-                    if matches!(scheduling_mode, BlockVerification) {
-                        state_machine.reinitialize();
-                    }
+                    let _ = (scheduling_mode, current_slot, block_size_estimate);
+                    datapoint_info!(
+                        "unified_scheduler-session_stats",
+                        ("slot", current_slot.unwrap_or_default(), i64),
+                        ("total_task_count", state_machine.total_task_count(), i64),
+                        (
+                            "peak_active_task_count",
+                            state_machine.peak_active_task_count(),
+                            i64
+                        ),
+                    );
+                    state_machine.reinitialize();
                     assert!(mem::replace(&mut session_ending, false));
 
                     // This variable is hoisted from OpenSubchannel match arm to pass the rustc
@@ -2385,7 +1999,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 sleepless_testing::at(CheckPoint::NewBufferedOrDroppedTask(
                                     task.task_id(),
                                 ));
-                                assert_matches!(scheduling_mode, BlockProduction);
                                 state_machine.buffer_task(task);
                             }
                             Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
@@ -2406,26 +2019,15 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         handler_context.thread_count,
                                     )
                                     .unwrap();
-                                // As for block production, poh isn't guaranteed to be updated to
-                                // the new BankWithScheduler. So, only break from this loop for
-                                // block verification.
-                                if matches!(scheduling_mode, BlockVerification) {
-                                    break;
-                                }
+                                break;
                             }
                             Ok(NewTaskPayload::UnpauseOpenedSubchannel) => {
-                                assert_matches!(scheduling_mode, BlockProduction);
-                                // poh update is guaranteed now; time to crunch on tasks!
                                 break;
                             }
                             Ok(NewTaskPayload::CloseSubchannel) => {
-                                assert_matches!(scheduling_mode, BlockProduction);
-                                // This match arm can be hit if context.is_preallocated()
-                                // or abort is hinted from task results, before explicit
-                                // session ending is sent from the poh or the replay thread.
+                                break;
                             }
                             Ok(NewTaskPayload::Reset) => {
-                                assert_matches!(scheduling_mode, BlockProduction);
                                 discard_on_reset = true;
                             }
                             Ok(NewTaskPayload::Disconnect) => {
@@ -2549,10 +2151,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             }
         };
 
-        let mode_char = match scheduling_mode {
-            BlockVerification => 'V',
-            BlockProduction => 'P',
-        };
+        let mode_char = 'V';
 
         self.scheduler_thread = Some(
             thread::Builder::new()
@@ -2870,8 +2469,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
         // semantics of session ending should be defined from the external system's perspective;
         // i.e. the completion of all scheduled task inside the unified scheduler. So, it can't be
         // nonblocking there.
-        let nonblocking = matches!(self.context().mode(), BlockProduction);
-        self.inner.thread_manager.do_end_session(nonblocking);
+        self.inner.thread_manager.do_end_session(false);
     }
 
     fn unpause_after_taken(&self) {
@@ -2925,9 +2523,7 @@ mod tests {
         crate::sleepless_testing,
         assert_matches::assert_matches,
         solana_clock::{MAX_PROCESSING_AGE, Slot},
-        solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
         solana_poh::record_channels::record_channels,
         solana_pubkey::Pubkey,
         solana_runtime::{
@@ -2950,7 +2546,6 @@ mod tests {
             sync::{Arc, RwLock},
             thread::JoinHandle,
         },
-        test_case::test_matrix,
     };
 
     impl<S, TH> SchedulerPool<S, TH>
@@ -4023,13 +3618,10 @@ mod tests {
         solana_ledger::genesis_utils::create_genesis_config(lamports)
     }
 
-    #[test_matrix(
-        [BlockVerification, BlockProduction]
-    )]
-    fn test_scheduler_schedule_execution_blocked_at_session_ending(
-        scheduling_mode: SchedulingMode,
-    ) {
+    #[test]
+    fn test_scheduler_schedule_execution_blocked_at_session_ending() {
         agave_logger::setup();
+        let scheduling_mode = BlockVerification;
 
         const STALLED_TRANSACTION_INDEX: OrderedTaskId = 0;
         const BLOCKED_TRANSACTION_INDEX: OrderedTaskId = 1;
@@ -4092,10 +3684,7 @@ mod tests {
 
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-        let supported_scheduling_mode = match scheduling_mode {
-            BlockVerification => SupportedSchedulingMode::with_verification(),
-            BlockProduction => SupportedSchedulingMode::with_production(),
-        };
+        let supported_scheduling_mode = SupportedSchedulingMode::with_verification();
         let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
             supported_scheduling_mode,
             None,
@@ -4104,21 +3693,9 @@ mod tests {
             None,
             None,
         );
-        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-
         let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
+        let _transaction_recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
-
-        if matches!(scheduling_mode, BlockProduction) {
-            pool.register_banking_stage(
-                None,
-                banking_packet_receiver,
-                Box::new(|_, _| unreachable!()),
-                transaction_recorder,
-                Box::new(DummyBankingMinitor),
-            );
-        }
 
         // This variable tracks the cumulative count of transactions since genesis, which is
         // incremented as test is progressed.
@@ -4128,10 +3705,6 @@ mod tests {
         let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
         let old_scheduler_id = scheduler.id();
-        if matches!(scheduling_mode, BlockProduction) {
-            scheduler.unpause_after_taken();
-        }
-
         scheduler
             .schedule_execution(tx0, STALLED_TRANSACTION_INDEX)
             .unwrap();
@@ -4171,17 +3744,8 @@ mod tests {
         // make sure the same scheduler is used to test its internal cross-session behavior
         // regardless scheduling_mode.
         assert_eq!(scheduler.id(), old_scheduler_id);
-        if matches!(scheduling_mode, BlockProduction) {
-            scheduler.unpause_after_taken();
-        }
-
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
-
-        if matches!(scheduling_mode, BlockProduction) {
-            // Block production scheduler should carry over transactions from previous bank
-            expected_transaction_count += 1;
-        }
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
     }
 
@@ -4642,7 +4206,6 @@ mod tests {
             banking_packet_receiver: never(),
             banking_packet_handler: Box::new(|_, _| {}),
             banking_stage_helper: None,
-            transaction_recorder: None,
         };
 
         let task = SchedulingStateMachine::create_task(tx, 0, &mut |_| {
@@ -4650,135 +4213,6 @@ mod tests {
         });
         DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
         assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
-    }
-
-    enum TxResult {
-        ExecutedWithSuccess,
-        ExecutedWithFailure,
-        NotExecuted,
-    }
-
-    #[test_matrix(
-        [TxResult::ExecutedWithSuccess, TxResult::ExecutedWithFailure, TxResult::NotExecuted],
-        [false, true]
-    )]
-    fn test_task_handler_poh_recording(tx_result: TxResult, should_succeed_to_record_to_poh: bool) {
-        agave_logger::setup();
-
-        let GenesisConfigInfo {
-            genesis_config,
-            ref mint_keypair,
-            ..
-        } = create_genesis_config_for_block_production(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let bank_forks = BankForks::new_rw_arc(bank);
-        let bank = bank_forks.read().unwrap().working_bank_with_scheduler();
-
-        let (tx, expected_tx_result) = match tx_result {
-            TxResult::ExecutedWithSuccess => (
-                system_transaction::transfer(
-                    mint_keypair,
-                    &solana_pubkey::new_rand(),
-                    1,
-                    genesis_config.hash(),
-                ),
-                Ok(()),
-            ),
-            TxResult::ExecutedWithFailure => (
-                system_transaction::transfer(
-                    mint_keypair,
-                    &solana_pubkey::new_rand(),
-                    1_000_000,
-                    genesis_config.hash(),
-                ),
-                Ok(()),
-            ),
-            TxResult::NotExecuted => (
-                system_transaction::transfer(
-                    mint_keypair,
-                    &solana_pubkey::new_rand(),
-                    1,
-                    Hash::default(),
-                ),
-                Err(TransactionError::BlockhashNotFound),
-            ),
-        };
-        let tx = RuntimeTransaction::from_transaction_for_tests(tx);
-
-        let result = &mut Ok(());
-        let timings = &mut ExecuteTimings::default();
-        let scheduling_context = &SchedulingContext::for_production(bank.clone());
-        let (sender, receiver) = crossbeam_channel::unbounded();
-
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-
-        let handler_context = &HandlerContext {
-            thread_count: 0,
-            log_messages_bytes_limit: None,
-            transaction_status_sender: Some(TransactionStatusSender {
-                sender,
-                dependency_tracker: None,
-            }),
-            replay_vote_sender: None,
-            prioritization_fee_cache: None,
-            banking_packet_receiver: never(),
-            banking_packet_handler: Box::new(|_, _| {}),
-            banking_stage_helper: None,
-            transaction_recorder: Some(transaction_recorder),
-        };
-
-        let task = SchedulingStateMachine::create_task(tx.clone(), 0, &mut |_| {
-            UsageQueue::new(&Capability::FifoQueueing)
-        });
-
-        // Recording will succeed based upon if the channel is shutdown or not.
-        if should_succeed_to_record_to_poh {
-            // If we should succeed, we reset the channel to accept records.
-            record_receiver.restart(bank.bank_id());
-        }
-
-        assert_eq!(bank.transaction_count(), 0);
-        assert_eq!(bank.transaction_error_count(), 0);
-        DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
-
-        if should_succeed_to_record_to_poh {
-            if expected_tx_result.is_ok() {
-                assert_matches!(result, Ok(()));
-                assert_eq!(bank.transaction_count(), 1);
-                if matches!(tx_result, TxResult::ExecutedWithFailure) {
-                    assert_eq!(bank.transaction_error_count(), 1);
-                } else {
-                    assert_eq!(bank.transaction_error_count(), 0);
-                }
-                assert_matches!(
-                    receiver.try_recv(),
-                    Ok(TransactionStatusMessage::Batch((
-                        TransactionStatusBatch { .. },
-                        None, // no work id
-                    )))
-                );
-                // check that the `Record` is correctly sent through the channel;
-                // in reality this would then be picked up by PoH service.
-                assert!(record_receiver.try_recv().is_ok());
-            } else {
-                assert_eq!(result, &expected_tx_result);
-                assert_eq!(bank.transaction_count(), 0);
-                assert_eq!(bank.transaction_error_count(), 0);
-                assert_matches!(receiver.try_recv(), Err(_));
-                assert!(record_receiver.try_recv().is_err());
-            }
-        } else {
-            if expected_tx_result.is_ok() {
-                assert_matches!(result, Err(TransactionError::CommitCancelled));
-            } else {
-                assert_eq!(result, &expected_tx_result);
-            }
-
-            assert_eq!(bank.transaction_count(), 0);
-            assert_matches!(receiver.try_recv(), Err(_));
-            assert!(record_receiver.try_recv().is_err());
-        }
     }
 
     #[derive(Debug)]

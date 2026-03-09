@@ -39,7 +39,6 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_time_utils::AtomicInterval,
-    solana_unified_scheduler_logic::SchedulingMode,
     std::{
         num::{NonZeroU64, NonZeroUsize, Saturating},
         ops::Deref,
@@ -848,23 +847,12 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     poh_controller: &mut PohController,
     tpu_bank: Bank,
 ) {
-    let tpu_bank = bank_forks
-        .write()
-        .unwrap()
-        .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
+    let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
     let tpu_bank_for_poh = tpu_bank.clone_with_scheduler();
-    let set_bank_res = if tpu_bank.has_installed_active_bp_scheduler() {
-        // Waiting here is needed because unified scheduler assumes bank exists in poh immediately
-        // after calling unpause_new_block_production_scheduler(). Otherwise, it wrongly thinks poh
-        // reached to the max tick height.
-        poh_controller.set_bank_sync(tpu_bank_for_poh)
-    } else {
-        poh_controller.set_bank(tpu_bank_for_poh)
-    };
+    let set_bank_res = poh_controller.set_bank(tpu_bank_for_poh);
     if set_bank_res.is_err() {
         warn!("Failed to set poh bank, poh service is disconnected");
     }
-    tpu_bank.unpause_new_block_production_scheduler();
 }
 
 #[derive(Debug)]

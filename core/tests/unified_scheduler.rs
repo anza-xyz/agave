@@ -35,7 +35,7 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_system_transaction as system_transaction,
     solana_transaction_error::TransactionResult as Result,
-    solana_unified_scheduler_logic::{SchedulingMode, Task},
+    solana_unified_scheduler_logic::Task,
     solana_unified_scheduler_pool::{
         DefaultSchedulerPool, DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool,
         TaskHandler,
@@ -261,14 +261,10 @@ fn test_scheduler_producing_blocks() {
 
     // Crate tpu_bank
     let tpu_bank = Bank::new_from_parent(genesis_bank.clone(), &Pubkey::default(), 2);
-    let tpu_bank = bank_forks
-        .write()
-        .unwrap()
-        .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
+    let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
     poh_controller
-        .set_bank_sync(tpu_bank.clone_with_scheduler())
+        .set_bank(tpu_bank.clone_with_scheduler())
         .unwrap();
-    tpu_bank.unpause_new_block_production_scheduler();
     let tpu_bank = bank_forks.read().unwrap().working_bank_with_scheduler();
     assert_eq!(tpu_bank.transaction_count(), 0);
 

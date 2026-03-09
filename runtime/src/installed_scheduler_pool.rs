@@ -263,7 +263,7 @@ pub struct SchedulingContext {
 impl SchedulingContext {
     pub fn for_preallocation() -> Self {
         Self {
-            mode: SchedulingMode::BlockProduction,
+            mode: SchedulingMode::BlockVerification,
             bank: None,
         }
     }
@@ -283,7 +283,7 @@ impl SchedulingContext {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn for_production(bank: Arc<Bank>) -> Self {
-        Self::new_with_mode(SchedulingMode::BlockProduction, bank)
+        Self::for_verification(bank)
     }
 
     pub fn is_preallocated(&self) -> bool {
@@ -508,11 +508,7 @@ impl BankWithScheduler {
     }
 
     pub fn has_installed_active_bp_scheduler(&self) -> bool {
-        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
-            matches!(scheduler.context().mode(), SchedulingMode::BlockProduction)
-        } else {
-            false
-        }
+        false
     }
 
     /// Schedule the transaction as long as the scheduler hasn't been aborted.
@@ -567,7 +563,10 @@ impl BankWithScheduler {
 
     pub fn unpause_new_block_production_scheduler(&self) {
         if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
-            assert_matches!(scheduler.context().mode(), SchedulingMode::BlockProduction);
+            assert_matches!(
+                scheduler.context().mode(),
+                SchedulingMode::BlockVerification
+            );
             scheduler.unpause_after_taken();
         }
     }
