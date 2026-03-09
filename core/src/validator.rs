@@ -6,7 +6,6 @@ use {
         admin_rpc_post_init::{AdminRpcRequestMetadataPostInit, KeyUpdaterType, KeyUpdaters},
         banking_stage::{
             BankingStage, transaction_scheduler::scheduler_controller::SchedulerConfig,
-            unified_scheduler::ensure_banking_stage_setup,
         },
         banking_trace::{self, BankingTracer, TraceError},
         block_creation_loop::{BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen},
@@ -1063,14 +1062,6 @@ impl Validator {
             transaction_status_sender.clone(),
             Some(replay_vote_sender.clone()),
             prioritization_fee_cache.clone(),
-        );
-        ensure_banking_stage_setup(
-            &scheduler_pool,
-            &bank_forks,
-            &banking_tracer_channels,
-            &poh_recorder,
-            transaction_recorder.clone(),
-            config.block_production_num_workers,
         );
         bank_forks
             .write()

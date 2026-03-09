@@ -86,11 +86,6 @@ mod scheduler_messages;
 
 pub mod transaction_scheduler;
 
-#[cfg(feature = "dev-context-only-utils")]
-pub mod unified_scheduler;
-#[cfg(not(feature = "dev-context-only-utils"))]
-pub(crate) mod unified_scheduler;
-
 #[cfg(unix)]
 mod progress_tracker;
 #[cfg(unix)]

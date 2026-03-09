@@ -4,7 +4,6 @@ use {
         banking_stage::{
             BankingStage, BankingStageHandle, LikeClusterInfo,
             transaction_scheduler::scheduler_controller::SchedulerConfig,
-            unified_scheduler::ensure_banking_stage_setup,
             update_bank_forks_and_poh_recorder_for_new_tpu_bank,
         },
         banking_trace::{
@@ -797,16 +796,12 @@ impl BankingSimulator {
 
         let num_workers = BankingStage::default_num_workers();
         let banking_tracer_channels = retracer.create_channels();
-        if let Some(pool) = unified_scheduler_pool {
-            ensure_banking_stage_setup(
-                &pool,
-                &bank_forks,
-                &banking_tracer_channels,
-                &poh_recorder,
-                transaction_recorder.clone(),
-                num_workers,
-            );
-        };
+        let _ = (
+            &unified_scheduler_pool,
+            &poh_recorder,
+            &transaction_recorder,
+            num_workers,
+        );
         let Channels {
             non_vote_sender,
             non_vote_receiver,

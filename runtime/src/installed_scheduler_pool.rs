@@ -281,11 +281,6 @@ impl SchedulingContext {
         Self::new_with_mode(SchedulingMode::BlockVerification, bank)
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn for_production(bank: Arc<Bank>) -> Self {
-        Self::for_verification(bank)
-    }
-
     pub fn is_preallocated(&self) -> bool {
         self.bank.is_none()
     }
