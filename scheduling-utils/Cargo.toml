@@ -19,7 +19,6 @@ agave-scheduler-bindings = { workspace = true }
 agave-transaction-view = { workspace = true }
 ahash.workspace = true
 bincode = { workspace = true, optional = true }
-metrics = { workspace = true }
 rts-alloc = { workspace = true }
 shaq = { workspace = true }
 slotmap = { workspace = true }
