@@ -1875,6 +1875,7 @@ impl Bank {
             !epoch_stakes.is_empty(),
             "should be populated (from fields.versioned_epoch_stakes)"
         );
+        let stakes_accounts_load_duration = now.elapsed();
         // The serialized rent collector is deprecated. Instead, reconstruct from fields plus
         // the rent sysvar account state.
         let rent = {
@@ -1886,7 +1887,6 @@ impl Bank {
             from_account::<sysvar::rent::Rent, _>(&rent_sysvar)
                 .expect("snapshot must contain well-formed rent sysvar account")
         };
-        let stakes_accounts_load_duration = now.elapsed();
         let mut bank = Self {
             rc: bank_rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
