@@ -207,12 +207,6 @@ pub struct SVMTransactionExecutionCost {
 
 impl Default for SVMTransactionExecutionCost {
     fn default() -> Self {
-        Self::new_with_defaults()
-    }
-}
-
-impl SVMTransactionExecutionCost {
-    pub fn new_with_defaults() -> Self {
         SVMTransactionExecutionCost {
             log_64_units: 100,
             create_program_address_units: 1500,
@@ -267,7 +261,9 @@ impl SVMTransactionExecutionCost {
             bls12_381_additional_pair_cost: 13_023,
         }
     }
+}
 
+impl SVMTransactionExecutionCost {
     /// Returns cost of the Poseidon hash function for the given number of
     /// inputs is determined by the following quadratic function:
     ///

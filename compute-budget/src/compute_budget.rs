@@ -159,7 +159,7 @@ impl ComputeBudget {
     pub fn new_with_defaults(simd_0268_active: bool) -> Self {
         Self::from_budget_and_cost(
             &SVMTransactionExecutionBudget::new_with_defaults(simd_0268_active),
-            &SVMTransactionExecutionCost::new_with_defaults(),
+            &SVMTransactionExecutionCost::default(),
         )
     }
 
