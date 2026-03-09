@@ -46,7 +46,7 @@ use {
         alloc::Layout,
         borrow::Cow,
         cell::RefCell,
-        collections::HashSet,
+        collections::{HashMap, HashSet},
         fmt::{self, Debug},
         rc::Rc,
     },
@@ -974,33 +974,8 @@ pub fn mock_process_instruction_with_feature_set<
     mut post_adjustments: G,
     feature_set: &SVMFeatureSet,
 ) -> Vec<AccountSharedData> {
-    let mut instruction_accounts: Vec<InstructionAccount> =
-        Vec::with_capacity(instruction_account_metas.len());
-    for account_meta in instruction_account_metas.iter() {
-        let index_in_transaction = accounts
-            .iter()
-            .position(|(key, _account)| *key == account_meta.pubkey)
-            .unwrap_or(accounts.len()) as IndexOfAccount;
-        instruction_accounts.push(InstructionAccount::new(
-            index_in_transaction,
-            account_meta.is_signer,
-            account_meta.is_writable,
-        ));
-    }
-
-    let (program_index, program_owner, pop_program_account) = accounts
-        .iter()
-        .enumerate()
-        .find(|(_, (key, _))| key == program_id)
-        .map(|(i, (_, acct))| (i, *acct.owner(), false))
-        .unwrap_or_else(|| {
-            let owner = native_loader::id();
-            accounts.push((*program_id, AccountSharedData::new(0, 0, &owner)));
-            (accounts.len().saturating_sub(1), owner, true)
-        });
-    let is_builtin = native_loader::check_id(&program_owner);
-
-    let pop_epoch_schedule_account = if !accounts
+    let original_len = accounts.len();
+    if !accounts
         .iter()
         .any(|(key, _)| *key == sysvar::epoch_schedule::id())
     {
@@ -1008,16 +983,29 @@ pub fn mock_process_instruction_with_feature_set<
             sysvar::epoch_schedule::id(),
             create_account_shared_data_for_test(&EpochSchedule::default()),
         ));
-        true
-    } else {
-        false
-    };
+    }
+
+    let instruction =
+        Instruction::new_with_bytes(*program_id, instruction_data, instruction_account_metas);
+    let (sanitized_message, transaction_accounts) =
+        mock_compile_message(&instruction, &accounts, program_id, &native_loader::id()).unwrap();
+
+    let program_owner = accounts
+        .iter()
+        .find(|(key, _)| key == program_id)
+        .map(|(_, acct)| *acct.owner())
+        .unwrap_or_else(native_loader::id);
+    let is_builtin = native_loader::check_id(&program_owner);
+
     with_mock_invoke_context_with_feature_set!(
         invoke_context,
         transaction_context,
         feature_set,
-        accounts
+        1,
+        transaction_accounts,
+        &accounts
     );
+
     let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
     program_cache_for_tx_batch.replenish(
         if is_builtin {
@@ -1035,26 +1023,33 @@ pub fn mock_process_instruction_with_feature_set<
             .unwrap_or(1),
     );
     invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
+
     pre_adjustments(&mut invoke_context);
+
+    let compiled_ix = sanitized_message.instructions().first().unwrap();
+    let program_account_index = compiled_ix.program_id_index as u16;
     invoke_context
-        .transaction_context
-        .configure_top_level_instruction_for_tests(
-            program_index as IndexOfAccount,
-            instruction_accounts,
-            instruction_data.to_vec(),
-        )
+        .prepare_top_level_instructions(&sanitized_message, &[program_account_index])
         .unwrap();
+
     let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
     assert_eq!(result, expected_result);
     post_adjustments(&mut invoke_context);
-    let mut accounts = transaction_context.deconstruct_without_keys().unwrap();
-    if pop_epoch_schedule_account {
-        accounts.pop();
-    }
-    if pop_program_account {
-        accounts.pop();
-    }
+
+    let txn_result_keys: Vec<_> = (0..transaction_context.get_number_of_accounts())
+        .map(|i| *transaction_context.get_key_of_account_at_index(i).unwrap())
+        .collect();
+    let txn_result_accounts = transaction_context.deconstruct_without_keys().unwrap();
+    let txn_result_map = txn_result_keys
+        .into_iter()
+        .zip(txn_result_accounts)
+        .collect::<HashMap<Pubkey, AccountSharedData>>();
+
     accounts
+        .into_iter()
+        .take(original_len)
+        .map(|(key, original)| txn_result_map.get(&key).cloned().unwrap_or(original))
+        .collect()
 }
 
 #[cfg(feature = "dev-context-only-utils")]
