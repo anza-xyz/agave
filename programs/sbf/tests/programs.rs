@@ -1235,25 +1235,6 @@ fn test_program_sbf_invoke_sanity() {
         );
 
         do_invoke_failure_test_local(
-            TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339,
-            TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
-            &[],
-            Some(vec![
-                format!("Program {invoke_program_id} invoke [1]"),
-                format!("Program log: invoke {program_lang} program"),
-                "Program log: Test max account infos exceeded before SIMD-0339 and before \
-                 increase cpi info"
-                    .into(),
-                "skip".into(), // don't compare compute consumption logs
-                format!(
-                    "Program {invoke_program_id} failed: Invoked an instruction with too many \
-                     account info's (65 > 64)"
-                ),
-            ]),
-            &bank,
-        );
-
-        do_invoke_failure_test_local(
             TEST_RETURN_ERROR,
             TransactionError::InstructionError(0, InstructionError::Custom(42)),
             std::slice::from_ref(&invoked_program_id),
