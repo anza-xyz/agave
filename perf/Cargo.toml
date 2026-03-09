@@ -26,6 +26,7 @@ dev-context-only-utils = [
     "dep:solana-transaction",
     "dep:solana-vote-program",
     "dep:solana-vote",
+    "solana-hash/atomic",
 ]
 frozen-abi = [
     "dep:solana-frozen-abi",
@@ -54,7 +55,7 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-hash = { workspace = true, features = ["atomic"] }
+solana-hash = { workspace = true }
 solana-keypair = { workspace = true, optional = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
