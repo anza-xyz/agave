@@ -366,6 +366,7 @@ impl Rocks {
         let mut read_options = ReadOptions::default();
         #[cfg(target_os = "linux")]
         {
+            assert!(agave_io_uring::io_uring_supported());
             read_options.set_async_io(true);
         }
         self.db
@@ -398,6 +399,7 @@ impl Rocks {
         let mut read_options = ReadOptions::default();
         #[cfg(target_os = "linux")]
         {
+            assert!(agave_io_uring::io_uring_supported());
             read_options.set_async_io(true);
         }
         self.db.iterator_cf_opt(cf, read_options, iterator_mode)
@@ -407,6 +409,7 @@ impl Rocks {
         let mut read_options = ReadOptions::default();
         #[cfg(target_os = "linux")]
         {
+            assert!(agave_io_uring::io_uring_supported());
             read_options.set_async_io(true);
         }
         Ok(self.db.raw_iterator_cf_opt(cf, read_options))
