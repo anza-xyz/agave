@@ -918,7 +918,7 @@ pub fn mock_process_instruction_with_feature_set<
 >(
     program_id: &Pubkey,
     instruction_data: &[u8],
-    mut transaction_accounts: Vec<KeyedAccountSharedData>,
+    mut accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     expected_result: Result<(), InstructionError>,
     builtin_function: BuiltinFunctionWithContext,
@@ -929,11 +929,10 @@ pub fn mock_process_instruction_with_feature_set<
     let mut instruction_accounts: Vec<InstructionAccount> =
         Vec::with_capacity(instruction_account_metas.len());
     for account_meta in instruction_account_metas.iter() {
-        let index_in_transaction = transaction_accounts
+        let index_in_transaction = accounts
             .iter()
             .position(|(key, _account)| *key == account_meta.pubkey)
-            .unwrap_or(transaction_accounts.len())
-            as IndexOfAccount;
+            .unwrap_or(accounts.len()) as IndexOfAccount;
         instruction_accounts.push(InstructionAccount::new(
             index_in_transaction,
             account_meta.is_signer,
@@ -941,23 +940,23 @@ pub fn mock_process_instruction_with_feature_set<
         ));
     }
 
-    let (program_index, program_owner, pop_program_account) = transaction_accounts
+    let (program_index, program_owner, pop_program_account) = accounts
         .iter()
         .enumerate()
         .find(|(_, (key, _))| key == program_id)
         .map(|(i, (_, acct))| (i, *acct.owner(), false))
         .unwrap_or_else(|| {
             let owner = native_loader::id();
-            transaction_accounts.push((*program_id, AccountSharedData::new(0, 0, &owner)));
-            (transaction_accounts.len().saturating_sub(1), owner, true)
+            accounts.push((*program_id, AccountSharedData::new(0, 0, &owner)));
+            (accounts.len().saturating_sub(1), owner, true)
         });
     let is_builtin = native_loader::check_id(&program_owner);
 
-    let pop_epoch_schedule_account = if !transaction_accounts
+    let pop_epoch_schedule_account = if !accounts
         .iter()
         .any(|(key, _)| *key == sysvar::epoch_schedule::id())
     {
-        transaction_accounts.push((
+        accounts.push((
             sysvar::epoch_schedule::id(),
             create_account_shared_data_for_test(&EpochSchedule::default()),
         ));
@@ -969,7 +968,7 @@ pub fn mock_process_instruction_with_feature_set<
         invoke_context,
         transaction_context,
         feature_set,
-        transaction_accounts
+        accounts
     );
     let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
     program_cache_for_tx_batch.replenish(
@@ -1000,21 +999,21 @@ pub fn mock_process_instruction_with_feature_set<
     let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
     assert_eq!(result, expected_result);
     post_adjustments(&mut invoke_context);
-    let mut transaction_accounts = transaction_context.deconstruct_without_keys().unwrap();
+    let mut accounts = transaction_context.deconstruct_without_keys().unwrap();
     if pop_epoch_schedule_account {
-        transaction_accounts.pop();
+        accounts.pop();
     }
     if pop_program_account {
-        transaction_accounts.pop();
+        accounts.pop();
     }
-    transaction_accounts
+    accounts
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut InvokeContext)>(
     program_id: &Pubkey,
     instruction_data: &[u8],
-    transaction_accounts: Vec<KeyedAccountSharedData>,
+    accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     expected_result: Result<(), InstructionError>,
     builtin_function: BuiltinFunctionWithContext,
@@ -1024,7 +1023,7 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
     mock_process_instruction_with_feature_set(
         program_id,
         instruction_data,
-        transaction_accounts,
+        accounts,
         instruction_account_metas,
         expected_result,
         builtin_function,
