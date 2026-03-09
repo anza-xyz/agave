@@ -1,41 +1,56 @@
 use {
     crate::{
-        bridge::{
-            Bridge, KeyedTransactionMeta, RuntimeState, ScheduleBatch, TransactionKey,
-            TransactionState, TxDecision, Worker, WorkerAction, WorkerResponse,
+        bridge::{KeyedTransactionMeta, ScheduleBatch, SchedulerBindingsBridge, TransactionKey},
+        handshake::{
+            ClientLogon, client,
+            server::{AgaveSession, Server},
         },
-        pubkeys_ptr::PubkeysPtr,
-        transaction_ptr::TransactionPtr,
+        responses_region::{execution_responses_from_iter, resolve_responses_from_iter},
+        transaction_ptr::TransactionPtrBatch,
     },
-    agave_feature_set::FeatureSet,
     agave_scheduler_bindings::{
-        ProgressMessage, SharablePubkeys, pack_message_flags,
+        ProgressMessage, SharablePubkeys, SharableTransactionBatchRegion,
+        SharableTransactionRegion, TpuToPackMessage, TransactionResponseRegion,
+        WorkerToPackMessage, pack_message_flags, processed_codes,
         worker_message_types::{
             CheckResponse, ExecutionResponse, fee_payer_balance_flags, not_included_reasons,
             resolve_flags, status_check_flags,
         },
     },
-    agave_transaction_view::{
-        result::TransactionViewError, transaction_data::TransactionData,
-        transaction_view::SanitizedTransactionView,
-    },
-    slotmap::SlotMap,
-    solana_fee::FeeFeatures,
     solana_pubkey::Pubkey,
     solana_transaction::versioned::VersionedTransaction,
-    std::{collections::VecDeque, ptr::NonNull},
+    std::{
+        ops::{Deref, DerefMut},
+        os::fd::IntoRawFd,
+    },
 };
 
-pub struct TestBridge<M> {
-    progress_queue: VecDeque<ProgressMessage>,
-    tpu_queue: VecDeque<TransactionKey>,
-    worker_queues: Vec<VecDeque<(KeyedTransactionMeta<M>, WorkerActionLite)>>,
-    workers: Vec<TestWorker>,
-    scheduled: VecDeque<ScheduleBatch<Vec<KeyedTransactionMeta<M>>>>,
+pub struct TestBridge<M>
+where
+    M: Copy,
+{
+    bridge: SchedulerBindingsBridge<M>,
+    agave: AgaveSession,
+}
 
-    progress: ProgressMessage,
-    runtime: RuntimeState,
-    state: SlotMap<TransactionKey, TransactionState>,
+impl<M> Deref for TestBridge<M>
+where
+    M: Copy,
+{
+    type Target = SchedulerBindingsBridge<M>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.bridge
+    }
+}
+
+impl<M> DerefMut for TestBridge<M>
+where
+    M: Copy,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.bridge
+    }
 }
 
 impl<M> TestBridge<M>
@@ -44,66 +59,71 @@ where
 {
     #[must_use]
     pub fn new(worker_count: usize, worker_req_cap: usize) -> Self {
-        Self {
-            progress_queue: VecDeque::default(),
-            tpu_queue: VecDeque::default(),
-            worker_queues: vec![VecDeque::default(); worker_count],
-            workers: vec![
-                TestWorker {
-                    len: 0,
-                    cap: worker_req_cap
-                };
-                worker_count
-            ],
-            scheduled: VecDeque::default(),
+        assert!(
+            worker_req_cap.is_power_of_two(),
+            "shaq requires power of 2 queue sizes"
+        );
 
-            progress: ProgressMessage {
-                leader_state: 0,
-                current_slot: 0,
-                next_leader_slot: u64::MAX,
-                leader_range_end: u64::MAX,
-                remaining_cost_units: 0,
-                current_slot_progress: 0,
-            },
-            runtime: RuntimeState {
-                feature_set: FeatureSet::all_enabled(),
-                fee_features: FeeFeatures {
-                    enable_secp256r1_precompile: true,
-                },
-                lamports_per_signature: 5000,
-                burn_percent: 50,
-            },
-            state: SlotMap::default(),
+        let logon = ClientLogon {
+            worker_count,
+            allocator_size: 64 * 1024 * 1024,
+            allocator_handles: 1,
+            tpu_to_pack_capacity: 1024,
+            progress_tracker_capacity: 256,
+            pack_to_worker_capacity: worker_req_cap,
+            worker_to_pack_capacity: 1024,
+            flags: 0,
+        };
+
+        let (agave, files) = Server::setup_session(logon).unwrap();
+        let fds: Vec<_> = files.into_iter().map(|f| f.into_raw_fd()).collect();
+        let client_session = client::setup_session(&logon, fds).unwrap();
+
+        Self {
+            bridge: SchedulerBindingsBridge::new(client_session),
+            agave,
         }
     }
 
+    #[must_use]
+    pub fn tx_count(&self) -> usize {
+        self.bridge.state().len()
+    }
+
+    #[must_use]
+    pub fn contains_tx(&self, key: TransactionKey) -> bool {
+        self.bridge.state().contains_key(key)
+    }
+
     pub fn queue_progress(&mut self, progress: ProgressMessage) {
-        self.progress_queue.push_back(progress);
+        self.agave.progress_tracker.try_write(progress).unwrap();
+        self.agave.progress_tracker.commit();
     }
 
     pub fn queue_tpu(&mut self, tx: &VersionedTransaction) {
-        // Serialize the transaction & get a raw pointer.
-        let mut serialized = bincode::serialize(tx).unwrap();
-        let len = serialized.len();
-        let data = NonNull::new(serialized.as_mut_ptr()).unwrap();
-        core::mem::forget(serialized);
+        let serialized = bincode::serialize(tx).unwrap();
+        let allocator = &self.agave.tpu_to_pack.allocator;
 
-        // Construct our TransactionPtr & sanitized view.
-        //
-        // SAFETY
-        // - We own this allocation exclusively & len is accurate.
-        let data = unsafe { TransactionPtr::from_raw_parts(data, len) };
-        let data = SanitizedTransactionView::try_new_sanitized(data, true, true).unwrap();
+        // Allocate in shared memory and copy the transaction bytes.
+        let ptr = allocator
+            .allocate(serialized.len().try_into().unwrap())
+            .unwrap();
+        unsafe {
+            std::ptr::copy_nonoverlapping(serialized.as_ptr(), ptr.as_ptr(), serialized.len());
+        }
+        let offset = unsafe { allocator.offset(ptr) };
 
-        // Insert into state & store the key in the tpu queue.
-        let key = self.state.insert(TransactionState {
-            dead: false,
-            borrows: 0,
+        let msg = TpuToPackMessage {
+            transaction: SharableTransactionRegion {
+                offset,
+                length: serialized.len() as u32,
+            },
             flags: 0,
-            data,
-            keys: None,
-        });
-        self.tpu_queue.push_back(key);
+            src_addr: [0; 16],
+        };
+
+        self.agave.tpu_to_pack.producer.try_write(msg).unwrap();
+        self.agave.tpu_to_pack.producer.commit();
     }
 
     pub fn queue_check_response(
@@ -120,21 +140,59 @@ where
         batch: &ScheduleBatch<Vec<KeyedTransactionMeta<M>>>,
         index: usize,
         keys: Option<Vec<Pubkey>>,
-        response: CheckResponse,
+        mut response: CheckResponse,
     ) {
-        let tx = batch.transactions[index];
+        let worker_idx = batch.worker;
 
-        // Insert the keys (if any).
-        self.state[tx.key].keys = keys.map(Self::allocate_pubkeys_ptr);
+        // Allocate pubkeys in shared memory if provided.
+        if let Some(keys) = keys {
+            let worker = &mut self.agave.workers[worker_idx];
+            let pubkeys_ptr = worker
+                .allocator
+                .allocate(
+                    (keys
+                        .len()
+                        .checked_mul(std::mem::size_of::<Pubkey>())
+                        .unwrap())
+                    .try_into()
+                    .unwrap(),
+                )
+                .unwrap();
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    keys.as_ptr().cast::<u8>(),
+                    pubkeys_ptr.as_ptr(),
+                    keys.len()
+                        .checked_mul(std::mem::size_of::<Pubkey>())
+                        .unwrap(),
+                );
+            }
+            let offset = unsafe { worker.allocator.offset(pubkeys_ptr) };
+            response.resolved_pubkeys = SharablePubkeys {
+                offset,
+                num_pubkeys: keys.len() as u32,
+            };
+        }
 
-        let rep = (tx, WorkerActionLite::Check(response));
-        self.worker_queues[batch.worker].push_back(rep);
+        // Build the batch region and response region, then send.
+        let batch_region = self.build_single_tx_batch_region(batch, index, worker_idx);
+        let worker = &mut self.agave.workers[worker_idx];
+        let responses_region =
+            resolve_responses_from_iter(&worker.allocator, [response].into_iter()).unwrap();
+
+        let msg = WorkerToPackMessage {
+            batch: batch_region,
+            processed_code: processed_codes::PROCESSED,
+            responses: responses_region,
+        };
+
+        worker.worker_to_pack.try_write(msg).unwrap();
+        worker.worker_to_pack.commit();
     }
 
     pub fn queue_all_checks_ok(&mut self) {
         while let Some(batch) = self.pop_schedule() {
             assert_eq!(batch.flags & 1, pack_message_flags::CHECK);
-            assert!(batch.max_working_slot >= self.progress.current_slot);
 
             for i in 0..batch.transactions.len() {
                 self.queue_check_response(&batch, i, None);
@@ -148,9 +206,21 @@ where
         index: usize,
         response: ExecutionResponse,
     ) {
-        let tx = batch.transactions[index];
-        let rep = (tx, WorkerActionLite::Execute(response));
-        self.worker_queues[batch.worker].push_back(rep);
+        let worker_idx = batch.worker;
+        let batch_region = self.build_single_tx_batch_region(batch, index, worker_idx);
+        let worker = &mut self.agave.workers[worker_idx];
+
+        let responses_region =
+            execution_responses_from_iter(&worker.allocator, [response].into_iter()).unwrap();
+
+        let msg = WorkerToPackMessage {
+            batch: batch_region,
+            processed_code: processed_codes::PROCESSED,
+            responses: responses_region,
+        };
+
+        worker.worker_to_pack.try_write(msg).unwrap();
+        worker.worker_to_pack.commit();
     }
 
     pub fn queue_unprocessed_response(
@@ -158,15 +228,81 @@ where
         batch: &ScheduleBatch<Vec<KeyedTransactionMeta<M>>>,
         index: usize,
     ) {
-        let tx = batch.transactions[index];
-        let rep = (tx, WorkerActionLite::Unprocessed);
-        self.worker_queues[batch.worker].push_back(rep);
+        let worker_idx = batch.worker;
+        let batch_region = self.build_single_tx_batch_region(batch, index, worker_idx);
+        let worker = &mut self.agave.workers[worker_idx];
+
+        let msg = WorkerToPackMessage {
+            batch: batch_region,
+            processed_code: processed_codes::MAX_WORKING_SLOT_EXCEEDED,
+            responses: TransactionResponseRegion {
+                tag: 0,
+                num_transaction_responses: 0,
+                transaction_responses_offset: 0,
+            },
+        };
+
+        worker.worker_to_pack.try_write(msg).unwrap();
+        worker.worker_to_pack.commit();
+    }
+
+    pub fn pop_schedule(&mut self) -> Option<ScheduleBatch<Vec<KeyedTransactionMeta<M>>>> {
+        for (worker_idx, worker) in self.agave.workers.iter_mut().enumerate() {
+            worker.pack_to_worker.sync();
+            if let Some(msg) = worker.pack_to_worker.try_read() {
+                let msg = *msg;
+                worker.pack_to_worker.finalize();
+
+                // Read the batch contents from shared memory.
+                let batch = unsafe {
+                    TransactionPtrBatch::<KeyedTransactionMeta<M>>::from_sharable_transaction_batch_region(
+                        &msg.batch,
+                        self.bridge.allocator(),
+                    )
+                };
+
+                let transactions: Vec<_> = batch.iter().map(|(_tx_ptr, meta)| meta).collect();
+
+                // Free the batch container (transactions are managed by the bridge).
+                unsafe { batch.free() };
+
+                return Some(ScheduleBatch {
+                    worker: worker_idx,
+                    transactions,
+                    max_working_slot: msg.max_working_slot,
+                    flags: msg.flags,
+                });
+            }
+        }
+
+        None
+    }
+
+    pub fn check_ok(&self) -> CheckResponse {
+        let progress = self.bridge.progress();
+
+        CheckResponse {
+            parsing_and_sanitization_flags: 0,
+            status_check_flags: status_check_flags::REQUESTED | status_check_flags::PERFORMED,
+            fee_payer_balance_flags: fee_payer_balance_flags::REQUESTED
+                | fee_payer_balance_flags::PERFORMED,
+            resolve_flags: resolve_flags::REQUESTED | resolve_flags::PERFORMED,
+            included_slot: progress.current_slot,
+            balance_slot: progress.current_slot,
+            fee_payer_balance: u64::from(u32::MAX),
+            resolution_slot: progress.current_slot,
+            min_alt_deactivation_slot: u64::MAX,
+            resolved_pubkeys: SharablePubkeys {
+                offset: 0,
+                num_pubkeys: 0,
+            },
+        }
     }
 
     #[must_use]
     pub fn execute_ok(&self) -> ExecutionResponse {
         ExecutionResponse {
-            execution_slot: self.progress.current_slot,
+            execution_slot: self.bridge.progress().current_slot,
             not_included_reason: not_included_reasons::NONE,
             cost_units: 0,
             fee_payer_balance: u64::from(u32::MAX),
@@ -176,250 +312,54 @@ where
     #[must_use]
     pub fn execute_err(&self, reason: u8) -> ExecutionResponse {
         ExecutionResponse {
-            execution_slot: self.progress.current_slot,
+            execution_slot: self.bridge.progress().current_slot,
             not_included_reason: reason,
             cost_units: 0,
             fee_payer_balance: u64::from(u32::MAX),
         }
     }
 
-    pub fn pop_schedule(&mut self) -> Option<ScheduleBatch<Vec<KeyedTransactionMeta<M>>>> {
-        self.scheduled.pop_front()
-    }
+    fn build_single_tx_batch_region(
+        &self,
+        batch: &ScheduleBatch<Vec<KeyedTransactionMeta<M>>>,
+        index: usize,
+        worker_idx: usize,
+    ) -> SharableTransactionBatchRegion {
+        type Batch<'a, M> = TransactionPtrBatch<'a, KeyedTransactionMeta<M>>;
 
-    #[must_use]
-    pub fn tx_count(&self) -> usize {
-        self.state.len()
-    }
+        let meta = batch.transactions[index];
+        let worker_allocator = &self.agave.workers[worker_idx].allocator;
 
-    #[must_use]
-    pub fn contains_tx(&self, key: TransactionKey) -> bool {
-        self.state.contains_key(key)
-    }
+        // Allocate the batch container in worker's shared memory.
+        let batch_ptr = worker_allocator
+            .allocate(Batch::<M>::TX_META_END as u32)
+            .unwrap();
+        let batch_offset = unsafe { worker_allocator.offset(batch_ptr) };
 
-    #[must_use]
-    pub fn check_ok(&self) -> CheckResponse {
-        CheckResponse {
-            parsing_and_sanitization_flags: 0,
-            status_check_flags: status_check_flags::REQUESTED | status_check_flags::PERFORMED,
-            fee_payer_balance_flags: fee_payer_balance_flags::REQUESTED
-                | fee_payer_balance_flags::PERFORMED,
-            resolve_flags: resolve_flags::REQUESTED | resolve_flags::PERFORMED,
-            included_slot: self.progress.current_slot,
-            balance_slot: self.progress.current_slot,
-            fee_payer_balance: u64::from(u32::MAX),
-            resolution_slot: self.progress.current_slot,
-            min_alt_deactivation_slot: u64::MAX,
-            resolved_pubkeys: SharablePubkeys {
-                offset: 0,
-                num_pubkeys: 0,
-            },
+        // Write the transaction region (offset is relative to the shared allocator,
+        // which is the same underlying file for both client and worker).
+        let tx_state = self.bridge.tx(meta.key);
+        let tx_region = unsafe {
+            tx_state
+                .data
+                .inner_data()
+                .to_sharable_transaction_region(self.bridge.allocator())
+        };
+        let tx_ptr = batch_ptr.cast::<SharableTransactionRegion>();
+        unsafe { tx_ptr.as_ptr().write(tx_region) };
+
+        // Write the metadata.
+        let meta_ptr = unsafe {
+            batch_ptr
+                .as_ptr()
+                .byte_add(Batch::<M>::TX_META_START)
+                .cast::<KeyedTransactionMeta<M>>()
+        };
+        unsafe { meta_ptr.write(meta) };
+
+        SharableTransactionBatchRegion {
+            num_transactions: 1,
+            transactions_offset: batch_offset,
         }
     }
-
-    fn allocate_pubkeys_ptr(mut keys: Vec<Pubkey>) -> PubkeysPtr {
-        // Get the raw pointer components.
-        let len = keys.len();
-        let data = NonNull::new(keys.as_mut_ptr()).unwrap();
-        core::mem::forget(keys);
-
-        // Construct our PubkeysPtr.
-        //
-        // SAFETY
-        // - We own this allocation exclusively & len is accurate.
-        unsafe { PubkeysPtr::from_raw_parts(data, len) }
-    }
-}
-
-impl<M> Bridge for TestBridge<M>
-where
-    M: Copy,
-{
-    type Worker = TestWorker;
-    type Meta = M;
-
-    fn runtime(&self) -> &RuntimeState {
-        &self.runtime
-    }
-
-    fn progress(&self) -> &ProgressMessage {
-        &self.progress
-    }
-
-    fn worker_count(&self) -> usize {
-        self.workers.len()
-    }
-
-    fn worker(&mut self, id: usize) -> &mut Self::Worker {
-        &mut self.workers[id]
-    }
-
-    fn tx(&self, key: TransactionKey) -> &TransactionState {
-        &self.state[key]
-    }
-
-    fn tx_insert(&mut self, tx: &[u8]) -> Result<TransactionKey, TransactionViewError> {
-        // Copy the transaction bytes & get a raw pointer.
-        let mut serialized = tx.to_vec();
-        let len = serialized.len();
-        let data = NonNull::new(serialized.as_mut_ptr()).unwrap();
-        core::mem::forget(serialized);
-
-        // Construct our TransactionPtr & sanitized view.
-        //
-        // SAFETY
-        // - We own this allocation exclusively & len is accurate.
-        let data = unsafe { TransactionPtr::from_raw_parts(data, len) };
-        let data = SanitizedTransactionView::try_new_sanitized(data, true, true)?;
-
-        // Insert into state & return the key.
-        let key = self.state.insert(TransactionState {
-            dead: false,
-            borrows: 0,
-            flags: 0,
-            data,
-            keys: None,
-        });
-
-        Ok(key)
-    }
-
-    fn tx_drop(&mut self, key: TransactionKey) {
-        self.state.remove(key).unwrap();
-    }
-
-    fn drain_progress(&mut self) -> Option<ProgressMessage> {
-        let latest = self.progress_queue.back().copied();
-        if let Some(progress) = latest {
-            self.progress = progress;
-        }
-        self.progress_queue.clear();
-
-        latest
-    }
-
-    fn tpu_len(&mut self) -> usize {
-        self.tpu_queue.len()
-    }
-
-    fn tpu_drain(
-        &mut self,
-        mut cb: impl FnMut(&mut Self, TransactionKey) -> TxDecision,
-        max_count: usize,
-    ) {
-        for _ in 0..max_count {
-            let Some(tx) = self.tpu_queue.pop_front() else {
-                return;
-            };
-
-            if cb(self, tx) == TxDecision::Drop {
-                self.state.remove(tx).unwrap();
-            }
-        }
-    }
-
-    fn worker_drain(
-        &mut self,
-        worker: usize,
-        mut cb: impl FnMut(&mut Self, WorkerResponse<'_, Self::Meta>) -> TxDecision,
-        max_count: usize,
-    ) {
-        for _ in 0..max_count {
-            let Some((KeyedTransactionMeta { key, meta }, rep)) =
-                self.worker_queues[worker].pop_front()
-            else {
-                return;
-            };
-
-            // Temporarily take keys to avoid mutable aliasing self.
-            let keys = self.state[key].keys.take();
-            let response = match rep {
-                WorkerActionLite::Unprocessed => WorkerAction::Unprocessed,
-                WorkerActionLite::Check(rep) => WorkerAction::Check(rep, keys.as_ref()),
-                WorkerActionLite::Execute(rep) => WorkerAction::Execute(rep),
-            };
-
-            match cb(
-                self,
-                WorkerResponse {
-                    key,
-                    meta,
-                    response,
-                },
-            ) {
-                // Restore keys.
-                TxDecision::Keep => self.state[key].keys = keys,
-                TxDecision::Drop => {
-                    let state = self.state.remove(key).unwrap();
-
-                    // Drop the underlying transaction allocation.
-                    let data = state.data.inner_data().data();
-                    let len = data.len();
-                    let ptr = data.as_ptr();
-                    drop(state);
-                    // SAFETY
-                    // - We original allocated this and exclusively own it, so it's safe for us to
-                    //   deallocate.
-                    unsafe {
-                        let allocation = core::slice::from_raw_parts_mut(ptr.cast_mut(), len);
-                        core::ptr::drop_in_place(allocation);
-                    }
-
-                    // Drop the underlying pubkeys allocation.
-                    if let Some(keys) = keys {
-                        let slice = keys.as_slice();
-                        let len = slice.len();
-                        let ptr = slice.as_ptr();
-                        // SAFETY
-                        // - We original allocated this and exclusively own it, so it's safe for us
-                        //   to deallocate.
-                        unsafe {
-                            let allocation = core::slice::from_raw_parts_mut(ptr.cast_mut(), len);
-                            core::ptr::drop_in_place(allocation);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn schedule(
-        &mut self,
-        ScheduleBatch {
-            worker,
-            transactions,
-            max_working_slot,
-            flags,
-        }: ScheduleBatch<&[KeyedTransactionMeta<M>]>,
-    ) {
-        self.scheduled.push_back(ScheduleBatch {
-            worker,
-            transactions: transactions.to_vec(),
-            max_working_slot,
-            flags,
-        });
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TestWorker {
-    len: usize,
-    cap: usize,
-}
-
-impl Worker for TestWorker {
-    fn len(&mut self) -> usize {
-        self.len
-    }
-
-    fn rem(&mut self) -> usize {
-        self.cap - self.len
-    }
-}
-
-#[derive(Debug, Clone)]
-enum WorkerActionLite {
-    Unprocessed,
-    Check(CheckResponse),
-    Execute(ExecutionResponse),
 }

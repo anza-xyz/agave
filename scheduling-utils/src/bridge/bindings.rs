@@ -1,9 +1,5 @@
 use {
     crate::{
-        bridge::{
-            Bridge, KeyedTransactionMeta, RuntimeState, ScheduleBatch, TransactionKey,
-            TransactionState, TxDecision, Worker, WorkerAction, WorkerResponse,
-        },
         handshake::client::{ClientSession, ClientWorkerSession},
         pubkeys_ptr::PubkeysPtr,
         transaction_ptr::{TransactionPtr, TransactionPtrBatch},
@@ -12,7 +8,7 @@ use {
     agave_scheduler_bindings::{
         MAX_TRANSACTIONS_PER_MESSAGE, PackToWorkerMessage, ProgressMessage,
         SharableTransactionBatchRegion, SharableTransactionRegion, TpuToPackMessage,
-        WorkerToPackMessage, processed_codes,
+        WorkerToPackMessage, processed_codes, tpu_message_flags,
         worker_message_types::{self, CheckResponse, ExecutionResponse},
     },
     agave_transaction_view::{
@@ -23,6 +19,7 @@ use {
     slotmap::SlotMap,
     solana_fee::FeeFeatures,
     solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
     std::ptr::NonNull,
 };
 
@@ -91,90 +88,37 @@ where
         }
     }
 
-    fn collect_batch(
-        allocator: &Allocator,
-        state: &mut SlotMap<TransactionKey, TransactionState>,
-        batch: &[KeyedTransactionMeta<M>],
-    ) -> SharableTransactionBatchRegion {
-        assert!(batch.len() <= MAX_TRANSACTIONS_PER_MESSAGE);
-
-        // Allocate a batch that can hold all our transaction pointers.
-        let transactions = allocator.allocate(Self::TX_BATCH_SIZE as u32).unwrap();
-        let transactions_offset = unsafe { allocator.offset(transactions) };
-
-        // Get our two pointers to the TX region & meta region.
-        let tx_ptr = unsafe {
-            allocator
-                .ptr_from_offset(transactions_offset)
-                .cast::<SharableTransactionRegion>()
-        };
-        // SAFETY
-        // - Pointer is guaranteed to not overrun the allocation as we just created it
-        //   with a sufficient size.
-        let meta_ptr = unsafe {
-            allocator
-                .ptr_from_offset(transactions_offset)
-                .byte_add(Self::TX_BATCH_META_OFFSET)
-                .cast::<KeyedTransactionMeta<M>>()
-        };
-
-        // Fill in the batch with transaction pointers.
-        for (i, meta) in batch.iter().copied().enumerate() {
-            let tx = &mut state[meta.key];
-            assert!(!tx.dead);
-
-            // We are sending a copy to Agave, we track this as a new borrow.
-            tx.borrows = tx.borrows.checked_add(1).unwrap();
-
-            // SAFETY
-            // - We have allocated the transaction batch to support at least
-            //   `MAX_TRANSACTIONS_PER_MESSAGE`, we terminate the loop before we overrun the
-            //   region.
-            unsafe {
-                tx_ptr.add(i).write(
-                    tx.data
-                        .inner_data()
-                        .to_sharable_transaction_region(allocator),
-                );
-                meta_ptr.add(i).write(meta);
-            };
-        }
-
-        SharableTransactionBatchRegion {
-            num_transactions: batch.len().try_into().unwrap(),
-            transactions_offset,
-        }
+    #[cfg(feature = "dev-context-only-utils")]
+    pub(crate) fn allocator(&self) -> &Allocator {
+        &self.allocator
     }
-}
 
-impl<M> Bridge for SchedulerBindingsBridge<M>
-where
-    M: Copy,
-{
-    type Worker = SchedulerWorker;
-    type Meta = M;
+    #[cfg(feature = "dev-context-only-utils")]
+    pub(crate) fn state(&self) -> &SlotMap<TransactionKey, TransactionState> {
+        &self.state
+    }
 
-    fn runtime(&self) -> &RuntimeState {
+    pub fn runtime(&self) -> &RuntimeState {
         &self.runtime
     }
 
-    fn progress(&self) -> &ProgressMessage {
+    pub fn progress(&self) -> &ProgressMessage {
         &self.progress
     }
 
-    fn worker_count(&self) -> usize {
+    pub fn worker_count(&self) -> usize {
         self.workers.len()
     }
 
-    fn worker(&mut self, id: usize) -> &mut Self::Worker {
+    pub fn worker(&mut self, id: usize) -> &mut SchedulerWorker {
         &mut self.workers[id]
     }
 
-    fn tx(&self, key: TransactionKey) -> &TransactionState {
+    pub fn tx(&self, key: TransactionKey) -> &TransactionState {
         &self.state[key]
     }
 
-    fn tx_insert(&mut self, tx: &[u8]) -> Result<TransactionKey, TransactionViewError> {
+    pub fn tx_insert(&mut self, tx: &[u8]) -> Result<TransactionKey, TransactionViewError> {
         assert!(tx.len() <= PACKET_DATA_SIZE);
 
         let ptr = self
@@ -220,7 +164,7 @@ where
         }
     }
 
-    fn tx_drop(&mut self, key: TransactionKey) {
+    pub fn tx_drop(&mut self, key: TransactionKey) {
         // If we have requests that have borrowed this shared transaction region, then
         // we can't immediately clean up and must instead flag it as dead.
         match self.state[key].borrows {
@@ -246,7 +190,7 @@ where
         }
     }
 
-    fn drain_progress(&mut self) -> Option<ProgressMessage> {
+    pub fn drain_progress(&mut self) -> Option<ProgressMessage> {
         self.progress_tracker.sync();
 
         let mut received = false;
@@ -259,13 +203,13 @@ where
         received.then_some(self.progress)
     }
 
-    fn tpu_len(&mut self) -> usize {
+    pub fn tpu_len(&mut self) -> usize {
         self.tpu_to_pack.sync();
 
         self.tpu_to_pack.len()
     }
 
-    fn tpu_drain(
+    pub fn tpu_drain(
         &mut self,
         mut cb: impl FnMut(&mut Self, TransactionKey) -> TxDecision,
         max_count: usize,
@@ -326,10 +270,10 @@ where
         self.tpu_to_pack.finalize();
     }
 
-    fn worker_drain(
+    pub fn worker_drain(
         &mut self,
         worker: usize,
-        mut cb: impl FnMut(&mut Self, WorkerResponse<'_, Self::Meta>) -> TxDecision,
+        mut cb: impl FnMut(&mut Self, WorkerResponse<'_, M>) -> TxDecision,
         max_count: usize,
     ) {
         self.workers[worker].0.worker_to_pack.sync();
@@ -342,7 +286,7 @@ where
         self.workers[worker].0.worker_to_pack.finalize();
     }
 
-    fn schedule(
+    pub fn schedule(
         &mut self,
         ScheduleBatch {
             worker,
@@ -363,12 +307,62 @@ where
             .unwrap();
         queue.commit();
     }
-}
 
-impl<M> SchedulerBindingsBridge<M>
-where
-    M: Copy,
-{
+    fn collect_batch(
+        allocator: &Allocator,
+        state: &mut SlotMap<TransactionKey, TransactionState>,
+        batch: &[KeyedTransactionMeta<M>],
+    ) -> SharableTransactionBatchRegion {
+        assert!(batch.len() <= MAX_TRANSACTIONS_PER_MESSAGE);
+
+        // Allocate a batch that can hold all our transaction pointers.
+        let transactions = allocator.allocate(Self::TX_BATCH_SIZE as u32).unwrap();
+        let transactions_offset = unsafe { allocator.offset(transactions) };
+
+        // Get our two pointers to the TX region & meta region.
+        let tx_ptr = unsafe {
+            allocator
+                .ptr_from_offset(transactions_offset)
+                .cast::<SharableTransactionRegion>()
+        };
+        // SAFETY
+        // - Pointer is guaranteed to not overrun the allocation as we just created it
+        //   with a sufficient size.
+        let meta_ptr = unsafe {
+            allocator
+                .ptr_from_offset(transactions_offset)
+                .byte_add(Self::TX_BATCH_META_OFFSET)
+                .cast::<KeyedTransactionMeta<M>>()
+        };
+
+        // Fill in the batch with transaction pointers.
+        for (i, meta) in batch.iter().copied().enumerate() {
+            let tx = &mut state[meta.key];
+            assert!(!tx.dead);
+
+            // We are sending a copy to Agave, we track this as a new borrow.
+            tx.borrows = tx.borrows.checked_add(1).unwrap();
+
+            // SAFETY
+            // - We have allocated the transaction batch to support at least
+            //   `MAX_TRANSACTIONS_PER_MESSAGE`, we terminate the loop before we overrun the
+            //   region.
+            unsafe {
+                tx_ptr.add(i).write(
+                    tx.data
+                        .inner_data()
+                        .to_sharable_transaction_region(allocator),
+                );
+                meta_ptr.add(i).write(meta);
+            };
+        }
+
+        SharableTransactionBatchRegion {
+            num_transactions: batch.len().try_into().unwrap(),
+            transactions_offset,
+        }
+    }
+
     fn handle_worker_response(
         &mut self,
         rep: WorkerToPackMessage,
@@ -547,4 +541,118 @@ enum WorkerResponseBatch {
     Unprocessed,
     Execution(NonNull<ExecutionResponse>),
     Check(NonNull<CheckResponse>),
+}
+
+pub struct RuntimeState {
+    pub feature_set: FeatureSet,
+    pub fee_features: FeeFeatures,
+    pub lamports_per_signature: u64,
+    pub burn_percent: u64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ScheduleBatch<T> {
+    pub worker: usize,
+    pub transactions: T,
+    pub max_working_slot: u64,
+    pub flags: u16,
+}
+
+pub trait Worker {
+    fn is_empty(&mut self) -> bool {
+        self.len() == 0
+    }
+
+    fn len(&mut self) -> usize;
+
+    fn rem(&mut self) -> usize;
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkerResponse<'a, M> {
+    pub key: TransactionKey,
+    pub meta: M,
+    pub response: WorkerAction<'a>,
+}
+
+#[derive(Debug, Clone)]
+pub enum WorkerAction<'a> {
+    Unprocessed,
+    Check(CheckResponse, Option<&'a PubkeysPtr>),
+    Execute(ExecutionResponse),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyedTransactionMeta<M> {
+    pub key: TransactionKey,
+    pub meta: M,
+}
+
+slotmap::new_key_type! {
+    pub struct TransactionKey;
+}
+
+#[derive(Debug)]
+pub struct TransactionState {
+    pub dead: bool,
+    pub borrows: u64,
+    pub flags: u8,
+    pub data: SanitizedTransactionView<TransactionPtr>,
+    pub keys: Option<PubkeysPtr>,
+}
+
+impl TransactionState {
+    #[must_use]
+    pub const fn is_simple_vote(&self) -> bool {
+        self.flags & tpu_message_flags::IS_SIMPLE_VOTE != 0
+    }
+
+    pub fn locks(&self) -> impl Iterator<Item = (&Pubkey, bool)> {
+        self.write_locks()
+            .map(|lock| (lock, true))
+            .chain(self.read_locks().map(|lock| (lock, false)))
+    }
+
+    pub fn write_locks(&self) -> impl Iterator<Item = &Pubkey> {
+        self.data
+            .static_account_keys()
+            .iter()
+            .chain(self.keys.iter().flat_map(|keys| keys.as_slice().iter()))
+            .enumerate()
+            .filter(|(i, _)| self.is_writable(*i as u8))
+            .map(|(_, key)| key)
+    }
+
+    pub fn read_locks(&self) -> impl Iterator<Item = &Pubkey> {
+        self.data
+            .static_account_keys()
+            .iter()
+            .chain(self.keys.iter().flat_map(|keys| keys.as_slice().iter()))
+            .enumerate()
+            .filter(|(i, _)| !self.is_writable(*i as u8))
+            .map(|(_, key)| key)
+    }
+
+    fn is_writable(&self, index: u8) -> bool {
+        if index >= self.data.num_static_account_keys() {
+            let loaded_address_index = index.wrapping_sub(self.data.num_static_account_keys());
+            loaded_address_index < self.data.total_writable_lookup_accounts() as u8
+        } else {
+            index
+                < self
+                    .data
+                    .num_signatures()
+                    .wrapping_sub(self.data.num_readonly_signed_static_accounts())
+                || (index >= self.data.num_signatures()
+                    && index
+                        < (self.data.static_account_keys().len() as u8)
+                            .wrapping_sub(self.data.num_readonly_unsigned_static_accounts()))
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum TxDecision {
+    Keep,
+    Drop,
 }

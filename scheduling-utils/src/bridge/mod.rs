@@ -1,8 +1,7 @@
 mod bindings;
-mod spec;
 #[cfg(feature = "dev-context-only-utils")]
-pub mod test;
+mod test;
 
+pub use bindings::*;
 #[cfg(feature = "dev-context-only-utils")]
 pub use test::TestBridge;
-pub use {bindings::SchedulerBindingsBridge, spec::*};
