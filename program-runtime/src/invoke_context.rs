@@ -800,7 +800,8 @@ macro_rules! with_mock_invoke_context_with_feature_set {
         $transaction_context:ident,
         $feature_set:ident,
         $top_level_instructions:literal,
-        $transaction_accounts:expr $(,)?
+        $transaction_accounts:expr,
+        $all_accounts:expr $(,)?
     ) => {
         use {
             solana_svm_callback::InvokeContextCallback,
@@ -820,6 +821,14 @@ macro_rules! with_mock_invoke_context_with_feature_set {
         let compute_budget = SVMTransactionExecutionBudget::new_with_defaults(
             $feature_set.raise_cpi_nesting_limit_to_8,
         );
+        let mut sysvar_cache = SysvarCache::default();
+        sysvar_cache.fill_missing_entries(|pubkey, callback| {
+            for (key, account) in $all_accounts.iter() {
+                if key == pubkey {
+                    callback(account.data());
+                }
+            }
+        });
         let mut $transaction_context = TransactionContext::new(
             $transaction_accounts,
             Rent::default(),
@@ -827,24 +836,6 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             compute_budget.max_instruction_trace_length,
             $top_level_instructions,
         );
-        let mut sysvar_cache = SysvarCache::default();
-        sysvar_cache.fill_missing_entries(|pubkey, callback| {
-            for index in 0..$transaction_context.get_number_of_accounts() {
-                if $transaction_context
-                    .get_key_of_account_at_index(index)
-                    .unwrap()
-                    == pubkey
-                {
-                    callback(
-                        $transaction_context
-                            .accounts()
-                            .try_borrow(index)
-                            .unwrap()
-                            .data(),
-                    );
-                }
-            }
-        });
         let program_runtime_environments = get_mock_program_runtime_environments();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
@@ -869,9 +860,27 @@ macro_rules! with_mock_invoke_context_with_feature_set {
         $invoke_context:ident,
         $transaction_context:ident,
         $feature_set:ident,
+        $top_level_instructions:literal,
         $transaction_accounts:expr $(,)?
     ) => {
-        with_mock_invoke_context_with_feature_set!(
+        let transaction_accounts: Vec<(solana_pubkey::Pubkey, solana_account::AccountSharedData)> =
+            $transaction_accounts;
+        $crate::with_mock_invoke_context_with_feature_set!(
+            $invoke_context,
+            $transaction_context,
+            $feature_set,
+            $top_level_instructions,
+            transaction_accounts,
+            &transaction_accounts
+        );
+    };
+    (
+        $invoke_context:ident,
+        $transaction_context:ident,
+        $feature_set:ident,
+        $transaction_accounts:expr $(,)?
+    ) => {
+        $crate::with_mock_invoke_context_with_feature_set!(
             $invoke_context,
             $transaction_context,
             $feature_set,
