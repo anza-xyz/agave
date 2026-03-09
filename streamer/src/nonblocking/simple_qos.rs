@@ -37,9 +37,11 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-/// Max RTT for BDP scaling
+/// Absolute max RTT to allow for a legitimate connection.
+/// Enough to cover any non-malicious link on Earth.
 const MAX_RTT: Duration = Duration::from_millis(320);
-/// Min RTT for BDP scaling
+/// Prevent connections from having 0 RTT when RTT is too small,
+/// as this would break some BDP calculations and assign zero bandwidth
 const MIN_RTT: Duration = Duration::from_millis(2);
 
 /// Allow for extra streams "in flight" on top of the nominal

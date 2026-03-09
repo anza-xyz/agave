@@ -326,7 +326,7 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
                 // least 1 stream per 100ms at full capacity.
                 let min_stake_ratio = 1_f64 / (self.config.max_streams_per_ms * 100) as f64;
                 let stake_ratio = stake as f64 / total_stake as f64;
-                let peer_type = if stake == 0 || stake_ratio < min_stake_ratio {
+                let peer_type = if stake_ratio < min_stake_ratio {
                     ConnectionPeerType::Unstaked
                 } else {
                     ConnectionPeerType::Staked(stake)

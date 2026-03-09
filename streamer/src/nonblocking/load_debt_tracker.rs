@@ -120,8 +120,8 @@ impl LoadDebtTracker {
             0.0
         };
         log::info!(
-            "LoadDebtTracker: transitions to_saturated={to_sat} \
-             saturated_duty={duty_pct:.1}% bucket={}",
+            "LoadDebtTracker: transitions to_saturated={to_sat} saturated_duty={duty_pct:.1}% \
+             bucket={}",
             self.bucket_level(),
         );
     }
@@ -450,15 +450,18 @@ mod tests {
         };
         assert!(
             mismatch_pct <= MAX_MISMATCH_PCT,
-            "mismatch rate too high: {mismatch_pct:.4} (mismatches={mismatches}, samples={samples})"
+            "mismatch rate too high: {mismatch_pct:.4} (mismatches={mismatches}, \
+             samples={samples})"
         );
     }
 
     #[cfg(feature = "shuttle-test")]
     #[test]
     fn shuttle_test_load_debt_tracker_interleavings() {
-        use shuttle::{check_random, thread};
-        use std::sync::{Arc, atomic::Ordering};
+        use {
+            shuttle::{check_random, thread},
+            std::sync::{Arc, atomic::Ordering},
+        };
 
         check_random(
             || {
