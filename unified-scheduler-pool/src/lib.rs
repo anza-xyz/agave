@@ -38,7 +38,6 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_svm::transaction_processing_result::ProcessedTransaction,
     solana_svm_timings::ExecuteTimings,
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
@@ -583,9 +582,6 @@ impl TaskHandler for DefaultTaskHandler {
             transaction_indexes,
         };
 
-        let pre_commit_callback =
-            Option::<fn(&Result<ProcessedTransaction>) -> Result<Option<usize>>>::None;
-
         *result = execute_batch(
             &batch_with_indexes,
             bank,
@@ -594,7 +590,6 @@ impl TaskHandler for DefaultTaskHandler {
             timings,
             handler_context.log_messages_bytes_limit,
             handler_context.prioritization_fee_cache.as_deref(),
-            pre_commit_callback,
         );
         sleepless_testing::at(CheckPoint::TaskHandled(task_id));
     }
