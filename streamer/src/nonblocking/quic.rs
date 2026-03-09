@@ -114,10 +114,7 @@ impl ParkRecheckBackoff {
             .base_ms
             .saturating_add(jitter_ms)
             .min(PARK_RECHECK_SLEEP_CAP_MS);
-        self.base_ms = self
-            .base_ms
-            .saturating_mul(2)
-            .min(PARK_RECHECK_BASE_CAP_MS);
+        self.base_ms = self.base_ms.saturating_mul(2).min(PARK_RECHECK_BASE_CAP_MS);
         Duration::from_millis(delay_ms)
     }
 
