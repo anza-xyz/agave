@@ -211,7 +211,7 @@ where
 
     pub fn tpu_drain(
         &mut self,
-        mut cb: impl FnMut(&mut Self, TransactionKey) -> TxDecision,
+        mut callback: impl FnMut(&mut Self, TransactionKey) -> TxDecision,
         max_count: usize,
     ) {
         self.tpu_to_pack.sync();
@@ -255,7 +255,7 @@ where
             self.metrics.state_len.set(self.state.len() as f64);
 
             // Remove & free the TX if the scheduler doesn't want it.
-            if cb(self, key) == TxDecision::Drop {
+            if callback(self, key) == TxDecision::Drop {
                 let state = self.state.remove(key).unwrap();
                 assert!(state.keys.is_none());
                 assert_eq!(state.borrows, 0);
@@ -273,7 +273,7 @@ where
     pub fn worker_drain(
         &mut self,
         worker: usize,
-        mut cb: impl FnMut(&mut Self, WorkerResponse<'_, M>) -> TxDecision,
+        mut callback: impl FnMut(&mut Self, WorkerResponse<'_, M>) -> TxDecision,
         max_count: usize,
     ) {
         self.workers[worker].0.worker_to_pack.sync();
@@ -281,7 +281,7 @@ where
             let Some(rep) = self.workers[worker].0.worker_to_pack.try_read().copied() else {
                 break;
             };
-            self.handle_worker_response(rep, &mut cb);
+            self.handle_worker_response(rep, &mut callback);
         }
         self.workers[worker].0.worker_to_pack.finalize();
     }
@@ -366,7 +366,7 @@ where
     fn handle_worker_response(
         &mut self,
         rep: WorkerToPackMessage,
-        cb: &mut impl FnMut(&mut Self, WorkerResponse<'_, M>) -> TxDecision,
+        callback: &mut impl FnMut(&mut Self, WorkerResponse<'_, M>) -> TxDecision,
     ) {
         // Get transaction & meta pointers.
         let transactions = unsafe {
@@ -409,7 +409,7 @@ where
             // SAFETY
             // - We took care to allocate these correctly originally.
             let KeyedTransactionMeta::<M> { key, meta } = unsafe { metas.add(index).read() };
-            let decision = self.handle_transaction_response(key, meta, index, &responses, cb);
+            let decision = self.handle_transaction_response(key, meta, index, &responses, callback);
 
             // Remove the tx from state & drop the allocation if requested.
             if decision == TxDecision::Drop {
@@ -436,7 +436,7 @@ where
         meta: M,
         index: usize,
         responses: &WorkerResponseBatch,
-        cb: &mut impl FnMut(&mut Self, WorkerResponse<'_, M>) -> TxDecision,
+        callback: &mut impl FnMut(&mut Self, WorkerResponse<'_, M>) -> TxDecision,
     ) -> TxDecision {
         // Decrease the borrow counter as Agave has returned ownership to us.
         let state = &mut self.state[key];
@@ -452,7 +452,7 @@ where
                     response: WorkerAction::Unprocessed,
                 };
 
-                cb(self, rep)
+                callback(self, rep)
             }
             (false, WorkerResponseBatch::Execution(rep)) => {
                 // SAFETY
@@ -464,7 +464,7 @@ where
                     response: WorkerAction::Execute(rep),
                 };
 
-                cb(self, rep)
+                callback(self, rep)
             }
             (false, WorkerResponseBatch::Check(rep)) => {
                 // SAFETY
@@ -480,7 +480,7 @@ where
                 });
 
                 // Callback holding keys ref, defer storing keys on state.
-                let decision = cb(
+                let decision = callback(
                     self,
                     WorkerResponse {
                         key,
