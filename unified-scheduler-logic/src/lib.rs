@@ -1023,12 +1023,9 @@ impl SchedulingStateMachine {
         // (`Bank::prepare_sanitized_batch()` is called in
         // `process_entries()`).
         //
-        // As for `banking_stage` with unified scheduler, it will need to run
-        // `validate_account_locks()` at least once somewhere in the code path.
-        // In the distant future, this function (`create_task()`) should be
-        // adjusted so that both stages do the checks before calling this or do
-        // the checks here, to simplify the two code paths regarding the
-        // essential `validate_account_locks` validation.
+        // In the future, this function (`create_task()`) could be adjusted so
+        // that the validation boundary is simpler and more explicit, either by
+        // requiring checks before every call or by doing the checks here.
         //
         // Lastly, `validate_account_locks()` is currently called in
         // `DefaultTransactionHandler::handle()` via

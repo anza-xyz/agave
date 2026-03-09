@@ -546,11 +546,6 @@ where
 
         info!("SchedulerPool::uninstalled_from_bank_forks(): ...finished");
     }
-
-    fn toggle_block_production_mode(&self, enable: bool) -> bool {
-        info!("toggle_block_production_mode: unsupported: enable: {enable}");
-        !enable
-    }
 }
 
 pub trait TaskHandler: Send + Sync + Debug + Sized + 'static {
@@ -1271,14 +1266,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             // important design goal of the scheduler in order to reduce the transaction
             // confirmation latency for end users.
             //
-            // Firstly, the scheduler thread must handle incoming messages from thread(s) owned by
-            // the replay stage or the banking stage. It also must handle incoming messages from
-            // the multi-threaded handlers. This heavily-multi-threaded whole processing load must
-            // be coped just with the single-threaded scheduler, to attain ideal cpu cache
-            // friendliness and main memory bandwidth saturation with its shared-nothing
-            // single-threaded account locking implementation. In other words, the per-task
-            // processing efficiency of the main loop codifies the upper bound of horizontal
-            // scalability of the unified scheduler.
+            // Firstly, the scheduler thread must handle incoming messages from its external
+            // caller threads and from the multi-threaded handlers. This heavily-multi-threaded
+            // whole processing load must be coped just with the single-threaded scheduler, to
+            // attain ideal cpu cache friendliness and main memory bandwidth saturation with its
+            // shared-nothing single-threaded account locking implementation. In other words, the
+            // per-task processing efficiency of the main loop codifies the upper bound of
+            // horizontal scalability of the unified scheduler.
             //
             // Moreover, the scheduler is designed to handle tasks without batching at all in the
             // pursuit of saturating all of the handler threads with maximally-fine-grained
@@ -3026,16 +3020,6 @@ mod tests {
         assert!(*TASK_COUNT.lock().unwrap() < 10);
     }
 
-    fn create_genesis_config_for_block_production(lamports: u64) -> GenesisConfigInfo {
-        // The in-scope create_genesis_config(), which is imported from the `solana-runtime`,
-        // doesn't properly setup leader schedule, causing the following panic if used for poh
-        // recorder, so use the one from the `solana-ledger` crate:
-        //
-        //   thread 'tests::...' panicked at ledger/src/leader_schedule.rs:LL:CC:
-        //   called `Result::unwrap()` on an `Err` value: NoItem
-        solana_ledger::genesis_utils::create_genesis_config(lamports)
-    }
-
     #[test]
     fn test_scheduler_schedule_execution_blocked_at_session_ending() {
         agave_logger::setup();
@@ -3084,7 +3068,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config_for_block_production(10_000);
+        } = create_genesis_config(10_000);
 
         // tx0 and tx1 is definitely conflicting to write-lock the mint address
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
