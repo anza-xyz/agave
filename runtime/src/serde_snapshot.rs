@@ -7,7 +7,6 @@ use {
     crate::{
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
         epoch_stakes::{DeserializableVersionedEpochStakes, VersionedEpochStakes},
-        rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
         snapshot_utils::StorageAndNextAccountsFileId,
         stake_account::StakeAccount,
@@ -56,7 +55,7 @@ use {
         time::Instant,
     },
     storage::SerializableStorage,
-    types::SerdeAccountsLtHash,
+    types::{SerdeAccountsLtHash, UnusedRentCollector},
 };
 
 mod obsolete_accounts;
@@ -178,7 +177,7 @@ struct DeserializableVersionedBank {
     _unused_fee_calculator: u64,
     fee_rate_governor: FeeRateGovernor,
     _unused_collected_rent: u64,
-    _unused_rent_collector: RentCollector,
+    _unused_rent_collector: UnusedRentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
     stakes: DeserializableStakes<Delegation>,
@@ -254,7 +253,7 @@ struct SerializableVersionedBank {
     unused_fee_calculator: u64,
     fee_rate_governor: FeeRateGovernor,
     unused_collected_rent: u64,
-    rent_collector: RentCollector,
+    unused_rent_collector: UnusedRentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
     #[serde(serialize_with = "serialize_stake_accounts_to_delegation_format")]
@@ -292,7 +291,7 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
             unused_fee_calculator: 0,
             fee_rate_governor: rhs.fee_rate_governor,
             unused_collected_rent: u64::default(),
-            rent_collector: rhs.rent_collector,
+            unused_rent_collector: UnusedRentCollector::zeroed(),
             epoch_schedule: rhs.epoch_schedule,
             inflation: rhs.inflation,
             stakes: rhs.stakes,
@@ -844,7 +843,6 @@ where
         epoch_stakes,
     );
 
-    info!("rent_collector: {:?}", bank.rent_collector());
     Ok((
         bank,
         ReconstructedBankInfo {
