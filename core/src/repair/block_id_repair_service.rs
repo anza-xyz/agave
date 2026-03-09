@@ -39,10 +39,7 @@ use {
         blockstore_meta::BlockLocation,
         shred::DATA_SHREDS_PER_FEC_BLOCK,
     },
-    solana_perf::{
-        packet::{PacketBatch, PacketRef, packet_config},
-        recycler::Recycler,
-    },
+    solana_perf::packet::{PacketBatch, PacketRef, packet_config},
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::SharableBanks,
     solana_streamer::{
@@ -272,12 +269,10 @@ impl BlockIdRepairService {
             block_id_repair_socket.clone(),
             exit.clone(),
             response_sender,
-            Recycler::default(),
             Arc::new(StreamerReceiveStats::new(
                 "block_id_repair_response_receiver",
             )),
             None,  // coalesce
-            false, // use_pinned_memory
             false, // is_staked_service
         );
 
@@ -1022,11 +1017,12 @@ impl BlockIdRepairService {
                     .iter()
                     .map(|(bytes, addr)| (bytes, addr)),
             )
-            .inspect_err(|SendPktsError::IoError(err, failed)| {
+            .inspect_err(|SendPktsError::IoError(err, sent)| {
                 error!(
-                    "{}: failed to send block_id repair packets, packets failed {failed}/{total}: \
+                    "{}: failed to send block_id repair packets, packets failed {}/{total}: \
                      {err:?}",
                     repair_info.cluster_info.id(),
+                    total - sent,
                 )
             });
         }
@@ -1036,11 +1032,11 @@ impl BlockIdRepairService {
                 repair_socket,
                 shred_socket_batch.iter().map(|(bytes, addr)| (bytes, addr)),
             )
-            .inspect_err(|SendPktsError::IoError(err, failed)| {
+            .inspect_err(|SendPktsError::IoError(err, sent)| {
                 error!(
-                    "{}: failed to send shred repair requests, packets failed {failed}/{total}: \
-                     {err:?}",
+                    "{}: failed to send shred repair requests, packets failed {}/{total}: {err:?}",
                     repair_info.cluster_info.id(),
+                    total - sent,
                 )
             });
         }

@@ -842,8 +842,9 @@ impl RepairService {
             } else {
                 let batch = batch.iter().map(|(bytes, addr)| (bytes, addr));
                 match batch_send(repair_socket, batch) {
-                    Ok(()) => (),
-                    Err(SendPktsError::IoError(err, num_failed)) => {
+                    Ok(_num_sent) => (),
+                    Err(SendPktsError::IoError(err, num_sent)) => {
+                        let num_failed = num_pkts - num_sent;
                         error!(
                             "{} batch_send failed to send {num_failed}/{num_pkts} packets first \
                              error {err:?}",
@@ -1190,10 +1191,10 @@ impl RepairService {
 
         // Send packet batch
         match batch_send(repair_socket, reqs) {
-            Ok(()) => {
+            Ok(_num_sent) => {
                 debug!("successfully sent repair request to {pubkey} / {address}!");
             }
-            Err(SendPktsError::IoError(err, _num_failed)) => {
+            Err(SendPktsError::IoError(err, _num_sent)) => {
                 error!("batch_send failed to send packet - error = {err:?}");
             }
         }
@@ -1432,6 +1433,7 @@ mod test {
         solana_perf::packet::PacketRef,
         solana_runtime::bank::Bank,
         solana_signer::Signer,
+        solana_streamer::packet::BytesPacketBatch,
         solana_time_utils::timestamp,
         std::{collections::HashSet, sync::Arc},
     };
@@ -1466,8 +1468,8 @@ mod test {
         );
 
         // Receive and translate repair packet
-        let mut packets = vec![solana_packet::Packet::default(); 1];
-        let _recv_count = solana_streamer::recvmmsg::recv_mmsg(&reader, &mut packets[..]).unwrap();
+        let mut packets = BytesPacketBatch::with_capacity(1);
+        let _recv_count = solana_streamer::recvmmsg::recv_mmsg(&reader, &mut packets).unwrap();
         let packet = &packets[0];
 
         let remote_request = PacketRef::from(packet).to_bytes_packet();

@@ -140,12 +140,12 @@ fn retransmit_to(
             .collect()
     };
     match multi_target_send(socket, data, &dests) {
-        Ok(()) => (),
-        Err(SendPktsError::IoError(ioerr, num_failed)) => {
+        Ok(_num_sent) => (),
+        Err(SendPktsError::IoError(ioerr, num_sent)) => {
             error!(
                 "retransmit_to multi_target_send error: {:?}, {}/{} packets failed",
                 ioerr,
-                num_failed,
+                dests.len() - num_sent,
                 dests.len(),
             );
         }

@@ -20,8 +20,8 @@ use {
 pub use {
     solana_packet::{Meta, PACKET_DATA_SIZE, Packet},
     solana_perf::packet::{
-        NUM_PACKETS, PACKETS_PER_BATCH, PacketBatch, PacketBatchRecycler, PacketRef, PacketRefMut,
-        RecycledPacketBatch,
+        BytesPacket, BytesPacketBatch, NUM_PACKETS, PACKETS_PER_BATCH, PacketBatch,
+        PacketBatchRecycler, PacketRef, PacketRefMut, RecycledPacketBatch,
     },
 };
 
@@ -35,28 +35,30 @@ This is a wrapper around recvmmsg(7) call.
 */
 #[cfg(not(unix))]
 pub(crate) fn recv_from(
-    batch: &mut RecycledPacketBatch,
+    batch: &mut BytesPacketBatch,
     socket: &UdpSocket,
     // If max_wait is None, reads from the socket until either:
     //   * 64 packets are read (PACKETS_PER_BATCH == 64), or
     //   * There are no more data available to read from the socket.
     max_wait: Option<Duration>,
 ) -> Result<usize> {
-    let mut i = 0;
+    batch.clear();
     //DOCUMENTED SIDE-EFFECT
     //Performance out of the IO without poll
     //  * block on the socket until it's readable
     //  * set the socket to non blocking
     //  * read until it fails
-    //  * set it back to blocking before returning
+    //  * leave the socket non blocking on return
     socket.set_nonblocking(false)?;
     trace!("receiving on {}", socket.local_addr().unwrap());
     let should_wait = max_wait.is_some();
     let start = should_wait.then(Instant::now);
+    // The socket is blocking for the first read only, so that we wait for at
+    // least one packet. Every subsequent read must not block.
+    let mut is_blocking = true;
     loop {
-        batch.resize(PACKETS_PER_BATCH, Packet::default());
-        match recv_mmsg(socket, &mut batch[i..]) {
-            Err(err) if i > 0 => {
+        match recv_mmsg(socket, batch) {
+            Err(err) if !batch.is_empty() => {
                 if !should_wait && err.kind() == ErrorKind::WouldBlock {
                     break;
                 }
@@ -66,14 +68,14 @@ pub(crate) fn recv_from(
                 return Err(e);
             }
             Ok(npkts) => {
-                if i == 0 {
+                if is_blocking {
                     socket.set_nonblocking(true)?;
+                    is_blocking = false;
                 }
                 trace!("got {npkts} packets");
-                i += npkts;
                 // Try to batch into big enough buffers
                 // will cause less re-shuffling later on.
-                if i >= PACKETS_PER_BATCH {
+                if batch.len() >= PACKETS_PER_BATCH {
                     break;
                 }
             }
@@ -82,15 +84,14 @@ pub(crate) fn recv_from(
             break;
         }
     }
-    batch.truncate(i);
-    Ok(i)
+    Ok(batch.len())
 }
 
 /// Receive multiple messages from `sock` into buffer provided in `batch`.
 /// This is a wrapper around recvmmsg(7) call.
 #[cfg(unix)]
 pub(crate) fn recv_from(
-    batch: &mut RecycledPacketBatch,
+    batch: &mut BytesPacketBatch,
     socket: &UdpSocket,
     // If max_wait is None, reads from the socket until either:
     //   * 64 packets are read (PACKETS_PER_BATCH == 64), or
@@ -133,24 +134,22 @@ pub(crate) fn recv_from(
     /// - If any packets were read, the function will exit.
     /// - If no packets were read, the function will return an error.
     fn recv_from_once(
-        batch: &mut RecycledPacketBatch,
+        batch: &mut BytesPacketBatch,
         socket: &UdpSocket,
         poll_fd: &mut [PollFd],
     ) -> Result<usize> {
-        let mut i = 0;
         let mut did_poll = false;
 
         loop {
-            match recv_mmsg(socket, &mut batch[i..]) {
-                Ok(npkts) => {
-                    i += npkts;
-                    if i >= PACKETS_PER_BATCH {
+            match recv_mmsg(socket, batch) {
+                Ok(_) => {
+                    if batch.len() >= PACKETS_PER_BATCH {
                         break;
                     }
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {
                     // If we have read any packets, we can exit.
-                    if i > 0 {
+                    if !batch.is_empty() {
                         break;
                     }
                     // If we have already polled once, return the error.
@@ -167,7 +166,7 @@ pub(crate) fn recv_from(
             }
         }
 
-        Ok(i)
+        Ok(batch.len())
     }
 
     /// Read and batch packets from the socket until batch size is [`PACKETS_PER_BATCH`] or `max_wait` is reached.
@@ -178,7 +177,7 @@ pub(crate) fn recv_from(
     /// On subsequent iterations, when [`ErrorKind::WouldBlock`] is encountered, poll for the
     /// saturating duration since the start of the loop.
     fn recv_from_coalesce(
-        batch: &mut RecycledPacketBatch,
+        batch: &mut BytesPacketBatch,
         socket: &UdpSocket,
         max_wait: Duration,
         poll_fd: &mut [PollFd],
@@ -199,24 +198,21 @@ pub(crate) fn recv_from(
         // `ppoll` is not supported on non-linuxish platforms, so we use `poll`, which only
         // supports millisecond precision.
         const MIN_POLL_DURATION: Duration = Duration::from_millis(1);
-
-        let mut i = 0;
         let deadline = Instant::now() + max_wait;
 
         loop {
-            match recv_mmsg(socket, &mut batch[i..]) {
-                Ok(npkts) => {
-                    i += npkts;
-                    if i >= PACKETS_PER_BATCH {
+            match recv_mmsg(socket, batch) {
+                Ok(_) => {
+                    if batch.len() >= PACKETS_PER_BATCH {
                         break;
                     }
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                    let timeout = if i == 0 {
+                    let timeout = if batch.is_empty() {
                         // This emulates the behavior of the original `recv_from` function,
                         // where it anticipates that the first read of the socket will block for
                         // `crate::streamer::SOCKET_READ_TIMEOUT` before failing with
-                        // `ErrorKind::WouldBlock`. The condition `i == 0` indicates that we are just
+                        // `ErrorKind::WouldBlock`. An empty batch indicates that we are just
                         // after the initial read, which did not result in any packets being read.
                         SOCKET_READ_TIMEOUT
                     } else {
@@ -264,17 +260,16 @@ pub(crate) fn recv_from(
             }
         }
 
-        Ok(i)
+        Ok(batch.len())
     }
 
     trace!("receiving on {}", socket.local_addr().unwrap());
 
+    batch.clear();
     let i = match max_wait {
         Some(max_wait) => recv_from_coalesce(batch, socket, max_wait, poll_fd),
         None => recv_from_once(batch, socket, poll_fd),
     }?;
-
-    batch.truncate(i);
 
     Ok(i)
 }
@@ -316,7 +311,7 @@ mod tests {
     }
 
     fn recv_from(
-        batch: &mut RecycledPacketBatch,
+        batch: &mut BytesPacketBatch,
         socket: &UdpSocket,
         max_wait: Option<Duration>,
     ) -> Result<usize> {
@@ -350,9 +345,7 @@ mod tests {
         }
         send_to(&batch, &send_socket, &SocketAddrSpace::Unspecified).unwrap();
 
-        batch
-            .iter_mut()
-            .for_each(|pkt| *pkt.meta_mut() = Meta::default());
+        let mut batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
         let recvd = recv_from(
             &mut batch,
             &recv_socket,
@@ -396,8 +389,6 @@ mod tests {
         let recv_socket = bind_to_localhost_unique().expect("should bind - receiver");
         let addr = recv_socket.local_addr().unwrap();
         let send_socket = bind_to_localhost_unique().expect("should bind - sender");
-        let mut batch = RecycledPacketBatch::with_capacity(PACKETS_PER_BATCH);
-        batch.resize(PACKETS_PER_BATCH, Packet::default());
 
         // Should only get PACKETS_PER_BATCH packets per iteration even
         // if a lot more were sent, and regardless of packet size
@@ -411,6 +402,7 @@ mod tests {
             }
             send_to(&batch, &send_socket, &SocketAddrSpace::Unspecified).unwrap();
         }
+        let mut batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
         let recvd = recv_from(
             &mut batch,
             &recv_socket,

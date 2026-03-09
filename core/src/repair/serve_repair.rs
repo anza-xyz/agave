@@ -1954,8 +1954,9 @@ impl ServeRepair {
             let num_pkts = pending_pongs.len();
             let pending_pongs = pending_pongs.iter().map(|(bytes, addr)| (bytes, addr));
             match batch_send(repair_socket, pending_pongs) {
-                Ok(()) => (),
-                Err(SendPktsError::IoError(err, num_failed)) => {
+                Ok(_num_sent) => (),
+                Err(SendPktsError::IoError(err, num_sent)) => {
+                    let num_failed = num_pkts - num_sent;
                     warn!(
                         "batch_send failed to send {num_failed}/{num_pkts} packets. First error: \
                          {err:?}"
