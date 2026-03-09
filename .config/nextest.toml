@@ -105,7 +105,7 @@ filter = 'package(solana-runtime) & test(/^bank_forks::tests::test_bank_forks_ne
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-runtime) & test(/^bank::tests::test_race_register_tick_freeze/)'
+filter = 'package(solana-runtime) & test(/^test_race_register_tick_freeze/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 [[profile.ci.overrides]]
