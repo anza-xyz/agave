@@ -1435,7 +1435,7 @@ mod test {
             shred::max_ticks_per_n_shreds,
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-        solana_perf::packet::PacketRef,
+        solana_perf::packet::{BytesPacket, PACKET_DATA_SIZE},
         solana_runtime::bank::Bank,
         solana_signer::Signer,
         solana_time_utils::timestamp,
@@ -1472,11 +1472,12 @@ mod test {
         );
 
         // Receive and translate repair packet
-        let mut packets = vec![solana_packet::Packet::default(); 1];
-        let _recv_count = solana_streamer::recvmmsg::recv_mmsg(&reader, &mut packets[..]).unwrap();
-        let packet = &packets[0];
-
-        let remote_request = PacketRef::from(packet).to_bytes_packet();
+        let mut buffer = vec![0u8; PACKET_DATA_SIZE];
+        let (nrecv, from) = reader
+            .recv_from(&mut buffer)
+            .expect("should receive the request");
+        buffer.truncate(nrecv);
+        let remote_request = BytesPacket::from_bytes(Some(&from), buffer);
         // Deserialize and check the request
         let deserialized =
             serve_repair::deserialize_request::<RepairProtocol>(&remote_request).unwrap();

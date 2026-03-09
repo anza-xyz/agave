@@ -7,7 +7,7 @@ use {
         self,
         filter::{ShredFilterContext, TurbineMode},
     },
-    solana_perf::packet::{PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef},
+    solana_perf::packet::{PacketBatch, PacketFlags, PacketRef},
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     solana_streamer::{
         evicting_sender::EvictingSender,
@@ -132,7 +132,6 @@ impl ShredFetchStage {
         sockets: Vec<Arc<UdpSocket>>,
         exit: Arc<AtomicBool>,
         sender: EvictingSender<PacketBatch>,
-        recycler: PacketBatchRecycler,
         bank_forks: Arc<RwLock<BankForks>>,
         shred_version: u16,
         name: &'static str,
@@ -153,10 +152,8 @@ impl ShredFetchStage {
                     socket,
                     exit.clone(),
                     packet_sender.clone(),
-                    recycler.clone(),
                     receiver_stats.clone(),
                     Some(Duration::from_millis(5)), // coalesce
-                    true,                           // use_pinned_memory
                     false,                          // is_staked_service
                 )
             })
@@ -191,7 +188,6 @@ impl ShredFetchStage {
         turbine_mode: TurbineMode,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let recycler = PacketBatchRecycler::new();
         let repair_context = RepairContext {
             repair_socket: repair_socket.clone(),
             cluster_info,
@@ -204,7 +200,6 @@ impl ShredFetchStage {
             sockets,
             exit.clone(),
             sender.clone(),
-            recycler.clone(),
             bank_forks.clone(),
             shred_version,
             "shred_fetch",
@@ -219,7 +214,6 @@ impl ShredFetchStage {
             vec![repair_socket],
             exit.clone(),
             sender.clone(),
-            recycler,
             bank_forks.clone(),
             shred_version,
             "shred_fetch_repair",
