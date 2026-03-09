@@ -152,10 +152,7 @@ static RESERVED_ACCOUNTS: std::sync::LazyLock<Vec<ReservedAccount>> =
             ReservedAccount::new_active(feature::id()),
             ReservedAccount::new_active(loader_v4::id()),
             ReservedAccount::new_active(secp256k1_program::id()),
-            ReservedAccount::new_pending(
-                secp256r1_program::id(),
-                feature_set::enable_secp256r1_precompile::id(),
-            ),
+            ReservedAccount::new_active(secp256r1_program::id()),
             #[allow(deprecated)]
             ReservedAccount::new_active(stake::config::id()),
             ReservedAccount::new_active(stake::id()),
