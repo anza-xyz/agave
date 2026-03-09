@@ -3226,9 +3226,6 @@ impl Bank {
         &self,
         txs: Vec<VersionedTransaction>,
     ) -> Result<TransactionBatch<'_, '_, RuntimeTransaction<SanitizedTransaction>>> {
-        let enable_static_instruction_limit = self
-            .feature_set
-            .is_active(&agave_feature_set::static_instruction_limit::id());
         let enable_instruction_account_limit = self
             .feature_set
             .is_active(&agave_feature_set::limit_instruction_accounts::id());
@@ -3241,7 +3238,6 @@ impl Bank {
                     None,
                     self,
                     self.get_reserved_account_keys(),
-                    enable_static_instruction_limit,
                     enable_instruction_account_limit,
                 )
             })
@@ -5010,9 +5006,6 @@ impl Bank {
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        let enable_static_instruction_limit = self
-            .feature_set
-            .is_active(&agave_feature_set::static_instruction_limit::id());
         let enable_instruction_account_limit = self
             .feature_set
             .is_active(&agave_feature_set::limit_instruction_accounts::id());
@@ -5031,9 +5024,8 @@ impl Bank {
             let message_hash = if verification_mode == TransactionVerificationMode::FullVerification
             {
                 // SIMD-0160, check instruction limit before signature verificaton
-                if enable_static_instruction_limit
-                    && tx.message.instructions().len()
-                        > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
+                if tx.message.instructions().len()
+                    > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
                 {
                     return Err(solana_transaction_error::TransactionError::SanitizeFailure);
                 }
@@ -5048,7 +5040,6 @@ impl Bank {
                 None,
                 self,
                 self.get_reserved_account_keys(),
-                enable_static_instruction_limit,
                 enable_instruction_account_limit,
             )
         }?;
