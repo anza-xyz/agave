@@ -444,6 +444,28 @@ where
 
         // Only callback if this state is not already dead (scheduler requested drop).
         match (state.dead, responses) {
+            (true, WorkerResponseBatch::Check(rep)) => {
+                // SAFETY
+                // - We trust Agave to have correctly allocated the responses.
+                let rep = unsafe { rep.add(index).read() };
+
+                // Free shared pubkeys if there are any.
+                if rep.resolved_pubkeys.num_pubkeys > 0 {
+                    // SAFETY
+                    // - Region exists as `num_pubkeys > 0`.
+                    // - Trust Agave to have allocated this region correctly.
+                    // - We now own it exclusively.
+                    unsafe {
+                        let keys = PubkeysPtr::from_sharable_pubkeys(
+                            &rep.resolved_pubkeys,
+                            &self.allocator,
+                        );
+                        keys.free(&self.allocator);
+                    };
+                }
+
+                TxDecision::Drop
+            }
             (true, _) => TxDecision::Drop,
             (false, WorkerResponseBatch::Unprocessed) => {
                 let rep = WorkerResponse {
