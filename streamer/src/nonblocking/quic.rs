@@ -51,8 +51,13 @@ use {
 
 pub const DEFAULT_WAIT_FOR_CHUNK_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Re-check interval for parked (zero-credit) connections.
-const PARK_RECHECK_INTERVAL: Duration = Duration::from_millis(10);
+/// Parked re-check base progression: 10 -> 20 -> 40 -> 80ms (cap at 80ms).
+const PARK_RECHECK_BASE_MS: u64 = 10;
+const PARK_RECHECK_BASE_CAP_MS: u64 = 80;
+/// Add fixed jitter to spread wakeups and avoid herd behavior.
+const PARK_RECHECK_JITTER_MAX_MS: u64 = 20;
+/// Hard cap on effective sleep.
+const PARK_RECHECK_SLEEP_CAP_MS: u64 = 100;
 
 pub const ALPN_TPU_PROTOCOL_ID: &[u8] = b"solana-tpu";
 
@@ -86,6 +91,41 @@ const QUIC_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 /// a stream reassembly would be delayed more is when something
 /// extraordinary has occured (congestion control or flow control blocking)
 const LATE_REASSEMBLY_THRESHOLD: f32 = 1.5;
+
+#[derive(Debug, Clone)]
+struct ParkRecheckBackoff {
+    base_ms: u64,
+}
+
+impl ParkRecheckBackoff {
+    fn new() -> Self {
+        Self {
+            base_ms: PARK_RECHECK_BASE_MS,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.base_ms = PARK_RECHECK_BASE_MS;
+    }
+
+    fn next_delay(&mut self) -> Duration {
+        let jitter_ms = rng().random_range(0..=PARK_RECHECK_JITTER_MAX_MS);
+        let delay_ms = self
+            .base_ms
+            .saturating_add(jitter_ms)
+            .min(PARK_RECHECK_SLEEP_CAP_MS);
+        self.base_ms = self
+            .base_ms
+            .saturating_mul(2)
+            .min(PARK_RECHECK_BASE_CAP_MS);
+        Duration::from_millis(delay_ms)
+    }
+
+    #[cfg(test)]
+    fn base_ms(&self) -> u64 {
+        self.base_ms
+    }
+}
 
 // A struct to accumulate the bytes making up
 // a packet, along with their offsets, and the
@@ -573,6 +613,7 @@ async fn handle_connection<Q, C>(
     C: ConnectionContext + Send + Sync + 'static,
 {
     let peer_type = context.peer_type();
+    let mut park_recheck_backoff = ParkRecheckBackoff::new();
     debug!(
         "quic new connection {} streams: {} connections: {}",
         remote_address,
@@ -592,11 +633,14 @@ async fn handle_connection<Q, C>(
             if max_streams == 0 {
                 // Park: don't accept streams, wait for load to drop
                 stats.parked_streams.fetch_add(1, Ordering::Relaxed);
+                let recheck_delay = park_recheck_backoff.next_delay();
                 select! {
-                    _ = tokio::time::sleep(PARK_RECHECK_INTERVAL) => continue,
+                    _ = tokio::time::sleep(recheck_delay) => continue,
                     _ = cancel.cancelled() => break,
                 }
             }
+            // Unparked: restore fast re-checks for the next time this connection parks.
+            park_recheck_backoff.reset();
         }
 
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
@@ -1141,6 +1185,46 @@ pub mod test {
         std::collections::HashMap,
         tokio::time::sleep,
     };
+
+    #[test]
+    fn test_park_recheck_backoff_progression_and_bounds() {
+        let mut backoff = ParkRecheckBackoff::new();
+
+        for expected_base in [10_u64, 20, 40, 80, 80, 80] {
+            assert_eq!(backoff.base_ms(), expected_base);
+            let delay_ms = backoff.next_delay().as_millis() as u64;
+            assert!(
+                delay_ms >= expected_base,
+                "delay_ms={delay_ms}, expected_base={expected_base}"
+            );
+            assert!(
+                delay_ms
+                    <= expected_base
+                        .saturating_add(PARK_RECHECK_JITTER_MAX_MS)
+                        .min(PARK_RECHECK_SLEEP_CAP_MS),
+                "delay_ms={delay_ms}, expected_base={expected_base}"
+            );
+        }
+
+        assert_eq!(backoff.base_ms(), PARK_RECHECK_BASE_CAP_MS);
+    }
+
+    #[test]
+    fn test_park_recheck_backoff_reset() {
+        let mut backoff = ParkRecheckBackoff::new();
+        for _ in 0..4 {
+            let _ = backoff.next_delay();
+        }
+        assert_eq!(backoff.base_ms(), PARK_RECHECK_BASE_CAP_MS);
+
+        backoff.reset();
+        assert_eq!(backoff.base_ms(), PARK_RECHECK_BASE_MS);
+
+        let delay_ms = backoff.next_delay().as_millis() as u64;
+        assert!(delay_ms >= PARK_RECHECK_BASE_MS);
+        assert!(delay_ms <= PARK_RECHECK_BASE_MS + PARK_RECHECK_JITTER_MAX_MS);
+        assert_eq!(backoff.base_ms(), 20);
+    }
 
     pub async fn check_timeout(receiver: Receiver<PacketBatch>, server_address: SocketAddr) {
         let conn1 = make_client_endpoint(&server_address, None).await;
