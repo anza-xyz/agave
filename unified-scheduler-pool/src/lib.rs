@@ -94,31 +94,6 @@ enum CheckPoint<'a> {
 type CountOrDefault = Option<usize>;
 type AtomicSchedulerId = AtomicU64;
 
-#[derive(Debug)]
-pub enum SupportedSchedulingMode {
-    Either(SchedulingMode),
-    Both,
-}
-
-impl SupportedSchedulingMode {
-    fn is_supported(&self, requested_mode: SchedulingMode) -> bool {
-        match (self, requested_mode) {
-            (Self::Both, _requested) => true,
-            (Self::Either(supported), ref requested) => supported == requested,
-        }
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn with_verification() -> Self {
-        Self::Either(BlockVerification)
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    fn with_production() -> Self {
-        Self::with_verification()
-    }
-}
-
 /// A pool of idling schedulers (usually [`PooledScheduler`]), ready to be taken by bank.
 ///
 /// Also, the pool runs a _cleaner_ thread named as `solScCleaner`. its jobs include:
@@ -135,7 +110,6 @@ impl SupportedSchedulingMode {
 /// explanation of this rather complex dyn trait/type hierarchy.
 #[derive(Debug)]
 pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
-    supported_scheduling_mode: SupportedSchedulingMode,
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
     block_production_scheduler_inner: Mutex<BlockProductionSchedulerInner<S, TH>>,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
@@ -441,7 +415,6 @@ where
     TH: TaskHandler,
 {
     pub fn new(
-        supported_scheduling_mode: SupportedSchedulingMode,
         block_verification_handler_count: CountOrDefault,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
@@ -449,7 +422,6 @@ where
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     ) -> Arc<Self> {
         Self::do_new(
-            supported_scheduling_mode,
             block_verification_handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
@@ -471,7 +443,6 @@ where
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     ) -> Arc<Self> {
         Self::new(
-            SupportedSchedulingMode::with_verification(),
             block_verification_handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
@@ -489,7 +460,6 @@ where
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     ) -> Arc<Self> {
         Self::new(
-            SupportedSchedulingMode::with_production(),
             block_verification_handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
@@ -500,7 +470,6 @@ where
 
     #[allow(clippy::too_many_arguments)]
     fn do_new(
-        supported_scheduling_mode: SupportedSchedulingMode,
         block_verification_handler_count: CountOrDefault,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
@@ -671,7 +640,6 @@ where
             .unwrap();
 
         let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
-            supported_scheduling_mode,
             scheduler_inners: Mutex::default(),
             block_production_scheduler_inner: Mutex::default(),
             trashed_scheduler_inners: Mutex::default(),
@@ -778,7 +746,7 @@ where
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
     ) -> Option<S> {
-        if !self.supported_scheduling_mode.is_supported(context.mode()) {
+        if !matches!(context.mode(), BlockVerification) {
             return None;
         }
 
@@ -2565,7 +2533,6 @@ mod tests {
             timeout_duration: Duration,
         ) -> Arc<Self> {
             Self::do_new(
-                SupportedSchedulingMode::with_verification(),
                 block_verification_handler_count,
                 log_messages_bytes_limit,
                 transaction_status_sender,
@@ -2588,7 +2555,6 @@ mod tests {
             prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         ) -> InstalledSchedulerPoolArc {
             Self::new(
-                SupportedSchedulingMode::with_verification(),
                 block_verification_handler_count,
                 log_messages_bytes_limit,
                 transaction_status_sender,
@@ -3684,15 +3650,8 @@ mod tests {
 
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-        let supported_scheduling_mode = SupportedSchedulingMode::with_verification();
-        let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
-            supported_scheduling_mode,
-            None,
-            None,
-            None,
-            None,
-            None,
-        );
+        let pool =
+            SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(None, None, None, None, None);
         let (record_sender, mut record_receiver) = record_channels(true);
         let _transaction_recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
@@ -4480,7 +4439,6 @@ mod tests {
 
         const REDUCED_MAX_USAGE_QUEUE_COUNT: usize = 0;
         let pool = DefaultSchedulerPool::do_new(
-            SupportedSchedulingMode::with_production(),
             None,
             None,
             None,
@@ -4556,7 +4514,6 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let pool = DefaultSchedulerPool::do_new(
-            SupportedSchedulingMode::with_production(),
             None,
             None,
             None,
@@ -4610,15 +4567,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
-        let pool = DefaultSchedulerPool::new(
-            // Both block verification and production scheduler are needed for this test.
-            SupportedSchedulingMode::Both,
-            None,
-            None,
-            None,
-            None,
-            None,
-        );
+        let pool = DefaultSchedulerPool::new(None, None, None, None, None);
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         let (record_sender, mut record_receiver) = record_channels(true);
@@ -4675,7 +4624,6 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let pool = DefaultSchedulerPool::do_new(
-            SupportedSchedulingMode::with_production(),
             None,
             None,
             None,
@@ -4757,7 +4705,6 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let pool = DefaultSchedulerPool::do_new(
-            SupportedSchedulingMode::with_production(),
             None,
             None,
             None,
@@ -4808,7 +4755,6 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let pool = DefaultSchedulerPool::do_new(
-            SupportedSchedulingMode::with_production(),
             None,
             None,
             None,
