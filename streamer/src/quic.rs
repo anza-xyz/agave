@@ -239,7 +239,7 @@ pub struct StreamerStats {
     /// Unsaturated→saturated transitions since last report.
     pub(crate) transitions_to_saturated: AtomicU64,
     /// Percentage of time spent saturated (0–100, integer).
-    pub(crate) saturated_pct: AtomicU64,
+    pub(crate) saturated_percent: AtomicU64,
 }
 
 impl StreamerStats {
@@ -254,29 +254,7 @@ impl StreamerStats {
         } else {
             0
         };
-        self.saturated_pct.store(pct, Ordering::Relaxed);
-    }
-
-    pub fn total_new_streams(&self) -> usize {
-        self.total_new_streams.load(Ordering::Relaxed)
-    }
-
-    pub fn parked_streams(&self) -> usize {
-        self.parked_streams.load(Ordering::Relaxed)
-    }
-
-    pub fn total_packets_sent_to_consumer(&self) -> usize {
-        self.total_packets_sent_to_consumer.load(Ordering::Relaxed)
-    }
-
-    pub fn connection_added_from_staked_peer(&self) -> usize {
-        self.connection_added_from_staked_peer
-            .load(Ordering::Relaxed)
-    }
-
-    pub fn connection_added_from_unstaked_peer(&self) -> usize {
-        self.connection_added_from_unstaked_peer
-            .load(Ordering::Relaxed)
+        self.saturated_percent.store(pct, Ordering::Relaxed);
     }
 
     pub fn report(&self, name: &'static str) {
@@ -598,8 +576,8 @@ impl StreamerStats {
                 i64
             ),
             (
-                "saturated_pct",
-                self.saturated_pct.swap(0, Ordering::Relaxed),
+                "saturated_percent",
+                self.saturated_percent.swap(0, Ordering::Relaxed),
                 i64
             ),
         );

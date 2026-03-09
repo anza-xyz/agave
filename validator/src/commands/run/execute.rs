@@ -1076,7 +1076,7 @@ pub fn execute(
 
     // Build a SwQosConfig closure that constructs the correct variant
     // based on the --tpu-swqos-mode flag, with per-config connection limits.
-    let make_swqos_config = |max_staked: u64, max_unstaked: u64| -> SwQosConfig {
+    let make_swqos_config = |global_max_staked: u64, global_max_unstaked: u64| -> SwQosConfig {
         match tpu_swqos_mode {
             "sleep" => SwQosConfig::Sleep(SwQosSleepConfig {
                 max_connections_per_unstaked_peer: tpu_max_connections_per_unstaked_peer
@@ -1085,8 +1085,8 @@ pub fn execute(
                 max_connections_per_staked_peer: tpu_max_connections_per_staked_peer
                     .try_into()
                     .unwrap(),
-                max_staked_connections: max_staked.try_into().unwrap(),
-                max_unstaked_connections: max_unstaked.try_into().unwrap(),
+                max_staked_connections: global_max_staked.try_into().unwrap(),
+                max_unstaked_connections: global_max_unstaked.try_into().unwrap(),
                 max_streams_per_ms,
             }),
             _ => SwQosConfig::MaxStreams(SwQosMaxStreamsConfig {
@@ -1096,8 +1096,8 @@ pub fn execute(
                 max_connections_per_staked_peer: tpu_max_connections_per_staked_peer
                     .try_into()
                     .unwrap(),
-                max_staked_connections: max_staked.try_into().unwrap(),
-                max_unstaked_connections: max_unstaked.try_into().unwrap(),
+                max_staked_connections: global_max_staked.try_into().unwrap(),
+                max_unstaked_connections: global_max_unstaked.try_into().unwrap(),
                 max_streams_per_ms,
                 ..Default::default()
             }),
