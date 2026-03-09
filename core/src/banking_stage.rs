@@ -520,7 +520,6 @@ impl BankingStage {
                 BlockProductionMethod::CentralSchedulerGreedy => {
                     self.spawn_internal_central(true, num_workers, config)
                 }
-                BlockProductionMethod::UnifiedScheduler => self.spawn_internal_unified(),
             },
             #[cfg(unix)]
             BankingControlMsg::External { session } => self.spawn_external(session),
@@ -661,17 +660,6 @@ impl BankingStage {
         }
 
         Ok(threads)
-    }
-
-    fn spawn_internal_unified(&self) -> Result<Vec<JoinHandle<()>>, ()> {
-        info!("Spawning internal unified scheduler");
-        if self.toggle_internal_unified(true) {
-            // All unified scheduler threads are managed by itself. So, return none here.
-            Ok(vec![])
-        } else {
-            error!("Spawning unified scheduler failed");
-            Err(())
-        }
     }
 
     fn toggle_internal_unified(&self, enable: bool) -> bool {

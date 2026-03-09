@@ -385,15 +385,6 @@ pub fn load_and_process_ledger(
         "block_production_method",
         BlockProductionMethod
     )
-    .inspect(|method| {
-        if matches!(method, BlockProductionMethod::UnifiedScheduler) {
-            warn!(
-                "Currently, the unified-scheduler method is experimental for block-production. It \
-                 has known security issues and should be used only for developing and \
-                 benchmarking purposes"
-            );
-        }
-    })
     .unwrap_or_default();
     info!(
         "Using: block-verification-method: {block_verification_method}, block-production-method: \
