@@ -914,12 +914,15 @@ macro_rules! with_mock_invoke_context {
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-pub fn mock_compile_message(
+pub fn mock_compile_message<A>(
     instruction: &Instruction,
-    accounts: &[(Pubkey, solana_account::Account)],
+    accounts: &[(Pubkey, A)],
     program_id: &Pubkey,
     loader_key: &Pubkey,
-) -> Option<(SanitizedMessage, Vec<(Pubkey, AccountSharedData)>)> {
+) -> Option<(SanitizedMessage, Vec<(Pubkey, AccountSharedData)>)>
+where
+    A: Into<AccountSharedData> + Clone,
+{
     let message = Message::new(std::slice::from_ref(instruction), None);
     let transaction_accounts: Vec<_> = message
         .account_keys
@@ -928,7 +931,7 @@ pub fn mock_compile_message(
             let account = accounts
                 .iter()
                 .find(|(k, _)| k == key)
-                .map(|(_, a)| AccountSharedData::from(a.clone()))
+                .map(|(_, a)| a.clone().into())
                 .unwrap_or_else(|| {
                     if key == program_id {
                         let mut account = AccountSharedData::new(0, 0, loader_key);
