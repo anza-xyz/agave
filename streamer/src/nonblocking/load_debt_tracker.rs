@@ -19,18 +19,19 @@ pub struct LoadDebtTracker {
     bucket: AtomicI64,
     /// High bit is a lock.
     last_refill_nanos: AtomicU64,
-    was_saturated: AtomicBool,
+    saturated: AtomicBool,
     epoch: Instant,
     refill_interval_nanos: u64,
     max_streams_per_second: u64,
     burst_capacity: i64,
-    /// 90% of burst_capacity — exit threshold for saturation hysteresis.
     recovery_threshold: i64,
     transitions_to_saturated: AtomicU64,
-    transitions_to_unsaturated: AtomicU64,
     saturated_nanos: AtomicU64,
     saturated_since_nanos: AtomicU64,
 }
+
+const LOCK_BIT: u64 = 1 << 63;
+const NANO_MASK: u64 = !LOCK_BIT;
 
 impl LoadDebtTracker {
     pub(crate) fn new(
@@ -46,71 +47,42 @@ impl LoadDebtTracker {
         Self {
             bucket: AtomicI64::new(burst_capacity),
             last_refill_nanos: AtomicU64::new(0),
-            was_saturated: AtomicBool::new(false),
+            saturated: AtomicBool::new(false),
             epoch: Instant::now(),
             refill_interval_nanos: refill_interval.as_nanos() as u64,
             max_streams_per_second,
             burst_capacity,
             recovery_threshold: burst_capacity * 9 / 10,
             transitions_to_saturated: AtomicU64::new(0),
-            transitions_to_unsaturated: AtomicU64::new(0),
             saturated_nanos: AtomicU64::new(0),
             saturated_since_nanos: AtomicU64::new(0),
         }
     }
 
-    /// Consume one token. Triggers refill when bucket hits zero or below.
+    /// Consume one token. Triggers state update when bucket hits zero or below.
     pub(crate) fn acquire(&self) {
         let prev = self.bucket.fetch_sub(1, Ordering::Relaxed);
-        if prev <= 1 {
-            self.try_refill();
+        if prev == 1 {
+            // Crossing 1 -> 0: force a state check immediately.
+            self.update_state_inner(true);
+        } else if prev < 1 {
+            // Already at/below zero: run normal state maintenance.
+            self.update_state_inner(false);
         }
     }
 
     /// Whether the system is saturated (with hysteresis).
-    /// Enters when bucket ≤ 0; exits when bucket reaches 90% of capacity.
-    /// Logs transitions at warn/info level.
+    /// When saturated, probes for recovery so the flag doesn't stay stale
+    /// if accepted-stream traffic drops.
     pub fn is_saturated(&self) -> bool {
-        let level = self.bucket.load(Ordering::Relaxed);
-        let was_saturated = self.was_saturated.load(Ordering::Relaxed);
-        let saturated = if was_saturated {
-            if level < self.recovery_threshold {
-                self.try_refill();
-                self.bucket.load(Ordering::Relaxed) < self.recovery_threshold
-            } else {
-                false
-            }
-        } else if level <= 0 {
-            self.try_refill();
-            self.bucket.load(Ordering::Relaxed) <= 0
-        } else {
-            false
-        };
-        let now_nanos = self.nanos_since_epoch();
-        let prev = self.was_saturated.swap(saturated, Ordering::Relaxed);
-        if saturated && !prev {
-            self.transitions_to_saturated
-                .fetch_add(1, Ordering::Relaxed);
-            self.saturated_since_nanos
-                .store(now_nanos, Ordering::Relaxed);
-            log::warn!(
-                "LoadDebtTracker: system saturated (bucket={})",
-                self.bucket.load(Ordering::Relaxed),
-            );
-        } else if !saturated && prev {
-            self.transitions_to_unsaturated
-                .fetch_add(1, Ordering::Relaxed);
-            let entered = self.saturated_since_nanos.load(Ordering::Relaxed);
-            if now_nanos > entered {
-                self.saturated_nanos
-                    .fetch_add(now_nanos - entered, Ordering::Relaxed);
-            }
-            log::info!(
-                "LoadDebtTracker: system recovered (bucket={})",
-                self.bucket.load(Ordering::Relaxed),
-            );
+        let saturated = self.saturated.load(Ordering::Relaxed);
+        if saturated {
+            self.update_state_inner(false);
+        } else if self.bucket.load(Ordering::Relaxed) <= 0 {
+            // If debt is visible but the flag is false, force an enter check.
+            self.update_state_inner(true);
         }
-        saturated
+        self.saturated.load(Ordering::Relaxed)
     }
 
     /// Return the current bucket level.
@@ -123,16 +95,11 @@ impl LoadDebtTracker {
         self.transitions_to_saturated.swap(0, Ordering::Relaxed)
     }
 
-    /// Return and reset the number of saturated→unsaturated transitions.
-    pub fn take_transitions_to_unsaturated(&self) -> u64 {
-        self.transitions_to_unsaturated.swap(0, Ordering::Relaxed)
-    }
-
     /// Return and reset cumulative nanos spent in saturated state.
     /// Flushes the pending interval if currently saturated.
     pub fn take_saturated_nanos(&self) -> u64 {
         let mut nanos = self.saturated_nanos.swap(0, Ordering::Relaxed);
-        if self.was_saturated.load(Ordering::Relaxed) {
+        if self.saturated.load(Ordering::Relaxed) {
             let now = self.nanos_since_epoch();
             let entered = self.saturated_since_nanos.swap(now, Ordering::Relaxed);
             if now > entered {
@@ -145,7 +112,6 @@ impl LoadDebtTracker {
     /// Log saturation statistics and reset counters.
     pub fn report_saturation_stats(&self, elapsed: Duration) {
         let to_sat = self.take_transitions_to_saturated();
-        let to_unsat = self.take_transitions_to_unsaturated();
         let sat_nanos = self.take_saturated_nanos();
         let elapsed_nanos = elapsed.as_nanos() as u64;
         let duty_pct = if elapsed_nanos > 0 {
@@ -154,39 +120,42 @@ impl LoadDebtTracker {
             0.0
         };
         log::info!(
-            "LoadDebtTracker: transitions to_saturated={to_sat} to_unsaturated={to_unsat} \
+            "LoadDebtTracker: transitions to_saturated={to_sat} \
              saturated_duty={duty_pct:.1}% bucket={}",
             self.bucket_level(),
         );
-    }
-
-    fn try_refill(&self) {
-        let now_nanos = self.nanos_since_epoch();
-        self.refill_at(now_nanos);
     }
 
     fn nanos_since_epoch(&self) -> u64 {
         self.epoch.elapsed().as_nanos() as u64
     }
 
-    fn refill_at(&self, now_nanos: u64) {
-        const LOCK_BIT: u64 = 1 << 63;
-        const NANO_MASK: u64 = !LOCK_BIT;
+    /// Refill the bucket if the interval has elapsed and update saturation
+    /// state. All state transitions happen under the bit lock.
+    ///
+    /// When `force` is false, a cheap elapsed-time pre-check avoids the CAS
+    /// unless a refill is actually due. When `force` is true, the pre-check
+    /// is skipped so a threshold transition can be recorded promptly.
+    fn update_state_inner(&self, force: bool) {
+        let now_nanos = self.nanos_since_epoch();
+        self.update_state_at(now_nanos, force);
+    }
 
+    fn update_state_at(&self, now_nanos: u64, force: bool) {
         let raw = self.last_refill_nanos.load(Ordering::Relaxed);
         if raw & LOCK_BIT != 0 {
-            return;
-        }
-        let last_nanos = raw & NANO_MASK;
-        if now_nanos <= last_nanos {
-            return;
-        }
-        let elapsed_nanos = now_nanos - last_nanos;
-        if elapsed_nanos < self.refill_interval_nanos {
-            return;
+            return; // another thread holds the lock
         }
 
-        // Try to acquire the refill lock.
+        // ── Pre-check: skip CAS when no work is needed ──
+        if !force {
+            let last_nanos = raw & NANO_MASK;
+            if now_nanos.saturating_sub(last_nanos) < self.refill_interval_nanos {
+                return;
+            }
+        }
+
+        // ── Acquire lock ──
         if self
             .last_refill_nanos
             .compare_exchange(raw, raw | LOCK_BIT, Ordering::AcqRel, Ordering::Relaxed)
@@ -195,20 +164,57 @@ impl LoadDebtTracker {
             return;
         }
 
-        let dt_secs = elapsed_nanos as f64 / 1_000_000_000.0;
-        let refill = (self.max_streams_per_second as f64 * dt_secs) as i64;
+        // ── Refill (only if interval has elapsed) ──
+        let last_nanos = raw & NANO_MASK;
+        let mut new_timestamp = last_nanos;
+        let mut log_enter_saturated = false;
+        let mut log_recovered = false;
+        let mut log_level = 0_i64;
+        let elapsed_nanos = now_nanos.saturating_sub(last_nanos);
+        if elapsed_nanos >= self.refill_interval_nanos {
+            let dt_secs = elapsed_nanos as f64 / 1_000_000_000.0;
+            let refill = (self.max_streams_per_second as f64 * dt_secs) as i64;
+            self.bucket.fetch_add(refill, Ordering::Relaxed);
 
-        self.bucket.fetch_add(refill, Ordering::Relaxed);
-
-        // Cap at burst_capacity (racy but bounded and fine for an approximate signal).
-        let level = self.bucket.load(Ordering::Relaxed);
-        if level > self.burst_capacity {
-            self.bucket.store(self.burst_capacity, Ordering::Relaxed);
+            let level = self.bucket.load(Ordering::Relaxed);
+            if level > self.burst_capacity {
+                self.bucket.store(self.burst_capacity, Ordering::Relaxed);
+            }
+            new_timestamp = now_nanos;
         }
 
-        // Release lock and store new timestamp.
+        // ── Update saturation state (under lock) ──
+        let level = self.bucket.load(Ordering::Relaxed);
+        let was_sat = self.saturated.load(Ordering::Relaxed);
+
+        if !was_sat && level <= 0 {
+            self.saturated.store(true, Ordering::Relaxed);
+            self.transitions_to_saturated
+                .fetch_add(1, Ordering::Relaxed);
+            self.saturated_since_nanos
+                .store(now_nanos, Ordering::Relaxed);
+            log_enter_saturated = true;
+            log_level = level;
+        } else if was_sat && level >= self.recovery_threshold {
+            self.saturated.store(false, Ordering::Relaxed);
+            let entered = self.saturated_since_nanos.load(Ordering::Relaxed);
+            if now_nanos > entered {
+                self.saturated_nanos
+                    .fetch_add(now_nanos - entered, Ordering::Relaxed);
+            }
+            log_recovered = true;
+            log_level = level;
+        }
+
+        // ── Release lock ──
         self.last_refill_nanos
-            .store(now_nanos & NANO_MASK, Ordering::Release);
+            .store(new_timestamp & NANO_MASK, Ordering::Release);
+
+        if log_enter_saturated {
+            log::warn!("LoadDebtTracker: system saturated (bucket={log_level})");
+        } else if log_recovered {
+            log::info!("LoadDebtTracker: system recovered (bucket={log_level})");
+        }
     }
 }
 
@@ -263,12 +269,26 @@ mod tests {
     }
 
     #[test]
+    fn test_is_saturated_self_heals_missed_enter() {
+        let g = simple();
+        acquire_n(&g, 100); // level = 0, saturated
+        assert!(g.is_saturated());
+
+        // Simulate a missed enter transition: debt is present but flag is false.
+        g.saturated.store(false, Ordering::Relaxed);
+        assert_eq!(g.bucket_level(), 0);
+
+        // Public API should force a state check and re-enter saturation.
+        assert!(g.is_saturated());
+    }
+
+    #[test]
     fn test_refill_adds_tokens() {
         let g = simple(); // 100/s, refill interval 10ms
         acquire_n(&g, 100); // level = 0
 
         // 50ms elapsed at 100/s → refill = 5 tokens
-        g.refill_at(50_000_000);
+        g.update_state_at(50_000_000, false);
         assert_eq!(g.bucket_level(), 5);
     }
 
@@ -278,7 +298,7 @@ mod tests {
         acquire_n(&g, 120); // level = -20
         assert_eq!(g.bucket_level(), -20);
         // 500ms at 100/s → refill = 50
-        g.refill_at(500_000_000);
+        g.update_state_at(500_000_000, false);
         assert_eq!(g.bucket_level(), 30); // -20 + 50
     }
 
@@ -287,7 +307,7 @@ mod tests {
         let g = simple(); // burst = 100, starts at 100
 
         // Don't consume anything. Refill after 10s → would add 1000.
-        g.refill_at(10_000_000_000);
+        g.update_state_at(10_000_000_000, false);
         assert_eq!(g.bucket_level(), 100); // capped
     }
 
@@ -295,7 +315,7 @@ mod tests {
     fn test_refill_skipped_before_interval() {
         let g = simple(); // interval = 10ms
         acquire_n(&g, 50); // level = 50
-        g.refill_at(5_000_000); // 5ms < 10ms interval → no refill
+        g.update_state_at(5_000_000, false); // 5ms < 10ms interval → no refill
         assert_eq!(g.bucket_level(), 50);
     }
 
@@ -306,13 +326,199 @@ mod tests {
         assert!(g.is_saturated());
 
         // Refill 50 → level=50: still saturated (below 90%).
-        g.refill_at(500_000_000);
+        g.update_state_at(500_000_000, false);
         assert_eq!(g.bucket_level(), 50);
         assert!(g.is_saturated());
 
         // Refill to 90 → at recovery threshold, recovered.
-        g.refill_at(900_000_000);
+        g.update_state_at(900_000_000, false);
         assert_eq!(g.bucket_level(), 90);
         assert!(!g.is_saturated());
+    }
+
+    #[test]
+    fn test_exact_accounting_fixed_timeline() {
+        let g = LoadDebtTracker::new(0, 100, Duration::from_millis(10));
+
+        // First saturated interval: [10ms, 70ms) => 60ms.
+        g.bucket.store(0, Ordering::Relaxed);
+        g.update_state_at(10_000_000, true);
+        g.bucket.store(50, Ordering::Relaxed);
+        g.update_state_at(40_000_000, false);
+        g.bucket.store(90, Ordering::Relaxed);
+        g.update_state_at(70_000_000, true);
+
+        assert_eq!(g.take_transitions_to_saturated(), 1);
+        assert_eq!(g.take_saturated_nanos(), 60_000_000);
+
+        // Second saturated interval: [80ms, 120ms) => 40ms.
+        g.bucket.store(0, Ordering::Relaxed);
+        g.update_state_at(80_000_000, true);
+        g.bucket.store(95, Ordering::Relaxed);
+        g.update_state_at(120_000_000, true);
+
+        assert_eq!(g.take_transitions_to_saturated(), 1);
+        assert_eq!(g.take_saturated_nanos(), 40_000_000);
+    }
+
+    #[test]
+    fn test_concurrent_stress_mismatch_rate() {
+        use std::{
+            sync::{
+                Arc, Barrier,
+                atomic::{AtomicU64, Ordering},
+            },
+            thread,
+        };
+
+        const WRITERS: usize = 4;
+        const READERS: usize = 2;
+        const ITERS: usize = 25_000;
+        const MARGIN: i64 = 5;
+        const MAX_MISMATCH_PCT: f64 = 0.01;
+
+        let g = Arc::new(LoadDebtTracker::new(20_000, 200, Duration::from_millis(1)));
+        let start = Arc::new(Barrier::new(WRITERS + READERS + 1));
+        let mismatches = Arc::new(AtomicU64::new(0));
+        let samples = Arc::new(AtomicU64::new(0));
+        let mut handles = Vec::with_capacity(WRITERS + READERS);
+
+        for _ in 0..WRITERS {
+            let g = Arc::clone(&g);
+            let start = Arc::clone(&start);
+            handles.push(thread::spawn(move || {
+                start.wait();
+                for i in 0..ITERS {
+                    g.acquire();
+                    if i % 32 == 0 {
+                        let _ = g.is_saturated();
+                    }
+                }
+            }));
+        }
+
+        for _ in 0..READERS {
+            let g = Arc::clone(&g);
+            let start = Arc::clone(&start);
+            let mismatches = Arc::clone(&mismatches);
+            let samples = Arc::clone(&samples);
+            handles.push(thread::spawn(move || {
+                start.wait();
+                for _ in 0..ITERS {
+                    let saturated = g.is_saturated();
+                    let level = g.bucket_level();
+                    if (level <= -MARGIN && !saturated)
+                        || (level >= g.recovery_threshold + MARGIN && saturated)
+                    {
+                        mismatches.fetch_add(1, Ordering::Relaxed);
+                    }
+                    samples.fetch_add(1, Ordering::Relaxed);
+                }
+            }));
+        }
+
+        start.wait();
+        for h in handles {
+            h.join().expect("worker thread should not panic");
+        }
+
+        // Force one final state consolidation at a large timestamp.
+        g.update_state_at(10_000_000_000, true);
+
+        let raw = g.last_refill_nanos.load(Ordering::Relaxed);
+        assert_eq!(raw & LOCK_BIT, 0, "lock bit must not remain set");
+
+        let level = g.bucket_level();
+        assert!(
+            level <= g.burst_capacity,
+            "bucket should not exceed burst capacity: {level}"
+        );
+        let saturated = g.is_saturated();
+        if level <= 0 {
+            assert!(saturated, "debt should imply saturated");
+        }
+        if level >= g.recovery_threshold {
+            assert!(!saturated, "recovery threshold should imply unsaturated");
+        }
+
+        let mismatches = mismatches.load(Ordering::Relaxed) as f64;
+        let samples = samples.load(Ordering::Relaxed) as f64;
+        let mismatch_pct = if samples > 0.0 {
+            mismatches / samples
+        } else {
+            0.0
+        };
+        assert!(
+            mismatch_pct <= MAX_MISMATCH_PCT,
+            "mismatch rate too high: {mismatch_pct:.4} (mismatches={mismatches}, samples={samples})"
+        );
+    }
+
+    #[cfg(feature = "shuttle-test")]
+    #[test]
+    fn shuttle_test_load_debt_tracker_interleavings() {
+        use shuttle::{check_random, thread};
+        use std::sync::{Arc, atomic::Ordering};
+
+        check_random(
+            || {
+                let g = Arc::new(LoadDebtTracker::new(1_000, 64, Duration::from_millis(1)));
+
+                let h1 = {
+                    let g = Arc::clone(&g);
+                    thread::spawn(move || {
+                        for _ in 0..64 {
+                            g.acquire();
+                            thread::yield_now();
+                        }
+                    })
+                };
+
+                let h2 = {
+                    let g = Arc::clone(&g);
+                    thread::spawn(move || {
+                        for step in 1..=64_u64 {
+                            g.update_state_at(step * 1_000_000, false);
+                            let _ = g.is_saturated();
+                            thread::yield_now();
+                        }
+                    })
+                };
+
+                let h3 = {
+                    let g = Arc::clone(&g);
+                    thread::spawn(move || {
+                        for _ in 0..64 {
+                            let _ = g.take_transitions_to_saturated();
+                            let _ = g.take_saturated_nanos();
+                            thread::yield_now();
+                        }
+                    })
+                };
+
+                h1.join().expect("acquire worker panicked");
+                h2.join().expect("state worker panicked");
+                h3.join().expect("stats worker panicked");
+
+                g.update_state_at(1_000_000_000, true);
+
+                let raw = g.last_refill_nanos.load(Ordering::Relaxed);
+                assert_eq!(raw & LOCK_BIT, 0, "lock bit leaked");
+
+                let level = g.bucket_level();
+                assert!(
+                    level <= g.burst_capacity,
+                    "bucket overflowed past burst capacity: {level}"
+                );
+                let saturated = g.is_saturated();
+                if level <= 0 {
+                    assert!(saturated, "debt should imply saturated");
+                }
+                if level >= g.recovery_threshold {
+                    assert!(!saturated, "recovery threshold should imply unsaturated");
+                }
+            },
+            200,
+        );
     }
 }

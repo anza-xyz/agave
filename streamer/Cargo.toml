@@ -19,6 +19,7 @@ name = "solana_streamer"
 [features]
 agave-unstable-api = []
 dev-context-only-utils = []
+shuttle-test = ["dep:shuttle"]
 
 [dependencies]
 agave-xdp = { workspace = true }
@@ -37,6 +38,7 @@ percentage = { workspace = true }
 quinn = { workspace = true }
 rand = { workspace = true }
 rustls = { workspace = true }
+shuttle = { workspace = true, optional = true }
 smallvec = { workspace = true }
 solana-keypair = { workspace = true }
 solana-metrics = { workspace = true }
