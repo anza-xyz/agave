@@ -641,9 +641,9 @@ impl TransactionState {
             index
                 < self
                     .data
-                    .num_signatures()
+                    .num_required_signatures()
                     .wrapping_sub(self.data.num_readonly_signed_static_accounts())
-                || (index >= self.data.num_signatures()
+                || (index >= self.data.num_required_signatures()
                     && index
                         < (self.data.static_account_keys().len() as u8)
                             .wrapping_sub(self.data.num_readonly_unsigned_static_accounts()))
