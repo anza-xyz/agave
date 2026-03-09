@@ -1454,8 +1454,7 @@ mod tests {
         std::{io::Cursor, net::Ipv4Addr},
     };
 
-    const TEST_REPAIR_PEERS_CACHE_CAPACITY: NonZeroUsize =
-        NonZeroUsize::new(100).unwrap();
+    const TEST_REPAIR_PEERS_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
     #[test]
     fn test_serialized_ping_size() {

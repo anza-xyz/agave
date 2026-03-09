@@ -86,7 +86,7 @@ pub struct ConnectionWorkersSchedulerConfig {
     pub stake_identity: Option<StakeIdentity>,
 
     /// The number of connections to be maintained by the scheduler.
-    pub num_connections: usize,
+    pub num_connections: NonZeroUsize,
 
     /// Whether to skip checking the transaction blockhash expiration.
     pub skip_check_transaction_age: bool,
@@ -233,8 +233,7 @@ impl ConnectionWorkersScheduler {
         let mut endpoint = setup_endpoint(bind, stake_identity, initial_congestion_window)?;
 
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
-        let mut workers =
-            WorkersCache::new(NonZeroUsize::new(num_connections).unwrap(), cancel.clone());
+        let mut workers = WorkersCache::new(num_connections, cancel.clone());
 
         let mut last_error = None;
         // flag to ensure that the section handling

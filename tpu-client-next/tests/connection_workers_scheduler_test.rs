@@ -29,7 +29,7 @@ use {
     std::{
         collections::HashMap,
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-        num::Saturating,
+        num::{NonZeroUsize, Saturating},
         sync::{
             Arc,
             atomic::{AtomicU64, Ordering},
@@ -55,7 +55,7 @@ fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerCon
     ConnectionWorkersSchedulerConfig {
         bind: BindTarget::Address(address),
         stake_identity: stake_identity.map(|identity| StakeIdentity::new(&identity)),
-        num_connections: 1,
+        num_connections: NonZeroUsize::new(1).unwrap(),
         skip_check_transaction_age: false,
         // At the moment we have only one strategy to send transactions: we try
         // to put to worker channel transaction batch and in case of failure
@@ -882,7 +882,7 @@ async fn test_client_builder() {
         .bind_socket(socket)
         .leader_send_fanout(1)
         .identity(None)
-        .max_cache_size(1)
+        .max_cache_size(NonZeroUsize::new(1).unwrap())
         .worker_channel_size(100)
         .metric_reporter({
             let successfully_sent = successfully_sent.clone();

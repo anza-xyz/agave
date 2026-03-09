@@ -15,6 +15,7 @@ use {
     },
     std::{
         net::{SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         sync::atomic::Ordering,
         time::{Duration, Instant},
     },
@@ -30,7 +31,7 @@ use {
 
 /// How many connections to maintain the tpu-client-next cache. The value is
 /// chosen to match MAX_CONNECTIONS from ConnectionCache
-const MAX_CONNECTIONS: usize = 1024;
+const MAX_CONNECTIONS: NonZeroUsize = NonZeroUsize::new(1024).unwrap();
 
 // Alias trait to shorten function definitions.
 pub trait TpuInfoWithSendStatic: TpuInfo + std::marker::Send + 'static {}

@@ -36,6 +36,7 @@ use {
     solana_transaction_error::TransportError,
     std::{
         net::{SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         sync::{Arc, RwLock},
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
@@ -545,7 +546,7 @@ impl TpuClientNextClient {
             stake_identity: stake_identity.map(StakeIdentity::new),
             // Cache size of 128 covers all nodes above the P90 slot count threshold,
             // which together account for ~75% of total slots in the epoch.
-            num_connections: 128,
+            num_connections: NonZeroUsize::new(128).unwrap(),
             skip_check_transaction_age: true,
             worker_channel_size: 2,
             max_reconnect_attempts: 4,
