@@ -9,6 +9,7 @@ use {
     crate::{
         bank::{RewardCalcTracer, RewardCalculationEvent, RewardsMetrics, null_tracer},
         inflation_rewards::{
+            adjust_delegation_for_rent,
             points::{CalculationEnvironment, DelegatedVoteState, PointValue, calculate_points},
             redeem_rewards,
         },
@@ -131,7 +132,6 @@ impl Bank {
         let stake_rewards = Arc::clone(&stake_rewards.stake_rewards);
 
         let num_partitions = self.get_reward_distribution_num_blocks(&stake_rewards);
-
         self.set_epoch_reward_status_calculation(distribution_starting_block_height, stake_rewards);
 
         self.create_epoch_rewards_sysvar(
@@ -430,6 +430,7 @@ impl Bank {
         new_rate_activation_epoch: Option<Epoch>,
         delay_commission_updates: bool,
         commission_rate_in_basis_points: bool,
+        adjust_delegations_for_rent: bool,
     ) -> Option<DelegationRewards> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
@@ -447,12 +448,53 @@ impl Bank {
 
         let stake_pubkey = *stake_pubkey;
         let vote_pubkey = stake_account.delegation().voter_pubkey;
+
+        let current_lamports = stake_account.lamports();
+        let minimum_lamports = self
+            .rent_collector
+            .rent
+            .minimum_balance(stake_account.data_len());
+        let mut stake = *stake_account.stake();
+
         let Some(vote_account) = distribution_epoch_vote_accounts.get(&vote_pubkey) else {
             debug!("could not find vote account {vote_pubkey} in cache");
-            return None;
+            // Even if the vote account doesn't exist, there might still be a
+            // need to adjust the stake delegation
+            if adjust_delegations_for_rent {
+                let delegation = stake.delegation.stake;
+                let stake_was_adjusted = adjust_delegation_for_rent(
+                    &mut stake.delegation,
+                    rewarded_epoch,
+                    delegation,
+                    current_lamports,
+                    minimum_lamports,
+                );
+                if stake_was_adjusted {
+                    debug!("delegation for stake {stake_pubkey} was adjusted");
+                    let stake_reward = PartitionedStakeReward {
+                        stake_pubkey,
+                        stake,
+                        stake_reward: 0,
+                        commission_bps: 0,
+                    };
+                    let reward_commission = RewardCommission {
+                        commission_bps: 0,
+                        commission_lamports: 0,
+                    };
+                    return Some(DelegationRewards {
+                        stake_reward,
+                        commission_pubkey: vote_pubkey,
+                        reward_commission,
+                    });
+                } else {
+                    debug!("delegation for stake {stake_pubkey} was not adjusted");
+                    return None;
+                }
+            } else {
+                return None;
+            }
         };
         let vote_state = vote_account.vote_state_view();
-        let stake_state = stake_account.stake_state();
 
         // Fetch the voter commission from past epochs to attempt to
         // delay the effect of commission updates by at least one
@@ -478,7 +520,7 @@ impl Bank {
         };
 
         match redeem_rewards(
-            stake_state,
+            stake,
             commission_bps,
             DelegatedVoteState::from(vote_state),
             CalculationEnvironment {
@@ -487,9 +529,11 @@ impl Bank {
                 stake_history,
                 new_rate_activation_epoch,
                 commission_rate_in_basis_points,
+                adjust_delegations_for_rent,
             },
             reward_calc_tracer,
-            stake_account.lamports(),
+            current_lamports,
+            minimum_lamports,
         ) {
             Ok((stake_reward, commission_lamports, stake)) => {
                 let stake_reward = PartitionedStakeReward {
@@ -532,6 +576,9 @@ impl Bank {
         let feature_snapshot = self.feature_set.snapshot();
         let delay_commission_updates = feature_snapshot.delay_commission_updates;
         let commission_rate_in_basis_points = feature_snapshot.commission_rate_in_basis_points;
+        // Name intentionally doesn't match -- "adjust delegations for rent" is
+        // part of relaxing post-exec min balance checks.
+        let adjust_delegations_for_rent = feature_snapshot.relax_post_exec_min_balance_check;
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
         // For N stake delegations, where N is >1,000,000, we produce:
@@ -561,6 +608,7 @@ impl Bank {
                         new_warmup_cooldown_rate_epoch,
                         delay_commission_updates,
                         commission_rate_in_basis_points,
+                        adjust_delegations_for_rent,
                     );
 
                     let (stake_reward, maybe_reward_record) = match maybe_reward_record {
@@ -866,6 +914,7 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
+        solana_rent::Rent,
         solana_signer::Signer,
         solana_stake_interface::{
             stake_flags::StakeFlags,
@@ -1147,6 +1196,37 @@ mod tests {
         })
     }
 
+    fn create_stake_account(
+        lamports: u64,
+        delegation: u64,
+        vote_address: &Pubkey,
+        activation_epoch: Epoch,
+    ) -> AccountSharedData {
+        let mut stake_account = AccountSharedData::new(
+            lamports,
+            StakeStateV2::size_of(),
+            &solana_sdk_ids::stake::id(),
+        );
+        let rent_exempt_reserve = lamports.saturating_sub(delegation);
+
+        let meta = Meta {
+            authorized: Authorized::auto(&Pubkey::new_unique()),
+            #[expect(deprecated)]
+            rent_exempt_reserve,
+            ..Meta::default()
+        };
+
+        let stake = Stake {
+            delegation: Delegation::new(vote_address, delegation, activation_epoch),
+            credits_observed: 0,
+        };
+
+        stake_account
+            .set_state(&StakeStateV2::Stake(meta, stake, StakeFlags::empty()))
+            .expect("set_state");
+        stake_account
+    }
+
     fn apply_epoch_operations(
         bank: Arc<Bank>,
         bank_forks: &RwLock<BankForks>,
@@ -1189,25 +1269,8 @@ mod tests {
                 let size = StakeStateV2::size_of();
                 let rent_exempt_reserve = bank.rent_collector().rent.minimum_balance(size);
                 let lamports = rent_exempt_reserve + stake_amount;
-                let mut stake_account =
-                    AccountSharedData::new(lamports, size, &solana_sdk_ids::stake::id());
-
-                let meta = Meta {
-                    authorized: Authorized::auto(&Pubkey::new_unique()),
-                    #[expect(deprecated)]
-                    rent_exempt_reserve,
-                    ..Meta::default()
-                };
-
-                let stake = Stake {
-                    delegation: Delegation::new(vote_address, *stake_amount, bank.epoch()),
-                    credits_observed: 0,
-                };
-
-                stake_account
-                    .set_state(&StakeStateV2::Stake(meta, stake, StakeFlags::empty()))
-                    .expect("set_state");
-
+                let stake_account =
+                    create_stake_account(lamports, *stake_amount, vote_address, bank.epoch());
                 bank.store_account(&Pubkey::new_unique(), &stake_account);
             }
 
@@ -1486,6 +1549,85 @@ mod tests {
                 )],
             },
         );
+    }
+
+    #[test]
+    fn test_adjust_delegation_for_prestaked_vote_account() {
+        let GenesisConfigInfo {
+            mut genesis_config,
+            voting_keypair,
+            ..
+        } = genesis_utils::create_genesis_config_with_leader(
+            1_000_000 * LAMPORTS_PER_SOL,
+            &Pubkey::new_unique(),
+            42 * LAMPORTS_PER_SOL,
+        );
+        let genesis_vote_address = voting_keypair.pubkey();
+
+        genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
+        genesis_config.rent = Rent::default();
+
+        let (bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+
+        let old_delegation = LAMPORTS_PER_SOL;
+        let rent_exempt_amount = genesis_config.rent.minimum_balance(StakeStateV2::size_of());
+
+        let vote_address = Pubkey::new_unique();
+
+        // No rent exemption at all
+        let stake_address_to_adjust = Pubkey::new_unique();
+        let stake_account =
+            create_stake_account(old_delegation, old_delegation, &vote_address, bank.epoch());
+        bank.store_account(&stake_address_to_adjust, &stake_account);
+
+        // Will be deactivated, below rent exemption
+        let stake_address_to_deactivate = Pubkey::new_unique();
+        let stake_account = create_stake_account(
+            rent_exempt_amount - 1,
+            rent_exempt_amount - 1,
+            &vote_address,
+            bank.epoch(),
+        );
+        bank.store_account(&stake_address_to_deactivate, &stake_account);
+
+        // Make a vote account earn points, otherwise stakes don't get updated
+        // at all
+        let bank = apply_epoch_operations(
+            bank,
+            bank_forks.as_ref(),
+            EpochOperations {
+                epoch: 0,
+                vote_operations: vec![(
+                    genesis_vote_address,
+                    VoteOperations {
+                        earned_credits: Some(1000),
+                        ..VoteOperations::default()
+                    },
+                )],
+            },
+        );
+
+        // Advance bank to next slot for distribution, see adjustment
+        let slot = bank.slot();
+        let bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::new_unique(),
+            slot + 1,
+        );
+
+        let stake_account = bank.get_account(&stake_address_to_adjust).unwrap();
+        let stake_state: StakeStateV2 = stake_account.state().unwrap();
+        let new_delegation = stake_state.stake().unwrap().delegation.stake;
+        assert_ne!(old_delegation, new_delegation);
+        assert_eq!(old_delegation, new_delegation + rent_exempt_amount);
+
+        let stake_account = bank.get_account(&stake_address_to_deactivate).unwrap();
+        let stake_state: StakeStateV2 = stake_account.state().unwrap();
+        let new_delegation = stake_state.stake().unwrap().delegation;
+        assert_eq!(new_delegation.stake, 0);
+        assert_eq!(new_delegation.deactivation_epoch, 0);
     }
 
     #[test]
