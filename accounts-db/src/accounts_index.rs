@@ -1003,6 +1003,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             }
         }
 
+        // If we found an ancestor, then we can return early without checking the roots
+        // If there is a root that is newer than the newest ancestor but not an ancestor
+        // then the root is from a different fork and should not be returned
+        if let Some(rv) = rv {
+            return Some(slot_list.len() - 1 - rv);
+        }
+
         let max_root_inclusive = max_root_inclusive.unwrap_or(Slot::MAX);
         let mut tracker = None;
 
@@ -3130,13 +3137,13 @@ mod tests {
             3
         );
 
-        // Given ancestors that are *older* than the newest root, return the newest root
+        // Given ancestors that are *older* than the newest root, should still return ancestors
         let ancestors = Ancestors::from(vec![3]);
         assert_eq!(
             index
                 .latest_slot(Some(&ancestors), &slot_slice, None)
                 .unwrap(),
-            1
+            2
         );
     }
 

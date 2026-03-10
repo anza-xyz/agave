@@ -2585,10 +2585,7 @@ fn test_bank_get_account_in_parent_after_squash2() {
     );
     bank1.squash();
 
-    // This picks up the values from 1 which is the highest root:
-    // TODO: if we need to access rooted banks older than this,
-    // need to fix the lookup.
-    assert_eq!(bank0.get_balance(&key1.pubkey()), 4 * amount);
+    assert_eq!(bank0.get_balance(&key1.pubkey()), amount);
     assert_eq!(bank3.get_balance(&key1.pubkey()), 4 * amount);
     assert_eq!(bank2.get_balance(&key1.pubkey()), 3 * amount);
     bank3.squash();
@@ -2617,12 +2614,8 @@ fn test_bank_get_account_in_parent_after_squash2() {
         Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank5, &Pubkey::default(), 6);
     bank6.squash();
 
-    // This picks up the values from 4 which is the highest root:
-    // TODO: if we need to access rooted banks older than this,
-    // need to fix the lookup.
-    assert_eq!(bank3.get_balance(&key1.pubkey()), 8 * amount);
-    assert_eq!(bank2.get_balance(&key1.pubkey()), 8 * amount);
-
+    assert_eq!(bank3.get_balance(&key1.pubkey()), 4 * amount);
+    assert_eq!(bank2.get_balance(&key1.pubkey()), 3 * amount);
     assert_eq!(bank4.get_balance(&key1.pubkey()), 8 * amount);
 }
 
