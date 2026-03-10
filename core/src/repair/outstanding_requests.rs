@@ -1,6 +1,6 @@
 use {
     crate::repair::request_response::RequestResponse,
-    lru::LruCache,
+    lazy_lru::LruCache,
     rand::{Rng, rng},
     solana_ledger::shred::Nonce,
 };

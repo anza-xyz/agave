@@ -64,9 +64,9 @@ dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 futures = { workspace = true }
 histogram = { workspace = true }
 itertools = { workspace = true }
+lazy-lru = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
-lru = { workspace = true }
 min-max-heap = { workspace = true }
 num_cpus = { workspace = true }
 num_enum = { workspace = true }
