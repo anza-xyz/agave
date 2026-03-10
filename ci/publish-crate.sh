@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 cd "$(dirname "$0")/.."
 source ci/semver_bash/semver.sh
 source ci/rust-version.sh stable
@@ -61,8 +61,6 @@ for Cargo_toml in $Cargo_tomls; do
   fi
 
   (
-    set -euo pipefail
-
     crate=$(dirname "$Cargo_toml")
     cargoCommand="cargo publish --token $CRATES_IO_TOKEN"
 
