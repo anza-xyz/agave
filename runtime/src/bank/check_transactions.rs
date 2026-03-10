@@ -112,7 +112,6 @@ impl Bank {
                             let fee_budget = FeeBudgetLimits::from(limit);
                             let fee_details = calculate_fee_details(
                                 tx.borrow(),
-                                false,
                                 self.fee_structure.lamports_per_signature,
                                 fee_budget.prioritization_fee,
                                 fee_features,
