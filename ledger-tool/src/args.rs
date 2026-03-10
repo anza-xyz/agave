@@ -4,7 +4,7 @@ use {
     log::*,
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
-        accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
+        accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
         accounts_file::StorageAccess,
         accounts_index::{
             AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT,
@@ -382,7 +382,6 @@ pub fn get_accounts_db_config(
         partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         storage_access,
         scan_filter_for_shrinking,
-        mark_obsolete_accounts: MarkObsoleteAccounts::default(),
         num_background_threads: None,
         num_foreground_threads: None,
         use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(

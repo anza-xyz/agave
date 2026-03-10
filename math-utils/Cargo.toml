@@ -1,7 +1,7 @@
 [package]
-name = "solana-compute-budget"
-description = "Solana compute budget"
-documentation = "https://docs.rs/solana-compute-budget"
+name = "agave-math-utils"
+description = "Math utilities for Agave"
+readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -11,11 +11,14 @@ edition = { workspace = true }
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = []
 
 [dependencies]
-solana-fee-structure = { workspace = true }
-solana-program-runtime = { workspace = true }
+num-traits = { workspace = true }
+
+[dev-dependencies]
+agave-math-utils = { path = ".", features = ["agave-unstable-api"] }
+rand = { workspace = true }
+test-case = { workspace = true }
 
 [lints]
 workspace = true

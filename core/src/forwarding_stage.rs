@@ -264,9 +264,6 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         is_tpu_vote_batch: bool,
         bank: &Bank,
     ) {
-        let enable_static_instruction_limit = bank
-            .feature_set
-            .is_active(&agave_feature_set::static_instruction_limit::id());
         let enable_instruction_accounts_limit = bank
             .feature_set
             .is_active(&agave_feature_set::limit_instruction_accounts::id());
@@ -292,7 +289,6 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 // If any steps fail, drop the packet.
                 let Some(priority) = SanitizedTransactionView::try_new_sanitized(
                     packet_data,
-                    enable_static_instruction_limit,
                     enable_instruction_accounts_limit,
                 )
                 .map_err(|_| ())

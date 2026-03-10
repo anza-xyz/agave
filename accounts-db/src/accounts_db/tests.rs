@@ -128,36 +128,31 @@ impl AccountStorageEntry {
 ///   For test that should panic, use the following syntax.
 ///     define_accounts_db_test!(TEST_NAME, panic = "PANIC_MSG", |accounts_db| { TEST_BODY });
 macro_rules! define_accounts_db_test {
-    (@testfn $name:ident, $accounts_file_provider: ident, $mark_obsolete_accounts: ident, |$accounts_db:ident| $inner: tt) => {
+    (@testfn $name:ident, $accounts_file_provider: ident, |$accounts_db:ident| $inner: tt) => {
         fn run_test($accounts_db: AccountsDb) {
             $inner
         }
         let accounts_db = AccountsDb::new_single_for_tests_with_provider_and_config(
             $accounts_file_provider,
-            AccountsDbConfig {
-                mark_obsolete_accounts: $mark_obsolete_accounts,
-                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            },
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
         );
         run_test(accounts_db);
     };
     ($name:ident, |$accounts_db:ident| $inner: tt) => {
         #[test_matrix(
-            [AccountsFileProvider::AppendVec],
-            [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled]
+            [AccountsFileProvider::AppendVec]
         )]
-        fn $name(accounts_file_provider: AccountsFileProvider, mark_obsolete_accounts: MarkObsoleteAccounts) {
-            define_accounts_db_test!(@testfn $name, accounts_file_provider, mark_obsolete_accounts, |$accounts_db| $inner);
+        fn $name(accounts_file_provider: AccountsFileProvider) {
+            define_accounts_db_test!(@testfn $name, accounts_file_provider, |$accounts_db| $inner);
         }
     };
     ($name:ident, panic = $panic_message:literal, |$accounts_db:ident| $inner: tt) => {
         #[test_matrix(
-            [AccountsFileProvider::AppendVec],
-            [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled]
+            [AccountsFileProvider::AppendVec]
         )]
         #[should_panic(expected = $panic_message)]
-        fn $name(accounts_file_provider: AccountsFileProvider, mark_obsolete_accounts: MarkObsoleteAccounts) {
-            define_accounts_db_test!(@testfn $name, accounts_file_provider, mark_obsolete_accounts, |$accounts_db| $inner);
+        fn $name(accounts_file_provider: AccountsFileProvider) {
+            define_accounts_db_test!(@testfn $name, accounts_file_provider, |$accounts_db| $inner);
         }
     };
 }
@@ -978,61 +973,6 @@ fn test_account_grow() {
 }
 
 #[test]
-fn test_lazy_gc_slot() {
-    agave_logger::setup();
-
-    // Only run this test with mark obsolete accounts disabled as garbage collection
-    // is not lazy with mark obsolete accounts enabled
-    let accounts = AccountsDb::new_with_config(
-        Vec::new(),
-        AccountsDbConfig {
-            mark_obsolete_accounts: MarkObsoleteAccounts::Disabled,
-            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-        },
-        None,
-        Arc::default(),
-    );
-
-    let pubkey = solana_pubkey::new_rand();
-    let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
-    //store an account
-    accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
-    accounts.add_root_and_flush_write_cache(0);
-
-    let ancestors = vec![(0, 0)].into_iter().collect();
-    let id = accounts
-        .accounts_index
-        .get_with_and_then(
-            &pubkey,
-            Some(&ancestors),
-            None,
-            false,
-            |(_slot, account_info)| account_info.store_id(),
-        )
-        .unwrap();
-
-    //slot is still there, since gc is lazy
-    assert_eq!(accounts.storage.get_slot_storage_entry(0).unwrap().id(), id);
-
-    //store causes clean
-    accounts.store_for_tests((1, [(&pubkey, &account)].as_slice()));
-
-    //slot is gone
-    accounts.print_accounts_stats("pre-clean");
-    accounts.add_root_and_flush_write_cache(1);
-    assert!(accounts.storage.get_slot_storage_entry(0).is_some());
-    accounts.clean_accounts_for_tests();
-    assert!(accounts.storage.get_slot_storage_entry(0).is_none());
-
-    //new value is there
-    let ancestors = vec![(1, 1)].into_iter().collect();
-    assert_eq!(
-        accounts.load_without_fixed_root(&ancestors, &pubkey),
-        Some((account, 1))
-    );
-}
-
-#[test]
 fn test_clean_zero_lamport_and_dead_slot() {
     agave_logger::setup();
 
@@ -1112,15 +1052,7 @@ fn test_clean_dead_slot_with_obsolete_accounts() {
 
     // Obsolete accounts are already unreffed so they should not be unreffed again
 
-    let accounts = AccountsDb::new_with_config(
-        Vec::new(),
-        AccountsDbConfig {
-            mark_obsolete_accounts: MarkObsoleteAccounts::Enabled,
-            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-        },
-        None,
-        Arc::default(),
-    );
+    let accounts = AccountsDb::new_single_for_tests();
 
     let pubkey = solana_pubkey::new_rand();
     let pubkey2 = solana_pubkey::new_rand();
@@ -1495,20 +1427,11 @@ fn test_clean_zero_lamport_and_old_roots() {
     assert!(!accounts.accounts_index.contains_with(&pubkey, None, None));
 }
 
-#[test_case(MarkObsoleteAccounts::Enabled)]
-#[test_case(MarkObsoleteAccounts::Disabled)]
-fn test_clean_old_with_normal_account(mark_obsolete_accounts: MarkObsoleteAccounts) {
+#[test]
+fn test_clean_old_with_normal_account() {
     agave_logger::setup();
 
-    let accounts = AccountsDb::new_with_config(
-        Vec::new(),
-        AccountsDbConfig {
-            mark_obsolete_accounts,
-            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-        },
-        None,
-        Arc::default(),
-    );
+    let accounts = AccountsDb::new_single_for_tests();
 
     let pubkey = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
@@ -1522,31 +1445,17 @@ fn test_clean_old_with_normal_account(mark_obsolete_accounts: MarkObsoleteAccoun
 
     assert_eq!(accounts.alive_account_count_in_slot(1), 1);
 
-    // With obsolete accounts enabled, slot 0 is cleaned during flush
-    if mark_obsolete_accounts == MarkObsoleteAccounts::Disabled {
-        assert_eq!(accounts.alive_account_count_in_slot(0), 1);
-        accounts.clean_accounts_for_tests();
-    }
-
     //now old state is cleaned up
     assert_eq!(accounts.alive_account_count_in_slot(0), 0);
     assert_eq!(accounts.alive_account_count_in_slot(1), 1);
 }
 
-#[test_case(MarkObsoleteAccounts::Enabled)]
-#[test_case(MarkObsoleteAccounts::Disabled)]
-fn test_clean_old_with_zero_lamport_account(mark_obsolete_accounts: MarkObsoleteAccounts) {
+#[test]
+fn test_clean_old_with_zero_lamport_account() {
     agave_logger::setup();
 
-    let accounts = AccountsDb::new_with_config(
-        Vec::new(),
-        AccountsDbConfig {
-            mark_obsolete_accounts,
-            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-        },
-        None,
-        Arc::default(),
-    );
+    let accounts = AccountsDb::new_single_for_tests();
+
     let pubkey1 = solana_pubkey::new_rand();
     let pubkey2 = solana_pubkey::new_rand();
     let normal_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
@@ -1565,33 +1474,20 @@ fn test_clean_old_with_zero_lamport_account(mark_obsolete_accounts: MarkObsolete
 
     accounts.print_accounts_stats("");
 
-    // With obsolete accounts enabled, slot 0 is cleaned during flush
-    if mark_obsolete_accounts == MarkObsoleteAccounts::Disabled {
-        // even if rooted, old state isn't cleaned up
-        assert_eq!(accounts.alive_account_count_in_slot(0), 2);
-        accounts.clean_accounts_for_tests();
-    }
-
     //Old state behind zero-lamport account is cleaned up
     assert_eq!(accounts.alive_account_count_in_slot(0), 0);
     assert_eq!(accounts.alive_account_count_in_slot(1), 2);
 }
 
-#[test_case(MarkObsoleteAccounts::Enabled)]
-#[test_case(MarkObsoleteAccounts::Disabled)]
-fn test_clean_old_with_both_normal_and_zero_lamport_accounts(
-    mark_obsolete_accounts: MarkObsoleteAccounts,
-) {
+#[test]
+fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
     agave_logger::setup();
 
     let mut accounts = AccountsDb {
         account_indexes: spl_token_mint_index_enabled(),
         ..AccountsDb::new_with_config(
             Vec::new(),
-            AccountsDbConfig {
-                mark_obsolete_accounts,
-                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            },
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1625,13 +1521,7 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts(
     accounts.add_root_and_flush_write_cache(1);
     accounts.add_root_and_flush_write_cache(2);
 
-    if mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
-        // With obsolete accounts enabled, slot 0 is cleaned during flush
-        assert_eq!(accounts.alive_account_count_in_slot(0), 0);
-    } else {
-        //even if rooted, old state isn't cleaned up
-        assert_eq!(accounts.alive_account_count_in_slot(0), 2);
-    }
+    assert_eq!(accounts.alive_account_count_in_slot(0), 0);
     assert_eq!(accounts.alive_account_count_in_slot(1), 1);
     assert_eq!(accounts.alive_account_count_in_slot(2), 1);
 
@@ -1730,20 +1620,11 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts(
     assert_eq!(found_accounts, vec![pubkey2]);
 }
 
-#[test_case(MarkObsoleteAccounts::Enabled)]
-#[test_case(MarkObsoleteAccounts::Disabled)]
-fn test_clean_max_slot_zero_lamport_account(mark_obsolete_accounts: MarkObsoleteAccounts) {
+#[test]
+fn test_clean_max_slot_zero_lamport_account() {
     agave_logger::setup();
 
-    let accounts = AccountsDb::new_with_config(
-        Vec::new(),
-        AccountsDbConfig {
-            mark_obsolete_accounts,
-            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-        },
-        None,
-        Arc::default(),
-    );
+    let accounts = AccountsDb::new_single_for_tests();
     let pubkey = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
@@ -1756,16 +1637,6 @@ fn test_clean_max_slot_zero_lamport_account(mark_obsolete_accounts: MarkObsolete
     // simulate slots are rooted after while
     accounts.add_root_and_flush_write_cache(0);
     accounts.add_root_and_flush_write_cache(1);
-
-    // Clean is performed as part of flush with obsolete accounts marked, so explicit clean isn't needed
-    if mark_obsolete_accounts == MarkObsoleteAccounts::Disabled {
-        // Only clean up to account 0, should not purge slot 0 based on
-        // updates in later slots in slot 1
-        assert_eq!(accounts.alive_account_count_in_slot(0), 1);
-        assert_eq!(accounts.alive_account_count_in_slot(1), 1);
-        accounts.clean_accounts(Some(0), false);
-        assert_eq!(accounts.alive_account_count_in_slot(0), 1);
-    }
 
     assert_eq!(accounts.alive_account_count_in_slot(1), 1);
     assert!(accounts.accounts_index.contains_with(&pubkey, None, None));
@@ -3344,19 +3215,9 @@ fn test_flush_cache_clean() {
     assert!(db.get_account_at_slot(&account_key, 0).is_none());
 }
 
-#[test_case(MarkObsoleteAccounts::Enabled)]
-#[test_case(MarkObsoleteAccounts::Disabled)]
-fn test_flush_cache_dont_clean_zero_lamport_account(mark_obsolete_accounts: MarkObsoleteAccounts) {
-    let db = AccountsDb::new_with_config(
-        Vec::new(),
-        AccountsDbConfig {
-            mark_obsolete_accounts,
-            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-        },
-        None,
-        Arc::default(),
-    );
-
+#[test]
+fn test_flush_cache_dont_clean_zero_lamport_account() {
+    let db = AccountsDb::new_single_for_tests();
     // If there is no latest full snapshot, zero lamport accounts can be cleaned and removed
     // immediately. Set latest full snapshot slot to zero to avoid cleaning zero lamport accounts
     db.set_latest_full_snapshot_slot(0);
@@ -3396,14 +3257,8 @@ fn test_flush_cache_dont_clean_zero_lamport_account(mark_obsolete_accounts: Mark
     db.flush_accounts_cache(true, None);
     db.clean_accounts_for_tests();
 
-    // The `zero_lamport_account_key` is still alive in slot 0, so refcount for the
-    // pubkey should be 2
-    if mark_obsolete_accounts == MarkObsoleteAccounts::Disabled {
-        db.assert_ref_count(&zero_lamport_account_key, 2);
-    } else {
-        // However, if obsolete accounts are enabled, it will only be alive in slot 2
-        db.assert_ref_count(&zero_lamport_account_key, 1);
-    }
+    // The `zero_lamport_account_key` is only alive in slot 2
+    db.assert_ref_count(&zero_lamport_account_key, 1);
     db.assert_ref_count(&other_account_key, 1);
 
     // The zero-lamport account in slot 2 should not be purged yet, because the
@@ -6125,79 +5980,6 @@ fn test_handle_dropped_roots_for_ancient_assert(storage_access: StorageAccess) {
     let dropped_roots = vec![slot0];
     insert_store(&db, entry);
     db.handle_dropped_roots_for_ancient(dropped_roots.into_iter());
-}
-
-/// Test that `clean` reclaims old accounts when cleaning old storages
-///
-/// When `clean` constructs candidates from old storages, pubkeys in these storages may have other
-/// newer versions of the accounts in other newer storages *not* explicitly marked to be visited by
-/// `clean`.  In this case, `clean` should still reclaim the old versions of these accounts.
-#[test]
-fn test_clean_old_storages_with_reclaims_rooted() {
-    // Test is testing clean behaviour that is specific to obsolete accounts disabled
-    // Only run in obsolete accounts disabled mode
-    let accounts_db = AccountsDb::new_with_config(
-        Vec::new(),
-        AccountsDbConfig {
-            mark_obsolete_accounts: MarkObsoleteAccounts::Disabled,
-            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-        },
-        None,
-        Arc::default(),
-    );
-    let pubkey = Pubkey::new_unique();
-    let old_slot = 11;
-    let new_slot = 22;
-    let slots = [old_slot, new_slot];
-    for &slot in &slots {
-        let account = AccountSharedData::new(slot, 0, &Pubkey::new_unique());
-        // store `pubkey` into multiple slots, and also store another unique pubkey
-        // to prevent the whole storage from being marked as dead by `clean`.
-        accounts_db.store_for_tests((
-            slot,
-            [(&pubkey, &account), (&Pubkey::new_unique(), &account)].as_slice(),
-        ));
-        accounts_db.add_root_and_flush_write_cache(slot);
-        accounts_db.uncleaned_pubkeys.remove(&slot);
-        // ensure this slot is *not* in the dirty_stores nor uncleaned_pubkeys, because we want to
-        // test cleaning *old* storages, i.e. when they aren't explicitly marked for cleaning
-        assert!(!accounts_db.dirty_stores.contains_key(&slot));
-        assert!(!accounts_db.uncleaned_pubkeys.contains_key(&slot));
-    }
-
-    // add `old_slot` to the dirty stores list to mimic it being picked up as old
-    let old_storage = accounts_db
-        .storage
-        .get_slot_storage_entry_shrinking_in_progress_ok(old_slot)
-        .unwrap();
-    accounts_db.dirty_stores.insert(old_slot, old_storage);
-
-    // ensure the slot list for `pubkey` has both the old and new slots
-    let slot_list = accounts_db
-        .accounts_index
-        .get_bin(&pubkey)
-        .slot_list_mut(&pubkey, |slot_list| slot_list.clone_list())
-        .unwrap();
-    assert_eq!(slot_list.len(), slots.len());
-    assert!(slot_list.iter().map(|(slot, _)| slot).eq(slots.iter()));
-
-    // `clean` should now reclaim the account in `old_slot`, even though `new_slot` is not
-    // explicitly being cleaned
-    accounts_db.clean_accounts_for_tests();
-
-    // ensure we've reclaimed the account in `old_slot`
-    let slot_list = accounts_db
-        .accounts_index
-        .get_bin(&pubkey)
-        .slot_list_mut(&pubkey, |slot_list| slot_list.clone_list())
-        .unwrap();
-    assert_eq!(slot_list.len(), 1);
-    assert!(
-        slot_list
-            .iter()
-            .map(|(slot, _)| slot)
-            .eq(iter::once(&new_slot))
-    );
 }
 
 /// Test that `clean` respects rooted vs unrooted slots w.r.t. reclaims

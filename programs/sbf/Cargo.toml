@@ -119,7 +119,7 @@ borsh = "1.5.1"
 byteorder = "1.3.2"
 elf = "0.8.0"
 itertools = "0.14.0"
-libsecp256k1 = { version = "0.7.0", default-features = false }
+libsecp256k1 = { version = "0.7.2", default-features = false }
 log = "0.4.11"
 miow = "0.6.1"
 net2 = "0.2.39"
@@ -245,7 +245,7 @@ solana-measure = { workspace = true }
 solana-message = "4.0.0"
 solana-program = { workspace = true }
 solana-program-entrypoint = "3.1.1"
-solana-program-runtime = { workspace = true }
+solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = "4.1.0"
 solana-rent = "4.1.0"
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }

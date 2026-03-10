@@ -215,7 +215,11 @@ impl VoteAccounts {
                 .map(|(pubkey, vote_account, stake)| (*pubkey, (stake, vote_account.clone()))),
         );
         if top_entries.is_empty() {
-            error!("no valid vote accounts found");
+            if cfg!(test) {
+                info!("No valid vote accounts found");
+            } else {
+                error!("No valid vote accounts found");
+            }
         }
         info!(
             "Out of {} vote accounts, {} are valid vote accounts after filtering, {} remain after \
