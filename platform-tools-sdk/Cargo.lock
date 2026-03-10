@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "dummy-for-ci"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 
 [[package]]
 name = "ed25519"
@@ -1496,9 +1496,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.13"
+version = "0.11.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1906b49b0c3bc04b5fe5d86a77925ae6524a19b816ae38ce1e426255f1d8a31"
+checksum = "434b42fec591c96ef50e21e886936e66d3cc3f737104fdb9b737c40ffb94c098"
 dependencies = [
  "bytes",
  "getrandom 0.3.4",
@@ -1526,7 +1526,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.2",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2139,7 +2139,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cargo-build-sbf"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "agave-logger",
  "assert_cmd",
@@ -2161,7 +2161,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cargo-test-sbf"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "agave-logger",
  "cargo_metadata",

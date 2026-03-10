@@ -73,7 +73,7 @@ use {
         convert::TryInto,
         fmt::Write,
         fs::{self, File},
-        io::{Error as IoError, ErrorKind},
+        io::Error as IoError,
         ops::{Bound, Range},
         path::{Path, PathBuf},
         rc::Rc,
@@ -1476,7 +1476,13 @@ impl Blockstore {
         } = shred_insertion_tracker;
 
         let index_meta_working_set_entry =
-            self.get_index_meta_entry(slot, index_working_set, index_meta_time_us);
+            match self.get_index_meta_entry(slot, index_working_set, index_meta_time_us) {
+                Ok(entry) => entry,
+                Err(err) => {
+                    error!("blockstore error during coding shred insertion: {err}");
+                    return false;
+                }
+            };
 
         let index_meta = &mut index_meta_working_set_entry.index;
         let erasure_set = shred.erasure_set();
@@ -1686,7 +1692,7 @@ impl Blockstore {
         } = shred_insertion_tracker;
 
         let index_meta_working_set_entry =
-            self.get_index_meta_entry(slot, index_working_set, index_meta_time_us);
+            self.get_index_meta_entry(slot, index_working_set, index_meta_time_us)?;
         let index_meta = &mut index_meta_working_set_entry.index;
         let slot_meta_entry = self.get_slot_meta_entry(
             slot_meta_working_set,
@@ -1694,7 +1700,7 @@ impl Blockstore {
             shred
                 .parent()
                 .map_err(|_| InsertDataShredError::InvalidShred)?,
-        );
+        )?;
 
         let slot_meta = &mut slot_meta_entry.new_slot_meta.borrow_mut();
         let erasure_set = shred.erasure_set();
@@ -2213,12 +2219,42 @@ impl Blockstore {
             return false;
         }
 
-        // TODO Shouldn't this use shred.parent() instead and update
-        // slot_meta.parent_slot accordingly?
-        slot_meta
-            .parent_slot
-            .map(|parent_slot| verify_shred_slots(slot, parent_slot, max_root))
-            .unwrap_or_default()
+        let Some(meta_parent_slot) = slot_meta.parent_slot else {
+            return false;
+        };
+
+        let Ok(shred_parent) = shred.parent() else {
+            warn!(
+                "Invalid data shred could not get parent slot shred_id {:?}",
+                shred.id()
+            );
+            return false;
+        };
+
+        if meta_parent_slot != shred_parent {
+            let leader_pubkey = leader_schedule
+                .and_then(|leader_schedule| leader_schedule.slot_leader_at(slot, None));
+
+            datapoint_error!(
+                "blockstore_error",
+                (
+                    "error",
+                    format!(
+                        "Leader {:?}, shred_id {:?}: received shred with parent {} but slot_meta \
+                         has parent {}",
+                        leader_pubkey,
+                        shred.id(),
+                        shred_parent,
+                        meta_parent_slot
+                    ),
+                    String
+                )
+            );
+
+            return false;
+        }
+
+        verify_shred_slots(slot, meta_parent_slot, max_root)
     }
 
     fn insert_data_shred<'a>(
@@ -3538,30 +3574,17 @@ impl Blockstore {
                 .iter(IteratorMode::End)?
                 .take(num)
                 .map(|(slot, data)| {
-                    deserialize::<PerfSampleV2>(&data)
-                        .map(|sample| (slot, sample.into()))
-                        .or_else(|err| {
-                            match &*err {
-                                bincode::ErrorKind::Io(io_err)
-                                    if matches!(io_err.kind(), ErrorKind::UnexpectedEof) =>
-                                {
-                                    // Not enough bytes to deserialize as `PerfSampleV2`.
-                                }
-                                _ => return Err(err),
-                            }
-
-                            deserialize::<PerfSampleV1>(&data).map(|sample| (slot, sample.into()))
-                        })
+                    deserialize::<PerfSample>(&data)
+                        .map(|sample| (slot, sample))
                         .map_err(Into::into)
                 });
 
         samples.collect()
     }
 
-    pub fn write_perf_sample(&self, index: Slot, perf_sample: &PerfSampleV2) -> Result<()> {
+    pub fn write_perf_sample(&self, index: Slot, perf_sample: &PerfSample) -> Result<()> {
         // Always write as the current version.
-        let bytes =
-            serialize(&perf_sample).expect("`PerfSampleV2` can be serialized with `bincode`");
+        let bytes = serialize(&perf_sample).expect("`PerfSample` can be serialized with `bincode`");
         self.perf_samples_cf.put_bytes(index, &bytes)
     }
 
@@ -4646,32 +4669,29 @@ impl Blockstore {
         slot_meta_working_set: &'a mut HashMap<u64, SlotMetaWorkingSetEntry>,
         slot: Slot,
         parent_slot: Slot,
-    ) -> &'a mut SlotMetaWorkingSetEntry {
+    ) -> Result<&'a mut SlotMetaWorkingSetEntry> {
         // Check if we've already inserted the slot metadata for this shred's slot
-        slot_meta_working_set.entry(slot).or_insert_with(|| {
-            // Store a 2-tuple of the metadata (working copy, backup copy)
-            if let Some(mut meta) = self
-                .meta_cf
-                .get(slot)
-                .expect("Expect database get to succeed")
-            {
-                let backup = Some(meta.clone());
-                // If parent_slot == None, then this is one of the orphans inserted
-                // during the chaining process, see the function find_slot_meta_in_cached_state()
-                // for details. Slots that are orphans are missing a parent_slot, so we should
-                // fill in the parent now that we know it.
-                if meta.is_orphan() {
-                    meta.parent_slot = Some(parent_slot);
-                }
-
-                SlotMetaWorkingSetEntry::new(Rc::new(RefCell::new(meta)), backup)
-            } else {
-                SlotMetaWorkingSetEntry::new(
-                    Rc::new(RefCell::new(SlotMeta::new(slot, Some(parent_slot)))),
-                    None,
-                )
+        let entry = match slot_meta_working_set.entry(slot) {
+            HashMapEntry::Occupied(occupied_entry) => occupied_entry.into_mut(),
+            HashMapEntry::Vacant(vacant_entry) => {
+                let meta = self.meta_cf.get(slot)?;
+                // Insert a new 2-tuple of the metadata (working copy, backup copy)
+                let slot_meta_entry = if let Some(mut meta) = meta {
+                    let backup = Some(meta.clone());
+                    if meta.is_orphan() {
+                        meta.parent_slot = Some(parent_slot);
+                    }
+                    SlotMetaWorkingSetEntry::new(Rc::new(RefCell::new(meta)), backup)
+                } else {
+                    SlotMetaWorkingSetEntry::new(
+                        Rc::new(RefCell::new(SlotMeta::new(slot, Some(parent_slot)))),
+                        None,
+                    )
+                };
+                vacant_entry.insert(slot_meta_entry)
             }
-        })
+        };
+        Ok(entry)
     }
 
     /// Returns the `SlotMeta` with the specified `slot_index`.  The resulting
@@ -4724,22 +4744,25 @@ impl Blockstore {
         slot: Slot,
         index_working_set: &'a mut HashMap<u64, IndexMetaWorkingSetEntry>,
         index_meta_time_us: &mut u64,
-    ) -> &'a mut IndexMetaWorkingSetEntry {
+    ) -> Result<&'a mut IndexMetaWorkingSetEntry> {
         let mut total_start = Measure::start("Total elapsed");
-        let res = index_working_set.entry(slot).or_insert_with(|| {
-            let newly_inserted_meta = self
-                .index_cf
-                .get(slot)
-                .unwrap()
-                .unwrap_or_else(|| Index::new(slot));
-            IndexMetaWorkingSetEntry {
-                index: newly_inserted_meta,
-                did_insert_occur: false,
+
+        let index_meta_entry = match index_working_set.entry(slot) {
+            HashMapEntry::Occupied(occupied_entry) => occupied_entry.into_mut(),
+            HashMapEntry::Vacant(vacant_entry) => {
+                let index = self.index_cf.get(slot)?.unwrap_or_else(|| Index::new(slot));
+                let index_entry = IndexMetaWorkingSetEntry {
+                    index,
+                    did_insert_occur: false,
+                };
+                vacant_entry.insert(index_entry)
             }
-        });
+        };
+
         total_start.stop();
         *index_meta_time_us += total_start.as_us();
-        res
+
+        Ok(index_meta_entry)
     }
 
     pub fn get_write_batch(&self) -> Result<WriteBatch> {
@@ -9857,120 +9880,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_get_recent_perf_samples_v1_only() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        let num_entries: usize = 10;
-
-        let slot_sample = |i: u64| PerfSampleV1 {
-            num_transactions: 1406 + i,
-            num_slots: 34 + i / 2,
-            sample_period_secs: (40 + i / 5) as u16,
-        };
-
-        let mut perf_samples: Vec<(Slot, PerfSample)> = vec![];
-        for i in 0..num_entries {
-            let slot = (i + 1) as u64 * 50;
-            let sample = slot_sample(i as u64);
-
-            let bytes = serialize(&sample).unwrap();
-            blockstore.perf_samples_cf.put_bytes(slot, &bytes).unwrap();
-            perf_samples.push((slot, sample.into()));
-        }
-
-        for i in 0..num_entries {
-            let mut expected_samples = perf_samples[num_entries - 1 - i..].to_vec();
-            expected_samples.sort_by_key(|b| cmp::Reverse(b.0));
-            assert_eq!(
-                blockstore.get_recent_perf_samples(i + 1).unwrap(),
-                expected_samples
-            );
-        }
-    }
-
-    #[test]
-    fn test_get_recent_perf_samples_v2_only() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        let num_entries: usize = 10;
-
-        let slot_sample = |i: u64| PerfSampleV2 {
-            num_transactions: 2495 + i,
-            num_slots: 167 + i / 2,
-            sample_period_secs: (37 + i / 5) as u16,
-            num_non_vote_transactions: 1672 + i,
-        };
-
-        let mut perf_samples: Vec<(Slot, PerfSample)> = vec![];
-        for i in 0..num_entries {
-            let slot = (i + 1) as u64 * 50;
-            let sample = slot_sample(i as u64);
-
-            let bytes = serialize(&sample).unwrap();
-            blockstore.perf_samples_cf.put_bytes(slot, &bytes).unwrap();
-            perf_samples.push((slot, sample.into()));
-        }
-
-        for i in 0..num_entries {
-            let mut expected_samples = perf_samples[num_entries - 1 - i..].to_vec();
-            expected_samples.sort_by_key(|b| cmp::Reverse(b.0));
-            assert_eq!(
-                blockstore.get_recent_perf_samples(i + 1).unwrap(),
-                expected_samples
-            );
-        }
-    }
-
-    #[test]
-    fn test_get_recent_perf_samples_v1_and_v2() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        let num_entries: usize = 10;
-
-        let slot_sample_v1 = |i: u64| PerfSampleV1 {
-            num_transactions: 1599 + i,
-            num_slots: 123 + i / 2,
-            sample_period_secs: (42 + i / 5) as u16,
-        };
-
-        let slot_sample_v2 = |i: u64| PerfSampleV2 {
-            num_transactions: 5809 + i,
-            num_slots: 81 + i / 2,
-            sample_period_secs: (35 + i / 5) as u16,
-            num_non_vote_transactions: 2209 + i,
-        };
-
-        let mut perf_samples: Vec<(Slot, PerfSample)> = vec![];
-        for i in 0..num_entries {
-            let slot = (i + 1) as u64 * 50;
-
-            if i % 3 == 0 {
-                let sample = slot_sample_v1(i as u64);
-                let bytes = serialize(&sample).unwrap();
-                blockstore.perf_samples_cf.put_bytes(slot, &bytes).unwrap();
-                perf_samples.push((slot, sample.into()));
-            } else {
-                let sample = slot_sample_v2(i as u64);
-                let bytes = serialize(&sample).unwrap();
-                blockstore.perf_samples_cf.put_bytes(slot, &bytes).unwrap();
-                perf_samples.push((slot, sample.into()));
-            }
-        }
-
-        for i in 0..num_entries {
-            let mut expected_samples = perf_samples[num_entries - 1 - i..].to_vec();
-            expected_samples.sort_by_key(|b| cmp::Reverse(b.0));
-            assert_eq!(
-                blockstore.get_recent_perf_samples(i + 1).unwrap(),
-                expected_samples
-            );
-        }
-    }
-
-    #[test]
     fn test_write_perf_samples() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
@@ -9979,7 +9888,7 @@ pub mod tests {
         let mut perf_samples: Vec<(Slot, PerfSample)> = vec![];
         for x in 1..num_entries + 1 {
             let slot = x as u64 * 50;
-            let sample = PerfSampleV2 {
+            let sample = PerfSample {
                 num_transactions: 1000 + x as u64,
                 num_slots: 50,
                 sample_period_secs: 20,
@@ -9987,7 +9896,7 @@ pub mod tests {
             };
 
             blockstore.write_perf_sample(slot, &sample).unwrap();
-            perf_samples.push((slot, PerfSample::V2(sample)));
+            perf_samples.push((slot, sample));
         }
 
         for x in 0..num_entries {
