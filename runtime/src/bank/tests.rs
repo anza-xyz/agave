@@ -1393,20 +1393,23 @@ fn test_bank_tx_fee() {
     let mint = arbitrary_transfer_amount * 100;
     let leader = solana_pubkey::new_rand();
     let GenesisConfigInfo {
-        mut genesis_config,
+        genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config_with_leader(mint, &leader, 3);
-    genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0); // something divisible by 2
 
-    let expected_fee_paid = genesis_config
-        .fee_rate_governor
-        .create_fee_calculator()
-        .lamports_per_signature;
-    let (expected_fee_collected, expected_fee_burned) =
-        genesis_config.fee_rate_governor.burn(expected_fee_paid);
+    let fee_structure = FeeStructure {
+        lamports_per_signature: 5000,
+        ..FeeStructure::default()
+    };
+    let expected_fee_paid = fee_structure.lamports_per_signature;
+    let expected_fee_burned =
+        expected_fee_paid * solana_fee_calculator::DEFAULT_BURN_PERCENT as u64 / 100;
+    let expected_fee_collected = expected_fee_paid - expected_fee_burned;
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.set_fee_structure(&fee_structure);
+    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     let capitalization = bank.capitalization();
 
