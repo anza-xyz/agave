@@ -1,6 +1,6 @@
 use {
     crate::cluster_info_metrics::should_report_message_signature,
-    lru::LruCache,
+    lazy_lru::LruCache,
     rand::{CryptoRng, Rng},
     serde::{Deserialize, Serialize},
     serde_big_array::BigArray,

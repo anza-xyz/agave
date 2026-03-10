@@ -40,7 +40,7 @@ use {
         map::{Entry, IndexMap, rayon::ParValues},
         set::IndexSet,
     },
-    lru::LruCache,
+    lazy_lru::LruCache,
     rayon::{ThreadPool, prelude::*},
     solana_clock::Slot,
     solana_hash::Hash,
