@@ -38,7 +38,8 @@ done
 Cargo_tomls=$(ci/order-crates-for-publishing.py)
 
 for Cargo_toml in $Cargo_tomls; do
-  echo "--- $Cargo_toml"
+  crate_name=$(grep -m 1 '^name = ' "$Cargo_toml" | cut -f 3 -d ' ' | tr -d \")
+  echo "--- $crate_name"
 
   # check the version which doesn't inherit from worksapce
   if ! grep -q "^version = { workspace = true }$" "$Cargo_toml"; then
@@ -48,8 +49,6 @@ for Cargo_toml in $Cargo_tomls; do
       exit 1
     }
   fi
-
-  crate_name=$(grep -m 1 '^name = ' "$Cargo_toml" | cut -f 3 -d ' ' | tr -d \")
 
   if grep -q "^publish = false" "$Cargo_toml"; then
     echo "$crate_name is marked as unpublishable"
@@ -62,7 +61,7 @@ for Cargo_toml in $Cargo_tomls; do
   fi
 
   (
-    set -x
+    set -eo pipefail
 
     crate=$(dirname "$Cargo_toml")
     cargoCommand="cargo publish --token $CRATES_IO_TOKEN"
@@ -72,18 +71,32 @@ for Cargo_toml in $Cargo_tomls; do
       echo "Attempt ${i} of ${numRetries}"
       # The rocksdb package does not build with the stock rust docker image so use
       # the solana rust docker image
-      if ci/docker-run-default-image.sh bash -exc "cd $crate; $cargoCommand"; then
+      output=$(mktemp)
+      if ci/docker-run-default-image.sh bash -exc "cd $crate; $cargoCommand" 2>&1 | tee "$output"; then
+        rm -f "$output"
         break
       fi
 
       if [ "$i" -lt "$numRetries" ]; then
-        sleep 3
+        if grep -qiE "status 429|429 Too Many Requests" "$output"; then
+          backoff=$((60 * i))
+          echo "Rate limited by crates.io, backing off for ${backoff}s"
+          sleep "$backoff"
+        else
+          sleep 3
+        fi
       else
+        rm -f "$output"
         echo "couldn't publish '$crate_name'"
         exit 1
       fi
+      rm -f "$output"
     done
   )
+
+  # crates.io allows a burst of 30 new versions, then 1 per minute.
+  # Sleep between each crate to stay within the sustained rate limit.
+  sleep 60
 done
 
 exit 0
