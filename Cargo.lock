@@ -7795,9 +7795,7 @@ dependencies = [
 name = "solana-compute-budget"
 version = "4.1.0-alpha.0"
 dependencies = [
- "qualifier_attr",
  "solana-fee-structure",
- "solana-frozen-abi",
  "solana-program-runtime",
 ]
 
@@ -8412,7 +8410,6 @@ checksum = "5e2abdb1223eea8ec64136f39cb1ffcf257e00f915c957c35c0dd9e3f4e700b0"
 dependencies = [
  "serde",
  "serde_derive",
- "solana-frozen-abi",
 ]
 
 [[package]]

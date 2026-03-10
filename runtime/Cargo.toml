@@ -31,7 +31,6 @@ frozen-abi = [
     "solana-account/frozen-abi",
     "solana-accounts-db/frozen-abi",
     "solana-bls-signatures/frozen-abi",
-    "solana-compute-budget/frozen-abi",
     "solana-cost-model/frozen-abi",
     "solana-epoch-schedule/frozen-abi",
     "solana-hard-forks/frozen-abi",
