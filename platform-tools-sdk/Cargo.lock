@@ -1526,11 +1526,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.2",
  "tracing",
-<<<<<<< HEAD
- "windows-sys 0.60.2",
-=======
  "windows-sys 0.59.0",
->>>>>>> aeeb06bac (chore: bump quinn-proto to v0.11.14 (#11142))
 ]
 
 [[package]]

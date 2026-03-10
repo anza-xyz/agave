@@ -5430,13 +5430,8 @@ dependencies = [
  "bitflags 2.11.0",
  "errno",
  "libc",
-<<<<<<< HEAD
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.2",
-=======
- "linux-raw-sys 0.12.1",
  "windows-sys 0.60.2",
->>>>>>> aeeb06bac (chore: bump quinn-proto to v0.11.14 (#11142))
 ]
 
 [[package]]
@@ -10367,13 +10362,8 @@ dependencies = [
  "fastrand",
  "getrandom 0.3.3",
  "once_cell",
-<<<<<<< HEAD
  "rustix 1.1.3",
  "windows-sys 0.61.2",
-=======
- "rustix 1.1.4",
- "windows-sys 0.60.2",
->>>>>>> aeeb06bac (chore: bump quinn-proto to v0.11.14 (#11142))
 ]
 
 [[package]]
