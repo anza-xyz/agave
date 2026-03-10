@@ -716,8 +716,13 @@ where
     );
 
     let ((vote_id, mut vote_account), (stake_id, stake_account)) =
-        crate::stakes::tests::create_staked_node_accounts(10_000);
-    let starting_vote_and_stake_balance = 10_000 + 1;
+        crate::stakes::tests::create_staked_node_accounts(10_000, &bank0.rent_collector.rent);
+    let starting_vote_and_stake_balance = 10_000
+        + 1
+        + bank0
+            .rent_collector
+            .rent
+            .minimum_balance(StakeStateV2::size_of());
 
     // set up accounts
     bank0.store_account_and_update_capitalization(&stake_id, &stake_account);
@@ -876,9 +881,19 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
         100,
     );
     let stake_id1 = solana_pubkey::new_rand();
-    let stake_account1 = crate::stakes::tests::create_stake_account(123, &vote_id, &stake_id1);
+    let stake_account1 = crate::stakes::tests::create_stake_account(
+        123,
+        &vote_id,
+        &stake_id1,
+        &bank.rent_collector.rent,
+    );
     let stake_id2 = solana_pubkey::new_rand();
-    let stake_account2 = crate::stakes::tests::create_stake_account(456, &vote_id, &stake_id2);
+    let stake_account2 = crate::stakes::tests::create_stake_account(
+        456,
+        &vote_id,
+        &stake_id2,
+        &bank.rent_collector.rent,
+    );
 
     // set up accounts
     bank.store_account_and_update_capitalization(&stake_id1, &stake_account1);
@@ -3723,7 +3738,7 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
         }
 
         let ((vote_id, vote_account), (stake_id, stake_account)) =
-            crate::stakes::tests::create_staked_node_accounts(1_0000);
+            crate::stakes::tests::create_staked_node_accounts(1_0000, &bank.rent_collector.rent);
         bank.capitalization
             .fetch_add(vote_account.lamports() + stake_account.lamports(), Relaxed);
         bank.store_account(&vote_id, &vote_account);
