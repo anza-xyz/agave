@@ -61,7 +61,7 @@ for Cargo_toml in $Cargo_tomls; do
   fi
 
   (
-    set -eo pipefail
+    set -euo pipefail
 
     crate=$(dirname "$Cargo_toml")
     cargoCommand="cargo publish --token $CRATES_IO_TOKEN"
