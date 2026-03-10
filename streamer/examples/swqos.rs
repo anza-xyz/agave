@@ -142,7 +142,7 @@ async fn main() -> anyhow::Result<()> {
 
     let SpawnNonBlockingServerResult {
         endpoints,
-        stats,
+        stats: _,
         thread: run_thread,
         max_concurrent_connections: _,
     } = solana_streamer::nonblocking::testing_utilities::spawn_stake_weighted_qos_server(
@@ -208,6 +208,5 @@ async fn main() -> anyhow::Result<()> {
     info!("Server terminating");
     cancel.cancel();
     drop(endpoints);
-    stats.report("final_stats");
     status
 }
