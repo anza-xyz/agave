@@ -48,7 +48,6 @@ fn morph_into_deployment_environment_v1<'a>(
 /// Directly deploy a program using a provided invoke context.
 /// This function should only be invoked from the runtime, since it does not
 /// provide any account loads or checks.
-#[allow(clippy::too_many_arguments)]
 pub fn deploy_program(
     log_collector: Option<Rc<RefCell<LogCollector>>>,
     #[cfg(feature = "metrics")] load_program_metrics: &mut LoadProgramMetrics,

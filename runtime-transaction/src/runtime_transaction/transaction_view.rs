@@ -14,6 +14,7 @@ use {
         VersionedMessage,
         compiled_instruction::CompiledInstruction,
         v0::{LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
+        v1,
     },
     solana_pubkey::Pubkey,
     solana_svm_transaction::svm_message::SVMMessage,
@@ -147,6 +148,10 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
                 loaded_addresses: Cow::Owned(self.loaded_addresses().unwrap().clone()),
                 is_writable_account_cache,
             }),
+            VersionedMessage::V1(message) => SanitizedMessage::V1(v1::CachedMessage {
+                message: Cow::Owned(message),
+                is_writable_account_cache,
+            }),
         };
 
         // SAFETY:
@@ -240,8 +245,7 @@ mod tests {
 
         let hash = Hash::new_unique();
         let transaction =
-            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true, true)
-                .unwrap();
+            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true).unwrap();
         let static_runtime_transaction =
             RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction,
@@ -274,7 +278,7 @@ mod tests {
         ) {
             let bytes = bincode::serialize(&original_transaction).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], true, true).unwrap();
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
@@ -341,7 +345,7 @@ mod tests {
             let bytes =
                 bincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], true, true).unwrap();
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,

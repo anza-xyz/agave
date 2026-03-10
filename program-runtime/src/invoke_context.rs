@@ -1,17 +1,24 @@
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    crate::loaded_programs::ProgramCacheEntry,
+    solana_account::{AccountSharedData, create_account_shared_data_for_test},
+    solana_epoch_schedule::EpochSchedule,
+    solana_instruction::AccountMeta,
+    solana_sdk_ids::sysvar,
+    solana_svm_type_overrides::sync::Arc,
+    solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
+};
 use {
     crate::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         loaded_programs::{
-            ProgramCacheEntry, ProgramCacheEntryType, ProgramCacheForTxBatch,
-            ProgramRuntimeEnvironments,
+            ProgramCacheEntryType, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
         },
         stable_log,
         sysvar_cache::SysvarCache,
     },
-    solana_account::{AccountSharedData, create_account_shared_data_for_test},
-    solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
+    solana_instruction::{Instruction, error::InstructionError},
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
@@ -22,19 +29,17 @@ use {
         vm::{Config, ContextObject, EbpfVm},
     },
     solana_sdk_ids::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader, sysvar,
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
     solana_svm_callback::InvokeContextCallback,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::{LogCollector, ic_msg},
     solana_svm_measure::measure::Measure,
     solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
-    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
-    solana_svm_type_overrides::sync::Arc,
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::{
         IndexOfAccount, MAX_ACCOUNTS_PER_TRANSACTION, instruction::InstructionContext,
         instruction_accounts::InstructionAccount, transaction::TransactionContext,
-        transaction_accounts::KeyedAccountSharedData,
     },
     std::{
         alloc::Layout,
@@ -209,7 +214,6 @@ pub struct InvokeContext<'a, 'ix_data> {
 }
 
 impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         transaction_context: &'a mut TransactionContext<'ix_data>,
         program_cache_for_tx_batch: &'a mut ProgramCacheForTxBatch,
@@ -454,47 +458,49 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         Ok(())
     }
 
-    /// Helper to prepare for process_instruction()/process_precompile() when the instruction is
-    /// a top level one
-    pub fn prepare_next_top_level_instruction(
+    /// Prepare the instruction trace with all the top level instructions
+    pub fn prepare_top_level_instructions(
         &mut self,
-        message: &impl SVMMessage,
-        instruction: &SVMInstruction,
-        program_account_index: IndexOfAccount,
-        data: &'ix_data [u8],
-    ) -> Result<(), InstructionError> {
-        // We reference accounts by an u8 index, so we have a total of 256 accounts.
-        let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
+        message: &'ix_data impl SVMMessage,
+        program_indices: &[IndexOfAccount],
+    ) -> Result<(), (u8, InstructionError)> {
+        for (top_level_instruction_index, ((_, instruction), program_account_index)) in message
+            .program_instructions_iter()
+            .zip(program_indices.iter())
+            .enumerate()
+        {
+            let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
 
-        let mut instruction_accounts: Vec<InstructionAccount> =
-            Vec::with_capacity(instruction.accounts.len());
-        for index_in_transaction in instruction.accounts.iter() {
-            debug_assert!((*index_in_transaction as usize) < transaction_callee_map.len());
+            let mut instruction_accounts: Vec<InstructionAccount> =
+                Vec::with_capacity(instruction.accounts.len());
+            for index_in_transaction in instruction.accounts.iter() {
+                let index_in_callee = transaction_callee_map
+                    .get_mut(*index_in_transaction as usize)
+                    .expect("Invalid index in transaction");
 
-            let index_in_callee = transaction_callee_map
-                .get_mut(*index_in_transaction as usize)
-                .unwrap();
+                if (*index_in_callee as usize) > instruction_accounts.len() {
+                    *index_in_callee = instruction_accounts.len() as u16;
+                }
 
-            if (*index_in_callee as usize) > instruction_accounts.len() {
-                *index_in_callee = instruction_accounts.len() as u16;
+                let index_in_transaction = *index_in_transaction as usize;
+                instruction_accounts.push(InstructionAccount::new(
+                    index_in_transaction as IndexOfAccount,
+                    message.is_signer(index_in_transaction),
+                    message.is_writable(index_in_transaction),
+                ));
             }
 
-            let index_in_transaction = *index_in_transaction as usize;
-            instruction_accounts.push(InstructionAccount::new(
-                index_in_transaction as IndexOfAccount,
-                message.is_signer(index_in_transaction),
-                message.is_writable(index_in_transaction),
-            ));
+            self.transaction_context
+                .configure_instruction_at_index(
+                    top_level_instruction_index,
+                    *program_account_index,
+                    instruction_accounts,
+                    transaction_callee_map,
+                    Cow::Borrowed(instruction.data),
+                    None,
+                )
+                .map_err(|err| (top_level_instruction_index as u8, err))?;
         }
-
-        self.transaction_context.configure_instruction_at_index(
-            self.transaction_context.get_instruction_trace_length(),
-            program_account_index,
-            instruction_accounts,
-            transaction_callee_map,
-            Cow::Borrowed(data),
-            None,
-        )?;
         Ok(())
     }
 
@@ -573,8 +579,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         let logger = self.get_log_collector();
         stable_log::program_invoke(&logger, &program_id, self.get_stack_height());
         let pre_remaining_units = self.get_remaining();
-        // In program-runtime v2 we will create this VM instance only once per transaction.
-        // `program_runtime_environment_v2.get_config()` will be used instead of `mock_config`.
         // For now, only built-ins are invoked from here, so the VM and its Config are irrelevant.
         let mock_config = Config::default();
         let empty_memory_mapping =
@@ -582,7 +586,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         let mut vm = EbpfVm::new(
             self.environment_config
                 .program_runtime_environments_for_execution
-                .program_runtime_v2
+                .program_runtime_v1
                 .clone(),
             SBPFVersion::V0,
             // Removes lifetime tracking
@@ -786,6 +790,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 #[macro_export]
 macro_rules! with_mock_invoke_context_with_feature_set {
     (
@@ -855,9 +860,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             environment_config,
             Some(LogCollector::new_ref()),
             compute_budget,
-            SVMTransactionExecutionCost::new_with_defaults(
-                $feature_set.increase_cpi_account_info_limit,
-            ),
+            SVMTransactionExecutionCost::default(),
         );
     };
     (
@@ -876,6 +879,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
     };
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 #[macro_export]
 macro_rules! with_mock_invoke_context {
     (
@@ -907,7 +911,8 @@ macro_rules! with_mock_invoke_context {
     };
 }
 
-#[allow(clippy::too_many_arguments)]
+#[cfg(feature = "dev-context-only-utils")]
+#[expect(clippy::too_many_arguments)]
 pub fn mock_process_instruction_with_feature_set<
     F: FnMut(&mut InvokeContext),
     G: FnMut(&mut InvokeContext),
@@ -996,6 +1001,7 @@ pub fn mock_process_instruction_with_feature_set<
     transaction_accounts
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut InvokeContext)>(
     loader_id: &Pubkey,
     program_index: Option<IndexOfAccount>,
@@ -1256,28 +1262,27 @@ mod tests {
             2,
         );
 
-        // To be uncommented when we reorder the trace
-        // transaction_context
-        //     .configure_instruction_at_index(
-        //         0,
-        //         0,
-        //         vec![InstructionAccount::new(0, false, false)],
-        //         vec![u16::MAX; 256],
-        //         Cow::Owned(Vec::new()),
-        //         None,
-        //     )
-        //     .unwrap();
-        //
-        // transaction_context
-        //     .configure_instruction_at_index(
-        //         1,
-        //         0,
-        //         vec![InstructionAccount::new(0, false, false)],
-        //         vec![u16::MAX; 256],
-        //         Cow::Owned(Vec::new()),
-        //         None,
-        //     )
-        //     .unwrap();
+        transaction_context
+            .configure_instruction_at_index(
+                0,
+                0,
+                vec![InstructionAccount::new(0, false, false)],
+                vec![u16::MAX; 256],
+                Cow::Owned(Vec::new()),
+                None,
+            )
+            .unwrap();
+
+        transaction_context
+            .configure_instruction_at_index(
+                1,
+                0,
+                vec![InstructionAccount::new(0, false, false)],
+                vec![u16::MAX; 256],
+                Cow::Owned(Vec::new()),
+                None,
+            )
+            .unwrap();
 
         for _ in 0..MAX_INSTRUCTIONS {
             transaction_context.push().unwrap();
@@ -1613,30 +1618,14 @@ mod tests {
             }
         }
 
-        let svm_instruction =
-            SVMInstruction::from(sanitized.message().instructions().first().unwrap());
         invoke_context
-            .prepare_next_top_level_instruction(
-                &sanitized,
-                &svm_instruction,
-                90,
-                svm_instruction.data,
-            )
+            .prepare_top_level_instructions(&sanitized, &[90, 90])
             .unwrap();
 
         test_case_1(&invoke_context);
 
         invoke_context.transaction_context.push().unwrap();
-        let svm_instruction =
-            SVMInstruction::from(sanitized.message().instructions().get(1).unwrap());
-        invoke_context
-            .prepare_next_top_level_instruction(
-                &sanitized,
-                &svm_instruction,
-                90,
-                svm_instruction.data,
-            )
-            .unwrap();
+        invoke_context.transaction_context.pop().unwrap();
 
         test_case_2(&invoke_context);
 
@@ -1695,16 +1684,9 @@ mod tests {
         let sanitized =
             SanitizedTransaction::try_from_legacy_transaction(transaction, &HashSet::new())
                 .unwrap();
-        let svm_instruction =
-            SVMInstruction::from(sanitized.message().instructions().first().unwrap());
 
         invoke_context
-            .prepare_next_top_level_instruction(
-                &sanitized,
-                &svm_instruction,
-                90,
-                svm_instruction.data,
-            )
+            .prepare_top_level_instructions(&sanitized, &[90, 90])
             .unwrap();
 
         {

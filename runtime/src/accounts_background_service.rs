@@ -138,7 +138,6 @@ pub struct SnapshotRequestHandler {
 
 impl SnapshotRequestHandler {
     // Returns the latest requested snapshot slot and storages
-    #[allow(clippy::type_complexity)]
     pub fn handle_snapshot_requests(
         &self,
         non_snapshot_time_us: u128,
@@ -259,6 +258,7 @@ impl SnapshotRequestHandler {
                     .accounts_db
                     .accounts_cache
                     .fetch_max_flush_root()
+                    .expect("Roots have been flushed")
         );
         flush_accounts_cache_time.stop();
 
@@ -403,7 +403,6 @@ pub struct AbsRequestHandlers {
 
 impl AbsRequestHandlers {
     // Returns the latest requested snapshot slot, if one exists
-    #[allow(clippy::type_complexity)]
     pub fn handle_snapshot_requests(
         &self,
         non_snapshot_time_us: u128,

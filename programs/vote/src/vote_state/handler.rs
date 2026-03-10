@@ -549,7 +549,7 @@ impl VoteStateHandle for VoteStateV4 {
     }
 
     fn commission(&self) -> u8 {
-        (self.inflation_rewards_commission_bps / 100) as u8
+        (self.inflation_rewards_commission_bps / 100).min(u8::MAX as u16) as u8
     }
 
     #[allow(clippy::arithmetic_side_effects)]
@@ -1322,6 +1322,33 @@ mod tests {
         let mut vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
 
         set_new_authorized_voter_and_assert(&mut vote_state, original_voter, epoch_offset, None);
+
+        // V4 removes the monotonicity constraint on target_epoch.
+        // V3 rejects non-monotonic target epochs; V4 allows them.
+        {
+            let voter_a = Pubkey::new_unique();
+            let voter_b = Pubkey::new_unique();
+
+            let mut v3 = VoteStateV3 {
+                authorized_voters: AuthorizedVoters::new(0, Pubkey::new_unique()),
+                ..Default::default()
+            };
+            v3.set_new_authorized_voter(&voter_a, 0, 10, None, |_| Ok(()))
+                .unwrap();
+            assert_eq!(
+                v3.set_new_authorized_voter(&voter_b, 0, 5, None, |_| Ok(())),
+                Err(InstructionError::InvalidAccountData)
+            );
+
+            let mut v4 = VoteStateV4 {
+                authorized_voters: AuthorizedVoters::new(0, Pubkey::new_unique()),
+                ..Default::default()
+            };
+            v4.set_new_authorized_voter(&voter_a, 0, 10, None, |_| Ok(()))
+                .unwrap();
+            v4.set_new_authorized_voter(&voter_b, 0, 5, None, |_| Ok(()))
+                .unwrap();
+        }
     }
 
     fn assert_authorized_voter_is_locked_within_epoch<T: VoteStateHandle>(
@@ -1550,6 +1577,35 @@ mod tests {
             new_authorized_voter
         );
         assert_eq!(vote_state.authorized_voters().len(), 1);
+
+        // V4 purge boundary: at epoch 11 with voter set at epoch 10,
+        // V4 retains epoch 10 (purge range 0..10) while V3 would not.
+        {
+            let voter_10 = Pubkey::new_unique();
+            let voter_15 = Pubkey::new_unique();
+            let mut v4 = VoteStateV4 {
+                authorized_voters: AuthorizedVoters::new(0, Pubkey::new_unique()),
+                ..Default::default()
+            };
+            v4.authorized_voters.insert(10, voter_10);
+            v4.authorized_voters.insert(15, voter_15);
+            let v4_voter = v4.get_and_update_authorized_voter(11).unwrap();
+            assert_eq!(v4_voter, voter_10);
+            // V4 purge range 0..10: epoch 10 retained.
+            assert!(v4.authorized_voters().get_authorized_voter(10).is_some());
+        }
+
+        // Epoch 0: saturating_sub(1) = 0, purge range 0..0 is empty.
+        {
+            let voter = Pubkey::new_unique();
+            let mut v4 = VoteStateV4 {
+                authorized_voters: AuthorizedVoters::new(0, voter),
+                ..Default::default()
+            };
+            let result = v4.get_and_update_authorized_voter(0).unwrap();
+            assert_eq!(result, voter);
+            assert!(!v4.authorized_voters().is_empty());
+        }
     }
 
     #[test_case(
@@ -2116,6 +2172,60 @@ mod tests {
     }
 
     #[test]
+    fn test_v4_commission_getter_clamps_extreme_bps() {
+        // Verify commission() clamps to u8::MAX for extreme bps values
+        // instead of wrapping around. SIMD-0291 allows storing any u16 as
+        // inflation_rewards_commission_bps — the legacy getter must not
+        // produce misleading values.
+        for (bps, expected) in [
+            (10_000, 100),   // normal
+            (25_500, 255),   // exact boundary, no clamping needed
+            (25_501, 255),   // just past boundary, clamped
+            (25_600, 255),   // would wrap to 0 without clamping
+            (u16::MAX, 255), // would wrap to 143 without clamping
+        ] {
+            let vote_state = VoteStateV4 {
+                inflation_rewards_commission_bps: bps,
+                ..Default::default()
+            };
+            let handler = VoteStateHandler::new_v4(vote_state);
+            assert_eq!(handler.commission(), expected);
+        }
+    }
+
+    #[test]
+    fn test_commission_v3_v4_parity() {
+        // Verify commission() returns the same value for equivalent V3
+        // and V4 states, both directly and through migration.
+        let vote_pubkey = Pubkey::new_unique();
+        for n in [0u8, 1, 50, 100, 101, 255] {
+            // Direct construction.
+            let v3 = VoteStateV3 {
+                commission: n,
+                ..Default::default()
+            };
+            let v3_handler = VoteStateHandler::new_v3(v3.clone());
+
+            let mut v4_handler = VoteStateHandler::new_v4(VoteStateV4::default());
+            v4_handler.set_commission(n);
+
+            assert_eq!(v3_handler.commission(), v4_handler.commission());
+
+            // Through V3→V4 migration.
+            let versioned = VoteStateVersions::V3(Box::new(v3));
+            let migrated = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
+            let migrated_handler = VoteStateHandler::new_v4(migrated);
+            assert_eq!(migrated_handler.commission(), n);
+            assert_eq!(
+                migrated_handler
+                    .as_ref_v4()
+                    .inflation_rewards_commission_bps,
+                n as u16 * 100
+            );
+        }
+    }
+
+    #[test]
     fn test_v4_conversion_from_all_versions() {
         // Test conversion from all vote state versions to v4 per SIMD-0185.
         let vote_pubkey = Pubkey::new_unique();
@@ -2248,6 +2358,55 @@ mod tests {
 
             // Should be an exact copy.
             assert_eq!(vote_state_v4, initial_vote_state_v4);
+        }
+    }
+
+    #[test]
+    fn test_v4_migration_with_pre_existing_voters() {
+        // Verify V4 purge rules apply to the migrated voter map from
+        // both V1_14_11 and V3.
+        let vote_pubkey = Pubkey::new_unique();
+        let voter_5 = Pubkey::new_unique();
+        let voter_7 = Pubkey::new_unique();
+        let voter_9 = Pubkey::new_unique();
+
+        let build_voters = || {
+            let mut voters = AuthorizedVoters::new(0, Pubkey::new_unique());
+            voters.insert(5, voter_5);
+            voters.insert(7, voter_7);
+            voters.insert(9, voter_9);
+            voters
+        };
+
+        let assert_purge = |v4: &mut VoteStateV4| {
+            // Advance to epoch 10. V4 purge range 0..9.
+            let voter = v4.get_and_update_authorized_voter(10).unwrap();
+            assert_eq!(voter, voter_9);
+            assert!(v4.authorized_voters().get_authorized_voter(9).is_some());
+            assert!(v4.authorized_voters().get_authorized_voter(7).is_none());
+            assert!(v4.authorized_voters().get_authorized_voter(5).is_none());
+        };
+
+        // V1_14_11 → V4
+        {
+            let v1 = VoteState1_14_11 {
+                authorized_voters: build_voters(),
+                ..Default::default()
+            };
+            let versioned = VoteStateVersions::V1_14_11(Box::new(v1));
+            let mut v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
+            assert_purge(&mut v4);
+        }
+
+        // V3 → V4
+        {
+            let v3 = VoteStateV3 {
+                authorized_voters: build_voters(),
+                ..Default::default()
+            };
+            let versioned = VoteStateVersions::V3(Box::new(v3));
+            let mut v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
+            assert_purge(&mut v4);
         }
     }
 
@@ -2414,5 +2573,67 @@ mod tests {
             let v4 = handler.as_ref_v4();
             assert_eq!(v4.inflation_rewards_commission_bps, bps);
         }
+    }
+
+    #[test]
+    fn test_compute_vote_latency() {
+        for (voted_for_slot, current_slot, expected) in [
+            (0, 0, 0),                   // zero latency
+            (0, 1, 1),                   // normal
+            (0, 255, 255),               // max u8
+            (0, 256, 255),               // clamped to u8::MAX
+            (0, 1_000, 255),             // large gap, clamped
+            (u64::MAX - 1, u64::MAX, 1), // near-max slots
+            (5, 5, 0),                   // same slot
+            (10, 5, 0),                  // current < voted, saturating_sub → 0
+        ] {
+            assert_eq!(compute_vote_latency(voted_for_slot, current_slot), expected);
+        }
+    }
+
+    #[test]
+    fn test_process_timestamp_v3_v4_parity() {
+        let mut v3 = VoteStateV3::default();
+        let mut v4 = VoteStateV4::default();
+
+        let timestamps = [
+            (10, 1_000_000),
+            (11, 1_000_001),
+            (15, 1_000_005),
+            (20, 1_000_010),
+        ];
+        for (slot, ts) in timestamps {
+            assert_eq!(
+                v3.process_timestamp(slot, ts),
+                v4.process_timestamp(slot, ts)
+            );
+            assert_eq!(v3.last_timestamp(), v4.last_timestamp());
+        }
+    }
+
+    #[test]
+    fn test_process_next_vote_slot_v3_v4_parity() {
+        let voter = Pubkey::new_unique();
+        let mut v3 = VoteStateV3 {
+            authorized_voters: AuthorizedVoters::new(0, voter),
+            ..Default::default()
+        };
+        let mut v4 = VoteStateV4 {
+            authorized_voters: AuthorizedVoters::new(0, voter),
+            ..Default::default()
+        };
+
+        for slot in [5, 10, 15, 20] {
+            v3.process_next_vote_slot(slot, 0, 20);
+            v4.process_next_vote_slot(slot, 0, 20);
+        }
+
+        // Both should have identical vote state after processing.
+        assert_eq!(v3.votes().len(), v4.votes().len());
+        for (lv3, lv4) in v3.votes().iter().zip(v4.votes().iter()) {
+            assert_eq!(lv3.slot(), lv4.slot());
+            assert_eq!(lv3.confirmation_count(), lv4.confirmation_count());
+        }
+        assert_eq!(v3.root_slot(), v4.root_slot());
     }
 }

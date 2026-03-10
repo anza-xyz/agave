@@ -13,7 +13,11 @@ use {
             SnapshotStorageRebuilder, get_slot_and_append_vec_id,
         },
     },
-    agave_fs::{FileInfo, buffered_writer::large_file_buf_writer, io_setup::IoSetupState},
+    agave_fs::{
+        FileInfo,
+        buffered_writer::{SizeLimitedWriter, large_file_buf_writer},
+        io_setup::IoSetupState,
+    },
     agave_snapshots::{
         ArchiveFormat, Result, SnapshotArchiveKind, SnapshotVersion, archive_snapshot,
         error::{
@@ -200,7 +204,6 @@ pub struct SnapshotRootPaths {
 /// Helper type to bundle up the results from `unarchive_snapshot()`
 #[derive(Debug)]
 pub struct UnarchivedSnapshot {
-    #[allow(dead_code)]
     unpack_dir: TempDir,
     pub storage: AccountStorageMap,
     pub bank_fields: BankFieldsToDeserialize,
@@ -225,7 +228,7 @@ pub struct UnarchivedSnapshots {
 
 /// Guard type that keeps the unpack directories of snapshots alive.
 /// Once dropped, the unpack directories are removed.
-#[allow(dead_code)]
+#[expect(dead_code)]
 #[derive(Debug)]
 pub struct UnarchivedSnapshotsGuard {
     full_unpack_dir: TempDir,
@@ -699,22 +702,20 @@ fn serialize_obsolete_accounts(
     let obsolete_accounts_path = bank_snapshot_dir
         .as_ref()
         .join(snapshot_paths::SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
-    let mut file_stream = large_file_buf_writer(&obsolete_accounts_path)?;
+    let mut file_stream = SizeLimitedWriter::new(
+        large_file_buf_writer(&obsolete_accounts_path)?,
+        maximum_obsolete_accounts_file_size,
+    );
 
-    serde_snapshot::serialize_into(&mut file_stream, obsolete_accounts_map)?;
+    serde_snapshot::serialize_into(&mut file_stream, obsolete_accounts_map).map_err(|err| {
+        IoError::other(format!(
+            "unable to serialize obsolete accounts to file '{}': {err}",
+            obsolete_accounts_path.display(),
+        ))
+    })?;
 
     file_stream.flush()?;
-
-    let consumed_size = file_stream.stream_position()?;
-    if consumed_size > maximum_obsolete_accounts_file_size {
-        let error_message = format!(
-            "too large obsolete accounts file to serialize: '{}' has {consumed_size} bytes, max \
-             size is {maximum_obsolete_accounts_file_size}",
-            obsolete_accounts_path.display(),
-        );
-        return Err(IoError::other(error_message).into());
-    }
-    Ok(consumed_size)
+    Ok(file_stream.bytes_written())
 }
 
 fn deserialize_obsolete_accounts(
@@ -794,19 +795,16 @@ fn serialize_snapshot_data_file_capped<F>(
 where
     F: FnOnce(&mut dyn Write) -> Result<()>,
 {
-    let mut data_file_stream = large_file_buf_writer(data_file_path)?;
-    serializer(&mut data_file_stream)?;
-    data_file_stream.flush()?;
-
-    let consumed_size = data_file_stream.stream_position()?;
-    if consumed_size > maximum_file_size {
-        let error_message = format!(
-            "too large snapshot data file to serialize: '{}' has {consumed_size} bytes",
+    let mut data_file_stream =
+        SizeLimitedWriter::new(large_file_buf_writer(data_file_path)?, maximum_file_size);
+    serializer(&mut data_file_stream).map_err(|err| {
+        IoError::other(format!(
+            "unable to serialize snapshot data to file '{}': {err}",
             data_file_path.display(),
-        );
-        return Err(IoError::other(error_message).into());
-    }
-    Ok(consumed_size)
+        ))
+    })?;
+    data_file_stream.flush()?;
+    Ok(data_file_stream.bytes_written())
 }
 
 fn deserialize_snapshot_data_files_capped<T: Sized>(
@@ -1446,7 +1444,7 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
 
     let snapshot_file_path = snapshot_info.snapshot_path();
     let snapshot_version_path = bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     let (file_receiver, stream_files_handle) = spawn_streaming_snapshot_dir_files(
         snapshot_file_path,
         snapshot_version_path,
@@ -1833,7 +1831,7 @@ mod tests {
                 Ok(())
             },
         );
-        assert_matches!(result, Err(SnapshotError::Io(ref message)) if message.to_string().starts_with("too large snapshot data file to serialize"));
+        assert_matches!(result, Err(SnapshotError::Io(ref message)) if message.to_string().contains("bytes would exceed limit of"));
     }
 
     #[test]
@@ -2658,7 +2656,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "too large obsolete accounts file to serialize")]
+    #[should_panic(expected = "bytes would exceed limit of 100")]
     fn test_serialize_obsolete_accounts_too_large_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let bank_snapshot_dir = temp_dir.path();

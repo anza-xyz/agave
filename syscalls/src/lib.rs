@@ -11,8 +11,6 @@ pub use self::{
         SyscallGetSysvar,
     },
 };
-use solana_program_runtime::memory::translate_vm_slice;
-#[allow(deprecated)]
 use {
     crate::mem_ops::is_nonoverlapping,
     solana_big_mod_exp::{BigModExpParams, big_mod_exp},
@@ -26,7 +24,7 @@ use {
         cpi::CpiError,
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
-        memory::MemoryTranslationError,
+        memory::{MemoryTranslationError, translate_vm_slice},
         stable_log, translate_inner, translate_slice_inner, translate_type_inner,
     },
     solana_pubkey::{MAX_SEED_LEN, MAX_SEEDS, PUBKEY_BYTES, Pubkey, PubkeyError},
@@ -609,7 +607,7 @@ fn translate_string_and_do(
 }
 
 // Do not use this directly
-#[allow(clippy::mut_from_ref)]
+#[expect(clippy::mut_from_ref)]
 fn translate_type_mut<T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
@@ -618,7 +616,7 @@ fn translate_type_mut<T>(
     translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
 }
 // Do not use this directly
-#[allow(clippy::mut_from_ref)]
+#[expect(clippy::mut_from_ref)]
 fn translate_slice_mut<T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
@@ -1987,18 +1985,30 @@ declare_builtin_function!(
 
         consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
-        // Reverse iterate through the instruction trace,
-        // ignoring anything except instructions on the same level
         let stack_height = invoke_context.get_stack_height();
-        let instruction_trace_length = invoke_context
-            .transaction_context
-            .get_instruction_trace_length();
         let mut reverse_index_at_stack_height = 0;
         let mut found_instruction_context = None;
-        for index_in_trace in (0..instruction_trace_length).rev() {
+        let current_ix_caller = invoke_context.transaction_context.get_current_instruction_context()?.get_index_of_caller();
+
+        // Either we only search for top level instructions or CPIs, depending on the stack height.
+        let range = if stack_height == 1 {
+            0..invoke_context.transaction_context.next_top_level_instruction_index()
+        } else {
+            let end = invoke_context.transaction_context.get_instruction_trace_length();
+            let start = end.saturating_sub(invoke_context.transaction_context.number_of_cpis_in_trace());
+            start..end
+        };
+
+        for index_in_trace in range.rev() {
             let instruction_context = invoke_context
                 .transaction_context
                 .get_instruction_context_at_index_in_trace(index_in_trace)?;
+            // If we are searching through CPIs, sibling instructions must have the same caller
+            // but instructions from different callers are interspaced in the frame.
+            if instruction_context.get_index_of_caller() != current_ix_caller {
+                continue;
+            }
+
             if instruction_context.get_stack_height() < stack_height {
                 break;
             }
@@ -4132,8 +4142,8 @@ mod tests {
         };
 
         let mut src_rent = create_filled_type::<Rent>(false);
-        src_rent.lamports_per_byte_year = 1;
-        src_rent.exemption_threshold = 2.0;
+        src_rent.lamports_per_byte = 1;
+        src_rent.exemption_threshold = 1.0f64.to_le_bytes();
         src_rent.burn_percent = 3;
 
         let mut src_rewards = create_filled_type::<EpochRewards>(false);
@@ -4376,7 +4386,7 @@ mod tests {
             assert_eq!(got_rent_obj, src_rent);
 
             let mut clean_rent = create_filled_type::<Rent>(true);
-            clean_rent.lamports_per_byte_year = src_rent.lamports_per_byte_year;
+            clean_rent.lamports_per_byte = src_rent.lamports_per_byte;
             clean_rent.exemption_threshold = src_rent.exemption_threshold;
             clean_rent.burn_percent = src_rent.burn_percent;
             assert!(are_bytes_equal(&got_rent_obj, &clean_rent));
@@ -5250,17 +5260,16 @@ mod tests {
         */
 
         let top_level = [b'A', b'B', b'C'];
-        // To be uncommented when we reoder the instruction trace
-        // for (idx, ix) in top_level.iter().enumerate() {
-        //     invoke_context
-        //         .transaction_context
-        //         .configure_top_level_instruction_for_tests(
-        //             0,
-        //             vec![InstructionAccount::new(idx as u16, false, false)],
-        //             vec![*ix],
-        //         )
-        //         .unwrap();
-        // }
+        for (idx, ix) in top_level.iter().enumerate() {
+            invoke_context
+                .transaction_context
+                .configure_top_level_instruction_for_tests(
+                    0,
+                    vec![InstructionAccount::new(idx as u16, false, false)],
+                    vec![*ix],
+                )
+                .unwrap();
+        }
 
         /*
         The trace looks like this:
@@ -5269,25 +5278,9 @@ mod tests {
          */
 
         // Execute Instr A
-        invoke_context
-            .transaction_context
-            .configure_top_level_instruction_for_tests(
-                0,
-                vec![InstructionAccount::new(0, false, false)],
-                vec![*top_level.first().unwrap()],
-            )
-            .unwrap();
         invoke_context.transaction_context.push().unwrap();
         invoke_context.transaction_context.pop().unwrap();
         // Execute Instr B
-        invoke_context
-            .transaction_context
-            .configure_top_level_instruction_for_tests(
-                0,
-                vec![InstructionAccount::new(1, false, false)],
-                vec![*top_level.get(1).unwrap()],
-            )
-            .unwrap();
         invoke_context.transaction_context.push().unwrap();
         // CPI into B1
         invoke_context
@@ -5587,14 +5580,6 @@ mod tests {
         invoke_context.transaction_context.pop().unwrap();
 
         // Execute C
-        invoke_context
-            .transaction_context
-            .configure_top_level_instruction_for_tests(
-                0,
-                vec![InstructionAccount::new(2, false, false)],
-                vec![*top_level.get(2).unwrap()],
-            )
-            .unwrap();
         invoke_context.transaction_context.push().unwrap();
 
         // Invoking the syscall from B with index zero should return ix C

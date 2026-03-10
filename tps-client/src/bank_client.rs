@@ -113,8 +113,19 @@ impl TpsClient for BankClient {
             })
     }
 
-    fn get_multiple_accounts(&self, _pubkeys: &[Pubkey]) -> TpsClientResult<Vec<Option<Account>>> {
-        unimplemented!("BankClient doesn't support get_multiple_accounts");
+    fn get_multiple_accounts(&self, pubkeys: &[Pubkey]) -> TpsClientResult<Vec<Option<Account>>> {
+        let mut accounts = Vec::with_capacity(pubkeys.len());
+        for pubkey in pubkeys {
+            let account = SyncClient::get_account(self, pubkey)
+                .map_err(|err| TpsClientError::Custom(format!("{err:?}")))?;
+            if account.is_none() {
+                return Err(TpsClientError::Custom(format!(
+                    "AccountNotFound: pubkey={pubkey}"
+                )));
+            }
+            accounts.push(account);
+        }
+        Ok(accounts)
     }
 
     fn get_slot_with_commitment(

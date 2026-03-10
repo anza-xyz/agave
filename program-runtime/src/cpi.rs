@@ -119,9 +119,7 @@ struct SolSignerSeedsC {
 }
 
 /// Maximum number of account info structs that can be used in a single CPI invocation
-const MAX_CPI_ACCOUNT_INFOS: usize = 128;
-/// Maximum number of account info structs that can be used in a single CPI invocation with SIMD-0339 active
-const MAX_CPI_ACCOUNT_INFOS_SIMD_0339: usize = 255;
+const MAX_CPI_ACCOUNT_INFOS: usize = 255;
 
 /// Check that an account info pointer field points to the expected address
 fn check_account_info_pointer(
@@ -161,25 +159,9 @@ fn check_instruction_size(num_accounts: usize, data_len: usize) -> Result<(), Er
 }
 
 /// Check that the number of account infos is within the CPI limit
-fn check_account_infos(
-    num_account_infos: usize,
-    invoke_context: &mut InvokeContext,
-) -> Result<(), Error> {
-    let max_cpi_account_infos = if invoke_context
-        .get_feature_set()
-        .increase_cpi_account_info_limit
-    {
-        MAX_CPI_ACCOUNT_INFOS_SIMD_0339
-    } else if invoke_context
-        .get_feature_set()
-        .increase_tx_account_lock_limit
-    {
-        MAX_CPI_ACCOUNT_INFOS
-    } else {
-        64
-    };
+fn check_account_infos(num_account_infos: usize) -> Result<(), Error> {
     let num_account_infos = num_account_infos as u64;
-    let max_account_infos = max_cpi_account_infos as u64;
+    let max_account_infos = MAX_CPI_ACCOUNT_INFOS as u64;
     if num_account_infos > max_account_infos {
         return Err(Box::new(CpiError::MaxInstructionAccountInfosExceeded {
             num_account_infos,
@@ -598,26 +580,21 @@ pub fn translate_instruction_rust(
         .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
         .unwrap_or(u64::MAX);
 
-    if invoke_context
-        .get_feature_set()
-        .increase_cpi_account_info_limit
-    {
-        // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
-        let account_meta_translation_cost =
-            (account_metas.len().saturating_mul(size_of::<AccountMeta>()) as u64)
-                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                .unwrap_or(u64::MAX);
+    // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
+    let account_meta_translation_cost =
+        (account_metas.len().saturating_mul(size_of::<AccountMeta>()) as u64)
+            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+            .unwrap_or(u64::MAX);
 
-        total_cu_translation_cost =
-            total_cu_translation_cost.saturating_add(account_meta_translation_cost);
-    }
+    total_cu_translation_cost =
+        total_cu_translation_cost.saturating_add(account_meta_translation_cost);
 
     consume_compute_meter(invoke_context, total_cu_translation_cost)?;
 
     let mut accounts = Vec::with_capacity(account_metas.len());
-    #[allow(clippy::needless_range_loop)]
+    #[expect(clippy::needless_range_loop)]
     for account_index in 0..account_metas.len() {
-        #[allow(clippy::indexing_slicing)]
+        #[expect(clippy::indexing_slicing)]
         let account_meta = &account_metas[account_index];
         if unsafe {
             std::ptr::read_volatile(&account_meta.is_signer as *const _ as *const u8) > 1
@@ -729,27 +706,22 @@ pub fn translate_instruction_c(
         .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
         .unwrap_or(u64::MAX);
 
-    if invoke_context
-        .get_feature_set()
-        .increase_cpi_account_info_limit
-    {
-        // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
-        let account_meta_translation_cost = (ix_c
-            .accounts_len
-            .saturating_mul(size_of::<AccountMeta>() as u64))
-        .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-        .unwrap_or(u64::MAX);
+    // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
+    let account_meta_translation_cost = (ix_c
+        .accounts_len
+        .saturating_mul(size_of::<AccountMeta>() as u64))
+    .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+    .unwrap_or(u64::MAX);
 
-        total_cu_translation_cost =
-            total_cu_translation_cost.saturating_add(account_meta_translation_cost);
-    }
+    total_cu_translation_cost =
+        total_cu_translation_cost.saturating_add(account_meta_translation_cost);
 
     consume_compute_meter(invoke_context, total_cu_translation_cost)?;
 
     let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
-    #[allow(clippy::needless_range_loop)]
+    #[expect(clippy::needless_range_loop)]
     for account_index in 0..ix_c.accounts_len as usize {
-        #[allow(clippy::indexing_slicing)]
+        #[expect(clippy::indexing_slicing)]
         let account_meta = &account_metas[account_index];
         if unsafe {
             std::ptr::read_volatile(&account_meta.is_signer as *const _ as *const u8) > 1
@@ -1016,26 +988,21 @@ where
         account_infos_len,
         check_aligned,
     )?;
-    check_account_infos(account_infos.len(), invoke_context)?;
+    check_account_infos(account_infos.len())?;
 
-    if invoke_context
-        .get_feature_set()
-        .increase_cpi_account_info_limit
-    {
-        let account_infos_bytes = account_infos.len().saturating_mul(ACCOUNT_INFO_BYTE_SIZE);
+    let account_infos_bytes = account_infos.len().saturating_mul(ACCOUNT_INFO_BYTE_SIZE);
 
-        consume_compute_meter(
-            invoke_context,
-            (account_infos_bytes as u64)
-                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                .unwrap_or(u64::MAX),
-        )?;
-    }
+    consume_compute_meter(
+        invoke_context,
+        (account_infos_bytes as u64)
+            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+            .unwrap_or(u64::MAX),
+    )?;
 
     let mut account_info_keys = Vec::with_capacity(account_infos_len as usize);
-    #[allow(clippy::needless_range_loop)]
+    #[expect(clippy::needless_range_loop)]
     for account_index in 0..account_infos_len as usize {
-        #[allow(clippy::indexing_slicing)]
+        #[expect(clippy::indexing_slicing)]
         let account_info = &account_infos[account_index];
         account_info_keys.push(translate_type::<Pubkey>(
             memory_mapping,
@@ -1104,7 +1071,7 @@ where
             .transaction_context
             .get_key_of_account_at_index(instruction_account.index_in_transaction)?;
 
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         if callee_account.is_executable() {
             // Use the known account
             consume_compute_meter(
@@ -1132,7 +1099,7 @@ where
             if caller_account_index >= account_infos.len() {
                 return Err(Box::new(CpiError::InvalidLength));
             }
-            #[allow(clippy::indexing_slicing)]
+            #[expect(clippy::indexing_slicing)]
             let caller_account =
                 do_translate(
                     invoke_context,

@@ -146,4 +146,3 @@ pub trait TpsClient {
 mod bank_client;
 mod rpc_client;
 mod tpu_client;
-pub mod utils;

@@ -125,7 +125,7 @@ impl CostModel {
         data_bytes_cost: u16,
         feature_set: &FeatureSet,
     ) -> TransactionCost<'a, Tx> {
-        let signature_cost = Self::get_signature_cost(transaction, feature_set);
+        let signature_cost = Self::get_signature_cost(transaction);
         let write_lock_cost = Self::get_write_lock_cost(num_write_locks);
 
         let allocated_accounts_data_size =
@@ -145,17 +145,8 @@ impl CostModel {
     }
 
     /// Returns signature details and the total signature cost
-    fn get_signature_cost(transaction: &impl StaticMeta, feature_set: &FeatureSet) -> u64 {
+    fn get_signature_cost(transaction: &impl StaticMeta) -> u64 {
         let signatures_count_detail = transaction.signature_details();
-
-        let ed25519_verify_cost = ED25519_VERIFY_STRICT_COST;
-
-        let secp256r1_verify_cost =
-            if feature_set.is_active(&feature_set::enable_secp256r1_precompile::id()) {
-                SECP256R1_VERIFY_COST
-            } else {
-                0
-            };
 
         signatures_count_detail
             .num_transaction_signatures()
@@ -168,12 +159,12 @@ impl CostModel {
             .saturating_add(
                 signatures_count_detail
                     .num_ed25519_instruction_signatures()
-                    .saturating_mul(ed25519_verify_cost),
+                    .saturating_mul(ED25519_VERIFY_STRICT_COST),
             )
             .saturating_add(
                 signatures_count_detail
                     .num_secp256r1_instruction_signatures()
-                    .saturating_mul(secp256r1_verify_cost),
+                    .saturating_mul(SECP256R1_VERIFY_COST),
             )
     }
 

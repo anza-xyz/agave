@@ -64,7 +64,6 @@ solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
-solana-native-token = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
 solana-poh-config = { workspace = true }
@@ -85,7 +84,6 @@ solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tls-utils = { workspace = true }
-solana-tpu-client = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }

@@ -162,16 +162,6 @@ macro_rules! dispatch {
             }
         }
     };
-    ($(#[$meta:meta])* $vis:vis fn $name:ident$(<$($t:ident: $cons:ident + ?Sized),*>)?(&mut self $(, $arg:ident: $ty:ty)*) $(-> $out:ty)?) => {
-        #[inline]
-        $(#[$meta])*
-        $vis fn $name$(<$($t: $cons + ?Sized),*>)?(&mut self $(, $arg:$ty)*) $(-> $out)? {
-            match self {
-                Self::Quic(this) => this.$name($($arg, )*),
-                Self::Udp(this) => this.$name($($arg, )*),
-            }
-        }
-    };
 }
 
 impl ClientConnection for BlockingClientConnection {

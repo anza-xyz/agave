@@ -95,12 +95,20 @@ impl<'ix_data> TransactionContext<'ix_data> {
             number_of_transaction_accounts: transaction_accounts.len() as u16,
         };
 
+        // We need an extra space for the placeholder, so we avoid relocations.
+        let mut instruction_trace =
+            Vec::with_capacity(instruction_trace_capacity.saturating_add(1));
+        instruction_trace.resize_with(
+            number_of_top_level_instructions.saturating_add(1),
+            InstructionFrame::default,
+        );
+
         Self {
             accounts: Rc::new(TransactionAccounts::new(transaction_accounts)),
             instruction_stack_capacity,
             instruction_trace_capacity,
             instruction_stack: Vec::with_capacity(instruction_stack_capacity),
-            instruction_trace: vec![InstructionFrame::default()],
+            instruction_trace,
             return_data_bytes: Vec::new(),
             transaction_frame,
             next_top_level_instruction_index: 0,
@@ -249,11 +257,14 @@ impl<'ix_data> TransactionContext<'ix_data> {
     pub fn get_next_instruction_context(
         &self,
     ) -> Result<InstructionContext<'_, '_>, InstructionError> {
-        let index_in_trace = self
-            .instruction_trace
-            .len()
-            .checked_sub(1)
-            .ok_or(InstructionError::CallDepth)?;
+        let index_in_trace = if self.instruction_stack.is_empty() {
+            self.next_top_level_instruction_index
+        } else {
+            self.instruction_trace
+                .len()
+                .checked_sub(1)
+                .ok_or(InstructionError::CallDepth)?
+        };
         self.get_instruction_context_at_index_in_trace(index_in_trace)
     }
 
@@ -329,7 +340,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         let dedup_map = Self::deduplicate_accounts_for_tests(&instruction_accounts);
 
         self.configure_instruction_at_index(
-            self.get_instruction_trace_length(),
+            self.next_top_level_instruction_index,
             program_index,
             instruction_accounts,
             dedup_map,
@@ -374,25 +385,29 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 .ok_or(InstructionError::CallDepth)?;
             instruction.nesting_level = nesting_level as u16;
         }
-        let index_in_trace = self.get_instruction_trace_length();
-        if index_in_trace >= self.instruction_trace_capacity {
+
+        if self.number_of_called_instructions_in_trace() >= self.instruction_trace_capacity {
             return Err(InstructionError::MaxInstructionTraceLengthExceeded);
         }
 
-        let current_top_level_instruction = if self.instruction_stack.is_empty() {
+        let (index_in_trace, current_top_level_instruction) = if self.instruction_stack.is_empty() {
             let index = self.next_top_level_instruction_index;
             self.next_top_level_instruction_index =
                 self.next_top_level_instruction_index.saturating_add(1);
-            index
+            (index, index)
         } else {
+            let index = self.get_instruction_trace_length();
             self.transaction_frame.number_of_cpis_in_trace = self
                 .transaction_frame
                 .number_of_cpis_in_trace
                 .saturating_add(1);
-            self.next_top_level_instruction_index.saturating_sub(1)
+            self.instruction_trace.push(InstructionFrame::default());
+            (
+                index,
+                self.next_top_level_instruction_index.saturating_sub(1),
+            )
         };
 
-        self.instruction_trace.push(InstructionFrame::default());
         if nesting_level >= self.instruction_stack_capacity {
             return Err(InstructionError::CallDepth);
         }
@@ -557,10 +572,12 @@ impl<'ix_data> TransactionContext<'ix_data> {
         )
     }
 
-    /// An active instruction is either one that has already finished execution or that is
-    /// under execution (e.g. all nested CPIs are active).
-    /// For ABIv2 only.
-    pub fn number_of_active_instructions_in_trace(&self) -> usize {
+    /// Called instruction are those that the program runtime has already called into. It
+    /// encompasses instructions under execution (e.g. all nested CPIs are already called) and
+    /// finished ones.
+    ///
+    /// Top level instructions that have not yet been executed aren't considered called.
+    pub fn number_of_called_instructions_in_trace(&self) -> usize {
         self.next_top_level_instruction_index
             .saturating_add(self.transaction_frame.number_of_cpis_in_trace as usize)
     }
@@ -847,6 +864,18 @@ mod tests {
             )
             .unwrap();
 
+        // Instruction #1
+        transaction_context
+            .configure_instruction_at_index(
+                1,
+                0,
+                vec![InstructionAccount::new(1, false, false)],
+                vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
+                Vec::new().into(),
+                None,
+            )
+            .unwrap();
+
         // Executing instruction #0
         transaction_context.push().unwrap();
         assert_eq!(
@@ -854,6 +883,10 @@ mod tests {
                 .transaction_frame
                 .current_executing_instruction,
             0
+        );
+        assert_eq!(
+            transaction_context.number_of_called_instructions_in_trace(),
+            1
         );
 
         assert_eq!(
@@ -879,7 +912,7 @@ mod tests {
             0,
         );
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             1
         );
 
@@ -897,7 +930,7 @@ mod tests {
             transaction_context
                 .transaction_frame
                 .current_executing_instruction,
-            1,
+            2
         );
 
         assert_eq!(
@@ -913,7 +946,7 @@ mod tests {
             1
         );
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             2
         );
 
@@ -936,7 +969,7 @@ mod tests {
             transaction_context
                 .transaction_frame
                 .current_executing_instruction,
-            2
+            3
         );
 
         assert_eq!(
@@ -959,13 +992,13 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             3
         );
         // Return from nested CPI
         transaction_context.pop().unwrap();
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             3
         );
 
@@ -985,7 +1018,7 @@ mod tests {
             transaction_context
                 .transaction_frame
                 .current_executing_instruction,
-            1
+            2
         );
 
         // A second nested CPI
@@ -1002,7 +1035,7 @@ mod tests {
             transaction_context
                 .transaction_frame
                 .current_executing_instruction,
-            3
+            4
         );
 
         assert_eq!(
@@ -1023,7 +1056,7 @@ mod tests {
             3
         );
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             4
         );
 
@@ -1034,7 +1067,7 @@ mod tests {
             transaction_context
                 .transaction_frame
                 .current_executing_instruction,
-            1
+            2
         );
 
         assert_eq!(
@@ -1059,7 +1092,7 @@ mod tests {
         // Return from first CPI
         transaction_context.pop().unwrap();
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             4
         );
 
@@ -1091,21 +1124,12 @@ mod tests {
 
         // Let's go to Instruction #1 (top level)
         transaction_context.pop().unwrap();
-
-        // Instruction #1
-        transaction_context
-            .configure_top_level_instruction_for_tests(
-                0,
-                vec![InstructionAccount::new(1, false, false)],
-                Vec::new(),
-            )
-            .unwrap();
         transaction_context.push().unwrap();
         assert_eq!(
             transaction_context
                 .transaction_frame
                 .current_executing_instruction,
-            4,
+            1,
         );
         assert_eq!(
             transaction_context
@@ -1150,7 +1174,7 @@ mod tests {
             4
         );
         assert_eq!(
-            transaction_context.number_of_active_instructions_in_trace(),
+            transaction_context.number_of_called_instructions_in_trace(),
             6
         );
 
@@ -1166,7 +1190,7 @@ mod tests {
             transaction_context
                 .transaction_frame
                 .current_executing_instruction,
-            4,
+            1,
         );
 
         transaction_context.pop().unwrap();
@@ -1192,12 +1216,6 @@ mod tests {
                 None,
             )
             .unwrap();
-        transaction_context.push().unwrap();
-        assert_eq!(
-            transaction_context.get_current_instruction_index().unwrap(),
-            0
-        );
-        transaction_context.pop().unwrap();
 
         // Second top-level instruction
         transaction_context
@@ -1213,6 +1231,15 @@ mod tests {
                 None,
             )
             .unwrap();
+
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context.get_current_instruction_index().unwrap(),
+            0
+        );
+
+        transaction_context.pop().unwrap();
+
         transaction_context.push().unwrap();
         assert_eq!(
             transaction_context.get_current_instruction_index().unwrap(),

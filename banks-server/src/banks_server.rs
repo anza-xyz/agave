@@ -179,8 +179,6 @@ fn simulate_transaction(
         bank,
         bank.get_reserved_account_keys(),
         bank.feature_set
-            .is_active(&agave_feature_set::static_instruction_limit::id()),
-        bank.feature_set
             .is_active(&agave_feature_set::limit_instruction_accounts::id()),
     ) {
         Err(err) => {

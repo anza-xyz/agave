@@ -56,7 +56,6 @@ use {
         fmt::Debug,
         marker::PhantomData,
         mem,
-        ops::DerefMut,
         sync::{
             Arc, Mutex, MutexGuard, OnceLock, Weak,
             atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
@@ -66,7 +65,6 @@ use {
     },
     trait_set::trait_set,
     unwrap_none::UnwrapNone,
-    vec_extract_if_polyfill::MakeExtractIf,
 };
 
 // For now, cap bandwidth use to just half of 1 Gbps link, which should be pretty conservative
@@ -586,17 +584,11 @@ where
                     let Ok(mut scheduler_inners) = scheduler_pool.scheduler_inners.lock() else {
                         break;
                     };
-                    // Use the still-unstable Vec::extract_if() even on stable rust toolchain by
-                    // using a polyfill and allowing unstable_name_collisions, because it's
-                    // simplest to code and fastest to run (= O(n); single linear pass and no
-                    // reallocation).
-                    //
                     // Note that this critical section could block the latency-sensitive replay
                     // code-path via ::take_scheduler().
-                    idle_inners.extend(MakeExtractIf::extract_if(
-                        scheduler_inners.deref_mut(),
-                        |(_inner, pooled_at)| now.duration_since(*pooled_at) > max_pooling_duration,
-                    ));
+                    idle_inners.extend(scheduler_inners.extract_if(.., |(_inner, pooled_at)| {
+                        now.duration_since(*pooled_at) > max_pooling_duration
+                    }));
                     drop(scheduler_inners);
 
                     let idle_inner_count = idle_inners.len();
@@ -686,8 +678,8 @@ where
                     let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock() else {
                         break;
                     };
-                    expired_listeners.extend(MakeExtractIf::extract_if(
-                        timeout_listeners.deref_mut(),
+                    expired_listeners.extend(timeout_listeners.extract_if(
+                        ..,
                         |(_callback, registered_at)| {
                             now.duration_since(*registered_at) > timeout_duration
                         },

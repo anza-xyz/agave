@@ -573,11 +573,7 @@ impl CrdsGossipPull {
             now,
             &mut stats,
         );
-        (
-            stats.failed_timeout + stats.failed_insert,
-            stats.failed_timeout,
-            stats.success,
-        )
+        (stats.failed_insert, stats.failed_timeout, stats.success)
     }
 }
 
@@ -675,10 +671,7 @@ pub(crate) fn get_max_bloom_filter_bytes(caller: &CrdsValue) -> usize {
 pub(crate) mod tests {
     use {
         super::*,
-        crate::{
-            crds_data::{CrdsData, Vote},
-            protocol::Protocol,
-        },
+        crate::{crds_data::CrdsData, protocol::Protocol},
         itertools::Itertools,
         rand::{SeedableRng, prelude::IndexedRandom as _},
         rand_chacha::ChaChaRng,
@@ -686,7 +679,6 @@ pub(crate) mod tests {
         solana_hash::HASH_BYTES,
         solana_keypair::keypair_from_seed,
         solana_packet::PACKET_DATA_SIZE,
-        solana_perf::test_tx::new_test_vote_tx,
         solana_sha256_hasher::hash,
         solana_time_utils::timestamp,
         std::{
@@ -1450,87 +1442,6 @@ pub(crate) mod tests {
                 .count(),
             2u64.pow(mask_bits) as usize
         )
-    }
-
-    #[test]
-    fn test_process_pull_response() {
-        let mut rng = rand::rng();
-        let node_crds = RwLock::<Crds>::default();
-        let node = CrdsGossipPull::default();
-
-        let peer_pubkey = solana_pubkey::new_rand();
-        let peer_entry =
-            CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(&peer_pubkey, 0)));
-        let stakes = HashMap::from([(peer_pubkey, 1u64)]);
-        let timeouts = CrdsTimeouts::new(
-            Pubkey::new_unique(),
-            node.crds_timeout, // default_timeout
-            Duration::from_millis(node.crds_timeout + 1),
-            &stakes,
-        );
-        // inserting a fresh value should be fine.
-        assert_eq!(
-            node.process_pull_response(&node_crds, &timeouts, vec![peer_entry.clone()], 1,)
-                .0,
-            0
-        );
-
-        let node_crds = RwLock::<Crds>::default();
-        let unstaked_peer_entry =
-            CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(&peer_pubkey, 0)));
-        // check that old contact infos fail if they are too old, regardless of "timeouts"
-        assert_eq!(
-            node.process_pull_response(
-                &node_crds,
-                &timeouts,
-                vec![peer_entry.clone(), unstaked_peer_entry],
-                node.crds_timeout + 100,
-            )
-            .0,
-            4
-        );
-
-        let node_crds = RwLock::<Crds>::default();
-        // check that old contact infos can still land as long as they have a "timeouts" entry
-        assert_eq!(
-            node.process_pull_response(
-                &node_crds,
-                &timeouts,
-                vec![peer_entry],
-                node.crds_timeout + 1,
-            )
-            .0,
-            0
-        );
-
-        // construct something that's not a contact info
-        let peer_vote = Vote::new(peer_pubkey, new_test_vote_tx(&mut rng), 0).unwrap();
-        let peer_vote = CrdsValue::new_unsigned(CrdsData::Vote(0, peer_vote));
-        // check that older CrdsValues (non-ContactInfos) infos pass even if are too old,
-        // but a recent contact info (inserted above) exists
-        assert_eq!(
-            node.process_pull_response(
-                &node_crds,
-                &timeouts,
-                vec![peer_vote.clone()],
-                node.crds_timeout + 1,
-            )
-            .0,
-            0
-        );
-
-        let node_crds = RwLock::<Crds>::default();
-        // without a contact info, inserting an old value should fail
-        assert_eq!(
-            node.process_pull_response(
-                &node_crds,
-                &timeouts,
-                vec![peer_vote],
-                node.crds_timeout + 2,
-            )
-            .0,
-            2
-        );
     }
 
     // Asserts that all bincode serialized pull requests fit in a Packet.

@@ -119,7 +119,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         {
             get_sysvar(
                 invoke_context.get_sysvar_cache().get_fees(),

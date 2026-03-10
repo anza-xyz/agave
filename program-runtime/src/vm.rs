@@ -209,6 +209,9 @@ pub fn execute<'a, 'b: 'a>(
     let provide_instruction_data_offset_in_vm_r2 = invoke_context
         .get_feature_set()
         .provide_instruction_data_offset_in_vm_r2;
+    let direct_account_pointers_in_program_input = invoke_context
+        .get_feature_set()
+        .direct_account_pointers_in_program_input;
 
     let mut serialize_time = Measure::start("serialize");
     let (parameter_bytes, regions, accounts_metadata, instruction_data_offset) =
@@ -216,6 +219,7 @@ pub fn execute<'a, 'b: 'a>(
             &instruction_context,
             virtual_address_space_adjustments,
             account_data_direct_mapping,
+            direct_account_pointers_in_program_input,
         )?;
     serialize_time.stop();
 
@@ -348,33 +352,30 @@ pub fn execute<'a, 'b: 'a>(
                                     .saturating_sub(vm_addr_range.start)
                                     as usize
                                     > account.get_data().len();
-                                error = EbpfError::SyscallError(Box::new(
-                                    #[allow(deprecated)]
-                                    match access_type {
-                                        AccessType::Store => {
-                                            if let Err(err) = account.can_data_be_changed() {
-                                                err
-                                            } else {
-                                                // The store was allowed but failed,
-                                                // thus it must have been an attempt to grow the account.
-                                                debug_assert!(is_access_outside_of_data);
-                                                InstructionError::InvalidRealloc
-                                            }
-                                        }
-                                        AccessType::Load => {
-                                            // Loads should only fail when they are outside of the account data.
+                                error = EbpfError::SyscallError(Box::new(match access_type {
+                                    AccessType::Store => {
+                                        if let Err(err) = account.can_data_be_changed() {
+                                            err
+                                        } else {
+                                            // The store was allowed but failed,
+                                            // thus it must have been an attempt to grow the account.
                                             debug_assert!(is_access_outside_of_data);
-                                            if account.can_data_be_changed().is_err() {
-                                                // Load beyond readonly account data happened because the program
-                                                // expected more data than there actually is.
-                                                InstructionError::AccountDataTooSmall
-                                            } else {
-                                                // Load beyond writable account data also attempted to grow.
-                                                InstructionError::InvalidRealloc
-                                            }
+                                            InstructionError::InvalidRealloc
                                         }
-                                    },
-                                ));
+                                    }
+                                    AccessType::Load => {
+                                        // Loads should only fail when they are outside of the account data.
+                                        debug_assert!(is_access_outside_of_data);
+                                        if account.can_data_be_changed().is_err() {
+                                            // Load beyond readonly account data happened because the program
+                                            // expected more data than there actually is.
+                                            InstructionError::AccountDataTooSmall
+                                        } else {
+                                            // Load beyond writable account data also attempted to grow.
+                                            InstructionError::InvalidRealloc
+                                        }
+                                    }
+                                }));
                             }
                         }
                     }

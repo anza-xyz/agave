@@ -8,6 +8,7 @@ use {
         compiled_instruction::CompiledInstruction,
         legacy::Message as LegacyMessage,
         v0::{self, LoadedAddresses, MessageAddressTableLookup},
+        v1,
     },
     solana_pubkey::Pubkey,
     solana_signature::Signature,
@@ -322,6 +323,60 @@ impl From<LegacyMessage> for generated::Message {
                 .collect(),
             versioned: false,
             address_table_lookups: vec![],
+            config: None,
+        }
+    }
+}
+
+impl From<v0::Message> for generated::Message {
+    fn from(message: v0::Message) -> Self {
+        Self {
+            header: Some(message.header.into()),
+            account_keys: message
+                .account_keys
+                .iter()
+                .map(|key| <Pubkey as AsRef<[u8]>>::as_ref(key).into())
+                .collect(),
+            recent_blockhash: message.recent_blockhash.to_bytes().into(),
+            instructions: message
+                .instructions
+                .into_iter()
+                .map(|ix| ix.into())
+                .collect(),
+            versioned: true,
+            address_table_lookups: message
+                .address_table_lookups
+                .into_iter()
+                .map(|lookup| lookup.into())
+                .collect(),
+            config: None,
+        }
+    }
+}
+
+impl From<v1::Message> for generated::Message {
+    fn from(message: v1::Message) -> Self {
+        Self {
+            header: Some(message.header.into()),
+            account_keys: message
+                .account_keys
+                .iter()
+                .map(|key| <Pubkey as AsRef<[u8]>>::as_ref(key).into())
+                .collect(),
+            recent_blockhash: message.lifetime_specifier.to_bytes().into(),
+            instructions: message
+                .instructions
+                .into_iter()
+                .map(|ix| ix.into())
+                .collect(),
+            versioned: true,
+            address_table_lookups: vec![],
+            config: Some(generated::TransactionConfig {
+                priority_fee: message.config.priority_fee,
+                compute_unit_limit: message.config.compute_unit_limit,
+                loaded_accounts_data_size_limit: message.config.loaded_accounts_data_size_limit,
+                heap_size: message.config.heap_size,
+            }),
         }
     }
 }
@@ -330,26 +385,8 @@ impl From<VersionedMessage> for generated::Message {
     fn from(message: VersionedMessage) -> Self {
         match message {
             VersionedMessage::Legacy(message) => Self::from(message),
-            VersionedMessage::V0(message) => Self {
-                header: Some(message.header.into()),
-                account_keys: message
-                    .account_keys
-                    .iter()
-                    .map(|key| <Pubkey as AsRef<[u8]>>::as_ref(key).into())
-                    .collect(),
-                recent_blockhash: message.recent_blockhash.to_bytes().into(),
-                instructions: message
-                    .instructions
-                    .into_iter()
-                    .map(|ix| ix.into())
-                    .collect(),
-                versioned: true,
-                address_table_lookups: message
-                    .address_table_lookups
-                    .into_iter()
-                    .map(|lookup| lookup.into())
-                    .collect(),
-            },
+            VersionedMessage::V0(message) => Self::from(message),
+            VersionedMessage::V1(message) => Self::from(message),
         }
     }
 }
@@ -1940,7 +1977,6 @@ mod test {
                         }),
                     };
                     let transaction_error: TransactionError = tx_by_addr_error
-                        .clone()
                         .try_into()
                         .unwrap_or_else(|_| panic!("{error:?} conversion implemented?"));
                     assert_eq!(tx_by_addr_error, transaction_error.into());
@@ -1958,7 +1994,6 @@ mod test {
                                 transaction_details: None,
                             };
                             let transaction_error: TransactionError = tx_by_addr_error
-                                .clone()
                                 .try_into()
                                 .unwrap_or_else(|_| panic!("{ix_error:?} conversion implemented?"));
                             assert_eq!(tx_by_addr_error, transaction_error.into());
@@ -1975,7 +2010,7 @@ mod test {
                                 transaction_details: None,
                             };
                             let transaction_error: TransactionError =
-                                tx_by_addr_error.clone().try_into().unwrap();
+                                tx_by_addr_error.try_into().unwrap();
                             assert_eq!(tx_by_addr_error, transaction_error.into());
                         }
                     }
@@ -1987,7 +2022,6 @@ mod test {
                         transaction_details: None,
                     };
                     let transaction_error: TransactionError = tx_by_addr_error
-                        .clone()
                         .try_into()
                         .unwrap_or_else(|_| panic!("{error:?} conversion implemented?"));
                     assert_eq!(tx_by_addr_error, transaction_error.into());

@@ -18,7 +18,6 @@ agave-votor-messages = { workspace = true }
 bitvec = { workspace = true }
 qualifier_attr = { workspace = true }
 rayon = { workspace = true }
-serde = { workspace = true }
 solana-bls-signatures = { workspace = true, features = ["parallel"] }
 solana-signer-store = { workspace = true }
 thiserror = { workspace = true }

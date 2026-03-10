@@ -72,7 +72,7 @@ impl Default for CrdsGossipPush {
         Self {
             active_set: RwLock::default(),
             crds_cursor: Mutex::default(),
-            received_cache: Mutex::new(ReceivedCache::new(2 * CRDS_UNIQUE_PUBKEY_CAPACITY)),
+            received_cache: Mutex::new(ReceivedCache::new(CRDS_UNIQUE_PUBKEY_CAPACITY)),
             push_fanout: CRDS_GOSSIP_PUSH_FANOUT,
             msg_timeout: CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS,
             prune_timeout: CRDS_GOSSIP_PRUNE_MSG_TIMEOUT_MS,

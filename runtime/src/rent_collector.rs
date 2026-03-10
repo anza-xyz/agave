@@ -1,8 +1,6 @@
 use {
-    solana_clock::Epoch,
-    solana_epoch_schedule::EpochSchedule,
-    solana_genesis_config::GenesisConfig,
-    solana_rent::{DEFAULT_BURN_PERCENT, Rent},
+    solana_clock::Epoch, solana_epoch_schedule::EpochSchedule,
+    solana_genesis_config::GenesisConfig, solana_rent::Rent,
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
@@ -48,12 +46,14 @@ impl RentCollector {
         }
     }
 
+    #[allow(deprecated)]
     pub(crate) fn deprecate_rent_exemption_threshold(&mut self) {
         self.rent = Rent {
-            lamports_per_byte_year: (self.rent.lamports_per_byte_year as f64
-                * self.rent.exemption_threshold) as u64,
-            exemption_threshold: 1.0,
-            burn_percent: DEFAULT_BURN_PERCENT,
+            lamports_per_byte: (self.rent.lamports_per_byte as f64
+                * f64::from_le_bytes(self.rent.exemption_threshold))
+                as u64,
+            exemption_threshold: 1.0f64.to_le_bytes(),
+            burn_percent: 50,
         }
     }
 }

@@ -1746,7 +1746,7 @@ impl ClusterInfo {
             .add_relaxed(pull_stats.success as u64);
 
         (
-            pull_stats.failed_insert + pull_stats.failed_timeout,
+            pull_stats.failed_insert,
             pull_stats.failed_timeout,
             pull_stats.success,
         )
@@ -2564,8 +2564,6 @@ mod tests {
             let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
             ClusterInfo::new(node.info, keypair, SocketAddrSpace::Unspecified)
         });
-        let entrypoint_pubkey = solana_pubkey::new_rand();
-        let data = test_crds_values(entrypoint_pubkey);
         let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
         let timeouts = CrdsTimeouts::new(
             cluster_info.id(),
@@ -2573,10 +2571,27 @@ mod tests {
             Duration::from_secs(48 * 3600),   // epoch_duration
             &stakes,
         );
+
+        // Generate CRDS value w/ expired timestamp.
+        let entrypoint_pubkey = solana_pubkey::new_rand();
+        let entrypoint_ci = ContactInfo::new_localhost(&entrypoint_pubkey, 0);
+        let entrypoint_crdsvalue = CrdsValue::new_unsigned(CrdsData::from(entrypoint_ci));
+        let data = vec![entrypoint_crdsvalue];
+
+        // Should fail for expired timestamp.
+        assert_eq!(
+            (1, 1, 0),
+            cluster_info.handle_pull_response(data, &timeouts)
+        );
+
+        // Expect pull response to be successfully inserted.
+        let data = test_crds_values(entrypoint_pubkey);
         assert_eq!(
             (0, 0, 1),
             cluster_info.handle_pull_response(data.clone(), &timeouts)
         );
+
+        // Should fail insertion because it was already inserted.
         assert_eq!(
             (1, 0, 0),
             cluster_info.handle_pull_response(data, &timeouts)
@@ -3407,47 +3422,6 @@ mod tests {
         );
         assert!(entrypoints_processed);
         assert_eq!(cluster_info.my_shred_version(), 2); // <--- No change to shred version
-    }
-
-    #[test]
-    #[ignore] // TODO: debug why this is flaky on buildkite!
-    fn test_pull_request_time_pruning() {
-        let node = Node::new_localhost();
-        let cluster_info = Arc::new(ClusterInfo::new(
-            node.info,
-            Arc::new(Keypair::new()),
-            SocketAddrSpace::Unspecified,
-        ));
-        let entrypoint_pubkey = solana_pubkey::new_rand();
-        let entrypoint = ContactInfo::new_localhost(&entrypoint_pubkey, timestamp());
-        cluster_info.set_entrypoint(entrypoint);
-
-        let mut rng = rand::rng();
-        let shred_version = cluster_info.my_shred_version();
-        let mut peers: Vec<Pubkey> = vec![];
-
-        const NO_ENTRIES: usize = CRDS_UNIQUE_PUBKEY_CAPACITY + 128;
-        let data: Vec<_> = repeat_with(|| {
-            let keypair = Keypair::new();
-            peers.push(keypair.pubkey());
-            let mut rand_ci = ContactInfo::new_rand(&mut rng, Some(keypair.pubkey()));
-            rand_ci.set_shred_version(shred_version);
-            rand_ci.set_wallclock(timestamp());
-            CrdsValue::new(CrdsData::from(rand_ci), &keypair)
-        })
-        .take(NO_ENTRIES)
-        .collect();
-        let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
-        let timeouts = CrdsTimeouts::new(
-            cluster_info.id(),
-            CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS * 4, // default_timeout
-            Duration::from_secs(48 * 3600),       // epoch_duration
-            &stakes,
-        );
-        assert_eq!(
-            (0, 0, NO_ENTRIES),
-            cluster_info.handle_pull_response(data, &timeouts)
-        );
     }
 
     #[test]

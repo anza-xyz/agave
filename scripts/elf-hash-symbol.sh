@@ -58,16 +58,10 @@ echo "Size: $SYMBOL_SIZE bytes"
 echo "File Offset (Dec): $FILE_OFFSET_DEC"
 echo "----------------------"
 
-# 5. The program data is embedded in a struct with 4-byte alignment and a leading
-#    u8, to enforce ebpf alignment requirements. We need to skip past the leading
-#    byte initial value and remove the padding
-FILE_OFFSET_DEC=$((FILE_OFFSET_DEC + 1))
-SYMBOL_SIZE=$((SYMBOL_SIZE - 4))
-
-echo "--- Elf Details ---"
-echo "Start Offset: ${FILE_OFFSET_DEC}"
-echo "Size: ${SYMBOL_SIZE}"
-echo "-------------------"
+if [ $((FILE_OFFSET_DEC % 4)) -ne 0 ]; then
+  echo "Error: ELF not aligned to 4-byte boundary, which is required be eBPF" >&2
+  exit 5
+fi
 
 # dd command to extract and hash the content
 echo -n "Hash (SHA256): "

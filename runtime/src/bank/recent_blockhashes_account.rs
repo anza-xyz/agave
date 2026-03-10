@@ -1,6 +1,6 @@
 //! Helpers for the recent blockhashes sysvar.
 
-#[allow(deprecated)]
+#[expect(deprecated)]
 use solana_sysvar::recent_blockhashes::{IntoIterSorted, IterItem, MAX_ENTRIES, RecentBlockhashes};
 use {
     solana_account::{
@@ -10,22 +10,21 @@ use {
     std::{collections::BinaryHeap, iter::FromIterator},
 };
 
-#[allow(deprecated)]
+#[expect(deprecated)]
 fn update_account<'a, I>(account: &mut AccountSharedData, recent_blockhash_iter: I) -> Option<()>
 where
     I: IntoIterator<Item = IterItem<'a>>,
 {
     let sorted = BinaryHeap::from_iter(recent_blockhash_iter);
-    #[allow(deprecated)]
     let sorted_iter = IntoIterSorted::new(sorted);
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     let recent_blockhash_iter = sorted_iter.take(MAX_ENTRIES);
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     let recent_blockhashes: RecentBlockhashes = recent_blockhash_iter.collect();
     to_account(&recent_blockhashes, account)
 }
 
-#[allow(deprecated)]
+#[expect(deprecated)]
 pub(in crate::bank) fn create_account_with_data_and_fields<'a, I>(
     recent_blockhash_iter: I,
     fields: InheritableAccountFields,
