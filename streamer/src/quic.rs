@@ -1,7 +1,6 @@
 use {
     crate::{
         nonblocking::{
-            load_debt_tracker::LoadDebtTracker,
             qos::{ConnectionContext, QosController},
             quic::{ALPN_TPU_PROTOCOL_ID, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
             simple_qos::{SimpleQos, SimpleQosBanlist, SimpleQosConfig},
@@ -26,7 +25,7 @@ use {
         num::NonZeroUsize,
         sync::{
             Arc, RwLock,
-            atomic::{AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicUsize, Ordering},
         },
         thread::{self},
         time::Duration,
@@ -236,27 +235,13 @@ pub struct StreamerStats {
     pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
     pub(crate) total_incoming_connection_attempts: AtomicUsize,
     pub(crate) quic_endpoints_count: AtomicUsize,
-    /// Unsaturated→saturated transitions since last report.
-    pub(crate) transitions_to_saturated: AtomicU64,
-    /// Percentage of time spent saturated (0–100, integer).
-    pub(crate) saturated_percent: AtomicU64,
+    /// Streams accepted while the system was saturated (staked peers).
+    pub(crate) saturated_staked_streams: AtomicUsize,
+    /// Streams accepted while the system was saturated (unstaked peers).
+    pub(crate) saturated_unstaked_streams: AtomicUsize,
 }
 
 impl StreamerStats {
-    /// Pull saturation counters from the LoadDebtTracker. Call before `report()`.
-    pub fn pull_saturation_stats(&self, tracker: &LoadDebtTracker, elapsed: Duration) {
-        self.transitions_to_saturated
-            .store(tracker.take_transitions_to_saturated(), Ordering::Relaxed);
-        let sat_nanos = tracker.take_saturated_nanos();
-        let elapsed_nanos = elapsed.as_nanos() as u64;
-        let pct = if elapsed_nanos > 0 {
-            sat_nanos * 100 / elapsed_nanos
-        } else {
-            0
-        };
-        self.saturated_percent.store(pct, Ordering::Relaxed);
-    }
-
     pub fn report(&self, name: &'static str) {
         datapoint_info!(
             name,
@@ -571,13 +556,13 @@ impl StreamerStats {
                 i64
             ),
             (
-                "transitions_to_saturated",
-                self.transitions_to_saturated.swap(0, Ordering::Relaxed),
+                "saturated_staked_streams",
+                self.saturated_staked_streams.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
-                "saturated_percent",
-                self.saturated_percent.swap(0, Ordering::Relaxed),
+                "saturated_unstaked_streams",
+                self.saturated_unstaked_streams.swap(0, Ordering::Relaxed),
                 i64
             ),
         );

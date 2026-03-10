@@ -339,7 +339,6 @@ where
         };
 
         if last_datapoint.elapsed().as_secs() >= 5 {
-            qos.pull_stats(&stats, last_datapoint.elapsed());
             stats.report(name);
             last_datapoint = Instant::now();
         }

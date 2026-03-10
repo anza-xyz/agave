@@ -25,9 +25,6 @@ pub struct LoadDebtTracker {
     max_streams_per_second: u64,
     burst_capacity: i64,
     recovery_threshold: i64,
-    transitions_to_saturated: AtomicU64,
-    saturated_nanos: AtomicU64,
-    saturated_since_nanos: AtomicU64,
 }
 
 const LOCK_BIT: u64 = 1 << 63;
@@ -53,9 +50,6 @@ impl LoadDebtTracker {
             max_streams_per_second,
             burst_capacity,
             recovery_threshold: burst_capacity * 9 / 10,
-            transitions_to_saturated: AtomicU64::new(0),
-            saturated_nanos: AtomicU64::new(0),
-            saturated_since_nanos: AtomicU64::new(0),
         }
     }
 
@@ -88,42 +82,6 @@ impl LoadDebtTracker {
     /// Return the current bucket level.
     pub fn bucket_level(&self) -> i64 {
         self.bucket.load(Ordering::Relaxed)
-    }
-
-    /// Return and reset the number of unsaturated→saturated transitions.
-    pub fn take_transitions_to_saturated(&self) -> u64 {
-        self.transitions_to_saturated.swap(0, Ordering::Relaxed)
-    }
-
-    /// Return and reset cumulative nanos spent in saturated state.
-    /// Flushes the pending interval if currently saturated.
-    pub fn take_saturated_nanos(&self) -> u64 {
-        let mut nanos = self.saturated_nanos.swap(0, Ordering::Relaxed);
-        if self.saturated.load(Ordering::Relaxed) {
-            let now = self.nanos_since_epoch();
-            let entered = self.saturated_since_nanos.swap(now, Ordering::Relaxed);
-            if now > entered {
-                nanos += now - entered;
-            }
-        }
-        nanos
-    }
-
-    /// Log saturation statistics and reset counters.
-    pub fn report_saturation_stats(&self, elapsed: Duration) {
-        let to_sat = self.take_transitions_to_saturated();
-        let sat_nanos = self.take_saturated_nanos();
-        let elapsed_nanos = elapsed.as_nanos() as u64;
-        let duty_pct = if elapsed_nanos > 0 {
-            sat_nanos as f64 / elapsed_nanos as f64 * 100.0
-        } else {
-            0.0
-        };
-        log::info!(
-            "LoadDebtTracker: transitions to_saturated={to_sat} saturated_duty={duty_pct:.1}% \
-             bucket={}",
-            self.bucket_level(),
-        );
     }
 
     fn nanos_since_epoch(&self) -> u64 {
@@ -189,19 +147,10 @@ impl LoadDebtTracker {
 
         if !was_sat && level <= 0 {
             self.saturated.store(true, Ordering::Relaxed);
-            self.transitions_to_saturated
-                .fetch_add(1, Ordering::Relaxed);
-            self.saturated_since_nanos
-                .store(now_nanos, Ordering::Relaxed);
             log_enter_saturated = true;
             log_level = level;
         } else if was_sat && level >= self.recovery_threshold {
             self.saturated.store(false, Ordering::Relaxed);
-            let entered = self.saturated_since_nanos.load(Ordering::Relaxed);
-            if now_nanos > entered {
-                self.saturated_nanos
-                    .fetch_add(now_nanos - entered, Ordering::Relaxed);
-            }
             log_recovered = true;
             log_level = level;
         }
@@ -337,31 +286,6 @@ mod tests {
     }
 
     #[test]
-    fn test_exact_accounting_fixed_timeline() {
-        let g = LoadDebtTracker::new(0, 100, Duration::from_millis(10));
-
-        // First saturated interval: [10ms, 70ms) => 60ms.
-        g.bucket.store(0, Ordering::Relaxed);
-        g.update_state_at(10_000_000, true);
-        g.bucket.store(50, Ordering::Relaxed);
-        g.update_state_at(40_000_000, false);
-        g.bucket.store(90, Ordering::Relaxed);
-        g.update_state_at(70_000_000, true);
-
-        assert_eq!(g.take_transitions_to_saturated(), 1);
-        assert_eq!(g.take_saturated_nanos(), 60_000_000);
-
-        // Second saturated interval: [80ms, 120ms) => 40ms.
-        g.bucket.store(0, Ordering::Relaxed);
-        g.update_state_at(80_000_000, true);
-        g.bucket.store(95, Ordering::Relaxed);
-        g.update_state_at(120_000_000, true);
-
-        assert_eq!(g.take_transitions_to_saturated(), 1);
-        assert_eq!(g.take_saturated_nanos(), 40_000_000);
-    }
-
-    #[test]
     fn test_concurrent_stress_mismatch_rate() {
         use std::{
             sync::{
@@ -492,8 +416,7 @@ mod tests {
                     let g = Arc::clone(&g);
                     thread::spawn(move || {
                         for _ in 0..64 {
-                            let _ = g.take_transitions_to_saturated();
-                            let _ = g.take_saturated_nanos();
+                            let _ = g.is_saturated();
                             thread::yield_now();
                         }
                     })

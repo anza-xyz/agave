@@ -455,8 +455,22 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
         self.compute_max_streams_for_rtt(context, rtt, saturated)
     }
 
-    fn on_stream_accepted(&self, _context: &SwQosMaxStreamsConnectionContext) {
+    fn on_stream_accepted(&self, context: &SwQosMaxStreamsConnectionContext) {
         self.load_tracker.acquire();
+        if self.load_tracker.is_saturated() {
+            match context.peer_type {
+                ConnectionPeerType::Staked(_) => {
+                    self.stats
+                        .saturated_staked_streams
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                ConnectionPeerType::Unstaked => {
+                    self.stats
+                        .saturated_unstaked_streams
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
     }
 
     fn on_stream_error(&self, _conn_context: &SwQosMaxStreamsConnectionContext) {}
@@ -505,10 +519,6 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
         _context: &SwQosMaxStreamsConnectionContext,
     ) -> impl Future<Output = ()> + Send {
         async {}
-    }
-
-    fn pull_stats(&self, stats: &crate::quic::StreamerStats, elapsed: Duration) {
-        stats.pull_saturation_stats(&self.load_tracker, elapsed);
     }
 
     fn max_concurrent_connections(&self) -> usize {

@@ -1,7 +1,7 @@
 use {
     crate::nonblocking::quic::{ClientConnectionTracker, ConnectionPeerType},
     quinn::Connection,
-    std::{future::Future, time::Duration},
+    std::future::Future,
     tokio_util::sync::CancellationToken,
 };
 
@@ -61,9 +61,6 @@ pub(crate) trait QosController<C: ConnectionContext> {
         let _ = (context, connection);
         None
     }
-
-    /// Pull QoS-specific metrics into StreamerStats before reporting.
-    fn pull_stats(&self, _stats: &crate::quic::StreamerStats, _elapsed: Duration) {}
 
     /// How many concurrent
     fn max_concurrent_connections(&self) -> usize;
