@@ -683,7 +683,7 @@ mod tests {
         let cost_limit = transfer_tx_cost + vote_tx_cost;
         bank.write_cost_tracker()
             .unwrap()
-            .set_limits(cost_limit, cost_limit, cost_limit);
+            .set_limits(cost_limit, cost_limit, cost_limit, u64::MAX);
         let (results, num_selected) =
             qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
         assert_eq!(num_selected, 2);

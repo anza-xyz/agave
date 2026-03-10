@@ -40,6 +40,7 @@ use {
     solana_runtime::genesis_utils::{
         GenesisConfigInfo, ValidatorVoteKeypairs,
         create_genesis_config_with_vote_accounts_and_cluster_type,
+        reapply_halve_slot_times_genesis_defaults_if_active,
     },
     solana_signer::{Signer, signers::Signers},
     solana_stake_interface::{
@@ -354,6 +355,10 @@ impl LocalCluster {
             !config.skip_warmup_slots,
         );
         genesis_config.poh_config = config.poh_config.clone();
+        // `create_genesis_config_with_vote_accounts_and_cluster_type()` may
+        // already apply feature-derived PoH defaults. Since local-cluster
+        // overrides `poh_config` here, re-apply active halve-slot-times defaults.
+        reapply_halve_slot_times_genesis_defaults_if_active(&mut genesis_config);
 
         let mut leader_config = safe_clone_config(&config.validator_configs[0]);
         let (leader_ledger_path, _blockhash) = create_new_tmp_ledger_with_size!(

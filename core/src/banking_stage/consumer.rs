@@ -6,7 +6,6 @@ use {
         scheduler_messages::MaxAge,
     },
     itertools::Itertools,
-    solana_clock::MAX_PROCESSING_AGE,
     solana_fee::FeeFeatures,
     solana_fee_structure::FeeBudgetLimits,
     solana_measure::measure_us,
@@ -131,8 +130,12 @@ impl Consumer {
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
         let pre_results = vec![Ok(()); txs.len()];
-        let check_results =
-            bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
+        let check_results = bank.check_transactions(
+            txs,
+            &pre_results,
+            bank.max_processing_age(),
+            &mut error_counters,
+        );
         let check_results: Vec<_> = check_results
             .into_iter()
             .zip(txs.iter())
@@ -333,7 +336,7 @@ impl Consumer {
         let (load_and_execute_transactions_output, load_execute_us) =
             measure_us!(bank.load_and_execute_transactions(
                 batch,
-                MAX_PROCESSING_AGE,
+                bank.max_processing_age(),
                 &mut execute_and_commit_timings.execute_timings,
                 &mut error_counters,
                 TransactionProcessingConfig {
@@ -1113,9 +1116,7 @@ mod tests {
         } = create_slow_genesis_config(lamports);
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         // set cost tracker limits to MAX so it will not filter out TXs
-        bank.write_cost_tracker()
-            .unwrap()
-            .set_limits(u64::MAX, u64::MAX, u64::MAX);
+        bank.write_cost_tracker().unwrap().set_limits_max();
 
         // Transfer more than the balance of the mint keypair, should cause a
         // InstructionError::InsufficientFunds that is then committed.
@@ -1181,9 +1182,7 @@ mod tests {
         bank.ns_per_slot = u128::MAX;
         let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         // set cost tracker limits to MAX so it will not filter out TXs
-        bank.write_cost_tracker()
-            .unwrap()
-            .set_limits(u64::MAX, u64::MAX, u64::MAX);
+        bank.write_cost_tracker().unwrap().set_limits_max();
 
         let mut transactions = vec![];
         let destination = Pubkey::new_unique();

@@ -172,9 +172,7 @@ fn bench_banking(
     let bank = bank_forks.read().unwrap().get(0).unwrap();
 
     // set cost tracker limits to MAX so it will not filter out TXs
-    bank.write_cost_tracker()
-        .unwrap()
-        .set_limits(u64::MAX, u64::MAX, u64::MAX);
+    bank.write_cost_tracker().unwrap().set_limits_max();
 
     debug!("threads: {num_threads} txs: {txes}");
 

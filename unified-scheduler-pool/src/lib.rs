@@ -2924,7 +2924,7 @@ mod tests {
         super::*,
         crate::sleepless_testing,
         assert_matches::assert_matches,
-        solana_clock::{MAX_PROCESSING_AGE, Slot},
+        solana_clock::Slot,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
@@ -4241,7 +4241,7 @@ mod tests {
             bank.slot().checked_add(1).unwrap(),
         ));
         // Immediately trigger WouldExceedMaxBlockCostLimit by setting all cost limits to 0
-        bank.write_cost_tracker().unwrap().set_limits(0, 0, 0);
+        bank.write_cost_tracker().unwrap().set_limits(0, 0, 0, 0);
 
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
@@ -4268,9 +4268,7 @@ mod tests {
             bank.slot().checked_add(1).unwrap(),
         ));
         // Revert the block cost limit
-        bank.write_cost_tracker()
-            .unwrap()
-            .set_limits(u64::MAX, u64::MAX, u64::MAX);
+        bank.write_cost_tracker().unwrap().set_limits_max();
 
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
@@ -4537,7 +4535,7 @@ mod tests {
                 genesis_config.hash(),
             ));
         let mut bank = Bank::new_for_tests(&genesis_config);
-        for _ in 0..MAX_PROCESSING_AGE {
+        for _ in 0..bank.max_processing_age() {
             bank.fill_bank_with_ticks_for_tests();
             bank.freeze();
             let slot = bank.slot();

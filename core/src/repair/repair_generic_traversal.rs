@@ -122,6 +122,7 @@ pub fn get_closest_completion(
     slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
     processed_slots: &mut HashSet<Slot>,
     limit: usize,
+    ticks_per_second: u64,
     outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
 ) -> (Vec<ShredRepairType>, /* processed slots */ usize) {
     let mut slot_dists: Vec<(Slot, u64)> = Vec::default();
@@ -199,6 +200,7 @@ pub fn get_closest_completion(
                 blockstore,
                 path_slot,
                 slot_meta,
+                ticks_per_second,
                 limit - repairs.len(),
                 outstanding_repairs,
             );
@@ -215,6 +217,7 @@ pub mod test {
     use {
         super::*,
         crate::repair::repair_service::sleep_shred_deferment_period,
+        solana_clock::DEFAULT_TICKS_PER_SECOND,
         solana_hash::Hash,
         solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path},
         trees::{Tree, TreeWalk, tr},
@@ -269,6 +272,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut processed_slots,
             10,
+            DEFAULT_TICKS_PER_SECOND,
             &mut outstanding_requests,
         );
         assert_eq!(repairs, []);
@@ -297,6 +301,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut processed_slots,
             1,
+            DEFAULT_TICKS_PER_SECOND,
             &mut outstanding_requests,
         );
         assert_eq!(repairs, [ShredRepairType::Shred(1, 30)]);
@@ -309,6 +314,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut processed_slots,
             4,
+            DEFAULT_TICKS_PER_SECOND,
             &mut outstanding_requests,
         );
         assert_eq!(repairs.len(), 4);
@@ -322,6 +328,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut processed_slots,
             1,
+            DEFAULT_TICKS_PER_SECOND,
             &mut outstanding_requests,
         );
         assert_eq!(repairs.len(), 0);

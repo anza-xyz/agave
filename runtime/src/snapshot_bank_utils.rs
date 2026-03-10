@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::status_cache;
 #[cfg(feature = "dev-context-only-utils")]
 use {
     crate::{
@@ -23,7 +25,6 @@ use {
             self, BankSnapshotInfo, StorageAndNextAccountsFileId, UnarchivedSnapshots,
             rebuild_storages_from_snapshot_dir, verify_and_unarchive_snapshots,
         },
-        status_cache,
     },
     agave_fs::dirs,
     agave_snapshots::{
@@ -509,8 +510,14 @@ fn verify_slot_deltas(
     slot_deltas: &[BankSlotDelta],
     bank: &Bank,
 ) -> std::result::Result<(), VerifySlotDeltasError> {
-    let info = verify_slot_deltas_structural(slot_deltas, bank.slot())?;
-    verify_slot_deltas_with_history(&info.slots, &bank.get_slot_history(), bank.slot())
+    let max_cache_entries = bank.status_cache.read().unwrap().max_cache_entries();
+    let info = verify_slot_deltas_structural(slot_deltas, bank.slot(), max_cache_entries)?;
+    verify_slot_deltas_with_history(
+        &info.slots,
+        &bank.get_slot_history(),
+        bank.slot(),
+        max_cache_entries,
+    )
 }
 
 /// Verify that the snapshot's slot deltas are not corrupt/invalid
@@ -518,13 +525,14 @@ fn verify_slot_deltas(
 fn verify_slot_deltas_structural(
     slot_deltas: &[BankSlotDelta],
     bank_slot: Slot,
+    max_cache_entries: usize,
 ) -> std::result::Result<VerifySlotDeltasStructuralInfo, VerifySlotDeltasError> {
     // there should not be more entries than that status cache's max
     let num_entries = slot_deltas.len();
-    if num_entries > status_cache::MAX_CACHE_ENTRIES {
+    if num_entries > max_cache_entries {
         return Err(VerifySlotDeltasError::TooManyEntries(
             num_entries,
-            status_cache::MAX_CACHE_ENTRIES,
+            max_cache_entries,
         ));
     }
 
@@ -570,6 +578,7 @@ fn verify_slot_deltas_with_history(
     slots_from_slot_deltas: &HashSet<Slot>,
     slot_history: &SlotHistory,
     bank_slot: Slot,
+    max_cache_entries: usize,
 ) -> std::result::Result<(), VerifySlotDeltasError> {
     // ensure the slot history is valid (as much as possible), since we're using it to verify the
     // slot deltas
@@ -593,7 +602,7 @@ fn verify_slot_deltas_with_history(
     let slot_missing_from_deltas = (slot_history.oldest()..=slot_history.newest())
         .rev()
         .filter(|slot| slot_history.check(*slot) == Check::Found)
-        .take(status_cache::MAX_CACHE_ENTRIES)
+        .take(max_cache_entries)
         .find(|slot| !slots_from_slot_deltas.contains(slot));
     if let Some(slot) = slot_missing_from_deltas {
         return Err(VerifySlotDeltasError::SlotNotFoundInDeltas(slot));
@@ -2378,7 +2387,11 @@ mod tests {
             .map(|slot| (slot, true, Status::default()))
             .collect();
 
-        let result = verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot);
+        let result = verify_slot_deltas_structural(
+            slot_deltas.as_slice(),
+            bank_slot,
+            status_cache::MAX_CACHE_ENTRIES,
+        );
         assert_eq!(
             result,
             Err(VerifySlotDeltasError::TooManyEntries(
@@ -2398,7 +2411,11 @@ mod tests {
         ];
 
         let bank_slot = 333;
-        let result = verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot);
+        let result = verify_slot_deltas_structural(
+            slot_deltas.as_slice(),
+            bank_slot,
+            status_cache::MAX_CACHE_ENTRIES,
+        );
         assert_eq!(
             result,
             Ok(VerifySlotDeltasStructuralInfo {
@@ -2416,7 +2433,11 @@ mod tests {
         ];
 
         let bank_slot = 333;
-        let result = verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot);
+        let result = verify_slot_deltas_structural(
+            slot_deltas.as_slice(),
+            bank_slot,
+            status_cache::MAX_CACHE_ENTRIES,
+        );
         assert_eq!(result, Err(VerifySlotDeltasError::SlotIsNotRoot(222)));
     }
 
@@ -2429,7 +2450,11 @@ mod tests {
         ];
 
         let bank_slot = 444;
-        let result = verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot);
+        let result = verify_slot_deltas_structural(
+            slot_deltas.as_slice(),
+            bank_slot,
+            status_cache::MAX_CACHE_ENTRIES,
+        );
         assert_eq!(
             result,
             Err(VerifySlotDeltasError::SlotGreaterThanMaxRoot(
@@ -2447,7 +2472,11 @@ mod tests {
         ];
 
         let bank_slot = 222;
-        let result = verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot);
+        let result = verify_slot_deltas_structural(
+            slot_deltas.as_slice(),
+            bank_slot,
+            status_cache::MAX_CACHE_ENTRIES,
+        );
         assert_eq!(
             result,
             Err(VerifySlotDeltasError::SlotHasMultipleEntries(111)),
@@ -2465,8 +2494,12 @@ mod tests {
         }
 
         let bank_slot = 444;
-        let result =
-            verify_slot_deltas_with_history(&slots_from_slot_deltas, &slot_history, bank_slot);
+        let result = verify_slot_deltas_with_history(
+            &slots_from_slot_deltas,
+            &slot_history,
+            bank_slot,
+            status_cache::MAX_CACHE_ENTRIES,
+        );
         assert_eq!(result, Ok(()));
     }
 
@@ -2480,8 +2513,12 @@ mod tests {
         slot_history.add(444); // <-- slot history is missing slot 222
 
         let bank_slot = 444;
-        let result =
-            verify_slot_deltas_with_history(&slots_from_slot_deltas, &slot_history, bank_slot);
+        let result = verify_slot_deltas_with_history(
+            &slots_from_slot_deltas,
+            &slot_history,
+            bank_slot,
+            status_cache::MAX_CACHE_ENTRIES,
+        );
 
         assert_eq!(
             result,
@@ -2502,8 +2539,12 @@ mod tests {
         slot_history.add(444);
 
         let bank_slot = 444;
-        let result =
-            verify_slot_deltas_with_history(&slots_from_slot_deltas, &slot_history, bank_slot);
+        let result = verify_slot_deltas_with_history(
+            &slots_from_slot_deltas,
+            &slot_history,
+            bank_slot,
+            status_cache::MAX_CACHE_ENTRIES,
+        );
 
         assert_eq!(
             result,
