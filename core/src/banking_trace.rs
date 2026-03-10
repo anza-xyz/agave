@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     bincode::serialize_into,
@@ -188,15 +186,6 @@ pub struct Channels {
     pub tpu_vote_receiver: BankingPacketReceiver,
     pub gossip_vote_sender: BankingPacketSender,
     pub gossip_vote_receiver: BankingPacketReceiver,
-}
-
-impl Channels {
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn sender_for_unified_scheduler(&self) -> &BankingPacketSender {
-        // Unified scheduler doesn't distinguish which kind of channels, so just pick the non-vote
-        // channel arbitrarily.
-        &self.non_vote_sender
-    }
 }
 
 impl BankingTracer {
