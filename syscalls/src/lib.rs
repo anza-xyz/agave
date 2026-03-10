@@ -540,31 +540,6 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
     Ok(result)
 }
 
-pub fn create_program_runtime_environment_v2<'a, 'ix_data>(
-    compute_budget: &SVMTransactionExecutionBudget,
-    debugging_features: bool,
-) -> BuiltinProgram<InvokeContext<'a, 'ix_data>> {
-    let config = Config {
-        max_call_depth: compute_budget.max_call_depth,
-        stack_frame_size: compute_budget.stack_frame_size,
-        enable_address_translation: true, // To be deactivated once we have BTF inference and verification
-        enable_stack_frame_gaps: false,
-        instruction_meter_checkpoint_distance: 10000,
-        enable_instruction_meter: true,
-        enable_register_tracing: debugging_features,
-        enable_symbol_and_section_labels: debugging_features,
-        reject_broken_elfs: true,
-        noop_instruction_rate: 256,
-        sanitize_user_provided_values: true,
-        enabled_sbpf_versions: SBPFVersion::Reserved..=SBPFVersion::Reserved,
-        optimize_rodata: true,
-        aligned_memory_mapping: true,
-        allow_memory_region_zero: true,
-        // Warning, do not use `Config::default()` so that configuration here is explicit.
-    };
-    BuiltinProgram::new_loader(config)
-}
-
 fn translate_type<T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,

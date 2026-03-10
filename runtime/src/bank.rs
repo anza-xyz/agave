@@ -71,9 +71,7 @@ use {
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::snapshot_hash::SnapshotHash,
-    agave_syscalls::{
-        create_program_runtime_environment_v1, create_program_runtime_environment_v2,
-    },
+    agave_syscalls::create_program_runtime_environment_v1,
     agave_votor_messages::{
         consensus_message::Certificate, migration::GENESIS_CERTIFICATE_ACCOUNT,
     },
@@ -4441,20 +4439,18 @@ impl Bank {
             .as_ref()
             .unwrap_or(&ComputeBudget::new_with_defaults(simd_0268_active))
             .to_budget();
-        ProgramRuntimeEnvironments {
-            program_runtime_v1: Arc::new(
-                create_program_runtime_environment_v1(
-                    &feature_set.runtime_features(),
-                    &compute_budget,
-                    false, /* deployment */
-                    false, /* debugging_features */
-                )
-                .unwrap(),
-            ),
-            program_runtime_v2: Arc::new(create_program_runtime_environment_v2(
+        let program_runtime_environment = Arc::new(
+            create_program_runtime_environment_v1(
+                &feature_set.runtime_features(),
                 &compute_budget,
+                false, /* deployment */
                 false, /* debugging_features */
-            )),
+            )
+            .unwrap(),
+        );
+        ProgramRuntimeEnvironments {
+            program_runtime_v1: program_runtime_environment.clone(),
+            program_runtime_v2: program_runtime_environment,
         }
     }
 
