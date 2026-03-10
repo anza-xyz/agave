@@ -15,6 +15,20 @@ use std::{
 /// Hysteresis: saturated when bucket ≤ 0, recovered when bucket reaches
 /// 90% of capacity. The wide band prevents oscillation near the boundary.
 ///
+/// This mechanism is intentionally approximate for hot-path cost reasons.
+/// It does not provide exact token accounting under contention.
+///
+/// Approximation details:
+/// - concurrent readers/writers can observe transient mismatch between
+///   `bucket` and `saturated`;
+/// - refill uses integer truncation (`floor`), so each refill update can
+///   lose <1 token of fractional credit.
+///
+/// Fractional-loss bound:
+/// - with refill interval `I`, at most `1 / I` refill updates can happen per
+///   second, so truncation bias is bounded by `< 1 / I` tokens/second.
+/// - relative bias is therefore bounded by `< (1 / I) / max_streams_per_second`.
+///
 pub struct LoadDebtTracker {
     bucket: AtomicI64,
     /// High bit is a lock.
@@ -36,17 +50,37 @@ impl LoadDebtTracker {
         burst_capacity: u64,
         refill_interval: Duration,
     ) -> Self {
+        let refill_interval_nanos = refill_interval.as_nanos();
         assert!(
-            refill_interval.as_nanos() > 0,
+            refill_interval_nanos > 0,
             "refill_interval must be > 0"
         );
+        assert!(
+            burst_capacity <= i64::MAX as u64,
+            "burst_capacity must fit i64"
+        );
+        assert!(
+            refill_interval_nanos <= u64::MAX as u128,
+            "refill_interval is too large"
+        );
+
+        // Require at least 1 whole token of refill per interval to avoid
+        // pathological zero-refill loops from integer truncation.
+        let refill_per_interval_numerator = (max_streams_per_second as u128)
+            .checked_mul(refill_interval_nanos)
+            .expect("max_streams_per_second * refill_interval overflow");
+        assert!(
+            refill_per_interval_numerator >= 1_000_000_000_u128,
+            "max_streams_per_second * refill_interval must yield at least 1 token per interval"
+        );
+
         let burst_capacity = burst_capacity as i64;
         Self {
             bucket: AtomicI64::new(burst_capacity),
             last_refill_nanos: AtomicU64::new(0),
             saturated: AtomicBool::new(false),
             epoch: Instant::now(),
-            refill_interval_nanos: refill_interval.as_nanos() as u64,
+            refill_interval_nanos: refill_interval_nanos as u64,
             max_streams_per_second,
             burst_capacity,
             recovery_threshold: burst_capacity * 9 / 10,
@@ -56,12 +90,10 @@ impl LoadDebtTracker {
     /// Consume one token. Triggers state update when bucket hits zero or below.
     pub(crate) fn acquire(&self) {
         let prev = self.bucket.fetch_sub(1, Ordering::Relaxed);
-        if prev == 1 {
+        if prev <= 1 {
             // Crossing 1 -> 0: force a state check immediately.
-            self.update_state_inner(true);
-        } else if prev < 1 {
             // Already at/below zero: run normal state maintenance.
-            self.update_state_inner(false);
+            self.update_state_inner(prev == 1);
         }
     }
 
@@ -284,6 +316,23 @@ mod tests {
         g.update_state_at(900_000_000, false);
         assert_eq!(g.bucket_level(), 90);
         assert!(!g.is_saturated());
+    }
+
+    #[test]
+    #[should_panic(expected = "must yield at least 1 token per interval")]
+    fn test_new_panics_if_refill_is_sub_token_per_interval() {
+        // 999 tokens/s over 1ms => 0.999 tokens per interval.
+        let _ = LoadDebtTracker::new(999, 100, Duration::from_millis(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "burst_capacity must fit i64")]
+    fn test_new_panics_if_burst_capacity_exceeds_i64() {
+        let _ = LoadDebtTracker::new(
+            1_000,
+            (i64::MAX as u64).saturating_add(1),
+            Duration::from_millis(1),
+        );
     }
 
     #[test]
