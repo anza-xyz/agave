@@ -800,23 +800,6 @@ impl RepairService {
         )
     }
 
-    pub fn generate_repairs_for_slot_not_throttled_by_tick(
-        blockstore: &Blockstore,
-        slot: Slot,
-        slot_meta: &SlotMeta,
-        max_repairs: usize,
-        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
-    ) -> Vec<ShredRepairType> {
-        Self::generate_repairs_for_slot(
-            blockstore,
-            slot,
-            slot_meta,
-            max_repairs,
-            false,
-            outstanding_repairs,
-        )
-    }
-
     /// If this slot is missing shreds generate repairs
     fn generate_repairs_for_slot(
         blockstore: &Blockstore,
