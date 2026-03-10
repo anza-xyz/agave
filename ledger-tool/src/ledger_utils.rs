@@ -13,9 +13,7 @@ use {
         validate_account_paths_for_direct_io,
     },
     solana_clock::Slot,
-    solana_core::validator::{
-        BlockProductionMethod, BlockVerificationMethod, supported_scheduling_mode,
-    },
+    solana_core::validator::{BlockProductionMethod, BlockVerificationMethod},
     solana_genesis_config::GenesisConfig,
     solana_genesis_utils::open_genesis_config,
     solana_geyser_plugin_manager::geyser_plugin_service::{
@@ -385,15 +383,6 @@ pub fn load_and_process_ledger(
         "block_production_method",
         BlockProductionMethod
     )
-    .inspect(|method| {
-        if matches!(method, BlockProductionMethod::UnifiedScheduler) {
-            warn!(
-                "Currently, the unified-scheduler method is experimental for block-production. It \
-                 has known security issues and should be used only for developing and \
-                 benchmarking purposes"
-            );
-        }
-    })
     .unwrap_or_default();
     info!(
         "Using: block-verification-method: {block_verification_method}, block-production-method: \
@@ -401,24 +390,21 @@ pub fn load_and_process_ledger(
     );
     let unified_scheduler_handler_threads =
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
-    let unified_scheduler_pool = match (&block_verification_method, &block_production_method) {
-        methods @ (BlockVerificationMethod::UnifiedScheduler, _) => {
-            let no_replay_vote_sender = None;
+    let unified_scheduler_pool = {
+        let no_replay_vote_sender = None;
 
-            let pool = DefaultSchedulerPool::new(
-                supported_scheduling_mode(methods),
-                unified_scheduler_handler_threads,
-                process_options.runtime_config.log_messages_bytes_limit,
-                transaction_status_sender.clone(),
-                no_replay_vote_sender,
-                None,
-            );
-            bank_forks
-                .write()
-                .unwrap()
-                .install_scheduler_pool(pool.clone());
-            Some(pool)
-        }
+        let pool = DefaultSchedulerPool::new(
+            unified_scheduler_handler_threads,
+            process_options.runtime_config.log_messages_bytes_limit,
+            transaction_status_sender.clone(),
+            no_replay_vote_sender,
+            None,
+        );
+        bank_forks
+            .write()
+            .unwrap()
+            .install_scheduler_pool(pool.clone());
+        Some(pool)
     };
 
     let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();

@@ -5,11 +5,7 @@ use {
     },
     solana_poh::poh_recorder::{PohRecorder, SharedLeaderState},
     solana_runtime::bank::Bank,
-    solana_unified_scheduler_pool::{BankingStageMonitor, BankingStageStatus},
-    std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering::Relaxed},
-    },
+    std::sync::Arc,
 };
 
 #[derive(Debug, Clone)]
@@ -74,48 +70,6 @@ impl DecisionMaker {
 impl From<&PohRecorder> for DecisionMaker {
     fn from(poh_recorder: &PohRecorder) -> Self {
         Self::new(poh_recorder.shared_leader_state())
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct DecisionMakerWrapper {
-    is_enabled: Arc<AtomicBool>,
-    is_exited: Arc<AtomicBool>,
-    decision_maker: DecisionMaker,
-}
-
-impl DecisionMakerWrapper {
-    pub(crate) fn new(
-        is_enabled: Arc<AtomicBool>,
-        is_exited: Arc<AtomicBool>,
-        decision_maker: DecisionMaker,
-    ) -> Self {
-        Self {
-            is_enabled,
-            is_exited,
-            decision_maker,
-        }
-    }
-}
-
-impl BankingStageMonitor for DecisionMakerWrapper {
-    fn status(&mut self) -> BankingStageStatus {
-        if self.is_exited.load(Relaxed) {
-            BankingStageStatus::Exited
-        } else if !self.is_enabled.load(Relaxed) {
-            BankingStageStatus::Disabled
-        } else if matches!(
-            self.decision_maker.make_consume_or_forward_decision(),
-            BufferedPacketsDecision::Forward,
-        ) {
-            BankingStageStatus::Inactive
-        } else {
-            BankingStageStatus::Active
-        }
-    }
-
-    fn toggle_banking_packet_receiver(&mut self, enable: bool) {
-        self.is_enabled.store(enable, Relaxed);
     }
 }
 
