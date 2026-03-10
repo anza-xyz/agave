@@ -33,6 +33,7 @@ pub struct LoadDebtTracker {
     bucket: AtomicI64,
     /// High bit is a lock.
     last_refill_nanos: AtomicU64,
+    /// Needed because 0 < bucket < recovery_threshold is ambiguous without history.
     saturated: AtomicBool,
     epoch: Instant,
     refill_interval_nanos: u64,
