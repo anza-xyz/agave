@@ -1,6 +1,6 @@
 use {
     crate::voting_service::AlpenglowPortOverride,
-    lru::LruCache,
+    lazy_lru::LruCache,
     solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
     solana_pubkey::Pubkey,
@@ -144,7 +144,7 @@ impl StakedValidatorsCache {
             };
             alpenglow_sockets.push(socket);
         }
-        self.cache.push(
+        self.cache.put(
             epoch,
             StakedValidatorsCacheEntry {
                 alpenglow_sockets,
@@ -478,13 +478,13 @@ mod tests {
         assert_eq!(5, svc.len());
 
         // Epoch 1 should have been evicted
-        assert!(!svc.cache.contains(&svc.cur_epoch(base_slot)));
+        assert!(!svc.cache.contains_key(&svc.cur_epoch(base_slot)));
 
         // Epochs 2 - 6 should have entries
         for entry_ix in 2_u64..=6_u64 {
             assert!(
                 svc.cache
-                    .contains(&svc.cur_epoch(entry_ix.saturating_mul(base_slot)))
+                    .contains_key(&svc.cur_epoch(entry_ix.saturating_mul(base_slot)))
             );
         }
 

@@ -36,8 +36,8 @@ bincode = { workspace = true }
 bitvec = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
+lazy-lru = { workspace = true }
 log = { workspace = true }
-lru = { workspace = true }
 parking_lot = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
