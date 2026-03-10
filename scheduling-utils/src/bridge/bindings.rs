@@ -72,9 +72,7 @@ where
             // TODO: Load this properly.
             runtime: RuntimeState {
                 feature_set: FeatureSet::all_enabled(),
-                fee_features: FeeFeatures {
-                    enable_secp256r1_precompile: true,
-                },
+                fee_features: FeeFeatures {},
                 lamports_per_signature: 5000,
                 burn_percent: 50,
             },
@@ -133,7 +131,7 @@ where
         // Sanitize the transaction, drop it immediately if it fails sanitization.
         //
         // TODO: Don't hardcode true, true.
-        match SanitizedTransactionView::try_new_sanitized(tx, true, true) {
+        match SanitizedTransactionView::try_new_sanitized(tx, true) {
             Ok(tx) => {
                 let key = self.state.insert(TransactionState {
                     dead: false,
@@ -225,7 +223,7 @@ where
             // Sanitize the transaction, drop it immediately if it fails sanitization.
             //
             // TODO: Don't hardcode true, true,
-            let Ok(tx) = SanitizedTransactionView::try_new_sanitized(tx, true, true) else {
+            let Ok(tx) = SanitizedTransactionView::try_new_sanitized(tx, true) else {
                 // SAFETY:
                 // - We own `tx` exclusively.
                 // - The previous `TransactionPtr` has been dropped by `try_new_sanitized`.
