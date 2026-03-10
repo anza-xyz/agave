@@ -22,6 +22,6 @@ solana-streamer = { workspace = true }
 solana-transaction-error = { workspace = true }
 
 [dev-dependencies]
-solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-packet = { workspace = true }
-solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
+solana-streamer = { path = "../streamer", features = ["agave-unstable-api", "dev-context-only-utils"] }
