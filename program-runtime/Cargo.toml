@@ -83,7 +83,9 @@ solana-program-runtime = { path = ".", features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
-solana-transaction-context = { workspace = true, features = [
+solana-transaction-context = { path = "../transaction-context", features = [
+    "agave-unstable-api",
+    "bincode",
     "dev-context-only-utils",
 ] }
 test-case = { workspace = true }

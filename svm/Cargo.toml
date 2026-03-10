@@ -95,19 +95,19 @@ libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
 rand = { workspace = true }
 shuttle = { workspace = true }
-solana-bpf-loader-program = { workspace = true }
+solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api"] }
 solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
-solana-compute-budget-program = { workspace = true }
+solana-compute-budget-program = { path = "../programs/compute-budget", features = ["agave-unstable-api"] }
 solana-ed25519-program = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-keypair = { workspace = true }
 solana-native-token = { workspace = true }
 solana-precompile-error = { workspace = true }
-solana-program-binaries = { workspace = true }
-solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"] }
+solana-program-runtime = { path = "../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-sbpf = { workspace = true, features = ["jit"] }
@@ -121,7 +121,7 @@ solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
-solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
+solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
 spl-token-interface = { workspace = true }
 test-case = { workspace = true }
 
