@@ -1495,6 +1495,10 @@ pub mod block_revenue_sharing {
     solana_pubkey::declare_id!("B1ockRevenueSharing111111111111111111111111");
 }
 
+pub mod rent_adjusted_delegations {
+    solana_pubkey::declare_id!("7MYx95UBiJufqnumyN7HfskJ9vKdcGMmhreVguqrE97K");
+}
+
 pub mod vote_account_initialize_v2 {
     solana_pubkey::declare_id!("VoteAccount1nitia1izeV211111111111111111111");
 }
@@ -2558,6 +2562,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             upgrade_bpf_stake_program_to_v5::id(),
             "SIMD-0490: Upgrade BPF Stake Program to v5.0.0",
+        ),
+        (
+            rent_adjusted_delegations::id(),
+            "SIMD-0488: Rent-adjusted delegations",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

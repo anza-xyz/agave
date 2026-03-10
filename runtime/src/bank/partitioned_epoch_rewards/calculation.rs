@@ -432,6 +432,7 @@ impl Bank {
         new_rate_activation_epoch: Option<Epoch>,
         delay_commission_updates: bool,
         commission_rate_in_basis_points: bool,
+        adjust_delegations_for_rent: bool,
     ) -> Option<DelegationRewards> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
@@ -455,6 +456,12 @@ impl Bank {
         };
         let vote_state = vote_account.vote_state_view();
         let stake_state = stake_account.stake_state();
+
+        let current_lamports = stake_account.lamports();
+        let minimum_lamports = self
+            .rent_collector
+            .rent
+            .minimum_balance(stake_account.data_len());
 
         // Fetch the voter commission from past epochs to attempt to
         // delay the effect of commission updates by at least one
@@ -489,9 +496,11 @@ impl Bank {
                 stake_history,
                 new_rate_activation_epoch,
                 commission_rate_in_basis_points,
+                adjust_delegations_for_rent,
             },
             reward_calc_tracer,
-            stake_account.lamports(),
+            current_lamports,
+            minimum_lamports,
         ) {
             Ok((stake_reward, commission_lamports, stake)) => {
                 let stake_reward = PartitionedStakeReward {
@@ -536,6 +545,9 @@ impl Bank {
         let feature_snapshot = self.feature_set.snapshot();
         let delay_commission_updates = feature_snapshot.delay_commission_updates;
         let commission_rate_in_basis_points = feature_snapshot.commission_rate_in_basis_points;
+        let adjust_delegations_for_rent = self
+            .feature_set
+            .is_active(&agave_feature_set::rent_adjusted_delegations::id());
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
         // For N stake delegations, where N is >1,000,000, we produce:
@@ -567,6 +579,7 @@ impl Bank {
                                 new_warmup_cooldown_rate_epoch,
                                 delay_commission_updates,
                                 commission_rate_in_basis_points,
+                                adjust_delegations_for_rent,
                             )
                         });
                     let (stake_reward, maybe_reward_record) = match maybe_reward_record {

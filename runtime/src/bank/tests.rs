@@ -995,7 +995,10 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
     let rewards = bank2.rewards.read().unwrap();
     rewards
         .iter()
-        .find(|(_address, reward)| reward.reward_type == RewardType::Staking)
+        .find(|(_address, reward)| {
+            reward.reward_type == RewardType::Staking
+                || reward.reward_type == RewardType::DeactivatedStake
+        })
         .unwrap();
 
     bank1.capitalization()

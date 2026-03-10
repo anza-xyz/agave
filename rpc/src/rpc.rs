@@ -782,7 +782,9 @@ impl JsonRpcRequestProcessor {
                 &addresses,
                 &|reward_type| -> bool {
                     reward_type == RewardType::Voting
-                        || (!epoch_has_partitioned_rewards && reward_type == RewardType::Staking)
+                        || (!epoch_has_partitioned_rewards
+                            && (reward_type == RewardType::Staking
+                                || reward_type == RewardType::DeactivatedStake))
                 },
             )
             .collect()
@@ -862,7 +864,10 @@ impl JsonRpcRequestProcessor {
                     block.rewards,
                     slot,
                     addresses,
-                    &|reward_type| -> bool { reward_type == RewardType::Staking },
+                    &|reward_type| -> bool {
+                        reward_type == RewardType::Staking
+                            || reward_type == RewardType::DeactivatedStake
+                    },
                 );
                 reward_map.extend(index_reward_map);
             }

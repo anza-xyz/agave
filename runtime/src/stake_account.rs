@@ -43,6 +43,11 @@ impl<T> StakeAccount<T> {
     pub(crate) fn stake_state(&self) -> &StakeStateV2 {
         &self.stake_state
     }
+
+    #[inline]
+    pub(crate) fn data_len(&self) -> usize {
+        self.account.data().len()
+    }
 }
 
 impl StakeAccount<Delegation> {
