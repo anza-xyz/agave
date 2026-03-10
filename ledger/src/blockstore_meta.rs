@@ -49,12 +49,12 @@ impl Default for ConnectedFlags {
 /// A fixed size BitVec offers fast lookup and fast de/serialization.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(transparent)]
-pub struct CompletedDataIndexesV2 {
+pub struct CompletedDataIndexes {
     index: BitVec<MAX_DATA_SHREDS_PER_SLOT>,
 }
 
 // API for CompletedDataIndexesV2 that mirrors BTreeSet<u32>.
-impl CompletedDataIndexesV2 {
+impl CompletedDataIndexes {
     #[inline]
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
         self.index.iter_ones().map(|i| i as u32)
@@ -86,10 +86,10 @@ impl CompletedDataIndexesV2 {
     }
 }
 
-impl FromIterator<u32> for CompletedDataIndexesV2 {
+impl FromIterator<u32> for CompletedDataIndexes {
     fn from_iter<T: IntoIterator<Item = u32>>(iter: T) -> Self {
         let index = iter.into_iter().map(|i| i as usize).collect();
-        CompletedDataIndexesV2 { index }
+        CompletedDataIndexes { index }
     }
 }
 
@@ -127,10 +127,7 @@ pub struct SlotMetaBase<T> {
     pub completed_data_indexes: T,
 }
 
-pub type SlotMetaV2 = SlotMetaBase<CompletedDataIndexesV2>;
-
-pub type SlotMeta = SlotMetaV2;
-pub type CompletedDataIndexes = CompletedDataIndexesV2;
+pub type SlotMeta = SlotMetaBase<CompletedDataIndexes>;
 
 // Serde implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
