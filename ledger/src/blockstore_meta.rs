@@ -150,14 +150,11 @@ mod serde_compat {
     }
 }
 
-pub type Index = IndexV2;
-pub type ShredIndex = ShredIndexV2;
-
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-pub struct IndexV2 {
+pub struct Index {
     pub slot: Slot,
-    data: ShredIndexV2,
-    coding: ShredIndexV2,
+    data: ShredIndex,
+    coding: ShredIndex,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -301,12 +298,12 @@ impl Index {
 /// - **Simplified Serialization**: The contiguous memory layout allows for efficient
 ///   serialization/deserialization without tree reconstruction.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct ShredIndexV2 {
+pub struct ShredIndex {
     index: BitVec<MAX_DATA_SHREDS_PER_SLOT>,
     num_shreds: usize,
 }
 
-impl ShredIndexV2 {
+impl ShredIndex {
     pub fn num_shreds(&self) -> usize {
         self.num_shreds
     }
@@ -342,9 +339,9 @@ impl ShredIndexV2 {
     }
 }
 
-impl FromIterator<u64> for ShredIndexV2 {
+impl FromIterator<u64> for ShredIndex {
     fn from_iter<T: IntoIterator<Item = u64>>(iter: T) -> Self {
-        let mut index = ShredIndexV2::default();
+        let mut index = ShredIndex::default();
         for idx in iter {
             index.insert(idx);
         }
@@ -722,7 +719,7 @@ mod test {
         fn range_query_correctness(
             indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
         ) {
-            let mut index = ShredIndexV2::default();
+            let mut index = ShredIndex::default();
 
             for idx in indices.clone() {
                 index.insert(idx);
@@ -737,7 +734,7 @@ mod test {
 
     #[test]
     fn test_shred_index_v2_range_bounds() {
-        let mut index = ShredIndexV2::default();
+        let mut index = ShredIndex::default();
 
         index.insert(10);
         index.insert(20);
@@ -774,7 +771,7 @@ mod test {
 
     #[test]
     fn test_shred_index_v2_boundary_conditions() {
-        let mut index = ShredIndexV2::default();
+        let mut index = ShredIndex::default();
 
         // First possible index
         index.insert(0);
