@@ -2632,6 +2632,10 @@ fn main() {
                     }
                 }
                 ("simulate-block-production", Some(arg_matches)) => {
+                    if arg_matches.is_present("transaction_struct") {
+                        warn!("Using `--transaction-structure` is deprecated and has no effect.");
+                    }
+
                     let mut process_options = parse_process_options(&ledger_path, arg_matches);
 
                     let banking_trace_events = load_banking_trace_events_or_exit(&ledger_path);

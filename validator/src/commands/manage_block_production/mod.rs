@@ -5,6 +5,7 @@ use {
         commands::{FromClapArgMatches, Result},
     },
     clap::{App, Arg, ArgMatches, SubCommand, value_t},
+    log::warn,
     solana_core::{
         banking_stage::BankingStage,
         validator::{BlockProductionMethod, SchedulerPacing, TransactionStructure},
@@ -24,6 +25,10 @@ pub struct ManageBlockProductionArgs {
 
 impl FromClapArgMatches for ManageBlockProductionArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
+        if matches.is_present("transaction_struct") {
+            warn!("Using `--transaction-structure` is deprecated and has no effect.");
+        }
+
         Ok(ManageBlockProductionArgs {
             block_production_method: value_t!(
                 matches,
