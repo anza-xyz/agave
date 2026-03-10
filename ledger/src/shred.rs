@@ -740,7 +740,7 @@ pub fn should_discard_shred<'a, P>(
 where
     P: Into<PacketRef<'a>>,
 {
-    should_discard_shred_with_custom_limits(
+    should_discard_shred_with_custom_shred_limits(
         packet,
         root,
         max_slot,
@@ -753,7 +753,7 @@ where
 }
 
 #[must_use]
-pub fn should_discard_shred_with_custom_limits<'a, P>(
+pub fn should_discard_shred_with_custom_shred_limits<'a, P>(
     packet: P,
     root: Slot,
     max_slot: Slot,

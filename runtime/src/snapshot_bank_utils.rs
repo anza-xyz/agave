@@ -1,5 +1,3 @@
-#[cfg(test)]
-use crate::status_cache;
 #[cfg(feature = "dev-context-only-utils")]
 use {
     crate::{
@@ -834,7 +832,7 @@ mod tests {
                 purge_old_bank_snapshots, purge_old_bank_snapshots_at_startup,
                 snapshot_storage_rebuilder::get_slot_and_append_vec_id,
             },
-            status_cache::Status,
+            status_cache::{self, Status},
         },
         agave_snapshots::{error::VerifySlotDeltasError, paths::get_bank_snapshot_dir},
         semver::Version,

@@ -130,13 +130,12 @@ pub fn create_genesis_config_with_vote_accounts(
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
     stakes: Vec<u64>,
 ) -> GenesisConfigInfo {
-    let feature_set = FeatureSet::all_enabled();
     create_genesis_config_with_vote_accounts_and_cluster_type(
         mint_lamports,
         voting_keypairs,
         stakes,
         ClusterType::Development,
-        &feature_set,
+        &FeatureSet::all_enabled(),
         false,
     )
 }
@@ -147,13 +146,12 @@ pub fn create_genesis_config_with_alpenglow_vote_accounts(
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
     stakes: Vec<u64>,
 ) -> GenesisConfigInfo {
-    let feature_set = FeatureSet::all_enabled();
     create_genesis_config_with_vote_accounts_and_cluster_type(
         mint_lamports,
         voting_keypairs,
         stakes,
         ClusterType::Development,
-        &feature_set,
+        &FeatureSet::all_enabled(),
         true,
     )
 }
@@ -314,7 +312,6 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
     let bls_keypair =
         BLSKeypair::derive_from_signer(&voting_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
     let validator_bls_pubkey = Some(bls_keypair.public.to_bytes_compressed());
-    let feature_set = FeatureSet::all_enabled();
     let genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
@@ -327,7 +324,7 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
         Rent::free(),               // most tests don't expect rent
         ClusterType::Development,
-        &feature_set,
+        &FeatureSet::all_enabled(),
         vec![],
     );
 
@@ -413,17 +410,6 @@ pub fn activate_feature(genesis_config: &mut GenesisConfig, feature_id: Pubkey) 
         )),
     );
     if !was_active && feature_id == agave_feature_set::halve_slot_times::id() {
-        apply_halve_slot_times_genesis_defaults(genesis_config);
-    }
-}
-
-/// Re-apply halve-slot-times genesis defaults when the feature is active.
-///
-/// This is used when tests override `poh_config` after feature accounts were
-/// already inserted (for example in local-cluster setup), which replaces values
-/// that should still reflect active feature defaults.
-pub fn reapply_halve_slot_times_genesis_defaults_if_active(genesis_config: &mut GenesisConfig) {
-    if is_feature_active_at_genesis(genesis_config, &agave_feature_set::halve_slot_times::id()) {
         apply_halve_slot_times_genesis_defaults(genesis_config);
     }
 }
@@ -578,6 +564,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
         cluster_type,
         ..GenesisConfig::default()
     };
+
     add_genesis_stake_config_account(&mut genesis_config);
     add_genesis_epoch_rewards_account(&mut genesis_config);
 

@@ -87,7 +87,7 @@ pub fn get_best_repair_shreds(
     let weighted_iter = RepairWeightTraversal::new(tree);
     let mut visited_set = HashSet::new();
     for next in weighted_iter {
-        if repairs.len() >= max_repairs {
+        if repairs.len() > max_repairs {
             break;
         }
 

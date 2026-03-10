@@ -12,7 +12,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::shred::{
         self, ShredFetchStats, max_code_shreds_per_slot, max_data_shreds_per_slot,
-        should_discard_shred_with_custom_limits,
+        should_discard_shred_with_custom_shred_limits,
     },
     solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{
@@ -175,7 +175,7 @@ impl ShredFetchStage {
             let turbine_disabled = turbine_disabled.load(Ordering::Relaxed);
             for mut packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
                 if turbine_disabled
-                    || should_discard_shred_with_custom_limits(
+                    || should_discard_shred_with_custom_shred_limits(
                         packet.as_ref(),
                         last_root,
                         max_slot,

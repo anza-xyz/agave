@@ -75,7 +75,6 @@ const REPAIR_REQUEST_TIMEOUT_MS: u64 = 150;
 const NUM_PEERS_TO_SAMPLE_FOR_REPAIRS: usize = 10;
 
 fn defer_repair_threshold_ticks(ticks_per_second: u64) -> u64 {
-    let ticks_per_second = ticks_per_second.max(1);
     DEFER_REPAIR_THRESHOLD.as_millis() as u64 * ticks_per_second / 1_000
 }
 
@@ -704,7 +703,7 @@ impl RepairService {
         // The tick rate can change, which changes the tick --> wall clock math
         // for how long we're willing to wait on turbine shreds. Re-check every
         // iteration.
-        let ticks_per_second = sharable_banks.working().ticks_per_second();
+        let ticks_per_second = sharable_banks.working().ticks_per_second().max(1);
 
         Self::update_weighting_heuristic(
             blockstore,
@@ -824,7 +823,6 @@ impl RepairService {
         throttle_requests_by_shred_tick: bool,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
-        let ticks_per_second = ticks_per_second.max(1);
         let defer_repair_threshold_ticks = if throttle_requests_by_shred_tick {
             defer_repair_threshold_ticks(ticks_per_second)
         } else {
