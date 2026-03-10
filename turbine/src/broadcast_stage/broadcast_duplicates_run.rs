@@ -5,7 +5,7 @@ use {
     agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
     itertools::Itertools,
-    solana_entry::{block_component::BlockComponent, entry::Entry},
+    solana_entry::entry::Entry,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
@@ -182,7 +182,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         self.prev_entry_hash = last_entries
             .as_ref()
             .map(|(original_last_entry, _)| original_last_entry.hash)
-            .or_else(|| Some(receive_results.entries.last().unwrap().hash));
+            .or_else(|| receive_results.entries.last().map(|e| e.hash));
 
         let shredder = Shredder::new(
             bank.slot(),
@@ -192,17 +192,21 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         )
         .expect("Expected to create a new shredder");
 
-        let component = BlockComponent::EntryBatch(receive_results.entries);
-        let (data_shreds, coding_shreds) = shredder.component_to_merkle_shreds_for_tests(
-            keypair,
-            &component,
-            last_tick_height == bank.max_tick_height() && last_entries.is_none(),
-            self.chained_merkle_root,
-            self.next_shred_index,
-            self.next_code_index,
-            &self.reed_solomon_cache,
-            &mut stats,
-        );
+        // Avoid generating an empty FEC set
+        let (data_shreds, coding_shreds) = if !receive_results.entries.is_empty() {
+            shredder.entries_to_merkle_shreds_for_tests(
+                keypair,
+                &receive_results.entries,
+                last_tick_height == bank.max_tick_height() && last_entries.is_none(),
+                self.chained_merkle_root,
+                self.next_shred_index,
+                self.next_code_index,
+                &self.reed_solomon_cache,
+                &mut stats,
+            )
+        } else {
+            (vec![], vec![])
+        };
         if let Some(shred) = data_shreds.iter().max_by_key(|shred| shred.index()) {
             self.chained_merkle_root = shred.merkle_root().unwrap();
         }
@@ -212,9 +216,9 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         }
         let last_shreds =
             last_entries.map(|(original_last_entry, duplicate_extra_last_entries)| {
-                let (original_last_data_shred, _) = shredder.component_to_merkle_shreds_for_tests(
+                let (original_last_data_shred, _) = shredder.entries_to_merkle_shreds_for_tests(
                     keypair,
-                    &BlockComponent::EntryBatch(vec![original_last_entry]),
+                    &[original_last_entry],
                     true,
                     self.chained_merkle_root,
                     self.next_shred_index,
@@ -225,9 +229,9 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 // Don't mark the last shred as last so that validators won't
                 // know that they've gotten all the shreds, and will continue
                 // trying to repair.
-                let (partition_last_data_shred, _) = shredder.component_to_merkle_shreds_for_tests(
+                let (partition_last_data_shred, _) = shredder.entries_to_merkle_shreds_for_tests(
                     keypair,
-                    &BlockComponent::EntryBatch(duplicate_extra_last_entries),
+                    &duplicate_extra_last_entries,
                     true,
                     self.chained_merkle_root,
                     self.next_shred_index,
@@ -260,17 +264,19 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 (original_last_data_shred, partition_last_data_shred)
             });
 
-        let data_shreds = Arc::new(data_shreds);
-        blockstore_sender.send((data_shreds.clone(), None))?;
+        if !data_shreds.is_empty() {
+            let data_shreds = Arc::new(data_shreds);
+            blockstore_sender.send((data_shreds.clone(), None))?;
 
-        // 3) Start broadcast step
-        info!(
-            "{} Sending good shreds for slot {} to network",
-            keypair.pubkey(),
-            data_shreds.first().unwrap().slot()
-        );
-        assert!(data_shreds.iter().all(|shred| shred.slot() == bank.slot()));
-        socket_sender.send((data_shreds, None))?;
+            // 3) Start broadcast step
+            info!(
+                "{} Sending good shreds for slot {} to network",
+                keypair.pubkey(),
+                data_shreds.first().unwrap().slot()
+            );
+            assert!(data_shreds.iter().all(|shred| shred.slot() == bank.slot()));
+            socket_sender.send((data_shreds, None))?;
+        }
 
         // Special handling of last shred to cause partition
         if let Some((original_last_data_shred, partition_last_data_shred)) = last_shreds {

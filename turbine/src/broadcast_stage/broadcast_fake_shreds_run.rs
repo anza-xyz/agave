@@ -1,6 +1,6 @@
 use {
     super::*,
-    solana_entry::{block_component::BlockComponent, entry::Entry},
+    solana_entry::entry::Entry,
     solana_gossip::contact_info::ContactInfo,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -79,10 +79,9 @@ impl BroadcastRun for BroadcastFakeShredsRun {
         )
         .expect("Expected to create a new shredder");
 
-        let component = BlockComponent::EntryBatch(receive_results.entries);
-        let (data_shreds, coding_shreds) = shredder.component_to_merkle_shreds_for_tests(
+        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             keypair,
-            &component,
+            &receive_results.entries,
             last_tick_height == bank.max_tick_height(),
             chained_merkle_root,
             next_shred_index,
