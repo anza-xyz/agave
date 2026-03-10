@@ -6720,19 +6720,19 @@ impl AccountsDb {
     }
 
     pub fn assert_load_account(&self, slot: Slot, pubkey: Pubkey, expected_lamports: u64) {
-        let ancestors = vec![(slot, 0)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![slot]);
         let (account, slot) = self.load_without_fixed_root(&ancestors, &pubkey).unwrap();
         assert_eq!((account.lamports(), slot), (expected_lamports, slot));
     }
 
     pub fn assert_not_load_account(&self, slot: Slot, pubkey: Pubkey) {
-        let ancestors = vec![(slot, 0)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![slot]);
         let load = self.load_without_fixed_root(&ancestors, &pubkey);
         assert!(load.is_none(), "{load:?}");
     }
 
     pub fn check_accounts(&self, pubkeys: &[Pubkey], slot: Slot, num: usize, count: usize) {
-        let ancestors = vec![(slot, 0)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![slot]);
         for _ in 0..num {
             let idx = rng().random_range(0..num);
             let account = self.load_without_fixed_root(&ancestors, &pubkeys[idx]);
@@ -6812,7 +6812,7 @@ impl AccountsDb {
         space: usize,
         num_vote: usize,
     ) {
-        let ancestors = vec![(slot, 0)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![slot]);
         for t in 0..num {
             let pubkey = solana_pubkey::new_rand();
             let account =
@@ -6826,7 +6826,7 @@ impl AccountsDb {
             let account =
                 AccountSharedData::new((num + t + 1) as u64, space, &solana_vote_program::id());
             pubkeys.push(pubkey);
-            let ancestors = vec![(slot, 0)].into_iter().collect();
+            let ancestors = Ancestors::from(vec![slot]);
             assert!(self.load_without_fixed_root(&ancestors, &pubkey).is_none());
             self.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
         }

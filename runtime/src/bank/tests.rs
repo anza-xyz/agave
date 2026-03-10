@@ -7682,7 +7682,7 @@ fn setup_banks_on_fork_to_remove(
         }
     }
 
-    let ancestors: Vec<(Slot, usize)> = slots_on_fork.iter().map(|(s, _)| (*s, 0)).collect();
+    let ancestors: Vec<_> = slots_on_fork.iter().map(|(s, _)| *s).collect();
     let ancestors = Ancestors::from(ancestors);
 
     (bank_at_fork_tip, slots_on_fork, ancestors)

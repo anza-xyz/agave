@@ -31,9 +31,9 @@ use {
 const DEFAULT_FILE_SIZE: u64 = 4 * 1024 * 1024;
 
 fn linear_ancestors(end_slot: u64) -> Ancestors {
-    let mut ancestors: Ancestors = vec![(0, 0)].into_iter().collect();
+    let mut ancestors = Ancestors::from(vec![0]);
     for i in 1..end_slot {
-        ancestors.insert(i, (i - 1) as usize);
+        ancestors.insert(i);
     }
     ancestors
 }
@@ -458,7 +458,7 @@ define_accounts_db_test!(test_accountsdb_add_root, |db| {
 
     db.store_for_tests((0, [(&key, &account0)].as_slice()));
     db.add_root(0);
-    let ancestors = vec![(1, 1)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![1]);
     assert_eq!(
         db.load_without_fixed_root(&ancestors, &key),
         Some((account0, 0))
@@ -474,13 +474,13 @@ define_accounts_db_test!(test_accountsdb_latest_ancestor, |db| {
     let account1 = AccountSharedData::new(0, 0, &key);
     db.store_for_tests((1, [(&key, &account1)].as_slice()));
 
-    let ancestors = vec![(1, 1)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![1]);
     assert_eq!(
         &db.load_without_fixed_root(&ancestors, &key).unwrap().0,
         &account1
     );
 
-    let ancestors = vec![(1, 1), (0, 0)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![1, 0]);
     assert_eq!(
         &db.load_without_fixed_root(&ancestors, &key).unwrap().0,
         &account1
@@ -511,13 +511,13 @@ define_accounts_db_test!(test_accountsdb_latest_ancestor_with_root, |db| {
     db.store_for_tests((1, [(&key, &account1)].as_slice()));
     db.add_root(0);
 
-    let ancestors = vec![(1, 1)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![1]);
     assert_eq!(
         &db.load_without_fixed_root(&ancestors, &key).unwrap().0,
         &account1
     );
 
-    let ancestors = vec![(1, 1), (0, 0)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![1, 0]);
     assert_eq!(
         &db.load_without_fixed_root(&ancestors, &key).unwrap().0,
         &account1
@@ -547,14 +547,14 @@ define_accounts_db_test!(test_accountsdb_root_one_slot, |db| {
     // masking accounts is done at the Accounts level, at accountsDB we see
     // original account (but could also accept "None", which is implemented
     // at the Accounts level)
-    let ancestors = vec![(0, 0), (1, 1)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![0, 1]);
     assert_eq!(
         &db.load_without_fixed_root(&ancestors, &key).unwrap().0,
         &account1
     );
 
     // we should see 1 token in slot 2
-    let ancestors = vec![(0, 0), (2, 2)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![0, 2]);
     assert_eq!(
         &db.load_without_fixed_root(&ancestors, &key).unwrap().0,
         &account0
@@ -562,12 +562,12 @@ define_accounts_db_test!(test_accountsdb_root_one_slot, |db| {
 
     db.add_root(0);
 
-    let ancestors = vec![(1, 1)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![1]);
     assert_eq!(
         db.load_without_fixed_root(&ancestors, &key),
         Some((account1, 1))
     );
-    let ancestors = vec![(2, 2)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![2]);
     assert_eq!(
         db.load_without_fixed_root(&ancestors, &key),
         Some((account0, 0))
@@ -579,7 +579,7 @@ define_accounts_db_test!(test_accountsdb_add_root_many, |db| {
     db.create_account(&mut pubkeys, 0, 100, 0, 0);
     for _ in 1..100 {
         let idx = rng().random_range(0..99);
-        let ancestors = vec![(0, 0)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![0]);
         let account = db
             .load_without_fixed_root(&ancestors, &pubkeys[idx])
             .unwrap();
@@ -595,11 +595,11 @@ define_accounts_db_test!(test_accountsdb_add_root_many, |db| {
     // check that all the accounts appear with a new root
     for _ in 1..100 {
         let idx = rng().random_range(0..99);
-        let ancestors = vec![(0, 0)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![0]);
         let account0 = db
             .load_without_fixed_root(&ancestors, &pubkeys[idx])
             .unwrap();
-        let ancestors = vec![(1, 1)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![1]);
         let account1 = db
             .load_without_fixed_root(&ancestors, &pubkeys[idx])
             .unwrap();
@@ -668,12 +668,12 @@ define_accounts_db_test!(test_accounts_unsquashed, |db0| {
 
     // masking accounts is done at the Accounts level, at accountsDB we see
     // original account
-    let ancestors = vec![(0, 0), (1, 1)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![0, 1]);
     assert_eq!(
         db0.load_without_fixed_root(&ancestors, &key),
         Some((account1, 1))
     );
-    let ancestors = vec![(0, 0)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![0]);
     assert_eq!(
         db0.load_without_fixed_root(&ancestors, &key),
         Some((account0, 0))
@@ -763,7 +763,7 @@ fn run_test_remove_unrooted_slot(is_cached: bool, db: AccountsDb) {
     let unrooted_bank_id = 9;
     let key = Pubkey::default();
     let account0 = AccountSharedData::new(1, 0, &key);
-    let ancestors = vec![(unrooted_slot, 1)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![unrooted_slot]);
     assert!(!db.accounts_index.contains(&key));
     if is_cached {
         db.store_for_tests((unrooted_slot, &[(&key, &account0)][..]));
@@ -806,13 +806,13 @@ define_accounts_db_test!(test_remove_unrooted_slot_storage, |db| {
 fn update_accounts(accounts: &AccountsDb, pubkeys: &[Pubkey], slot: Slot, range: usize) {
     for _ in 1..1000 {
         let idx = rng().random_range(0..range);
-        let ancestors = vec![(slot, 0)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![slot]);
         if let Some((mut account, _)) = accounts.load_without_fixed_root(&ancestors, &pubkeys[idx])
         {
             account.checked_add_lamports(1).unwrap();
             accounts.store_for_tests((slot, [(&pubkeys[idx], &account)].as_slice()));
             if account.is_zero_lamport() {
-                let ancestors = vec![(slot, 0)].into_iter().collect();
+                let ancestors = Ancestors::from(vec![slot]);
                 assert!(
                     accounts
                         .load_without_fixed_root(&ancestors, &pubkeys[idx])
@@ -835,7 +835,7 @@ fn test_account_one() {
     let db = AccountsDb::new_for_tests(paths);
     let mut pubkeys: Vec<Pubkey> = vec![];
     db.create_account(&mut pubkeys, 0, 1, 0, 0);
-    let ancestors = vec![(0, 0)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![0]);
     let account = db.load_without_fixed_root(&ancestors, &pubkeys[0]).unwrap();
     let default_account = AccountSharedData::from(Account {
         lamports: 1,
@@ -875,7 +875,7 @@ fn test_account_grow_many() {
         accounts.store_for_tests((0, [(&key, &account)].as_slice()));
         keys.push(key);
     }
-    let ancestors = vec![(0, 0)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![0]);
     for (i, key) in keys.iter().enumerate() {
         assert_eq!(
             accounts
@@ -926,7 +926,7 @@ fn test_account_grow() {
             assert_eq!(store.count(), 2);
             continue;
         }
-        let ancestors = vec![(0, 0)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![0]);
         assert_eq!(
             accounts
                 .load_without_fixed_root(&ancestors, &pubkey1)
@@ -950,7 +950,7 @@ fn test_account_grow() {
                 accounts.add_root_and_flush_write_cache(0);
                 assert_eq!(accounts.storage.len(), 1);
             }
-            let ancestors = vec![(0, 0)].into_iter().collect();
+            let ancestors = Ancestors::from(vec![0]);
             assert_eq!(
                 accounts
                     .load_without_fixed_root(&ancestors, &pubkey1)
@@ -989,7 +989,7 @@ fn test_clean_zero_lamport_and_dead_slot() {
     // Make sure both accounts are in the same AppendVec in slot 0, which
     // will prevent pubkey1 from being cleaned up later even when it's a
     // zero-lamport account
-    let ancestors = vec![(0, 1)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![0]);
     let (slot1, account_info1) = accounts
         .accounts_index
         .get_with_and_then(
@@ -1805,7 +1805,7 @@ fn test_accountsdb_scan_accounts() {
     let account1 = AccountSharedData::new(2, 0, &key);
     db.store_for_tests((1, [(&key1, &account1)].as_slice()));
 
-    let ancestors = vec![(0, 0)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![0]);
     let mut accounts = Vec::new();
     db.scan_accounts(
         &ancestors,
@@ -1820,7 +1820,7 @@ fn test_accountsdb_scan_accounts() {
     .expect("should scan accounts");
     assert_eq!(accounts, vec![account0]);
 
-    let ancestors = vec![(1, 1), (0, 0)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![1, 0]);
     let mut accounts = Vec::new();
     db.scan_accounts(
         &ancestors,
@@ -1861,7 +1861,7 @@ fn test_cleanup_key_not_removed() {
     db.store_for_tests((2, [(&key1, &account2)].as_slice()));
 
     db.print_accounts_stats("post");
-    let ancestors = vec![(2, 0)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![2]);
     assert_eq!(
         db.load_without_fixed_root(&ancestors, &key1)
             .unwrap()
@@ -1882,7 +1882,7 @@ fn test_store_large_account() {
 
     db.store_for_tests((0, [(&key, &account)].as_slice()));
 
-    let ancestors = vec![(0, 0)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![0]);
     let ret = db.load_without_fixed_root(&ancestors, &key).unwrap();
     assert_eq!(ret.0.data().len(), data_len);
 }
@@ -1946,7 +1946,7 @@ fn test_verify_bank_capitalization() {
         let some_data_len = 0;
         let some_slot: Slot = 0;
         let account = AccountSharedData::new(1, some_data_len, &key);
-        let ancestors = vec![(some_slot, 0)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![some_slot]);
 
         db.store_for_tests((some_slot, [(&key, &account)].as_slice()));
         if pass == 0 {
@@ -2872,11 +2872,11 @@ fn test_store_load_cached() {
     );
 
     // Load with ancestors not equal to `slot` will return nothing
-    let ancestors = vec![(slot + 1, 1)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![slot + 1]);
     assert!(db.load_without_fixed_root(&ancestors, &key).is_none());
 
     // Load with ancestors equal to `slot` will return the account
-    let ancestors = vec![(slot, 1)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![slot]);
     assert_eq!(
         db.load_without_fixed_root(&ancestors, &key),
         Some((account0.clone(), slot))
@@ -2902,7 +2902,7 @@ fn test_store_flush_load_cached() {
     // No root was added yet, requires an ancestor to find
     // the account
     db.flush_accounts_cache(true, None);
-    let ancestors = vec![(slot, 1)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![slot]);
     assert_eq!(
         db.load_without_fixed_root(&ancestors, &key),
         Some((account0.clone(), slot))
@@ -2938,7 +2938,7 @@ fn test_flush_accounts_cache() {
     db.add_root(root6);
 
     // Unrooted slot should be able to be fetched before the flush
-    let ancestors = vec![(unrooted_slot, 1)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![unrooted_slot]);
     assert_eq!(
         db.load_without_fixed_root(&ancestors, &unrooted_key),
         Some((account0.clone(), unrooted_slot))
@@ -3030,7 +3030,7 @@ fn run_test_flush_accounts_cache_if_needed(num_roots: usize, num_unrooted: usize
         let ancestors = if slot < num_roots as Slot {
             Ancestors::default()
         } else {
-            vec![(slot, 1)].into_iter().collect()
+            Ancestors::from(vec![slot])
         };
         assert_eq!(
             db.load_without_fixed_root(&ancestors, &key),
@@ -3387,7 +3387,7 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
 
     let max_scan_root = 0;
     db.add_root(max_scan_root);
-    let scan_ancestors: Arc<Ancestors> = Arc::new(vec![(0, 1), (1, 1)].into_iter().collect());
+    let scan_ancestors: Arc<Ancestors> = Arc::new(Ancestors::from(vec![0, 1]));
     let bank_id = 0;
     let scan_tracker = setup_scan(db.clone(), scan_ancestors.clone(), bank_id, account_key2);
 
@@ -3446,7 +3446,7 @@ impl AccountsDb {
     fn get_account_at_slot(&self, pubkey: &Pubkey, slot: Slot) -> Option<AccountSharedData> {
         // Add the slot to ancestors so unrooted slots will be selected
         let mut ancestors = Ancestors::default();
-        ancestors.insert(slot, 1);
+        ancestors.insert(slot);
 
         // Limit the max root to the slot being queried to avoid returning newer rooted slots
         let max_root = Some(slot);
@@ -3619,7 +3619,7 @@ fn setup_accounts_db_cache_clean(
         }
         accounts_db.add_root(*slot as Slot);
         if Some(*slot) == scan_slot {
-            let ancestors = Arc::new(vec![(stall_slot, 1), (*slot, 1)].into_iter().collect());
+            let ancestors = Arc::new(Ancestors::from(vec![stall_slot, *slot]));
             let bank_id = 0;
             scan_tracker = Some(setup_scan(
                 accounts_db.clone(),
@@ -6377,7 +6377,7 @@ fn test_write_accounts_to_cache_scenarios(
     let db = AccountsDb::new_single_for_tests();
     let slot: Slot = 1;
     let key = solana_pubkey::new_rand();
-    let ancestors = vec![(1, 1), (2, 2)].into_iter().collect();
+    let ancestors = Ancestors::from(vec![1, 2]);
 
     // Setup initial state
     match initial_state {

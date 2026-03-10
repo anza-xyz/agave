@@ -44,9 +44,9 @@ mod serde_snapshot_tests {
     };
 
     fn linear_ancestors(end_slot: u64) -> Ancestors {
-        let mut ancestors: Ancestors = vec![(0, 0)].into_iter().collect();
+        let mut ancestors = Ancestors::from(vec![0]);
         for i in 1..end_slot {
-            ancestors.insert(i, (i - 1) as usize);
+            ancestors.insert(i);
         }
         ancestors
     }
@@ -190,7 +190,7 @@ mod serde_snapshot_tests {
     fn check_accounts_local(accounts: &Accounts, pubkeys: &[Pubkey], num: usize) {
         for _ in 1..num {
             let idx = rng().random_range(0..num - 1);
-            let ancestors = vec![(0, 0)].into_iter().collect();
+            let ancestors = Ancestors::from(vec![0]);
             let account = accounts.load_without_fixed_root(&ancestors, &pubkeys[idx]);
             let account1 = Some((
                 AccountSharedData::new((idx + 1) as u64, 0, AccountSharedData::default().owner()),
