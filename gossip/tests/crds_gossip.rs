@@ -19,7 +19,7 @@ use {
         crds_value::{CrdsValue, CrdsValueLabel},
     },
     solana_keypair::Keypair,
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
     solana_sha256_hasher::hash,
@@ -589,7 +589,7 @@ fn network_run_pull(
                             .generate_pull_responses(
                                 thread_pool,
                                 &requests,
-                                usize::MAX, // output_size_limit
+                                &TokenBucket::new(u64::MAX, u64::MAX, 1.0), //outbound data budget
                                 now,
                                 |_| true, // should_retain_crds_value
                                 0,        // network shred version

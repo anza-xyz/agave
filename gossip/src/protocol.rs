@@ -41,8 +41,6 @@ pub(crate) const MAX_PRUNE_DATA_NODES: usize = 32;
 const PRUNE_DATA_PREFIX: &[u8] = b"\xffSOLANA_PRUNE_DATA";
 /// Number of bytes in the randomly generated token sent with ping messages.
 const GOSSIP_PING_TOKEN_SIZE: usize = 32;
-/// Minimum serialized size of a Protocol::PullResponse packet.
-pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
 
 /// Gossip protocol messages base enum
 #[derive(Serialize, Deserialize, Debug)]
@@ -469,20 +467,6 @@ pub(crate) mod tests {
             assert!(pull_response.bincode_serialized_size() < PACKET_DATA_SIZE);
             let push_message = Protocol::PushMessage(keypair.pubkey(), vec![value.clone()]);
             assert!(push_message.bincode_serialized_size() < PACKET_DATA_SIZE);
-        }
-    }
-
-    #[test]
-    fn test_pull_response_min_serialized_size() {
-        let mut rng = rand::rng();
-        for _ in 0..100 {
-            let crds_values = vec![CrdsValue::new_rand(&mut rng, None)];
-            let pull_response = Protocol::PullResponse(Pubkey::new_unique(), crds_values);
-            let size = pull_response.bincode_serialized_size();
-            assert!(
-                PULL_RESPONSE_MIN_SERIALIZED_SIZE <= size,
-                "pull-response serialized size: {size}"
-            );
         }
     }
 

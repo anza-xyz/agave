@@ -32,7 +32,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
@@ -44,7 +44,7 @@ use {
         ops::Index,
         sync::{
             LazyLock, Mutex, RwLock,
-            atomic::{AtomicI64, AtomicUsize, Ordering},
+            atomic::{AtomicUsize, Ordering},
         },
         time::Duration,
     },
@@ -313,22 +313,63 @@ impl CrdsGossipPull {
         thread_pool: &ThreadPool,
         crds: &RwLock<Crds>,
         requests: &[PullRequest],
-        output_size_limit: usize, // Limit number of crds values returned.
+        outbound_budget: &TokenBucket,
         now: u64,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
         self_shred_version: u16,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
-        Self::filter_crds_values(
-            thread_pool,
-            crds,
-            requests,
-            output_size_limit,
-            now,
-            should_retain_crds_value,
-            self_shred_version,
-            stats,
-        )
+        let crds: &RwLock<Crds> = crds;
+        let msg_timeout = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
+        let jitter = rand::rng().random_range(0..msg_timeout / 4);
+        //skip filters from callers that are too old
+        let caller_wallclock_window =
+            now.saturating_sub(msg_timeout)..now.saturating_add(msg_timeout);
+        let dropped_requests = AtomicUsize::default();
+        let total_skipped = AtomicUsize::default();
+        let crds = crds.read().unwrap();
+        let apply_filter = |request: &PullRequest| {
+            if outbound_budget.current_tokens() == 0 {
+                return Vec::default();
+            }
+            let filter = &request.filter;
+            let caller_wallclock = request.wallclock;
+            if !caller_wallclock_window.contains(&caller_wallclock) {
+                dropped_requests.fetch_add(1, Ordering::Relaxed);
+                return Vec::default();
+            }
+            let caller_wallclock = caller_wallclock.checked_add(jitter).unwrap_or(0);
+            let pred = |entry: &&VersionedCrdsValue| {
+                debug_assert!(filter.test_mask(entry.value.hash()));
+                // Skip values that are too new.
+                if entry.value.wallclock() > caller_wallclock {
+                    total_skipped.fetch_add(1, Ordering::Relaxed);
+                    false
+                } else {
+                    !filter.filter_contains(entry.value.hash())
+                        && should_retain_crds_value(&entry.value)
+                }
+            };
+            let out: Vec<_> = crds
+                .filter_bitmask(filter.mask, filter.mask_bits, self_shred_version)
+                .filter(pred)
+                .map(|entry| entry.value.clone())
+                .take_while(|entry| {
+                    outbound_budget
+                        .consume_tokens(entry.bincode_serialized_size() as u64)
+                        .is_ok()
+                })
+                .collect();
+            out
+        };
+        let ret: Vec<_> = thread_pool.install(|| requests.par_iter().map(apply_filter).collect());
+        stats
+            .filter_crds_values_dropped_requests
+            .add_relaxed(dropped_requests.into_inner() as u64);
+        stats
+            .filter_crds_values_dropped_values
+            .add_relaxed(total_skipped.into_inner() as u64);
+        ret
     }
 
     // Checks if responses should be inserted and
@@ -464,69 +505,6 @@ impl CrdsGossipPull {
         drop(crds);
         drop(failed_inserts);
         filters.into()
-    }
-
-    /// Filter values that fail the bloom filter up to `max_bytes`.
-    fn filter_crds_values(
-        thread_pool: &ThreadPool,
-        crds: &RwLock<Crds>,
-        requests: &[PullRequest],
-        output_size_limit: usize, // Limit number of crds values returned.
-        now: u64,
-        // Predicate returning false if the CRDS value should be discarded.
-        should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
-        self_shred_version: u16,
-        stats: &GossipStats,
-    ) -> Vec<Vec<CrdsValue>> {
-        let msg_timeout = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
-        let jitter = rand::rng().random_range(0..msg_timeout / 4);
-        //skip filters from callers that are too old
-        let caller_wallclock_window =
-            now.saturating_sub(msg_timeout)..now.saturating_add(msg_timeout);
-        let dropped_requests = AtomicUsize::default();
-        let total_skipped = AtomicUsize::default();
-        let output_size_limit = output_size_limit.try_into().unwrap_or(i64::MAX);
-        let output_size_limit = AtomicI64::new(output_size_limit);
-        let crds = crds.read().unwrap();
-        let apply_filter = |request: &PullRequest| {
-            if output_size_limit.load(Ordering::Relaxed) <= 0 {
-                return Vec::default();
-            }
-            let filter = &request.filter;
-            let caller_wallclock = request.wallclock;
-            if !caller_wallclock_window.contains(&caller_wallclock) {
-                dropped_requests.fetch_add(1, Ordering::Relaxed);
-                return Vec::default();
-            }
-            let caller_wallclock = caller_wallclock.checked_add(jitter).unwrap_or(0);
-            let pred = |entry: &&VersionedCrdsValue| {
-                debug_assert!(filter.test_mask(entry.value.hash()));
-                // Skip values that are too new.
-                if entry.value.wallclock() > caller_wallclock {
-                    total_skipped.fetch_add(1, Ordering::Relaxed);
-                    false
-                } else {
-                    !filter.filter_contains(entry.value.hash())
-                        && should_retain_crds_value(&entry.value)
-                }
-            };
-            let out: Vec<_> = crds
-                .filter_bitmask(filter.mask, filter.mask_bits, self_shred_version)
-                .filter(pred)
-                .map(|entry| entry.value.clone())
-                .take(output_size_limit.load(Ordering::Relaxed).max(0) as usize)
-                .collect();
-            output_size_limit.fetch_sub(out.len() as i64, Ordering::Relaxed);
-            out
-        };
-        let ret: Vec<_> = thread_pool.install(|| requests.par_iter().map(apply_filter).collect());
-        stats
-            .filter_crds_values_dropped_requests
-            .add_relaxed(dropped_requests.into_inner() as u64);
-        stats
-            .filter_crds_values_dropped_values
-            .add_relaxed(total_skipped.into_inner() as u64);
-        ret
     }
 
     pub(crate) fn make_timeouts<'a>(
@@ -1071,6 +1049,10 @@ pub(crate) mod tests {
         assert!(count < 75, "count of peer != old: {count}");
     }
 
+    fn outbound_budget_for_tests() -> TokenBucket {
+        TokenBucket::new(u64::MAX, u64::MAX, 1.0)
+    }
+
     #[test]
     fn test_generate_pull_responses() {
         let thread_pool = ThreadPoolBuilder::new().build().unwrap();
@@ -1123,7 +1105,7 @@ pub(crate) mod tests {
             &thread_pool,
             &dest_crds,
             &requests,
-            usize::MAX, // output_size_limit
+            &outbound_budget_for_tests(),
             now,
             |_| true, // should_retain_crds_value
             0,        // self_shred_version
@@ -1148,7 +1130,7 @@ pub(crate) mod tests {
             &thread_pool,
             &dest_crds,
             &requests,
-            usize::MAX, // output_size_limit
+            &outbound_budget_for_tests(),
             now,
             |_| true, // should_retain_crds_value
             0,        // self_shred_version
@@ -1175,7 +1157,7 @@ pub(crate) mod tests {
             &thread_pool,
             &dest_crds,
             &requests,
-            usize::MAX, // output_size_limit
+            &outbound_budget_for_tests(),
             now,
             |_| true, // should_retain_crds_value
             0,        // self_shred_version
@@ -1269,10 +1251,10 @@ pub(crate) mod tests {
                 &thread_pool,
                 &dest_crds,
                 &requests,
-                usize::MAX, // output_size_limit
-                0,          // now
-                |_| true,   // should_retain_crds_value
-                0,          // self_shred_version
+                &outbound_budget_for_tests(),
+                0,        // now
+                |_| true, // should_retain_crds_value
+                0,        // self_shred_version
                 &GossipStats::default(),
             );
             // if there is a false positive this is empty
