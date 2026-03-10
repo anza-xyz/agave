@@ -1165,9 +1165,14 @@ fn test_one_tx_two_out_atomic_pass() {
 // This test demonstrates that fees are paid even when a program fails.
 #[test]
 fn test_detect_failed_duplicate_transactions() {
-    let (mut genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
-    genesis_config.fee_rate_governor = FeeRateGovernor::new(5_000, 0);
-    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+    let fee_structure = FeeStructure {
+        lamports_per_signature: 5_000,
+        ..FeeStructure::default()
+    };
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.set_fee_structure(&fee_structure);
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     let dest = Keypair::new();
 
@@ -1195,7 +1200,7 @@ fn test_detect_failed_duplicate_transactions() {
     // This should be the original balance minus the transaction fee.
     assert_eq!(
         bank.get_balance(&mint_keypair.pubkey()),
-        LAMPORTS_PER_SOL - 5_000
+        LAMPORTS_PER_SOL - fee_structure.lamports_per_signature
     );
 }
 
