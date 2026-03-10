@@ -69,7 +69,6 @@ where
                 remaining_cost_units: 0,
                 current_slot_progress: 0,
             },
-            // TODO: Load this properly.
             runtime: RuntimeState {
                 feature_set: FeatureSet::all_enabled(),
                 fee_features: FeeFeatures {},
@@ -129,8 +128,6 @@ where
         let tx = unsafe { TransactionPtr::from_raw_parts(ptr, tx.len()) };
 
         // Sanitize the transaction, drop it immediately if it fails sanitization.
-        //
-        // TODO: Don't hardcode true, true.
         match SanitizedTransactionView::try_new_sanitized(tx, true) {
             Ok(tx) => {
                 let key = self.state.insert(TransactionState {
@@ -221,8 +218,6 @@ where
             };
 
             // Sanitize the transaction, drop it immediately if it fails sanitization.
-            //
-            // TODO: Don't hardcode true, true,
             let Ok(tx) = SanitizedTransactionView::try_new_sanitized(tx, true) else {
                 // SAFETY:
                 // - We own `tx` exclusively.
