@@ -139,7 +139,6 @@ impl SvmTestEnvironment<'_> {
             EXECUTION_EPOCH,
             Arc::downgrade(&fork_graph),
             Some(Arc::new(create_custom_loader())),
-            None, // We are not using program runtime v2.
         );
 
         // The sysvars must be put in the cache

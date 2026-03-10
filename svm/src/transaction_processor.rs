@@ -258,7 +258,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         epoch: Epoch,
         fork_graph: Weak<RwLock<FG>>,
         program_runtime_environment_v1: Option<ProgramRuntimeEnvironment>,
-        program_runtime_environment_v2: Option<ProgramRuntimeEnvironment>,
     ) -> Self {
         let mut processor = Self::new_uninitialized(slot, epoch);
         processor
@@ -279,8 +278,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .upcoming_epoch = processor.epoch;
         processor.environments.program_runtime_v1 =
             program_runtime_environment_v1.unwrap_or(empty_loader());
-        processor.environments.program_runtime_v2 =
-            program_runtime_environment_v2.unwrap_or(empty_loader());
+        processor.environments.program_runtime_v2 = empty_loader();
         processor
     }
 
@@ -1687,7 +1685,7 @@ mod tests {
         let account_loader = (&mock_bank).into();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
         let batch_processor =
-            TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
+            TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None);
         let key = Pubkey::new_unique();
 
         let mut account_set = HashMap::new();
@@ -1712,7 +1710,7 @@ mod tests {
         let mock_bank = MockBankCallback::default();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
         let batch_processor =
-            TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
+            TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None);
         let program_runtime_environments_for_execution =
             batch_processor.get_environments_for_epoch(0);
         let key = Pubkey::new_unique();
@@ -2088,7 +2086,7 @@ mod tests {
     fn test_add_builtin() {
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
         let batch_processor =
-            TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
+            TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None);
 
         let key = Pubkey::new_unique();
         let name = "a_builtin_name";

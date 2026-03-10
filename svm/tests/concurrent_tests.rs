@@ -40,8 +40,7 @@ const MAX_ITERATIONS: usize = 10_000;
 fn program_cache_execution(threads: usize) {
     let mut mock_bank = MockBankCallback::default();
     let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
-    let batch_processor =
-        TransactionBatchProcessor::new(5, 5, Arc::downgrade(&fork_graph), None, None);
+    let batch_processor = TransactionBatchProcessor::new(5, 5, Arc::downgrade(&fork_graph), None);
 
     let programs = vec![
         deploy_program("hello-solana".to_string(), 0, &mut mock_bank),
@@ -146,7 +145,6 @@ fn svm_concurrent() {
         2,
         Arc::downgrade(&fork_graph),
         Some(Arc::new(create_custom_loader())),
-        None, // We are not using program runtime v2.
     ));
 
     mock_bank.configure_sysvars();
