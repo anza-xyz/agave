@@ -285,10 +285,10 @@ pub mod test {
         let keypair = Keypair::new();
         let reed_solomon_cache = ReedSolomonCache::default();
 
-        let completed_shreds: Vec<Shred> = [0, 2, 4, 6]
+        let completed_shreds: Vec<Shred> = [(0, 0), (2, 1), (4, 2), (6, best_overall_slot)]
             .iter()
-            .flat_map(|slot| {
-                let shredder = Shredder::new(*slot, slot.saturating_sub(1), 0, 42).unwrap();
+            .flat_map(|(slot, parent_slot)| {
+                let shredder = Shredder::new(*slot, *parent_slot, 0, 42).unwrap();
                 let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
                     &keypair,
                     &[],
