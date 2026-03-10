@@ -4,7 +4,7 @@ use {
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_clock::{MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY, Slot},
     solana_fee::{FeeFeatures, calculate_fee_details},
-    solana_fee_structure::{FeeBudgetLimits, FeeDetails},
+    solana_fee_structure::FeeBudgetLimits,
     solana_nonce::state::{Data as NonceData, DurableNonce},
     solana_nonce_account as nonce_account,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
@@ -149,20 +149,6 @@ impl Bank {
             .collect()
     }
 
-    fn checked_transactions_details_with_test_override(
-        nonce_address: Option<Pubkey>,
-        lamports_per_signature: u64,
-        mut compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
-    ) -> CheckedTransactionDetails {
-        // This is done to support legacy tests. The tests should be updated, and check
-        // for 0 lamports_per_signature should be removed from the code.
-        if lamports_per_signature == 0 {
-            compute_budget_and_limits.fee_details = FeeDetails::default();
-        }
-
-        CheckedTransactionDetails::new(nonce_address, compute_budget_and_limits)
-    }
-
     fn check_transaction_age(
         &self,
         tx: &impl SVMMessage,
@@ -173,20 +159,15 @@ impl Bank {
         compute_budget: SVMTransactionExecutionAndFeeBudgetLimits,
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.recent_blockhash();
-        if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
-            Ok(Self::checked_transactions_details_with_test_override(
-                None,
-                hash_info.lamports_per_signature(),
-                compute_budget,
-            ))
-        } else if let Some((nonce_address, previous_lamports_per_signature)) =
+        if hash_queue
+            .get_hash_info_if_valid(recent_blockhash, max_age)
+            .is_some()
+        {
+            Ok(CheckedTransactionDetails::new(None, compute_budget))
+        } else if let Some((nonce_address, _)) =
             self.check_nonce_transaction_validity(tx, next_durable_nonce)
         {
-            Ok(Self::checked_transactions_details_with_test_override(
-                Some(nonce_address),
-                previous_lamports_per_signature,
-                compute_budget,
-            ))
+            Ok(CheckedTransactionDetails::new(Some(nonce_address), compute_budget))
         } else {
             error_counters.blockhash_not_found += 1;
             Err(TransactionError::BlockhashNotFound)
