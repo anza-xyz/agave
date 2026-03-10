@@ -69,26 +69,22 @@ for Cargo_toml in $Cargo_tomls; do
       echo "Attempt ${i} of ${numRetries}"
       # The rocksdb package does not build with the stock rust docker image so use
       # the solana rust docker image
-      output=$(mktemp)
-      if ci/docker-run-default-image.sh bash -exc "cd $crate; $cargoCommand" 2>&1 | tee "$output"; then
-        rm -f "$output"
+      if output=$(ci/docker-run-default-image.sh bash -exc "cd $crate; $cargoCommand" 2>&1 | tee /dev/fd/2); then
         break
       fi
 
       if [ "$i" -lt "$numRetries" ]; then
-        if grep -qiE "status 429|429 Too Many Requests" "$output"; then
-          backoff=$((60 * i))
-          echo "Rate limited by crates.io, backing off for ${backoff}s"
-          sleep "$backoff"
+        retry_after=$(sed -n 's/.*Please try again after \(.*\) or email.*/\1/p' <<< "$output")
+        if [[ -n "$retry_after" ]]; then
+          backoff=$(( $(date -d "$retry_after" +%s) - $(date +%s) ))
+          [[ $backoff -gt 0 ]] && sleep "$backoff"
         else
           sleep 3
         fi
       else
-        rm -f "$output"
         echo "couldn't publish '$crate_name'"
         exit 1
       fi
-      rm -f "$output"
     done
   )
 
