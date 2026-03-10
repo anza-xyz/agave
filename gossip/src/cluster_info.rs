@@ -1624,7 +1624,6 @@ impl ClusterInfo {
                         GossipFilterDirection::EgressPullResponse,
                     )
                 },
-                self.my_shred_version(),
                 &self.stats,
             )
         };

@@ -237,7 +237,6 @@ impl CrdsGossip {
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
-        self_shred_version: u16,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         CrdsGossipPull::generate_pull_responses(
@@ -247,7 +246,6 @@ impl CrdsGossip {
             output_size_limit,
             now,
             should_retain_crds_value,
-            self_shred_version,
             stats,
         )
     }
