@@ -6052,7 +6052,7 @@ mod tests {
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
         let feature_set = SVMFeatureSet::default();
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = get_mock_program_runtime_environments();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
@@ -6118,7 +6118,7 @@ mod tests {
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
         let feature_set = SVMFeatureSet::default();
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = get_mock_program_runtime_environments();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,

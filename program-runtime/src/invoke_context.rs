@@ -807,7 +807,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
-                loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+                loaded_programs::{ProgramCacheForTxBatch, get_mock_program_runtime_environments},
                 sysvar_cache::SysvarCache,
             },
         };
@@ -843,7 +843,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 }
             }
         });
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = get_mock_program_runtime_environments();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,

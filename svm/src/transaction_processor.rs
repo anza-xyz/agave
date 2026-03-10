@@ -1245,7 +1245,9 @@ mod tests {
             execution_budget::{
                 SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
             },
-            loaded_programs::{BlockRelation, ProgramCacheEntryType},
+            loaded_programs::{
+                BlockRelation, ProgramCacheEntryType, get_mock_program_runtime_environments,
+            },
         },
         solana_rent::Rent,
         solana_sdk_ids::{bpf_loader, loader_v4, system_program, sysvar},
@@ -1696,7 +1698,7 @@ mod tests {
         batch_processor.replenish_program_cache(
             &account_loader,
             &account_set,
-            &ProgramRuntimeEnvironments::default(),
+            &get_mock_program_runtime_environments(),
             &mut program_cache_for_tx_batch,
             &mut ExecuteTimings::default(),
             false,
