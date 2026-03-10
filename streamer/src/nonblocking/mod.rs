@@ -1,9 +1,9 @@
 pub mod connection_rate_limiter;
-pub(crate) mod load_debt_tracker;
+mod load_debt_tracker;
 pub mod qos;
 pub mod quic;
 pub mod simple_qos;
-pub(crate) mod stream_throttle;
+mod stream_throttle;
 pub mod swqos;
 pub mod swqos_max_streams;
 #[cfg(feature = "dev-context-only-utils")]

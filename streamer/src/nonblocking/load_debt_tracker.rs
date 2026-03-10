@@ -79,7 +79,8 @@ impl LoadDebtTracker {
         self.saturated.load(Ordering::Relaxed)
     }
 
-    /// Return the current bucket level.
+    /// Return the current bucket level (testing only).
+    #[cfg(test)]
     pub fn bucket_level(&self) -> i64 {
         self.bucket.load(Ordering::Relaxed)
     }
@@ -93,7 +94,7 @@ impl LoadDebtTracker {
     ///
     /// When `force` is false, a cheap elapsed-time pre-check avoids the CAS
     /// unless a refill is actually due. When `force` is true, the pre-check
-    /// is skipped so a threshold transition can be recorded promptly.
+    /// is skipped so a saturation transition can be detected promptly.
     fn update_state_inner(&self, force: bool) {
         let now_nanos = self.nanos_since_epoch();
         self.update_state_at(now_nanos, force);
