@@ -287,7 +287,7 @@ hex-literal = "1.1.0"
 hidapi = { version = "2.6.5", default-features = false }
 histogram = "0.6.9"
 hmac = "0.12.1"
-http = "1.1.0"
+http = "1.4.0"
 humantime = "2.3.0"
 hyper-util = "0.1.20"
 im = "15.1.0"
