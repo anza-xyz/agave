@@ -388,6 +388,11 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
                         // If we couldn't prune a connection in the staked connection table, let's
                         // put this connection in the unstaked connection table. If needed, prune a
                         // connection from the unstaked connection table.
+                        //
+                        // NOTE: This fallback can place the same staked pubkey in both tables.
+                        // The per-peer stream counter is table-local, so saturated per-connection
+                        // quota division can temporarily over-allocate for that pubkey (bounded
+                        // in practice by two tables). This is an accepted approximation.
                         if let Ok((last_update, cancel_connection, stream_counter)) = self
                             .prune_unstaked_connections_and_add_new_connection(
                                 client_connection_tracker,
@@ -457,19 +462,12 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
 
     fn on_stream_accepted(&self, context: &SwQosMaxStreamsConnectionContext) {
         self.load_tracker.acquire();
-        if self.load_tracker.is_saturated() {
-            match context.peer_type {
-                ConnectionPeerType::Staked(_) => {
-                    self.stats
-                        .saturated_staked_streams
-                        .fetch_add(1, Ordering::Relaxed);
-                }
-                ConnectionPeerType::Unstaked => {
-                    self.stats
-                        .saturated_unstaked_streams
-                        .fetch_add(1, Ordering::Relaxed);
-                }
-            }
+        if matches!(context.peer_type, ConnectionPeerType::Staked(_))
+            && self.load_tracker.is_saturated()
+        {
+            self.stats
+                .saturated_staked_streams
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
 

@@ -52,10 +52,7 @@ impl LoadDebtTracker {
         refill_interval: Duration,
     ) -> Self {
         let refill_interval_nanos = refill_interval.as_nanos();
-        assert!(
-            refill_interval_nanos > 0,
-            "refill_interval must be > 0"
-        );
+        assert!(refill_interval_nanos > 0, "refill_interval must be > 0");
         assert!(
             burst_capacity <= i64::MAX as u64,
             "burst_capacity must fit i64"

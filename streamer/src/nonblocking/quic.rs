@@ -628,7 +628,9 @@ async fn handle_connection<Q, C>(
 
             if max_streams == 0 {
                 // Park: don't accept streams, wait for load to drop
-                stats.parked_streams.fetch_add(1, Ordering::Relaxed);
+                stats
+                    .unstaked_connections_parked
+                    .fetch_add(1, Ordering::Relaxed);
                 let recheck_delay = park_recheck_backoff.next_delay();
                 select! {
                     _ = tokio::time::sleep(recheck_delay) => continue,

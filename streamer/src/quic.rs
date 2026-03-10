@@ -216,7 +216,7 @@ pub struct StreamerStats {
     pub(crate) stream_load_ema: AtomicUsize,
     pub(crate) stream_load_ema_overflow: AtomicUsize,
     pub(crate) stream_load_capacity_overflow: AtomicUsize,
-    pub(crate) parked_streams: AtomicUsize,
+    pub(crate) unstaked_connections_parked: AtomicUsize,
     pub(crate) total_staked_packets_sent_for_batching: AtomicUsize,
     pub(crate) total_unstaked_packets_sent_for_batching: AtomicUsize,
     pub(crate) throttled_staked_streams: AtomicUsize,
@@ -237,8 +237,6 @@ pub struct StreamerStats {
     pub(crate) quic_endpoints_count: AtomicUsize,
     /// Streams accepted while the system was saturated (staked peers).
     pub(crate) saturated_staked_streams: AtomicUsize,
-    /// Streams accepted while the system was saturated (unstaked peers).
-    pub(crate) saturated_unstaked_streams: AtomicUsize,
 }
 
 impl StreamerStats {
@@ -551,18 +549,13 @@ impl StreamerStats {
                 i64
             ),
             (
-                "parked_streams",
-                self.parked_streams.swap(0, Ordering::Relaxed),
+                "unstaked_connections_parked",
+                self.unstaked_connections_parked.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "saturated_staked_streams",
                 self.saturated_staked_streams.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "saturated_unstaked_streams",
-                self.saturated_unstaked_streams.swap(0, Ordering::Relaxed),
                 i64
             ),
         );
