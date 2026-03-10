@@ -664,25 +664,25 @@ mod serde_snapshot_tests {
         current_slot += 1;
         assert_eq!(0, accounts.alive_account_count_in_slot(current_slot));
         accounts.add_root_and_flush_write_cache(current_slot - 1);
-        accounts.assert_ref_count(&pubkey1, 1);
+        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
         accounts.store_for_tests((current_slot, [(&pubkey1, &account2)].as_slice()));
         accounts.store_for_tests((current_slot, [(&pubkey1, &account2)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
         assert_eq!(1, accounts.alive_account_count_in_slot(current_slot));
-        // Stores to same pubkey, same slot only count once towards the
-        accounts.assert_ref_count(&pubkey1, 2);
+        // Ref count is 1 as the older version in the previous slot was marked obsolete
+        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
 
         // C: Yet more update to trigger lazy clean of step A
         current_slot += 1;
-        accounts.assert_ref_count(&pubkey1, 2);
+        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
         accounts.store_for_tests((current_slot, [(&pubkey1, &account3)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
-        accounts.assert_ref_count(&pubkey1, 3);
+        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
         accounts.add_root_and_flush_write_cache(current_slot);
 
         // D: Make pubkey1 0-lamport; also triggers clean of step B
         current_slot += 1;
-        accounts.assert_ref_count(&pubkey1, 3);
+        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
         accounts.store_for_tests((current_slot, [(&pubkey1, &zero_lamport_account)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
         // had to be a root to flush, but clean won't work as this test expects if it is a root
@@ -703,9 +703,8 @@ mod serde_snapshot_tests {
             .alive_roots
             .insert(current_slot);
 
-        // Removed one reference from the dead slot (reference only counted once
-        // even though there were two stores to the pubkey in that slot)
-        accounts.assert_ref_count(&pubkey1, 3);
+        // Ref count is 1 as the older versions were marked obsolete
+        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
         accounts.add_root(current_slot);
 
         // E: Avoid missing bank hash error

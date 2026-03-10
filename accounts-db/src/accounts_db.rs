@@ -6832,22 +6832,6 @@ impl AccountsDb {
         }
     }
 
-    // With obsolete accounts marked, obsolete references are marked in the storage
-    // and no longer need to be referenced. This leads to a static reference count
-    // of 1. As referencing checking is common in tests, this test wrapper abstracts the behavior
-    pub fn assert_ref_count(&self, pubkey: &Pubkey, expected_ref_count: RefCount) {
-        let expected_ref_count = match self.mark_obsolete_accounts {
-            MarkObsoleteAccounts::Disabled => expected_ref_count,
-            // When obsolete accounts are marked, the ref count is always 1 or 0
-            MarkObsoleteAccounts::Enabled => expected_ref_count.min(1),
-        };
-
-        assert_eq!(
-            self.accounts_index.ref_count_from_storage(pubkey),
-            expected_ref_count,
-        );
-    }
-
     pub fn alive_account_count_in_slot(&self, slot: Slot) -> usize {
         self.storage
             .get_slot_storage_entry(slot)
