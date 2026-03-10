@@ -41,8 +41,8 @@ impl<M> SchedulerBindingsBridge<M>
 where
     M: Copy,
 {
-    const TX_BATCH_META_OFFSET: usize = Batch::<M>::TX_META_START;
-    const TX_BATCH_SIZE: usize = Batch::<M>::TX_META_END;
+    const TRANSACTION_BATCH_META_OFFSET: usize = Batch::<M>::TRANSACTION_META_START;
+    const TRANSACTION_BATCH_SIZE: usize = Batch::<M>::TRANSACTION_META_END;
 
     #[must_use]
     pub fn new(
@@ -106,11 +106,14 @@ where
         &mut self.workers[id]
     }
 
-    pub fn tx(&self, key: TransactionKey) -> &TransactionState {
+    pub fn transaction(&self, key: TransactionKey) -> &TransactionState {
         &self.state[key]
     }
 
-    pub fn tx_insert(&mut self, tx: &[u8]) -> Result<TransactionKey, TransactionViewError> {
+    pub fn insert_transaction(
+        &mut self,
+        tx: &[u8],
+    ) -> Result<TransactionKey, TransactionViewError> {
         assert!(tx.len() <= PACKET_DATA_SIZE);
 
         let ptr = self
@@ -153,7 +156,7 @@ where
         }
     }
 
-    pub fn tx_drop(&mut self, key: TransactionKey) {
+    pub fn drop_transaction(&mut self, key: TransactionKey) {
         // If we have requests that have borrowed this shared transaction region, then
         // we can't immediately clean up and must instead flag it as dead.
         match self.state[key].borrows {
@@ -197,7 +200,7 @@ where
         self.tpu_to_pack.len()
     }
 
-    pub fn tpu_drain(
+    pub fn drain_tpu(
         &mut self,
         mut callback: impl FnMut(&mut Self, TransactionKey) -> TxDecision,
         max_count: usize,
@@ -257,7 +260,7 @@ where
         sanitize_failures
     }
 
-    pub fn worker_drain(
+    pub fn drain_worker(
         &mut self,
         worker: usize,
         mut callback: impl FnMut(&mut Self, WorkerResponse<'_, M>) -> TxDecision,
@@ -303,7 +306,9 @@ where
         assert!(batch.len() <= MAX_TRANSACTIONS_PER_MESSAGE);
 
         // Allocate a batch that can hold all our transaction pointers.
-        let transactions = allocator.allocate(Self::TX_BATCH_SIZE as u32).unwrap();
+        let transactions = allocator
+            .allocate(Self::TRANSACTION_BATCH_SIZE as u32)
+            .unwrap();
         let transactions_offset = unsafe { allocator.offset(transactions) };
 
         // Get our two pointers to the TX region & meta region.
@@ -318,7 +323,7 @@ where
         let meta_ptr = unsafe {
             allocator
                 .ptr_from_offset(transactions_offset)
-                .byte_add(Self::TX_BATCH_META_OFFSET)
+                .byte_add(Self::TRANSACTION_BATCH_META_OFFSET)
                 .cast::<KeyedTransactionMeta<M>>()
         };
 
@@ -363,7 +368,11 @@ where
         };
         // SAFETY:
         // - We ensured that this batch was originally allocated to support M.
-        let metas = unsafe { transactions.byte_add(Batch::<M>::TX_META_START).cast() };
+        let metas = unsafe {
+            transactions
+                .byte_add(Batch::<M>::TRANSACTION_META_START)
+                .cast()
+        };
 
         let responses = match (rep.processed_code, rep.responses.tag) {
             (processed_codes::PROCESSED, worker_message_types::EXECUTION_RESPONSE) => {
@@ -400,7 +409,7 @@ where
 
             // Remove the tx from state & drop the allocation if requested.
             if decision == TxDecision::Drop {
-                self.tx_drop(key);
+                self.drop_transaction(key);
             }
         }
 

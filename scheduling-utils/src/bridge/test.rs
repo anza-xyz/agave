@@ -332,13 +332,13 @@ where
 
         // Allocate the batch container in worker's shared memory.
         let batch_ptr = worker_allocator
-            .allocate(Batch::<M>::TX_META_END as u32)
+            .allocate(Batch::<M>::TRANSACTION_META_END as u32)
             .unwrap();
         let batch_offset = unsafe { worker_allocator.offset(batch_ptr) };
 
         // Write the transaction region (offset is relative to the shared allocator,
         // which is the same underlying file for both client and worker).
-        let tx_state = self.bridge.tx(meta.key);
+        let tx_state = self.bridge.transaction(meta.key);
         let tx_region = unsafe {
             tx_state
                 .data
@@ -352,7 +352,7 @@ where
         let meta_ptr = unsafe {
             batch_ptr
                 .as_ptr()
-                .byte_add(Batch::<M>::TX_META_START)
+                .byte_add(Batch::<M>::TRANSACTION_META_START)
                 .cast::<KeyedTransactionMeta<M>>()
         };
         unsafe { meta_ptr.write(meta) };
