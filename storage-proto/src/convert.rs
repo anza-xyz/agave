@@ -1356,6 +1356,10 @@ mod test {
         reward.reward_type = Some(RewardType::Staking);
         let gen_reward: generated::Reward = reward.clone().into();
         assert_eq!(reward, gen_reward.into());
+
+        reward.reward_type = Some(RewardType::DeactivatedStake);
+        let gen_reward: generated::Reward = reward.clone().into();
+        assert_eq!(reward, gen_reward.into());
     }
 
     #[test]
