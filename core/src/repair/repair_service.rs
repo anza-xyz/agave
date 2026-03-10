@@ -783,58 +783,33 @@ impl RepairService {
         }
     }
 
-    pub fn generate_repairs_for_slot_throttled_by_tick(
-        blockstore: &Blockstore,
-        slot: Slot,
-        slot_meta: &SlotMeta,
-        max_repairs: usize,
-        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
-    ) -> Vec<ShredRepairType> {
-        Self::generate_repairs_for_slot(
-            blockstore,
-            slot,
-            slot_meta,
-            max_repairs,
-            true,
-            outstanding_repairs,
-        )
-    }
-
     /// If this slot is missing shreds generate repairs
-    fn generate_repairs_for_slot(
+    pub(crate) fn generate_repairs_for_slot(
         blockstore: &Blockstore,
         slot: Slot,
         slot_meta: &SlotMeta,
         max_repairs: usize,
-        throttle_requests_by_shred_tick: bool,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
-        let defer_repair_threshold_ticks = if throttle_requests_by_shred_tick {
-            DEFER_REPAIR_THRESHOLD_TICKS
-        } else {
-            0
-        };
         if max_repairs == 0 || slot_meta.is_full() {
             vec![]
         } else if slot_meta.consumed == slot_meta.received {
-            if throttle_requests_by_shred_tick {
-                // check delay time of last shred
-                if let Some(reference_tick) = slot_meta
-                    .received
-                    .checked_sub(1)
-                    .and_then(|index| blockstore.get_data_shred(slot, index).ok()?)
-                    .and_then(|shred| shred::layout::get_reference_tick(&shred).ok())
-                    .map(u64::from)
+            // check delay time of last shred
+            if let Some(reference_tick) = slot_meta
+                .received
+                .checked_sub(1)
+                .and_then(|index| blockstore.get_data_shred(slot, index).ok()?)
+                .and_then(|shred| shred::layout::get_reference_tick(&shred).ok())
+                .map(u64::from)
+            {
+                // System time is not monotonic
+                let ticks_since_first_insert = DEFAULT_TICKS_PER_SECOND
+                    * timestamp().saturating_sub(slot_meta.first_shred_timestamp)
+                    / 1_000;
+                if ticks_since_first_insert
+                    < reference_tick.saturating_add(DEFER_REPAIR_THRESHOLD_TICKS)
                 {
-                    // System time is not monotonic
-                    let ticks_since_first_insert = DEFAULT_TICKS_PER_SECOND
-                        * timestamp().saturating_sub(slot_meta.first_shred_timestamp)
-                        / 1_000;
-                    if ticks_since_first_insert
-                        < reference_tick.saturating_add(defer_repair_threshold_ticks)
-                    {
-                        return vec![];
-                    }
+                    return vec![];
                 }
             }
 
@@ -850,7 +825,7 @@ impl RepairService {
                 .find_missing_data_indexes(
                     slot,
                     slot_meta.first_shred_timestamp,
-                    defer_repair_threshold_ticks,
+                    DEFER_REPAIR_THRESHOLD_TICKS,
                     slot_meta.consumed,
                     slot_meta.received,
                     max_repairs,
@@ -878,7 +853,7 @@ impl RepairService {
         while repairs.len() < max_repairs && !pending_slots.is_empty() {
             let slot = pending_slots.pop().unwrap();
             if let Some(slot_meta) = blockstore.meta(slot).unwrap() {
-                let new_repairs = Self::generate_repairs_for_slot_throttled_by_tick(
+                let new_repairs = Self::generate_repairs_for_slot(
                     blockstore,
                     slot,
                     &slot_meta,
@@ -1062,7 +1037,7 @@ impl RepairService {
                     ..SlotMeta::default()
                 });
 
-            let new_repairs = Self::generate_repairs_for_slot_throttled_by_tick(
+            let new_repairs = Self::generate_repairs_for_slot(
                 blockstore,
                 slot,
                 &meta,
@@ -1085,7 +1060,7 @@ impl RepairService {
                 // If the slot is full, no further need to repair this slot
                 None
             } else {
-                Some(Self::generate_repairs_for_slot_throttled_by_tick(
+                Some(Self::generate_repairs_for_slot(
                     blockstore,
                     slot,
                     &slot_meta,
