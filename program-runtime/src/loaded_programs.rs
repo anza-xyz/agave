@@ -1240,11 +1240,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     }
 
     /// Returns the list of entries which are verified and compiled.
-    pub fn get_flattened_entries(
-        &self,
-        include_program_runtime_v1: bool,
-        _include_program_runtime_v2: bool,
-    ) -> Vec<(Pubkey, Slot, Arc<ProgramCacheEntry>)> {
+    pub fn get_flattened_entries(&self) -> Vec<(Pubkey, Slot, Arc<ProgramCacheEntry>)> {
         match &self.index {
             IndexImplementation::V1 { entries, .. } => entries
                 .iter()
@@ -1252,13 +1248,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     second_level
                         .iter()
                         .filter_map(move |program| match program.program {
-                            ProgramCacheEntryType::Loaded(_) => {
-                                if include_program_runtime_v1 {
-                                    Some((*id, 0, program.clone()))
-                                } else {
-                                    None
-                                }
-                            }
+                            ProgramCacheEntryType::Loaded(_) => Some((*id, 0, program.clone())),
                             _ => None,
                         })
                 })
@@ -1290,7 +1280,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
 
     /// Unloads programs which were used infrequently
     pub fn sort_and_unload(&mut self, shrink_to: PercentageInteger) {
-        let mut sorted_candidates = self.get_flattened_entries(true, true);
+        let mut sorted_candidates = self.get_flattened_entries();
         sorted_candidates.sort_by_cached_key(|(_id, _last_modification_slot, program)| {
             program.tx_usage_counter.load(Ordering::Relaxed)
         });
@@ -1306,7 +1296,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     /// Evicts programs using 2's random selection, choosing the least used program out of the two entries.
     /// The eviction is performed enough number of times to reduce the cache usage to the given percentage.
     pub fn evict_using_2s_random_selection(&mut self, shrink_to: PercentageInteger, now: Slot) {
-        let mut candidates = self.get_flattened_entries(true, true);
+        let mut candidates = self.get_flattened_entries();
         self.stats
             .water_level
             .store(candidates.len() as u64, Ordering::Relaxed);

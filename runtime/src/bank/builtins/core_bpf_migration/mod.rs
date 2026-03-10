@@ -730,7 +730,7 @@ pub(crate) mod tests {
                 .global_program_cache
                 .read()
                 .unwrap();
-            let entries = program_cache.get_flattened_entries(true, true);
+            let entries = program_cache.get_flattened_entries();
             let target_entry = entries
                 .iter()
                 .find(|(program_id, _last_modification_slot, _entry)| {
