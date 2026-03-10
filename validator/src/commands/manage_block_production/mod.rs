@@ -18,7 +18,6 @@ const COMMAND: &str = "manage-block-production";
 #[derive(Debug, PartialEq)]
 pub struct ManageBlockProductionArgs {
     pub block_production_method: BlockProductionMethod,
-    pub transaction_structure: TransactionStructure,
     pub num_workers: NonZeroUsize,
     pub pacing_fill_time_millis: SchedulerPacing,
 }
@@ -29,6 +28,11 @@ impl FromClapArgMatches for ManageBlockProductionArgs {
             warn!("Using `--transaction-structure` is deprecated and has no effect.");
         }
 
+        // Preserve validation of legacy values, but do not thread the result
+        // through block production configuration anymore.
+        let _transaction_structure =
+            value_t!(matches, "transaction_struct", TransactionStructure).unwrap_or_default();
+
         Ok(ManageBlockProductionArgs {
             block_production_method: value_t!(
                 matches,
@@ -36,8 +40,6 @@ impl FromClapArgMatches for ManageBlockProductionArgs {
                 BlockProductionMethod
             )
             .unwrap_or_default(),
-            transaction_structure: value_t!(matches, "transaction_struct", TransactionStructure)
-                .unwrap_or_default(),
             num_workers: value_t!(matches, "block_production_num_workers", NonZeroUsize)
                 .unwrap_or(BankingStage::default_num_workers()),
             pacing_fill_time_millis: value_t!(
@@ -97,10 +99,9 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     let manage_block_production_args = ManageBlockProductionArgs::from_clap_arg_match(matches)?;
 
     println!(
-        "Respawning block-production threads with method: {}, transaction structure: {}, \
-         num_workers: {}, pacing_fill_time_millis: {}",
+        "Respawning block-production threads with method: {}, num_workers: {}, \
+         pacing_fill_time_millis: {}",
         manage_block_production_args.block_production_method,
-        manage_block_production_args.transaction_structure,
         manage_block_production_args.num_workers,
         manage_block_production_args.pacing_fill_time_millis,
     );
@@ -110,7 +111,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
             .await?
             .manage_block_production(
                 manage_block_production_args.block_production_method,
-                manage_block_production_args.transaction_structure,
+                TransactionStructure::default(),
                 manage_block_production_args.num_workers,
                 manage_block_production_args.pacing_fill_time_millis,
             )
@@ -139,7 +140,6 @@ mod tests {
             args,
             ManageBlockProductionArgs {
                 block_production_method: BlockProductionMethod::default(),
-                transaction_structure: TransactionStructure::default(),
                 num_workers: BankingStage::default_num_workers(),
                 pacing_fill_time_millis: SchedulerConfig::default().scheduler_pacing,
             }
@@ -167,7 +167,6 @@ mod tests {
             args,
             ManageBlockProductionArgs {
                 block_production_method: BlockProductionMethod::CentralScheduler,
-                transaction_structure: TransactionStructure::Sdk,
                 num_workers: NonZeroUsize::new(4).unwrap(),
                 pacing_fill_time_millis: SchedulerPacing::FillTimeMillis(
                     NonZeroU64::new(50).unwrap()
@@ -197,7 +196,6 @@ mod tests {
             args,
             ManageBlockProductionArgs {
                 block_production_method: BlockProductionMethod::CentralScheduler,
-                transaction_structure: TransactionStructure::Sdk,
                 num_workers: NonZeroUsize::new(4).unwrap(),
                 pacing_fill_time_millis: SchedulerPacing::Disabled,
             }

@@ -257,6 +257,12 @@ impl BlockProductionMethod {
 )]
 #[strum(serialize_all = "kebab-case")]
 #[serde(rename_all = "kebab-case")]
+/// Compatibility-only enum for deprecated CLI/RPC plumbing.
+///
+/// `--transaction-structure` no longer affects validator behavior. Keep this
+/// enum around only so legacy CLI arguments and RPC callers continue to accept
+/// the historical `sdk` and `view` values until the next intentional breaking
+/// removal.
 pub enum TransactionStructure {
     Sdk,
     #[default]
