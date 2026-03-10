@@ -6166,7 +6166,7 @@ impl Bank {
         test_config: BankTestConfig,
         paths: Vec<PathBuf>,
     ) -> Self {
-        Self::new_from_genesis(
+        let mut bank = Self::new_from_genesis(
             genesis_config,
             runtime_config,
             paths,
@@ -6177,7 +6177,13 @@ impl Bank {
             Arc::default(),
             None,
             None,
-        )
+        );
+        // Keep test-bank fee structure aligned with the genesis fee configuration.
+        bank.set_fee_structure(&FeeStructure {
+            lamports_per_signature: genesis_config.fee_rate_governor.lamports_per_signature,
+            ..FeeStructure::default()
+        });
+        bank
     }
 
     pub fn new_for_benches(genesis_config: &GenesisConfig) -> Self {
