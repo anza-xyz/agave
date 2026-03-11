@@ -20,7 +20,14 @@ use {
 };
 
 /// CrdsValue that is replicated across the cluster
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "8H1HW2pngBhajU5S34axTeNfvfawQF4Ra2yRrnnFZszS",
+        abi_digest = "Ba2bWzxrB5f7kC6Rb1kxtqvd8NpTEbjwGyicrSFvqLYG"
+    )
+)]
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct CrdsValue {
     signature: Signature,
@@ -207,6 +214,20 @@ impl CrdsValue {
             .map(usize::try_from)
             .unwrap()
             .unwrap()
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<CrdsValue>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> CrdsValue {
+        let data: CrdsData = rng.random();
+        CrdsValue {
+            signature: Signature::from(rng.random::<[u8; 64]>()),
+            data,
+            hash: Hash::new_from_array(rng.random()),
+        }
     }
 }
 
