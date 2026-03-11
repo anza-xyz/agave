@@ -1,14 +1,12 @@
 use {
     crate::handshake::{
-        ClientLogon,
+        AgaveHandshakeError, AgaveTpuToPackSession, AgaveWorkerSession, ClientLogon,
         shared::{
-            GLOBAL_ALLOCATORS, LOGON_FAILURE, LOGON_SUCCESS, MAX_ALLOCATOR_HANDLES, MAX_WORKERS,
-            VERSION,
+            AgaveSession, GLOBAL_ALLOCATORS, LOGON_FAILURE, LOGON_SUCCESS, MAX_ALLOCATOR_HANDLES,
+            MAX_WORKERS, VERSION,
         },
     },
-    agave_scheduler_bindings::{
-        PackToWorkerMessage, ProgressMessage, TpuToPackMessage, WorkerToPackMessage,
-    },
+    agave_scheduler_bindings::PackToWorkerMessage,
     nix::sys::socket::{self, ControlMessage, MsgFlags, UnixAddr},
     rts_alloc::Allocator,
     std::{
@@ -22,7 +20,6 @@ use {
         path::Path,
         time::{Duration, Instant},
     },
-    thiserror::Error,
 };
 
 type ShaqError = shaq::error::Error;
@@ -161,13 +158,8 @@ impl Server {
         // Setup the worker sessions.
         let (worker_files, workers) = (0..logon.worker_count).try_fold(
             (Vec::default(), Vec::default()),
-            |(mut fds, mut workers), offset| {
-                // NB: Server validates all requested counts are within expected bands so this
-                // should never panic.
-                let worker_index = GLOBAL_ALLOCATORS.checked_add(offset).unwrap();
-                let worker_index = u32::try_from(worker_index).unwrap();
-                // SAFETY: Worker index is guaranteed to be unique.
-                let allocator = unsafe { Allocator::join(&allocator_file, worker_index) }?;
+            |(mut fds, mut workers), _| {
+                let allocator = Allocator::join(&allocator_file)?;
 
                 let (pack_to_worker_file, pack_to_worker) =
                     Self::create_consumer(logon.pack_to_worker_capacity)?;
@@ -213,13 +205,14 @@ impl Server {
             let allocator_file = Self::create_shmem(huge)?;
             let allocator_file_size = Self::align_file_size(logon.allocator_size, huge);
 
-            Allocator::create(
-                &allocator_file,
-                allocator_file_size,
-                u32::try_from(allocator_count).unwrap(),
-                2 * 1024 * 1024,
-                0,
-            )
+            unsafe {
+                Allocator::create(
+                    &allocator_file,
+                    allocator_file_size,
+                    u32::try_from(allocator_count).unwrap(),
+                    2 * 1024 * 1024,
+                )
+            }
             .map(|allocator| (allocator_file, allocator))
         };
 
@@ -230,14 +223,15 @@ impl Server {
     fn create_producer<T>(
         capacity: usize,
         huge: bool,
-    ) -> Result<(File, shaq::Producer<T>), ShaqError> {
+    ) -> Result<(File, shaq::spsc::Producer<T>), ShaqError> {
         let create = |huge: bool| {
             let file = Self::create_shmem(huge)?;
-            let minimum_file_size = shaq::minimum_file_size::<T>(capacity);
+            let minimum_file_size = shaq::spsc::minimum_file_size::<T>(capacity);
             let file_size = Self::align_file_size(minimum_file_size, huge);
 
             // SAFETY: uniqely creating as producer
-            unsafe { shaq::Producer::create(&file, file_size) }.map(|producer| (file, producer))
+            unsafe { shaq::spsc::Producer::create(&file, file_size) }
+                .map(|producer| (file, producer))
         };
 
         // Try to create with huge pages, fallback to regular pages.
@@ -249,14 +243,15 @@ impl Server {
 
     fn create_consumer(
         capacity: usize,
-    ) -> Result<(File, shaq::Consumer<PackToWorkerMessage>), ShaqError> {
+    ) -> Result<(File, shaq::spsc::Consumer<PackToWorkerMessage>), ShaqError> {
         let create = |huge: bool| {
             let file = Self::create_shmem(huge)?;
-            let minimum_file_size = shaq::minimum_file_size::<PackToWorkerMessage>(capacity);
+            let minimum_file_size = shaq::spsc::minimum_file_size::<PackToWorkerMessage>(capacity);
             let file_size = Self::align_file_size(minimum_file_size, huge);
 
             // SAFETY: uniquely creating as consumer.
-            unsafe { shaq::Consumer::create(&file, file_size) }.map(|producer| (file, producer))
+            unsafe { shaq::spsc::Consumer::create(&file, file_size) }
+                .map(|producer| (file, producer))
         };
 
         // Try to create with huge pages, fallback to regular pages.
@@ -340,50 +335,4 @@ impl Server {
             false => size.next_multiple_of(4096),
         }
     }
-}
-
-/// An initialized scheduling session.
-pub struct AgaveSession {
-    pub flags: u16,
-    pub tpu_to_pack: AgaveTpuToPackSession,
-    pub progress_tracker: shaq::Producer<ProgressMessage>,
-    pub workers: Vec<AgaveWorkerSession>,
-}
-
-/// Shared memory objects for the tpu to pack worker.
-pub struct AgaveTpuToPackSession {
-    pub allocator: Allocator,
-    pub producer: shaq::Producer<TpuToPackMessage>,
-}
-
-/// Shared memory objects for a single banking worker.
-pub struct AgaveWorkerSession {
-    pub allocator: Allocator,
-    pub pack_to_worker: shaq::Consumer<PackToWorkerMessage>,
-    pub worker_to_pack: shaq::Producer<WorkerToPackMessage>,
-}
-
-/// Potential errors that can occur during the Agave side of the handshake.
-///
-/// # Note
-///
-/// These errors are stringified (up to 256 bytes then truncated) and sent to the client.
-#[derive(Debug, Error)]
-pub enum AgaveHandshakeError {
-    #[error("Io; err={0}")]
-    Io(#[from] std::io::Error),
-    #[error("Timeout")]
-    Timeout,
-    #[error("Close during handshake")]
-    EofDuringHandshake,
-    #[error("Version; server={server}; client={client}")]
-    Version { server: u64, client: u64 },
-    #[error("Worker count; count={0}")]
-    WorkerCount(usize),
-    #[error("Allocator handles; count={0}")]
-    AllocatorHandles(usize),
-    #[error("Rts alloc; err={0:?}")]
-    RtsAlloc(#[from] RtsAllocError),
-    #[error("Shaq; err={0:?}")]
-    Shaq(#[from] ShaqError),
 }

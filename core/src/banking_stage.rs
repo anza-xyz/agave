@@ -92,9 +92,7 @@ pub mod unified_scheduler;
 #[cfg(not(feature = "dev-context-only-utils"))]
 pub(crate) mod unified_scheduler;
 
-#[cfg(unix)]
 mod progress_tracker;
-#[cfg(unix)]
 mod tpu_to_pack;
 
 /// The maximum number of worker threads that can be spawned by banking stage.
@@ -732,7 +730,7 @@ mod external {
     use {
         super::*,
         crate::banking_stage::consume_worker::external::ExternalWorker,
-        agave_scheduling_utils::handshake::server::{AgaveSession, AgaveWorkerSession},
+        agave_scheduling_utils::handshake::{AgaveSession, AgaveWorkerSession},
         tpu_to_pack::BankingPacketReceivers,
     };
 
@@ -850,7 +848,7 @@ pub enum BankingControlMsg {
     },
     #[cfg(unix)]
     External {
-        session: agave_scheduling_utils::handshake::server::AgaveSession,
+        session: agave_scheduling_utils::handshake::AgaveSession,
     },
 }
 

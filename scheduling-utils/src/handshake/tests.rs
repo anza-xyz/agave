@@ -1,8 +1,6 @@
 use {
     crate::handshake::{
-        ClientLogon,
-        client::{ClientHandshakeError, connect},
-        server::{AgaveHandshakeError, Server},
+        AgaveHandshakeError, ClientHandshakeError, ClientLogon, client::connect, server::Server,
         shared::MAX_WORKERS,
     },
     agave_scheduler_bindings::{

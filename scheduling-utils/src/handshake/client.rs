@@ -1,10 +1,7 @@
 use {
     crate::handshake::{
-        ClientLogon,
-        shared::{GLOBAL_ALLOCATORS, LOGON_FAILURE, MAX_WORKERS, VERSION},
-    },
-    agave_scheduler_bindings::{
-        PackToWorkerMessage, ProgressMessage, TpuToPackMessage, WorkerToPackMessage,
+        ClientLogon, ClientWorkerSession,
+        shared::{ClientHandshakeError, ClientSession, LOGON_FAILURE, MAX_WORKERS, VERSION},
     },
     libc::CMSG_LEN,
     nix::sys::socket::{self, ControlMessageOwned, MsgFlags, UnixAddr},
@@ -19,11 +16,7 @@ use {
         path::Path,
         time::Duration,
     },
-    thiserror::Error,
 };
-
-type RtsError = rts_alloc::error::Error;
-type ShaqError = shaq::error::Error;
 
 /// Number of global shared memory objects (in addition to per worker objects).
 const GLOBAL_SHMEM: usize = 3;
@@ -151,17 +144,8 @@ pub fn setup_session(
 
     // Setup requested allocators.
     let allocators = (0..logon.allocator_handles)
-        .map(|offset| {
-            // NB: Server validates all requested counts are within expected bands so this should
-            // never panic.
-            let id = GLOBAL_ALLOCATORS
-                .checked_add(logon.worker_count)
-                .unwrap()
-                .checked_add(offset)
-                .unwrap();
-
-            unsafe { Allocator::join(allocator_file, u32::try_from(id).unwrap()) }
-        })
+        // TODO: Use join existing to re-use mmap.
+        .map(|_| Allocator::join(allocator_file))
         .collect::<Result<Vec<_>, _>>()?;
 
     // Ensure worker file count matches expectations.
@@ -176,8 +160,8 @@ pub fn setup_session(
     // underlying object alive until process exit or munmap.
     let session = ClientSession {
         allocators,
-        tpu_to_pack: unsafe { shaq::Consumer::join(tpu_to_pack_file)? },
-        progress_tracker: unsafe { shaq::Consumer::join(progress_tracker_file)? },
+        tpu_to_pack: unsafe { shaq::spsc::Consumer::join(tpu_to_pack_file)? },
+        progress_tracker: unsafe { shaq::spsc::Consumer::join(progress_tracker_file)? },
         workers: worker_files
             .chunks(2)
             .map(|window| {
@@ -186,45 +170,14 @@ pub fn setup_session(
                 };
 
                 Ok(ClientWorkerSession {
-                    pack_to_worker: unsafe { shaq::Producer::join(pack_to_worker)? },
-                    worker_to_pack: unsafe { shaq::Consumer::join(worker_to_pack)? },
+                    pack_to_worker: unsafe { shaq::spsc::Producer::join(pack_to_worker)? },
+                    worker_to_pack: unsafe { shaq::spsc::Consumer::join(worker_to_pack)? },
                 })
             })
             .collect::<Result<_, ClientHandshakeError>>()?,
     };
 
     Ok(session)
-}
-
-/// The complete initialized scheduling session.
-pub struct ClientSession {
-    pub allocators: Vec<Allocator>,
-    pub tpu_to_pack: shaq::Consumer<TpuToPackMessage>,
-    pub progress_tracker: shaq::Consumer<ProgressMessage>,
-    pub workers: Vec<ClientWorkerSession>,
-}
-
-/// An per worker scheduling session.
-pub struct ClientWorkerSession {
-    pub pack_to_worker: shaq::Producer<PackToWorkerMessage>,
-    pub worker_to_pack: shaq::Consumer<WorkerToPackMessage>,
-}
-
-/// Potential errors that can occur during the client's side of the handshake.
-#[derive(Debug, Error)]
-pub enum ClientHandshakeError {
-    #[error("Io; err={0}")]
-    Io(#[from] std::io::Error),
-    #[error("Timed out")]
-    TimedOut,
-    #[error("Protocol violation")]
-    ProtocolViolation,
-    #[error("Rejected; reason={0}")]
-    Rejected(String),
-    #[error("Rts alloc; err={0}")]
-    RtsAlloc(#[from] RtsError),
-    #[error("Shaq; err={0}")]
-    Shaq(#[from] ShaqError),
 }
 
 impl From<nix::Error> for ClientHandshakeError {
