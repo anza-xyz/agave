@@ -28,6 +28,22 @@ use {
 use {solana_svm_measure::measure::Measure, solana_svm_timings::ExecuteDetailsTimings};
 
 pub type ProgramRuntimeEnvironment = Arc<BuiltinProgram<InvokeContext<'static, 'static>>>;
+#[cfg(feature = "dev-context-only-utils")]
+pub fn get_mock_program_runtime_environment() -> ProgramRuntimeEnvironment {
+    static MOCK_ENVIRONMENT: std::sync::OnceLock<ProgramRuntimeEnvironment> =
+        std::sync::OnceLock::<ProgramRuntimeEnvironment>::new();
+    MOCK_ENVIRONMENT
+        .get_or_init(|| Arc::new(BuiltinProgram::new_mock()))
+        .clone()
+}
+#[cfg(feature = "dev-context-only-utils")]
+pub fn get_mock_program_runtime_environments() -> ProgramRuntimeEnvironments {
+    ProgramRuntimeEnvironments {
+        program_runtime_v1: get_mock_program_runtime_environment(),
+        program_runtime_v2: get_mock_program_runtime_environment(),
+    }
+}
+
 pub const MAX_LOADED_ENTRY_COUNT: usize = 512;
 pub const DELAY_VISIBILITY_SLOT_OFFSET: Slot = 1;
 
@@ -1224,11 +1240,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     }
 
     /// Returns the list of entries which are verified and compiled.
-    pub fn get_flattened_entries(
-        &self,
-        include_program_runtime_v1: bool,
-        _include_program_runtime_v2: bool,
-    ) -> Vec<(Pubkey, Slot, Arc<ProgramCacheEntry>)> {
+    pub fn get_flattened_entries(&self) -> Vec<(Pubkey, Slot, Arc<ProgramCacheEntry>)> {
         match &self.index {
             IndexImplementation::V1 { entries, .. } => entries
                 .iter()
@@ -1236,13 +1248,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     second_level
                         .iter()
                         .filter_map(move |program| match program.program {
-                            ProgramCacheEntryType::Loaded(_) => {
-                                if include_program_runtime_v1 {
-                                    Some((*id, 0, program.clone()))
-                                } else {
-                                    None
-                                }
-                            }
+                            ProgramCacheEntryType::Loaded(_) => Some((*id, 0, program.clone())),
                             _ => None,
                         })
                 })
@@ -1274,7 +1280,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
 
     /// Unloads programs which were used infrequently
     pub fn sort_and_unload(&mut self, shrink_to: PercentageInteger) {
-        let mut sorted_candidates = self.get_flattened_entries(true, true);
+        let mut sorted_candidates = self.get_flattened_entries();
         sorted_candidates.sort_by_cached_key(|(_id, _last_modification_slot, program)| {
             program.tx_usage_counter.load(Ordering::Relaxed)
         });
@@ -1290,7 +1296,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     /// Evicts programs using 2's random selection, choosing the least used program out of the two entries.
     /// The eviction is performed enough number of times to reduce the cache usage to the given percentage.
     pub fn evict_using_2s_random_selection(&mut self, shrink_to: PercentageInteger, now: Slot) {
-        let mut candidates = self.get_flattened_entries(true, true);
+        let mut candidates = self.get_flattened_entries();
         self.stats
             .water_level
             .store(candidates.len() as u64, Ordering::Relaxed);
@@ -1413,7 +1419,8 @@ mod tests {
             BlockRelation, DELAY_VISIBILITY_SLOT_OFFSET, ForkGraph, ProgramCache,
             ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
             ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
-            ProgramRuntimeEnvironments,
+            ProgramRuntimeEnvironments, get_mock_program_runtime_environment,
+            get_mock_program_runtime_environments,
         },
         assert_matches::assert_matches,
         percentage::Percentage,
@@ -1431,22 +1438,6 @@ mod tests {
         },
         test_case::{test_case, test_matrix},
     };
-
-    static MOCK_ENVIRONMENT: std::sync::OnceLock<ProgramRuntimeEnvironment> =
-        std::sync::OnceLock::<ProgramRuntimeEnvironment>::new();
-
-    fn get_mock_env() -> ProgramRuntimeEnvironment {
-        MOCK_ENVIRONMENT
-            .get_or_init(|| Arc::new(BuiltinProgram::new_mock()))
-            .clone()
-    }
-
-    fn get_mock_envs() -> ProgramRuntimeEnvironments {
-        ProgramRuntimeEnvironments {
-            program_runtime_v1: get_mock_env(),
-            program_runtime_v2: get_mock_env(),
-        }
-    }
 
     fn new_test_entry(deployment_slot: Slot, effective_slot: Slot) -> Arc<ProgramCacheEntry> {
         new_test_entry_with_usage(deployment_slot, effective_slot, AtomicU64::default())
@@ -1468,7 +1459,7 @@ mod tests {
         usage_counter: AtomicU64,
     ) -> Arc<ProgramCacheEntry> {
         Arc::new(ProgramCacheEntry {
-            program: new_loaded_entry(get_mock_env()),
+            program: new_loaded_entry(get_mock_program_runtime_environment()),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             account_size: 0,
             deployment_slot,
@@ -1499,7 +1490,7 @@ mod tests {
         current_slot: Slot,
         reason: ProgramCacheEntryType,
     ) -> Arc<ProgramCacheEntry> {
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
         let program = Arc::new(ProgramCacheEntry::new_tombstone(
             current_slot,
             ProgramCacheEntryOwner::LoaderV2,
@@ -1514,7 +1505,7 @@ mod tests {
         key: Pubkey,
         current_slot: Slot,
     ) -> Arc<ProgramCacheEntry> {
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
         let loaded = new_test_entry_with_usage(
             current_slot,
             current_slot.saturating_add(1),
@@ -1572,7 +1563,7 @@ mod tests {
         usage_counters: Vec<u64>,
         programs: &mut Vec<(Pubkey, Slot, u64)>,
     ) {
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
         // Add multiple entries for program
         deployment_slots
             .iter()
@@ -1812,7 +1803,7 @@ mod tests {
     #[test]
     fn test_usage_count_of_unloaded_program() {
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
 
         let program = Pubkey::new_unique();
         let evict_to_pct = 2;
@@ -1878,7 +1869,7 @@ mod tests {
             [(1, 2), (5, 5), (5, 6), (5, 10), (9, 10), (10, 10), (3, 12)];
         let mut rng = rand::rng();
         let program_id = Pubkey::new_unique();
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
         for _ in 0..1000 {
             let mut entries = EXPECTED_ENTRIES.to_vec();
             entries.shuffle(&mut rng);
@@ -1908,41 +1899,41 @@ mod tests {
     #[test_matrix(
         (
             ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::FailedVerification(get_mock_env()),
-            new_loaded_entry(get_mock_env()),
+            ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
+            new_loaded_entry(get_mock_program_runtime_environment()),
         ),
         (
-            ProgramCacheEntryType::FailedVerification(get_mock_env()),
+            ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::Unloaded(get_mock_env()),
-            new_loaded_entry(get_mock_env()),
+            ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
+            new_loaded_entry(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
         )
     )]
     #[test_matrix(
         (
-            ProgramCacheEntryType::Unloaded(get_mock_env()),
+            ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
         ),
         (
-            ProgramCacheEntryType::FailedVerification(get_mock_env()),
+            ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::Unloaded(get_mock_env()),
+            ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
         )
     )]
     #[test_matrix(
         (ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),),
         (
-            ProgramCacheEntryType::FailedVerification(get_mock_env()),
+            ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::Unloaded(get_mock_env()),
-            new_loaded_entry(get_mock_env()),
+            ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
+            new_loaded_entry(get_mock_program_runtime_environment()),
         )
     )]
     #[should_panic(expected = "Unexpected replacement of an entry")]
     fn test_assign_program_failure(old: ProgramCacheEntryType, new: ProgramCacheEntryType) {
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
         let program_id = Pubkey::new_unique();
         assert!(!cache.assign_program(
             &envs,
@@ -1976,7 +1967,7 @@ mod tests {
 
     #[test_case(
         ProgramCacheEntryType::Unloaded(Arc::new(BuiltinProgram::new_mock())),
-        new_loaded_entry(get_mock_env())
+        new_loaded_entry(get_mock_program_runtime_environment())
     )]
     #[test_case(
         ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
@@ -1984,7 +1975,7 @@ mod tests {
     )]
     fn test_assign_program_success(old: ProgramCacheEntryType, new: ProgramCacheEntryType) {
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
         let program_id = Pubkey::new_unique();
         assert!(!cache.assign_program(
             &envs,
@@ -2019,7 +2010,7 @@ mod tests {
     #[test]
     fn test_assign_program_removes_entries_in_same_slot() {
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
         let program_id = Pubkey::new_unique();
         let closed_other_slot = Arc::new(ProgramCacheEntry {
             program: ProgramCacheEntryType::Closed,
@@ -2040,7 +2031,7 @@ mod tests {
             latest_access_slot: AtomicU64::default(),
         });
         let loaded_entry_current_env = Arc::new(ProgramCacheEntry {
-            program: ProgramCacheEntryType::Unloaded(get_mock_env()),
+            program: ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             account_size: 0,
             deployment_slot: 10,
@@ -2075,7 +2066,7 @@ mod tests {
     #[test]
     fn test_tombstone() {
         let env = Arc::new(BuiltinProgram::new_mock());
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
         let tombstone = ProgramCacheEntry::new_tombstone(
             0,
             ProgramCacheEntryOwner::LoaderV2,
@@ -2201,7 +2192,7 @@ mod tests {
     #[test]
     fn test_prune_different_env() {
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
 
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {
             relation: BlockRelation::Ancestor,
@@ -2351,7 +2342,7 @@ mod tests {
     #[test]
     fn test_fork_extract_and_prune() {
         let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
 
         // Fork graph created for the test
         //                   0
@@ -2551,7 +2542,7 @@ mod tests {
     #[test]
     fn test_extract_using_deployment_slot() {
         let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
 
         // Fork graph created for the test
         //                   0
@@ -2609,7 +2600,7 @@ mod tests {
     #[test]
     fn test_extract_unloaded() {
         let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
 
         // Fork graph created for the test
         //                   0
@@ -2688,7 +2679,7 @@ mod tests {
     #[test]
     fn test_extract_different_environment() {
         let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
         let other_envs = ProgramRuntimeEnvironments {
             program_runtime_v1: Arc::new(BuiltinProgram::new_mock()),
             program_runtime_v2: Arc::new(BuiltinProgram::new_mock()),
@@ -2738,7 +2729,7 @@ mod tests {
     #[test]
     fn test_extract_nonexistent() {
         let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
         let fork_graph = TestForkGraphSpecific::default();
         let fork_graph = Arc::new(RwLock::new(fork_graph));
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
@@ -2753,11 +2744,11 @@ mod tests {
     #[test]
     fn test_unloaded() {
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
         for program_cache_entry_type in [
-            ProgramCacheEntryType::FailedVerification(get_mock_env()),
+            ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::Unloaded(get_mock_env()),
+            ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
         ] {
             let entry = Arc::new(ProgramCacheEntry {
@@ -2796,7 +2787,7 @@ mod tests {
     #[test]
     fn test_fork_prune_find_first_ancestor() {
         let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
 
         // Fork graph created for the test
         //                   0
@@ -2837,7 +2828,7 @@ mod tests {
     #[test]
     fn test_prune_by_deployment_slot() {
         let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
-        let envs = get_mock_envs();
+        let envs = get_mock_program_runtime_environments();
 
         // Fork graph created for the test
         //                   0

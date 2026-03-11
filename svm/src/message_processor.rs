@@ -92,7 +92,7 @@ mod tests {
             execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
             invoke_context::EnvironmentConfig,
             loaded_programs::{
-                ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
+                ProgramCacheEntry, ProgramCacheForTxBatch, get_mock_program_runtime_environments,
             },
             sysvar_cache::SysvarCache,
         },
@@ -219,7 +219,7 @@ mod tests {
         ));
         let sysvar_cache = SysvarCache::default();
         let feature_set = SVMFeatureSet::all_enabled();
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = get_mock_program_runtime_environments();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
@@ -276,7 +276,7 @@ mod tests {
                 ),
             ]),
         ));
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = get_mock_program_runtime_environments();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
@@ -325,7 +325,7 @@ mod tests {
                 ),
             ]),
         ));
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = get_mock_program_runtime_environments();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
@@ -463,7 +463,7 @@ mod tests {
         ));
         let sysvar_cache = SysvarCache::default();
         let feature_set = SVMFeatureSet::all_enabled();
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = get_mock_program_runtime_environments();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
@@ -505,7 +505,7 @@ mod tests {
             )],
             Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
         ));
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = get_mock_program_runtime_environments();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
@@ -546,7 +546,7 @@ mod tests {
             )],
             Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
         ));
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = get_mock_program_runtime_environments();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
@@ -699,7 +699,7 @@ mod tests {
             }
         }
         let feature_set = SVMFeatureSet::all_enabled();
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = get_mock_program_runtime_environments();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,

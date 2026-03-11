@@ -87,7 +87,7 @@ use {
         leader_schedule_utils::first_of_consecutive_leader_slots,
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_controller::SnapshotController,
-        vote_sender_types::ReplayVoteSender,
+        vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
     solana_signer::Signer,
     solana_svm_timings::ExecuteTimings,
@@ -2479,6 +2479,7 @@ impl ReplayStage {
         ancestor_hashes_replay_update_sender: &AncestorHashesReplayUpdateSender,
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
         tbft_structs: &mut Option<&mut TowerBFTStructures>,
+        replay_vote_sender: &ReplayVoteSender,
     ) {
         // Do not remove from progress map when marking dead! Needed by
         // `process_duplicate_confirmed_slots()`
@@ -2509,6 +2510,12 @@ impl ReplayStage {
         blockstore
             .set_dead_slot(slot)
             .expect("Failed to mark slot as dead in blockstore");
+        replay_vote_sender
+            .send(ReplayVoteMessage::InvalidBank {
+                replay_bank_id: bank.bank_id(),
+                replay_slot: slot,
+            })
+            .expect("Failed to send InvalidBank message to replay vote sender");
 
         blockstore.slots_stats.mark_dead(slot);
 
@@ -3307,6 +3314,7 @@ impl ReplayStage {
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
         transaction_status_sender: Option<&TransactionStatusSender>,
+        replay_vote_sender: &ReplayVoteSender,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
         rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
@@ -3354,6 +3362,7 @@ impl ReplayStage {
                             ancestor_hashes_replay_update_sender,
                             purge_repair_slot_counter,
                             &mut tbft_structs,
+                            replay_vote_sender,
                         );
                         // don't try to run the below logic to check if the bank is completed
                         continue;
@@ -3391,15 +3400,29 @@ impl ReplayStage {
                     Ok(())
                 };
                 let verify_err = {
-                    let mut elapsed = 0;
+                    let mut poh_verify_elapsed = 0;
+                    let mut tx_verify_elapsed = 0;
                     let res = bank_progress
                         .replay_progress
                         .write()
                         .unwrap()
-                        .wait_for_all_verification_results(&mut elapsed);
-                    replay_stats.write().unwrap().poh_verify_elapsed += elapsed;
+                        .wait_for_all_verification_results(
+                            &mut poh_verify_elapsed,
+                            &mut tx_verify_elapsed,
+                        );
+                    {
+                        let mut stats = replay_stats.write().unwrap();
+                        stats.poh_verify_elapsed += poh_verify_elapsed;
+                        stats.transaction_verify_elapsed += tx_verify_elapsed;
+                    }
                     res
                 };
+                // we send this whether the block was valid or not. It's only
+                // used to release buffered votes if any.
+                let _ = replay_vote_sender.send(ReplayVoteMessage::BankComplete {
+                    replay_bank_id: bank.bank_id(),
+                    replay_slot: bank.slot(),
+                });
                 if let Err(err) = replay_err.or(verify_err) {
                     let root = bank_forks.read().unwrap().root();
                     Self::mark_dead_slot(
@@ -3414,11 +3437,11 @@ impl ReplayStage {
                         ancestor_hashes_replay_update_sender,
                         purge_repair_slot_counter,
                         &mut tbft_structs,
+                        replay_vote_sender,
                     );
                     // don't try to run the remaining normal processing for the completed bank
                     continue;
                 }
-
                 let is_leader_block = bank.leader_id() == my_pubkey;
                 let block_id = if !is_leader_block {
                     // If the block does not have at least DATA_SHREDS_PER_FEC_BLOCK correctly retransmitted
@@ -3443,6 +3466,7 @@ impl ReplayStage {
                                 ancestor_hashes_replay_update_sender,
                                 purge_repair_slot_counter,
                                 &mut tbft_structs,
+                                replay_vote_sender,
                             );
                             continue;
                         }
@@ -3727,6 +3751,7 @@ impl ReplayStage {
             bank_forks,
             progress,
             transaction_status_sender,
+            replay_vote_sender,
             bank_notification_sender,
             rpc_subscriptions,
             slot_status_notifier,
@@ -5425,17 +5450,21 @@ pub(crate) mod tests {
                 &MigrationStatus::default(),
             )
             .and_then(|replay_tx_count| {
-                let mut elapsed = 0;
+                let mut poh_verify_elapsed = 0;
+                let mut tx_verify_elapsed = 0;
                 bank1_progress
                     .replay_progress
                     .write()
                     .unwrap()
-                    .wait_for_all_verification_results(&mut elapsed)?;
-                bank1_progress
-                    .replay_stats
-                    .write()
-                    .unwrap()
-                    .poh_verify_elapsed += elapsed;
+                    .wait_for_all_verification_results(
+                        &mut poh_verify_elapsed,
+                        &mut tx_verify_elapsed,
+                    )?;
+                {
+                    let mut stats = bank1_progress.replay_stats.write().unwrap();
+                    stats.poh_verify_elapsed += poh_verify_elapsed;
+                    stats.transaction_verify_elapsed += tx_verify_elapsed;
+                }
                 Ok(replay_tx_count)
             });
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
@@ -5448,6 +5477,7 @@ pub(crate) mod tests {
             ));
             let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
                 unbounded();
+            let (replay_vote_sender, replay_vote_receiver) = unbounded();
             let dead_slots = Arc::new(Mutex::new(HashSet::default()));
 
             let slot_status_notifier: Option<SlotStatusNotifier> = Some(Arc::new(RwLock::new(
@@ -5469,8 +5499,16 @@ pub(crate) mod tests {
                     &ancestor_hashes_replay_update_sender,
                     &mut PurgeRepairSlotCounter::default(),
                     &mut Some(&mut tbft_structs),
+                    &replay_vote_sender,
                 );
             }
+            assert_eq!(
+                replay_vote_receiver.try_recv(),
+                Ok(ReplayVoteMessage::InvalidBank {
+                    replay_bank_id: bank1.bank_id(),
+                    replay_slot: bank1.slot(),
+                })
+            );
             assert!(dead_slots.lock().unwrap().contains(&bank1.slot()));
             // Check that the erroring bank was marked as dead in the progress map
             assert!(

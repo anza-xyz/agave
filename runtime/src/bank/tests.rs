@@ -92,7 +92,6 @@ use {
         bpf_loader, bpf_loader_upgradeable, ed25519_program, incinerator, native_loader,
         secp256k1_program,
     },
-    solana_sha256_hasher::hash,
     solana_signature::Signature,
     solana_signer::Signer,
     solana_stake_interface::{
@@ -189,43 +188,6 @@ pub(in crate::bank) fn create_genesis_config(lamports: u64) -> (GenesisConfig, K
 pub(in crate::bank) fn new_sanitized_message(message: Message) -> SanitizedMessage {
     SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
         .unwrap()
-}
-
-#[test]
-fn test_race_register_tick_freeze() {
-    agave_logger::setup();
-
-    let (mut genesis_config, _) = create_genesis_config(50);
-    genesis_config.ticks_per_slot = 1;
-    let p = solana_pubkey::new_rand();
-    let hash = hash(p.as_ref());
-
-    for _ in 0..1000 {
-        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
-        let bank0_ = bank0.clone();
-        let freeze_thread = Builder::new()
-            .name("freeze".to_string())
-            .spawn(move || {
-                loop {
-                    if bank0_.is_complete() {
-                        assert_eq!(bank0_.last_blockhash(), hash);
-                        break;
-                    }
-                }
-            })
-            .unwrap();
-
-        let bank0_ = bank0.clone();
-        let register_tick_thread = Builder::new()
-            .name("register_tick".to_string())
-            .spawn(move || {
-                bank0_.register_tick_for_test(&hash);
-            })
-            .unwrap();
-
-        register_tick_thread.join().unwrap();
-        freeze_thread.join().unwrap();
-    }
 }
 
 fn new_executed_processing_result(
@@ -754,8 +716,13 @@ where
     );
 
     let ((vote_id, mut vote_account), (stake_id, stake_account)) =
-        crate::stakes::tests::create_staked_node_accounts(10_000);
-    let starting_vote_and_stake_balance = 10_000 + 1;
+        crate::stakes::tests::create_staked_node_accounts(10_000, &bank0.rent_collector.rent);
+    let starting_vote_and_stake_balance = 10_000
+        + 1
+        + bank0
+            .rent_collector
+            .rent
+            .minimum_balance(StakeStateV2::size_of());
 
     // set up accounts
     bank0.store_account_and_update_capitalization(&stake_id, &stake_account);
@@ -914,9 +881,19 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
         100,
     );
     let stake_id1 = solana_pubkey::new_rand();
-    let stake_account1 = crate::stakes::tests::create_stake_account(123, &vote_id, &stake_id1);
+    let stake_account1 = crate::stakes::tests::create_stake_account(
+        123,
+        &vote_id,
+        &stake_id1,
+        &bank.rent_collector.rent,
+    );
     let stake_id2 = solana_pubkey::new_rand();
-    let stake_account2 = crate::stakes::tests::create_stake_account(456, &vote_id, &stake_id2);
+    let stake_account2 = crate::stakes::tests::create_stake_account(
+        456,
+        &vote_id,
+        &stake_id2,
+        &bank.rent_collector.rent,
+    );
 
     // set up accounts
     bank.store_account_and_update_capitalization(&stake_id1, &stake_account1);
@@ -1620,130 +1597,6 @@ fn test_bank_tx_compute_unit_fee() {
                 commission_bps: None,
             }
         )]
-    );
-}
-
-#[test]
-fn test_bank_blockhash_fee_structure() {
-    //agave_logger::setup();
-
-    let leader = solana_pubkey::new_rand();
-    let GenesisConfigInfo {
-        mut genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config_with_leader(1_000_000, &leader, 3);
-    genesis_config
-        .fee_rate_governor
-        .target_lamports_per_signature = 5000;
-    genesis_config.fee_rate_governor.target_signatures_per_slot = 0;
-
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    goto_end_of_slot(bank.clone());
-    let cheap_blockhash = bank.last_blockhash();
-    let cheap_lamports_per_signature = bank.get_lamports_per_signature();
-    assert_eq!(cheap_lamports_per_signature, 0);
-
-    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 1);
-    goto_end_of_slot(bank.clone());
-    let expensive_blockhash = bank.last_blockhash();
-    let expensive_lamports_per_signature = bank.get_lamports_per_signature();
-    assert!(cheap_lamports_per_signature < expensive_lamports_per_signature);
-
-    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 2);
-
-    // Send a transfer using cheap_blockhash
-    let key = solana_pubkey::new_rand();
-    let initial_mint_balance = bank.get_balance(&mint_keypair.pubkey());
-    let tx = system_transaction::transfer(&mint_keypair, &key, 1, cheap_blockhash);
-    assert_eq!(bank.process_transaction(&tx), Ok(()));
-    assert_eq!(bank.get_balance(&key), 1);
-    let cheap_fee = calculate_test_fee(
-        &new_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique()))),
-        cheap_lamports_per_signature,
-        bank.fee_structure(),
-    );
-    assert_eq!(
-        bank.get_balance(&mint_keypair.pubkey()),
-        initial_mint_balance - 1 - cheap_fee
-    );
-
-    // Send a transfer using expensive_blockhash
-    let key = solana_pubkey::new_rand();
-    let initial_mint_balance = bank.get_balance(&mint_keypair.pubkey());
-    let tx = system_transaction::transfer(&mint_keypair, &key, 1, expensive_blockhash);
-    assert_eq!(bank.process_transaction(&tx), Ok(()));
-    assert_eq!(bank.get_balance(&key), 1);
-    let expensive_fee = calculate_test_fee(
-        &new_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique()))),
-        expensive_lamports_per_signature,
-        bank.fee_structure(),
-    );
-    assert_eq!(
-        bank.get_balance(&mint_keypair.pubkey()),
-        initial_mint_balance - 1 - expensive_fee
-    );
-}
-
-#[test]
-fn test_bank_blockhash_compute_unit_fee_structure() {
-    //agave_logger::setup();
-
-    let leader = solana_pubkey::new_rand();
-    let GenesisConfigInfo {
-        mut genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config_with_leader(1_000_000_000, &leader, 3);
-    genesis_config
-        .fee_rate_governor
-        .target_lamports_per_signature = 1000;
-    genesis_config.fee_rate_governor.target_signatures_per_slot = 1;
-
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    goto_end_of_slot(bank.clone());
-    let cheap_blockhash = bank.last_blockhash();
-    let cheap_lamports_per_signature = bank.get_lamports_per_signature();
-    assert_eq!(cheap_lamports_per_signature, 0);
-
-    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 1);
-    goto_end_of_slot(bank.clone());
-    let expensive_blockhash = bank.last_blockhash();
-    let expensive_lamports_per_signature = bank.get_lamports_per_signature();
-    assert!(cheap_lamports_per_signature < expensive_lamports_per_signature);
-
-    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 2);
-
-    // Send a transfer using cheap_blockhash
-    let key = solana_pubkey::new_rand();
-    let initial_mint_balance = bank.get_balance(&mint_keypair.pubkey());
-    let tx = system_transaction::transfer(&mint_keypair, &key, 1, cheap_blockhash);
-    assert_eq!(bank.process_transaction(&tx), Ok(()));
-    assert_eq!(bank.get_balance(&key), 1);
-    let cheap_fee = calculate_test_fee(
-        &new_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique()))),
-        cheap_lamports_per_signature,
-        bank.fee_structure(),
-    );
-    assert_eq!(
-        bank.get_balance(&mint_keypair.pubkey()),
-        initial_mint_balance - 1 - cheap_fee
-    );
-
-    // Send a transfer using expensive_blockhash
-    let key = solana_pubkey::new_rand();
-    let initial_mint_balance = bank.get_balance(&mint_keypair.pubkey());
-    let tx = system_transaction::transfer(&mint_keypair, &key, 1, expensive_blockhash);
-    assert_eq!(bank.process_transaction(&tx), Ok(()));
-    assert_eq!(bank.get_balance(&key), 1);
-    let expensive_fee = calculate_test_fee(
-        &new_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique()))),
-        expensive_lamports_per_signature,
-        bank.fee_structure(),
-    );
-    assert_eq!(
-        bank.get_balance(&mint_keypair.pubkey()),
-        initial_mint_balance - 1 - expensive_fee
     );
 }
 
@@ -3761,7 +3614,7 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
         }
 
         let ((vote_id, vote_account), (stake_id, stake_account)) =
-            crate::stakes::tests::create_staked_node_accounts(1_0000);
+            crate::stakes::tests::create_staked_node_accounts(1_0000, &bank.rent_collector.rent);
         bank.capitalization
             .fetch_add(vote_account.lamports() + stake_account.lamports(), Relaxed);
         bank.store_account(&vote_id, &vote_account);
@@ -5502,7 +5355,7 @@ fn test_shrink_candidate_slots_cached() {
     // No more slots should be shrunk
     assert_eq!(bank2.shrink_candidate_slots(), 0);
     // alive_counts represents the count of alive accounts in the three slots 0,1,2
-    assert_eq!(alive_counts, vec![13, 1, 6]);
+    assert_eq!(alive_counts, vec![14, 1, 6]);
 }
 
 #[test]
@@ -9091,15 +8944,11 @@ fn test_verify_transactions_packet_data_size() {
     }
 }
 
-#[test_case(false; "pre_simd160_static_instruction_limit")]
-#[test_case(true; "simd160_static_instruction_limit")]
-fn test_verify_transactions_instruction_limit(simd_0160_enabled: bool) {
+#[test]
+fn test_verify_transactions_instruction_limit() {
     let GenesisConfigInfo { genesis_config, .. } =
         create_genesis_config_with_leader(42, &solana_pubkey::new_rand(), 42);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    if !simd_0160_enabled {
-        bank.deactivate_feature(&feature_set::static_instruction_limit::id());
-    }
+    let bank = Bank::new_for_tests(&genesis_config);
 
     let recent_blockhash = Hash::new_unique();
     let keypair = Keypair::new();
@@ -9124,17 +8973,10 @@ fn test_verify_transactions_instruction_limit(simd_0160_enabled: bool) {
 
     assert!(bincode::serialized_size(&tx).unwrap() <= PACKET_DATA_SIZE as u64);
 
-    if simd_0160_enabled {
-        assert_matches!(
-            bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
-            Err(TransactionError::SanitizeFailure)
-        );
-    } else {
-        assert!(
-            bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification)
-                .is_ok()
-        );
-    }
+    assert_matches!(
+        bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
+        Err(TransactionError::SanitizeFailure)
+    );
 }
 
 #[test_case(false; "pre_simd406_limit_instruction_accounts")]
@@ -11327,54 +11169,33 @@ fn test_last_restart_slot() {
     let mint_lamports = 100;
     let validator_stake_lamports = 10;
     let leader_pubkey = Pubkey::default();
-    let GenesisConfigInfo {
-        mut genesis_config, ..
-    } = create_genesis_config_with_leader(mint_lamports, &leader_pubkey, validator_stake_lamports);
-    // Remove last restart slot account so we can simluate its' activation
-    genesis_config
-        .accounts
-        .remove(&feature_set::last_restart_slot_sysvar::id())
-        .unwrap();
+    let GenesisConfigInfo { genesis_config, .. } =
+        create_genesis_config_with_leader(mint_lamports, &leader_pubkey, validator_stake_lamports);
 
     let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
     // Register a hard fork in the future so last restart slot will update
-    bank0.register_hard_fork(6);
-    assert!(!last_restart_slot_dirty(&bank0));
-    assert_eq!(get_last_restart_slot(&bank0), None);
-
-    let mut bank1 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 1));
-    assert!(!last_restart_slot_dirty(&bank1));
-    assert_eq!(get_last_restart_slot(&bank1), None);
-
-    // Activate the feature in slot 1, it will get initialized in slot 1's children
-    Arc::get_mut(&mut bank1)
-        .unwrap()
-        .activate_feature(&feature_set::last_restart_slot_sysvar::id());
-    let bank2 = Arc::new(Bank::new_from_parent(bank1.clone(), &Pubkey::default(), 2));
-    assert!(last_restart_slot_dirty(&bank2));
-    assert_eq!(get_last_restart_slot(&bank2), Some(0));
-    let bank3 = Arc::new(Bank::new_from_parent(bank1, &Pubkey::default(), 3));
-    assert!(last_restart_slot_dirty(&bank3));
-    assert_eq!(get_last_restart_slot(&bank3), Some(0));
+    bank0.register_hard_fork(3);
+    assert!(last_restart_slot_dirty(&bank0));
+    assert_eq!(get_last_restart_slot(&bank0), Some(0));
 
     // Not dirty in children where the last restart slot has not changed
-    let bank4 = Arc::new(Bank::new_from_parent(bank2, &Pubkey::default(), 4));
-    assert!(!last_restart_slot_dirty(&bank4));
-    assert_eq!(get_last_restart_slot(&bank4), Some(0));
-    let bank5 = Arc::new(Bank::new_from_parent(bank3, &Pubkey::default(), 5));
-    assert!(!last_restart_slot_dirty(&bank5));
-    assert_eq!(get_last_restart_slot(&bank5), Some(0));
+    let bank1 = Arc::new(Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1));
+    assert!(!last_restart_slot_dirty(&bank1));
+    assert_eq!(get_last_restart_slot(&bank1), Some(0));
+    let bank2 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 2));
+    assert!(!last_restart_slot_dirty(&bank2));
+    assert_eq!(get_last_restart_slot(&bank2), Some(0));
 
     // Last restart slot has now changed so it will be dirty again
-    let bank6 = Arc::new(Bank::new_from_parent(bank4, &Pubkey::default(), 6));
-    assert!(last_restart_slot_dirty(&bank6));
-    assert_eq!(get_last_restart_slot(&bank6), Some(6));
+    let bank3 = Arc::new(Bank::new_from_parent(bank2, &Pubkey::default(), 3));
+    assert!(last_restart_slot_dirty(&bank3));
+    assert_eq!(get_last_restart_slot(&bank3), Some(3));
 
     // Last restart will not change for a hard fork that has not occurred yet
-    bank6.register_hard_fork(10);
-    let bank7 = Arc::new(Bank::new_from_parent(bank6, &Pubkey::default(), 7));
-    assert!(!last_restart_slot_dirty(&bank7));
-    assert_eq!(get_last_restart_slot(&bank7), Some(6));
+    bank3.register_hard_fork(6);
+    let bank4 = Arc::new(Bank::new_from_parent(bank3, &Pubkey::default(), 4));
+    assert!(!last_restart_slot_dirty(&bank4));
+    assert_eq!(get_last_restart_slot(&bank4), Some(3));
 }
 
 /// Test that simulations report the compute units of failed transactions

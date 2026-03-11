@@ -830,8 +830,7 @@ mod tests {
         agave_snapshots::{error::VerifySlotDeltasError, paths::get_bank_snapshot_dir},
         semver::Version,
         solana_accounts_db::{
-            accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, MarkObsoleteAccounts},
-            accounts_file::StorageAccess,
+            accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING, accounts_file::StorageAccess,
         },
         solana_genesis_config::create_genesis_config,
         solana_keypair::Keypair,
@@ -965,14 +964,7 @@ mod tests {
         // Create a few accounts
         let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
 
-        let bank_test_config = BankTestConfig {
-            accounts_db_config: AccountsDbConfig {
-                mark_obsolete_accounts: MarkObsoleteAccounts::Enabled,
-                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            },
-        };
-
-        let bank = Bank::new_with_config_for_tests(&genesis_config, bank_test_config);
+        let bank = Bank::new_for_tests(&genesis_config);
 
         let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank);
         bank0
@@ -2049,9 +2041,8 @@ mod tests {
     ///
     /// If zero lamport accounts are not handled correctly, Account1 or Account2 will come back
     /// failing the test
-    #[test_case(MarkObsoleteAccounts::Disabled)]
-    #[test_case(MarkObsoleteAccounts::Enabled)]
-    fn test_fastboot_handle_zero_lamport_accounts(mark_obsolete_accounts: MarkObsoleteAccounts) {
+    #[test]
+    fn test_fastboot_handle_zero_lamport_accounts() {
         let collector = Pubkey::new_unique();
         let key1 = Keypair::new();
         let key2 = Keypair::new();
@@ -2063,14 +2054,8 @@ mod tests {
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
 
         let lamports = 123_456 * LAMPORTS_PER_SOL;
-        let bank_test_config = BankTestConfig {
-            accounts_db_config: AccountsDbConfig {
-                mark_obsolete_accounts,
-                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            },
-        };
 
-        let bank0 = Bank::new_with_config_for_tests(&genesis_config, bank_test_config);
+        let bank0 = Bank::new_for_tests(&genesis_config);
         let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank0);
         bank0.transfer(lamports, &mint, &key2.pubkey()).unwrap();
         bank0.transfer(lamports, &mint, &key1.pubkey()).unwrap();

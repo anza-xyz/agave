@@ -1,5 +1,5 @@
 use {
-    crate::welford_stats::WelfordStats,
+    agave_math_utils::welford_stats::WelfordStats,
     agave_votor_messages::vote::Vote,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     solana_clock::{Epoch, Slot},

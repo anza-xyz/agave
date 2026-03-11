@@ -1015,19 +1015,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced()),
     )
     .arg(
-        Arg::with_name("accounts_db_mark_obsolete_accounts")
-            .long("accounts-db-mark-obsolete-accounts")
-            .help("Controls obsolete account tracking")
-            .takes_value(true)
-            .possible_values(&["enabled", "disabled"])
-            .long_help(
-                "Controls obsolete account tracking. This feature tracks obsolete accounts in the \
-                 account storage entry allowing for earlier cleaning of obsolete accounts in the \
-                 storages and index. This value is currently enabled by default.",
-            )
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
         Arg::with_name("no_accounts_db_snapshots_direct_io")
             .long("no-accounts-db-snapshots-direct-io")
             .help("Disable direct I/O use for accounts-db snapshot operations")
