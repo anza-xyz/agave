@@ -2,7 +2,7 @@ use {
     crate::{
         nonblocking::{
             connection_rate_limiter::ConnectionRateLimiter,
-            qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
+            qos::{ConnectionContext, MaxStreamsAction, OpaqueStreamerCounter, QosController},
         },
         quic::{QuicServerError, QuicStreamerConfig, StreamerStats, configure_server},
         quic_socket::QuicSocket,
@@ -604,6 +604,7 @@ async fn handle_connection<Q, C>(
 {
     let peer_type = context.peer_type();
     let mut park_recheck_backoff = ParkRecheckBackoff::new();
+    let mut last_applied_max_streams: Option<u32> = None;
     debug!(
         "quic new connection {} streams: {} connections: {}",
         remote_address,
@@ -617,11 +618,23 @@ async fn handle_connection<Q, C>(
     // it is not the end of the world.
     let rtt = connection.rtt();
     'conn: loop {
-        if let Some(max_streams) = qos.compute_max_streams(&context, &connection) {
-            connection.set_max_concurrent_uni_streams(VarInt::from_u32(max_streams));
-
-            if max_streams == 0 {
-                // Park: don't accept streams, wait for load to drop
+        match qos.compute_max_streams(&context, &connection) {
+            MaxStreamsAction::Unmanaged => {}
+            MaxStreamsAction::Set(max_streams) => {
+                debug_assert!(max_streams > 0, "Set(0) should use Park");
+                if max_streams > 0 && last_applied_max_streams != Some(max_streams) {
+                    connection.set_max_concurrent_uni_streams(VarInt::from_u32(max_streams));
+                    last_applied_max_streams = Some(max_streams);
+                }
+                // Unparked: restore fast re-checks for the next time this connection parks.
+                park_recheck_backoff.reset();
+            }
+            MaxStreamsAction::Park => {
+                if last_applied_max_streams != Some(0) {
+                    connection.set_max_concurrent_uni_streams(VarInt::from_u32(0));
+                    last_applied_max_streams = Some(0);
+                }
+                // Park: don't accept streams, wait for load to drop.
                 stats
                     .unstaked_connections_parked
                     .fetch_add(1, Ordering::Relaxed);
@@ -631,8 +644,6 @@ async fn handle_connection<Q, C>(
                     _ = cancel.cancelled() => break,
                 }
             }
-            // Unparked: restore fast re-checks for the next time this connection parks.
-            park_recheck_backoff.reset();
         }
 
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop

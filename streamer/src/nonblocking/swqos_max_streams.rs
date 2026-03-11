@@ -2,7 +2,7 @@ use {
     crate::{
         nonblocking::{
             load_debt_tracker::LoadDebtTracker,
-            qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
+            qos::{ConnectionContext, MaxStreamsAction, OpaqueStreamerCounter, QosController},
             quic::{
                 CONNECTION_CLOSE_CODE_DISALLOWED, CONNECTION_CLOSE_REASON_DISALLOWED,
                 ClientConnectionTracker, ConnectionHandlerError, ConnectionPeerType,
@@ -456,10 +456,14 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
         &self,
         context: &SwQosMaxStreamsConnectionContext,
         connection: &Connection,
-    ) -> Option<u32> {
+    ) -> MaxStreamsAction {
         let saturated = self.load_tracker.is_saturated();
         let rtt = connection.rtt();
-        self.compute_max_streams_for_rtt(context, rtt, saturated)
+        match self.compute_max_streams_for_rtt(context, rtt, saturated) {
+            Some(0) => MaxStreamsAction::Park,
+            Some(max_streams) => MaxStreamsAction::Set(max_streams),
+            None => MaxStreamsAction::Unmanaged,
+        }
     }
 
     fn on_stream_accepted(&self, context: &SwQosMaxStreamsConnectionContext) {

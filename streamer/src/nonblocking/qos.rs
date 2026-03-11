@@ -13,6 +13,16 @@ pub(crate) trait ConnectionContext: Clone + Send + Sync {
     fn remote_pubkey(&self) -> Option<solana_pubkey::Pubkey>;
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum MaxStreamsAction {
+    /// This QoS implementation does not manage MAX_STREAMS on this path.
+    Unmanaged,
+    /// Apply a MAX_STREAMS value.
+    Set(u32),
+    /// Park the connection (MAX_STREAMS=0 and park behavior).
+    Park,
+}
+
 /// A trait to manage QoS for connections. This includes
 /// 1) deriving the ConnectionContext for a connection
 /// 2) managing connection caching and connection limits, stream limits
@@ -55,11 +65,10 @@ pub(crate) trait QosController<C: ConnectionContext> {
     /// Optionally spawn QoS-specific background tasks onto the server runtime.
     fn spawn_background_tasks(&mut self) {}
 
-    /// Desired max concurrent uni streams. `Some(0)` parks the connection;
-    /// `None` means this QoS implementation does not manage MAX_STREAMS.
-    fn compute_max_streams(&self, context: &C, connection: &Connection) -> Option<u32> {
+    /// Desired MAX_STREAMS action for this connection.
+    fn compute_max_streams(&self, context: &C, connection: &Connection) -> MaxStreamsAction {
         let _ = (context, connection);
-        None
+        MaxStreamsAction::Unmanaged
     }
 
     /// How many concurrent
