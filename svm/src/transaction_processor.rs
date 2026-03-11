@@ -982,7 +982,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut process_message_time = Measure::start("process_message_time");
         let process_result = process_message(
             tx,
-            &loaded_transaction.program_indices,
             &mut invoke_context,
             execute_timings,
             &mut executed_units,

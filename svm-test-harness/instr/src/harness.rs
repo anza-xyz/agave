@@ -108,11 +108,8 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
             compute_budget.to_cost(),
         );
 
-        let compiled_ix = sanitized_message.instructions().first()?;
-        let program_account_index = compiled_ix.program_id_index as u16;
-
         invoke_context
-            .prepare_top_level_instructions(&sanitized_message, &[program_account_index])
+            .prepare_top_level_instructions(&sanitized_message)
             .ok()?;
 
         if invoke_context.is_precompile(&input.instruction.program_id) {

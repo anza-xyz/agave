@@ -465,12 +465,9 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     pub fn prepare_top_level_instructions(
         &mut self,
         message: &'ix_data impl SVMMessage,
-        program_indices: &[IndexOfAccount],
     ) -> Result<(), (u8, InstructionError)> {
-        for (top_level_instruction_index, ((_, instruction), program_account_index)) in message
-            .program_instructions_iter()
-            .zip(program_indices.iter())
-            .enumerate()
+        for (top_level_instruction_index, (_, instruction)) in
+            message.program_instructions_iter().enumerate()
         {
             let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
 
@@ -496,7 +493,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             self.transaction_context
                 .configure_instruction_at_index(
                     top_level_instruction_index,
-                    *program_account_index,
+                    instruction.program_id_index as u16,
                     instruction_accounts,
                     transaction_callee_map,
                     Cow::Borrowed(instruction.data),
@@ -1027,10 +1024,8 @@ pub fn mock_process_instruction_with_feature_set<
 
     pre_adjustments(&mut invoke_context);
 
-    let compiled_ix = sanitized_message.instructions().first().unwrap();
-    let program_account_index = compiled_ix.program_id_index as u16;
     invoke_context
-        .prepare_top_level_instructions(&sanitized_message, &[program_account_index])
+        .prepare_top_level_instructions(&sanitized_message)
         .unwrap();
 
     let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
@@ -1668,7 +1663,7 @@ mod tests {
         }
 
         invoke_context
-            .prepare_top_level_instructions(&sanitized, &[90, 90])
+            .prepare_top_level_instructions(&sanitized)
             .unwrap();
 
         test_case_1(&invoke_context);
@@ -1735,7 +1730,7 @@ mod tests {
                 .unwrap();
 
         invoke_context
-            .prepare_top_level_instructions(&sanitized, &[90, 90])
+            .prepare_top_level_instructions(&sanitized)
             .unwrap();
 
         {
