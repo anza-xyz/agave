@@ -22,7 +22,7 @@ use {
     crossbeam_channel::{RecvTimeoutError, TryRecvError},
     solana_accounts_db::account_locks::validate_account_locks,
     solana_address_lookup_table_interface::state::estimate_last_valid_slot,
-    solana_clock::{Epoch, MAX_PROCESSING_AGE, Slot},
+    solana_clock::{Epoch, Slot},
     solana_cost_model::cost_model::CostModel,
     solana_fee_structure::FeeBudgetLimits,
     solana_message::v0::LoadedAddresses,
@@ -272,7 +272,7 @@ impl TransactionViewReceiveAndBuffer {
                     working_bank.check_transactions::<RuntimeTransaction<_>>(
                         &transactions,
                         &lock_results[..transactions.len()],
-                        MAX_PROCESSING_AGE,
+                        working_bank.max_processing_age(),
                         &mut error_counters,
                     )
                 };

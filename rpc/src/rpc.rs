@@ -30,7 +30,7 @@ use {
         },
     },
     solana_client::connection_cache::Protocol,
-    solana_clock::{MAX_PROCESSING_AGE, Slot, UnixTimestamp},
+    solana_clock::{Slot, UnixTimestamp},
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_entry::entry::Entry,
     solana_epoch_info::EpochInfo,
@@ -3855,7 +3855,8 @@ pub mod rpc_full {
                 // It provides a fallback timeout for durable-nonce transaction retries in case of
                 // malicious packing of the retry queue. Durable-nonce transactions are otherwise
                 // retried until the nonce is advanced.
-                last_valid_block_height = preflight_bank.block_height() + MAX_PROCESSING_AGE as u64;
+                last_valid_block_height =
+                    preflight_bank.block_height() + preflight_bank.max_processing_age() as u64;
             }
 
             if !skip_preflight {

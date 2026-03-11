@@ -2449,6 +2449,10 @@ impl Bank {
         self.epoch_schedule().get_slots_in_epoch(epoch) as f64 / self.slots_per_year
     }
 
+    pub fn max_processing_age(&self) -> usize {
+        MAX_PROCESSING_AGE
+    }
+
     // Calculates the starting-slot for inflation from the activation slot.
     // This method assumes that `pico_inflation` will be enabled before `full_inflation`, giving
     // precedence to the latter. However, since `pico_inflation` is fixed-rate Inflation, should
@@ -2895,7 +2899,7 @@ impl Bank {
 
     pub fn is_blockhash_valid(&self, hash: &Hash) -> bool {
         let blockhash_queue = self.blockhash_queue.read().unwrap();
-        blockhash_queue.is_hash_valid_for_age(hash, MAX_PROCESSING_AGE)
+        blockhash_queue.is_hash_valid_for_age(hash, self.max_processing_age())
     }
 
     pub fn get_minimum_balance_for_rent_exemption(&self, data_len: usize) -> u64 {
@@ -2950,7 +2954,7 @@ impl Bank {
         // length is made variable by epoch
         blockhash_queue
             .get_hash_age(blockhash)
-            .map(|age| self.block_height + MAX_PROCESSING_AGE as u64 - age)
+            .map(|age| self.block_height + self.max_processing_age() as u64 - age)
     }
 
     /// Query the alpenglow genesis certificate account.
@@ -3393,7 +3397,8 @@ impl Bank {
             // After simulation, transactions will need to be forwarded to the leader
             // for processing. During forwarding, the transaction could expire if the
             // delay is not accounted for.
-            MAX_PROCESSING_AGE - MAX_TRANSACTION_FORWARDING_DELAY,
+            self.max_processing_age()
+                .saturating_sub(MAX_TRANSACTION_FORWARDING_DELAY),
             &mut timings,
             &mut TransactionErrorMetrics::default(),
             TransactionProcessingConfig {
@@ -4187,7 +4192,7 @@ impl Bank {
 
         let (mut commit_results, ..) = self.load_execute_and_commit_transactions(
             &batch,
-            MAX_PROCESSING_AGE,
+            self.max_processing_age(),
             ExecutionRecordingConfig {
                 enable_cpi_recording: false,
                 enable_log_recording: true,
@@ -4230,7 +4235,7 @@ impl Bank {
     ) -> Vec<Result<()>> {
         self.load_execute_and_commit_transactions(
             batch,
-            MAX_PROCESSING_AGE,
+            self.max_processing_age(),
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,

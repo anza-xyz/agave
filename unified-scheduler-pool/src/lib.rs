@@ -2931,7 +2931,7 @@ mod tests {
         super::*,
         crate::sleepless_testing,
         assert_matches::assert_matches,
-        solana_clock::{MAX_PROCESSING_AGE, Slot},
+        solana_clock::Slot,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
@@ -4544,7 +4544,7 @@ mod tests {
                 genesis_config.hash(),
             ));
         let mut bank = Bank::new_for_tests(&genesis_config);
-        for _ in 0..MAX_PROCESSING_AGE {
+        for _ in 0..bank.max_processing_age() {
             bank.fill_bank_with_ticks_for_tests();
             bank.freeze();
             let slot = bank.slot();

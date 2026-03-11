@@ -6,7 +6,6 @@ use {
         scheduler_messages::MaxAge,
     },
     itertools::Itertools,
-    solana_clock::MAX_PROCESSING_AGE,
     solana_fee::FeeFeatures,
     solana_fee_structure::FeeBudgetLimits,
     solana_measure::measure_us,
@@ -131,8 +130,12 @@ impl Consumer {
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
         let pre_results = vec![Ok(()); txs.len()];
-        let check_results =
-            bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
+        let check_results = bank.check_transactions(
+            txs,
+            &pre_results,
+            bank.max_processing_age(),
+            &mut error_counters,
+        );
         let check_results: Vec<_> = check_results
             .into_iter()
             .zip(txs.iter())
@@ -333,7 +336,7 @@ impl Consumer {
         let (load_and_execute_transactions_output, load_execute_us) =
             measure_us!(bank.load_and_execute_transactions(
                 batch,
-                MAX_PROCESSING_AGE,
+                bank.max_processing_age(),
                 &mut execute_and_commit_timings.execute_timings,
                 &mut error_counters,
                 TransactionProcessingConfig {
