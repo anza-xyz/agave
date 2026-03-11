@@ -373,11 +373,8 @@ pub fn get_accounts_db_config(
         use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
             solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
         ),
-<<<<<<< HEAD
-        ..AccountsDbConfig::default()
-=======
         snapshots_use_direct_io: !arg_matches.is_present("no_accounts_db_snapshots_direct_io"),
->>>>>>> 66d105723 (feat: enable direct-io in accounts-db snapshot operations with opt-out flag (#10790))
+        ..AccountsDbConfig::default()
     }
 }
 
