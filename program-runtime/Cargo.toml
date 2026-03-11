@@ -18,7 +18,7 @@ name = "solana_program_runtime"
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = []
+dev-context-only-utils = ["dep:solana-message"]
 dummy-for-ci-check = ["metrics"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 metrics = []
@@ -52,6 +52,7 @@ solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-last-restart-slot = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
+solana-message = { workspace = true, optional = true }
 solana-program-entrypoint = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }

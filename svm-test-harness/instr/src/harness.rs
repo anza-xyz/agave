@@ -3,13 +3,10 @@
 use {
     crate::fixture::{instr_context::InstrContext, instr_effects::InstrEffects},
     agave_syscalls::create_program_runtime_environment_v1,
-    solana_account::{AccountSharedData, WritableAccount},
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_instruction::Instruction,
     solana_instruction_error::InstructionError,
-    solana_message::{LegacyMessage, Message, SanitizedMessage},
     solana_program_runtime::{
-        invoke_context::{EnvironmentConfig, InvokeContext},
+        invoke_context::{EnvironmentConfig, InvokeContext, mock_compile_message},
         loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
         sysvar_cache::SysvarCache,
     },
@@ -19,46 +16,13 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_transaction_context::transaction::TransactionContext,
-    std::{collections::HashSet, rc::Rc, sync::Arc},
+    std::{rc::Rc, sync::Arc},
 };
 
 /// Default callback with no precompile support.
 struct DefaultCallback;
 
 impl InvokeContextCallback for DefaultCallback {}
-
-fn compile_message(
-    instruction: &Instruction,
-    accounts: &[(Pubkey, solana_account::Account)],
-    program_id: &Pubkey,
-    loader_key: &Pubkey,
-) -> Option<(SanitizedMessage, Vec<(Pubkey, AccountSharedData)>)> {
-    let message = Message::new(std::slice::from_ref(instruction), None);
-    let transaction_accounts: Vec<_> = message
-        .account_keys
-        .iter()
-        .map(|key| {
-            let account = accounts
-                .iter()
-                .find(|(k, _)| k == key)
-                .map(|(_, a)| AccountSharedData::from(a.clone()))
-                .unwrap_or_else(|| {
-                    if key == program_id {
-                        let mut account = AccountSharedData::new(0, 0, loader_key);
-                        account.set_executable(true);
-                        account
-                    } else {
-                        AccountSharedData::default()
-                    }
-                });
-            (*key, account)
-        })
-        .collect();
-
-    let sanitized_message = SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()));
-
-    Some((sanitized_message, transaction_accounts))
-}
 
 /// Execute a single instruction against the Solana VM.
 ///
@@ -98,7 +62,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     let loader_key = program_cache.find(program_id)?.account_owner();
 
     let (sanitized_message, transaction_accounts) =
-        compile_message(&input.instruction, &input.accounts, program_id, &loader_key)?;
+        mock_compile_message(&input.instruction, &input.accounts, program_id, &loader_key)?;
 
     let mut transaction_context = TransactionContext::new(
         transaction_accounts,
@@ -207,41 +171,13 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_account::Account, solana_instruction::AccountMeta, solana_pubkey::Pubkey,
-        solana_svm_feature_set::SVMFeatureSet, solana_sysvar_id::SysvarId,
+        super::*,
+        solana_account::Account,
+        solana_instruction::{AccountMeta, Instruction},
+        solana_pubkey::Pubkey,
+        solana_svm_feature_set::SVMFeatureSet,
+        solana_sysvar_id::SysvarId,
     };
-
-    #[test]
-    fn test_compile_message() {
-        let program_id = Pubkey::new_from_array([1u8; 32]);
-        let writable = Pubkey::new_from_array([2u8; 32]);
-        let loader_key = Pubkey::new_from_array([3u8; 32]);
-
-        let instruction = Instruction {
-            program_id,
-            accounts: vec![AccountMeta::new(writable, false)],
-            data: vec![1, 2, 3],
-        };
-
-        let accounts = vec![(
-            writable,
-            Account {
-                lamports: 100,
-                ..Account::default()
-            },
-        )];
-
-        let (message, tx_accounts) =
-            compile_message(&instruction, &accounts, &program_id, &loader_key).unwrap();
-
-        assert_eq!(message.instructions().len(), 1);
-        assert_eq!(tx_accounts.len(), 2);
-        assert_eq!(tx_accounts[0].0, writable);
-        assert_eq!(tx_accounts[1].0, program_id);
-
-        // Verify the writable account is NOT promoted to signer.
-        assert!(!message.is_signer(0));
-    }
 
     #[test]
     fn test_system_program_exec() {

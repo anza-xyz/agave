@@ -1,9 +1,10 @@
 #[cfg(feature = "dev-context-only-utils")]
 use {
     crate::loaded_programs::ProgramCacheEntry,
-    solana_account::{AccountSharedData, create_account_shared_data_for_test},
+    solana_account::{AccountSharedData, WritableAccount, create_account_shared_data_for_test},
     solana_epoch_schedule::EpochSchedule,
     solana_instruction::AccountMeta,
+    solana_message::{LegacyMessage, Message, SanitizedMessage},
     solana_sdk_ids::sysvar,
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
@@ -45,6 +46,7 @@ use {
         alloc::Layout,
         borrow::Cow,
         cell::RefCell,
+        collections::HashSet,
         fmt::{self, Debug},
         rc::Rc,
     },
@@ -912,6 +914,40 @@ macro_rules! with_mock_invoke_context {
 }
 
 #[cfg(feature = "dev-context-only-utils")]
+pub fn mock_compile_message(
+    instruction: &Instruction,
+    accounts: &[(Pubkey, solana_account::Account)],
+    program_id: &Pubkey,
+    loader_key: &Pubkey,
+) -> Option<(SanitizedMessage, Vec<(Pubkey, AccountSharedData)>)> {
+    let message = Message::new(std::slice::from_ref(instruction), None);
+    let transaction_accounts: Vec<_> = message
+        .account_keys
+        .iter()
+        .map(|key| {
+            let account = accounts
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, a)| AccountSharedData::from(a.clone()))
+                .unwrap_or_else(|| {
+                    if key == program_id {
+                        let mut account = AccountSharedData::new(0, 0, loader_key);
+                        account.set_executable(true);
+                        account
+                    } else {
+                        AccountSharedData::default()
+                    }
+                });
+            (*key, account)
+        })
+        .collect();
+
+    let sanitized_message = SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()));
+
+    Some((sanitized_message, transaction_accounts))
+}
+
+#[cfg(feature = "dev-context-only-utils")]
 pub fn mock_process_instruction_with_feature_set<
     F: FnMut(&mut InvokeContext),
     G: FnMut(&mut InvokeContext),
@@ -1039,15 +1075,13 @@ mod tests {
         super::*,
         crate::execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
         serde::{Deserialize, Serialize},
-        solana_account::WritableAccount,
-        solana_instruction::Instruction,
+        solana_account::Account,
         solana_keypair::Keypair,
         solana_rent::Rent,
         solana_sdk_ids::system_program,
         solana_signer::Signer,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION,
-        std::collections::HashSet,
         test_case::test_case,
     };
 
@@ -1884,5 +1918,37 @@ mod tests {
             result.is_ok(),
             "top-level signer should not need seeds: {result:?}"
         );
+    }
+
+    #[test]
+    fn test_compile_message() {
+        let program_id = Pubkey::new_from_array([1u8; 32]);
+        let writable = Pubkey::new_from_array([2u8; 32]);
+        let loader_key = Pubkey::new_from_array([3u8; 32]);
+
+        let instruction = Instruction {
+            program_id,
+            accounts: vec![AccountMeta::new(writable, false)],
+            data: vec![1, 2, 3],
+        };
+
+        let accounts = vec![(
+            writable,
+            Account {
+                lamports: 100,
+                ..Account::default()
+            },
+        )];
+
+        let (message, tx_accounts) =
+            mock_compile_message(&instruction, &accounts, &program_id, &loader_key).unwrap();
+
+        assert_eq!(message.instructions().len(), 1);
+        assert_eq!(tx_accounts.len(), 2);
+        assert_eq!(tx_accounts.first().unwrap().0, writable);
+        assert_eq!(tx_accounts.get(1).unwrap().0, program_id);
+
+        // Verify the writable account is NOT promoted to signer.
+        assert!(!message.is_signer(0));
     }
 }

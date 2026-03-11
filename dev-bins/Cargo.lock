@@ -7856,6 +7856,7 @@ dependencies = [
  "solana-instruction",
  "solana-last-restart-slot",
  "solana-loader-v3-interface",
+ "solana-message",
  "solana-program-entrypoint",
  "solana-pubkey 4.1.0",
  "solana-rent 4.1.0",

@@ -12,6 +12,7 @@ publish = false
 
 [features]
 agave-unstable-api = []
+dev-context-only-utils = []
 dummy-for-ci-check = ["fuzz"]
 fuzz = [
     "dep:agave-feature-set",

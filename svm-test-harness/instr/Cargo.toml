@@ -12,6 +12,7 @@ publish = false
 
 [features]
 agave-unstable-api = []
+dev-context-only-utils = []
 dummy-for-ci-check = ["fuzz"]
 metrics = ["solana-program-runtime/metrics", "solana-svm/metrics"]
 fuzz = [
@@ -36,9 +37,8 @@ solana-compute-budget = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true, features = ["serde"] }
 solana-loader-v4-interface = { workspace = true }
-solana-message = { workspace = true }
 solana-precompile-error = { workspace = true }
-solana-program-runtime = { workspace = true }
+solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true, features = ["sysvar"] }
 solana-sdk-ids = { workspace = true }
