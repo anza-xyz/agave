@@ -40,7 +40,7 @@ pub enum RpcCustomError {
     #[error("SendTransactionPreflightFailure")]
     SendTransactionPreflightFailure {
         message: String,
-        result: RpcSimulateTransactionResult,
+        result: Box<RpcSimulateTransactionResult>,
     },
     #[error("TransactionSignatureVerificationFailure")]
     TransactionSignatureVerificationFailure,
