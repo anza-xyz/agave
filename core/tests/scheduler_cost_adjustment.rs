@@ -87,7 +87,6 @@ impl TestSetup {
         let commit_result = bank
             .load_execute_and_commit_transactions(
                 &batch,
-                bank.max_processing_age(),
                 ExecutionRecordingConfig::new_single_setting(false),
                 &mut ExecuteTimings::default(),
                 None,

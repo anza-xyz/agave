@@ -536,6 +536,7 @@ impl PartialEq for Bank {
             rc: _,
             status_cache: _,
             blockhash_queue,
+            max_processing_age,
             ancestors: _,
             hash,
             parent_hash,
@@ -603,6 +604,7 @@ impl PartialEq for Bank {
             // is added to the struct, this PartialEq is accordingly updated.
         } = self;
         *blockhash_queue.read().unwrap() == *other.blockhash_queue.read().unwrap()
+            && *max_processing_age == other.max_processing_age
             && *hash.read().unwrap() == *other.hash.read().unwrap()
             && parent_hash == &other.parent_hash
             && parent_slot == &other.parent_slot
@@ -751,6 +753,9 @@ pub struct Bank {
 
     /// FIFO queue of `recent_blockhash` items
     blockhash_queue: RwLock<BlockhashQueue>,
+
+    /// Maximum age in slots a blockhash can be for a tx to be processed.
+    max_processing_age: usize,
 
     /// The set of parents including this bank
     pub ancestors: Ancestors,
@@ -1086,6 +1091,7 @@ impl Bank {
             rc: BankRc::new(accounts),
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::<BlockhashQueue>::default(),
+            max_processing_age: MAX_PROCESSING_AGE,
             ancestors: Ancestors::default(),
             hash: RwLock::<Hash>::default(),
             parent_hash: Hash::default(),
@@ -1322,7 +1328,7 @@ impl Bank {
             bank_id,
             epoch,
             blockhash_queue,
-
+            max_processing_age: parent.max_processing_age,
             // TODO: clean this up, so much special-case copying...
             hashes_per_tick: parent.hashes_per_tick,
             ticks_per_slot: parent.ticks_per_slot,
@@ -1896,6 +1902,7 @@ impl Bank {
             rc: bank_rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
+            max_processing_age: MAX_PROCESSING_AGE,
             ancestors,
             hash: RwLock::new(fields.hash),
             parent_hash: fields.parent_hash,
@@ -2450,7 +2457,7 @@ impl Bank {
     }
 
     pub fn max_processing_age(&self) -> usize {
-        MAX_PROCESSING_AGE
+        self.max_processing_age
     }
 
     // Calculates the starting-slot for inflation from the activation slot.
@@ -2899,7 +2906,7 @@ impl Bank {
 
     pub fn is_blockhash_valid(&self, hash: &Hash) -> bool {
         let blockhash_queue = self.blockhash_queue.read().unwrap();
-        blockhash_queue.is_hash_valid_for_age(hash, self.max_processing_age())
+        blockhash_queue.is_hash_valid_for_age(hash, self.max_processing_age)
     }
 
     pub fn get_minimum_balance_for_rent_exemption(&self, data_len: usize) -> u64 {
@@ -2954,7 +2961,7 @@ impl Bank {
         // length is made variable by epoch
         blockhash_queue
             .get_hash_age(blockhash)
-            .map(|age| self.block_height + self.max_processing_age() as u64 - age)
+            .map(|age| self.block_height + self.max_processing_age as u64 - age)
     }
 
     /// Query the alpenglow genesis certificate account.
@@ -3397,7 +3404,7 @@ impl Bank {
             // After simulation, transactions will need to be forwarded to the leader
             // for processing. During forwarding, the transaction could expire if the
             // delay is not accounted for.
-            self.max_processing_age()
+            self.max_processing_age
                 .saturating_sub(MAX_TRANSACTION_FORWARDING_DELAY),
             &mut timings,
             &mut TransactionErrorMetrics::default(),
@@ -4087,14 +4094,12 @@ impl Bank {
     pub fn load_execute_and_commit_transactions(
         &self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
-        max_age: usize,
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
     ) -> (Vec<TransactionCommitResult>, Option<BalanceCollector>) {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
-            max_age,
             recording_config,
             timings,
             log_messages_bytes_limit,
@@ -4106,7 +4111,6 @@ impl Bank {
     pub fn load_execute_and_commit_transactions_with_pre_commit_callback<'a>(
         &'a self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
-        max_age: usize,
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
@@ -4117,7 +4121,6 @@ impl Bank {
     ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
-            max_age,
             recording_config,
             timings,
             log_messages_bytes_limit,
@@ -4128,7 +4131,6 @@ impl Bank {
     fn do_load_execute_and_commit_transactions_with_pre_commit_callback<'a>(
         &'a self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
-        max_age: usize,
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
@@ -4142,7 +4144,7 @@ impl Bank {
             balance_collector,
         } = self.load_and_execute_transactions(
             batch,
-            max_age,
+            self.max_processing_age,
             timings,
             &mut TransactionErrorMetrics::default(),
             TransactionProcessingConfig {
@@ -4192,7 +4194,6 @@ impl Bank {
 
         let (mut commit_results, ..) = self.load_execute_and_commit_transactions(
             &batch,
-            self.max_processing_age(),
             ExecutionRecordingConfig {
                 enable_cpi_recording: false,
                 enable_log_recording: true,
@@ -4235,7 +4236,6 @@ impl Bank {
     ) -> Vec<Result<()>> {
         self.load_execute_and_commit_transactions(
             batch,
-            self.max_processing_age(),
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
