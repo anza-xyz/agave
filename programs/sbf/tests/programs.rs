@@ -151,7 +151,6 @@ fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> Transact
     let mut commit_results = bank
         .load_execute_and_commit_transactions(
             &tx_batch,
-            bank.max_processing_age(),
             ExecutionRecordingConfig {
                 enable_cpi_recording: true,
                 enable_log_recording: true,
@@ -5580,7 +5579,6 @@ fn test_function_call_args() {
     let result = bank
         .load_execute_and_commit_transactions(
             &tx_batch,
-            bank.max_processing_age(),
             ExecutionRecordingConfig {
                 enable_cpi_recording: false,
                 enable_log_recording: false,
