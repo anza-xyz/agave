@@ -438,6 +438,7 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
+        solana_rent::Rent,
         solana_reward_info::RewardType,
         solana_signer::Signer,
         solana_stake_interface::state::StakeStateV2,
@@ -464,8 +465,8 @@ mod tests {
             }
         }
 
-        pub fn new_random() -> Self {
-            Self::maybe_from(&StakeReward::new_random()).unwrap()
+        pub fn new_random(rent: &Rent) -> Self {
+            Self::maybe_from(&StakeReward::new_random(rent)).unwrap()
         }
     }
 
@@ -679,7 +680,11 @@ mod tests {
         let expected_num = 100;
 
         let stake_rewards = (0..expected_num)
-            .map(|_| Some(PartitionedStakeReward::new_random()))
+            .map(|_| {
+                Some(PartitionedStakeReward::new_random(
+                    &bank.rent_collector.rent,
+                ))
+            })
             .collect::<PartitionedStakeRewards>();
 
         let partition_indices = vec![(0..expected_num).collect()];
@@ -729,7 +734,11 @@ mod tests {
             |num_stakes: u64, expected_num_reward_distribution_blocks: u64| {
                 // Given the short epoch, i.e. 32 slots, we should cap the number of reward distribution blocks to 32/10 = 3.
                 let stake_rewards = (0..num_stakes)
-                    .map(|_| Some(PartitionedStakeReward::new_random()))
+                    .map(|_| {
+                        Some(PartitionedStakeReward::new_random(
+                            &bank.rent_collector.rent,
+                        ))
+                    })
                     .collect::<PartitionedStakeRewards>();
 
                 assert_eq!(
@@ -767,7 +776,11 @@ mod tests {
         // Given 8k rewards, it will take 2 blocks to credit all the rewards
         let expected_num = 8192;
         let stake_rewards = (0..expected_num)
-            .map(|_| Some(PartitionedStakeReward::new_random()))
+            .map(|_| {
+                Some(PartitionedStakeReward::new_random(
+                    &bank.rent_collector.rent,
+                ))
+            })
             .collect::<PartitionedStakeRewards>();
 
         assert_eq!(bank.get_reward_distribution_num_blocks(&stake_rewards), 2);
@@ -793,20 +806,24 @@ mod tests {
     fn test_get_reward_distribution_num_blocks_none() {
         let rewards_all = 8192;
         let expected_rewards_some = 6144;
+
+        let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+        let bank = Bank::new_for_tests(&genesis_config);
+
         let rewards = (0..rewards_all)
             .map(|i| {
                 if i % 4 == 0 {
                     None
                 } else {
-                    Some(PartitionedStakeReward::new_random())
+                    Some(PartitionedStakeReward::new_random(
+                        &bank.rent_collector.rent,
+                    ))
                 }
             })
             .collect::<PartitionedStakeRewards>();
         assert_eq!(rewards.rewards.len(), rewards_all);
         assert_eq!(rewards.num_rewards(), expected_rewards_some);
 
-        let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-        let bank = Bank::new_for_tests(&genesis_config);
         assert_eq!(bank.get_reward_distribution_num_blocks(&rewards), 1);
     }
 

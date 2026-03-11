@@ -34,6 +34,7 @@ mod tests {
         },
         solana_epoch_schedule::EpochSchedule,
         solana_native_token::LAMPORTS_PER_SOL,
+        solana_rent::Rent,
         std::sync::Arc,
     };
 
@@ -41,9 +42,10 @@ mod tests {
     fn test_hash_rewards_into_partitions() {
         // setup the expected number of stake rewards
         let expected_num = 12345;
+        let rent = Rent::default();
 
         let stake_rewards = (0..expected_num)
-            .map(|_| Some(PartitionedStakeReward::new_random()))
+            .map(|_| Some(PartitionedStakeReward::new_random(&rent)))
             .collect::<PartitionedStakeRewards>();
 
         let partition_indices = hash_rewards_into_partitions(&stake_rewards, &Hash::default(), 5);
@@ -79,7 +81,11 @@ mod tests {
         // simulate 40K - 1 rewards, the expected num of credit blocks should be 10.
         let expected_num = 40959;
         let stake_rewards = (0..expected_num)
-            .map(|_| Some(PartitionedStakeReward::new_random()))
+            .map(|_| {
+                Some(PartitionedStakeReward::new_random(
+                    &bank.rent_collector.rent,
+                ))
+            })
             .collect::<PartitionedStakeRewards>();
 
         let partition_indices =

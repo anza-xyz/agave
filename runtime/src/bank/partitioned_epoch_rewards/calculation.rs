@@ -2148,7 +2148,7 @@ mod tests {
     ) {
         for _ in 0..count {
             let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
-                create_staked_node_accounts(stake_lamports);
+                create_staked_node_accounts(stake_lamports, &bank.rent_collector.rent);
             bank.store_account_and_update_capitalization(&vote_pubkey, &vote_account);
             bank.store_account_and_update_capitalization(&stake_pubkey, &stake_account);
             voters.insert(vote_pubkey);

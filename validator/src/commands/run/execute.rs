@@ -891,17 +891,6 @@ pub fn execute(
     let maximum_snapshot_download_abort =
         value_t_or_exit!(matches, "maximum_snapshot_download_abort", u64);
 
-    if matches!(
-        validator_config.block_production_method,
-        BlockProductionMethod::UnifiedScheduler
-    ) {
-        warn!(
-            "Currently, the unified-scheduler method is experimental for block-production. It has \
-             known security issues and should be used only for developing and benchmarking \
-             purposes"
-        );
-    }
-
     let public_rpc_addr = matches
         .value_of("public_rpc_addr")
         .map(|addr| {
