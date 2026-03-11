@@ -9,7 +9,6 @@ use {
         send_batch::generate_durable_nonce_accounts,
     },
     solana_commitment_config::CommitmentConfig,
-    solana_connection_cache::connection_cache::NewConnectionConfig,
     solana_core::validator::ValidatorConfig,
     solana_faucet::faucet::run_local_faucet_for_tests,
     solana_fee_calculator::FeeRateGovernor,
@@ -20,13 +19,11 @@ use {
         validator_configs::make_identical_validator_configs,
     },
     solana_net_utils::SocketAddrSpace,
-    solana_quic_client::{QuicConfig, QuicConnectionManager},
     solana_rent::Rent,
     solana_rpc::rpc::JsonRpcConfig,
-    solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_test_validator::TestValidatorGenesis,
-    solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},
+    solana_tps_client::TpuClientNextClient,
     std::{sync::Arc, time::Duration},
 };
 
@@ -132,21 +129,17 @@ fn test_bench_tps_test_validator(config: Config) {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client = Arc::new(RpcClient::new_with_commitment(
-        test_validator.rpc_url(),
-        CommitmentConfig::processed(),
-    ));
     let websocket_url = test_validator.rpc_pubsub_url();
 
     let client = Arc::new(
-        TpuClient::new(
-            "tpu_client_quic_bench_tps",
-            rpc_client,
+        TpuClientNextClient::new(
+            &test_validator.rpc_url(),
             &websocket_url,
-            TpuClientConfig::default(),
-            QuicConnectionManager::new_with_connection_config(QuicConfig::new().unwrap()),
+            CommitmentConfig::processed(),
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            None,
         )
-        .expect("Should build Quic Tpu Client."),
+        .expect("Should build TpuClientNextClient."),
     );
 
     let lamports_per_account = 1000;

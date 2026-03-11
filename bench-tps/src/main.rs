@@ -7,18 +7,13 @@ use {
         keypairs::get_keypairs,
         send_batch::{generate_durable_nonce_accounts, generate_keypairs},
     },
-    solana_client::connection_cache::ConnectionCache,
     solana_commitment_config::CommitmentConfig,
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis::Base64Account,
     solana_keypair::Keypair,
-    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_signer::Signer,
-    solana_streamer::streamer::StakedNodes,
     solana_system_interface::program as system_program,
-    solana_tps_client::TpsClient,
-    solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},
+    solana_tps_client::{TpsClient, TpuClientNextClient},
     std::{
         collections::HashMap,
         fs::File,
@@ -26,7 +21,7 @@ use {
         net::IpAddr,
         path::Path,
         process::exit,
-        sync::{Arc, RwLock},
+        sync::Arc,
     },
 };
 
@@ -37,88 +32,13 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 /// Number of signatures for all transactions in ~1 week at ~100K TPS
 pub const NUM_SIGNATURES_FOR_TXS: u64 = 100_000 * 60 * 60 * 24 * 7;
 
-/// Request information about node's stake
-/// If fail to get requested information, return error
-/// Otherwise return stake of the node
-/// along with total activated stake of the network
-fn find_node_activated_stake(
-    rpc_client: Arc<RpcClient>,
-    node_id: Pubkey,
-) -> Result<(u64, u64), ()> {
-    let vote_accounts = rpc_client.get_vote_accounts();
-    if let Err(error) = vote_accounts {
-        error!("Failed to get vote accounts, error: {error}");
-        return Err(());
-    }
-
-    let vote_accounts = vote_accounts.unwrap();
-
-    let total_active_stake: u64 = vote_accounts
-        .current
-        .iter()
-        .map(|vote_account| vote_account.activated_stake)
-        .sum();
-
-    let node_id_as_str = node_id.to_string();
-    let find_result = vote_accounts
-        .current
-        .iter()
-        .find(|&vote_account| vote_account.node_pubkey == node_id_as_str);
-    match find_result {
-        Some(value) => Ok((value.activated_stake, total_active_stake)),
-        None => {
-            error!("Failed to find stake for requested node");
-            Err(())
-        }
-    }
-}
-
-fn create_connection_cache(
-    json_rpc_url: &str,
-    tpu_connection_pool_size: usize,
-    bind_address: IpAddr,
-    client_node_id: Option<&Keypair>,
-    commitment_config: CommitmentConfig,
-) -> ConnectionCache {
-    if client_node_id.is_none() {
-        return ConnectionCache::new_quic(
-            "bench-tps-connection_cache_quic",
-            tpu_connection_pool_size,
-        );
-    }
-
-    let rpc_client = Arc::new(RpcClient::new_with_commitment(
-        json_rpc_url.to_string(),
-        commitment_config,
-    ));
-
-    let client_node_id = client_node_id.unwrap();
-    let (stake, total_stake) =
-        find_node_activated_stake(rpc_client, client_node_id.pubkey()).unwrap_or_default();
-    info!("Stake for specified client_node_id: {stake}, total stake: {total_stake}");
-    let stakes = HashMap::from([
-        (client_node_id.pubkey(), stake),
-        (Pubkey::new_unique(), total_stake - stake),
-    ]);
-    let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
-        Arc::new(stakes),
-        HashMap::<Pubkey, u64>::default(), // overrides
-    )));
-    ConnectionCache::new_with_client_options(
-        "bench-tps-connection_cache_quic",
-        tpu_connection_pool_size,
-        None,
-        Some((client_node_id, bind_address)),
-        Some((&staked_nodes, &client_node_id.pubkey())),
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 fn create_client(
     external_client_type: &ExternalClientType,
     json_rpc_url: &str,
     websocket_url: &str,
-    connection_cache: ConnectionCache,
+    bind_address: IpAddr,
+    client_node_id: Option<&Keypair>,
     commitment_config: CommitmentConfig,
 ) -> Arc<dyn TpsClient + Send + Sync> {
     match external_client_type {
@@ -126,38 +46,19 @@ fn create_client(
             json_rpc_url.to_string(),
             commitment_config,
         )),
-        ExternalClientType::TpuClient => {
-            let rpc_client = Arc::new(RpcClient::new_with_commitment(
-                json_rpc_url.to_string(),
+        ExternalClientType::TpuClient => Arc::new(
+            TpuClientNextClient::new(
+                json_rpc_url,
+                websocket_url,
                 commitment_config,
-            ));
-            match connection_cache {
-                ConnectionCache::Udp(cache) => Arc::new(
-                    TpuClient::new_with_connection_cache(
-                        rpc_client,
-                        websocket_url,
-                        TpuClientConfig::default(),
-                        cache,
-                    )
-                    .unwrap_or_else(|err| {
-                        eprintln!("Could not create TpuClient {err:?}");
-                        exit(1);
-                    }),
-                ),
-                ConnectionCache::Quic(cache) => Arc::new(
-                    TpuClient::new_with_connection_cache(
-                        rpc_client,
-                        websocket_url,
-                        TpuClientConfig::default(),
-                        cache,
-                    )
-                    .unwrap_or_else(|err| {
-                        eprintln!("Could not create TpuClient {err:?}");
-                        exit(1);
-                    }),
-                ),
-            }
-        }
+                bind_address,
+                client_node_id,
+            )
+            .unwrap_or_else(|err| {
+                eprintln!("Could not create TpuClientNextClient {err:?}");
+                exit(1);
+            }),
+        ),
     }
 }
 
@@ -186,7 +87,6 @@ fn main() {
         target_lamports_per_signature,
         num_lamports_per_account,
         external_client_type,
-        tpu_connection_pool_size,
         skip_tx_account_data_size,
         compute_unit_price,
         use_durable_nonce,
@@ -229,18 +129,12 @@ fn main() {
         return;
     }
 
-    let connection_cache = create_connection_cache(
-        json_rpc_url,
-        *tpu_connection_pool_size,
-        *bind_address,
-        client_node_id.as_ref(),
-        *commitment_config,
-    );
     let client = create_client(
         external_client_type,
         json_rpc_url,
         websocket_url,
-        connection_cache,
+        *bind_address,
+        client_node_id.as_ref(),
         *commitment_config,
     );
     if let Some(instruction_padding_config) = instruction_padding_config {

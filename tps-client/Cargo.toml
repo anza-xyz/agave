@@ -19,6 +19,7 @@ bank-client = ["dep:solana-client-traits", "dep:solana-runtime"]
 dev-context-only-utils = []
 
 [dependencies]
+bincode = { workspace = true }
 log = { workspace = true }
 solana-account = { workspace = true }
 solana-client = { workspace = true }
@@ -40,10 +41,13 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
 solana-tpu-client = { workspace = true }
+solana-tpu-client-next = { workspace = true, features = ["agave-unstable-api", "websocket-node-address-service"] }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
 
 [dev-dependencies]
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
