@@ -1,15 +1,6 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 use {
-    agave_feature_set::{enable_secp256r1_precompile, FeatureSet},
-    solana_fee_structure::FeeDetails,
+    agave_feature_set::FeatureSet, solana_fee_structure::FeeDetails,
     solana_svm_transaction::svm_message::SVMStaticMessage,
 };
 
@@ -20,15 +11,11 @@ use {
 // instead of removing, since fees will naturally be changed via feature-gates
 // in the future. Keeping this struct will help keep things organized.
 #[derive(Copy, Clone)]
-pub struct FeeFeatures {
-    pub enable_secp256r1_precompile: bool,
-}
+pub struct FeeFeatures {}
 
 impl From<&FeatureSet> for FeeFeatures {
-    fn from(feature_set: &FeatureSet) -> Self {
-        Self {
-            enable_secp256r1_precompile: feature_set.is_active(&enable_secp256r1_precompile::ID),
-        }
+    fn from(_feature_set: &FeatureSet) -> Self {
+        Self {}
     }
 }
 
@@ -55,18 +42,14 @@ pub fn calculate_fee_details(
     zero_fees_for_test: bool,
     lamports_per_signature: u64,
     prioritization_fee: u64,
-    fee_features: FeeFeatures,
+    _fee_features: FeeFeatures,
 ) -> FeeDetails {
     if zero_fees_for_test {
         return FeeDetails::default();
     }
 
     FeeDetails::new(
-        calculate_signature_fee(
-            SignatureCounts::from(message),
-            lamports_per_signature,
-            fee_features.enable_secp256r1_precompile,
-        ),
+        calculate_signature_fee(SignatureCounts::from(message), lamports_per_signature),
         prioritization_fee,
     )
 }
@@ -80,14 +63,11 @@ pub fn calculate_signature_fee(
         num_secp256r1_signatures,
     }: SignatureCounts,
     lamports_per_signature: u64,
-    enable_secp256r1_precompile: bool,
 ) -> u64 {
     let signature_count = num_transaction_signatures
         .saturating_add(num_ed25519_signatures)
         .saturating_add(num_secp256k1_signatures)
-        .saturating_add(
-            u64::from(enable_secp256r1_precompile).wrapping_mul(num_secp256r1_signatures),
-        );
+        .saturating_add(num_secp256r1_signatures);
     signature_count.saturating_mul(lamports_per_signature)
 }
 
@@ -127,7 +107,6 @@ mod tests {
                     num_secp256r1_signatures: 0,
                 },
                 LAMPORTS_PER_SIGNATURE,
-                true,
             ),
             0
         );
@@ -142,7 +121,6 @@ mod tests {
                     num_secp256r1_signatures: 0,
                 },
                 LAMPORTS_PER_SIGNATURE,
-                true,
             ),
             LAMPORTS_PER_SIGNATURE
         );
@@ -157,24 +135,8 @@ mod tests {
                     num_secp256r1_signatures: 4,
                 },
                 LAMPORTS_PER_SIGNATURE,
-                true,
             ),
             10 * LAMPORTS_PER_SIGNATURE
-        );
-
-        // Pre-compile signatures (no secp256r1)
-        assert_eq!(
-            calculate_signature_fee(
-                SignatureCounts {
-                    num_transaction_signatures: 1,
-                    num_ed25519_signatures: 2,
-                    num_secp256k1_signatures: 3,
-                    num_secp256r1_signatures: 4,
-                },
-                LAMPORTS_PER_SIGNATURE,
-                false,
-            ),
-            6 * LAMPORTS_PER_SIGNATURE
         );
     }
 }

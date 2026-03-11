@@ -2,9 +2,9 @@ use {
     crate::{
         cli::{ComputeUnitPrice, Config, InstructionPaddingConfig},
         log_transaction_service::{
-            create_log_transactions_service_and_sender, SignatureBatchSender, TransactionInfoBatch,
+            SignatureBatchSender, TransactionInfoBatch, create_log_transactions_service_and_sender,
         },
-        perf_utils::{sample_txs, SampleStats},
+        perf_utils::{SampleStats, sample_txs},
         send_batch::*,
     },
     chrono::Utc,
@@ -33,10 +33,10 @@ use {
         collections::{HashSet, VecDeque},
         process::exit,
         sync::{
-            atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering},
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
 };
@@ -1226,7 +1226,7 @@ mod tests {
         agave_feature_set::FeatureSet,
         solana_commitment_config::CommitmentConfig,
         solana_fee_calculator::FeeRateGovernor,
-        solana_genesis_config::{create_genesis_config, GenesisConfig},
+        solana_genesis_config::{GenesisConfig, create_genesis_config},
         solana_native_token::LAMPORTS_PER_SOL,
         solana_nonce::state::State,
         solana_runtime::{bank::Bank, bank_client::BankClient, bank_forks::BankForks},
@@ -1240,25 +1240,57 @@ mod tests {
         bank.wrap_with_bank_forks_for_tests()
     }
 
-    #[test]
-    fn test_bench_tps_bank_client() {
+    fn run_bench_tps_bank_client(mut config: Config) {
         let (genesis_config, id) = create_genesis_config(10_000 * LAMPORTS_PER_SOL);
+        config.id = id;
+        config.tx_count = 10;
+        config.duration = Duration::from_secs(5);
         let (bank, _bank_forks) = bank_with_all_features(&genesis_config);
         let client = Arc::new(BankClient::new_shared(bank));
 
-        let config = Config {
-            id,
-            tx_count: 10,
-            duration: Duration::from_secs(5),
-            ..Config::default()
+        let keypair_count = config.tx_count * config.keypair_multiplier;
+        let keypairs = generate_and_fund_keypairs(
+            client.clone(),
+            &config.id,
+            keypair_count,
+            1_000_000_000,
+            false,
+            false,
+        )
+        .unwrap();
+        let nonce_keypairs = if config.use_durable_nonce {
+            Some(generate_durable_nonce_accounts(client.clone(), &keypairs))
+        } else {
+            None
         };
 
-        let keypair_count = config.tx_count * config.keypair_multiplier;
-        let keypairs =
-            generate_and_fund_keypairs(client.clone(), &config.id, keypair_count, 20, false, false)
-                .unwrap();
+        do_bench_tps(client, config, keypairs, nonce_keypairs);
+    }
 
-        do_bench_tps(client, config, keypairs, None);
+    #[test]
+    fn test_bench_tps_bank_client() {
+        run_bench_tps_bank_client(Config::default());
+    }
+
+    #[test]
+    fn test_bench_tps_bank_client_nonce() {
+        let config = Config {
+            use_durable_nonce: true,
+            ..Config::default()
+        };
+        run_bench_tps_bank_client(config);
+    }
+
+    #[test]
+    fn test_bench_tps_bank_client_with_padding() {
+        let config = Config {
+            instruction_padding_config: Some(InstructionPaddingConfig {
+                program_id: spl_instruction_padding_interface::ID,
+                data_size: 0,
+            }),
+            ..Config::default()
+        };
+        run_bench_tps_bank_client(config);
     }
 
     #[test]

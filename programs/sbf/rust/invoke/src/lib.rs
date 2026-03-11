@@ -16,7 +16,7 @@ use {
             MAX_CPI_ACCOUNT_INFOS, MAX_CPI_INSTRUCTION_ACCOUNTS, MAX_CPI_INSTRUCTION_DATA_LEN,
         },
     },
-    solana_program_entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
+    solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, ProgramResult},
     solana_program_error::ProgramError,
     solana_pubkey::{Pubkey, PubkeyError},
     solana_sbf_rust_invoke_dep::*,
@@ -913,7 +913,7 @@ fn process_instruction<'a>(
                         // TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE_MOVING_DATA_POINTER
                         // is that we don't move the data pointer past the
                         // RcBox. This is needed to avoid the "Invalid account
-                        // info pointer" check when stricter_abi_and_runtime_constraints is enabled.
+                        // info pointer" check when syscall_parameter_address_restrictions is enabled.
                         // This also means we don't need to update the
                         // serialized len like we do in the other test.
                         value: RefCell::new(slice::from_raw_parts_mut(
@@ -1068,7 +1068,7 @@ fn process_instruction<'a>(
             let realloc_program_id = accounts[REALLOC_PROGRAM_INDEX].key;
             let realloc_program_owner = accounts[REALLOC_PROGRAM_INDEX].owner;
             let invoke_program_id = accounts[INVOKE_PROGRAM_INDEX].key;
-            let stricter_abi_and_runtime_constraints = instruction_data[1];
+            let virtual_address_space_adjustments = instruction_data[1];
             let new_len = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
             let prev_len = account.data_len();
             let expected = account.data.borrow()[..new_len].to_vec();
@@ -1088,10 +1088,10 @@ fn process_instruction<'a>(
             )
             .unwrap();
 
-            // deserialize_parameters_unaligned predates realloc support, and
+            // deserialize_parameters_for_abiv0 predates realloc support, and
             // hardcodes the account data length to the original length.
             if !bpf_loader_deprecated::check_id(realloc_program_owner)
-                && stricter_abi_and_runtime_constraints == 0
+                && virtual_address_space_adjustments == 0
             {
                 assert_eq!(&*account.data.borrow(), &expected);
                 assert_eq!(
@@ -1131,7 +1131,7 @@ fn process_instruction<'a>(
             };
 
             let mut expected = account.data.borrow().to_vec();
-            let stricter_abi_and_runtime_constraints = instruction_data[1];
+            let virtual_address_space_adjustments = instruction_data[1];
             let new_len = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
             expected.extend_from_slice(&instruction_data[10..]);
             let mut instruction_data =
@@ -1151,7 +1151,7 @@ fn process_instruction<'a>(
             .unwrap();
 
             assert_eq!(*account.data.borrow(), &prev_data[..new_len]);
-            if stricter_abi_and_runtime_constraints == 0 {
+            if virtual_address_space_adjustments == 0 {
                 assert_eq!(
                     unsafe {
                         slice::from_raw_parts(
@@ -1340,7 +1340,7 @@ fn process_instruction<'a>(
             }
 
             if !invoke_struction.is_empty() {
-                // Invoke another program. With stricter_abi_and_runtime_constraints, before CPI the callee will update the accounts (incl resizing)
+                // Invoke another program. With virtual_address_space_adjustments, before CPI the callee will update the accounts (incl resizing)
                 // so the pointer may change.
                 let invoked_program_id = accounts[INVOKED_PROGRAM_INDEX].key;
 
@@ -1394,11 +1394,11 @@ fn process_instruction<'a>(
             let stack = unsafe {
                 slice::from_raw_parts_mut(
                     MM_STACK_START as *mut u8,
-                    MAX_CALL_DEPTH * STACK_FRAME_SIZE * 2,
+                    MAX_CALL_DEPTH * STACK_FRAME_SIZE,
                 )
             };
 
-            #[cfg(not(target_feature = "dynamic-frames"))]
+            #[cfg(all(not(target_feature = "dynamic-frames"), not(feature = "sbpf-v3")))]
             // We don't know in which frame we are now, so we skip a few (10) frames at the start
             // which might have been used by the current call stack. We check that the memory for
             // the 10..MAX_CALL_DEPTH frames is zeroed. Then we write a sentinel value, and in the
@@ -1407,12 +1407,22 @@ fn process_instruction<'a>(
             // When we don't have dynamic stack frames, the stack grows from lower addresses
             // to higher addresses, so we compare accordingly.
             for i in 10..MAX_CALL_DEPTH {
-                let stack = &mut stack[i * STACK_FRAME_SIZE * 2..][..STACK_FRAME_SIZE];
+                let stack = &mut stack[i * STACK_FRAME_SIZE..(i + 1) * STACK_FRAME_SIZE];
                 assert!(stack == &ZEROS[..STACK_FRAME_SIZE], "stack not zeroed");
                 stack.fill(42);
             }
 
-            #[cfg(target_feature = "dynamic-frames")]
+            #[cfg(feature = "sbpf-v3")]
+            // In sbpfv3, we don't have stack gaps nor dynamic frames, so this code is similar
+            // to the one above, but we can't index from `i * STACK_FRAME_SIZE * 2`. Instead,
+            // we do `i * STACK_FRAME_SIZE`.
+            for i in 10..MAX_CALL_DEPTH {
+                let stack = &mut stack[i * STACK_FRAME_SIZE..(i + 1) * STACK_FRAME_SIZE];
+                assert!(stack == &ZEROS[..STACK_FRAME_SIZE], "stack not zeroed");
+                stack.fill(42);
+            }
+
+            #[cfg(all(target_feature = "dynamic-frames", feature = "sbpf-v3"))]
             // When we have dynamic frames, the stack grows from the higher addresses, so we
             // compare from zero until the beginning of a function frame.
             unsafe {
@@ -1650,8 +1660,10 @@ struct RcBox<T> {
 
 #[allow(invalid_reference_casting)]
 unsafe fn overwrite_account_data(account: &AccountInfo, data: Rc<RefCell<&mut [u8]>>) {
-    std::ptr::write_volatile(
-        &account.data as *const _ as usize as *mut Rc<RefCell<&mut [u8]>>,
-        data,
-    );
+    unsafe {
+        std::ptr::write_volatile(
+            &account.data as *const _ as usize as *mut Rc<RefCell<&mut [u8]>>,
+            data,
+        );
+    }
 }

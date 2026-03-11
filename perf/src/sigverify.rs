@@ -4,17 +4,15 @@
 use {
     crate::{
         packet::{
-            BytesPacketBatch, Packet, PacketBatch, PacketFlags, PacketRef, PacketRefMut,
+            BytesPacketBatch, PacketBatch, PacketFlags, PacketRef, PacketRefMut,
             RecycledPacketBatch,
         },
         recycled_vec::RecycledVec,
-        recycler::Recycler,
     },
-    rayon::{prelude::*, ThreadPool},
+    rayon::prelude::*,
     solana_hash::Hash,
     solana_message::{MESSAGE_HEADER_LENGTH, MESSAGE_VERSION_PREFIX},
     solana_pubkey::Pubkey,
-    solana_rayon_threadlimit::get_thread_count,
     solana_short_vec::decode_shortu16_len,
     solana_signature::Signature,
     std::{convert::TryFrom, mem::size_of},
@@ -23,17 +21,7 @@ use {
 // Empirically derived to constrain max verify latency to ~8ms at lower packet counts
 pub const VERIFY_PACKET_CHUNK_SIZE: usize = 128;
 
-static PAR_THREAD_POOL: std::sync::LazyLock<ThreadPool> = std::sync::LazyLock::new(|| {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(get_thread_count())
-        .thread_name(|i| format!("solSigVerify{i:02}"))
-        .build()
-        .unwrap()
-});
-
 pub type TxOffset = RecycledVec<u32>;
-
-type TxOffsets = (TxOffset, TxOffset, TxOffset, TxOffset, Vec<Vec<u32>>);
 
 #[derive(Debug, PartialEq, Eq)]
 struct PacketOffsets {
@@ -396,58 +384,6 @@ fn check_for_simple_vote_transaction(
     Ok(())
 }
 
-pub fn generate_offsets(
-    batches: &mut [PacketBatch],
-    recycler: &Recycler<TxOffset>,
-    reject_non_vote: bool,
-) -> TxOffsets {
-    debug!("allocating..");
-    let mut signature_offsets: RecycledVec<_> = recycler.allocate("sig_offsets");
-    let mut pubkey_offsets: RecycledVec<_> = recycler.allocate("pubkey_offsets");
-    let mut msg_start_offsets: RecycledVec<_> = recycler.allocate("msg_start_offsets");
-    let mut msg_sizes: RecycledVec<_> = recycler.allocate("msg_size_offsets");
-    let mut current_offset: usize = 0;
-    let offsets = batches
-        .iter_mut()
-        .map(|batch| {
-            batch
-                .iter_mut()
-                .map(|mut packet| {
-                    let packet_offsets =
-                        get_packet_offsets(&mut packet, current_offset, reject_non_vote);
-
-                    trace!("pubkey_offset: {}", packet_offsets.pubkey_start);
-
-                    let mut pubkey_offset = packet_offsets.pubkey_start;
-                    let mut sig_offset = packet_offsets.sig_start;
-                    let msg_size = current_offset.saturating_add(packet.meta().size) as u32;
-                    for _ in 0..packet_offsets.sig_len {
-                        signature_offsets.push(sig_offset);
-                        sig_offset = sig_offset.saturating_add(size_of::<Signature>() as u32);
-
-                        pubkey_offsets.push(pubkey_offset);
-                        pubkey_offset = pubkey_offset.saturating_add(size_of::<Pubkey>() as u32);
-
-                        msg_start_offsets.push(packet_offsets.msg_start);
-
-                        let msg_size = msg_size.saturating_sub(packet_offsets.msg_start);
-                        msg_sizes.push(msg_size);
-                    }
-                    current_offset = current_offset.saturating_add(size_of::<Packet>());
-                    packet_offsets.sig_len
-                })
-                .collect()
-        })
-        .collect();
-    (
-        signature_offsets,
-        pubkey_offsets,
-        msg_start_offsets,
-        msg_sizes,
-        offsets,
-    )
-}
-
 fn split_batches(batches: Vec<PacketBatch>) -> (Vec<BytesPacketBatch>, Vec<RecycledPacketBatch>) {
     let mut bytes_batches = Vec::new();
     let mut pinned_batches = Vec::new();
@@ -517,9 +453,14 @@ pub fn shrink_batches(batches: Vec<PacketBatch>) -> Vec<PacketBatch> {
         .collect()
 }
 
-pub fn ed25519_verify(batches: &mut [PacketBatch], reject_non_vote: bool, packet_count: usize) {
+pub fn ed25519_verify(
+    thread_pool: &rayon::ThreadPool,
+    batches: &mut [PacketBatch],
+    reject_non_vote: bool,
+    packet_count: usize,
+) {
     debug!("CPU ECDSA for {packet_count}");
-    PAR_THREAD_POOL.install(|| {
+    thread_pool.install(|| {
         batches.par_iter_mut().flatten().for_each(|mut packet| {
             if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
                 packet.meta_mut().set_discard(true);
@@ -528,29 +469,15 @@ pub fn ed25519_verify(batches: &mut [PacketBatch], reject_non_vote: bool, packet
     });
 }
 
-pub fn ed25519_verify_disabled(batches: &mut [PacketBatch]) {
+pub fn ed25519_verify_disabled(thread_pool: &rayon::ThreadPool, batches: &mut [PacketBatch]) {
     let packet_count = count_packets_in_batches(batches);
     debug!("disabled ECDSA for {packet_count}");
-    PAR_THREAD_POOL.install(|| {
+
+    thread_pool.install(|| {
         batches.par_iter_mut().flatten().for_each(|mut packet| {
             packet.meta_mut().set_discard(false);
-        });
+        })
     });
-}
-
-pub fn copy_return_values<I, T>(sig_lens: I, out: &RecycledVec<u8>, rvs: &mut [Vec<u8>])
-where
-    I: IntoIterator<Item = T>,
-    T: IntoIterator<Item = u32>,
-{
-    debug_assert!(rvs.iter().flatten().all(|&rv| rv == 0u8));
-    let mut offset = 0usize;
-    let rvs = rvs.iter_mut().flatten();
-    for (k, rv) in sig_lens.into_iter().flatten().zip(rvs) {
-        let out = out[offset..].iter().take(k as usize).all(|&x| x == 1u8);
-        *rv = u8::from(k != 0u32 && out);
-        offset = offset.saturating_add(k as usize);
-    }
 }
 
 pub fn mark_disabled(batches: &mut [PacketBatch], r: &[Vec<u8>]) {
@@ -563,6 +490,26 @@ pub fn mark_disabled(batches: &mut [PacketBatch], r: &[Vec<u8>]) {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+pub fn threadpool_for_tests() -> rayon::ThreadPool {
+    // Four threads is sufficient for unit tests
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .thread_name(|i| format!("solSigVerTest{i:02}"))
+        .build()
+        .expect("new rayon threadpool")
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub fn threadpool_for_benches() -> rayon::ThreadPool {
+    let num_threads = (num_cpus::get() / 2).max(1);
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .thread_name(|i| format!("solSigVerBnch{i:02}"))
+        .build()
+        .expect("new rayon threadpool")
+}
+
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
@@ -570,8 +517,8 @@ mod tests {
         super::*,
         crate::{
             packet::{
-                to_packet_batches, BytesPacket, BytesPacketBatch, Packet, RecycledPacketBatch,
-                PACKETS_PER_BATCH,
+                BytesPacket, BytesPacketBatch, PACKETS_PER_BATCH, Packet, RecycledPacketBatch,
+                to_packet_batches,
             },
             sigverify::{self, PacketOffsets},
             test_tx::{
@@ -582,12 +529,11 @@ mod tests {
         bytes::{BufMut, Bytes, BytesMut},
         rand::Rng,
         solana_keypair::Keypair,
-        solana_message::{compiled_instruction::CompiledInstruction, Message, MessageHeader},
+        solana_message::{Message, MessageHeader, compiled_instruction::CompiledInstruction},
         solana_packet::PACKET_DATA_SIZE,
         solana_signature::Signature,
         solana_signer::Signer,
-        solana_transaction::{versioned::VersionedTransaction, Transaction},
-        std::iter::repeat_with,
+        solana_transaction::{Transaction, versioned::VersionedTransaction},
         test_case::test_case,
     };
 
@@ -597,46 +543,6 @@ mod tests {
         assert!(a.len() >= b.len());
         let end = a.len() - b.len() + 1;
         (0..end).find(|&i| a[i..i + b.len()] == b[..])
-    }
-
-    #[test]
-    fn test_copy_return_values() {
-        let mut rng = rand::rng();
-        let sig_lens: Vec<Vec<u32>> = {
-            let size = rng.random_range(0..64);
-            repeat_with(|| {
-                let size = rng.random_range(0..16);
-                repeat_with(|| rng.random_range(0..5)).take(size).collect()
-            })
-            .take(size)
-            .collect()
-        };
-        let out: Vec<Vec<Vec<bool>>> = sig_lens
-            .iter()
-            .map(|sig_lens| {
-                sig_lens
-                    .iter()
-                    .map(|&size| repeat_with(|| rng.random()).take(size as usize).collect())
-                    .collect()
-            })
-            .collect();
-        let expected: Vec<Vec<u8>> = out
-            .iter()
-            .map(|out| {
-                out.iter()
-                    .map(|out| u8::from(!out.is_empty() && out.iter().all(|&k| k)))
-                    .collect()
-            })
-            .collect();
-        let out = RecycledVec::<u8>::from_vec(
-            out.into_iter().flatten().flatten().map(u8::from).collect(),
-        );
-        let mut rvs: Vec<Vec<u8>> = sig_lens
-            .iter()
-            .map(|sig_lens| vec![0u8; sig_lens.len()])
-            .collect();
-        copy_return_values(sig_lens, &out, &mut rvs);
-        assert_eq!(rvs, expected);
     }
 
     #[test]
@@ -1015,15 +921,18 @@ mod tests {
 
         // check result
         let should_discard = modify_data;
-        assert!(batches
-            .iter()
-            .flat_map(|batch| batch.iter())
-            .all(|p| p.meta().discard() == should_discard));
+        assert!(
+            batches
+                .iter()
+                .flat_map(|batch| batch.iter())
+                .all(|p| p.meta().discard() == should_discard)
+        );
     }
 
     fn ed25519_verify(batches: &mut [PacketBatch]) {
+        let threadpool = threadpool_for_tests();
         let packet_count = sigverify::count_packets_in_batches(batches);
-        sigverify::ed25519_verify(batches, false, packet_count);
+        sigverify::ed25519_verify(&threadpool, batches, false, packet_count);
     }
 
     #[test]
@@ -1037,10 +946,12 @@ mod tests {
 
         // verify packets
         ed25519_verify(&mut batches);
-        assert!(batches
-            .iter()
-            .flat_map(|batch| batch.iter())
-            .all(|p| p.meta().discard()));
+        assert!(
+            batches
+                .iter()
+                .flat_map(|batch| batch.iter())
+                .all(|p| p.meta().discard())
+        );
     }
 
     #[test]
@@ -1065,7 +976,7 @@ mod tests {
 
     #[test]
     fn test_verify_large_pass() {
-        test_verify_n(VERIFY_PACKET_CHUNK_SIZE * get_thread_count(), false);
+        test_verify_n(VERIFY_PACKET_CHUNK_SIZE * 32, false);
     }
 
     #[test]
@@ -1075,7 +986,7 @@ mod tests {
 
     #[test]
     fn test_verify_large_fail() {
-        test_verify_n(VERIFY_PACKET_CHUNK_SIZE * get_thread_count(), true);
+        test_verify_n(VERIFY_PACKET_CHUNK_SIZE * 32, true);
     }
 
     #[test]
@@ -1103,17 +1014,19 @@ mod tests {
         let ref_ans = 1u8;
         let mut ref_vec = vec![vec![ref_ans; n]; num_batches];
         ref_vec[0].push(0u8);
-        assert!(batches
-            .iter()
-            .flat_map(|batch| batch.iter())
-            .zip(ref_vec.into_iter().flatten())
-            .all(|(p, discard)| {
-                if discard == 0 {
-                    p.meta().discard()
-                } else {
-                    !p.meta().discard()
-                }
-            }));
+        assert!(
+            batches
+                .iter()
+                .flat_map(|batch| batch.iter())
+                .zip(ref_vec.into_iter().flatten())
+                .all(|(p, discard)| {
+                    if discard == 0 {
+                        p.meta().discard()
+                    } else {
+                        !p.meta().discard()
+                    }
+                })
+        );
     }
 
     #[test]

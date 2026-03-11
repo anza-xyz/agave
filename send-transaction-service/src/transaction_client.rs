@@ -4,14 +4,14 @@ use {
     log::warn,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
-    solana_quic_definitions::NotifyKeyUpdate,
+    solana_tls_utils::NotifyKeyUpdate,
     solana_tpu_client_next::{
+        ConnectionWorkersScheduler,
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
-        ConnectionWorkersScheduler,
     },
     std::{
         net::{SocketAddr, UdpSocket},
@@ -182,6 +182,7 @@ impl TpuClientNextClient {
                 connect: leader_forward_count + 1,
                 send: leader_forward_count,
             },
+            override_initial_congestion_window: None,
         }
     }
 

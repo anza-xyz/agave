@@ -1,10 +1,9 @@
-#![cfg(feature = "agave-unstable-api")]
 use std::{
     net::{IpAddr, Ipv4Addr, UdpSocket},
     ops::Deref,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 

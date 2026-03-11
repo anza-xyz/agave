@@ -176,7 +176,7 @@ pub fn get_closest_completion(
             }
         }
     }
-    slot_dists.sort_by(|(_, d1), (_, d2)| d1.cmp(d2));
+    slot_dists.sort_by_key(|(_, d)| *d);
 
     let mut visited = HashSet::from([root_slot]);
     let mut repairs = Vec::new();
@@ -195,7 +195,7 @@ pub fn get_closest_completion(
                 continue;
             }
             let slot_meta = slot_meta_cache.get(&path_slot).unwrap().as_ref().unwrap();
-            let new_repairs = RepairService::generate_repairs_for_slot_throttled_by_tick(
+            let new_repairs = RepairService::generate_repairs_for_slot(
                 blockstore,
                 path_slot,
                 slot_meta,
@@ -217,7 +217,7 @@ pub mod test {
         crate::repair::repair_service::sleep_shred_deferment_period,
         solana_hash::Hash,
         solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path},
-        trees::{tr, Tree, TreeWalk},
+        trees::{Tree, TreeWalk, tr},
     };
 
     #[test]

@@ -7,8 +7,8 @@ use {
     itertools::Either,
     pretty_hex::PrettyHex,
     serde::{
-        ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
         Deserialize, Serialize,
+        ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
@@ -16,8 +16,8 @@ use {
         is_loadable::IsLoadable as _,
     },
     solana_cli_output::{
-        display::{build_balance_message, writeln_transaction},
         CliAccount, CliAccountNewConfig, OutputFormat, QuietDisplay, VerboseDisplay,
+        display::{build_balance_message, writeln_transaction},
     },
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -37,9 +37,10 @@ use {
     },
     std::{
         cell::RefCell,
+        cmp,
         collections::HashMap,
         fmt::{self, Display, Formatter},
-        io::{stdout, Write},
+        io::{Write, stdout},
         rc::Rc,
         sync::Arc,
     },
@@ -273,8 +274,9 @@ impl fmt::Display for CliBlockWithEntries {
                         )
                     },
                     reward
-                        .commission
-                        .map(|commission| format!("{commission:>9}%"))
+                        .commission_bps
+                        .map(|bps| format!("{:>8}.{:02}%", bps / 100, bps % 100))
+                        .or_else(|| reward.commission.map(|c| format!("{c:>9}%")))
                         .unwrap_or_else(|| "    -".to_string())
                 )?;
             }
@@ -744,7 +746,7 @@ pub fn output_ledger(
 pub fn output_sorted_program_ids(program_ids: HashMap<Pubkey, u64>) {
     let mut program_ids_array: Vec<_> = program_ids.into_iter().collect();
     // Sort descending by count of program id
-    program_ids_array.sort_by(|a, b| b.1.cmp(&a.1));
+    program_ids_array.sort_by_key(|b| cmp::Reverse(b.1));
     for (program_id, count) in program_ids_array.iter() {
         println!("{:<44}: {}", program_id.to_string(), count);
     }

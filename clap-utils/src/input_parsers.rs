@@ -1,7 +1,7 @@
 use {
     crate::keypair::{
-        keypair_from_seed_phrase, pubkey_from_path, resolve_signer_from_path, signer_from_path,
-        ASK_KEYWORD, SKIP_SEED_PHRASE_VALIDATION_ARG,
+        ASK_KEYWORD, SKIP_SEED_PHRASE_VALIDATION_ARG, keypair_from_seed_phrase, pubkey_from_path,
+        resolve_signer_from_path, signer_from_path,
     },
     chrono::DateTime,
     clap::ArgMatches,
@@ -9,7 +9,7 @@ use {
     solana_clock::UnixTimestamp,
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
-    solana_keypair::{read_keypair_file, Keypair},
+    solana_keypair::{Keypair, read_keypair_file},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -272,7 +272,7 @@ mod tests {
     use {
         super::*,
         clap::{App, Arg},
-        solana_bls_signatures::{keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey},
+        solana_bls_signatures::{Pubkey as BLSPubkey, keypair::Keypair as BLSKeypair},
         solana_keypair::write_keypair_file,
         std::fs,
     };
@@ -438,8 +438,8 @@ mod tests {
 
     #[test]
     fn test_bls_pubkeys_of() {
-        let bls_pubkey1: BLSPubkey = BLSKeypair::new().public;
-        let bls_pubkey2: BLSPubkey = BLSKeypair::new().public;
+        let bls_pubkey1: BLSPubkey = BLSKeypair::new().public.into();
+        let bls_pubkey2: BLSPubkey = BLSKeypair::new().public.into();
         let bls_pubkey1_compressed: BLSPubkeyCompressed = bls_pubkey1.try_into().unwrap();
         let bls_pubkey2_compressed: BLSPubkeyCompressed = bls_pubkey2.try_into().unwrap();
         let matches = app().get_matches_from(vec![

@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use {
-    solana_account::{state_traits::StateMut, AccountSharedData},
-    solana_instruction::{error::InstructionError, Instruction},
+    solana_account::{AccountSharedData, state_traits::StateMut},
+    solana_instruction::{Instruction, error::InstructionError},
     solana_keypair::Keypair,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_test::*,

@@ -6,13 +6,13 @@ pagination_label: "Best Practices: Validator Monitoring"
 
 It is essential that you have monitoring in place on your validator. In the event that your validator is delinquent (behind the rest of the network) you want to respond immediately to fix the issue. One very useful tool to monitor your validator is [`agave-watchtower`](#agave-watchtower).
 
-## Solana Watchtower
+## Agave Watchtower
 
-Solana Watchtower is an extremely useful monitoring tool that will regularly monitor the health of your validator. It can monitor your validator for delinquency then notify you on your application of choice: Slack, Discord, Telegram or Twilio. Additionally, `agave-watchtower` has the ability to monitor the health of the entire cluster so that you can be aware of any cluster wide problems.
+Agave Watchtower is an extremely useful monitoring tool that will regularly monitor the health of your validator. It can monitor your validator for delinquency then notify you on your application of choice: Slack, Discord, Telegram or Twilio. Additionally, `agave-watchtower` has the ability to monitor the health of the entire cluster so that you can be aware of any cluster wide problems.
 
 ### Getting Started
 
-To get started with Solana Watchtower, run `agave-watchtower --help`. From the help menu, you can see the optional flags and an explanation of the command.
+To get started with Agave Watchtower, run `agave-watchtower --help`. From the help menu, you can see the optional flags and an explanation of the command.
 
 Here is a sample command that will monitor a validator node with an identity public key of `2uTk98rqqwENevkPH2AHHzGHXgeGc1h6ku8hQUqWeXZp`:
 

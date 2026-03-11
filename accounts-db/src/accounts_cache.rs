@@ -8,11 +8,32 @@ use {
         collections::BTreeSet,
         ops::Deref,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
 };
+
+/// Tracks the maximum flushed root slot.
+///
+/// Internally stores `slot + 1` so that the default value of `0` naturally
+/// represents "no flushed roots".
+#[derive(Debug, Default)]
+struct MaxFlushedRoot(AtomicU64);
+
+impl MaxFlushedRoot {
+    /// Returns the current max flushed root, or `None` if no root has been flushed.
+    fn get(&self) -> Option<Slot> {
+        self.0.load(Ordering::Acquire).checked_sub(1)
+    }
+
+    /// Atomically update to the maximum of the current value and `slot`.
+    /// Stores `slot + 1` internally so 0 can represent no slots flushed
+    /// Note: Will overflow at u64::MAX, but realistically should never get that high
+    fn fetch_max(&self, slot: Slot) {
+        self.0.fetch_max(slot + 1, Ordering::Release);
+    }
+}
 
 #[derive(Debug)]
 pub struct SlotCache {
@@ -151,7 +172,7 @@ pub struct AccountsCache {
     // Queue of potentially unflushed roots. Random eviction + cache too large
     // could have triggered a flush of this slot already
     maybe_unflushed_roots: RwLock<BTreeSet<Slot>>,
-    max_flushed_root: AtomicU64,
+    max_flushed_root: MaxFlushedRoot,
     /// The size of account data stored in the whole AccountsCache, in bytes
     total_size: Arc<AtomicU64>,
     /// The number of accounts stored in the whole AccountsCache
@@ -230,6 +251,10 @@ impl AccountsCache {
         self.maybe_unflushed_roots.write().unwrap().insert(root);
     }
 
+    pub fn num_unflushed_roots(&self) -> usize {
+        self.maybe_unflushed_roots.read().unwrap().len()
+    }
+
     pub fn clear_roots(&self, max_root: Option<Slot>) -> BTreeSet<Slot> {
         let mut w_maybe_unflushed_roots = self.maybe_unflushed_roots.write().unwrap();
         if let Some(max_root) = max_root {
@@ -263,17 +288,17 @@ impl AccountsCache {
         self.cache.len()
     }
 
-    pub fn fetch_max_flush_root(&self) -> Slot {
-        self.max_flushed_root.load(Ordering::Acquire)
+    pub fn fetch_max_flush_root(&self) -> Option<Slot> {
+        self.max_flushed_root.get()
     }
 
     pub fn set_max_flush_root(&self, root: Slot) {
-        self.max_flushed_root.fetch_max(root, Ordering::Release);
+        self.max_flushed_root.fetch_max(root);
     }
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use super::*;
 
     impl AccountsCache {
@@ -327,5 +352,28 @@ pub mod tests {
         cache.slot_cache(inserted_slot).unwrap().mark_slot_frozen();
         // If the cache is told the size limit is 0, it should return the one frozen slot
         assert_eq!(cache.cached_frozen_slots(), vec![inserted_slot]);
+    }
+
+    #[test]
+    fn test_max_flushed_root_fetch_max() {
+        let root = MaxFlushedRoot::default();
+        assert_eq!(root.get(), None);
+
+        root.fetch_max(0);
+        assert_eq!(root.get(), Some(0));
+
+        // first real slot replaces sentinel
+        root.fetch_max(10);
+        assert_eq!(root.get(), Some(10));
+
+        // larger slot wins
+        root.fetch_max(20);
+        assert_eq!(root.get(), Some(20));
+
+        // smaller and equal slots are ignored
+        root.fetch_max(5);
+        assert_eq!(root.get(), Some(20));
+        root.fetch_max(20);
+        assert_eq!(root.get(), Some(20));
     }
 }

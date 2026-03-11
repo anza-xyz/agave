@@ -11,9 +11,9 @@
 
 use {
     crate::{
-        input_parsers::{pubkeys_sigs_of, STDOUT_OUTFILE_TOKEN},
-        offline::{SIGNER_ARG, SIGN_ONLY_ARG},
         ArgConstant,
+        input_parsers::{STDOUT_OUTFILE_TOKEN, pubkeys_sigs_of},
+        offline::{SIGN_ONLY_ARG, SIGNER_ARG},
     },
     bip39::{Language, Mnemonic, Seed},
     clap::ArgMatches,
@@ -21,8 +21,8 @@ use {
     solana_derivation_path::{DerivationPath, DerivationPathError},
     solana_hash::Hash,
     solana_keypair::{
-        keypair_from_seed, keypair_from_seed_phrase_and_passphrase, read_keypair,
-        read_keypair_file, seed_derivable::keypair_from_seed_and_derivation_path, Keypair,
+        Keypair, keypair_from_seed, keypair_from_seed_phrase_and_passphrase, read_keypair,
+        read_keypair_file, seed_derivable::keypair_from_seed_and_derivation_path,
     },
     solana_message::Message,
     solana_presigner::Presigner,
@@ -30,16 +30,16 @@ use {
     solana_remote_wallet::{
         locator::{Locator as RemoteWalletLocator, LocatorError as RemoteWalletLocatorError},
         remote_keypair::generate_remote_keypair,
-        remote_wallet::{maybe_wallet_manager, RemoteWalletError, RemoteWalletManager},
+        remote_wallet::{RemoteWalletError, RemoteWalletManager, maybe_wallet_manager},
     },
     solana_seed_phrase::generate_seed_from_seed_phrase_and_passphrase,
     solana_signature::Signature,
-    solana_signer::{null_signer::NullSigner, Signer},
+    solana_signer::{Signer, null_signer::NullSigner},
     std::{
         cell::RefCell,
         convert::TryFrom,
         error,
-        io::{stdin, stdout, Write},
+        io::{Write, stdin, stdout},
         ops::Deref,
         process::exit,
         rc::Rc,
@@ -463,7 +463,9 @@ pub(crate) fn parse_signer_source<S: AsRef<str>>(
         }
     };
     match uriparse::URIReference::try_from(source.as_str()) {
-        Err(_) => Err(SignerSourceError::UnrecognizedSource),
+        Err(_) => std::fs::metadata(source.as_str())
+            .map(|_| SignerSource::new(SignerSourceKind::Filepath(source)))
+            .map_err(|_| SignerSourceError::UnrecognizedSource),
         Ok(uri) => {
             if let Some(scheme) = uri.scheme() {
                 let scheme = scheme.as_str().to_ascii_lowercase();
@@ -1115,7 +1117,7 @@ mod tests {
         super::*,
         crate::offline::OfflineArgs,
         assert_matches::assert_matches,
-        clap::{value_t_or_exit, App, Arg},
+        clap::{App, Arg, value_t_or_exit},
         solana_keypair::write_keypair_file,
         solana_remote_wallet::{locator::Manufacturer, remote_wallet::initialize_wallet_manager},
         solana_system_interface::instruction::transfer,
@@ -1260,6 +1262,20 @@ mod tests {
                 legacy: false,
             }
         );
+        let dir_with_spaces = TempDir::new().unwrap();
+        let spaced_dir = dir_with_spaces.path().join("my keys");
+        std::fs::create_dir_all(&spaced_dir).unwrap();
+        let spaced_file = NamedTempFile::new_in(&spaced_dir).unwrap();
+        let spaced_path_str = spaced_file.path().to_str().unwrap();
+        assert!(spaced_path_str.contains(' '));
+        assert!(
+            matches!(parse_signer_source(spaced_path_str).unwrap(), SignerSource {
+                kind: SignerSourceKind::Filepath(p),
+                derivation_path: None,
+                legacy: false,
+            } if p == spaced_path_str)
+        );
+
         assert!(
             matches!(parse_signer_source(format!("file:{absolute_path_str}")).unwrap(), SignerSource {
                 kind: SignerSourceKind::Filepath(p),

@@ -14,7 +14,7 @@ use {
         snapshot_controller::SnapshotController,
         snapshot_package::SnapshotPackage,
     },
-    agave_snapshots::{error::SnapshotError, SnapshotArchiveKind, SnapshotKind},
+    agave_snapshots::{SnapshotArchiveKind, SnapshotKind, error::SnapshotError},
     crossbeam_channel::{Receiver, SendError, Sender},
     log::*,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
@@ -26,10 +26,10 @@ use {
         cmp,
         fmt::{self, Debug, Formatter},
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, LazyLock, Mutex, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
-        thread::{self, sleep, Builder, JoinHandle},
+        thread::{self, Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
 };
@@ -138,7 +138,6 @@ pub struct SnapshotRequestHandler {
 
 impl SnapshotRequestHandler {
     // Returns the latest requested snapshot slot and storages
-    #[allow(clippy::type_complexity)]
     pub fn handle_snapshot_requests(
         &self,
         non_snapshot_time_us: u128,
@@ -259,6 +258,7 @@ impl SnapshotRequestHandler {
                     .accounts_db
                     .accounts_cache
                     .fetch_max_flush_root()
+                    .expect("Roots have been flushed")
         );
         flush_accounts_cache_time.stop();
 
@@ -403,7 +403,6 @@ pub struct AbsRequestHandlers {
 
 impl AbsRequestHandlers {
     // Returns the latest requested snapshot slot, if one exists
-    #[allow(clippy::type_complexity)]
     pub fn handle_snapshot_requests(
         &self,
         non_snapshot_time_us: u128,
@@ -544,11 +543,10 @@ impl AccountsBackgroundService {
                                 .flush_accounts_cache(force_flush, Some(max_clean_slot_inclusive));
 
                             if should_clean {
-                                bank.rc.accounts.accounts_db.clean_accounts(
-                                    Some(max_clean_slot_inclusive),
-                                    false,
-                                    bank.epoch_schedule(),
-                                );
+                                bank.rc
+                                    .accounts
+                                    .accounts_db
+                                    .clean_accounts(Some(max_clean_slot_inclusive), false);
                                 last_cleaned_slot = max_clean_slot_inclusive;
                                 previous_clean_time = Instant::now();
                             }
@@ -701,8 +699,8 @@ fn cmp_snapshot_request_kinds_by_priority(
     b: &SnapshotRequestKind,
 ) -> cmp::Ordering {
     use {
-        cmp::Ordering::{Equal, Greater, Less},
         SnapshotRequestKind as Kind,
+        cmp::Ordering::{Equal, Greater, Less},
     };
     match (a, b) {
         (Kind::FullSnapshot, Kind::FullSnapshot) => Equal,
@@ -899,9 +897,11 @@ mod test {
 
         // And now ensure the snapshot request channel is empty!
         assert_eq!(latest_full_snapshot_slot(&bank0), Some(240));
-        assert!(snapshot_request_handler
-            .get_next_snapshot_request()
-            .is_none());
+        assert!(
+            snapshot_request_handler
+                .get_next_snapshot_request()
+                .is_none()
+        );
     }
 
     /// Ensure that we can prune banks with the same slot (if they were on different forks)

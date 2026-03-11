@@ -1,27 +1,28 @@
 use {
-    agave_feature_set::{deprecate_legacy_vote_ixs, FeatureSet},
+    agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
     bincode::serialize,
-    criterion::{criterion_group, criterion_main, Criterion},
-    solana_account::{self as account, create_account_for_test, Account, AccountSharedData},
+    criterion::{Criterion, criterion_group, criterion_main},
+    solana_account::{self as account, Account, AccountSharedData, create_account_for_test},
     solana_clock::{Clock, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_instruction::{error::InstructionError, AccountMeta},
+    solana_instruction::{AccountMeta, error::InstructionError},
     solana_program_runtime::invoke_context::{
         mock_process_instruction, mock_process_instruction_with_feature_set,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{sysvar, vote::id},
-    solana_slot_hashes::{SlotHashes, MAX_ENTRIES},
+    solana_slot_hashes::{MAX_ENTRIES, SlotHashes},
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
+    solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     solana_vote_program::{
         vote_instruction::VoteInstruction,
         vote_processor::Entrypoint,
         vote_state::{
-            create_v4_account_with_authorized, handler::VoteStateHandle, TowerSync, Vote,
-            VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs, VoteAuthorizeWithSeedArgs, VoteInit,
-            VoteStateUpdate, VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            MAX_LOCKOUT_HISTORY, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
+            VoteAuthorizeWithSeedArgs, VoteInit, VoteStateUpdate, VoteStateV3, VoteStateVersions,
+            create_v4_account_with_authorized, handler::VoteStateHandle,
         },
     },
 };
@@ -136,9 +137,12 @@ fn create_test_account() -> (Pubkey, AccountSharedData) {
         create_v4_account_with_authorized(
             &solana_pubkey::new_rand(),
             &vote_pubkey,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &vote_pubkey,
-            None,
             0,
+            &vote_pubkey,
+            0,
+            &vote_pubkey,
             balance,
         ),
     )
@@ -156,9 +160,12 @@ fn create_test_account_with_authorized() -> (Pubkey, Pubkey, Pubkey, AccountShar
         create_v4_account_with_authorized(
             &solana_pubkey::new_rand(),
             &authorized_voter,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &authorized_withdrawer,
-            None,
             0,
+            &authorized_withdrawer,
+            0,
+            &authorized_withdrawer,
             100,
         ),
     )
@@ -380,7 +387,7 @@ impl BenchWithdraw {
         let (vote_pubkey, vote_account) = create_test_account();
         let authorized_withdrawer_pubkey = solana_pubkey::new_rand();
         let transaction_accounts = vec![
-            (vote_pubkey, vote_account.clone()),
+            (vote_pubkey, vote_account),
             (sysvar::clock::id(), create_default_clock_account()),
             (sysvar::rent::id(), create_default_rent_account()),
             (authorized_withdrawer_pubkey, AccountSharedData::default()),
@@ -727,9 +734,12 @@ impl BenchAuthorizeWithSeed {
         let vote_account = create_v4_account_with_authorized(
             &Pubkey::new_unique(),
             &authorized_voter,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &authorized_withdrawer,
-            None,
             0,
+            &authorized_withdrawer,
+            0,
+            &authorized_withdrawer,
             100,
         );
         let clock_account = account::create_account_shared_data_for_test(&clock);
@@ -816,9 +826,12 @@ impl BenchAuthorizeCheckedWithSeed {
         let vote_account = create_v4_account_with_authorized(
             &Pubkey::new_unique(),
             &authorized_voter,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &authorized_withdrawer,
-            None,
             0,
+            &authorized_withdrawer,
+            0,
+            &authorized_withdrawer,
             100,
         );
         let new_authority_pubkey = Pubkey::new_unique();
@@ -926,8 +939,8 @@ impl BenchCompactUpdateVoteState {
         };
 
         let transaction_accounts = vec![
-            (vote_pubkey, vote_account.clone()),
-            (sysvar::slot_hashes::id(), slot_hashes_account.clone()),
+            (vote_pubkey, vote_account),
+            (sysvar::slot_hashes::id(), slot_hashes_account),
             (sysvar::clock::id(), create_default_clock_account()),
         ];
 
@@ -989,8 +1002,8 @@ impl BenchTowerSync {
         };
 
         let transaction_accounts = vec![
-            (vote_pubkey, vote_account.clone()),
-            (sysvar::slot_hashes::id(), slot_hashes_account.clone()),
+            (vote_pubkey, vote_account),
+            (sysvar::slot_hashes::id(), slot_hashes_account),
             (sysvar::clock::id(), create_default_clock_account()),
         ];
 

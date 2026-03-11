@@ -46,7 +46,7 @@ impl<T> VmSlice<T> {
     }
 
     /// # Safety
-    /// Set a new length for the mapped account.
+    /// Set a new length for the mapped area.
     /// This function is not safe to use if not coupled with the respective change in
     /// the underlying vector.
     pub unsafe fn set_len(&mut self, new_len: u64) {

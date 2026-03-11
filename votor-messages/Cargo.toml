@@ -21,7 +21,6 @@ frozen-abi = [
 
 [dependencies]
 agave-feature-set = { workspace = true }
-agave-logger = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 solana-address = { workspace = true, features = ["curve25519"] }
@@ -36,8 +35,15 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-hash = { workspace = true, features = ["serde"] }
+solana-hash = { workspace = true, features = ["serde", "copy", "decode", "wincode"] }
 solana-pubkey = { workspace = true }
+solana-signer-store = { workspace = true }
+thiserror = { workspace = true }
+wincode = { workspace = true }
+
+[dev-dependencies]
+agave-votor-messages = { path = ".", features = ["dev-context-only-utils"] }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

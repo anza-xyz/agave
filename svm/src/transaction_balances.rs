@@ -97,12 +97,10 @@ impl BalanceCollector {
                 && !transaction.is_invoked(index)
                 && !is_known_spl_token_id(key)
                 && is_known_spl_token_id(account.owner())
-            {
-                if let Some(token_info) =
+                && let Some(token_info) =
                     SvmTokenInfo::unpack_token_account(account_loader, &account, index)
-                {
-                    token_balances.push(token_info);
-                }
+            {
+                token_balances.push(token_info);
             }
         }
 

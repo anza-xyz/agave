@@ -5,7 +5,7 @@ use {
     itertools::Itertools,
     log::*,
     solana_core::{
-        banking_stage::{unified_scheduler::ensure_banking_stage_setup, BankingStage},
+        banking_stage::{BankingStage, unified_scheduler::ensure_banking_stage_setup},
         banking_trace::BankingTracer,
         consensus::{
             heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
@@ -42,7 +42,7 @@ use {
     },
     std::{
         collections::HashMap,
-        sync::{atomic::Ordering, Arc, Mutex},
+        sync::{Arc, Mutex, atomic::Ordering},
         thread::sleep,
         time::Duration,
     },
@@ -225,7 +225,7 @@ fn test_scheduler_producing_blocks() {
         signal_receiver,
     ) = create_test_recorder(
         genesis_bank.clone(),
-        blockstore.clone(),
+        blockstore,
         None,
         Some(leader_schedule_cache),
     );

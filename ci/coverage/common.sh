@@ -11,6 +11,5 @@ export PART_2_PACKAGES=(
   solana-runtime
   solana-perf
   solana-core
-  solana-wen-restart
   solana-gossip
 )

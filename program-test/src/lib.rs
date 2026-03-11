@@ -1,52 +1,44 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 //! The solana-program-test provides a BanksClient-based test framework SBF programs
 #![allow(clippy::arithmetic_side_effects)]
 
 // Export tokio for test clients
 pub use tokio;
 use {
-    agave_feature_set::{
-        increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8, FEATURE_NAMES,
-    },
+    agave_feature_set::{FEATURE_NAMES, FeatureSet, raise_cpi_nesting_limit_to_8},
     async_trait::async_trait,
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     chrono_humanize::{Accuracy, HumanTime, Tense},
     log::*,
     solana_account::{
-        create_account_shared_data_for_test, state_traits::StateMut, Account, AccountSharedData,
-        ReadableAccount,
+        Account, AccountSharedData, ReadableAccount, create_account_shared_data_for_test,
+        state_traits::StateMut,
     },
     solana_account_info::AccountInfo,
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
-    solana_clock::{Epoch, Slot},
+    solana_clock::{Clock, Epoch, Slot},
     solana_cluster_type::ClusterType,
-    solana_compute_budget::compute_budget::ComputeBudget,
-    solana_fee_calculator::{FeeRateGovernor, DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE},
+    solana_compute_budget::compute_budget::{ComputeBudget, SVMTransactionExecutionCost},
+    solana_epoch_rewards::EpochRewards,
+    solana_epoch_schedule::EpochSchedule,
+    solana_fee_calculator::{DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE, FeeRateGovernor},
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
     solana_instruction::{
-        error::{InstructionError, UNSUPPORTED_SYSVAR},
         Instruction,
+        error::{InstructionError, UNSUPPORTED_SYSVAR},
     },
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_poh_config::PohConfig,
     solana_program_binaries as programs,
-    solana_program_entrypoint::{deserialize, SUCCESS},
+    solana_program_entrypoint::{SUCCESS, deserialize},
     solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
-        serialization::serialize_parameters, stable_log,
+        serialization::serialize_parameters, stable_log, sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -54,19 +46,18 @@ use {
         bank::Bank,
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
-        genesis_utils::{create_genesis_config_with_leader_ex, GenesisConfigInfo},
+        genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader_ex},
         runtime_config::RuntimeConfig,
     },
     solana_signer::Signer,
     solana_svm_log_collector::ic_msg,
     solana_svm_timings::ExecuteTimings,
-    solana_sysvar::SysvarSerialize,
+    solana_sysvar::{SysvarSerialize, last_restart_slot::LastRestartSlot},
     solana_sysvar_id::SysvarId,
     solana_vote_program::vote_state::{VoteStateV4, VoteStateVersions},
     std::{
         cell::RefCell,
         collections::{HashMap, HashSet},
-        convert::TryFrom,
         fs::File,
         io::{self, Read},
         mem::transmute,
@@ -74,8 +65,8 @@ use {
         path::{Path, PathBuf},
         ptr,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         time::{Duration, Instant},
     },
@@ -89,7 +80,7 @@ pub use {
     solana_program_runtime::invoke_context::InvokeContext,
     solana_sbpf::{
         error::EbpfError,
-        vm::{get_runtime_environment_key, EbpfVm},
+        vm::{EbpfVm, get_runtime_environment_key},
     },
     solana_transaction_context::IndexOfAccount,
 };
@@ -142,16 +133,17 @@ pub fn invoke_builtin_function(
     // Copy indices_in_instruction into a HashSet to ensure there are no duplicates
     let deduplicated_indices: HashSet<IndexOfAccount> = instruction_account_indices.collect();
 
-    // Serialize entrypoint parameters with SBF ABI
-    let mask_out_rent_epoch_in_vm_serialization = invoke_context
+    let direct_account_pointers_in_program_input = invoke_context
         .get_feature_set()
-        .mask_out_rent_epoch_in_vm_serialization;
+        .direct_account_pointers_in_program_input;
+
+    // Serialize entrypoint parameters with SBF ABI
     let (mut parameter_bytes, _regions, _account_lengths, _instruction_data_offset) =
         serialize_parameters(
             &instruction_context,
-            false, // There is no VM so stricter_abi_and_runtime_constraints can not be implemented here
+            false, // There is no VM so virtual_address_space_adjustments can not be implemented here
             false, // There is no VM so account_data_direct_mapping can not be implemented here
-            mask_out_rent_epoch_in_vm_serialization,
+            direct_account_pointers_in_program_input,
         )?;
 
     // Deserialize data back into instruction params
@@ -253,6 +245,68 @@ fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned
 }
 
 struct SyscallStubs {}
+
+impl SyscallStubs {
+    fn fetch_and_write_sysvar<T: SysvarSerialize>(
+        &self,
+        var_addr: *mut u8,
+        offset: u64,
+        length: u64,
+        fetch: impl FnOnce(&SysvarCache) -> Result<Arc<T>, InstructionError>,
+    ) -> u64 {
+        // Consume compute units for the syscall.
+        let invoke_context = get_invoke_context();
+        let SVMTransactionExecutionCost {
+            sysvar_base_cost,
+            cpi_bytes_per_unit,
+            mem_op_base_cost,
+            ..
+        } = *invoke_context.get_execution_cost();
+
+        let sysvar_id_cost = 32_u64.checked_div(cpi_bytes_per_unit).unwrap_or(0);
+        let sysvar_buf_cost = length.checked_div(cpi_bytes_per_unit).unwrap_or(0);
+
+        if invoke_context
+            .consume_checked(
+                sysvar_base_cost
+                    .saturating_add(sysvar_id_cost)
+                    .saturating_add(std::cmp::max(sysvar_buf_cost, mem_op_base_cost)),
+            )
+            .is_err()
+        {
+            panic!("Exceeded compute budget");
+        }
+
+        // Fetch the sysvar from the cache.
+        let Ok(sysvar) = fetch(get_invoke_context().get_sysvar_cache()) else {
+            return UNSUPPORTED_SYSVAR;
+        };
+
+        // Check that the requested length is not greater than
+        // the actual serialized length of the sysvar data.
+        let Ok(expected_length) = bincode::serialized_size(&sysvar) else {
+            return UNSUPPORTED_SYSVAR;
+        };
+
+        if offset.saturating_add(length) > expected_length {
+            return UNSUPPORTED_SYSVAR;
+        }
+
+        // Write only the requested slice [offset, offset + length).
+        if let Ok(serialized) = bincode::serialize(&sysvar) {
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    serialized[offset as usize..].as_ptr(),
+                    var_addr,
+                    length as usize,
+                )
+            };
+            SUCCESS
+        } else {
+            UNSUPPORTED_SYSVAR
+        }
+    }
+}
 impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
     fn sol_log(&self, message: &str) {
         let invoke_context = get_invoke_context();
@@ -285,7 +339,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             .collect::<Vec<_>>();
 
         invoke_context
-            .prepare_next_instruction(instruction.clone(), &signers)
+            .prepare_next_cpi_instruction(instruction.clone(), &signers)
             .unwrap();
 
         // Copy caller's account_info modifications into invoke_context accounts
@@ -444,6 +498,47 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
     fn sol_get_stack_height(&self) -> u64 {
         let invoke_context = get_invoke_context();
         invoke_context.get_stack_height().try_into().unwrap()
+    }
+
+    fn sol_get_sysvar(
+        &self,
+        sysvar_id_addr: *const u8,
+        var_addr: *mut u8,
+        offset: u64,
+        length: u64,
+    ) -> u64 {
+        let sysvar_id = unsafe { &*(sysvar_id_addr as *const Pubkey) };
+
+        match *sysvar_id {
+            id if id == Clock::id() => self.fetch_and_write_sysvar::<Clock>(
+                var_addr,
+                offset,
+                length,
+                SysvarCache::get_clock,
+            ),
+            id if id == EpochRewards::id() => self.fetch_and_write_sysvar::<EpochRewards>(
+                var_addr,
+                offset,
+                length,
+                SysvarCache::get_epoch_rewards,
+            ),
+            id if id == EpochSchedule::id() => self.fetch_and_write_sysvar::<EpochSchedule>(
+                var_addr,
+                offset,
+                length,
+                SysvarCache::get_epoch_schedule,
+            ),
+            id if id == LastRestartSlot::id() => self.fetch_and_write_sysvar::<LastRestartSlot>(
+                var_addr,
+                offset,
+                length,
+                SysvarCache::get_last_restart_slot,
+            ),
+            id if id == Rent::id() => {
+                self.fetch_and_write_sysvar::<Rent>(var_addr, offset, length, SysvarCache::get_rent)
+            }
+            _ => UNSUPPORTED_SYSVAR,
+        }
     }
 }
 
@@ -815,6 +910,19 @@ impl ProgramTest {
         let mint_keypair = Keypair::new();
         let voting_keypair = Keypair::new();
 
+        // Remove features tagged to deactivate
+        let mut feature_set = FeatureSet::all_enabled();
+        for deactivate_feature_pk in &self.deactivate_feature_set {
+            if FEATURE_NAMES.contains_key(deactivate_feature_pk) {
+                feature_set.deactivate(deactivate_feature_pk);
+            } else {
+                warn!(
+                    "Feature {deactivate_feature_pk:?} set for deactivation is not a known \
+                     Feature public key"
+                );
+            }
+        }
+
         let mut genesis_config = create_genesis_config_with_leader_ex(
             1_000_000 * LAMPORTS_PER_SOL,
             &mint_keypair.pubkey(),
@@ -823,30 +931,13 @@ impl ProgramTest {
             &Pubkey::new_unique(),
             None,
             bootstrap_validator_stake_lamports,
-            42,
+            890_880,
             fee_rate_governor,
             rent.clone(),
             ClusterType::Development,
+            &feature_set,
             std::mem::take(&mut self.genesis_accounts),
         );
-
-        // Remove features tagged to deactivate
-        for deactivate_feature_pk in &self.deactivate_feature_set {
-            if FEATURE_NAMES.contains_key(deactivate_feature_pk) {
-                match genesis_config.accounts.remove(deactivate_feature_pk) {
-                    Some(_) => debug!("Feature for {deactivate_feature_pk:?} deactivated"),
-                    None => warn!(
-                        "Feature {deactivate_feature_pk:?} set for deactivation not found in \
-                         genesis_config account list, ignored."
-                    ),
-                }
-            } else {
-                warn!(
-                    "Feature {deactivate_feature_pk:?} set for deactivation is not a known \
-                     Feature public key"
-                );
-            }
-        }
 
         let target_tick_duration = Duration::from_micros(100);
         genesis_config.poh_config = PohConfig::new_sleep(target_tick_duration);
@@ -862,9 +953,6 @@ impl ProgramTest {
                         genesis_config
                             .accounts
                             .contains_key(&raise_cpi_nesting_limit_to_8::id()),
-                        genesis_config
-                            .accounts
-                            .contains_key(&increase_cpi_account_info_limit::id()),
                     )
                 }),
                 transaction_account_lock_limit: self.transaction_account_lock_limit,

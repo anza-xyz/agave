@@ -17,12 +17,10 @@ agave-unstable-api = []
 
 [dependencies]
 agave-logger = { workspace = true }
-clap = { version = "3.1.5", features = ["cargo"] }
-log = { workspace = true }
+clap = { version = "3.1.5", default-features = false, features = ["cargo", "std", "suggestions"] }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
 solana-entry = { workspace = true }
 solana-measure = { workspace = true }
-solana-perf = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-version = { workspace = true }

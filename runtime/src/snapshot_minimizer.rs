@@ -10,12 +10,10 @@ use {
         iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
         prelude::ParallelSlice,
     },
-    solana_account::{state_traits::StateMut, ReadableAccount},
+    solana_account::{ReadableAccount, state_traits::StateMut},
     solana_accounts_db::{
-        accounts_db::{
-            stats::PurgeStats, AccountStorageEntry, AccountsDb, GetUniqueAccountsResult,
-            UpdateIndexThreadSelection,
-        },
+        account_storage_entry::AccountStorageEntry,
+        accounts_db::{AccountsDb, GetUniqueAccountsResult, UpdateIndexThreadSelection},
         storable_accounts::StorableAccountsBySlot,
     },
     solana_clock::Slot,
@@ -26,8 +24,8 @@ use {
     std::{
         collections::HashSet,
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
         },
     },
 };
@@ -206,22 +204,12 @@ impl<'a> SnapshotMinimizer<'a> {
         );
         info!("{process_snapshot_storages_measure}");
 
-        // Avoid excessive logging
-        self.accounts_db()
-            .log_dead_slots
-            .store(false, Ordering::Relaxed);
-
         let (_, purge_dead_slots_measure) =
             measure_time!(self.purge_dead_slots(dead_slots), "purge dead slots");
         info!("{purge_dead_slots_measure}");
 
         let (_, drop_storages_measure) = measure_time!(drop(dead_storages), "drop storages");
         info!("{drop_storages_measure}");
-
-        // Turn logging back on after minimization
-        self.accounts_db()
-            .log_dead_slots
-            .store(true, Ordering::Relaxed);
     }
 
     /// Determines minimum set of slots that accounts in `minimized_account_set` are in
@@ -354,9 +342,8 @@ impl<'a> SnapshotMinimizer<'a> {
 
     /// Purge dead slots from storage and cache
     fn purge_dead_slots(&self, dead_slots: Vec<Slot>) {
-        let stats = PurgeStats::default();
         self.accounts_db()
-            .purge_slots_from_cache_and_store(dead_slots.iter(), &stats);
+            .purge_slots_for_snapshot_minimizer(dead_slots.iter());
     }
 
     /// Convenience function for getting accounts_db
@@ -379,7 +366,7 @@ mod tests {
         agave_snapshots::snapshot_config::SnapshotConfig,
         dashmap::DashSet,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-        solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+        solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_genesis_config::create_genesis_config,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_pubkey::Pubkey,
@@ -412,12 +399,16 @@ mod tests {
         };
         minimizer.get_vote_accounts();
 
-        assert!(minimizer
-            .minimized_account_set
-            .contains(&genesis_config_info.voting_keypair.pubkey()));
-        assert!(minimizer
-            .minimized_account_set
-            .contains(&genesis_config_info.validator_pubkey));
+        assert!(
+            minimizer
+                .minimized_account_set
+                .contains(&genesis_config_info.voting_keypair.pubkey())
+        );
+        assert!(
+            minimizer
+                .minimized_account_set
+                .contains(&genesis_config_info.validator_pubkey)
+        );
     }
 
     #[test]
@@ -524,9 +515,11 @@ mod tests {
         assert_eq!(minimizer.minimized_account_set.len(), 3);
         assert!(minimizer.minimized_account_set.contains(&non_program_id));
         assert!(minimizer.minimized_account_set.contains(&program_id));
-        assert!(minimizer
-            .minimized_account_set
-            .contains(&programdata_address));
+        assert!(
+            minimizer
+                .minimized_account_set
+                .contains(&programdata_address)
+        );
     }
 
     #[test]

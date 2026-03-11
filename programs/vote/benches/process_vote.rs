@@ -3,8 +3,8 @@
 extern crate test;
 
 use {
-    agave_feature_set::{deprecate_legacy_vote_ixs, FeatureSet},
-    solana_account::{create_account_for_test, Account, AccountSharedData},
+    agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
+    solana_account::{Account, AccountSharedData, create_account_for_test},
     solana_clock::{Clock, Slot},
     solana_hash::Hash,
     solana_instruction::AccountMeta,
@@ -13,13 +13,13 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
-    solana_slot_hashes::{SlotHashes, MAX_ENTRIES},
+    solana_slot_hashes::{MAX_ENTRIES, SlotHashes},
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_vote_program::{
         vote_instruction::VoteInstruction,
         vote_state::{
-            handler::VoteStateHandle, TowerSync, Vote, VoteInit, VoteStateUpdate, VoteStateV3,
-            VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            MAX_LOCKOUT_HISTORY, TowerSync, Vote, VoteInit, VoteStateUpdate, VoteStateV3,
+            VoteStateVersions, handler::VoteStateHandle,
         },
     },
     test::Bencher,

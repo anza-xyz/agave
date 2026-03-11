@@ -2,27 +2,25 @@
 mod tests {
     use {
         crate::{
-            bank::{test_utils as bank_test_utils, Bank},
+            bank::{Bank, test_utils as bank_test_utils},
             epoch_stakes::{EpochAuthorizedVoters, NodeIdToVoteAccounts, VersionedEpochStakes},
             genesis_utils::activate_all_features,
             runtime_config::RuntimeConfig,
             serde_snapshot::{self, ExtraFieldsToSerialize, SnapshotStreams},
             snapshot_bank_utils,
-            snapshot_utils::{
-                create_tmp_accounts_dir_for_tests, get_storages_to_serialize,
-                StorageAndNextAccountsFileId,
-            },
+            snapshot_utils::{StorageAndNextAccountsFileId, create_tmp_accounts_dir_for_tests},
             stakes::{SerdeStakesToStakeFormat, Stakes},
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
         solana_accounts_db::{
+            ObsoleteAccounts,
             account_storage::AccountStorageMap,
+            account_storage_entry::AccountStorageEntry,
             accounts_db::{
-                get_temp_accounts_paths, AccountStorageEntry, AccountsDb, AtomicAccountsFileId,
-                ACCOUNTS_DB_CONFIG_FOR_TESTING,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AtomicAccountsFileId,
+                get_temp_accounts_paths,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
-            ObsoleteAccounts,
         },
         solana_epoch_schedule::EpochSchedule,
         solana_genesis_config::create_genesis_config,
@@ -33,7 +31,7 @@ mod tests {
             mem,
             ops::RangeFull,
             path::Path,
-            sync::{atomic::Ordering, Arc, OnceLock},
+            sync::{Arc, OnceLock},
         },
         tempfile::TempDir,
         test_case::{test_case, test_matrix},
@@ -121,15 +119,14 @@ mod tests {
                 &mut writer,
                 bank_fields,
                 bank2.get_bank_hash_stats(),
-                &get_storages_to_serialize(&bank2.get_snapshot_storages(None)),
+                &bank2.get_snapshot_storages(None),
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
-                    obsolete_incremental_snapshot_persistence: None,
-                    obsolete_epoch_accounts_hash: None,
+                    unused_incremental_snapshot_persistence: None,
+                    unused_epoch_accounts_hash: None,
                     versioned_epoch_stakes,
                     accounts_lt_hash,
                 },
-                accounts_db.write_version.load(Ordering::Acquire),
             )
             .unwrap();
         }
@@ -177,7 +174,7 @@ mod tests {
 
     fn add_root_and_flush_write_cache(bank: &Bank) {
         bank.rc.accounts.add_root(bank.slot());
-        bank.flush_accounts_cache_slot_for_tests()
+        bank.force_flush_accounts_cache();
     }
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
@@ -217,7 +214,7 @@ mod tests {
         crate::serde_snapshot::bank_to_stream(
             &mut std::io::BufWriter::new(&mut writer),
             &bank,
-            &get_storages_to_serialize(&snapshot_storages),
+            &snapshot_storages,
         )
         .unwrap();
 
@@ -319,7 +316,7 @@ mod tests {
     mod test_bank_serialize {
         use {
             super::*,
-            crate::{bank::BankHashStats, serde_snapshot::ObsoleteIncrementalSnapshotPersistence},
+            crate::{bank::BankHashStats, serde_snapshot::UnusedIncrementalSnapshotPersistence},
             solana_accounts_db::accounts_hash::AccountsLtHash,
             solana_frozen_abi::abi_example::AbiExample,
             solana_hash::Hash,
@@ -348,7 +345,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "AA17oKJsK6QTAntr31iPoonMYtVfks2syxMfj15AkXfa")
+            frozen_abi(digest = "7NL9Sugo2js3PtueK7izqSwX5dGWKDMDVnjo6MirVPWE")
         )]
         #[derive(serde::Serialize)]
         pub struct BankAbiTestWrapper {
@@ -365,7 +362,7 @@ mod tests {
             // ensure there is at least one snapshot storage example for ABI digesting
             assert!(!snapshot_storages.is_empty());
 
-            let incremental_snapshot_persistence = ObsoleteIncrementalSnapshotPersistence {
+            let incremental_snapshot_persistence = UnusedIncrementalSnapshotPersistence {
                 full_slot: u64::default(),
                 full_hash: [1; 32],
                 full_capitalization: u64::default(),
@@ -379,17 +376,14 @@ mod tests {
                 serializer,
                 bank_fields,
                 BankHashStats::default(),
-                &get_storages_to_serialize(&snapshot_storages),
+                &snapshot_storages,
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank.fee_rate_governor.lamports_per_signature,
-                    obsolete_incremental_snapshot_persistence: Some(
-                        incremental_snapshot_persistence,
-                    ),
-                    obsolete_epoch_accounts_hash: Some(Hash::new_unique()),
+                    unused_incremental_snapshot_persistence: Some(incremental_snapshot_persistence),
+                    unused_epoch_accounts_hash: Some(Hash::new_unique()),
                     versioned_epoch_stakes,
                     accounts_lt_hash: Some(AccountsLtHash(LtHash::identity()).into()),
                 },
-                u64::default(), // obsolete, formerly write_version
             )
         }
     }

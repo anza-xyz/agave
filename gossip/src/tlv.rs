@@ -91,10 +91,7 @@ pub(crate) fn parse<'a, T: TryFrom<&'a TlvRecord>>(entries: &'a [TlvRecord]) -> 
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        define_tlv_enum,
-        tlv::{TlvDecodeError, TlvRecord},
-    };
+    use crate::tlv::{TlvDecodeError, TlvRecord};
 
     define_tlv_enum! (pub(crate) enum ExtensionNew {
         1=>Test(u64),

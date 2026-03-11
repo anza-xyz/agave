@@ -10,8 +10,6 @@ pub const COMPUTE_UNIT_TO_US_RATIO: u64 = 30;
 pub const SIGNATURE_COST: u64 = COMPUTE_UNIT_TO_US_RATIO * 24;
 /// Number of compute units for one secp256k1 signature verification.
 pub const SECP256K1_VERIFY_COST: u64 = COMPUTE_UNIT_TO_US_RATIO * 223;
-/// Number of compute units for one ed25519 signature verification.
-pub const ED25519_VERIFY_COST: u64 = COMPUTE_UNIT_TO_US_RATIO * 76;
 /// Number of compute units for one ed25519 strict signature verification.
 pub const ED25519_VERIFY_STRICT_COST: u64 = COMPUTE_UNIT_TO_US_RATIO * 80;
 /// Number of compute units for one secp256r1 signature verification.
@@ -32,7 +30,7 @@ pub const MAX_BLOCK_UNITS_SIMD_0286: u64 = 100_000_000;
 /// Number of compute units that a writable account in a block is allowed. The
 /// limit is to prevent too many transactions write to same account, therefore
 /// reduce block's parallelism.
-pub const MAX_WRITABLE_ACCOUNT_UNITS: u64 = 12_000_000;
+pub const MAX_WRITABLE_ACCOUNT_UNITS: u64 = 24_000_000;
 
 /// Number of compute units that a block can have for vote transactions,
 /// set to less than MAX_BLOCK_UNITS to leave room for non-vote transactions

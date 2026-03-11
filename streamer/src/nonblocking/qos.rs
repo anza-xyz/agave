@@ -52,6 +52,9 @@ pub(crate) trait QosController<C: ConnectionContext> {
         connection: Connection,
     ) -> impl Future<Output = usize> + Send;
 
+    /// Optionally spawn QoS-specific background tasks onto the server runtime.
+    fn spawn_background_tasks(&mut self) {}
+
     /// How many concurrent
     fn max_concurrent_connections(&self) -> usize;
 }

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use {
-        crossbeam_channel::{unbounded, Receiver},
+        crossbeam_channel::{Receiver, unbounded},
         log::*,
         solana_connection_cache::{
             client_connection::ClientStats, connection_cache_stats::ConnectionCacheStats,
@@ -16,7 +16,7 @@ mod tests {
             quic::{QuicStreamerConfig, SpawnServerResult},
             streamer::StakedNodes,
         },
-        solana_tls_utils::{new_dummy_x509_certificate, QuicClientCertificate},
+        solana_tls_utils::{QuicClientCertificate, new_dummy_x509_certificate},
         std::{
             net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
             sync::{Arc, RwLock},
@@ -74,10 +74,10 @@ mod tests {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = solana_streamer::quic::spawn_stake_wighted_qos_server(
+        } = solana_streamer::quic::spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
-            vec![s.try_clone().unwrap()],
+            vec![s.try_clone().unwrap().into()],
             &keypair,
             sender,
             staked_nodes,
@@ -158,7 +158,7 @@ mod tests {
             max_concurrent_connections: _,
         } = solana_streamer::nonblocking::testing_utilities::spawn_stake_weighted_qos_server(
             "quic_streamer_test",
-            vec![s.try_clone().unwrap()],
+            vec![s.try_clone().unwrap().into()],
             &keypair,
             sender,
             staked_nodes,
@@ -214,10 +214,10 @@ mod tests {
             endpoints: request_recv_endpoints,
             thread: request_recv_thread,
             key_updater: _,
-        } = solana_streamer::quic::spawn_stake_wighted_qos_server(
+        } = solana_streamer::quic::spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
-            [request_recv_socket.try_clone().unwrap()],
+            [request_recv_socket.try_clone().unwrap().into()],
             &keypair,
             sender,
             staked_nodes.clone(),
@@ -239,10 +239,10 @@ mod tests {
             endpoints: mut response_recv_endpoints,
             thread: response_recv_thread,
             key_updater: _,
-        } = solana_streamer::quic::spawn_stake_wighted_qos_server(
+        } = solana_streamer::quic::spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
-            [response_recv_socket],
+            [response_recv_socket.into()],
             &keypair2,
             sender2,
             staked_nodes,
@@ -329,7 +329,7 @@ mod tests {
             max_concurrent_connections: _,
         } = solana_streamer::nonblocking::testing_utilities::spawn_stake_weighted_qos_server(
             "quic_streamer_test",
-            vec![s.try_clone().unwrap()],
+            vec![s.try_clone().unwrap().into()],
             &keypair,
             sender,
             staked_nodes,

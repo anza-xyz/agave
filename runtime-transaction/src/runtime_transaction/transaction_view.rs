@@ -10,10 +10,11 @@ use {
         transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
     },
     solana_message::{
-        compiled_instruction::CompiledInstruction,
-        v0::{LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
         LegacyMessage, MessageHeader, SanitizedMessage, TransactionSignatureDetails,
         VersionedMessage,
+        compiled_instruction::CompiledInstruction,
+        v0::{LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
+        v1,
     },
     solana_pubkey::Pubkey,
     solana_svm_transaction::svm_message::SVMMessage,
@@ -147,6 +148,10 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
                 loaded_addresses: Cow::Owned(self.loaded_addresses().unwrap().clone()),
                 is_writable_account_cache,
             }),
+            VersionedMessage::V1(message) => SanitizedMessage::V1(v1::CachedMessage {
+                message: Cow::Owned(message),
+                is_writable_account_cache,
+            }),
         };
 
         // SAFETY:
@@ -219,7 +224,7 @@ mod tests {
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_message::{v0, AddressLookupTableAccount, SimpleAddressLoader},
+        solana_message::{AddressLookupTableAccount, SimpleAddressLoader, v0},
         solana_signature::Signature,
         solana_system_interface::instruction as system_instruction,
         solana_system_transaction as system_transaction,

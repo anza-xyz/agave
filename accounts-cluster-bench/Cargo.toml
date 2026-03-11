@@ -21,7 +21,6 @@ clap = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
-solana-account-decoder = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-client = { workspace = true }
@@ -32,7 +31,7 @@ solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
-solana-message = { workspace = true, features = ["serde", "bincode", "blake3"] }
+solana-message = { workspace = true, features = ["serde", "blake3", "wincode"] }
 solana-net-utils = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-pubkey = { workspace = true }

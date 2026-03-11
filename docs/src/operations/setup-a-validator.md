@@ -588,7 +588,7 @@ tail -f /home/sol/agave-validator*.log
 `agave-watchtower` is a command you can run on a separate machine to monitor
 your server. You can read more about handling
 [automatic restarts and monitoring](./best-practices/monitoring.md#agave-watchtower)
-using Solana Watchtower here in the docs.
+using Agave Watchtower here in the docs.
 
 ## Common issues
 

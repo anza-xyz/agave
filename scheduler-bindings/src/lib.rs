@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 #![no_std]
 
 //! Messages passed between agave and an external pack process.
@@ -57,10 +49,7 @@
 //!
 
 /// Reference to a transaction that can shared safely across processes.
-#[cfg_attr(
-    feature = "dev-context-only-utils",
-    derive(Debug, Clone, Copy, PartialEq, Eq)
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct SharableTransactionRegion {
     /// Offset within the shared memory allocator.
@@ -70,10 +59,7 @@ pub struct SharableTransactionRegion {
 }
 
 /// Reference to an array of Pubkeys that can be shared safely across processes.
-#[cfg_attr(
-    feature = "dev-context-only-utils",
-    derive(Debug, Clone, Copy, PartialEq, Eq)
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct SharablePubkeys {
     /// Offset within the shared memory allocator.
@@ -94,8 +80,7 @@ pub struct SharablePubkeys {
 /// 4. External pack process frees all transaction memory pointed to by the
 ///    [`SharableTransactionRegion`] in the batch, then frees the memory for
 ///    the array of [`SharableTransactionRegion`].
-#[cfg_attr(feature = "dev-context-only-utils", derive(Debug, PartialEq, Eq))]
-#[derive(Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(C)]
 pub struct SharableTransactionBatchRegion {
     /// Number of transactions in the batch.
@@ -111,10 +96,7 @@ pub struct SharableTransactionBatchRegion {
 /// 2. agave sends a [`WorkerToPackMessage`] with `responses`.
 /// 3. External pack process processes the inner messages. Potentially freeing
 ///    any memory within each inner message (see [`worker_message_types`] for details).
-#[cfg_attr(
-    feature = "dev-context-only-utils",
-    derive(Debug, Clone, Copy, PartialEq, Eq)
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct TransactionResponseRegion {
     /// Tag indicating the type of message.
@@ -139,10 +121,7 @@ pub struct TransactionResponseRegion {
 /// TPU passes transactions to the external pack process.
 /// This is also a transfer of ownership of the transaction:
 ///   the external pack process is responsible for freeing the memory.
-#[cfg_attr(
-    feature = "dev-context-only-utils",
-    derive(Debug, Clone, Copy, PartialEq, Eq)
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct TpuToPackMessage {
     pub transaction: SharableTransactionRegion,
@@ -167,30 +146,34 @@ pub mod tpu_message_flags {
     pub const FROM_STAKED_NODE: u8 = 1 << 2;
 }
 
-/// Indicates the node is not leader.
-pub const IS_NOT_LEADER: u8 = 0;
-/// Indicates the node is leader.
-pub const IS_LEADER: u8 = 1;
+/// The node is not currently in a leader slot.
+pub const NOT_LEADER: u8 = 0;
+/// The node is in a leader slot but the working bank is not yet ready.
+///
+/// Transactions cannot be processed in this state.
+pub const LEADER_STARTING: u8 = 1;
+/// The node is in a leader slot and has a working bank ready.
+///
+/// Transactions can be processed in this state.
+pub const LEADER_READY: u8 = 2;
 
 /// Message: [Agave -> Pack]
 /// Agave passes leader status to the external pack process.
-#[cfg_attr(
-    feature = "dev-context-only-utils",
-    derive(Debug, Clone, Copy, PartialEq, Eq)
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct ProgressMessage {
-    /// Indicates if node is currently leader or not.
-    /// [`IS_LEADER`] if the node is leader.
-    /// [`IS_NOT_LEADER`] if the node is not leader.
-    /// Other values should be considered invalid.
+    /// Indicates the current leader status of the node.
+    ///
+    /// - [`NOT_LEADER`]: Node is not in a leader slot.
+    /// - [`LEADER_STARTING`]: Node is in a leader slot but bank is not ready.
+    /// - [`LEADER_READY`]: Node is in a leader slot with bank ready for transactions.
+    ///
+    /// # Usage
+    ///
+    /// - To check if within a leader slot: `leader_state != NOT_LEADER`.
+    /// - To check if transactions can be processed: `leader_state == LEADER_READY`.
     pub leader_state: u8,
-    /// The current slot. This along with a leader schedule is not sufficient
-    /// for determining if the node is currently leader. There is a slight
-    /// delay between when a node is supposed to begin its' leader slot, and
-    /// when a bank is ready for processing transactions as leader.
-    /// Using [`Self::leader_state`] for determining if the node is leader
-    /// and has a bank available.
+    /// The current slot.
     pub current_slot: u64,
     /// Next known leader slot or u64::MAX if unknown.
     /// This will **not** include the current slot if leader.
@@ -224,10 +207,7 @@ pub const MAX_TRANSACTIONS_PER_MESSAGE: usize = 64;
 ///
 /// These messages do not transfer ownership of the transactions.
 /// The external pack process is still responsible for freeing the memory.
-#[cfg_attr(
-    feature = "dev-context-only-utils",
-    derive(Debug, Clone, Copy, PartialEq, Eq)
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct PackToWorkerMessage {
     /// Flags on how to handle this message.
@@ -300,10 +280,7 @@ pub mod processed_codes {
 
 /// Message: [Worker -> Pack]
 /// Message from worker threads in response to a [`PackToWorkerMessage`].
-#[cfg_attr(
-    feature = "dev-context-only-utils",
-    derive(Debug, Clone, Copy, PartialEq, Eq)
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct WorkerToPackMessage {
     /// Offset and number of transactions in the batch.
@@ -330,12 +307,20 @@ pub mod worker_message_types {
     /// Response to pack for a transaction that attempted execution.
     /// This response will only be sent if the original message flags
     /// requested execution i.e. not [`super::pack_message_flags::RESOLVE`].
-    #[cfg_attr(
-        feature = "dev-context-only-utils",
-        derive(Debug, Clone, Copy, PartialEq, Eq)
-    )]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[repr(C)]
     pub struct ExecutionResponse {
+        /// The slot this transaction was executed.
+        ///
+        /// # Note
+        ///
+        /// The current semantics are:
+        ///
+        /// - If we successfully get a bank and try your request, this slot is the latest
+        ///   bank we attempted (during a slot roll we can try 2 banks ).
+        /// - If we do not attempt or attemp and fail to get a bank, this field will be
+        ///   zero.
+        pub execution_slot: u64,
         /// Indicates if the transaction was included in the block or not.
         /// If [`not_included_reasons::NONE`], the transaction was included.
         pub not_included_reason: u8,
@@ -486,10 +471,7 @@ pub mod worker_message_types {
         pub const FAILED: u8 = 1 << 2;
     }
 
-    #[cfg_attr(
-        feature = "dev-context-only-utils",
-        derive(Debug, Clone, Copy, PartialEq, Eq)
-    )]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[repr(C)]
     pub struct CheckResponse {
         /// See [`parsing_and_sanitization_flags`] for details.

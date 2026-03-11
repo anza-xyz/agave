@@ -7,15 +7,17 @@
 #![allow(clippy::unnecessary_cast)]
 #![allow(clippy::uninlined_format_args)]
 
+#[cfg(all(feature = "sbf_rust", not(feature = "sbpf-v3")))]
+use solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status};
 #[cfg(feature = "sbf_rust")]
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
-    borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
+    borsh::{BorshDeserialize, BorshSerialize, from_slice, to_vec},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
-    solana_clock::{UnixTimestamp, MAX_PROCESSING_AGE},
+    solana_clock::{MAX_PROCESSING_AGE, UnixTimestamp},
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
@@ -23,14 +25,11 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::{FeeBin, FeeBudgetLimits, FeeStructure},
     solana_hash::Hash,
-    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_keypair::Keypair,
     solana_loader_v3_interface::instruction as loader_v3_instruction,
-    solana_loader_v4_interface::{
-        instruction as loader_v4_instruction,
-        state::{LoaderV4State, LoaderV4Status},
-    },
-    solana_message::{inner_instruction::InnerInstruction, Message, SanitizedMessage},
+    solana_loader_v4_interface::instruction as loader_v4_instruction,
+    solana_message::{Message, SanitizedMessage, inner_instruction::InnerInstruction},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -38,8 +37,8 @@ use {
         bank_client::BankClient,
         bank_forks::BankForks,
         genesis_utils::{
-            bootstrap_validator_stake_lamports, create_genesis_config,
-            create_genesis_config_with_leader_ex, GenesisConfigInfo,
+            GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
+            create_genesis_config_with_leader_ex,
         },
         loader_utils::{
             create_program, instructions_to_load_program_of_loader_v4, load_program_of_loader_v4,
@@ -56,10 +55,11 @@ use {
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_processor::ExecutionRecordingConfig,
     },
+    solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_svm_type_overrides::rand,
-    solana_system_interface::{program as system_program, MAX_PERMITTED_DATA_LENGTH},
+    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     std::{
@@ -82,19 +82,17 @@ use {
 };
 
 #[cfg(feature = "sbf_rust")]
-fn default_program_cache(
-    feature_set: &FeatureSet,
-) -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
-    harness::program_cache::new_with_builtins(feature_set, /* slot */ 0)
+fn default_program_cache() -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
+    harness::program_cache::new_with_builtins(/* slot */ 0)
 }
 
 fn default_program_cache_with_program(
     program_id: &Pubkey,
     program_elf: &[u8],
-    feature_set: &FeatureSet,
+    feature_set: &SVMFeatureSet,
     compute_budget: &ComputeBudget,
 ) -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
-    let mut program_cache = default_program_cache(feature_set);
+    let mut program_cache = default_program_cache();
     harness::program_cache::add_program(
         &mut program_cache,
         program_id,
@@ -280,7 +278,7 @@ fn test_program_sbf_sanity() {
         let program_elf = harness::file::load_program_elf(program.0);
         let program_id = Pubkey::new_unique();
 
-        let feature_set = FeatureSet::all_enabled();
+        let feature_set = SVMFeatureSet::all_enabled();
 
         let pubkey1 = Pubkey::new_unique();
         let pubkey2 = Pubkey::new_unique();
@@ -293,7 +291,7 @@ fn test_program_sbf_sanity() {
 
         let accounts = vec![(pubkey1, Account::default()), (pubkey2, Account::default())];
 
-        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let compute_budget = ComputeBudget::new_with_defaults(false);
         let mut program_cache = default_program_cache_with_program(
             &program_id,
             &program_elf,
@@ -346,10 +344,12 @@ fn test_program_sbf_loader_deprecated() {
         let program_elf = harness::file::load_program_elf(program);
         let program_id = Pubkey::new_unique();
 
-        let mut feature_set = FeatureSet::all_enabled();
-        feature_set.deactivate(&agave_feature_set::disable_deploy_of_alloc_free_syscall::id());
+        let feature_set = SVMFeatureSet {
+            disable_deploy_of_alloc_free_syscall: false,
+            ..SVMFeatureSet::all_enabled()
+        };
 
-        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let compute_budget = ComputeBudget::new_with_defaults(false);
 
         let pubkey = Pubkey::new_unique();
         let accounts = vec![
@@ -357,7 +357,7 @@ fn test_program_sbf_loader_deprecated() {
             (pubkey, Account::default()),
         ];
 
-        let mut program_cache = default_program_cache(&feature_set);
+        let mut program_cache = default_program_cache();
         harness::program_cache::add_program(
             &mut program_cache,
             &program_id,
@@ -386,7 +386,9 @@ fn test_program_sbf_loader_deprecated() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", not(feature = "sbpf-v3")))]
+// In SBPFv3, we don't have a verification step for undefined syscalls, and we don't do dynamic
+// symbol resolution, so this test would pass.
 fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     agave_logger::setup();
 
@@ -402,8 +404,8 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     let program_id = Pubkey::new_unique();
     let authority_pubkey = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let feature_set = SVMFeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     // Create a retracted program account with LoaderV4State header + ELF bytes.
     let loader_state = LoaderV4State {
@@ -433,7 +435,7 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
         (authority_pubkey, Account::default()),
     ];
 
-    let mut program_cache = default_program_cache(&feature_set);
+    let mut program_cache = default_program_cache();
     let sysvar_cache = default_sysvar_cache();
 
     // Build the deploy instruction
@@ -477,8 +479,8 @@ fn test_program_sbf_duplicate_accounts() {
 
         let program_elf = harness::file::load_program_elf(program);
         let program_id = Pubkey::new_unique();
-        let feature_set = FeatureSet::all_enabled();
-        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let feature_set = SVMFeatureSet::all_enabled();
+        let compute_budget = ComputeBudget::new_with_defaults(false);
         let mut program_cache = default_program_cache_with_program(
             &program_id,
             &program_elf,
@@ -507,7 +509,7 @@ fn test_program_sbf_duplicate_accounts() {
             ];
             let instruction = Instruction::new_with_bytes(program_id, data, account_metas.clone());
             let context = InstrContext {
-                feature_set: feature_set.clone(),
+                feature_set,
                 accounts,
                 instruction,
             };
@@ -560,7 +562,7 @@ fn test_program_sbf_duplicate_accounts() {
         ];
         let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas);
         let context = InstrContext {
-            feature_set: feature_set.clone(),
+            feature_set,
             accounts,
             instruction,
         };
@@ -592,13 +594,13 @@ fn test_program_sbf_error_handling() {
         let program_elf = harness::file::load_program_elf(program);
         let program_id = Pubkey::new_unique();
 
-        let feature_set = FeatureSet::all_enabled();
+        let feature_set = SVMFeatureSet::all_enabled();
 
         let pubkey1 = Pubkey::new_unique();
 
         let accounts = vec![(pubkey1, Account::default())];
 
-        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let compute_budget = ComputeBudget::new_with_defaults(false);
         let mut program_cache = default_program_cache_with_program(
             &program_id,
             &program_elf,
@@ -613,7 +615,7 @@ fn test_program_sbf_error_handling() {
             let instruction = Instruction::new_with_bytes(program_id, data, account_metas);
 
             let context = InstrContext {
-                feature_set: feature_set.clone(),
+                feature_set,
                 accounts: accounts.clone(),
                 instruction,
             };
@@ -687,8 +689,8 @@ fn test_return_data_and_log_data_syscall() {
         let program_elf = harness::file::load_program_elf(program);
         let program_id = Pubkey::new_unique();
 
-        let feature_set = FeatureSet::all_enabled();
-        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let feature_set = SVMFeatureSet::all_enabled();
+        let compute_budget = ComputeBudget::new_with_defaults(false);
 
         let pubkey = Pubkey::new_unique();
         let accounts = vec![(pubkey, Account::default())];
@@ -717,17 +719,21 @@ fn test_return_data_and_log_data_syscall() {
 
         assert!(effects.result.is_none());
 
-        assert!(effects
-            .logs
-            .iter()
-            .any(|log| log == "Program data: AQID BAUG"));
+        assert!(
+            effects
+                .logs
+                .iter()
+                .any(|log| log == "Program data: AQID BAUG")
+        );
 
         assert_eq!(effects.return_data, vec![0x08, 0x01, 0x44]);
 
-        assert!(effects
-            .logs
-            .iter()
-            .any(|log| log == &format!("Program return: {} CAFE", program_id)));
+        assert!(
+            effects
+                .logs
+                .iter()
+                .any(|log| log == &format!("Program return: {} CAFE", program_id))
+        );
     }
 }
 
@@ -974,9 +980,10 @@ fn test_program_sbf_invoke_sanity() {
             bank,
             &feature_set::raise_cpi_nesting_limit_to_8::id(),
         );
-        assert!(bank
-            .feature_set
-            .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id()));
+        assert!(
+            bank.feature_set
+                .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id())
+        );
         {
             // Reset the account balances for `ARGUMENT` and `INVOKED_ARGUMENT`
             let account = AccountSharedData::new(42, 100, &invoke_program_id);
@@ -1022,28 +1029,13 @@ fn test_program_sbf_invoke_sanity() {
         let bank = bank_with_feature_deactivated(
             &bank_forks,
             bank,
-            &feature_set::increase_cpi_account_info_limit::id(),
-        );
-
-        assert!(!bank
-            .feature_set
-            .is_active(&feature_set::increase_cpi_account_info_limit::id()));
-
-        do_invoke_success(
-            TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_SIMD_0339,
-            &[],
-            std::slice::from_ref(&invoked_program_id),
-            &bank,
-        );
-
-        let bank = bank_with_feature_deactivated(
-            &bank_forks,
-            bank,
             &feature_set::increase_tx_account_lock_limit::id(),
         );
-        assert!(!bank
-            .feature_set
-            .is_active(&feature_set::increase_tx_account_lock_limit::id()));
+        assert!(
+            !bank
+                .feature_set
+                .is_active(&feature_set::increase_tx_account_lock_limit::id())
+        );
 
         do_invoke_success(
             TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339,
@@ -1057,19 +1049,11 @@ fn test_program_sbf_invoke_sanity() {
             &feature_set::increase_tx_account_lock_limit::id(),
         );
 
-        assert!(bank
-            .feature_set
-            .is_active(&feature_set::increase_tx_account_lock_limit::id()));
-
-        let bank = bank_with_feature_activated(
-            &bank_forks,
-            bank,
-            &feature_set::increase_cpi_account_info_limit::id(),
+        assert!(
+            bank.feature_set
+                .is_active(&feature_set::increase_tx_account_lock_limit::id())
         );
 
-        assert!(bank
-            .feature_set
-            .is_active(&feature_set::increase_cpi_account_info_limit::id()));
         // failure cases
 
         let do_invoke_failure_test_local_with_compute_check =
@@ -1241,57 +1225,13 @@ fn test_program_sbf_invoke_sanity() {
         let bank = bank_with_feature_deactivated(
             &bank_forks,
             bank,
-            &feature_set::increase_cpi_account_info_limit::id(),
-        );
-
-        assert!(!bank
-            .feature_set
-            .is_active(&feature_set::increase_cpi_account_info_limit::id()));
-
-        do_invoke_failure_test_local(
-            TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_SIMD_0339,
-            TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
-            &[],
-            Some(vec![
-                format!("Program {invoke_program_id} invoke [1]"),
-                format!("Program log: invoke {program_lang} program"),
-                "Program log: Test max account infos exceeded before SIMD-0339".into(),
-                "skip".into(), // don't compare compute consumption logs
-                format!(
-                    "Program {invoke_program_id} failed: Invoked an instruction with too many \
-                     account info's (129 > 128)"
-                ),
-            ]),
-            &bank,
-        );
-
-        let bank = bank_with_feature_deactivated(
-            &bank_forks,
-            bank,
             &feature_set::increase_tx_account_lock_limit::id(),
         );
 
-        assert!(!bank
-            .feature_set
-            .is_active(&feature_set::increase_tx_account_lock_limit::id()));
-
-        do_invoke_failure_test_local(
-            TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339,
-            TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
-            &[],
-            Some(vec![
-                format!("Program {invoke_program_id} invoke [1]"),
-                format!("Program log: invoke {program_lang} program"),
-                "Program log: Test max account infos exceeded before SIMD-0339 and before \
-                 increase cpi info"
-                    .into(),
-                "skip".into(), // don't compare compute consumption logs
-                format!(
-                    "Program {invoke_program_id} failed: Invoked an instruction with too many \
-                     account info's (65 > 64)"
-                ),
-            ]),
-            &bank,
+        assert!(
+            !bank
+                .feature_set
+                .is_active(&feature_set::increase_tx_account_lock_limit::id())
         );
 
         do_invoke_failure_test_local(
@@ -1333,9 +1273,11 @@ fn test_program_sbf_invoke_sanity() {
             bank,
             &feature_set::raise_cpi_nesting_limit_to_8::id(),
         );
-        assert!(!bank
-            .feature_set
-            .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id()));
+        assert!(
+            !bank
+                .feature_set
+                .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id())
+        );
         do_invoke_failure_test_local(
             TEST_NESTED_INVOKE_TOO_DEEP,
             TransactionError::InstructionError(0, InstructionError::CallDepth),
@@ -1356,9 +1298,10 @@ fn test_program_sbf_invoke_sanity() {
             bank,
             &feature_set::raise_cpi_nesting_limit_to_8::id(),
         );
-        assert!(bank
-            .feature_set
-            .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id()));
+        assert!(
+            bank.feature_set
+                .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id())
+        );
         do_invoke_failure_test_local(
             TEST_NESTED_INVOKE_SIMD_0268_TOO_DEEP,
             TransactionError::InstructionError(0, InstructionError::CallDepth),
@@ -1463,8 +1406,8 @@ fn test_program_sbf_program_id_spoofing() {
     let malicious_swap_pubkey = Pubkey::new_unique();
     let malicious_system_pubkey = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let feature_set = SVMFeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     let from_pubkey = Pubkey::new_unique();
     let to_pubkey = Pubkey::new_unique();
@@ -1479,7 +1422,7 @@ fn test_program_sbf_program_id_spoofing() {
         (to_pubkey, Account::new(0, 0, &system_program::id())),
     ];
 
-    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    let mut program_cache = harness::program_cache::new_with_builtins(0);
     harness::program_cache::add_program(
         &mut program_cache,
         &malicious_swap_pubkey,
@@ -1538,15 +1481,15 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
     let caller_pubkey = Pubkey::new_unique();
     let caller2_pubkey = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let feature_set = SVMFeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     let accounts = vec![
         (caller_pubkey, Account::new(0, 0, &loader_v4::id())),
         (caller2_pubkey, Account::new(0, 0, &loader_v4::id())),
     ];
 
-    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    let mut program_cache = harness::program_cache::new_with_builtins(0);
     harness::program_cache::add_program(
         &mut program_cache,
         &caller_pubkey,
@@ -1592,8 +1535,8 @@ fn test_program_sbf_ro_modify() {
     let program_elf = harness::file::load_program_elf("solana_sbf_rust_ro_modify");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let feature_set = SVMFeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     let test_pubkey = Pubkey::new_unique();
     let accounts = vec![
@@ -1619,7 +1562,7 @@ fn test_program_sbf_ro_modify() {
             Instruction::new_with_bytes(program_id, &[instr_data], account_metas.clone());
 
         let context = InstrContext {
-            feature_set: feature_set.clone(),
+            feature_set,
             accounts: accounts.clone(),
             instruction,
         };
@@ -1643,8 +1586,8 @@ fn test_program_sbf_call_depth() {
     let program_elf = harness::file::load_program_elf("solana_sbf_rust_call_depth");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let feature_set = SVMFeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     let mut program_cache = default_program_cache_with_program(
         &program_id,
@@ -1658,7 +1601,7 @@ fn test_program_sbf_call_depth() {
         let instruction = Instruction::new_with_bincode(program_id, &depth, vec![]);
 
         let context = InstrContext {
-            feature_set: feature_set.clone(),
+            feature_set,
             accounts: vec![],
             instruction,
         };
@@ -1681,8 +1624,8 @@ fn test_program_sbf_compute_budget() {
     let program_elf = harness::file::load_program_elf("solana_sbf_rust_noop");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
-    let mut compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let feature_set = SVMFeatureSet::all_enabled();
+    let mut compute_budget = ComputeBudget::new_with_defaults(false);
     compute_budget.compute_unit_limit = 0;
 
     let accounts = vec![(program_id, Account::new(0, 0, &loader_v4::id()))];
@@ -1740,7 +1683,7 @@ fn assert_instruction_count() {
     {
         programs.extend_from_slice(&[
             ("solana_sbf_rust_128bit", 784),
-            ("solana_sbf_rust_alloc", 4934),
+            ("solana_sbf_rust_alloc", 4940),
             ("solana_sbf_rust_custom_heap", 343),
             ("solana_sbf_rust_dep_crate", 22),
             ("solana_sbf_rust_iter", 1514),
@@ -1750,14 +1693,14 @@ fn assert_instruction_count() {
             ("solana_sbf_rust_noop", 342),
             ("solana_sbf_rust_param_passing", 108),
             ("solana_sbf_rust_rand", 315),
-            ("solana_sbf_rust_sanity", 14223),
+            ("solana_sbf_rust_sanity", 14228),
             ("solana_sbf_rust_secp256k1_recover", 88615),
             ("solana_sbf_rust_sha", 21998),
         ]);
     }
 
-    let feature_set = FeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let feature_set = SVMFeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false);
     let sysvar_cache = default_sysvar_cache();
 
     println!("\n  {:36} expected actual  diff", "SBF program");
@@ -1783,7 +1726,7 @@ fn assert_instruction_count() {
         let instruction = Instruction::new_with_bytes(program_id, &[], instruction_accounts);
 
         let context = InstrContext {
-            feature_set: feature_set.clone(),
+            feature_set,
             accounts,
             instruction,
         };
@@ -1881,8 +1824,8 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
         harness::file::load_program_elf("solana_sbf_rust_r2_instruction_data_pointer");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let feature_set = SVMFeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     let mut program_cache = default_program_cache_with_program(
         &program_id,
@@ -1951,6 +1894,7 @@ fn get_stable_genesis_config() -> GenesisConfigInfo {
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
         Rent::free(),               // most tests don't expect rent
         ClusterType::Development,
+        &FeatureSet::all_enabled(),
         vec![],
     );
     genesis_config.creation_time = Duration::ZERO.as_secs() as UnixTimestamp;
@@ -2428,11 +2372,13 @@ fn test_program_sbf_disguised_as_sbf_loader() {
         let program_elf = harness::file::load_program_elf(program);
         let program_id = Pubkey::new_unique();
 
-        let mut feature_set = FeatureSet::all_enabled();
-        feature_set.deactivate(&agave_feature_set::remove_bpf_loader_incorrect_program_id::id());
-        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let feature_set = SVMFeatureSet {
+            remove_bpf_loader_incorrect_program_id: false,
+            ..SVMFeatureSet::all_enabled()
+        };
+        let compute_budget = ComputeBudget::new_with_defaults(false);
 
-        let mut program_cache = default_program_cache(&feature_set);
+        let mut program_cache = default_program_cache();
         harness::program_cache::add_program(
             &mut program_cache,
             &program_id,
@@ -2468,10 +2414,10 @@ fn test_program_reads_from_program_account() {
     let program_elf = harness::file::load_program_elf("read_program");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let feature_set = SVMFeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
-    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    let mut program_cache = harness::program_cache::new_with_builtins(0);
     harness::program_cache::add_program(
         &mut program_cache,
         &program_id,
@@ -2528,9 +2474,9 @@ fn test_program_sbf_c_dup() {
     let program_elf = harness::file::load_program_elf("ser");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
-    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    let feature_set = SVMFeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false);
+    let mut program_cache = harness::program_cache::new_with_builtins(0);
     harness::program_cache::add_program(
         &mut program_cache,
         &program_id,
@@ -2772,8 +2718,8 @@ fn test_program_sbf_ro_account_modify() {
     let program_elf = harness::file::load_program_elf("solana_sbf_rust_ro_account_modify");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
-    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let feature_set = SVMFeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false);
 
     let mut program_cache = default_program_cache_with_program(
         &program_id,
@@ -2795,7 +2741,7 @@ fn test_program_sbf_ro_account_modify() {
         let instruction = Instruction::new_with_bytes(program_id, &[case], account_metas.clone());
 
         let context = InstrContext {
-            feature_set: feature_set.clone(),
+            feature_set,
             accounts: accounts.clone(),
             instruction,
         };
@@ -2823,13 +2769,14 @@ fn test_program_sbf_realloc() {
 
     let mint_pubkey = mint_keypair.pubkey();
     let signer = &[&mint_keypair];
-    for stricter_abi_and_runtime_constraints in [false, true] {
+    for virtual_address_space_adjustments in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -3965,9 +3912,11 @@ fn test_program_sbf_processed_inner_instruction() {
         &[instruction2, instruction1, instruction0],
         Some(&mint_keypair.pubkey()),
     );
-    assert!(bank_client
-        .send_and_confirm_message(&[&mint_keypair], message)
-        .is_ok());
+    assert!(
+        bank_client
+            .send_and_confirm_message(&[&mint_keypair], message)
+            .is_ok()
+    );
 }
 
 #[test]
@@ -4123,7 +4072,7 @@ fn test_program_sbf_inner_instruction_alignment_checks() {
 fn test_cpi_account_ownership_writability() {
     agave_logger::setup();
 
-    for stricter_abi_and_runtime_constraints in [false, true] {
+    for virtual_address_space_adjustments in [false, true] {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -4132,8 +4081,9 @@ fn test_cpi_account_ownership_writability() {
 
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
 
@@ -4201,7 +4151,7 @@ fn test_cpi_account_ownership_writability() {
 
                 let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
 
-                if (byte_index as usize) < account_size || stricter_abi_and_runtime_constraints {
+                if (byte_index as usize) < account_size || virtual_address_space_adjustments {
                     assert_eq!(
                         result.unwrap_err().unwrap(),
                         TransactionError::InstructionError(
@@ -4210,7 +4160,7 @@ fn test_cpi_account_ownership_writability() {
                         )
                     );
                 } else {
-                    // without stricter_abi_and_runtime_constraints, changes to the realloc padding
+                    // without virtual_address_space_adjustments, changes to the realloc padding
                     // outside the account length are ignored
                     assert!(result.is_ok(), "{result:?}");
                 }
@@ -4218,11 +4168,11 @@ fn test_cpi_account_ownership_writability() {
         }
         // Test that the CPI code that updates `ref_to_len_in_vm` fails if we
         // make it write to an invalid location. This is the first variant which
-        // correctly triggers ExternalAccountDataModified when stricter_abi_and_runtime_constraints is
-        // disabled. When stricter_abi_and_runtime_constraints is enabled this tests fails early
+        // correctly triggers ExternalAccountDataModified when virtual_address_space_adjustments is
+        // disabled. When virtual_address_space_adjustments is enabled this tests fails early
         // because we move the account data pointer.
         // TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE is able to make more
-        // progress when stricter_abi_and_runtime_constraints is on.
+        // progress when virtual_address_space_adjustments is on.
         let account = AccountSharedData::new(42, 0, &invoke_program_id);
         bank.store_account(&account_keypair.pubkey(), &account);
         let instruction_data = vec![
@@ -4239,8 +4189,8 @@ fn test_cpi_account_ownership_writability() {
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         assert_eq!(
             result.unwrap_err().unwrap(),
-            if stricter_abi_and_runtime_constraints {
-                // We move the data pointer, stricter_abi_and_runtime_constraints doesn't allow it
+            if virtual_address_space_adjustments {
+                // We move the data pointer, virtual_address_space_adjustments doesn't allow it
                 // anymore so it errors out earlier. See
                 // test_cpi_invalid_account_info_pointers.
                 TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
@@ -4259,7 +4209,7 @@ fn test_cpi_account_ownership_writability() {
 
         for target_account in [1, account_metas.len() as u8 - 1] {
             // Similar to the test above where we try to make CPI write into account
-            // data. This variant is for when stricter_abi_and_runtime_constraints is enabled.
+            // data. This variant is for when virtual_address_space_adjustments is enabled.
             let account = AccountSharedData::new(42, 0, &invoke_program_id);
             bank.store_account(&account_keypair.pubkey(), &account);
             let account = AccountSharedData::new(42, 0, &invoke_program_id);
@@ -4278,7 +4228,7 @@ fn test_cpi_account_ownership_writability() {
             let message = Message::new(&[instruction], Some(&mint_pubkey));
             let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
             let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-            if stricter_abi_and_runtime_constraints {
+            if virtual_address_space_adjustments {
                 assert_eq!(
                     result.unwrap_err(),
                     TransactionError::InstructionError(
@@ -4320,7 +4270,7 @@ fn test_cpi_account_ownership_writability() {
 fn test_cpi_account_data_updates() {
     agave_logger::setup();
 
-    for (deprecated_callee, deprecated_caller, stricter_abi_and_runtime_constraints) in
+    for (deprecated_callee, deprecated_caller, virtual_address_space_adjustments) in
         [false, true].into_iter().flat_map(move |z| {
             [false, true]
                 .into_iter()
@@ -4334,8 +4284,9 @@ fn test_cpi_account_data_updates() {
         } = create_genesis_config(100_123_456_789);
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
 
@@ -4406,7 +4357,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if stricter_abi_and_runtime_constraints {
+                    if virtual_address_space_adjustments {
                         InstructionError::ProgramFailedToComplete
                     } else {
                         InstructionError::ModifiedProgramId
@@ -4445,7 +4396,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if stricter_abi_and_runtime_constraints {
+                    if virtual_address_space_adjustments {
                         InstructionError::InvalidRealloc
                     } else {
                         InstructionError::AccountDataSizeChanged
@@ -4469,7 +4420,7 @@ fn test_cpi_account_data_updates() {
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN,
-            stricter_abi_and_runtime_constraints as u8,
+            virtual_address_space_adjustments as u8,
         ];
         instruction_data.extend_from_slice(4usize.to_le_bytes().as_ref());
         let instruction = Instruction::new_with_bytes(
@@ -4488,7 +4439,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if stricter_abi_and_runtime_constraints && deprecated_callee {
+                    if virtual_address_space_adjustments && deprecated_callee {
                         InstructionError::InvalidRealloc
                     } else {
                         InstructionError::AccountDataSizeChanged
@@ -4511,7 +4462,7 @@ fn test_cpi_account_data_updates() {
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
-            stricter_abi_and_runtime_constraints as u8,
+            virtual_address_space_adjustments as u8,
         ];
         // realloc to "foobazbad" then shrink to "foobazb"
         instruction_data.extend_from_slice(7usize.to_le_bytes().as_ref());
@@ -4527,7 +4478,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if stricter_abi_and_runtime_constraints {
+                    if virtual_address_space_adjustments {
                         InstructionError::ProgramFailedToComplete
                     } else {
                         InstructionError::ModifiedProgramId
@@ -4548,7 +4499,7 @@ fn test_cpi_account_data_updates() {
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
-            stricter_abi_and_runtime_constraints as u8,
+            virtual_address_space_adjustments as u8,
         ];
         // realloc to "foobazbad" then shrink to "f"
         instruction_data.extend_from_slice(1usize.to_le_bytes().as_ref());
@@ -4564,7 +4515,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if stricter_abi_and_runtime_constraints {
+                    if virtual_address_space_adjustments {
                         InstructionError::ProgramFailedToComplete
                     } else {
                         InstructionError::ModifiedProgramId
@@ -4733,9 +4684,9 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
     let program_elf = harness::file::load_program_elf("solana_sbf_rust_divide_by_zero");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
+    let feature_set = SVMFeatureSet::all_enabled();
     let compute_budget = {
-        let mut budget = ComputeBudget::new_with_defaults(false, false);
+        let mut budget = ComputeBudget::new_with_defaults(false);
         budget.compute_unit_limit = 10_000u64;
         budget
     };
@@ -4780,13 +4731,14 @@ fn test_deny_access_beyond_current_length() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    for stricter_abi_and_runtime_constraints in [false, true] {
+    for virtual_address_space_adjustments in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -4826,7 +4778,7 @@ fn test_deny_access_beyond_current_length() {
                 account_metas.clone(),
             );
             let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-            if stricter_abi_and_runtime_constraints {
+            if virtual_address_space_adjustments {
                 assert_eq!(
                     result.unwrap_err().unwrap(),
                     TransactionError::InstructionError(0, expected_error)
@@ -4849,13 +4801,14 @@ fn test_deny_executable_write() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    for stricter_abi_and_runtime_constraints in [false, true] {
+    for virtual_address_space_adjustments in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -4905,13 +4858,14 @@ fn test_update_callee_account() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    for stricter_abi_and_runtime_constraints in [false, true] {
+    for virtual_address_space_adjustments in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -4936,7 +4890,7 @@ fn test_update_callee_account() {
             AccountMeta::new_readonly(invoke_program_id, false),
         ];
 
-        // I. do CPI with account in read only (separate code path with stricter_abi_and_runtime_constraints)
+        // I. do CPI with account in read only (separate code path with virtual_address_space_adjustments)
         let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
         account.set_data(data);
@@ -5142,7 +5096,7 @@ fn test_update_callee_account() {
         );
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
 
-        if stricter_abi_and_runtime_constraints {
+        if virtual_address_space_adjustments {
             // changing the data pointer is not permitted
             assert!(result.is_err());
         } else {
@@ -5190,13 +5144,14 @@ fn test_account_info_in_account() {
     }
 
     for program in programs {
-        for stricter_abi_and_runtime_constraints in [false, true] {
+        for syscall_parameter_address_restrictions in [false, true] {
             let mut bank = Bank::new_for_tests(&genesis_config);
             let feature_set = Arc::make_mut(&mut bank.feature_set);
             // by default test banks have all features enabled, so we only need to
             // disable when needed
-            if !stricter_abi_and_runtime_constraints {
-                feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+            if !syscall_parameter_address_restrictions {
+                feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+                feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
                 feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
             }
 
@@ -5233,7 +5188,7 @@ fn test_account_info_in_account() {
             bank.store_account(&account_keypair.pubkey(), &account);
 
             let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-            if stricter_abi_and_runtime_constraints {
+            if syscall_parameter_address_restrictions {
                 assert!(result.is_err());
             } else {
                 assert!(result.is_ok());
@@ -5252,13 +5207,14 @@ fn test_account_info_rc_in_account() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    for stricter_abi_and_runtime_constraints in [false, true] {
+    for syscall_parameter_address_restrictions in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !syscall_parameter_address_restrictions {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
 
@@ -5300,7 +5256,7 @@ fn test_account_info_rc_in_account() {
         let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
         let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
 
-        if stricter_abi_and_runtime_constraints {
+        if syscall_parameter_address_restrictions {
             assert!(
                 logs.last().unwrap().ends_with(" failed: Invalid pointer"),
                 "{logs:?}"
@@ -5323,7 +5279,7 @@ fn test_account_info_rc_in_account() {
         let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
         let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
 
-        if stricter_abi_and_runtime_constraints {
+        if syscall_parameter_address_restrictions {
             assert!(
                 logs.last().unwrap().ends_with(" failed: Invalid pointer"),
                 "{logs:?}"
@@ -5349,7 +5305,8 @@ fn test_clone_account_data() {
     let mut bank = Bank::new_for_tests(&genesis_config);
     let feature_set = Arc::make_mut(&mut bank.feature_set);
 
-    feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+    feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+    feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
     feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
 
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -5689,7 +5646,7 @@ fn test_function_call_args() {
 fn test_mem_syscalls_overlap_account_begin_or_end() {
     agave_logger::setup();
 
-    for stricter_abi_and_runtime_constraints in [false, true] {
+    for virtual_address_space_adjustments in [false, true] {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -5698,8 +5655,9 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
 
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
-        if !stricter_abi_and_runtime_constraints {
-            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+        if !virtual_address_space_adjustments {
+            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
             feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
 
@@ -5744,9 +5702,8 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
 
             for instr in 0..=15 {
                 println!(
-                    "Testing deprecated:{deprecated} \
-                     stricter_abi_and_runtime_constraints:{stricter_abi_and_runtime_constraints} \
-                     instruction:{instr}"
+                    "Testing deprecated:{deprecated} virtual_address_space_adjustments: \
+                     {virtual_address_space_adjustments} instruction:{instr}"
                 );
                 let instruction =
                     Instruction::new_with_bytes(program_id, &[instr], account_metas.clone());
@@ -5756,7 +5713,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
                 let last_line = logs.last().unwrap();
 
-                if stricter_abi_and_runtime_constraints {
+                if virtual_address_space_adjustments {
                     assert!(last_line.contains(" failed: Access violation"), "{logs:?}");
                 } else {
                     assert!(result.is_ok(), "{logs:?}");
@@ -5768,9 +5725,8 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
 
             for instr in 0..=15 {
                 println!(
-                    "Testing deprecated:{deprecated} \
-                     stricter_abi_and_runtime_constraints:{stricter_abi_and_runtime_constraints} \
-                     instruction:{instr} zero-length account"
+                    "Testing deprecated:{deprecated} virtual_address_space_adjustments: \
+                     {virtual_address_space_adjustments} instruction:{instr} zero-length account"
                 );
                 let instruction =
                     Instruction::new_with_bytes(program_id, &[instr, 0], account_metas.clone());
@@ -5780,7 +5736,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
                 let last_line = logs.last().unwrap();
 
-                if stricter_abi_and_runtime_constraints && (!deprecated || instr < 8) {
+                if virtual_address_space_adjustments && (!deprecated || instr < 8) {
                     assert!(
                         last_line.contains(" failed: account data too small")
                             || last_line.contains(" failed: Failed to reallocate account data")
@@ -5788,7 +5744,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                         "{logs:?}",
                     );
                 } else {
-                    // stricter_abi_and_runtime_constraints && deprecated && instr >= 8 succeeds with zero-length accounts
+                    // virtual_address_space_adjustments && deprecated && instr >= 8 succeeds with zero-length accounts
                     // because there is no MemoryRegion for the account,
                     // so there can be no error when leaving that non-existent region.
                     assert!(result.is_ok(), "{logs:?}");
@@ -5796,4 +5752,72 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
             }
         }
     }
+}
+
+#[test_matrix(
+    [0, 1, 2, 5, 10, 15, 20, 32],
+    [1, 10, 50, 100, 255, 500, 1000, 1024]
+)]
+#[allow(clippy::arithmetic_side_effects)]
+#[cfg(feature = "sbf_rust")]
+fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data_len: usize) {
+    agave_logger::setup();
+
+    let program_elf = harness::file::load_program_elf("solana_sbf_rust_direct_account_pointers");
+    let program_id = Pubkey::new_unique();
+
+    let feature_set = SVMFeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false);
+
+    let mut program_cache = default_program_cache_with_program(
+        &program_id,
+        &program_elf,
+        &feature_set,
+        &compute_budget,
+    );
+    let sysvar_cache = default_sysvar_cache();
+
+    let mut accounts = Vec::new();
+    let mut account_metas = Vec::new();
+
+    for i in 0..num_accounts {
+        let pubkey = Pubkey::new_unique();
+
+        // Mixed account sizes.
+        accounts.push((pubkey, Account::new(0, 100 + (i * 50), &program_id)));
+
+        // Mixed account roles.
+        if i % 2 == 0 {
+            account_metas.push(AccountMeta::new(pubkey, false));
+        } else {
+            account_metas.push(AccountMeta::new_readonly(pubkey, false));
+        }
+    }
+
+    // Add `num_accounts` duplicated accounts.
+    for i in 0..num_accounts {
+        let pubkey = accounts[i].0;
+        account_metas.push(AccountMeta::new(pubkey, false));
+    }
+
+    let input_data: Vec<u8> = (0..input_data_len).map(|i| (i % 256) as u8).collect();
+
+    let instruction = Instruction::new_with_bytes(program_id, &input_data, account_metas);
+
+    let context = InstrContext {
+        feature_set,
+        accounts,
+        instruction,
+    };
+
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
+
+    assert!(effects.result.is_none());
+    // `num_accounts * 2` will be added as return data.
+    assert_eq!(
+        (num_accounts * 2).to_le_bytes().to_vec(),
+        effects.return_data
+    );
 }

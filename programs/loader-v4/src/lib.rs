@@ -1,30 +1,23 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 use {
     solana_bincode::limited_deserialize,
-    solana_bpf_loader_program::{deploy_program, execute},
     solana_instruction::error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::{
+        DEPLOYMENT_COOLDOWN_IN_SLOTS,
         instruction::LoaderV4Instruction,
         state::{LoaderV4State, LoaderV4Status},
-        DEPLOYMENT_COOLDOWN_IN_SLOTS,
     },
     solana_program_runtime::{
+        deploy_program,
         invoke_context::InvokeContext,
         loaded_programs::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
+        vm::execute,
     },
     solana_pubkey::Pubkey,
     solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
-    solana_svm_log_collector::{ic_logger_msg, LogCollector},
+    solana_svm_log_collector::{LogCollector, ic_logger_msg},
     solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{
@@ -506,8 +499,8 @@ mod tests {
     use {
         super::*,
         solana_account::{
-            create_account_shared_data_for_test, AccountSharedData, ReadableAccount,
-            WritableAccount,
+            AccountSharedData, ReadableAccount, WritableAccount,
+            create_account_shared_data_for_test,
         },
         solana_bpf_loader_program::test_utils,
         solana_clock::Slot,

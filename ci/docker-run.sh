@@ -99,6 +99,11 @@ if [[ -z "$SOLANA_DOCKER_RUN_NOSETUID" ]]; then
   ARGS+=(--user "$(id -u):$(id -g)")
 fi
 
+if [[ -n $EXTRA_DOCKER_RUN_ARGS ]]; then
+  read -r -a extra_docker_run_args <<< "$EXTRA_DOCKER_RUN_ARGS"
+  ARGS+=("${extra_docker_run_args[@]}")
+fi
+
 if [[ -n $SOLANA_ALLOCATE_TTY ]]; then
   # Colored output, progress bar and Ctrl-C:
   # https://stackoverflow.com/a/41099052/10242004
@@ -124,12 +129,16 @@ ARGS+=(
   --env CRATES_IO_TOKEN
 )
 
-# Also propagate environment variables needed for codecov
-# https://docs.codecov.io/docs/testing-with-docker#section-codecov-inside-docker
-# We normalize CI to `1`; but codecov expects it to be `true` to detect Buildkite...
-# Unfortunately, codecov.io fails sometimes:
-#   curl: (7) Failed to connect to codecov.io port 443: Connection timed out
-CODECOV_ENVS=$(CI=true bash <(while ! curl -sS --retry 5 --retry-delay 2 --retry-connrefused --fail https://codecov.io/env; do sleep 10; done))
+CODECOV_ENVS=
+if [[ ${FETCH_CODECOV_ENVS:-false} == true ]]; then
+	echo "FETCH_CODECOV_ENVS=true, fetching codecov environment variables"
+	# ref: https://docs.codecov.io/docs/testing-with-docker#section-codecov-inside-docker
+	# Unfortunately, codecov.io fails sometimes:
+	#   curl: (7) Failed to connect to codecov.io port 443: Connection timed out
+	CODECOV_ENVS=$(CI=true bash <(while ! curl -sS --retry 5 --retry-delay 2 --retry-connrefused --fail https://codecov.io/env; do sleep 10; done))
+else
+	echo "skipping fetching codecov environment variables. (set FETCH_CODECOV_ENVS to true to enable)"
+fi
 
 if $INTERACTIVE; then
   if [[ -n $1 ]]; then

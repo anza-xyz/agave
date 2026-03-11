@@ -88,13 +88,12 @@
 
 pub use crate::nonblocking::pubsub_client::PubsubClientError;
 use {
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    crossbeam_channel::{Receiver, Sender, unbounded},
     log::*,
     serde::de::DeserializeOwned,
     serde_json::{
-        json,
+        Map, Value, json,
         value::Value::{Number, Object},
-        Map, Value,
     },
     solana_account_decoder_client_types::UiAccount,
     solana_clock::Slot,
@@ -115,18 +114,18 @@ use {
         marker::PhantomData,
         net::TcpStream,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
-        thread::{sleep, JoinHandle},
+        thread::{JoinHandle, sleep},
         time::Duration,
     },
     tungstenite::{
+        Message, WebSocket,
         client::IntoClientRequest,
         connect,
-        http::{header, StatusCode},
+        http::{StatusCode, header},
         stream::MaybeTlsStream,
-        Message, WebSocket,
     },
 };
 
@@ -230,7 +229,7 @@ where
         if let Ok(json_msg) = serde_json::from_str::<Map<String, Value>>(message_text) {
             if let Some(Object(params)) = json_msg.get("params") {
                 if let Some(result) = params.get("result") {
-                    if let Ok(x) = serde_json::from_value::<T>(result.clone()) {
+                    if let Ok(x) = T::deserialize(result) {
                         return Ok(Some(x));
                     }
                 }

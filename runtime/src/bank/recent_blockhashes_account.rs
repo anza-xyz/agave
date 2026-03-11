@@ -1,31 +1,30 @@
 //! Helpers for the recent blockhashes sysvar.
 
-#[allow(deprecated)]
-use solana_sysvar::recent_blockhashes::{IntoIterSorted, IterItem, RecentBlockhashes, MAX_ENTRIES};
+#[expect(deprecated)]
+use solana_sysvar::recent_blockhashes::{IntoIterSorted, IterItem, MAX_ENTRIES, RecentBlockhashes};
 use {
     solana_account::{
-        create_account_shared_data_with_fields, to_account, AccountSharedData,
-        InheritableAccountFields,
+        AccountSharedData, InheritableAccountFields, create_account_shared_data_with_fields,
+        to_account,
     },
     std::{collections::BinaryHeap, iter::FromIterator},
 };
 
-#[allow(deprecated)]
+#[expect(deprecated)]
 fn update_account<'a, I>(account: &mut AccountSharedData, recent_blockhash_iter: I) -> Option<()>
 where
     I: IntoIterator<Item = IterItem<'a>>,
 {
     let sorted = BinaryHeap::from_iter(recent_blockhash_iter);
-    #[allow(deprecated)]
     let sorted_iter = IntoIterSorted::new(sorted);
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     let recent_blockhash_iter = sorted_iter.take(MAX_ENTRIES);
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     let recent_blockhashes: RecentBlockhashes = recent_blockhash_iter.collect();
     to_account(&recent_blockhashes, account)
 }
 
-#[allow(deprecated)]
+#[expect(deprecated)]
 pub(in crate::bank) fn create_account_with_data_and_fields<'a, I>(
     recent_blockhash_iter: I,
     fields: InheritableAccountFields,
@@ -47,8 +46,8 @@ mod tests {
     use {
         super::*,
         rand::{rng, seq::SliceRandom},
-        solana_account::{from_account, DUMMY_INHERITABLE_ACCOUNT_FIELDS},
-        solana_hash::{Hash, HASH_BYTES},
+        solana_account::{DUMMY_INHERITABLE_ACCOUNT_FIELDS, from_account},
+        solana_hash::{HASH_BYTES, Hash},
         solana_sysvar::recent_blockhashes::Entry,
     };
 

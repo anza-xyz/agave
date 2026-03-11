@@ -1,6 +1,6 @@
 use {
     solana_builtins_default_costs::{
-        get_builtin_migration_feature_index, BuiltinMigrationFeatureIndex, MAYBE_BUILTIN_KEY,
+        BuiltinMigrationFeatureIndex, MAYBE_BUILTIN_KEY, get_builtin_migration_feature_index,
     },
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
@@ -66,7 +66,7 @@ mod test {
     use {
         super::*,
         solana_builtins_default_costs::{
-            get_migration_feature_id, BuiltinCost, MigratingBuiltinCost, MIGRATING_BUILTINS_COSTS,
+            BuiltinCost, MIGRATING_BUILTINS_COSTS, MigratingBuiltinCost, get_migration_feature_id,
         },
     };
 

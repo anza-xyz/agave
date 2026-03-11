@@ -1,4 +1,3 @@
-#![cfg_attr(not(feature = "agave-unstable-api"), allow(dead_code))]
 //! The `shred` module defines data structures and methods to pull MTU sized data frames from the
 //! network. There are two types of shreds: data and coding. Data shreds contain entry information
 //! while coding shreds provide redundancy to protect against dropped network packets (erasures).
@@ -59,19 +58,19 @@ use {
     num_enum::{IntoPrimitive, TryFromPrimitive},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
-    solana_entry::entry::{create_ticks, Entry},
+    solana_entry::entry::{Entry, create_ticks},
     solana_hash::Hash,
     solana_perf::packet::PacketRef,
     solana_pubkey::Pubkey,
     solana_sha256_hasher::hashv,
-    solana_signature::{Signature, SIGNATURE_BYTES},
+    solana_signature::{SIGNATURE_BYTES, Signature},
     static_assertions::const_assert_eq,
     std::{fmt::Debug, mem::MaybeUninit},
     thiserror::Error,
     wincode::{
+        SchemaRead, SchemaWrite, TypeMeta,
         containers::Pod,
         io::{Reader, Writer},
-        SchemaRead, SchemaWrite, TypeMeta,
     },
 };
 pub use {
@@ -239,8 +238,7 @@ pub enum ShredType {
     Code = 0b0101_1010,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
-#[serde(into = "u8", try_from = "u8")]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ShredVariant {
     // proof_size is the number of Merkle proof entries, and is encoded in the
     // lowest 4 bits of the binary representation. The first 4 bits identify
@@ -254,9 +252,8 @@ enum ShredVariant {
 }
 
 /// A common header that is present in data and code shred headers
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct ShredCommonHeader {
-    #[wincode(with = "Pod<_>")]
     signature: Signature,
     shred_variant: ShredVariant,
     slot: Slot,
@@ -266,7 +263,7 @@ struct ShredCommonHeader {
 }
 
 /// The data shred header has parent offset and flags
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct DataShredHeader {
     parent_offset: u16,
     #[wincode(with = "Pod<_>")]
@@ -275,7 +272,7 @@ struct DataShredHeader {
 }
 
 /// The coding shred header has FEC information
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct CodingShredHeader {
     num_data_shreds: u16,
     num_coding_shreds: u16,
@@ -388,7 +385,7 @@ macro_rules! dispatch {
     }
 }
 
-use dispatch;
+use {dispatch, wincode::config::ConfigCore};
 
 impl Shred {
     dispatch!(fn common_header(&self) -> &ShredCommonHeader);
@@ -656,7 +653,7 @@ impl TryFrom<u8> for ShredVariant {
     }
 }
 
-impl SchemaWrite for ShredVariant {
+unsafe impl<C: ConfigCore> SchemaWrite<C> for ShredVariant {
     type Src = Self;
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: 1,
@@ -667,24 +664,21 @@ impl SchemaWrite for ShredVariant {
         Ok(1)
     }
 
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+    fn write(writer: impl Writer, src: &Self::Src) -> wincode::WriteResult<()> {
         let repr: u8 = (*src).into();
-        u8::write(writer, &repr)
+        <u8 as SchemaWrite<C>>::write(writer, &repr)
     }
 }
 
-impl<'a> SchemaRead<'a> for ShredVariant {
+unsafe impl<'a, C: ConfigCore> SchemaRead<'a, C> for ShredVariant {
     type Dst = Self;
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: 1,
         zero_copy: false,
     };
 
-    fn read(
-        reader: &mut impl Reader<'a>,
-        dst: &mut MaybeUninit<Self::Dst>,
-    ) -> wincode::ReadResult<()> {
-        let repr = u8::get(reader)?;
+    fn read(reader: impl Reader<'a>, dst: &mut MaybeUninit<Self::Dst>) -> wincode::ReadResult<()> {
+        let repr = <u8 as SchemaRead<C>>::get(reader)?;
         let value = Self::try_from(repr)
             .map_err(|_| wincode::ReadError::InvalidTagEncoding(repr as usize))?;
         dst.write(value);
@@ -724,7 +718,6 @@ pub fn should_discard_shred<'a, P>(
     root: Slot,
     max_slot: Slot,
     shred_version: u16,
-    enforce_fixed_fec_set: impl Fn(Slot) -> bool,
     discard_unexpected_data_complete_shreds: impl Fn(Slot) -> bool,
     stats: &mut ShredFetchStats,
 ) -> bool
@@ -792,9 +785,7 @@ where
 
             if !erasure_config.is_fixed() {
                 stats.misaligned_erasure_config += 1;
-                if enforce_fixed_fec_set(slot) {
-                    return true;
-                }
+                return true;
             }
         }
         ShredType::Data => {
@@ -825,7 +816,7 @@ where
             {
                 stats.unexpected_data_complete_shred += 1;
 
-                if enforce_fixed_fec_set(slot) && discard_unexpected_data_complete_shreds(slot) {
+                if discard_unexpected_data_complete_shreds(slot) {
                     return true;
                 }
             }
@@ -834,18 +825,14 @@ where
                 && !check_last_data_shred_index(index)
             {
                 stats.misaligned_last_data_index += 1;
-                if enforce_fixed_fec_set(slot) {
-                    return true;
-                }
+                return true;
             }
         }
     }
 
     if !check_fixed_fec_set(index, fec_set_index) {
         stats.misaligned_fec_set += 1;
-        if enforce_fixed_fec_set(slot) {
-            return true;
-        }
+        return true;
     }
 
     match shred_variant {
@@ -969,7 +956,7 @@ mod tests {
         assert_matches::assert_matches,
         itertools::Itertools,
         rand::Rng,
-        rand_chacha::{rand_core::SeedableRng, ChaChaRng},
+        rand_chacha::{ChaChaRng, rand_core::SeedableRng},
         rayon::ThreadPoolBuilder,
         solana_keypair::keypair_from_seed,
         std::io::{Cursor, Seek, SeekFrom, Write},
@@ -1025,8 +1012,6 @@ mod tests {
 
     #[test]
     fn test_shred_constants() {
-        use wincode::Serialize as _;
-
         let common_header = ShredCommonHeader {
             signature: Signature::default(),
             shred_variant: ShredVariant::MerkleCode {
@@ -1070,7 +1055,7 @@ mod tests {
         );
         assert_eq!(
             SIZE_OF_SIGNATURE,
-            Pod::<Signature>::serialized_size(&Signature::default()).unwrap() as usize
+            wincode::serialized_size(&Signature::default()).unwrap() as usize
         );
         assert_eq!(
             SIZE_OF_SHRED_VARIANT,
@@ -1152,7 +1137,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| true,
                 |_| false,
                 &mut stats
             ));
@@ -1166,7 +1150,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| true,
                 |_| false,
                 &mut stats
             ));
@@ -1178,7 +1161,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| true,
                 |_| false,
                 &mut stats
             ));
@@ -1190,7 +1172,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| true,
                 |_| false,
                 &mut stats
             ));
@@ -1202,7 +1183,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| true,
                 |_| false,
                 &mut stats
             ));
@@ -1214,7 +1194,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| true,
                 |_| false,
                 &mut stats
             ));
@@ -1227,7 +1206,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version.wrapping_add(1),
-                |_| true,
                 |_| false,
                 &mut stats
             ));
@@ -1240,7 +1218,6 @@ mod tests {
                 parent_slot + 1, // root
                 max_slot,
                 shred_version,
-                |_| true,
                 |_| false,
                 &mut stats
             ));
@@ -1263,7 +1240,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| true,
                 |_| false,
                 &mut stats
             ));
@@ -1286,7 +1262,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| true,
                 |_| false,
                 &mut stats
             ));
@@ -1309,7 +1284,6 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| true,
-                |_| true,
                 &mut stats
             ));
             assert_eq!(stats.index_out_of_bounds, 1);
@@ -1326,7 +1300,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| true,
                 |_| false,
                 &mut stats
             ));
@@ -1338,7 +1311,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version.wrapping_add(1),
-                |_| true,
                 |_| false,
                 &mut stats
             ));
@@ -1351,7 +1323,6 @@ mod tests {
                 slot, // root
                 max_slot,
                 shred_version,
-                |_| true,
                 |_| true,
                 &mut stats
             ));
@@ -1373,7 +1344,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| true,
                 |_| false,
                 &mut stats
             ));
@@ -1381,9 +1351,8 @@ mod tests {
         }
     }
 
-    #[test_case(true; "enforce_fixed_fec_set")]
-    #[test_case(false ; "do_not_enforce_fixed_fec_set")]
-    fn test_should_discard_shred_fec_set_checks(enforce_fixed_fec_set: bool) {
+    #[test]
+    fn test_should_discard_shred_fec_set_checks() {
         agave_logger::setup();
         let mut rng = rand::rng();
         let slot = 18_291;
@@ -1423,11 +1392,10 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| enforce_fixed_fec_set,
                 |_| false,
                 &mut stats,
             );
-            assert_eq!(should_discard, enforce_fixed_fec_set);
+            assert!(should_discard);
             assert_eq!(stats.misaligned_fec_set, 1);
         }
 
@@ -1456,11 +1424,10 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| enforce_fixed_fec_set,
                 |_| false,
                 &mut stats,
             );
-            assert_eq!(should_discard, enforce_fixed_fec_set);
+            assert!(should_discard);
             assert_eq!(stats.misaligned_fec_set, 1);
         }
 
@@ -1488,11 +1455,10 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| enforce_fixed_fec_set,
                 |_| false,
                 &mut stats,
             );
-            assert_eq!(should_discard, enforce_fixed_fec_set);
+            assert!(should_discard);
             assert_eq!(stats.misaligned_erasure_config, 1);
         }
 
@@ -1537,11 +1503,10 @@ mod tests {
             root,
             max_slot,
             shred_version,
-            |_| enforce_fixed_fec_set,
             |_| false,
             &mut stats,
         );
-        assert_eq!(should_discard, enforce_fixed_fec_set);
+        assert!(should_discard);
         assert_eq!(stats.misaligned_last_data_index, 1);
     }
 
@@ -2035,15 +2000,8 @@ mod tests {
         }
 
         let mut stats = ShredFetchStats::default();
-        let should_discard = should_discard_shred(
-            &packet,
-            root,
-            max_slot,
-            shred_version,
-            |_| true,
-            |_| true,
-            &mut stats,
-        );
+        let should_discard =
+            should_discard_shred(&packet, root, max_slot, shred_version, |_| true, &mut stats);
         assert!(should_discard);
         assert_eq!(stats.unexpected_data_complete_shred, 1);
 
@@ -2058,15 +2016,8 @@ mod tests {
         }
 
         let mut stats = ShredFetchStats::default();
-        let should_discard = should_discard_shred(
-            &packet,
-            root,
-            max_slot,
-            shred_version,
-            |_| true,
-            |_| true,
-            &mut stats,
-        );
+        let should_discard =
+            should_discard_shred(&packet, root, max_slot, shred_version, |_| true, &mut stats);
         assert!(!should_discard);
         assert_eq!(stats.unexpected_data_complete_shred, 0);
     }

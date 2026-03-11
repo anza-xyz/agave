@@ -4,14 +4,14 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_message::{
-        compiled_instruction::CompiledInstruction, v0::Message as MessageV0, AccountMeta,
-        Instruction, Message, VersionedMessage,
+        AccountMeta, Instruction, Message, VersionedMessage,
+        compiled_instruction::CompiledInstruction, v0::Message as MessageV0,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{stake, system_program},
     solana_signer::Signer,
     solana_system_interface::instruction::SystemInstruction,
-    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_vote::vote_transaction,
     solana_vote_program::vote_state::TowerSync,
 };
@@ -42,7 +42,7 @@ pub fn test_multisig_tx() -> Transaction {
 
     let instructions = vec![CompiledInstruction::new(
         0,
-        &transfer_instruction,
+        &bincode::serialize(&transfer_instruction).unwrap(),
         vec![0, 1],
     )];
 

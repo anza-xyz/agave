@@ -1,21 +1,13 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 pub use solana_file_download::DownloadProgressRecord;
 use {
     agave_snapshots::{
-        paths as snapshot_paths, snapshot_hash::SnapshotHash, ArchiveFormat, SnapshotArchiveKind,
-        ZstdConfig,
+        ArchiveFormat, SnapshotArchiveKind, ZstdConfig, paths as snapshot_paths,
+        snapshot_hash::SnapshotHash,
     },
     log::*,
     solana_clock::Slot,
-    solana_file_download::{download_file, DownloadProgressCallbackOption},
+    solana_file_download::{DownloadProgressCallbackOption, download_file},
     solana_genesis_config::DEFAULT_GENESIS_ARCHIVE,
     solana_runtime::snapshot_utils,
     std::{

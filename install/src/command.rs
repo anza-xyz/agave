@@ -5,7 +5,7 @@ use {
         update_manifest::{SignedUpdateManifest, UpdateManifest},
     },
     chrono::{Local, TimeZone},
-    console::{style, Emoji},
+    console::{Emoji, style},
     crossbeam_channel::unbounded,
     indicatif::{ProgressBar, ProgressStyle},
     serde::{Deserialize, Serialize},
@@ -14,7 +14,7 @@ use {
         state::get_config_data,
     },
     solana_hash::Hash,
-    solana_keypair::{read_keypair_file, signable::Signable, Keypair},
+    solana_keypair::{Keypair, read_keypair_file, signable::Signable},
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -355,8 +355,8 @@ pub fn string_from_winreg_value(val: &winreg::RegValue) -> Option<String> {
 #[cfg(windows)]
 fn get_windows_path_var() -> Result<Option<String>, String> {
     use winreg::{
-        enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE},
         RegKey,
+        enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE},
     };
 
     let root = RegKey::predef(HKEY_CURRENT_USER);
@@ -389,12 +389,12 @@ fn add_to_path(new_path: &str) -> bool {
         winapi::{
             shared::minwindef::*,
             um::winuser::{
-                SendMessageTimeoutA, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
+                HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutA, WM_SETTINGCHANGE,
             },
         },
         winreg::{
-            enums::{RegType, HKEY_CURRENT_USER, KEY_READ, KEY_WRITE},
             RegKey, RegValue,
+            enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, RegType},
         },
     };
 
@@ -1317,13 +1317,13 @@ pub fn list(config_file: &str) -> Result<(), String> {
         )
     })?;
 
+    let current_version =
+        load_release_version(&config.active_release_dir().join("version.yml"))?.channel;
+
     for entry in entries {
         match entry {
             Ok(entry) => {
                 let dir_name = entry.file_name();
-                let current_version =
-                    load_release_version(&config.active_release_dir().join("version.yml"))?.channel;
-
                 let current = if current_version.contains(dir_name.to_string_lossy().as_ref()) {
                     " (current)"
                 } else {

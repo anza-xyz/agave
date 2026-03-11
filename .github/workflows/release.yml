@@ -49,35 +49,37 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.VERSION_BUMP_PAT }}
 
-      - name: Parse Info
-        id: parse_info
+      - name: Setup
         run: |
-          # get the next version
-          version=${{ github.ref_name }}
-          major=$(echo $version | cut -d'.' -f1)
-          minor=$(echo $version | cut -d'.' -f2)
-          patch=$(echo $version | cut -d'.' -f3)
-          next_version=$major.$minor.$((patch+1))
-          : "${next_version:?}"
+          # install toml-cli
+          cargo install toml-cli --locked
 
-          # get the traget branch
-          target_branch=$major.$minor
-          : "${target_branch:?}"
+          # install xtask
+          cargo install \
+            --git https://github.com/anza-xyz/xtask \
+            --rev 930e3baec27a17cb4491b5585515b33f94dbd039 \
+            --bin xtask
 
-          echo "next_version=$next_version" | tee -a $GITHUB_OUTPUT
-          echo "target_branch=$target_branch" | tee -a $GITHUB_OUTPUT
-
-      - name: Create branch and make changes
-        run: |
-          next_version=${{ steps.parse_info.outputs.next_version }}
-
-          git checkout -b version-bump-$next_version
-          ./scripts/increment-cargo-version.sh patch
-
+          # git config
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git commit -am "Bump version to $next_version"
-          git push origin version-bump-$next_version
+
+      - name: Process
+        id: process
+        run: |
+          xtask bump-version patch-or-pre-release
+
+          new_version="$(toml get --raw Cargo.toml workspace.package.version)"
+
+          git checkout -b version-bump-$new_version
+          git commit -am "Bump version to $new_version"
+          git push origin version-bump-$new_version
+
+          echo "new_version=$new_version" | tee -a $GITHUB_OUTPUT
+
+          base_ref="${{ github.event.base_ref }}"
+          target_branch="${base_ref##*/}"
+          echo "target_branch=$target_branch" | tee -a $GITHUB_OUTPUT
 
       - name: Create PR
         uses: actions/github-script@v8
@@ -87,7 +89,7 @@ jobs:
             github.rest.pulls.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: 'Bump version to ${{ steps.parse_info.outputs.next_version }}',
-              head: 'version-bump-${{ steps.parse_info.outputs.next_version }}',
-              base: '${{ steps.parse_info.outputs.target_branch }}'
+              title: 'Bump version to ${{ steps.process.outputs.new_version }}',
+              head: 'version-bump-${{ steps.process.outputs.new_version }}',
+              base: '${{ steps.process.outputs.target_branch }}'
             })

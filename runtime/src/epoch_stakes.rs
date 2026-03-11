@@ -1,9 +1,10 @@
 use {
-    crate::stakes::SerdeStakesToStakeFormat,
+    crate::stakes::{DeserializableStakes, SerdeStakesToStakeFormat, Stakes},
     serde::{Deserialize, Serialize},
     solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
+    solana_stake_interface::state::Stake,
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         collections::HashMap,
@@ -13,6 +14,17 @@ use {
 
 pub type NodeIdToVoteAccounts = HashMap<Pubkey, NodeVoteAccounts>;
 pub type EpochAuthorizedVoters = HashMap<Pubkey, Pubkey>;
+
+/// Entry in the [`BLSPubkeyToRankMap`] associating a validator's identity
+/// pubkey and BLS pubkey with its stake.
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
+pub struct BLSPubkeyStakeEntry {
+    pub pubkey: Pubkey,
+    pub bls_pubkey: BLSPubkey,
+    pub stake: u64,
+}
 
 /// Container to store a mapping from validator [`BLSPubkey`] to rank.
 ///
@@ -24,11 +36,11 @@ pub type EpochAuthorizedVoters = HashMap<Pubkey, Pubkey>;
 pub struct BLSPubkeyToRankMap {
     /// Mapping from validator [`BLSPubkey`] to rank.
     rank_map: HashMap<BLSPubkey, u16>,
-    /// Mapping from rank to validator [`(Pubkey, BLSPubkey)`].
+    /// Mapping from rank to [`BLSPubkeyStakeEntry`].
     //
     // TODO(wen): We can make sorted_pubkeys a Vec<BLSPubkey> after we remove ed25519
     // pubkey from the consensus pool.
-    sorted_pubkeys: Vec<(Pubkey, BLSPubkey)>,
+    sorted_pubkeys: Vec<BLSPubkeyStakeEntry>,
 }
 
 impl BLSPubkeyToRankMap {
@@ -56,8 +68,13 @@ impl BLSPubkeyToRankMap {
         });
         let mut sorted_pubkeys = Vec::new();
         let mut bls_pubkey_to_rank_map = HashMap::new();
-        for (rank, (pubkey, bls_pubkey, _stake)) in pubkey_stake_pair_vec.into_iter().enumerate() {
-            sorted_pubkeys.push((pubkey, bls_pubkey));
+        for (rank, (pubkey, bls_pubkey, stake)) in pubkey_stake_pair_vec.into_iter().enumerate() {
+            let entry = BLSPubkeyStakeEntry {
+                pubkey,
+                bls_pubkey,
+                stake,
+            };
+            sorted_pubkeys.push(entry);
             bls_pubkey_to_rank_map.insert(bls_pubkey, rank as u16);
         }
         Self {
@@ -78,7 +95,7 @@ impl BLSPubkeyToRankMap {
         self.rank_map.get(bls_pubkey)
     }
 
-    pub fn get_pubkey(&self, index: usize) -> Option<&(Pubkey, BLSPubkey)> {
+    pub fn get_pubkey_stake_entry(&self, index: usize) -> Option<&BLSPubkeyStakeEntry> {
         self.sorted_pubkeys.get(index)
     }
 }
@@ -90,7 +107,21 @@ pub struct NodeVoteAccounts {
     pub total_stake: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Simplified, intermediate representation of [`VersionedEpochStakes`]
+///
+/// Its bincode serializaiton format is identical as `VersionedEpochStakes`, but allows faster
+/// deserialization by storing stakes in [`DeserializableStakes`]).
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) enum DeserializableVersionedEpochStakes {
+    Current {
+        stakes: DeserializableStakes<Stake>,
+        total_stake: u64,
+        node_id_to_vote_accounts: NodeIdToVoteAccounts,
+        epoch_authorized_voters: EpochAuthorizedVoters,
+    },
+}
+
+#[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub enum VersionedEpochStakes {
@@ -103,6 +134,24 @@ pub enum VersionedEpochStakes {
         #[serde(skip)]
         bls_pubkey_to_rank_map: OnceLock<Arc<BLSPubkeyToRankMap>>,
     },
+}
+
+impl From<DeserializableVersionedEpochStakes> for VersionedEpochStakes {
+    fn from(epoch_stakes: DeserializableVersionedEpochStakes) -> Self {
+        let DeserializableVersionedEpochStakes::Current {
+            stakes,
+            total_stake,
+            node_id_to_vote_accounts,
+            epoch_authorized_voters,
+        } = epoch_stakes;
+        Self::Current {
+            stakes: SerdeStakesToStakeFormat::Stake(Stakes::from_deserialized(stakes)),
+            total_stake,
+            node_id_to_vote_accounts: Arc::new(node_id_to_vote_accounts),
+            epoch_authorized_voters: Arc::new(epoch_authorized_voters),
+            bls_pubkey_to_rank_map: OnceLock::new(),
+        }
+    }
 }
 
 impl VersionedEpochStakes {
@@ -208,35 +257,30 @@ impl VersionedEpochStakes {
         leader_schedule_epoch: Epoch,
     ) -> (u64, NodeIdToVoteAccounts, EpochAuthorizedVoters) {
         let mut node_id_to_vote_accounts: NodeIdToVoteAccounts = HashMap::new();
-        let total_stake = epoch_vote_accounts
-            .iter()
-            .map(|(_, (stake, _))| stake)
-            .sum();
-        let epoch_authorized_voters = epoch_vote_accounts
-            .iter()
-            .filter_map(|(key, (stake, account))| {
-                let vote_state = account.vote_state_view();
+        let mut epoch_authorized_voters: EpochAuthorizedVoters = HashMap::new();
+        let mut total_stake: u64 = 0;
 
-                if *stake > 0 {
-                    if let Some(authorized_voter) =
-                        vote_state.get_authorized_voter(leader_schedule_epoch)
-                    {
-                        let node_vote_accounts = node_id_to_vote_accounts
-                            .entry(*vote_state.node_pubkey())
-                            .or_default();
+        for (key, (stake, account)) in epoch_vote_accounts.iter() {
+            total_stake += *stake;
 
-                        node_vote_accounts.total_stake += stake;
-                        node_vote_accounts.vote_accounts.push(*key);
+            if *stake == 0 {
+                continue;
+            }
 
-                        Some((*key, *authorized_voter))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect();
+            let vote_state = account.vote_state_view();
+
+            if let Some(authorized_voter) = vote_state.get_authorized_voter(leader_schedule_epoch) {
+                let node_vote_accounts = node_id_to_vote_accounts
+                    .entry(*vote_state.node_pubkey())
+                    .or_default();
+
+                node_vote_accounts.total_stake += stake;
+                node_vote_accounts.vote_accounts.push(*key);
+
+                epoch_authorized_voters.insert(*key, *authorized_voter);
+            }
+        }
+
         (
             total_stake,
             node_id_to_vote_accounts,
@@ -251,6 +295,7 @@ pub(crate) mod tests {
         super::*, solana_account::AccountSharedData,
         solana_bls_signatures::keypair::Keypair as BLSKeypair,
         solana_vote::vote_account::VoteAccount,
+        solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         solana_vote_program::vote_state::create_v4_account_with_authorized, std::iter,
         test_case::test_case,
     };
@@ -275,32 +320,29 @@ pub(crate) mod tests {
                     iter::repeat_with(|| {
                         let authorized_voter = solana_pubkey::new_rand();
                         let bls_pubkey_compressed: BLSPubkeyCompressed =
-                            BLSKeypair::new().public.try_into().unwrap();
+                            BLSKeypair::new().public.into();
                         let bls_pubkey_compressed_serialized =
                             bincode::serialize(&bls_pubkey_compressed)
                                 .unwrap()
                                 .try_into()
                                 .unwrap();
 
-                        let account = if is_alpenglow {
-                            create_v4_account_with_authorized(
-                                &node_id,
-                                &authorized_voter,
-                                &node_id,
-                                Some(bls_pubkey_compressed_serialized),
-                                0,
-                                100,
-                            )
+                        let bls_pubkey = if is_alpenglow {
+                            bls_pubkey_compressed_serialized
                         } else {
-                            create_v4_account_with_authorized(
-                                &node_id,
-                                &authorized_voter,
-                                &node_id,
-                                None,
-                                0,
-                                100,
-                            )
+                            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]
                         };
+                        let account = create_v4_account_with_authorized(
+                            &node_id,
+                            &authorized_voter,
+                            bls_pubkey,
+                            &node_id,
+                            0,
+                            &node_id,
+                            0,
+                            &node_id,
+                            100,
+                        );
                         VoteAccountInfo {
                             vote_account: solana_pubkey::new_rand(),
                             account,
@@ -440,7 +482,7 @@ pub(crate) mod tests {
         let epoch_stakes = VersionedEpochStakes::new_for_tests(epoch_vote_accounts.clone(), 0);
         let bls_pubkey_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
         assert_eq!(bls_pubkey_to_rank_map.len(), num_vote_accounts);
-        for (pubkey, (_, vote_account)) in epoch_vote_accounts {
+        for (pubkey, (stake, vote_account)) in epoch_vote_accounts {
             let vote_state_view = vote_account.vote_state_view();
             let bls_pubkey_compressed = bincode::deserialize::<BLSPubkeyCompressed>(
                 &vote_state_view.bls_pubkey_compressed().unwrap(),
@@ -450,8 +492,12 @@ pub(crate) mod tests {
             let index = bls_pubkey_to_rank_map.get_rank(&bls_pubkey).unwrap();
             assert!(index >= &0 && index < &(num_vote_accounts as u16));
             assert_eq!(
-                bls_pubkey_to_rank_map.get_pubkey(*index as usize),
-                Some(&(pubkey, bls_pubkey))
+                bls_pubkey_to_rank_map.get_pubkey_stake_entry(*index as usize),
+                Some(&BLSPubkeyStakeEntry {
+                    pubkey,
+                    bls_pubkey,
+                    stake,
+                })
             );
         }
 

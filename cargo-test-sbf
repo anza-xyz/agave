@@ -2,13 +2,9 @@
 
 here=$(dirname "$0")
 
-maybe_sbf_sdk="--sbf-sdk $here/platform-tools-sdk/sbf"
-for a in "$@"; do
-  if [[ $a = --sbf-sdk ]]; then
-    maybe_sbf_sdk=
-  fi
-done
-
-export CARGO_BUILD_SBF="$here"/cargo-build-sbf
-set -x
-exec cargo run --manifest-path "$here"/platform-tools-sdk/cargo-test-sbf/Cargo.toml -- $maybe_sbf_sdk "$@"
+cargo --list | grep -q "^\s*test-sbf"
+found=$?
+if [[ $found -ne 0 ]]; then
+  cargo install cargo-test-sbf
+fi
+exec cargo test-sbf "$@"

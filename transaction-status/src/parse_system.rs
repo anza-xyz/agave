@@ -1,10 +1,10 @@
 use {
     crate::parse_instruction::{
-        check_num_accounts, ParsableProgram, ParseInstructionError, ParsedInstructionEnum,
+        ParsableProgram, ParseInstructionError, ParsedInstructionEnum, check_num_accounts,
     },
     bincode::deserialize,
     serde_json::json,
-    solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
+    solana_message::{AccountKeys, compiled_instruction::CompiledInstruction},
     solana_system_interface::instruction::SystemInstruction,
 };
 
@@ -198,11 +198,36 @@ pub fn parse_system(
                 }),
             })
         }
-        SystemInstruction::CreateAccountAllowPrefund { .. } => {
-            // feature-gated activation to be implemented
-            Err(ParseInstructionError::InstructionNotParsable(
-                ParsableProgram::System,
-            ))
+        SystemInstruction::CreateAccountAllowPrefund {
+            lamports,
+            space,
+            owner,
+        } => {
+            if lamports == 0 {
+                // No `from` case: only need newAccount
+                check_num_system_accounts(&instruction.accounts, 1)?;
+                Ok(ParsedInstructionEnum {
+                    instruction_type: "createAccountAllowPrefund".to_string(),
+                    info: json!({
+                        "newAccount": account_keys[instruction.accounts[0] as usize].to_string(),
+                        "space": space,
+                        "owner": owner.to_string(),
+                    }),
+                })
+            } else {
+                // With `from`: need newAccount and source
+                check_num_system_accounts(&instruction.accounts, 2)?;
+                Ok(ParsedInstructionEnum {
+                    instruction_type: "createAccountAllowPrefund".to_string(),
+                    info: json!({
+                        "newAccount": account_keys[instruction.accounts[0] as usize].to_string(),
+                        "source": account_keys[instruction.accounts[1] as usize].to_string(),
+                        "lamports": lamports,
+                        "space": space,
+                        "owner": owner.to_string(),
+                    }),
+                })
+            }
         }
     }
 }
@@ -251,11 +276,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -309,11 +336,100 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
+        let keys = message.account_keys.clone();
+        message.instructions[0].accounts.pop();
+        assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
+    }
+
+    #[test]
+    fn test_parse_system_create_account_allow_prefund_ix() {
+        let lamports = 55;
+        let space = 128;
+        let to_pubkey = Pubkey::new_unique();
+        let from_pubkey = Pubkey::new_unique();
+        let owner_pubkey = Pubkey::new_unique();
+
+        let instruction = system_instruction::create_account_allow_prefund(
+            &to_pubkey,
+            Some((&from_pubkey, lamports)),
+            space,
+            &owner_pubkey,
+        );
+        let mut message = Message::new(&[instruction], Some(&from_pubkey));
+        assert_eq!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys, None)
+            )
+            .unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "createAccountAllowPrefund".to_string(),
+                info: json!({
+                    "newAccount": to_pubkey.to_string(),
+                    "source": from_pubkey.to_string(),
+                    "lamports": lamports,
+                    "owner": owner_pubkey.to_string(),
+                    "space": space,
+                }),
+            }
+        );
+        // key mismatch check
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
+        let keys = message.account_keys.clone();
+        message.instructions[0].accounts.pop();
+        assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
+    }
+
+    #[test]
+    fn test_parse_system_create_account_allow_prefund_ix_no_payer() {
+        let space = 128;
+        let to_pubkey = Pubkey::new_unique();
+        let owner_pubkey = Pubkey::new_unique();
+        let top_level_payer = Pubkey::new_unique();
+        let instruction = system_instruction::create_account_allow_prefund(
+            &to_pubkey,
+            None,
+            space,
+            &owner_pubkey,
+        );
+        let mut message = Message::new(&[instruction], Some(&top_level_payer));
+
+        assert_eq!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys, None)
+            )
+            .unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "createAccountAllowPrefund".to_string(),
+                info: json!({
+                    "newAccount": to_pubkey.to_string(),
+                    "owner": owner_pubkey.to_string(),
+                    "space": space,
+                }),
+            }
+        );
+        // key mismatch check
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&[message.account_keys[0]], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -358,11 +474,13 @@ mod test {
             }
         );
 
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         message.instructions[0].accounts.pop();
@@ -427,11 +545,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -466,11 +586,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -511,11 +633,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..2], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..2], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -544,11 +668,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..2], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..2], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -586,11 +712,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..4], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..4], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -626,11 +754,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[1],
-            &AccountKeys::new(&message.account_keys[0..3], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[1],
+                &AccountKeys::new(&message.account_keys[0..3], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -663,11 +793,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());

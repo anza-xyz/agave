@@ -7,13 +7,13 @@ use {
     log::debug,
     setup::{setup_stake, setup_vote},
     solana_account::Account,
-    solana_account_info::{next_account_info, AccountInfo},
+    solana_account_info::{AccountInfo, next_account_info},
     solana_banks_client::BanksClient,
     solana_clock::Clock,
-    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_keypair::Keypair,
     solana_program_error::{ProgramError, ProgramResult},
-    solana_program_test::{processor, ProgramTest, ProgramTestBanksClientExt, ProgramTestError},
+    solana_program_test::{ProgramTest, ProgramTestBanksClientExt, ProgramTestError, processor},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::stake_utils,
@@ -24,10 +24,10 @@ use {
         state::{StakeActivationStatus, StakeStateV2},
         sysvar::stake_history,
     },
-    solana_sysvar::{clock, SysvarSerialize},
+    solana_sysvar::{SysvarSerialize, clock},
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
-    solana_vote_program::vote_state,
+    solana_vote_program::vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
     std::{convert::TryInto, slice},
 };
 
@@ -223,9 +223,12 @@ async fn stake_rewards_filter_bench_core(num_stake_accounts: u64) {
     let vote_account = vote_state::create_v4_account_with_authorized(
         &node_address,
         &vote_address,
+        [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
         &vote_address,
-        None,
         0,
+        &vote_address,
+        0,
+        &vote_address,
         1_000_000_000,
     );
     program_test.add_account(vote_address, vote_account.clone().into());

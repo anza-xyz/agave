@@ -32,13 +32,13 @@ shuttle = { workspace = true, optional = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
 solana-hash = { workspace = true }
+solana-leader-schedule = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
-solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true }
 thiserror = { workspace = true }
 

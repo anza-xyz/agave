@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 
 pub mod parse_account_data;
@@ -26,8 +18,8 @@ pub use solana_account_decoder_client_types::{
     UiAccount, UiAccountData, UiAccountEncoding, UiDataSliceConfig,
 };
 use {
-    crate::parse_account_data::{parse_account_data_v3, AccountAdditionalDataV3},
-    base64::{prelude::BASE64_STANDARD, Engine},
+    crate::parse_account_data::{AccountAdditionalDataV3, parse_account_data_v3},
+    base64::{Engine, prelude::BASE64_STANDARD},
     serde::{Deserialize, Serialize},
     solana_account::ReadableAccount,
     solana_fee_calculator::FeeCalculator,

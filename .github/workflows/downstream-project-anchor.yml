@@ -13,8 +13,6 @@ on:
       - "**.rs"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "cargo-build-sbf"
-      - "cargo-test-sbf"
       - "scripts/build-downstream-anchor-projects.sh"
       - "scripts/patch-spl-crates-for-anchor.sh"
       - ".github/scripts/purge-ubuntu-runner.sh"

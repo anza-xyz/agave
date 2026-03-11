@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 //! This lib contains both standard imports and imports shuttle.
 //! Shuttle is a Rust crate that facilitates multithreaded testing. It has its own scheduler
 //! and can efficiently detect bugs in concurrent code. The downside is that we need to replace
@@ -33,7 +25,7 @@ pub mod hint {
 pub mod rand {
     pub use rand::*;
     #[cfg(feature = "shuttle-test")]
-    pub use shuttle::rand::{thread_rng as rng, Rng, RngCore};
+    pub use shuttle::rand::{Rng, RngCore, thread_rng as rng};
 }
 
 pub mod sync {

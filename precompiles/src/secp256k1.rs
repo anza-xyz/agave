@@ -3,8 +3,8 @@ use {
     digest::Digest,
     solana_precompile_error::PrecompileError,
     solana_secp256k1_program::{
-        eth_address_from_pubkey, SecpSignatureOffsets, HASHED_PUBKEY_SERIALIZED_SIZE,
-        SIGNATURE_OFFSETS_SERIALIZED_SIZE, SIGNATURE_SERIALIZED_SIZE,
+        HASHED_PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
+        SIGNATURE_SERIALIZED_SIZE, SecpSignatureOffsets, eth_address_from_pubkey,
     },
 };
 
@@ -131,10 +131,10 @@ pub mod tests {
     use {
         super::*,
         crate::test_verify_with_alignment,
-        rand0_7::{thread_rng, Rng},
+        rand::Rng,
         solana_keccak_hasher as keccak,
         solana_secp256k1_program::{
-            new_secp256k1_instruction_with_signature, sign_message, DATA_START,
+            DATA_START, new_secp256k1_instruction_with_signature, sign_message,
         },
     };
 
@@ -306,7 +306,8 @@ pub mod tests {
             SIGNATURE_OFFSETS_SERIALIZED_SIZE
         );
 
-        let secp_privkey = libsecp256k1::SecretKey::random(&mut thread_rng());
+        let secret_bytes: [u8; 32] = rand::random();
+        let secp_privkey = libsecp256k1::SecretKey::parse(&secret_bytes).unwrap();
         let message_arr = b"hello";
         let secp_pubkey = libsecp256k1::PublicKey::from_secret_key(&secp_privkey);
         let eth_address =
@@ -320,23 +321,27 @@ pub mod tests {
             &eth_address,
         );
         let feature_set = FeatureSet::all_enabled();
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_ok());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_ok()
+        );
 
-        let index = thread_rng().gen_range(0, instruction.data.len());
+        let index = rand::rng().random_range(0..instruction.data.len());
         instruction.data[index] = instruction.data[index].wrapping_add(12);
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_err());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_err()
+        );
     }
 
     // Signatures are malleable.
@@ -344,7 +349,8 @@ pub mod tests {
     fn test_malleability() {
         agave_logger::setup();
 
-        let secret_key = libsecp256k1::SecretKey::random(&mut thread_rng());
+        let secret_bytes: [u8; 32] = rand::random();
+        let secret_key = libsecp256k1::SecretKey::parse(&secret_bytes).unwrap();
         let public_key = libsecp256k1::PublicKey::from_secret_key(&secret_key);
         let eth_address = eth_address_from_pubkey(&public_key.serialize()[1..].try_into().unwrap());
 

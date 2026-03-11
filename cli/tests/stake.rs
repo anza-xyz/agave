@@ -4,19 +4,19 @@ use {
     solana_account::state_traits::StateMut,
     solana_cli::{
         check_balance,
-        cli::{process_command, request_and_confirm_airdrop, CliCommand, CliConfig},
+        cli::{CliCommand, CliConfig, process_command, request_and_confirm_airdrop},
         spend_utils::SpendAmount,
         stake::StakeAuthorizationIndexed,
         test_utils::{check_ready, wait_for_next_epoch_plus_n_slots},
     },
-    solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
+    solana_cli_output::{OutputFormat, parse_sign_only_reply_string},
     solana_client::nonblocking::blockhash_query::{BlockhashQuery, Source},
     solana_commitment_config::CommitmentConfig,
     solana_epoch_schedule::EpochSchedule,
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::FeeStructure,
-    solana_keypair::{keypair_from_seed, Keypair},
+    solana_keypair::{Keypair, keypair_from_seed},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::SocketAddrSpace,
     solana_nonce::state::State as NonceState,
@@ -43,8 +43,7 @@ async fn test_stake_delegation_force() {
     let test_validator = TestValidatorGenesis::default()
         .fee_rate_governor(FeeRateGovernor::new(0, 0))
         .rent(Rent {
-            lamports_per_byte_year: 1,
-            exemption_threshold: 1.0,
+            lamports_per_byte: 1,
             ..Rent::default()
         })
         .epoch_schedule(EpochSchedule::custom(
@@ -84,7 +83,12 @@ async fn test_stake_delegation_force() {
         identity_account: 0,
         authorized_voter: None,
         authorized_withdrawer,
-        commission: 0,
+        commission: Some(0),
+        use_v2_instruction: false,
+        inflation_rewards_commission_bps: None,
+        inflation_rewards_collector: None,
+        block_revenue_commission_bps: None,
+        block_revenue_collector: None,
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -198,9 +202,9 @@ async fn test_stake_delegation_force() {
     process_command(&config).await.unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_seed_stake_delegation_and_deactivation(compute_unit_price: Option<u64>) {
     agave_logger::setup();
 
@@ -642,9 +646,9 @@ async fn test_stake_delegation_and_withdraw_all() {
     check_balance!(55 * LAMPORTS_PER_SOL, &rpc_client, &recipient_pubkey);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_stake_delegation_and_deactivation(compute_unit_price: Option<u64>) {
     agave_logger::setup();
 
@@ -739,9 +743,9 @@ async fn test_stake_delegation_and_deactivation(compute_unit_price: Option<u64>)
     process_command(&config_validator).await.unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_offline_stake_delegation_and_deactivation(compute_unit_price: Option<u64>) {
     agave_logger::setup();
 
@@ -905,9 +909,9 @@ async fn test_offline_stake_delegation_and_deactivation(compute_unit_price: Opti
     process_command(&config_payer).await.unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_nonced_stake_delegation_and_deactivation(compute_unit_price: Option<u64>) {
     agave_logger::setup();
 
@@ -1042,9 +1046,9 @@ async fn test_nonced_stake_delegation_and_deactivation(compute_unit_price: Optio
     process_command(&config).await.unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_stake_authorize(compute_unit_price: Option<u64>) {
     agave_logger::setup();
 

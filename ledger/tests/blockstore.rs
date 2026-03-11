@@ -2,7 +2,7 @@ use {
     solana_entry::entry,
     solana_hash::Hash,
     solana_ledger::{
-        blockstore::{self, Blockstore},
+        blockstore::{self, Blockstore, PurgeType},
         get_tmp_ledger_path_auto_delete,
     },
     std::{sync::Arc, thread::Builder},
@@ -43,6 +43,8 @@ fn test_multiple_threads_insert_shred() {
         assert_eq!(meta0.next_slots, expected_next_slots);
 
         // Delete slots for next iteration
-        blockstore.purge_and_compact_slots(0, num_threads + 1);
+        blockstore
+            .purge_slots(0, num_threads + 1, PurgeType::Exact)
+            .unwrap();
     }
 }

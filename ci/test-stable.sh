@@ -94,6 +94,11 @@ test-stable-sbf)
   _ make -C programs/sbf clean-all
   _ cargo_build_sbf_sanity "v2"
 
+  # SBPFv3 program tests
+  _ make -C programs/sbf clean-all test-v3
+  _ make -C programs/sbf clean-all
+  _ cargo_build_sbf_sanity "v3"
+
   exit 0
   ;;
 test-docs)

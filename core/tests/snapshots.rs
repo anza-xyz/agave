@@ -3,8 +3,8 @@
 use {
     crate::snapshot_utils::create_tmp_accounts_dir_for_tests,
     agave_snapshots::{
-        paths as snapshot_paths, snapshot_archive_info::FullSnapshotArchiveInfo,
-        snapshot_config::SnapshotConfig, SnapshotInterval, SnapshotKind,
+        SnapshotInterval, SnapshotKind, paths as snapshot_paths,
+        snapshot_archive_info::FullSnapshotArchiveInfo, snapshot_config::SnapshotConfig,
     },
     crossbeam_channel::unbounded,
     itertools::Itertools,
@@ -24,7 +24,7 @@ use {
         },
         bank::{Bank, BankTestConfig},
         bank_forks::BankForks,
-        genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
+        genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
         runtime_config::RuntimeConfig,
         snapshot_bank_utils,
         snapshot_controller::SnapshotController,
@@ -40,8 +40,8 @@ use {
         num::NonZeroU64,
         path::PathBuf,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         time::{Duration, Instant},
     },
@@ -100,7 +100,7 @@ impl SnapshotTestConfig {
             ..SnapshotConfig::default()
         };
         SnapshotTestConfig {
-            bank_forks: bank_forks_arc.clone(),
+            bank_forks: bank_forks_arc,
             genesis_config_info,
             snapshot_config,
             incremental_snapshot_archives_dir,
@@ -174,7 +174,7 @@ where
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
     let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
     let snapshot_controller = Arc::new(SnapshotController::new(
-        snapshot_request_sender.clone(),
+        snapshot_request_sender,
         snapshot_test_config.snapshot_config.clone(),
         bank_forks.read().unwrap().root(),
     ));
@@ -401,7 +401,7 @@ fn test_bank_forks_incremental_snapshot() {
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
     let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
     let snapshot_controller = Arc::new(SnapshotController::new(
-        snapshot_request_sender.clone(),
+        snapshot_request_sender,
         snapshot_test_config.snapshot_config.clone(),
         bank_forks.read().unwrap().root(),
     ));
@@ -615,7 +615,7 @@ fn test_snapshots_with_background_services() {
     }
 
     let snapshot_controller = Arc::new(SnapshotController::new(
-        snapshot_request_sender.clone(),
+        snapshot_request_sender,
         snapshot_test_config.snapshot_config.clone(),
         bank_forks.read().unwrap().root(),
     ));
@@ -634,13 +634,14 @@ fn test_snapshots_with_background_services() {
 
     let exit = Arc::new(AtomicBool::new(false));
     let snapshot_packager_service = SnapshotPackagerService::new(
-        pending_snapshot_packages.clone(),
+        pending_snapshot_packages,
         None,
         exit.clone(),
         None,
-        cluster_info.clone(),
+        cluster_info,
         snapshot_controller.clone(),
         false,
+        0,
     );
 
     let accounts_background_service =
@@ -788,7 +789,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
     let bank_forks = snapshot_test_config.bank_forks.clone();
 
     let snapshot_controller = Arc::new(SnapshotController::new(
-        snapshot_request_sender.clone(),
+        snapshot_request_sender,
         snapshot_test_config.snapshot_config.clone(),
         bank_forks.read().unwrap().root(),
     ));
@@ -802,9 +803,10 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
         None,
         exit.clone(),
         exit_backpressure.clone(),
-        cluster_info.clone(),
+        cluster_info,
         snapshot_controller.clone(),
         false,
+        0,
     );
 
     let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;
@@ -867,6 +869,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
     exit.store(true, Ordering::Relaxed);
     let packager_exit_result = snapshot_packager_service.join();
     assert!(packager_exit_result.is_ok());
+    assert_eq!(snapshot_controller.latest_bank_snapshot_slot(), LAST_SLOT);
 
     // verify that the fastboot snapshot was written and can be restored from
     let bank_snapshot = snapshot_utils::get_highest_bank_snapshot(

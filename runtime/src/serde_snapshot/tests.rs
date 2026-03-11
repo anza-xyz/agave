@@ -4,30 +4,30 @@ mod serde_snapshot_tests {
         crate::{
             bank::BankHashStats,
             serde_snapshot::{
-                deserialize_accounts_db_fields, reconstruct_accountsdb_from_fields,
-                remap_append_vec_file, SerializableAccountsDb, SnapshotAccountsDbFields,
+                SerializableAccountsDb, SnapshotAccountsDbFields, deserialize_accounts_db_fields,
+                reconstruct_accountsdb_from_fields, remap_append_vec_file,
             },
-            snapshot_utils::{get_storages_to_serialize, StorageAndNextAccountsFileId},
+            snapshot_utils::StorageAndNextAccountsFileId,
         },
         agave_fs::FileInfo,
-        bincode::{serialize_into, Error},
+        bincode::{Error, serialize_into},
         log::info,
-        rand::{rng, Rng},
+        rand::{Rng, rng},
         solana_account::{AccountSharedData, ReadableAccount},
         solana_accounts_db::{
+            ObsoleteAccounts,
             account_storage::AccountStorageMap,
+            account_storage_entry::AccountStorageEntry,
             account_storage_reader::AccountStorageReader,
             accounts::Accounts,
             accounts_db::{
-                get_temp_accounts_paths, AccountStorageEntry, AccountsDb, AccountsDbConfig,
-                AtomicAccountsFileId, MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig, AtomicAccountsFileId,
+                get_temp_accounts_paths,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
             ancestors::Ancestors,
-            ObsoleteAccounts,
         },
         solana_clock::Slot,
-        solana_epoch_schedule::EpochSchedule,
         solana_pubkey::Pubkey,
         std::{
             fs::File,
@@ -35,8 +35,8 @@ mod serde_snapshot_tests {
             ops::RangeFull,
             path::{Path, PathBuf},
             sync::{
-                atomic::{AtomicUsize, Ordering},
                 Arc,
+                atomic::{AtomicUsize, Ordering},
             },
         },
         tempfile::TempDir,
@@ -96,24 +96,21 @@ mod serde_snapshot_tests {
         )
     }
 
-    fn accountsdb_to_stream<W>(
+    fn account_storages_to_stream<W>(
         stream: &mut W,
-        accounts_db: &AccountsDb,
         slot: Slot,
-        account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
+        account_storage_entries: &[Arc<AccountStorageEntry>],
     ) -> Result<(), Error>
     where
         W: Write,
     {
         let bank_hash_stats = BankHashStats::default();
-        let write_version = accounts_db.write_version.load(Ordering::Acquire);
         serialize_into(
             stream,
             &SerializableAccountsDb {
                 slot,
                 account_storage_entries,
                 bank_hash_stats,
-                write_version,
             },
         )
     }
@@ -162,13 +159,7 @@ mod serde_snapshot_tests {
     ) -> AccountsDb {
         let mut writer = Cursor::new(vec![]);
         let snapshot_storages = accounts.get_storages(..=slot).0;
-        accountsdb_to_stream(
-            &mut writer,
-            accounts,
-            slot,
-            &get_storages_to_serialize(&snapshot_storages),
-        )
-        .unwrap();
+        account_storages_to_stream(&mut writer, slot, &snapshot_storages).unwrap();
 
         let buf = writer.into_inner();
         let mut reader = BufReader::new(&buf[..]);
@@ -222,7 +213,7 @@ mod serde_snapshot_tests {
             .collect();
         for (i, pubkey) in pubkeys.iter().enumerate() {
             let account = AccountSharedData::new(i as u64 + 1, 0, &Pubkey::default());
-            accounts.store_accounts_seq((slot, [(pubkey, &account)].as_slice()), None);
+            accounts.store_accounts_seq((slot, [(pubkey, &account)].as_slice()), None, None);
         }
         check_accounts_local(&accounts, &pubkeys, 100);
         accounts.accounts_db.add_root_and_flush_write_cache(slot);
@@ -231,11 +222,10 @@ mod serde_snapshot_tests {
             .calculate_accounts_lt_hash_at_startup_from_index(&Ancestors::default(), slot);
 
         let mut writer = Cursor::new(vec![]);
-        accountsdb_to_stream(
+        account_storages_to_stream(
             &mut writer,
-            &accounts.accounts_db,
             slot,
-            &get_storages_to_serialize(&accounts.accounts_db.get_storages(..=slot).0),
+            &accounts.accounts_db.get_storages(..=slot).0,
         )
         .unwrap();
 
@@ -300,33 +290,16 @@ mod serde_snapshot_tests {
         db.assert_load_account(new_root, key2, 1);
 
         // Check purged account stays gone
-        let unrooted_slot_ancestors = vec![(unrooted_slot, 1)].into_iter().collect();
-        assert!(db
-            .load_without_fixed_root(&unrooted_slot_ancestors, &key)
-            .is_none());
+        db.assert_not_load_account(unrooted_slot, key);
     }
 
     #[test_matrix(
-        [StorageAccess::File, #[allow(deprecated)] StorageAccess::Mmap],
-        [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled],
-        [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled]
+        [StorageAccess::File, #[allow(deprecated)] StorageAccess::Mmap]
     )]
-    fn test_accounts_db_serialize1(
-        storage_access: StorageAccess,
-        mark_obsolete_accounts_initial: MarkObsoleteAccounts,
-        mark_obsolete_accounts_restore: MarkObsoleteAccounts,
-    ) {
+    fn test_accounts_db_serialize1(storage_access: StorageAccess) {
         for pass in 0..2 {
             agave_logger::setup();
-            let accounts = AccountsDb::new_with_config(
-                Vec::new(),
-                AccountsDbConfig {
-                    mark_obsolete_accounts: mark_obsolete_accounts_initial,
-                    ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-                },
-                None,
-                Arc::default(),
-            );
+            let accounts = AccountsDb::new_single_for_tests();
             let mut pubkeys: Vec<Pubkey> = vec![];
 
             // Create 100 accounts in slot 0
@@ -396,15 +369,11 @@ mod serde_snapshot_tests {
             accounts.check_storage(1, 11, 21);
             accounts.check_storage(2, 31, 31);
 
-            let accounts_db_config = AccountsDbConfig {
-                mark_obsolete_accounts: mark_obsolete_accounts_restore,
-                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            };
             let daccounts = reconstruct_accounts_db_via_serialization(
                 &accounts,
                 latest_slot,
                 storage_access,
-                accounts_db_config,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING,
             );
 
             assert_eq!(
@@ -418,21 +387,8 @@ mod serde_snapshot_tests {
             daccounts.check_accounts(&pubkeys[35..], 0, 65, 37);
             daccounts.check_accounts(&pubkeys1, 1, 10, 1);
 
-            // If accounts are marked obsolete at initial save time, then the accounts will be
-            // shrunk during snapshot archive
-            if mark_obsolete_accounts_initial == MarkObsoleteAccounts::Enabled {
-                daccounts.check_storage(0, 78, 78);
-                daccounts.check_storage(1, 11, 11);
-            // If accounts are marked obsolete at restore time, then the accounts will be marked
-            // obsolete and cleaned during snapshot restore but not removed from the storages until
-            // the next shrink
-            } else if mark_obsolete_accounts_restore == MarkObsoleteAccounts::Enabled {
-                daccounts.check_storage(0, 78, 100);
-                daccounts.check_storage(1, 11, 21);
-            } else {
-                daccounts.check_storage(0, 100, 100);
-                daccounts.check_storage(1, 21, 21);
-            }
+            daccounts.check_storage(0, 78, 78);
+            daccounts.check_storage(1, 11, 11);
 
             daccounts.check_storage(2, 31, 31);
 
@@ -848,14 +804,13 @@ mod serde_snapshot_tests {
                 pubkey_count,
                 accounts.all_account_count_in_accounts_file(shrink_slot)
             );
-            accounts.shrink_all_slots(*startup, &EpochSchedule::default(), None);
+            accounts.shrink_all_slots(*startup, None);
             assert_eq!(
                 pubkey_count_after_shrink,
                 accounts.all_account_count_in_accounts_file(shrink_slot)
             );
 
             let no_ancestors = Ancestors::default();
-            let epoch_schedule = EpochSchedule::default();
 
             let calculated_capitalization = accounts
                 .calculate_capitalization_at_startup_from_index(&no_ancestors, current_slot);
@@ -875,7 +830,7 @@ mod serde_snapshot_tests {
             assert_eq!(accounts_lt_hash_pre, accounts_lt_hash_post);
 
             // repeating should be no-op
-            accounts.shrink_all_slots(*startup, &epoch_schedule, None);
+            accounts.shrink_all_slots(*startup, None);
             assert_eq!(
                 pubkey_count_after_shrink,
                 accounts.all_account_count_in_accounts_file(shrink_slot)

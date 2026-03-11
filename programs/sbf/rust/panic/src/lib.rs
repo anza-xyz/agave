@@ -1,7 +1,7 @@
 //! Example Rust-based SBF program that panics
 
 #[cfg(all(feature = "custom-panic", target_os = "solana"))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 fn custom_panic(info: &core::panic::PanicInfo<'_>) {
     // Note: Full panic reporting is included here for testing purposes
     solana_msg::msg!("program custom panic enabled");

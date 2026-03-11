@@ -1,17 +1,9 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 use {
     agave_snapshots::unpack_genesis_archive,
     log::*,
     solana_download_utils::download_genesis_if_missing,
-    solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE},
+    solana_genesis_config::{DEFAULT_GENESIS_ARCHIVE, GenesisConfig},
     solana_hash::Hash,
     solana_rpc_client::rpc_client::RpcClient,
     std::net::SocketAddr,
@@ -133,4 +125,4 @@ pub fn download_then_check_genesis_hash(
     set_and_verify_expected_genesis_hash(genesis_config, expected_genesis_hash, rpc_client)
 }
 
-pub use open::{open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE};
+pub use open::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, OpenGenesisConfigError, open_genesis_config};

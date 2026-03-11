@@ -6,7 +6,7 @@ here=$(dirname "$0")
 # shellcheck source=.buildkite/scripts/common.sh
 source "$here"/common.sh
 
-agent="${1-solana}"
+agent="${1-default}"
 
 parallelism=5
 partitions=()
@@ -31,6 +31,19 @@ partitions+=(
 {
   "name": "dev-bins",
   "command": "ci/docker-run-default-image.sh cargo nextest run --profile ci --manifest-path ./dev-bins/Cargo.toml",
+  "timeout_in_minutes": 35,
+  "agent": "$agent"
+}
+EOF
+  )")
+
+# add platform-tools-sdk
+partitions+=(
+  "$(
+    cat <<EOF
+{
+  "name": "platform-tools-sdk",
+  "command": "ci/docker-run-default-image.sh cargo nextest run --profile ci --manifest-path ./platform-tools-sdk/Cargo.toml",
   "timeout_in_minutes": 35,
   "agent": "$agent"
 }

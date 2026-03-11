@@ -2,9 +2,9 @@ use {
     super::*,
     solana_instruction::Instruction,
     solana_program_runtime::cpi::{
-        cpi_common, translate_accounts_c, translate_accounts_rust, translate_instruction_c,
-        translate_instruction_rust, translate_signers_c, translate_signers_rust,
-        SyscallInvokeSigned, TranslatedAccount,
+        SyscallInvokeSigned, TranslatedAccount, cpi_common, translate_accounts_c,
+        translate_accounts_rust, translate_instruction_c, translate_instruction_rust,
+        translate_signers_c, translate_signers_rust,
     },
 };
 
@@ -45,7 +45,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
     fn translate_accounts<'a>(
         account_infos_addr: u64,
         account_infos_len: u64,
-        memory_mapping: &MemoryMapping<'_>,
+        memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext,
         check_aligned: bool,
     ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
@@ -112,7 +112,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
     fn translate_accounts<'a>(
         account_infos_addr: u64,
         account_infos_len: u64,
-        memory_mapping: &MemoryMapping<'_>,
+        memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext,
         check_aligned: bool,
     ) -> Result<Vec<TranslatedAccount<'a>>, Error> {

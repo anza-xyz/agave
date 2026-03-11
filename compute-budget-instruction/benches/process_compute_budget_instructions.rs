@@ -1,6 +1,6 @@
 use {
     agave_feature_set::FeatureSet,
-    criterion::{criterion_group, criterion_main, Criterion, Throughput},
+    criterion::{Criterion, Throughput, criterion_group, criterion_main},
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_instruction::Instruction,
@@ -10,7 +10,7 @@ use {
     solana_signer::Signer,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_system_interface::instruction::transfer,
-    solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+    solana_transaction::{Transaction, sanitized::SanitizedTransaction},
     std::hint::black_box,
 };
 
@@ -35,11 +35,13 @@ fn bench_process_compute_budget_instructions_empty(c: &mut Criterion) {
                 let tx = build_sanitized_transaction(&Keypair::new(), &[]);
                 bencher.iter(|| {
                     (0..NUM_TRANSACTIONS_PER_ITER).for_each(|_| {
-                        assert!(process_compute_budget_instructions(
-                            black_box(SVMStaticMessage::program_instructions_iter(&tx)),
-                            black_box(&feature_set),
+                        assert!(
+                            process_compute_budget_instructions(
+                                black_box(SVMStaticMessage::program_instructions_iter(&tx)),
+                                black_box(&feature_set),
+                            )
+                            .is_ok()
                         )
-                        .is_ok())
                     })
                 });
             });
@@ -66,11 +68,13 @@ fn bench_process_compute_budget_instructions_no_builtins(c: &mut Criterion) {
                     let tx = build_sanitized_transaction(&Keypair::new(), &ixs);
                     bencher.iter(|| {
                         (0..NUM_TRANSACTIONS_PER_ITER).for_each(|_| {
-                            assert!(process_compute_budget_instructions(
-                                black_box(SVMStaticMessage::program_instructions_iter(&tx)),
-                                black_box(&feature_set),
+                            assert!(
+                                process_compute_budget_instructions(
+                                    black_box(SVMStaticMessage::program_instructions_iter(&tx)),
+                                    black_box(&feature_set),
+                                )
+                                .is_ok()
                             )
-                            .is_ok())
                         })
                     });
                 },
@@ -92,11 +96,13 @@ fn bench_process_compute_budget_instructions_compute_budgets(c: &mut Criterion) 
                 let tx = build_sanitized_transaction(&Keypair::new(), &ixs);
                 bencher.iter(|| {
                     (0..NUM_TRANSACTIONS_PER_ITER).for_each(|_| {
-                        assert!(process_compute_budget_instructions(
-                            black_box(SVMStaticMessage::program_instructions_iter(&tx)),
-                            black_box(&feature_set),
+                        assert!(
+                            process_compute_budget_instructions(
+                                black_box(SVMStaticMessage::program_instructions_iter(&tx)),
+                                black_box(&feature_set),
+                            )
+                            .is_ok()
                         )
-                        .is_ok())
                     })
                 });
             });
@@ -125,11 +131,13 @@ fn bench_process_compute_budget_instructions_builtins(c: &mut Criterion) {
                 let tx = build_sanitized_transaction(&Keypair::new(), &ixs);
                 bencher.iter(|| {
                     (0..NUM_TRANSACTIONS_PER_ITER).for_each(|_| {
-                        assert!(process_compute_budget_instructions(
-                            black_box(SVMStaticMessage::program_instructions_iter(&tx)),
-                            black_box(&feature_set),
+                        assert!(
+                            process_compute_budget_instructions(
+                                black_box(SVMStaticMessage::program_instructions_iter(&tx)),
+                                black_box(&feature_set),
+                            )
+                            .is_ok()
                         )
-                        .is_ok())
                     })
                 });
             });
@@ -165,11 +173,13 @@ fn bench_process_compute_budget_instructions_mixed(c: &mut Criterion) {
 
                     bencher.iter(|| {
                         (0..NUM_TRANSACTIONS_PER_ITER).for_each(|_| {
-                            assert!(process_compute_budget_instructions(
-                                black_box(SVMStaticMessage::program_instructions_iter(&tx)),
-                                black_box(&feature_set),
+                            assert!(
+                                process_compute_budget_instructions(
+                                    black_box(SVMStaticMessage::program_instructions_iter(&tx)),
+                                    black_box(&feature_set),
+                                )
+                                .is_ok()
                             )
-                            .is_ok())
                         })
                     });
                 },

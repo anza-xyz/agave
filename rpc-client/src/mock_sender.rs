@@ -3,13 +3,13 @@
 use {
     crate::rpc_sender::*,
     async_trait::async_trait,
-    base64::{prelude::BASE64_STANDARD, Engine},
-    serde_json::{json, Number, Value},
+    base64::{Engine, prelude::BASE64_STANDARD},
+    serde_json::{Number, Value, json},
     solana_account_decoder_client_types::{UiAccount, UiAccountData, UiAccountEncoding},
     solana_clock::{Slot, UnixTimestamp},
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
-    solana_instruction::{error::InstructionError, TRANSACTION_LEVEL_STACK_HEIGHT},
+    solana_instruction::{TRANSACTION_LEVEL_STACK_HEIGHT, error::InstructionError},
     solana_message::MessageHeader,
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{
@@ -26,14 +26,13 @@ use {
         },
     },
     solana_signature::Signature,
-    solana_transaction::{versioned::TransactionVersion, Transaction},
+    solana_transaction::{Transaction, versioned::TransactionVersion},
     solana_transaction_error::{TransactionError, TransactionResult},
     solana_transaction_status_client_types::{
-        option_serializer::OptionSerializer, EncodedConfirmedBlock,
-        EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
+        EncodedConfirmedBlock, EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
         EncodedTransactionWithStatusMeta, Rewards, TransactionBinaryEncoding,
         TransactionConfirmationStatus, TransactionStatus, UiCompiledInstruction, UiMessage,
-        UiRawMessage, UiTransaction, UiTransactionStatusMeta,
+        UiRawMessage, UiTransaction, UiTransactionStatusMeta, option_serializer::OptionSerializer,
     },
     solana_version::Version,
     std::{
@@ -230,6 +229,7 @@ impl RpcSender for MockSender {
                                         stack_height: Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32),
                                     }],
                                     address_table_lookups: None,
+                                    transaction_config: None,
                                 })
                         }),
                     meta: Some(UiTransactionStatusMeta {
@@ -250,6 +250,7 @@ impl RpcSender for MockSender {
                         }),
                 },
                 block_time: Some(1628633791),
+                transaction_index: Some(0),
             })?,
             "getTransactionCount" => json![1234],
             "getSlot" => json![0],
@@ -369,7 +370,7 @@ impl RpcSender for MockSender {
                 let version = Version::default();
                 json!(RpcVersionInfo {
                     solana_core: version.to_string(),
-                    feature_set: Some(version.feature_set),
+                    feature_set: Some(version.feature_set()),
                 })
             }
             "getLatestBlockhash" => serde_json::to_value(Response {
@@ -396,6 +397,7 @@ impl RpcSender for MockSender {
                 rpc: Some(SocketAddr::from(([10, 239, 6, 48], 8899))),
                 pubsub: Some(SocketAddr::from(([10, 239, 6, 48], 8900))),
                 version: Some("1.0.0 c375ce1f".to_string()),
+                client_id: Some("Agave".to_string()),
                 feature_set: None,
                 shred_version: None,
             }])?,
@@ -430,6 +432,7 @@ impl RpcSender for MockSender {
                     memo: None,
                     block_time: None,
                     confirmation_status: Some(TransactionConfirmationStatus::Finalized),
+                    transaction_index: Some(0),
                 }])?
             }
             "getBlockTime" => serde_json::to_value(UnixTimestamp::default())?,
@@ -470,6 +473,7 @@ impl RpcSender for MockSender {
                     amount: 2500,
                     post_balance: 499999442500,
                     commission: None,
+                    commission_bps: None,
                 })])?,
             "minimumLedgerSlot" => json![123],
             "getMaxRetransmitSlot" => json![123],

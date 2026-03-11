@@ -1,5 +1,5 @@
 use {
-    assert_cmd::assert::Assert,
+    assert_cmd::{assert::Assert, cargo::cargo_bin_cmd},
     predicates::prelude::*,
     std::{env, fs, path::PathBuf, str::FromStr},
 };
@@ -7,14 +7,17 @@ use {
 #[macro_use]
 extern crate serial_test;
 
-fn should_install_tools() -> bool {
+fn platform_tools_path() -> PathBuf {
     let tools_path = env::var("HOME").unwrap();
-    let toolchain_path = PathBuf::from(tools_path)
+    PathBuf::from(tools_path)
         .join(".cache")
         .join("solana")
-        .join("v1.52")
-        .join("platform-tools");
+        .join("v1.53")
+        .join("platform-tools")
+}
 
+fn should_install_tools() -> bool {
+    let toolchain_path = platform_tools_path();
     let rust_path = toolchain_path.join("rust");
     let llvm_path = toolchain_path.join("llvm");
     let binaries = rust_path.join("bin");
@@ -59,7 +62,7 @@ fn run_cargo_build(crate_name: &str, extra_args: &[&str], fail: bool) {
         .join(crate_name)
         .join("Cargo.toml");
     let toml = format!("{}", toml.display());
-    let mut args = vec!["-v", "--sbf-sdk", "../sbf", "--manifest-path", &toml];
+    let mut args = vec!["-v", "--manifest-path", &toml];
     if should_install_tools() {
         args.push("--force-tools-install");
     }
@@ -70,16 +73,14 @@ fn run_cargo_build(crate_name: &str, extra_args: &[&str], fail: bool) {
         args.push("--");
     }
     args.push("-vv");
-    let mut cmd = assert_cmd::Command::cargo_bin("cargo-build-sbf").unwrap();
-    let assert = cmd.env("RUST_LOG", "debug").args(&args).assert();
-    let output = assert.get_output();
+    let output = cargo_bin_cmd!("cargo-build-sbf")
+        .env("RUST_LOG", "debug")
+        .args(&args)
+        .output()
+        .unwrap();
     eprintln!("Test stdout\n{}\n", String::from_utf8_lossy(&output.stdout));
     eprintln!("Test stderr\n{}\n", String::from_utf8_lossy(&output.stderr));
-    if fail {
-        assert.failure();
-    } else {
-        assert.success();
-    }
+    assert_eq!(!output.status.success(), fail);
 }
 
 fn clean_target(crate_name: &str) {
@@ -191,16 +192,7 @@ fn build_noop_and_readelf(arch: &str) -> Assert {
         .join("deploy")
         .join("noop.so");
     let bin = bin.to_str().unwrap();
-    let root = cwd
-        .parent()
-        .expect("Unable to get parent directory of current working dir")
-        .parent()
-        .expect("Unable to get ../.. of current working dir");
-    let readelf = root
-        .join("platform-tools-sdk")
-        .join("sbf")
-        .join("dependencies")
-        .join("platform-tools")
+    let readelf = platform_tools_path()
         .join("llvm")
         .join("bin")
         .join("llvm-readelf");
@@ -246,7 +238,6 @@ fn test_sbpfv2() {
 
 #[test]
 #[serial]
-#[ignore]
 fn test_sbpfv3() {
     let assert_v1 = build_noop_and_readelf("v3");
     assert_v1
@@ -297,25 +288,20 @@ fn test_corrupted_toolchain() {
             .join("noop")
             .join("Cargo.toml");
         let toml = format!("{}", toml.display());
-        let args = vec!["--sbf-sdk", "../sbf", "--manifest-path", &toml];
+        let args = vec!["--manifest-path", &toml];
 
-        let mut cmd = assert_cmd::Command::cargo_bin("cargo-build-sbf").unwrap();
-        let assert = cmd.env("RUST_LOG", "debug").args(&args).assert();
-        let output = assert.get_output();
+        let output = cargo_bin_cmd!("cargo-build-sbf")
+            .env("RUST_LOG", "debug")
+            .args(&args)
+            .output()
+            .unwrap();
 
         assert!(
             String::from_utf8_lossy(&output.stderr).contains("The Solana toolchain is corrupted.")
         );
     }
 
-    let cwd = env::current_dir().expect("Unable to get current working directory");
-    let sdk_path = cwd.parent().unwrap().join("sbf");
-
-    let bin_folder = sdk_path
-        .join("dependencies")
-        .join("platform-tools")
-        .join("rust")
-        .join("bin");
+    let bin_folder = platform_tools_path().join("rust").join("bin");
     fs::rename(bin_folder.join("cargo"), bin_folder.join("cargo_2"))
         .expect("Failed to rename file");
 
@@ -348,20 +334,14 @@ fn test_corrupted_toolchain() {
 #[test]
 #[serial]
 fn test_alternate_download() {
-    let args = [
-        "-v",
-        "--sbf-sdk",
-        "../sbf",
-        "--install-only",
-        "--force-tools-install",
-    ];
-    let assert = assert_cmd::Command::cargo_bin("cargo-build-sbf")
-        .unwrap()
+    let args = ["-v", "--install-only", "--force-tools-install"];
+    let output = cargo_bin_cmd!("cargo-build-sbf")
         .env("RUST_LOG", "debug")
         .args(args)
-        .assert();
+        .output()
+        .unwrap();
 
-    assert.success();
+    assert!(output.status.success());
 
     build_noop_and_readelf("v0");
 }
@@ -369,22 +349,14 @@ fn test_alternate_download() {
 #[test]
 #[serial]
 fn test_binaries_work() {
-    let args = [
-        "-v",
-        "--sbf-sdk",
-        "../sbf",
-        "--install-only",
-        "--force-tools-install",
-    ];
-    let assert = assert_cmd::Command::cargo_bin("cargo-build-sbf")
-        .unwrap()
+    let args = ["-v", "--install-only", "--force-tools-install"];
+    let output = cargo_bin_cmd!("cargo-build-sbf")
         .env("RUST_LOG", "debug")
         .args(args)
-        .assert();
-    assert.success();
-    let cwd = env::current_dir().expect("Unable to get current working directory");
-    let sdk_path = cwd.parent().unwrap().join("sbf");
-    let platform_folder = sdk_path.join("dependencies").join("platform-tools");
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let platform_folder = platform_tools_path();
     let rust_bin_folder = platform_folder.join("rust").join("bin");
     let llvm_bin_folder = platform_folder.join("llvm").join("bin");
     for binary in ["llc", "clang"] {

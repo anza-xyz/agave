@@ -1,6 +1,6 @@
 use {
-    agave_io_uring::{Completion, Ring, RingOp},
-    io_uring::{opcode, squeue, types, IoUring},
+    agave_io_uring::{Completion, Ring, RingAccess as _, RingOp},
+    io_uring::{IoUring, opcode, squeue, types},
     slab::Slab,
     std::{
         collections::VecDeque,
@@ -196,7 +196,7 @@ impl UnlinkOp {
             //
             // Safety: the entry doesn't hold any pointers
             if let Some(fd) = dir.fd.take() {
-                comp.push(Op::Close(CloseOp::new(self.dir_key, fd.into_raw_fd())));
+                comp.push(Op::Close(CloseOp::new(self.dir_key, fd.into_raw_fd())))?;
             }
         }
 

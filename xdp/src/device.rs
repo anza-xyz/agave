@@ -5,11 +5,11 @@ use {
         umem::{Frame, FrameOffset},
     },
     libc::{
-        ifreq, mmap, munmap, socket, syscall, xdp_ring_offset, SYS_ioctl, AF_INET, IF_NAMESIZE,
-        SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM,
+        AF_INET, IF_NAMESIZE, SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM, SYS_ioctl,
+        ifreq, mmap, munmap, socket, syscall, xdp_ring_offset,
     },
     std::{
-        ffi::{c_char, CStr, CString},
+        ffi::{CStr, CString, c_char},
         fs,
         io::{self, ErrorKind},
         marker::PhantomData,
@@ -262,6 +262,9 @@ pub(crate) struct RingConsumer {
     cached_consumer: u32,
 }
 
+///Safety: Instances of `RingConsumer` MUST only be resident on one thread at a time
+unsafe impl Send for RingConsumer {}
+
 impl RingConsumer {
     pub fn new(producer: *mut AtomicU32, consumer: *mut AtomicU32) -> Self {
         Self {
@@ -305,6 +308,9 @@ pub(crate) struct RingProducer {
     cached_consumer: u32,
     size: u32,
 }
+
+///Safety: Instances of `RingProducer` MUST only be resident on one thread at a time
+unsafe impl Send for RingProducer {}
 
 impl RingProducer {
     pub fn new(producer: *mut AtomicU32, consumer: *mut AtomicU32, size: u32) -> Self {
@@ -434,6 +440,9 @@ pub struct RingMmap<T> {
     pub desc: *mut T,
     pub flags: *mut AtomicU32,
 }
+
+///Safety: Instances of `RingMmap<T>` MUST only be resident on one thread at a time
+unsafe impl<T> Send for RingMmap<T> {}
 
 impl<T> Drop for RingMmap<T> {
     fn drop(&mut self) {

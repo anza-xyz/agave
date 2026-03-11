@@ -1,0 +1,44 @@
+name: "Manage stale issues and PRs"
+on:
+  # Chosen to be just before London wakes up and way past San Francisco's bedtime.
+  schedule:
+    - cron: "0 8 * * 1-5" # This is in UTC.
+  # Do a dry-run (debug-only: true) whenever this workflow itself is changed.
+  pull_request:
+    paths:
+      - .github/workflows/manage-stale-issues.yml
+    types:
+      - opened
+      - synchronize
+
+permissions:
+  # removing the issues permission for now as we'll start with just PRs.
+  # issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    # Forks do not need to run this, especially on cron schedule.
+    if: >
+      github.event_name != 'schedule'
+      || github.repository == 'anza-xyz/agave'
+
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/stale@v10
+        with:
+          ascending: true # Spend API operations budget on older, more-likely-to-get-closed issues first
+          close-issue-message: 'This issue was closed because it has been stale for 7 days with no activity.'
+          close-pr-message: 'This pull request was closed because it has been stale for 7 days with no activity.'
+          days-before-issue-stale: -1
+          days-before-pr-stale: 60
+          days-before-close: 7
+          debug-only: ${{ github.event_name == 'pull_request' }} # Dry-run when true.
+          exempt-all-milestones: true # There are some projects in the repo, so possibly milestones are relevant.
+          exempt-issue-labels: do-not-close,feature-gate
+          exempt-pr-labels: do-not-close,feature-gate
+          operations-per-run: ${{ github.event_name == 'pull_request' && 300 || 30 }}
+          stale-issue-label: stale
+          stale-issue-message: 'This issue is stale because it has been open 365 days with no activity. Remove stale label or comment or this will be closed in 7 days.'
+          stale-pr-label: stale
+          stale-pr-message: 'This pull request is stale because it has been open 60 days with no activity. Remove stale label or comment or this will be closed in 7 days.'

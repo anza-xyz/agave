@@ -30,7 +30,6 @@ pub(crate) fn calculate_stake_weighted_timestamp<I, K, V, T>(
     slot_duration: Duration,
     epoch_start_timestamp: Option<(Slot, UnixTimestamp)>,
     max_allowable_drift: MaxAllowableDrift,
-    fix_estimate_into_u64: bool,
 ) -> Option<UnixTimestamp>
 where
     I: IntoIterator<Item = (K, V)>,
@@ -70,11 +69,8 @@ where
     if let Some((epoch_start_slot, epoch_start_timestamp)) = epoch_start_timestamp {
         let poh_estimate_offset =
             slot_duration.saturating_mul(slot.saturating_sub(epoch_start_slot) as u32);
-        let estimate_offset = Duration::from_secs(if fix_estimate_into_u64 {
-            (estimate as u64).saturating_sub(epoch_start_timestamp as u64)
-        } else {
-            estimate.saturating_sub(epoch_start_timestamp) as u64
-        });
+        let estimate_offset =
+            Duration::from_secs((estimate as u64).saturating_sub(epoch_start_timestamp as u64));
         let max_allowable_drift_fast =
             poh_estimate_offset.saturating_mul(max_allowable_drift.fast) / 100;
         let max_allowable_drift_slow =
@@ -170,7 +166,6 @@ pub mod tests {
             slot_duration,
             None,
             max_allowable_drift,
-            true,
         )
         .unwrap();
         // With no bounding, timestamp w/ 0.00003% of the stake can shift the timestamp backward 8min
@@ -194,7 +189,6 @@ pub mod tests {
             slot_duration,
             None,
             max_allowable_drift,
-            true,
         )
         .unwrap();
         // With no bounding, timestamp w/ 0.00003% of the stake can shift the timestamp forward 97k years!
@@ -218,7 +212,6 @@ pub mod tests {
             slot_duration,
             None,
             max_allowable_drift,
-            true,
         )
         .unwrap();
         assert_eq!(bounded, recent_timestamp); // multiple low-staked outliers cannot affect bounded timestamp if they don't shift the median
@@ -267,7 +260,6 @@ pub mod tests {
             slot_duration,
             None,
             max_allowable_drift,
-            true,
         )
         .unwrap();
         assert_eq!(bounded, recent_timestamp); // outlier(s) cannot affect bounded timestamp if they don't shift the median
@@ -305,7 +297,6 @@ pub mod tests {
             slot_duration,
             None,
             max_allowable_drift,
-            true,
         )
         .unwrap();
         assert_eq!(recent_timestamp - bounded, 1578909061); // outliers > 1/2 of available stake can affect timestamp
@@ -372,7 +363,6 @@ pub mod tests {
             slot_duration,
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
-            true,
         )
         .unwrap();
         assert_eq!(bounded, poh_estimate + acceptable_delta);
@@ -394,7 +384,6 @@ pub mod tests {
             slot_duration,
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
-            true,
         )
         .unwrap();
         assert_eq!(bounded, poh_estimate - acceptable_delta);
@@ -416,7 +405,6 @@ pub mod tests {
             slot_duration,
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
-            true,
         )
         .unwrap();
         assert_eq!(bounded, poh_estimate + acceptable_delta);
@@ -437,7 +425,6 @@ pub mod tests {
             slot_duration,
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
-            true,
         )
         .unwrap();
         assert_eq!(bounded, poh_estimate - acceptable_delta);
@@ -522,7 +509,6 @@ pub mod tests {
             slot_duration,
             Some((0, epoch_start_timestamp)),
             allowable_drift_25,
-            true,
         )
         .unwrap();
         assert_eq!(bounded, poh_estimate + acceptable_delta_25);
@@ -534,7 +520,6 @@ pub mod tests {
             slot_duration,
             Some((0, epoch_start_timestamp)),
             allowable_drift_50,
-            true,
         )
         .unwrap();
         assert_eq!(bounded, poh_estimate + acceptable_delta_25 + 1);
@@ -565,7 +550,6 @@ pub mod tests {
             slot_duration,
             Some((0, epoch_start_timestamp)),
             allowable_drift_25,
-            true,
         )
         .unwrap();
         assert_eq!(bounded, poh_estimate + acceptable_delta_25);
@@ -577,7 +561,6 @@ pub mod tests {
             slot_duration,
             Some((0, epoch_start_timestamp)),
             allowable_drift_50,
-            true,
         )
         .unwrap();
         assert_eq!(bounded, poh_estimate + acceptable_delta_50);
@@ -658,7 +641,6 @@ pub mod tests {
             slot_duration,
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
-            true,
         )
         .unwrap();
         assert_eq!(bounded, poh_estimate - acceptable_delta_fast);
@@ -689,7 +671,6 @@ pub mod tests {
             slot_duration,
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
-            true,
         )
         .unwrap();
         assert_eq!(bounded, poh_estimate + acceptable_delta_fast + 1);
@@ -720,7 +701,6 @@ pub mod tests {
             slot_duration,
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
-            true,
         )
         .unwrap();
         assert_eq!(bounded, poh_estimate + acceptable_delta_slow);
@@ -780,8 +760,6 @@ pub mod tests {
         .cloned()
         .collect();
 
-        // Without fix, median timestamps before epoch_start_timestamp actually increase the time
-        // estimate due to incorrect casting.
         let bounded = calculate_stake_weighted_timestamp(
             &unique_timestamps,
             &stakes,
@@ -789,19 +767,6 @@ pub mod tests {
             slot_duration,
             Some((0, epoch_start_timestamp)),
             max_allowable_drift,
-            false,
-        )
-        .unwrap();
-        assert_eq!(bounded, poh_estimate + acceptable_delta);
-
-        let bounded = calculate_stake_weighted_timestamp(
-            &unique_timestamps,
-            &stakes,
-            slot as Slot,
-            slot_duration,
-            Some((0, epoch_start_timestamp)),
-            max_allowable_drift,
-            true,
         )
         .unwrap();
         assert_eq!(bounded, poh_estimate - acceptable_delta);

@@ -1,5 +1,5 @@
-//! The `logger` module configures `env_logger`
 #![cfg(feature = "agave-unstable-api")]
+//! The `logger` module configures `env_logger`
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, RwLock},

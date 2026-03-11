@@ -34,9 +34,13 @@ pub enum InflationPointCalculationEvent {
     CalculatedPoints(u64, u128, u128, u128),
     SplitRewards(u64, u64, u64, PointValue),
     EffectiveStakeAtRewardedEpoch(u64),
-    RentExemptReserve(u64),
+    PriorTotalLamports(u64),
     Delegation(Delegation, Pubkey),
+    /// Commission as a percentage (0-100).
     Commission(u8),
+    /// Commission in basis points (0-10,000 representing 0-100%).
+    /// Used when `commission_rate_in_basis_points` feature is active.
+    CommissionBps(u16),
     CreditsObserved(u64, Option<u64>),
     Skipped(SkippedReason),
 }
@@ -227,7 +231,7 @@ mod tests {
     use {
         super::*,
         solana_native_token::LAMPORTS_PER_SOL,
-        solana_vote_program::vote_state::{handler::VoteStateHandle, VoteStateV4},
+        solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandle},
     };
 
     impl<'a> From<&'a VoteStateV4> for DelegatedVoteState<'a> {

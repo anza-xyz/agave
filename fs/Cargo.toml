@@ -24,6 +24,7 @@ libc = { workspace = true }
 log = { workspace = true }
 slab = { workspace = true }
 smallvec = { workspace = true }
+thiserror = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 agave-io-uring = { workspace = true }

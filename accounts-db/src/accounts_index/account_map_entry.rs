@@ -1,16 +1,16 @@
 use {
     super::{
-        bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         AtomicRefCount, DiskIndexValue, IndexValue, RefCount, SlotList, SlotListItem,
+        bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
     },
     crate::{account_info::AccountInfo, is_zero_lamport::IsZeroLamport},
     solana_clock::Slot,
     std::{
         fmt::Debug,
-        ops::Deref,
+        ops::{Deref, DerefMut},
         sync::{
-            atomic::{AtomicBool, Ordering},
             RwLock, RwLockReadGuard, RwLockWriteGuard,
+            atomic::{AtomicBool, Ordering},
         },
     },
 };
@@ -207,6 +207,12 @@ impl<T> Deref for SlotListWriteGuard<'_, T> {
 
     fn deref(&self) -> &Self::Target {
         self.0.as_slice()
+    }
+}
+
+impl<T> DerefMut for SlotListWriteGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut_slice()
     }
 }
 

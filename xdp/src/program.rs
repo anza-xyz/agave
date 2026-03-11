@@ -2,7 +2,7 @@
 
 use {
     crate::device::NetworkDevice,
-    aya::{programs::Xdp, Ebpf, EbpfLoader},
+    aya::{Ebpf, EbpfLoader, programs::Xdp},
     std::io::{Cursor, Write},
 };
 
@@ -45,7 +45,7 @@ pub fn load_xdp_program(dev: &NetworkDevice) -> Result<Ebpf, Box<dyn std::error:
     let broken_frags = dev.driver()? == "i40e";
     let mut ebpf = if broken_frags {
         loader.set_global("AGAVE_XDP_DROP_MULTI_FRAGS", &1u8, true);
-        loader.load(&agave_xdp_ebpf::AGAVE_XDP_EBPF_PROGRAM)
+        loader.load(agave_xdp_ebpf::AGAVE_XDP_EBPF_PROGRAM)
     } else {
         loader.load(&generate_xdp_elf())
     }?;
@@ -163,7 +163,9 @@ fn write_section_header(
     addralign: u64,
     entsize: u64,
 ) -> std::io::Result<()> {
-    write_fields!(w, name, type_, flags, addr, offset, size, link, info, addralign, entsize);
+    write_fields!(
+        w, name, type_, flags, addr, offset, size, link, info, addralign, entsize
+    );
 
     Ok(())
 }

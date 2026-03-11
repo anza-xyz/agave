@@ -11,18 +11,13 @@ use {
     solana_accounts_db::{
         account_info::{AccountInfo, StorageLocation},
         accounts::{AccountAddressFilter, Accounts},
-        accounts_db::{AccountFromStorage, AccountsDb, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS},
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, AccountFromStorage, AccountsDb},
         accounts_index::ScanConfig,
         ancestors::Ancestors,
     },
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    std::{
-        collections::{HashMap, HashSet},
-        path::PathBuf,
-        sync::{Arc, RwLock},
-        thread::Builder,
-    },
+    std::{collections::HashSet, path::PathBuf, sync::Arc, thread::Builder},
     test::Bencher,
 };
 
@@ -68,10 +63,10 @@ where
     F: Fn(&Accounts, &[Pubkey]) + Send + Copy + 'static,
 {
     let num_readers = 5;
-    let accounts_db = new_accounts_db(vec![PathBuf::from(
-        std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string()),
-    )
-    .join(bench_name)]);
+    let accounts_db = new_accounts_db(vec![
+        PathBuf::from(std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string()))
+            .join(bench_name),
+    ]);
     let accounts = Arc::new(Accounts::new(Arc::new(accounts_db)));
     let num_keys = 1000;
     let slot = 0;
@@ -85,11 +80,8 @@ where
     )
     .collect();
     let storable_accounts: Vec<_> = pubkeys.iter().zip(accounts_data.iter()).collect();
-    accounts.store_accounts_par((slot, storable_accounts.as_slice()), None);
-    accounts.add_root(slot);
-    accounts
-        .accounts_db
-        .flush_accounts_cache_slot_for_tests(slot);
+    accounts.store_accounts_par((slot, storable_accounts.as_slice()), None, None);
+    accounts.accounts_db.add_root_and_flush_write_cache(slot);
 
     let pubkeys = Arc::new(pubkeys);
     for i in 0..num_readers {
@@ -112,7 +104,7 @@ where
         // Write to a different slot than the one being read from. Because
         // there's a new account pubkey being written to every time, will
         // compete for the accounts index lock on every store
-        accounts.store_accounts_par((slot + 1, new_storable_accounts.as_slice()), None);
+        accounts.store_accounts_par((slot + 1, new_storable_accounts.as_slice()), None, None);
     });
 }
 
@@ -137,75 +129,27 @@ fn bench_concurrent_read_write(bencher: &mut Bencher) {
 
 #[bench]
 fn bench_concurrent_scan_write(bencher: &mut Bencher) {
-    store_accounts_with_possible_contention("concurrent_scan_write", bencher, |accounts, _| loop {
-        test::black_box(
-            accounts
-                .load_by_program(
-                    &Ancestors::default(),
-                    0,
-                    AccountSharedData::default().owner(),
-                    &ScanConfig::default(),
-                )
-                .unwrap(),
-        );
-    })
-}
-
-#[bench]
-#[ignore]
-fn bench_dashmap_single_reader_with_n_writers(bencher: &mut Bencher) {
-    let num_readers = 5;
-    let num_keys = 10000;
-    let map = Arc::new(DashMap::new());
-    for i in 0..num_keys {
-        map.insert(i, i);
-    }
-    for _ in 0..num_readers {
-        let map = map.clone();
-        Builder::new()
-            .name("readers".to_string())
-            .spawn(move || loop {
-                test::black_box(map.entry(5).or_insert(2));
-            })
-            .unwrap();
-    }
-    bencher.iter(|| {
-        for _ in 0..num_keys {
-            test::black_box(map.get(&5).unwrap().value());
-        }
-    })
-}
-
-#[bench]
-#[ignore]
-fn bench_rwlock_hashmap_single_reader_with_n_writers(bencher: &mut Bencher) {
-    let num_readers = 5;
-    let num_keys = 10000;
-    let map = Arc::new(RwLock::new(HashMap::new()));
-    for i in 0..num_keys {
-        map.write().unwrap().insert(i, i);
-    }
-    for _ in 0..num_readers {
-        let map = map.clone();
-        Builder::new()
-            .name("readers".to_string())
-            .spawn(move || loop {
-                test::black_box(map.write().unwrap().get(&5));
-            })
-            .unwrap();
-    }
-    bencher.iter(|| {
-        for _ in 0..num_keys {
-            test::black_box(map.read().unwrap().get(&5));
+    store_accounts_with_possible_contention("concurrent_scan_write", bencher, |accounts, _| {
+        loop {
+            test::black_box(
+                accounts
+                    .load_by_program(
+                        &Ancestors::default(),
+                        0,
+                        AccountSharedData::default().owner(),
+                        &ScanConfig::default(),
+                    )
+                    .unwrap(),
+            );
         }
     })
 }
 
 fn setup_bench_dashmap_iter() -> (Arc<Accounts>, DashMap<Pubkey, (AccountSharedData, Hash)>) {
-    let accounts_db = new_accounts_db(vec![PathBuf::from(
-        std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string()),
-    )
-    .join("bench_dashmap_par_iter")]);
+    let accounts_db = new_accounts_db(vec![
+        PathBuf::from(std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string()))
+            .join("bench_dashmap_par_iter"),
+    ]);
     let accounts = Arc::new(Accounts::new(Arc::new(accounts_db)));
 
     let dashmap = DashMap::new();

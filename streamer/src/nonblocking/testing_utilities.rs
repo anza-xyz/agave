@@ -1,29 +1,29 @@
 //! Contains utility functions to create server and client for test purposes.
 use {
-    super::quic::{SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID},
+    super::quic::{ALPN_TPU_PROTOCOL_ID, SpawnNonBlockingServerResult},
     crate::{
         nonblocking::{
             quic::spawn_server,
             swqos::{SwQos, SwQosConfig},
         },
-        quic::{QuicServerError, QuicStreamerConfig, StreamerStats},
+        quic::{QUIC_MAX_TIMEOUT, QuicServerError, QuicStreamerConfig, StreamerStats},
+        quic_socket::QuicSocket,
         streamer::StakedNodes,
     },
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    crossbeam_channel::{Receiver, Sender, unbounded},
     quinn::{
-        crypto::rustls::QuicClientConfig, ClientConfig, Connection, EndpointConfig, IdleTimeout,
-        TokioRuntime, TransportConfig,
+        ClientConfig, Connection, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig,
+        crypto::rustls::QuicClientConfig,
     },
     solana_keypair::Keypair,
     solana_net_utils::sockets::{
-        bind_to_localhost_unique, localhost_port_range_for_tests, multi_bind_in_range_with_config,
-        SocketConfiguration as SocketConfig,
+        SocketConfiguration as SocketConfig, bind_to_with_config, localhost_port_range_for_tests,
+        multi_bind_in_range_with_config, unique_port_range_for_tests,
     },
     solana_perf::packet::PacketBatch,
-    solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
     solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
     std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         sync::{Arc, RwLock},
         time::{Duration, Instant},
     },
@@ -31,10 +31,15 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
+/// Duration for QUIC keep-alive in tests. Typically tests are running for shorter duration that
+/// connection timeout and keep-alive is not strictly necessary. But for longer running tests, it
+/// makes sense to have keep-alive enable and set the value to be around half of the connection timeout.
+const QUIC_KEEP_ALIVE_FOR_TESTS: Duration = Duration::from_secs(5);
+
 /// Spawn a streamer instance in the current tokio runtime.
 pub fn spawn_stake_weighted_qos_server(
     name: &'static str,
-    sockets: impl IntoIterator<Item = UdpSocket>,
+    sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
@@ -46,12 +51,7 @@ where
 {
     let stats = Arc::<StreamerStats>::default();
 
-    let swqos = Arc::new(SwQos::new(
-        qos_config,
-        stats.clone(),
-        staked_nodes,
-        cancel.clone(),
-    ));
+    let swqos = SwQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
 
     spawn_server(
         name,
@@ -80,8 +80,8 @@ pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
     let mut transport_config = TransportConfig::default();
     let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
     transport_config.max_idle_timeout(Some(timeout));
-    transport_config.keep_alive_interval(Some(QUIC_KEEP_ALIVE));
-    transport_config.send_fairness(QUIC_SEND_FAIRNESS);
+    transport_config.keep_alive_interval(Some(QUIC_KEEP_ALIVE_FOR_TESTS));
+    transport_config.send_fairness(false);
     config.transport_config(Arc::new(transport_config));
 
     config
@@ -95,7 +95,7 @@ pub struct SpawnTestServerResult {
     pub cancel: CancellationToken,
 }
 
-pub fn create_quic_server_sockets() -> Vec<UdpSocket> {
+pub fn create_quic_server_sockets() -> Vec<QuicSocket> {
     let num = if cfg!(not(target_os = "windows")) {
         10
     } else {
@@ -110,6 +110,9 @@ pub fn create_quic_server_sockets() -> Vec<UdpSocket> {
     )
     .expect("bind operation for quic server sockets should succeed")
     .1
+    .into_iter()
+    .map(QuicSocket::from)
+    .collect()
 }
 
 pub fn setup_quic_server(
@@ -153,7 +156,42 @@ pub async fn make_client_endpoint(
     addr: &SocketAddr,
     client_keypair: Option<&Keypair>,
 ) -> Connection {
-    let client_socket = bind_to_localhost_unique().expect("should bind - client");
+    make_client_endpoint_with_local_addr(
+        addr,
+        SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            unique_port_range_for_tests(1).start,
+        ),
+        client_keypair,
+    )
+    .await
+    .expect("Test server should be already listening on '{addr}'")
+}
+
+pub async fn make_client_endpoint_with_bind_ip(
+    addr: &SocketAddr,
+    bind_ip: IpAddr,
+    client_keypair: Option<&Keypair>,
+) -> Result<Connection, quinn::ConnectionError> {
+    make_client_endpoint_with_local_addr(
+        addr,
+        SocketAddr::new(bind_ip, unique_port_range_for_tests(1).start),
+        client_keypair,
+    )
+    .await
+}
+
+pub async fn make_client_endpoint_with_local_addr(
+    addr: &SocketAddr,
+    local_addr: SocketAddr,
+    client_keypair: Option<&Keypair>,
+) -> Result<Connection, quinn::ConnectionError> {
+    let client_socket = bind_to_with_config(
+        local_addr.ip(),
+        local_addr.port(),
+        SocketConfig::default().set_non_blocking(true),
+    )
+    .expect("should bind client socket with local addr");
     let mut endpoint = quinn::Endpoint::new(
         EndpointConfig::default(),
         None,
@@ -169,7 +207,6 @@ pub async fn make_client_endpoint(
         .connect(*addr, "localhost")
         .expect("Endpoint configuration should be correct")
         .await
-        .expect("Test server should be already listening on 'localhost'")
 }
 
 pub async fn check_multiple_streams(

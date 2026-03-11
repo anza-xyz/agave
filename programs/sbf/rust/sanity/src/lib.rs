@@ -30,8 +30,7 @@ enum TestEnum {
 }
 
 #[allow(dead_code)]
-#[allow(clippy::enum_clike_unportable_variant)]
-#[repr(C)]
+#[repr(u64)]
 enum Test64BitEnum {
     VariantOne,
     VariantTwo = 0xFFFFFFFFF,

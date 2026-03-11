@@ -24,7 +24,6 @@ frozen-abi = [
     "dep:solana-frozen-abi-macro",
     "solana-accounts-db/frozen-abi",
     "solana-bloom/frozen-abi",
-    "solana-compute-budget/frozen-abi",
     "solana-cost-model/frozen-abi",
     "solana-frozen-abi/frozen-abi",
     "solana-gossip/frozen-abi",
@@ -42,30 +41,27 @@ frozen-abi = [
 
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
+agave-bls-cert-verify = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
 agave-scheduling-utils = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
-agave-verified-packet-receiver = { workspace = true }
-agave-votor = { workspace = true, features = ["agave-unstable-api"] }
+agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-xdp = { workspace = true }
 ahash = { workspace = true }
 anyhow = { workspace = true }
 arc-swap = { workspace = true }
 arrayvec = { workspace = true }
 assert_matches = { workspace = true }
 async-trait = { workspace = true }
-base64 = { workspace = true }
 bincode = { workspace = true }
-bs58 = { workspace = true }
-bytemuck = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
-derive_more = { workspace = true }
 futures = { workspace = true }
 histogram = { workspace = true }
 itertools = { workspace = true }
@@ -92,12 +88,11 @@ solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bincode = { workspace = true }
 solana-bloom = { workspace = true }
-solana-builtins-default-costs = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-compute-budget = { workspace = true }
-solana-compute-budget-instruction = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-cost-model = { workspace = true }
@@ -115,18 +110,19 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-genesis-config = { workspace = true }
 solana-genesis-utils = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
-solana-gossip = { workspace = true, features = ["agave-unstable-api"] }
+solana-gossip = { workspace = true }
 solana-hard-forks = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
-solana-ledger = { workspace = true, features = ["agave-unstable-api"] }
+solana-leader-schedule = { workspace = true }
+solana-ledger = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
-solana-net-utils = { workspace = true, features = ["agave-unstable-api"] }
+solana-net-utils = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-packet = { workspace = true }
@@ -134,15 +130,12 @@ solana-perf = { workspace = true }
 solana-poh = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-quic-client = { workspace = true }
-solana-quic-definitions = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
-solana-sanitize = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-send-transaction-service = { workspace = true }
 solana-sha256-hasher = { workspace = true }
@@ -153,7 +146,7 @@ solana-signer = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-slot-history = { workspace = true }
 solana-streamer = { workspace = true }
-solana-svm = { workspace = true }
+solana-svm = { workspace = true, features = ["metrics"] }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
@@ -166,14 +159,13 @@ solana-tpu-client-next = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
-solana-turbine = { workspace = true, features = ["agave-unstable-api"] }
+solana-turbine = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
 solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
-solana-wen-restart = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
@@ -183,6 +175,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }
 trees = { workspace = true }
+wincode = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }
@@ -194,8 +187,9 @@ sysctl = { workspace = true }
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
-agave-scheduler-bindings = { workspace = true, features = ["dev-context-only-utils"] }
+agave-scheduler-bindings = { workspace = true }
 bencher = { workspace = true }
+bitvec = { workspace = true }
 criterion = { workspace = true }
 fs_extra = { workspace = true }
 serde_json = { workspace = true }
@@ -215,6 +209,7 @@ solana-poh = { workspace = true, features = ["dev-context-only-utils"] }
 solana-program-binaries = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
+solana-signer-store = { workspace = true }
 solana-system-program = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true, features = [
     "dev-context-only-utils",
@@ -232,6 +227,10 @@ name = "gen_keys"
 
 [[bench]]
 name = "sigverify_stage"
+harness = false
+
+[[bench]]
+name = "bls_vote_sigverify"
 harness = false
 
 [[bench]]

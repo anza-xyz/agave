@@ -2,11 +2,11 @@
 
 use {
     solana_program::log::sol_log_64,
-    solana_program_entrypoint::{custom_heap_default, custom_panic_default, SUCCESS},
+    solana_program_entrypoint::{SUCCESS, custom_heap_default, custom_panic_default},
     solana_sbf_rust_param_passing_dep::{Data, TestDep},
 };
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     let array = [0xA, 0xB, 0xC, 0xD, 0xE, 0xF];
     let data = Data {

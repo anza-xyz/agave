@@ -1,7 +1,7 @@
 use {
     crate::cli_output::CliSignatureVerificationStatus,
     agave_reserved_account_keys::ReservedAccountKeys,
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     chrono::{DateTime, Local, SecondsFormat, TimeZone, Utc},
     console::style,
     indicatif::{ProgressBar, ProgressStyle},
@@ -731,26 +731,20 @@ mod test {
         super::*,
         solana_keypair::Keypair,
         solana_message::{
-            v0::{self, LoadedAddresses},
             Message as LegacyMessage, MessageHeader, VersionedMessage,
+            v0::{self, LoadedAddresses},
         },
         solana_pubkey::Pubkey,
+        solana_seed_derivable::SeedDerivable,
         solana_signer::Signer,
         solana_transaction::Transaction,
-        solana_transaction_context::TransactionReturnData,
+        solana_transaction_context::transaction::TransactionReturnData,
         solana_transaction_status::{Reward, RewardType, TransactionStatusMeta},
         std::io::BufWriter,
     };
 
-    fn new_test_keypair() -> Keypair {
-        let secret = ed25519_dalek::SecretKey::from_bytes(&[0u8; 32]).unwrap();
-        let public = ed25519_dalek::PublicKey::from(&secret);
-        let keypair = ed25519_dalek::Keypair { secret, public };
-        Keypair::try_from(keypair.to_bytes().as_ref()).unwrap()
-    }
-
     fn new_test_v0_transaction() -> VersionedTransaction {
-        let keypair = new_test_keypair();
+        let keypair = Keypair::from_seed(&[0u8; 32]).unwrap();
         let account_key = Pubkey::new_from_array([1u8; 32]);
         let address_table_key = Pubkey::new_from_array([2u8; 32]);
         VersionedTransaction::try_new(
@@ -780,7 +774,7 @@ mod test {
 
     #[test]
     fn test_write_legacy_transaction() {
-        let keypair = new_test_keypair();
+        let keypair = Keypair::from_seed(&[0u8; 32]).unwrap();
         let account_key = Pubkey::new_from_array([1u8; 32]);
         let transaction = VersionedTransaction::from(Transaction::new(
             &[&keypair],
@@ -813,6 +807,7 @@ mod test {
                 post_balance: 9_900,
                 reward_type: Some(RewardType::Rent),
                 commission: None,
+                commission_bps: None,
             }]),
             loaded_addresses: LoadedAddresses::default(),
             return_data: Some(TransactionReturnData {
@@ -893,6 +888,7 @@ Rewards:
                 post_balance: 14_900,
                 reward_type: Some(RewardType::Rent),
                 commission: None,
+                commission_bps: None,
             }]),
             loaded_addresses,
             return_data: Some(TransactionReturnData {

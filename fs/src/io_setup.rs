@@ -21,6 +21,8 @@ use {
 pub struct IoSetupState {
     #[cfg(target_os = "linux")]
     shared_sqpoll: Option<SharedSqPoll>,
+    pub use_direct_io: bool,
+    pub use_registered_io_uring_buffers: bool,
 }
 
 impl IoSetupState {
@@ -33,7 +35,27 @@ impl IoSetupState {
         Ok(Self {
             #[cfg(target_os = "linux")]
             shared_sqpoll: Some(SharedSqPoll::new()?),
+            ..self
         })
+    }
+
+    /// Enables registering of buffers in io-uring (as `fixed`).
+    ///
+    /// Speeds up kernel operations on the memory, but requires appropriate memlock ulimit.
+    pub fn with_buffers_registered(mut self, fixed: bool) -> Self {
+        self.use_registered_io_uring_buffers = fixed;
+        self
+    }
+
+    /// Enables direct I/O for operations that bypass the operating system's caching layer.
+    ///
+    /// File system is required to support opening files with `O_DIRECT` flag.
+    ///
+    /// This can improve performance when allocation and checking of caches by the kernel is slower
+    /// than the overall savings from re-using cached file data (e.g. for read / write once data).
+    pub fn with_direct_io(mut self, use_direct_io: bool) -> Self {
+        self.use_direct_io = use_direct_io;
+        self
     }
 
     #[cfg(target_os = "linux")]
@@ -49,7 +71,7 @@ mod tests {
         crate::{
             file_io::FileCreator,
             io_uring::{
-                file_creator::IoUringFileCreator,
+                file_creator::IoUringFileCreatorBuilder,
                 sequential_file_reader::SequentialFileReaderBuilder,
             },
         },
@@ -67,21 +89,20 @@ mod tests {
 
         let read_bytes = RwLock::new(vec![]);
         let read_bytes_ref = &read_bytes;
-        let mut file_creator = IoUringFileCreator::with_buffer_capacity(
-            1 << 20,
-            io_setup.shared_sqpoll_fd(),
-            move |file_info| {
+        let mut file_creator = IoUringFileCreatorBuilder::new()
+            .shared_sqpoll(io_setup.shared_sqpoll_fd())
+            .build(1 << 20, move |file_info| {
                 let mut reader = SequentialFileReaderBuilder::new()
                     .shared_sqpoll(io_setup.shared_sqpoll_fd())
-                    .build(file_info.path, 1 << 20)
+                    .build(1 << 20)
                     .unwrap();
+                reader.set_path(file_info.path).unwrap();
                 reader
                     .read_to_end(read_bytes_ref.write().unwrap().as_mut())
                     .unwrap();
                 None
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
         let dir_handle = Arc::new(File::open(temp_dir.path()).unwrap());

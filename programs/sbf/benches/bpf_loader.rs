@@ -15,21 +15,20 @@ use {
     agave_syscalls::create_program_runtime_environment_v1,
     byteorder::{ByteOrder, LittleEndian, WriteBytesExt},
     solana_account::AccountSharedData,
-    solana_bpf_loader_program::create_vm,
     solana_client_traits::SyncClient,
     solana_instruction::{AccountMeta, Instruction},
     solana_measure::measure::Measure,
     solana_message::Message,
     solana_program_entrypoint::SUCCESS,
     solana_program_runtime::{
-        execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
+        create_vm, execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
         serialization::serialize_parameters,
     },
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_client::BankClient,
-        genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        genesis_utils::{GenesisConfigInfo, create_genesis_config},
         loader_utils::{load_program_from_file, load_program_of_loader_v4},
     },
     solana_sbpf::{
@@ -65,11 +64,12 @@ macro_rules! with_mock_invoke_context {
         solana_program_runtime::with_mock_invoke_context!(
             $invoke_context,
             transaction_context,
+            1,
             transaction_accounts
         );
         $invoke_context
             .transaction_context
-            .configure_next_instruction_for_tests(1, instruction_accounts, vec![])
+            .configure_top_level_instruction_for_tests(1, instruction_accounts, vec![])
             .unwrap();
         $invoke_context.push().unwrap();
     };
@@ -229,10 +229,13 @@ fn bench_create_vm(bencher: &mut Bencher) {
     const BUDGET: u64 = 200_000;
     invoke_context.mock_set_remaining(BUDGET);
 
-    let stricter_abi_and_runtime_constraints = invoke_context
+    let virtual_address_space_adjustments = invoke_context
         .get_feature_set()
-        .stricter_abi_and_runtime_constraints;
+        .virtual_address_space_adjustments;
     let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
+    let direct_account_pointers_in_program_input = invoke_context
+        .get_feature_set()
+        .direct_account_pointers_in_program_input;
     let raise_cpi_nesting_limit_to_8 = invoke_context
         .get_feature_set()
         .raise_cpi_nesting_limit_to_8;
@@ -254,9 +257,9 @@ fn bench_create_vm(bencher: &mut Bencher) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        stricter_abi_and_runtime_constraints,
+        virtual_address_space_adjustments,
         account_data_direct_mapping,
-        true, // mask_out_rent_epoch_in_vm_serialization
+        direct_account_pointers_in_program_input,
     )
     .unwrap();
 
@@ -279,10 +282,13 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
     const BUDGET: u64 = 200_000;
     invoke_context.mock_set_remaining(BUDGET);
 
-    let stricter_abi_and_runtime_constraints = invoke_context
+    let virtual_address_space_adjustments = invoke_context
         .get_feature_set()
-        .stricter_abi_and_runtime_constraints;
+        .virtual_address_space_adjustments;
     let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
+    let direct_account_pointers_in_program_input = invoke_context
+        .get_feature_set()
+        .direct_account_pointers_in_program_input;
 
     // Serialize account data
     let (_serialized, regions, account_lengths, _instruction_data_offset) = serialize_parameters(
@@ -290,9 +296,9 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        stricter_abi_and_runtime_constraints,
+        virtual_address_space_adjustments,
         account_data_direct_mapping,
-        true, // mask_out_rent_epoch_in_vm_serialization
+        direct_account_pointers_in_program_input,
     )
     .unwrap();
 

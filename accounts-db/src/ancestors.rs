@@ -5,8 +5,6 @@ use {
     std::collections::HashMap,
 };
 
-pub type AncestorsForSerialization = HashMap<Slot, usize>;
-
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, PartialEq)]
 pub struct Ancestors {
@@ -121,7 +119,7 @@ impl Ancestors {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use {
         super::*, crate::contains::Contains, log::*, solana_measure::measure::Measure,
         std::collections::HashSet,

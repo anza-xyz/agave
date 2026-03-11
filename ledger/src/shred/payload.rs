@@ -1,7 +1,7 @@
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 use {
     crate::shred::Nonce,
-    solana_perf::packet::{bytes::BufMut, BytesPacket, Meta, Packet},
+    solana_perf::packet::{BytesPacket, Meta, Packet, bytes::BufMut},
 };
 use {
     bytes::{Bytes, BytesMut},

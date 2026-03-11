@@ -16,9 +16,9 @@ use {
     solana_clock::Slot,
     solana_core::consensus::tower_storage::FileTowerStorage,
     solana_epoch_schedule::EpochSchedule,
-    solana_faucet::faucet::{run_faucet, Faucet},
+    solana_faucet::faucet::{Faucet, run_faucet},
     solana_inflation::Inflation,
-    solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
+    solana_keypair::{Keypair, read_keypair_file, write_keypair_file},
     solana_native_token::sol_str_to_lamports,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
@@ -42,6 +42,10 @@ use {
         time::{Duration, SystemTime, UNIX_EPOCH},
     },
 };
+
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 #[derive(PartialEq, Eq)]
 enum Output {
@@ -565,7 +569,7 @@ fn main() {
             /* enable_warmup_epochs = */ false,
         ));
 
-        genesis.rent = Rent::with_slots_per_epoch(slots_per_epoch);
+        genesis.rent = Rent::default();
     }
 
     if let Some(inflation_fixed) = inflation_fixed {

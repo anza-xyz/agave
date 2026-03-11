@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 #![allow(deprecated)]
 
 use {
@@ -15,11 +7,11 @@ use {
     solana_clock::Slot,
     solana_commitment_config::CommitmentLevel,
     solana_hash::Hash,
-    solana_message::{inner_instruction::InnerInstructions, Message},
+    solana_message::{Message, inner_instruction::InnerInstructions},
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction,
-    solana_transaction_context::TransactionReturnData,
+    solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionError,
 };
 
@@ -76,7 +68,7 @@ pub struct BanksTransactionResultWithMetadata {
 pub trait Banks {
     async fn send_transaction_with_context(transaction: VersionedTransaction);
     async fn get_transaction_status_with_context(signature: Signature)
-        -> Option<TransactionStatus>;
+    -> Option<TransactionStatus>;
     async fn get_slot_with_context(commitment: CommitmentLevel) -> Slot;
     async fn get_block_height_with_context(commitment: CommitmentLevel) -> u64;
     async fn process_transaction_with_preflight_and_commitment_and_context(

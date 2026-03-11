@@ -1,7 +1,7 @@
 use {
     crate::{
-        admin_rpc_service, format_name_value, new_spinner_progress_bar, println_name_value,
-        ProgressBar,
+        ProgressBar, admin_rpc_service, format_name_value, new_spinner_progress_bar,
+        println_name_value,
     },
     console::style,
     solana_clock::Slot,
@@ -16,8 +16,8 @@ use {
         net::SocketAddr,
         path::{Path, PathBuf},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread,
         time::{Duration, SystemTime},
@@ -105,8 +105,8 @@ impl Dashboard {
                 if let Some(gossip) = contact_info.gossip {
                     println_name_value("Gossip Address:", &gossip.to_string());
                 }
-                if let Some(tpu) = contact_info.tpu {
-                    println_name_value("TPU Address:", &tpu.to_string());
+                if let Some(tpu) = contact_info.tpu_quic {
+                    println_name_value("TPU QUIC Address:", &tpu.to_string());
                 }
                 if let Some(rpc) = contact_info.rpc {
                     println_name_value("JSON RPC URL:", &format!("http://{rpc}"));

@@ -5,7 +5,7 @@ mod target_builtin;
 mod target_core_bpf;
 
 use {
-    crate::bank::{builtins::core_bpf_migration::target_bpf_v2::TargetBpfV2, Bank},
+    crate::bank::{Bank, builtins::core_bpf_migration::target_bpf_v2::TargetBpfV2},
     error::CoreBpfMigrationError,
     num_traits::{CheckedAdd, CheckedSub},
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -15,14 +15,15 @@ use {
     solana_instruction::error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
+        deploy::deploy_program,
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::ProgramCacheForTxBatch,
+        loaded_programs::{LoadProgramMetrics, ProgramCacheForTxBatch},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::bpf_loader_upgradeable,
     solana_svm_callback::InvokeContextCallback,
-    solana_transaction_context::TransactionContext,
+    solana_transaction_context::transaction::TransactionContext,
     source_buffer::SourceBuffer,
     std::{cmp::Ordering, sync::atomic::Ordering::Relaxed},
     target_builtin::TargetBuiltin,
@@ -147,7 +148,7 @@ impl Bank {
             let compute_budget = self
                 .compute_budget()
                 .unwrap_or(ComputeBudget::new_with_defaults(
-                    /* simd_0268_active */ false, /* simd_0339_active */ false,
+                    /* simd_0268_active */ false,
                 ));
             let mut sysvar_cache = SysvarCache::default();
             sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
@@ -161,6 +162,7 @@ impl Bank {
                 self.rent_collector.rent.clone(),
                 compute_budget.max_instruction_stack_depth,
                 compute_budget.max_instruction_trace_length,
+                1,
             );
 
             struct MockCallback {}
@@ -183,8 +185,10 @@ impl Bank {
                 compute_budget.to_cost(),
             );
 
-            let load_program_metrics = solana_bpf_loader_program::deploy_program(
+            let mut load_program_metrics = LoadProgramMetrics::default();
+            deploy_program(
                 dummy_invoke_context.get_log_collector(),
+                &mut load_program_metrics,
                 dummy_invoke_context.program_cache_for_tx_batch,
                 program_runtime_environments.program_runtime_v1.clone(),
                 program_id,
@@ -206,6 +210,7 @@ impl Bank {
             .unwrap()
             .merge(
                 &self.transaction_processor.environments,
+                self.slot,
                 &program_cache_for_tx_batch.drain_modified_entries(),
             );
 
@@ -216,11 +221,16 @@ impl Bank {
         &mut self,
         builtin_program_id: &Pubkey,
         config: &CoreBpfMigrationConfig,
+        allow_prefunded: bool,
     ) -> Result<(), CoreBpfMigrationError> {
         datapoint_info!(config.datapoint_name, ("slot", self.slot, i64));
 
-        let target =
-            TargetBuiltin::new_checked(self, builtin_program_id, &config.migration_target)?;
+        let target = TargetBuiltin::new_checked(
+            self,
+            builtin_program_id,
+            &config.migration_target,
+            allow_prefunded,
+        )?;
         let source = if let Some(expected_hash) = config.verified_build_hash {
             SourceBuffer::new_checked_with_verified_build_hash(
                 self,
@@ -310,7 +320,7 @@ impl Bank {
     ///     );
     /// }
     /// ```
-    #[allow(dead_code)] // Only used when an upgrade is configured.
+    // #[expect(dead_code)] // Only used when an upgrade is configured.
     pub(crate) fn upgrade_core_bpf_program(
         &mut self,
         core_bpf_program_address: &Pubkey,
@@ -381,22 +391,25 @@ impl Bank {
     ///     self.upgrade_loader_v2_program_with_loader_v3_program(
     ///        &bpf_loader_v2_program_address,
     ///        &source_buffer_address,
+    ///        true,
     ///        "test_upgrade_loader_v2_program_with_loader_v3_program",
     ///     );
     /// }
     /// ```
     /// The `source_buffer_address` must point to a Loader v3 buffer account
     /// (state equal to [`UpgradeableLoaderState::Buffer`]).
-    #[allow(dead_code)] // Only used when an upgrade is configured.
+    // #[expect(dead_code)] // Only used when an upgrade is configured.
     pub(crate) fn upgrade_loader_v2_program_with_loader_v3_program(
         &mut self,
         loader_v2_bpf_program_address: &Pubkey,
         source_buffer_address: &Pubkey,
+        allow_prefunded: bool,
         datapoint_name: &'static str,
     ) -> Result<(), CoreBpfMigrationError> {
         datapoint_info!(datapoint_name, ("slot", self.slot, i64));
 
-        let target = TargetBpfV2::new_checked(self, loader_v2_bpf_program_address)?;
+        let target =
+            TargetBpfV2::new_checked(self, loader_v2_bpf_program_address, allow_prefunded)?;
         let source = SourceBuffer::new_checked(self, source_buffer_address)?;
 
         // Attempt serialization first before modifying the bank.
@@ -487,9 +500,9 @@ pub(crate) mod tests {
         super::*,
         crate::{
             bank::{
+                Bank,
                 test_utils::goto_end_of_slot,
                 tests::{create_genesis_config, create_simple_test_bank},
-                Bank,
             },
             runtime_config::RuntimeConfig,
             snapshot_bank_utils::{bank_from_snapshot_archives, bank_to_full_snapshot_archive},
@@ -499,13 +512,13 @@ pub(crate) mod tests {
         agave_snapshots::snapshot_config::SnapshotConfig,
         assert_matches::assert_matches,
         solana_account::{
-            state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount,
+            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
         },
         solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_builtins::{
+            BUILTINS,
             core_bpf_migration::{CoreBpfMigrationConfig, CoreBpfMigrationTargetType},
             prototype::{BuiltinPrototype, StatelessBuiltinPrototype},
-            BUILTINS,
         },
         solana_clock::Slot,
         solana_epoch_schedule::EpochSchedule,
@@ -702,12 +715,14 @@ pub(crate) mod tests {
 
             // The bank's builtins should not contain the target program
             // address.
-            assert!(!bank
-                .transaction_processor
-                .builtin_program_ids
-                .read()
-                .unwrap()
-                .contains(&self.target_program_address));
+            assert!(
+                !bank
+                    .transaction_processor
+                    .builtin_program_ids
+                    .read()
+                    .unwrap()
+                    .contains(&self.target_program_address)
+            );
 
             // The cache should contain the target program.
             let program_cache = bank
@@ -715,11 +730,13 @@ pub(crate) mod tests {
                 .global_program_cache
                 .read()
                 .unwrap();
-            let entries = program_cache.get_flattened_entries(true, true);
+            let entries = program_cache.get_flattened_entries();
             let target_entry = entries
                 .iter()
-                .find(|(program_id, _)| program_id == &self.target_program_address)
-                .map(|(_, entry)| entry)
+                .find(|(program_id, _last_modification_slot, _entry)| {
+                    program_id == &self.target_program_address
+                })
+                .map(|(_program_id, _last_modification_slot, entry)| entry)
                 .unwrap();
 
             // The target program entry should be updated.
@@ -792,7 +809,7 @@ pub(crate) mod tests {
 
         // Perform the migration.
         let migration_slot = bank.slot();
-        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
             .unwrap();
 
         // Run the post-migration program checks.
@@ -857,7 +874,7 @@ pub(crate) mod tests {
 
         // Perform the migration.
         let migration_slot = bank.slot();
-        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
             .unwrap();
 
         // Run the post-migration program checks.
@@ -924,7 +941,7 @@ pub(crate) mod tests {
         };
 
         assert_matches!(
-            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
                 .unwrap_err(),
             CoreBpfMigrationError::UpgradeAuthorityMismatch(_, _)
         )
@@ -978,7 +995,7 @@ pub(crate) mod tests {
         };
 
         assert_matches!(
-            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
                 .unwrap_err(),
             CoreBpfMigrationError::BuildHashMismatch(_, _)
         )
@@ -1040,7 +1057,7 @@ pub(crate) mod tests {
             datapoint_name: "test_migrate_builtin",
         };
 
-        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
             .unwrap();
 
         let program_data_address = get_program_data_address(&builtin_id);
@@ -1244,7 +1261,7 @@ pub(crate) mod tests {
 
             let instruction = Instruction::new_with_bytes(*target_program_id, &[], Vec::new());
 
-            invoke_context.native_invoke(instruction, &[])
+            invoke_context.native_invoke_signed(instruction, &[])
         });
     }
 
@@ -1501,12 +1518,13 @@ pub(crate) mod tests {
 
         // Assert the feature _was_ activated but the program was not migrated.
         assert!(bank.feature_set.is_active(feature_id));
-        assert!(bank
-            .transaction_processor
-            .builtin_program_ids
-            .read()
-            .unwrap()
-            .contains(builtin_id));
+        assert!(
+            bank.transaction_processor
+                .builtin_program_ids
+                .read()
+                .unwrap()
+                .contains(builtin_id)
+        );
         assert_eq!(
             bank.get_account(builtin_id).unwrap().owner(),
             &native_loader::id()
@@ -1519,12 +1537,13 @@ pub(crate) mod tests {
         // Again, assert the feature is still active and the program still was
         // not migrated.
         assert!(bank.feature_set.is_active(feature_id));
-        assert!(bank
-            .transaction_processor
-            .builtin_program_ids
-            .read()
-            .unwrap()
-            .contains(builtin_id));
+        assert!(
+            bank.transaction_processor
+                .builtin_program_ids
+                .read()
+                .unwrap()
+                .contains(builtin_id)
+        );
         assert_eq!(
             bank.get_account(builtin_id).unwrap().owner(),
             &native_loader::id()
@@ -1587,12 +1606,13 @@ pub(crate) mod tests {
 
         // Assert the feature is active and the bank still added the builtin.
         assert!(bank.feature_set.is_active(feature_id));
-        assert!(bank
-            .transaction_processor
-            .builtin_program_ids
-            .read()
-            .unwrap()
-            .contains(builtin_id));
+        assert!(
+            bank.transaction_processor
+                .builtin_program_ids
+                .read()
+                .unwrap()
+                .contains(builtin_id)
+        );
         assert_eq!(
             bank.get_account(builtin_id).unwrap().owner(),
             &native_loader::id()
@@ -1605,12 +1625,13 @@ pub(crate) mod tests {
 
         // Assert the feature is active but the builtin was not migrated.
         assert!(bank.feature_set.is_active(feature_id));
-        assert!(bank
-            .transaction_processor
-            .builtin_program_ids
-            .read()
-            .unwrap()
-            .contains(builtin_id));
+        assert!(
+            bank.transaction_processor
+                .builtin_program_ids
+                .read()
+                .unwrap()
+                .contains(builtin_id)
+        );
         assert_eq!(
             bank.get_account(builtin_id).unwrap().owner(),
             &native_loader::id()
@@ -1668,12 +1689,14 @@ pub(crate) mod tests {
         let check_builtin_is_bpf = |bank: &Bank| {
             // The bank's transaction processor should not contain the builtin
             // in its list of builtin program IDs.
-            assert!(!bank
-                .transaction_processor
-                .builtin_program_ids
-                .read()
-                .unwrap()
-                .contains(builtin_id));
+            assert!(
+                !bank
+                    .transaction_processor
+                    .builtin_program_ids
+                    .read()
+                    .unwrap()
+                    .contains(builtin_id)
+            );
             // The builtin should be owned by the upgradeable loader and have
             // the correct state.
             let fetched_builtin_program_account = bank.get_account(builtin_id).unwrap();
@@ -1810,6 +1833,7 @@ pub(crate) mod tests {
         bank.upgrade_loader_v2_program_with_loader_v3_program(
             &bpf_loader_v2_program_address,
             &source_buffer_address,
+            true,
             "test_upgrade_loader_v2_program_with_loader_v3_program",
         )
         .unwrap();
@@ -1890,6 +1914,7 @@ pub(crate) mod tests {
             bank.upgrade_loader_v2_program_with_loader_v3_program(
                 &bpf_loader_v2_program_address,
                 &source_buffer_address,
+                true,
                 "test_upgrade_loader_v2_program_with_loader_v3_program",
             )
             .unwrap_err(),
@@ -2087,6 +2112,7 @@ pub(crate) mod tests {
         bank.upgrade_loader_v2_program_with_loader_v3_program(
             &bpf_loader_v2_program_address,
             &source_buffer_address,
+            true,
             "test_upgrade_loader_v2_program_with_loader_v3_program",
         )
         .unwrap();
@@ -2136,7 +2162,7 @@ pub(crate) mod tests {
 
         // Load the migrated program to the cache and run checks.
         let entry = roundtrip_bank
-            .load_program(&bpf_loader_v2_program_address, false, upgrade_slot)
+            .load_program(&bpf_loader_v2_program_address, upgrade_slot)
             .unwrap();
 
         let mut program_cache = roundtrip_bank
@@ -2148,6 +2174,7 @@ pub(crate) mod tests {
         program_cache.assign_program(
             &roundtrip_bank.transaction_processor.environments,
             bpf_loader_v2_program_address,
+            upgrade_slot,
             entry,
         );
         // Release the lock on the program cache.

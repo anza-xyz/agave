@@ -4,19 +4,19 @@
 use {
     crate::{
         packet::{
-            self, Packet, PacketBatch, PacketBatchRecycler, PacketRef, RecycledPacketBatch,
-            PACKETS_PER_BATCH,
+            self, PACKETS_PER_BATCH, Packet, PacketBatch, PacketBatchRecycler, PacketRef,
+            RecycledPacketBatch,
         },
-        sendmmsg::{batch_send, SendPktsError},
+        sendmmsg::{SendPktsError, batch_send},
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
     solana_net_utils::{
+        SocketAddrSpace,
         multihomed_sockets::{
             BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider,
             SocketProvider,
         },
-        SocketAddrSpace,
     },
     solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
@@ -25,10 +25,10 @@ use {
         collections::HashMap,
         net::{IpAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
     thiserror::Error,
@@ -165,7 +165,6 @@ fn recv_loop<P: SocketProvider>(
     stats: &StreamerReceiveStats,
     coalesce: Option<Duration>,
     use_pinned_memory: bool,
-    in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> Result<()> {
     fn setup_socket(socket: &UdpSocket) -> Result<()> {
@@ -200,13 +199,6 @@ fn recv_loop<P: SocketProvider>(
                 return Ok(());
             }
 
-            if let Some(ref in_vote_only_mode) = in_vote_only_mode {
-                if in_vote_only_mode.load(Ordering::Relaxed) {
-                    sleep(Duration::from_millis(1));
-                    continue;
-                }
-            }
-
             #[cfg(unix)]
             let result = packet::recv_from(&mut packet_batch, socket, coalesce, &mut poll_fd);
             #[cfg(not(unix))]
@@ -237,7 +229,7 @@ fn recv_loop<P: SocketProvider>(
                             stats.num_packets_dropped.fetch_add(len, Ordering::Relaxed);
                         }
                         Err(TrySendError::Disconnected(err)) => {
-                            return Err(StreamerError::Send(SendError(err)))
+                            return Err(StreamerError::Send(SendError(err)));
                         }
                     }
                 }
@@ -267,7 +259,6 @@ pub fn receiver(
     stats: Arc<StreamerReceiveStats>,
     coalesce: Option<Duration>,
     use_pinned_memory: bool,
-    in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> JoinHandle<()> {
     Builder::new()
@@ -282,7 +273,6 @@ pub fn receiver(
                 &stats,
                 coalesce,
                 use_pinned_memory,
-                in_vote_only_mode,
                 is_staked_service,
             );
         })
@@ -300,7 +290,6 @@ pub fn receiver_atomic(
     stats: Arc<StreamerReceiveStats>,
     coalesce: Option<Duration>,
     use_pinned_memory: bool,
-    in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> JoinHandle<()> {
     Builder::new()
@@ -315,7 +304,6 @@ pub fn receiver_atomic(
                 &stats,
                 coalesce,
                 use_pinned_memory,
-                in_vote_only_mode,
                 is_staked_service,
             );
         })
@@ -493,6 +481,7 @@ fn recv_send(
 
 pub fn recv_packet_batches(
     recvr: &PacketBatchReceiver,
+    soft_receive_limit: usize,
 ) -> Result<(Vec<PacketBatch>, usize, Duration)> {
     let recv_start = Instant::now();
     let timer = Duration::new(1, 0);
@@ -500,7 +489,11 @@ pub fn recv_packet_batches(
     trace!("got packets");
     let mut num_packets = packet_batch.len();
     let mut packet_batches = vec![packet_batch];
-    while let Ok(packet_batch) = recvr.try_recv() {
+
+    while num_packets < soft_receive_limit {
+        let Ok(packet_batch) = recvr.try_recv() else {
+            break;
+        };
         trace!("got more packets");
         num_packets += packet_batch.len();
         packet_batches.push(packet_batch);
@@ -605,7 +598,7 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{Packet, RecycledPacketBatch, PACKET_DATA_SIZE},
+            packet::{PACKET_DATA_SIZE, Packet, RecycledPacketBatch},
             streamer::{receiver, responder},
         },
         crossbeam_channel::unbounded,
@@ -614,8 +607,8 @@ mod test {
         std::{
             io::{self, Write},
             sync::{
-                atomic::{AtomicBool, Ordering},
                 Arc,
+                atomic::{AtomicBool, Ordering},
             },
             time::Duration,
         },
@@ -659,7 +652,6 @@ mod test {
             stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
             true,
-            None,
             false,
         );
         const NUM_PACKETS: usize = 5;

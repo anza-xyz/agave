@@ -7,7 +7,7 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = { workspace = true }
+edition = "2024"
 
 [features]
 agave-unstable-api = []
@@ -35,7 +35,7 @@ solana-message = { workspace = true, features = ["serde"] }
 solana-signature = { workspace = true, features = ["serde"] }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true, features = ["bincode"] }
-solana-transaction = { workspace = true, features = ["bincode"] }
+solana-transaction = { workspace = true, features = ["wincode"] }
 
 [[bench]]
 name = "bytes"

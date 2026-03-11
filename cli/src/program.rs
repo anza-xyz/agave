@@ -2,16 +2,16 @@ use {
     crate::{
         checks::*,
         cli::{
-            log_instruction_custom_error, CliCommand, CliCommandInfo, CliConfig, CliError,
-            ProcessResult,
+            CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
+            log_instruction_custom_error,
         },
         compute_budget::{
-            simulate_and_update_compute_unit_limit, ComputeUnitConfig,
-            UpdateComputeUnitLimitResult, WithComputeUnitConfig,
+            ComputeUnitConfig, UpdateComputeUnitLimitResult, WithComputeUnitConfig,
+            simulate_and_update_compute_unit_limit,
         },
-        feature::{status_from_account, CliFeatureStatus},
+        feature::{CliFeatureStatus, status_from_account},
     },
-    agave_feature_set::{raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES},
+    agave_feature_set::{FEATURE_NAMES, FeatureSet, raise_cpi_nesting_limit_to_8},
     agave_syscalls::create_program_runtime_environment_v1,
     bip39::{Language, Mnemonic, MnemonicType, Seed},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
@@ -20,29 +20,29 @@ use {
     solana_account_decoder::{UiAccount, UiAccountEncoding, UiDataSliceConfig},
     solana_clap_utils::{
         self,
-        compute_budget::{compute_unit_price_arg, ComputeUnitLimit},
-        fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
+        compute_budget::{ComputeUnitLimit, compute_unit_price_arg},
+        fee_payer::{FEE_PAYER_ARG, fee_payer_arg},
         hidden_unless_forced,
         input_parsers::*,
         input_validators::*,
         keypair::*,
-        offline::{OfflineArgs, DUMP_TRANSACTION_MESSAGE, SIGN_ONLY_ARG},
+        offline::{DUMP_TRANSACTION_MESSAGE, OfflineArgs, SIGN_ONLY_ARG},
     },
     solana_cli_output::{
-        return_signers_with_config, CliProgram, CliProgramAccountType, CliProgramAuthority,
-        CliProgramBuffer, CliProgramId, CliUpgradeableBuffer, CliUpgradeableBuffers,
-        CliUpgradeableProgram, CliUpgradeableProgramClosed, CliUpgradeableProgramExtended,
-        CliUpgradeableProgramMigrated, CliUpgradeablePrograms, ReturnSignersConfig,
+        CliProgram, CliProgramAccountType, CliProgramAuthority, CliProgramBuffer, CliProgramId,
+        CliUpgradeableBuffer, CliUpgradeableBuffers, CliUpgradeableProgram,
+        CliUpgradeableProgramClosed, CliUpgradeableProgramExtended, CliUpgradeableProgramMigrated,
+        CliUpgradeablePrograms, ReturnSignersConfig, return_signers_with_config,
     },
     solana_client::{
         connection_cache::ConnectionCache,
         send_and_confirm_transactions_in_parallel::{
-            send_and_confirm_transactions_in_parallel_v2, SendAndConfirmConfigV2,
+            SendAndConfirmConfigV2, send_and_confirm_transactions_in_parallel_v2,
         },
     },
     solana_commitment_config::CommitmentConfig,
-    solana_instruction::{error::InstructionError, Instruction},
-    solana_keypair::{keypair_from_seed, read_keypair_file, Keypair},
+    solana_instruction::{Instruction, error::InstructionError},
+    solana_keypair::{Keypair, keypair_from_seed, read_keypair_file},
     solana_loader_v3_interface::{
         get_program_data_address, instruction as loader_v3_instruction,
         state::UpgradeableLoaderState,
@@ -66,7 +66,7 @@ use {
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget},
     solana_signature::Signature,
     solana_signer::Signer,
-    solana_system_interface::{error::SystemError, MAX_PERMITTED_DATA_LENGTH},
+    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, error::SystemError},
     solana_tpu_client::tpu_client::TpuClientConfig,
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
@@ -172,6 +172,7 @@ pub enum ProgramCliCommand {
     ExtendProgramChecked {
         program_pubkey: Pubkey,
         authority_signer_index: SignerIndex,
+        payer_signer_index: SignerIndex,
         additional_bytes: u32,
     },
     MigrateProgram {
@@ -648,6 +649,27 @@ impl ProgramSubCommands for App<'_, '_> {
                                     "Number of bytes that will be allocated for the program's \
                                      data account",
                                 ),
+                        )
+                        .arg(
+                            Arg::with_name("authority")
+                                .long("authority")
+                                .value_name("AUTHORITY_SIGNER")
+                                .takes_value(true)
+                                .validator(is_valid_signer)
+                                .help(
+                                    "Upgrade authority [default: the default configured keypair]",
+                                ),
+                        )
+                        .arg(
+                            Arg::with_name("payer")
+                                .long("payer")
+                                .value_name("PAYER_SIGNER")
+                                .takes_value(true)
+                                .validator(is_valid_signer)
+                                .help(
+                                    "Payer for the additional rent [default: the default \
+                                     configured keypair]",
+                                ),
                         ),
                 )
                 .subcommand(
@@ -1018,11 +1040,13 @@ pub fn parse_program_subcommand(
 
             let (authority_signer, authority_pubkey) =
                 signer_of(matches, "authority", wallet_manager)?;
+            let (payer_signer, payer_pubkey) = signer_of(matches, "payer", wallet_manager)?;
 
             let signer_info = default_signer.generate_unique_signers(
                 vec![
                     Some(default_signer.signer_from_path(matches, wallet_manager)?),
                     authority_signer,
+                    payer_signer,
                 ],
                 matches,
                 wallet_manager,
@@ -1032,6 +1056,7 @@ pub fn parse_program_subcommand(
                 command: CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
                     program_pubkey,
                     authority_signer_index: signer_info.index_of(authority_pubkey).unwrap(),
+                    payer_signer_index: signer_info.index_of(payer_pubkey).unwrap(),
                     additional_bytes,
                 }),
                 signers: signer_info.signers,
@@ -1270,6 +1295,7 @@ pub async fn process_program_subcommand(
         ProgramCliCommand::ExtendProgramChecked {
             program_pubkey,
             authority_signer_index,
+            payer_signer_index,
             additional_bytes,
         } => {
             process_extend_program(
@@ -1277,6 +1303,7 @@ pub async fn process_program_subcommand(
                 config,
                 *program_pubkey,
                 *authority_signer_index,
+                *payer_signer_index,
                 *additional_bytes,
             )
             .await
@@ -1299,24 +1326,21 @@ pub async fn process_program_subcommand(
 }
 
 fn get_default_program_keypair(program_location: &Option<String>) -> Keypair {
-    let program_keypair = {
-        if let Some(program_location) = program_location {
-            let mut keypair_file = PathBuf::new();
-            keypair_file.push(program_location);
-            let mut filename = keypair_file.file_stem().unwrap().to_os_string();
-            filename.push("-keypair");
-            keypair_file.set_file_name(filename);
-            keypair_file.set_extension("json");
-            if let Ok(keypair) = read_keypair_file(keypair_file.to_str().unwrap()) {
-                keypair
-            } else {
-                Keypair::new()
-            }
+    if let Some(program_location) = program_location {
+        let mut keypair_file = PathBuf::new();
+        keypair_file.push(program_location);
+        let mut filename = keypair_file.file_stem().unwrap().to_os_string();
+        filename.push("-keypair");
+        keypair_file.set_file_name(filename);
+        keypair_file.set_extension("json");
+        if let Ok(keypair) = read_keypair_file(keypair_file.to_str().unwrap()) {
+            keypair
         } else {
             Keypair::new()
         }
-    };
-    program_keypair
+    } else {
+        Keypair::new()
+    }
 }
 
 /// Deploy program using upgradeable loader. It also can process program upgrades
@@ -1784,8 +1808,8 @@ async fn process_write_buffer(
     } else {
         program_data.len()
     };
-    let min_rent_exempt_program_data_balance = rpc_client
-        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+    let min_rent_exempt_program_buffer_balance = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(
             buffer_data_max_len,
         ))
         .await?;
@@ -1795,7 +1819,7 @@ async fn process_write_buffer(
         config,
         &program_data,
         program_data.len(),
-        min_rent_exempt_program_data_balance,
+        min_rent_exempt_program_buffer_balance,
         fee_payer_signer,
         buffer_signer,
         &buffer_pubkey,
@@ -2435,7 +2459,7 @@ async fn process_close(
 
         let mut closed = vec![];
         for buffer in buffers.buffers.iter() {
-            if close(
+            match close(
                 rpc_client,
                 config,
                 &Pubkey::from_str(&buffer.address)?,
@@ -2444,11 +2468,16 @@ async fn process_close(
                 None,
             )
             .await
-            .is_ok()
             {
-                closed.push(buffer.clone());
+                Ok(()) => {
+                    closed.push(buffer.clone());
+                }
+                Err(err) => {
+                    eprintln!("Failed to close buffer {}: {}", buffer.address, err);
+                }
             }
         }
+
         Ok(config
             .output_format
             .formatted_string(&CliUpgradeableBuffers {
@@ -2463,10 +2492,13 @@ async fn process_extend_program(
     config: &CliConfig<'_>,
     program_pubkey: Pubkey,
     authority_signer_index: SignerIndex,
+    payer_signer_index: SignerIndex,
     additional_bytes: u32,
 ) -> ProcessResult {
-    let payer_pubkey = config.signers[0].pubkey();
+    let fee_payer_pubkey = config.signers[0].pubkey();
     let authority_signer = config.signers[authority_signer_index];
+    let payer_signer = config.signers[payer_signer_index];
+    let payer_pubkey = payer_signer.pubkey();
 
     if additional_bytes == 0 {
         return Err("Additional bytes must be greater than zero".into());
@@ -2541,9 +2573,12 @@ async fn process_extend_program(
                 additional_bytes,
             )
         };
-    let mut tx = Transaction::new_unsigned(Message::new(&[instruction], Some(&payer_pubkey)));
+    let mut tx = Transaction::new_unsigned(Message::new(&[instruction], Some(&fee_payer_pubkey)));
 
-    tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
+    tx.try_sign(
+        &[config.signers[0], authority_signer, payer_signer],
+        blockhash,
+    )?;
     let result = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &tx,
@@ -2827,7 +2862,7 @@ async fn do_process_write_buffer(
     config: &CliConfig<'_>,
     program_data: &[u8], // can be empty, hence we have program_len
     program_len: usize,
-    min_rent_exempt_program_data_balance: u64,
+    min_rent_exempt_program_buffer_balance: u64,
     fee_payer_signer: &dyn Signer,
     buffer_signer: Option<&dyn Signer>,
     buffer_pubkey: &Pubkey,
@@ -2850,10 +2885,10 @@ async fn do_process_write_buffer(
                     &fee_payer_signer.pubkey(),
                     buffer_pubkey,
                     &buffer_authority_signer.pubkey(),
-                    min_rent_exempt_program_data_balance,
+                    min_rent_exempt_program_buffer_balance,
                     program_len,
                 )?,
-                min_rent_exempt_program_data_balance,
+                min_rent_exempt_program_buffer_balance,
                 vec![0; program_len],
             )
         };
@@ -3405,8 +3440,8 @@ async fn send_deploy_messages(
     Ok(None)
 }
 
-fn create_ephemeral_keypair(
-) -> Result<(usize, bip39::Mnemonic, Keypair), Box<dyn std::error::Error>> {
+fn create_ephemeral_keypair()
+-> Result<(usize, bip39::Mnemonic, Keypair), Box<dyn std::error::Error>> {
     const WORDS: usize = 12;
     let mnemonic = Mnemonic::new(MnemonicType::for_word_count(WORDS)?, Language::English);
     let seed = Seed::new(&mnemonic, "");
@@ -4591,9 +4626,97 @@ mod tests {
                 command: CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
                     program_pubkey,
                     authority_signer_index: 0,
+                    payer_signer_index: 0,
                     additional_bytes
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
+            }
+        );
+
+        // with authority
+        let authority_keypair = Keypair::new();
+        let authority_keypair_file = make_tmp_path("authority_keypair_file");
+        write_keypair_file(&authority_keypair, &authority_keypair_file).unwrap();
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "extend",
+            &program_pubkey.to_string(),
+            &additional_bytes.to_string(),
+            "--authority",
+            &authority_keypair_file,
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
+                    program_pubkey,
+                    authority_signer_index: 1,
+                    payer_signer_index: 0,
+                    additional_bytes
+                }),
+                signers: vec![
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&authority_keypair_file).unwrap()),
+                ],
+            }
+        );
+
+        // with payer
+        let payer_keypair = Keypair::new();
+        let payer_keypair_file = make_tmp_path("payer_keypair_file");
+        write_keypair_file(&payer_keypair, &payer_keypair_file).unwrap();
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "extend",
+            &program_pubkey.to_string(),
+            &additional_bytes.to_string(),
+            "--payer",
+            &payer_keypair_file,
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
+                    program_pubkey,
+                    authority_signer_index: 0,
+                    payer_signer_index: 1,
+                    additional_bytes
+                }),
+                signers: vec![
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&payer_keypair_file).unwrap()),
+                ],
+            }
+        );
+
+        // with both authority and payer
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "extend",
+            &program_pubkey.to_string(),
+            &additional_bytes.to_string(),
+            "--authority",
+            &authority_keypair_file,
+            "--payer",
+            &payer_keypair_file,
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
+                    program_pubkey,
+                    authority_signer_index: 1,
+                    payer_signer_index: 2,
+                    additional_bytes
+                }),
+                signers: vec![
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&authority_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&payer_keypair_file).unwrap()),
+                ],
             }
         );
     }

@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 
 pub mod nonblocking;
@@ -22,7 +14,7 @@ use {
             QuicLazyInitializedEndpoint,
         },
         quic_client::{
-            close_quic_connection, QuicClientConnection as BlockingQuicClientConnection,
+            QuicClientConnection as BlockingQuicClientConnection, close_quic_connection,
         },
     },
     log::debug,
@@ -39,7 +31,7 @@ use {
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::streamer::StakedNodes,
-    solana_tls_utils::{new_dummy_x509_certificate, QuicClientCertificate},
+    solana_tls_utils::{QuicClientCertificate, new_dummy_x509_certificate},
     std::{
         net::{IpAddr, SocketAddr, UdpSocket},
         sync::{Arc, RwLock},

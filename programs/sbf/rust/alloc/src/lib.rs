@@ -7,11 +7,11 @@ extern crate alloc;
 use {
     solana_msg::msg,
     solana_program::log::sol_log_64,
-    solana_program_entrypoint::{custom_heap_default, custom_panic_default, SUCCESS},
+    solana_program_entrypoint::{SUCCESS, custom_heap_default, custom_panic_default},
     std::{alloc::Layout, mem},
 };
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     unsafe {
         // Test modest allocation and de-allocation

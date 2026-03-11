@@ -13,6 +13,7 @@ agave-unstable-api = []
 
 [dependencies]
 arc-swap = { workspace = true }
+bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
@@ -22,3 +23,4 @@ thiserror = { workspace = true }
 agave-xdp-ebpf = { workspace = true }
 aya = { workspace = true }
 caps = { workspace = true }
+core_affinity = { workspace = true }

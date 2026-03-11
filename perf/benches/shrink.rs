@@ -1,10 +1,10 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    bencher::{benchmark_group, benchmark_main, Bencher},
+    bencher::{Bencher, benchmark_group, benchmark_main},
     rand::prelude::*,
     solana_perf::{
-        packet::{to_packet_batches, PacketBatch, PACKETS_PER_BATCH},
+        packet::{PACKETS_PER_BATCH, PacketBatch, to_packet_batches},
         sigverify,
     },
     std::iter,

@@ -34,8 +34,8 @@ const SOCKET_TAG_RPC: u8 = 2;
 const SOCKET_TAG_RPC_PUBSUB: u8 = 3;
 const SOCKET_TAG_SERVE_REPAIR: u8 = 4;
 const SOCKET_TAG_SERVE_REPAIR_QUIC: u8 = 1;
-const SOCKET_TAG_TPU: u8 = 5;
-const SOCKET_TAG_TPU_FORWARDS: u8 = 6;
+const SOCKET_TAG_TPU: u8 = 5; // not in use
+const SOCKET_TAG_TPU_FORWARDS: u8 = 6; // not in use
 const SOCKET_TAG_TPU_FORWARDS_QUIC: u8 = 7;
 const SOCKET_TAG_TPU_QUIC: u8 = 8;
 const SOCKET_TAG_TPU_VOTE: u8 = 9;
@@ -442,11 +442,7 @@ impl ContactInfo {
         let mut node = Self::new(*pubkey, wallclock, /*shred_version:*/ 0u16);
         node.set_gossip((Ipv4Addr::LOCALHOST, 8000)).unwrap();
         node.set_tvu(UDP, (Ipv4Addr::LOCALHOST, 8001)).unwrap();
-        node.set_tvu(QUIC, (Ipv4Addr::LOCALHOST, 8002)).unwrap();
-        node.set_tpu(UDP, (Ipv4Addr::LOCALHOST, 8003)).unwrap();
         node.set_tpu(QUIC, (Ipv4Addr::LOCALHOST, 8009)).unwrap();
-        node.set_tpu_forwards(UDP, (Ipv4Addr::LOCALHOST, 8004))
-            .unwrap();
         node.set_tpu_forwards(QUIC, (Ipv4Addr::LOCALHOST, 8010))
             .unwrap();
         node.set_tpu_vote(UDP, (Ipv4Addr::LOCALHOST, 8005)).unwrap();
@@ -476,9 +472,7 @@ impl ContactInfo {
         node.set_gossip((addr, port + 1)).unwrap();
         node.set_tvu(UDP, (addr, port + 2)).unwrap();
         node.set_tvu(QUIC, (addr, port + 3)).unwrap();
-        node.set_tpu(UDP, (addr, port)).unwrap();
         node.set_tpu(QUIC, (addr, port + 6)).unwrap();
-        node.set_tpu_forwards(UDP, (addr, port + 5)).unwrap();
         node.set_tpu_forwards(QUIC, (addr, port + 11)).unwrap();
         node.set_tpu_vote(UDP, (addr, port + 7)).unwrap();
         node.set_tpu_vote(QUIC, (addr, port + 9)).unwrap();
@@ -682,9 +676,7 @@ macro_rules! socketaddr {
     ($ip:expr, $port:expr) => {
         std::net::SocketAddr::from((std::net::Ipv4Addr::from($ip), $port))
     };
-    ($str:expr) => {{
-        $str.parse::<std::net::SocketAddr>().unwrap()
-    }};
+    ($str:expr) => {{ $str.parse::<std::net::SocketAddr>().unwrap() }};
 }
 
 #[macro_export]
@@ -699,8 +691,8 @@ mod tests {
     use {
         super::*,
         rand::{
-            prelude::{IndexedRandom as _, SliceRandom as _},
             Rng,
+            prelude::{IndexedRandom as _, SliceRandom as _},
         },
         solana_keypair::Keypair,
         solana_signer::Signer,
@@ -905,16 +897,8 @@ mod tests {
                 sockets.get(&SOCKET_TAG_SERVE_REPAIR_QUIC)
             );
             assert_eq!(
-                node.tpu(Protocol::UDP).as_ref(),
-                sockets.get(&SOCKET_TAG_TPU)
-            );
-            assert_eq!(
                 node.tpu(Protocol::QUIC).as_ref(),
                 sockets.get(&SOCKET_TAG_TPU_QUIC)
-            );
-            assert_eq!(
-                node.tpu_forwards(Protocol::UDP).as_ref(),
-                sockets.get(&SOCKET_TAG_TPU_FORWARDS)
             );
             assert_eq!(
                 node.tpu_forwards(Protocol::QUIC).as_ref(),
@@ -960,19 +944,22 @@ mod tests {
                 sockets.values().map(SocketAddr::ip).collect::<HashSet<_>>(),
             );
             // Assert that all sockets reference a valid IP address.
-            assert!(node
-                .sockets
-                .iter()
-                .map(|entry| node.addrs.get(usize::from(entry.index)))
-                .all(|addr| addr.is_some()));
-            // Assert that port offsets don't overflow.
-            assert!(u16::try_from(
+            assert!(
                 node.sockets
                     .iter()
-                    .map(|entry| u64::from(entry.offset))
-                    .sum::<u64>()
-            )
-            .is_ok());
+                    .map(|entry| node.addrs.get(usize::from(entry.index)))
+                    .all(|addr| addr.is_some())
+            );
+            // Assert that port offsets don't overflow.
+            assert!(
+                u16::try_from(
+                    node.sockets
+                        .iter()
+                        .map(|entry| u64::from(entry.offset))
+                        .sum::<u64>()
+                )
+                .is_ok()
+            );
             // Assert that serde round trips.
             let bytes = bincode::serialize(&node).unwrap();
             let other: ContactInfo = bincode::deserialize(&bytes).unwrap();

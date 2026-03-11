@@ -4,14 +4,14 @@
 use {
     aya_ebpf::{
         bindings::xdp_action::{XDP_DROP, XDP_PASS},
-        helpers::gen::bpf_xdp_get_buff_len,
+        helpers::r#gen::bpf_xdp_get_buff_len,
         macros::xdp,
         programs::XdpContext,
     },
     core::ptr,
 };
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 // Set to 1 from user space at load time to control whether we must drop multi-frags packets
 static AGAVE_XDP_DROP_MULTI_FRAGS: u8 = 0;
 

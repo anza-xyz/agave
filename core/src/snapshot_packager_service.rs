@@ -1,11 +1,11 @@
 mod snapshot_gossip_manager;
 use {
     agave_snapshots::{
-        paths as snapshot_paths, snapshot_config::SnapshotConfig,
-        snapshot_hash::StartingSnapshotHashes, SnapshotKind,
+        SnapshotKind, paths as snapshot_paths, snapshot_config::SnapshotConfig,
+        snapshot_hash::StartingSnapshotHashes,
     },
     snapshot_gossip_manager::SnapshotGossipManager,
-    solana_accounts_db::accounts_db::AccountStorageEntry,
+    solana_accounts_db::account_storage_entry::AccountStorageEntry,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::{meas_dur, measure::Measure, measure_us},
@@ -18,8 +18,8 @@ use {
     },
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -44,6 +44,7 @@ impl SnapshotPackagerService {
         cluster_info: Arc<ClusterInfo>,
         snapshot_controller: Arc<SnapshotController>,
         enable_gossip_push: bool,
+        niceness_adj: i8,
     ) -> Self {
         let t_snapshot_packager = Builder::new()
             .name("solSnapshotPkgr".to_string())
@@ -53,7 +54,7 @@ impl SnapshotPackagerService {
                 }
                 info!("{} has started", Self::NAME);
                 let snapshot_config = snapshot_controller.snapshot_config();
-                renice_this_thread(snapshot_config.packager_thread_niceness_adj).unwrap();
+                renice_this_thread(niceness_adj).unwrap();
                 let mut snapshot_gossip_manager = enable_gossip_push
                     .then(|| SnapshotGossipManager::new(cluster_info, starting_snapshot_hashes));
 
@@ -84,6 +85,8 @@ impl SnapshotPackagerService {
                     let snapshot_kind = snapshot_package.snapshot_kind;
                     let snapshot_slot = snapshot_package.slot;
                     let snapshot_hash = snapshot_package.hash;
+
+                    snapshot_controller.set_latest_bank_snapshot_slot(snapshot_slot);
 
                     if exit_backpressure.is_some() {
                         // With exit backpressure, we will delay flushing snapshot storages

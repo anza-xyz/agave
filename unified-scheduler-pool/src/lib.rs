@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 //! Transaction scheduling code.
 //!
 //! This crate implements 3 solana-runtime traits [`InstalledScheduler`], [`UninstalledScheduler`]
@@ -25,30 +17,29 @@ use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     assert_matches::assert_matches,
     crossbeam_channel::{
-        self, never, select_biased, Receiver, RecvError, RecvTimeoutError, SendError, Sender,
+        self, Receiver, RecvError, RecvTimeoutError, SendError, Sender, never, select_biased,
     },
     dashmap::DashMap,
     derive_where::derive_where,
-    dyn_clone::{clone_trait_object, DynClone},
+    dyn_clone::{DynClone, clone_trait_object},
     log::*,
     scopeguard::defer,
     solana_clock::{Epoch, Slot},
     solana_cost_model::cost_model::CostModel,
     solana_ledger::blockstore_processor::{
-        execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
+        TransactionBatchWithIndexes, TransactionStatusSender, execute_batch,
     },
     solana_metrics::datapoint_info,
     solana_poh::transaction_recorder::{RecordTransactionsSummary, TransactionRecorder},
     solana_pubkey::Pubkey,
     solana_runtime::{
         installed_scheduler_pool::{
-            initialized_result_with_timings, InstalledScheduler, InstalledSchedulerBox,
-            InstalledSchedulerPool, ResultWithTimings, ScheduleResult, SchedulerAborted,
-            SchedulerId, SchedulingContext, TimeoutListener, UninstalledScheduler,
-            UninstalledSchedulerBox,
+            InstalledScheduler, InstalledSchedulerBox, InstalledSchedulerPool, ResultWithTimings,
+            ScheduleResult, SchedulerAborted, SchedulerId, SchedulingContext, TimeoutListener,
+            UninstalledScheduler, UninstalledSchedulerBox, initialized_result_with_timings,
         },
         prioritization_fee_cache::PrioritizationFeeCache,
-        vote_sender_types::ReplayVoteSender,
+        vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_svm::transaction_processing_result::ProcessedTransaction,
@@ -65,22 +56,24 @@ use {
         fmt::Debug,
         marker::PhantomData,
         mem,
-        ops::DerefMut,
         sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
             Arc, Mutex, MutexGuard, OnceLock, Weak,
+            atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
         },
-        thread::{self, sleep, JoinHandle},
+        thread::{self, JoinHandle, sleep},
         time::{Duration, Instant},
     },
     trait_set::trait_set,
     unwrap_none::UnwrapNone,
-    vec_extract_if_polyfill::MakeExtractIf,
 };
 
 // For now, cap bandwidth use to just half of 1 Gbps link, which should be pretty conservative
 // assumption these days...
 const MAX_BLOCK_SIZE_THRESHOLD: BlockSize = 20 * 1024 * 1024;
+
+// This const is intentionally aligned with central scheduler's corresponding const called
+// TOTAL_BUFFERED_PACKETS.
+const MAX_UNIQUE_ACTIVE_TASK_COUNT: usize = 100_000;
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
@@ -90,8 +83,8 @@ use crate::sleepless_testing::BuilderTracked;
 #[derive(Debug)]
 enum CheckPoint<'a> {
     NewTask(OrderedTaskId),
-    NewBufferedTask(OrderedTaskId),
-    BufferedTask(OrderedTaskId),
+    NewBufferedOrDroppedTask(OrderedTaskId),
+    BufferedOrDroppedTask(OrderedTaskId),
     TaskHandled(OrderedTaskId),
     TaskAccumulated(OrderedTaskId, &'a Result<()>),
     SessionEnding,
@@ -591,17 +584,11 @@ where
                     let Ok(mut scheduler_inners) = scheduler_pool.scheduler_inners.lock() else {
                         break;
                     };
-                    // Use the still-unstable Vec::extract_if() even on stable rust toolchain by
-                    // using a polyfill and allowing unstable_name_collisions, because it's
-                    // simplest to code and fastest to run (= O(n); single linear pass and no
-                    // reallocation).
-                    //
                     // Note that this critical section could block the latency-sensitive replay
                     // code-path via ::take_scheduler().
-                    idle_inners.extend(MakeExtractIf::extract_if(
-                        scheduler_inners.deref_mut(),
-                        |(_inner, pooled_at)| now.duration_since(*pooled_at) > max_pooling_duration,
-                    ));
+                    idle_inners.extend(scheduler_inners.extract_if(.., |(_inner, pooled_at)| {
+                        now.duration_since(*pooled_at) > max_pooling_duration
+                    }));
                     drop(scheduler_inners);
 
                     let idle_inner_count = idle_inners.len();
@@ -691,8 +678,8 @@ where
                     let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock() else {
                         break;
                     };
-                    expired_listeners.extend(MakeExtractIf::extract_if(
-                        timeout_listeners.deref_mut(),
+                    expired_listeners.extend(timeout_listeners.extract_if(
+                        ..,
                         |(_callback, registered_at)| {
                             now.duration_since(*registered_at) > timeout_duration
                         },
@@ -1296,6 +1283,13 @@ impl TaskHandler for DefaultTaskHandler {
             bank,
             handler_context.transaction_status_sender.as_ref(),
             handler_context.replay_vote_sender.as_ref(),
+            match scheduling_context.mode() {
+                BlockVerification => ReplayVoteSendType::Executed {
+                    replay_bank_id: bank.bank_id(),
+                    replay_slot: bank.slot(),
+                },
+                BlockProduction => ReplayVoteSendType::VerifiedExecuted,
+            },
             timings,
             handler_context.log_messages_bytes_limit,
             handler_context.prioritization_fee_cache.as_deref(),
@@ -1855,6 +1849,32 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         }
     }
 
+    fn max_unique_active_task_count(mode: SchedulingMode) -> Option<usize> {
+        match mode {
+            BlockVerification => {
+                // We can't silently drop block verification tasks by imposing some arbitrary limit
+                // here; otherwise same transactions could be allowed in the same block!
+                // The block size (i.e. shred count) limit is already enforced before unified
+                // scheduler.
+                None
+            }
+            BlockProduction => {
+                // Unlike BlockVerification, we need to cap the maximum number of tasks at hand at
+                // any given moment, in order to avoid unbounded memory consumption, which is
+                // remotely controllable. Also, drop duplicate tasks to make better use of the now
+                // constrained space.
+                // Note that this deduplication isn't perfect because it searches duplicates only
+                // among the _current_ active task set, allowing false negatives (i.e. failure of
+                // duplicate detection) in the already handled tasks. However, it's effective
+                // enough, given that significant buffering just before the first leader slot.
+                // This naive impl is chosen; otherwise proper eviction would rather be hard here,
+                // considering the existence of transaction retires (same tx but with different
+                // task id).
+                Some(MAX_UNIQUE_ACTIVE_TASK_COUNT)
+            }
+        }
+    }
+
     fn can_receive_unblocked_task(
         session_ending: bool,
         mode: SchedulingMode,
@@ -2187,16 +2207,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             move || {
                 let (do_now, dont_now) = (&disconnected::<()>(), &never::<()>());
                 let dummy_receiver = |trigger| {
-                    if trigger {
-                        do_now
-                    } else {
-                        dont_now
-                    }
+                    if trigger { do_now } else { dont_now }
                 };
 
                 let mut state_machine = unsafe {
                     SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling(
                         Self::max_running_task_count(scheduling_mode, handler_context.thread_count),
+                        Self::max_unique_active_task_count(scheduling_mode),
                     )
                 };
 
@@ -2268,7 +2285,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         if let Some(task) = state_machine.schedule_or_buffer_task(task, session_ending) {
                                             runnable_task_sender.send_aux_payload(task).unwrap();
                                         } else {
-                                            sleepless_testing::at(CheckPoint::BufferedTask(task_id));
+                                            sleepless_testing::at(CheckPoint::BufferedOrDroppedTask(task_id));
                                         }
                                     }
                                     Ok(NewTaskPayload::CloseSubchannel) => {
@@ -2330,6 +2347,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             "unified_scheduler-bp_session_stats",
                             ("slot", current_slot.unwrap_or_default(), i64),
                             ("block_size_estimate", block_size_estimate, i64),
+                            ("total_task_count", state_machine.total_task_count(), i64),
+                            (
+                                "peak_active_task_count",
+                                state_machine.peak_active_task_count(),
+                                i64
+                            ),
+                            (
+                                "dropped_task_count",
+                                state_machine.dropped_task_count(),
+                                i64
+                            ),
                         );
                     }
                     if matches!(scheduling_mode, BlockVerification) {
@@ -2361,7 +2389,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
                             Ok(NewTaskPayload::Payload(task)) => {
-                                sleepless_testing::at(CheckPoint::NewBufferedTask(task.task_id()));
+                                sleepless_testing::at(CheckPoint::NewBufferedOrDroppedTask(
+                                    task.task_id(),
+                                ));
                                 assert_matches!(scheduling_mode, BlockProduction);
                                 state_machine.buffer_task(task);
                             }
@@ -2901,7 +2931,7 @@ mod tests {
         super::*,
         crate::sleepless_testing,
         assert_matches::assert_matches,
-        solana_clock::{Slot, MAX_PROCESSING_AGE},
+        solana_clock::{MAX_PROCESSING_AGE, Slot},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
@@ -2910,7 +2940,7 @@ mod tests {
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
             installed_scheduler_pool::{
                 BankWithScheduler, InstalledSchedulerPoolArc, SchedulingContext,
             },
@@ -3000,6 +3030,7 @@ mod tests {
         BeforeEndSession,
         AfterSession,
         AfterDiscarded,
+        BeforeDiscardRequested,
     }
 
     #[test]
@@ -3677,13 +3708,17 @@ mod tests {
 
         // existing banks in bank_forks shouldn't process transactions anymore in general, so
         // shouldn't be touched
-        assert!(!bank_forks
-            .working_bank_with_scheduler()
-            .has_installed_scheduler());
+        assert!(
+            !bank_forks
+                .working_bank_with_scheduler()
+                .has_installed_scheduler()
+        );
         bank_forks.install_scheduler_pool(pool);
-        assert!(!bank_forks
-            .working_bank_with_scheduler()
-            .has_installed_scheduler());
+        assert!(
+            !bank_forks
+                .working_bank_with_scheduler()
+                .has_installed_scheduler()
+        );
 
         let mut child_bank = bank_forks.insert(child_bank);
         assert!(child_bank.has_installed_scheduler());
@@ -4007,7 +4042,7 @@ mod tests {
         const BLOCKED_TRANSACTION_INDEX: OrderedTaskId = 1;
 
         let _progress = sleepless_testing::setup(&[
-            &CheckPoint::BufferedTask(BLOCKED_TRANSACTION_INDEX),
+            &CheckPoint::BufferedOrDroppedTask(BLOCKED_TRANSACTION_INDEX),
             &TestCheckPoint::AfterBufferedTask,
             &CheckPoint::SessionEnding,
             &TestCheckPoint::AfterSessionEnding,
@@ -4828,7 +4863,7 @@ mod tests {
         agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
-            &CheckPoint::NewBufferedTask(17),
+            &CheckPoint::NewBufferedOrDroppedTask(17),
             &TestCheckPoint::AfterNewBufferedTask,
         ]);
 
@@ -4890,7 +4925,7 @@ mod tests {
         agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
-            &CheckPoint::NewBufferedTask(18),
+            &CheckPoint::NewBufferedOrDroppedTask(18),
             &TestCheckPoint::AfterNewBufferedTask,
         ]);
 
@@ -5197,15 +5232,13 @@ mod tests {
 
         agave_logger::setup();
 
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_for_block_production(10_000);
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_for_block_production(10_000);
 
         const DISCARDED_TASK_COUNT: OrderedTaskId = 3;
         let _progress = sleepless_testing::setup(&[
-            &CheckPoint::NewBufferedTask(DISCARDED_TASK_COUNT - 1),
+            &CheckPoint::NewBufferedOrDroppedTask(DISCARDED_TASK_COUNT - 1),
+            &TestCheckPoint::BeforeDiscardRequested,
             &CheckPoint::DiscardRequested,
             &CheckPoint::Discarded(DISCARDED_TASK_COUNT.try_into().unwrap()),
             &TestCheckPoint::AfterDiscarded,
@@ -5227,16 +5260,18 @@ mod tests {
             DEFAULT_TIMEOUT_DURATION,
         );
 
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        ));
         let fixed_banking_packet_handler =
             Box::new(move |helper: &BankingStageHelper, _banking_packet| {
                 for task_id in 0..DISCARDED_TASK_COUNT {
-                    helper.send_new_task(helper.create_new_unconstrained_task(tx0.clone(), task_id))
+                    let tx = RuntimeTransaction::from_transaction_for_tests(
+                        system_transaction::transfer(
+                            &Keypair::new(),
+                            &solana_pubkey::new_rand(),
+                            2,
+                            genesis_config.hash(),
+                        ),
+                    );
+                    helper.send_new_task(helper.create_new_unconstrained_task(tx, task_id))
                 }
             });
 
@@ -5256,6 +5291,7 @@ mod tests {
             Box::new(SimpleBankingMinitor),
         );
 
+        sleepless_testing::at(TestCheckPoint::BeforeDiscardRequested);
         // By now, there should be a buffered transaction. Let's discard it.
         *START_DISCARD.lock().unwrap() = true;
 

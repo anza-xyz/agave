@@ -4,13 +4,13 @@ use {
     crate::repair::{repair_service::OutstandingShredRepairs, serve_repair::ServeRepair},
     agave_feature_set::FeatureSet,
     bytes::Bytes,
-    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
     itertools::Itertools,
-    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
+    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
-    solana_ledger::shred::{self, should_discard_shred, ShredFetchStats},
+    solana_ledger::shred::{self, ShredFetchStats, should_discard_shred},
     solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{
         BytesPacket, BytesPacketBatch, PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef,
@@ -24,8 +24,8 @@ use {
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -79,20 +79,13 @@ impl ShredFetchStage {
         const STATS_SUBMIT_CADENCE: Duration = Duration::from_secs(1);
         let mut last_updated = Instant::now();
         let mut keypair = repair_context.as_ref().copied().map(RepairContext::keypair);
-        let (
-            mut last_root,
-            mut slots_per_epoch,
-            mut feature_set,
-            mut epoch_schedule,
-            mut last_slot,
-        ) = {
+        let (mut last_root, mut slots_per_epoch, mut feature_set, mut epoch_schedule) = {
             let root_bank = sharable_banks.root();
             (
                 root_bank.slot(),
                 root_bank.get_slots_in_epoch(root_bank.epoch()),
                 root_bank.feature_set.clone(),
                 root_bank.epoch_schedule().clone(),
-                sharable_banks.working().slot(),
             )
         };
         let mut stats = ShredFetchStats::default();
@@ -100,7 +93,6 @@ impl ShredFetchStage {
         for mut packet_batch in recvr {
             if last_updated.elapsed().as_millis() as u64 > DEFAULT_MS_PER_SLOT {
                 last_updated = Instant::now();
-                last_slot = sharable_banks.working().slot();
                 let root_bank = sharable_banks.root();
                 feature_set = root_bank.feature_set.clone();
                 epoch_schedule = root_bank.epoch_schedule().clone();
@@ -144,15 +136,7 @@ impl ShredFetchStage {
 
             // Filter out shreds that are way too far in the future to avoid the
             // overhead of having to hold onto them.
-            let max_slot = last_slot + MAX_SHRED_DISTANCE_MINIMUM.max(2 * slots_per_epoch);
-            let enforce_fixed_fec_set = |shred_slot| {
-                check_feature_activation(
-                    &agave_feature_set::enforce_fixed_fec_set::id(),
-                    shred_slot,
-                    &feature_set,
-                    &epoch_schedule,
-                )
-            };
+            let max_slot = last_root + MAX_SHRED_DISTANCE_MINIMUM.max(2 * slots_per_epoch);
             let discard_unexpected_data_complete_shreds = |shred_slot| {
                 check_feature_activation(
                     &agave_feature_set::discard_unexpected_data_complete_shreds::id(),
@@ -169,7 +153,6 @@ impl ShredFetchStage {
                         last_root,
                         max_slot,
                         shred_version,
-                        enforce_fixed_fec_set,
                         discard_unexpected_data_complete_shreds,
                         &mut stats,
                     )
@@ -228,7 +211,6 @@ impl ShredFetchStage {
                     receiver_stats.clone(),
                     Some(Duration::from_millis(5)), // coalesce
                     true,                           // use_pinned_memory
-                    None,                           // in_vote_only_mode
                     false,                          // is_staked_service
                 )
             })
@@ -255,7 +237,6 @@ impl ShredFetchStage {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         sockets: Vec<Arc<UdpSocket>>,
-        turbine_quic_endpoint_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_socket: Arc<UdpSocket>,
         sender: EvictingSender<PacketBatch>,
@@ -295,7 +276,7 @@ impl ShredFetchStage {
             vec![repair_socket],
             exit.clone(),
             sender.clone(),
-            recycler.clone(),
+            recycler,
             bank_forks.clone(),
             shred_version,
             "shred_fetch_repair",
@@ -311,10 +292,6 @@ impl ShredFetchStage {
         // Repair shreds fetched over QUIC protocol.
         {
             let (packet_sender, packet_receiver) = unbounded();
-            let bank_forks = bank_forks.clone();
-            let exit = exit.clone();
-            let sender = sender.clone();
-            let turbine_disabled = turbine_disabled.clone();
             tvu_threads.extend([
                 Builder::new()
                     .name("solTvuRecvRpr".to_string())
@@ -347,38 +324,6 @@ impl ShredFetchStage {
                     .unwrap(),
             ]);
         }
-        // Turbine shreds fetched over QUIC protocol.
-        let (packet_sender, packet_receiver) = unbounded();
-        tvu_threads.extend([
-            Builder::new()
-                .name("solTvuRecvQuic".to_string())
-                .spawn(|| {
-                    receive_quic_datagrams(
-                        turbine_quic_endpoint_receiver,
-                        PacketFlags::empty(),
-                        packet_sender,
-                        exit,
-                    )
-                })
-                .unwrap(),
-            Builder::new()
-                .name("solTvuFetchQuic".to_string())
-                .spawn(move || {
-                    let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-                    Self::modify_packets(
-                        packet_receiver,
-                        None,
-                        sender,
-                        &sharable_banks,
-                        shred_version,
-                        "shred_fetch_quic",
-                        PacketFlags::empty(),
-                        None, // repair_context
-                        turbine_disabled,
-                    )
-                })
-                .unwrap(),
-        ]);
         Self {
             thread_hdls: tvu_threads,
         }

@@ -6,7 +6,7 @@ use {
     std::{
         ffi::OsStr,
         fs,
-        io::{prelude::*, BufWriter},
+        io::{BufWriter, prelude::*},
         path::PathBuf,
         str,
     },

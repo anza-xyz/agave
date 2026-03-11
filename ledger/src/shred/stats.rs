@@ -38,6 +38,7 @@ pub struct ProcessShredsStats {
     pub err_unknown_chained_merkle_root: u64,
     pub(crate) padding_bytes: usize,
     pub(crate) data_bytes: usize,
+    pub(crate) num_entries: usize,
     num_merkle_data_shreds: usize,
     num_merkle_coding_shreds: usize,
 }
@@ -87,6 +88,7 @@ impl ProcessShredsStats {
             ("slot", slot, i64),
             ("shredding_time", self.shredding_elapsed, i64),
             ("receive_time", self.receive_elapsed, i64),
+            ("num_entries", self.num_entries, i64),
             ("num_data_shreds", self.num_merkle_data_shreds, i64),
             ("num_coding_shreds", self.num_merkle_coding_shreds, i64),
             ("slot_broadcast_time", slot_broadcast_time, i64),
@@ -241,6 +243,7 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
             err_unknown_chained_merkle_root,
             padding_bytes,
             data_bytes,
+            num_entries,
             num_merkle_data_shreds,
             num_merkle_coding_shreds,
         } = rhs;
@@ -260,6 +263,7 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
         self.err_unknown_chained_merkle_root += err_unknown_chained_merkle_root;
         self.padding_bytes += padding_bytes;
         self.data_bytes += data_bytes;
+        self.num_entries += num_entries;
         self.num_merkle_data_shreds += num_merkle_data_shreds;
         self.num_merkle_coding_shreds += num_merkle_coding_shreds;
         for (i, bucket) in self.num_data_shreds_hist.iter_mut().enumerate() {

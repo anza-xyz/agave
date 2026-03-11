@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 //! Alpenglow vote message types
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![deny(missing_docs)]
@@ -19,7 +11,9 @@
 #![warn(unsafe_op_in_unsafe_fn)]
 
 pub mod consensus_message;
+pub mod fraction;
 pub mod migration;
+pub mod reward_certificate;
 pub mod vote;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]

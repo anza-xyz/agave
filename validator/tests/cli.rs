@@ -1,6 +1,6 @@
 use {
     assert_cmd::prelude::*,
-    solana_keypair::{write_keypair_file, Keypair},
+    solana_keypair::{Keypair, write_keypair_file},
     std::process::Command,
     tempfile::TempDir,
 };
@@ -18,7 +18,7 @@ fn test_use_the_same_path_for_accounts_and_snapshots() {
 
     let temp_dir_str = temp_dir_path.to_str().unwrap();
 
-    let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!(env!("CARGO_PKG_NAME")));
     cmd.args([
         "--identity",
         id_json_str,

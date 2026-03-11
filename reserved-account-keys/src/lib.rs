@@ -1,19 +1,11 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 //! Collection of reserved account keys that cannot be write-locked by transactions.
 //! New reserved account keys may be added as long as they specify a feature
 //! gate that transitions the key into read-only at an epoch boundary.
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 use {
-    agave_feature_set::{self as feature_set, FeatureSet},
+    agave_feature_set::FeatureSet,
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
         address_lookup_table, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
@@ -160,10 +152,7 @@ static RESERVED_ACCOUNTS: std::sync::LazyLock<Vec<ReservedAccount>> =
             ReservedAccount::new_active(feature::id()),
             ReservedAccount::new_active(loader_v4::id()),
             ReservedAccount::new_active(secp256k1_program::id()),
-            ReservedAccount::new_pending(
-                secp256r1_program::id(),
-                feature_set::enable_secp256r1_precompile::id(),
-            ),
+            ReservedAccount::new_active(secp256r1_program::id()),
             #[allow(deprecated)]
             ReservedAccount::new_active(stake::config::id()),
             ReservedAccount::new_active(stake::id()),

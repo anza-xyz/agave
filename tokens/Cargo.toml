@@ -17,14 +17,16 @@ remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]
 chrono = { workspace = true, features = ["default", "serde"] }
-clap = "2.33.0"
+clap = { version = "2.33.0", default-features = false, features = ["suggestions"] }
 console = { workspace = true }
 csv = { workspace = true }
 ctrlc = { workspace = true, features = ["termination"] }
 indexmap = { workspace = true }
 indicatif = { workspace = true }
-pickledb = { workspace = true, features = ["yaml"] }
+pickledb = { workspace = true, features = ["json"] }
 serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }

@@ -4,10 +4,10 @@
 
 use {
     crate::{
+        SendTransactionStats,
         connection_worker::ConnectionWorker,
         logging::{debug, trace},
         transaction_batch::TransactionBatch,
-        SendTransactionStats,
     },
     lru::LruCache,
     quinn::Endpoint,
@@ -184,7 +184,7 @@ impl WorkersCache {
         handshake_timeout: Duration,
         stats: Arc<SendTransactionStats>,
     ) -> Option<ShutdownWorker> {
-        if let Some(worker) = self.workers.peek(&peer) {
+        if let Some(worker) = self.workers.get(&peer) {
             // if worker is active, we will reuse it. Otherwise, we will spawn
             // the new one and the existing will be popped out.
             if worker.is_active() {
@@ -363,13 +363,13 @@ pub fn shutdown_worker(worker: ShutdownWorker) {
 mod tests {
     use {
         crate::{
+            SendTransactionStats,
             connection_worker::DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             connection_workers_scheduler::BindTarget,
             quic_networking::{create_client_config, create_client_endpoint},
             send_transaction_stats::SendTransactionStatsNonAtomic,
             transaction_batch::TransactionBatch,
-            workers_cache::{spawn_worker, WorkersCache, WorkersCacheError},
-            SendTransactionStats,
+            workers_cache::{WorkersCache, WorkersCacheError, spawn_worker},
         },
         quinn::Endpoint,
         solana_net_utils::sockets::{bind_to_localhost_unique, unique_port_range_for_tests},
@@ -379,7 +379,7 @@ mod tests {
             sync::Arc,
             time::Duration,
         },
-        tokio::time::{sleep, timeout, Instant},
+        tokio::time::{Instant, sleep, timeout},
         tokio_util::sync::CancellationToken,
     };
 
@@ -388,7 +388,7 @@ mod tests {
 
     fn create_test_endpoint() -> Endpoint {
         let socket = bind_to_localhost_unique().unwrap();
-        let client_config = create_client_config(&QuicClientCertificate::new(None));
+        let client_config = create_client_config(&QuicClientCertificate::new(None), None);
         create_client_endpoint(BindTarget::Socket(socket), client_config).unwrap()
     }
 

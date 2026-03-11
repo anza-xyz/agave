@@ -1,24 +1,24 @@
 use {
     super::{
-        epoch_rewards_hasher, Bank, EpochRewardStatus, PartitionedStakeReward, StakeRewards,
-        StartBlockHeightAndPartitionedRewards,
+        Bank, EpochRewardStatus, PartitionedStakeReward, StakeRewards,
+        StartBlockHeightAndPartitionedRewards, epoch_rewards_hasher,
     },
     crate::{
         bank::{
-            metrics::{report_partitioned_reward_metrics, RewardsStoreMetrics},
+            metrics::{RewardsStoreMetrics, report_partitioned_reward_metrics},
             partitioned_epoch_rewards::EpochRewardPhase,
         },
         stake_account::StakeAccount,
     },
     log::error,
     serde::{Deserialize, Serialize},
-    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_accounts_db::stake_rewards::StakeReward,
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut},
+    solana_accounts_db::stake_rewards::{StakeReward, StakeRewardInfo},
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
-    solana_reward_info::{RewardInfo, RewardType},
+    solana_reward_info::RewardType,
     solana_stake_interface::state::{Delegation, StakeStateV2},
-    std::sync::{atomic::Ordering::Relaxed, Arc},
+    std::sync::{Arc, atomic::Ordering::Relaxed},
     thiserror::Error,
 };
 
@@ -185,7 +185,7 @@ impl Bank {
         stake_rewards
             .iter()
             .filter(|x| x.get_stake_reward() > 0)
-            .for_each(|x| rewards.push((x.stake_pubkey, x.stake_reward_info)));
+            .for_each(|x| rewards.push((x.stake_pubkey, x.stake_reward_info.into())));
         rewards.len().saturating_sub(initial_len)
     }
 
@@ -214,7 +214,7 @@ impl Bank {
                 .delegation
                 .stake
                 .saturating_add(partitioned_stake_reward.stake_reward),
-            partitioned_stake_reward.stake.delegation.stake,
+            partitioned_stake_reward.stake.delegation.stake
         );
         account
             .set_state(&StakeStateV2::Stake(
@@ -225,11 +225,11 @@ impl Bank {
             .map_err(|_| DistributionError::UnableToSetState)?;
         Ok(StakeReward {
             stake_pubkey: partitioned_stake_reward.stake_pubkey,
-            stake_reward_info: RewardInfo {
+            stake_reward_info: StakeRewardInfo {
                 reward_type: RewardType::Staking,
                 lamports: i64::try_from(partitioned_stake_reward.stake_reward).unwrap(),
                 post_balance: account.lamports(),
-                commission: Some(partitioned_stake_reward.commission),
+                commission_bps: Some(partitioned_stake_reward.commission_bps),
             },
             stake_account: account,
         })
@@ -311,12 +311,13 @@ mod tests {
         crate::{
             bank::{
                 partitioned_epoch_rewards::{
-                    epoch_rewards_hasher::hash_rewards_into_partitions, tests::convert_rewards,
                     PartitionedStakeRewards, REWARD_CALCULATION_NUM_BLOCKS,
+                    epoch_rewards_hasher::hash_rewards_into_partitions, tests::convert_rewards,
                 },
                 tests::create_genesis_config,
             },
             inflation_rewards::points::PointValue,
+            reward_info::RewardInfo,
             stake_utils,
         },
         rand::Rng,
@@ -325,13 +326,13 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_native_token::LAMPORTS_PER_SOL,
-        solana_rent::Rent,
-        solana_reward_info::{RewardInfo, RewardType},
+        solana_reward_info::RewardType,
         solana_stake_interface::{
             stake_flags::StakeFlags,
             state::{Meta, Stake},
         },
         solana_sysvar as sysvar,
+        solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         solana_vote_program::vote_state,
         std::sync::Arc,
     };
@@ -344,7 +345,11 @@ mod tests {
         let expected_num = 100;
 
         let stake_rewards = (0..expected_num)
-            .map(|_| Some(PartitionedStakeReward::new_random()))
+            .map(|_| {
+                Some(PartitionedStakeReward::new_random(
+                    &bank.rent_collector.rent,
+                ))
+            })
             .collect::<PartitionedStakeRewards>();
 
         let partition_indices =
@@ -368,7 +373,11 @@ mod tests {
         let expected_num = 1;
 
         let stake_rewards = (0..expected_num)
-            .map(|_| Some(PartitionedStakeReward::new_random()))
+            .map(|_| {
+                Some(PartitionedStakeReward::new_random(
+                    &bank.rent_collector.rent,
+                ))
+            })
             .collect::<PartitionedStakeRewards>();
 
         let partition_indices = hash_rewards_into_partitions(
@@ -401,16 +410,19 @@ mod tests {
     }
 
     fn populate_starting_stake_accounts_from_stake_rewards(bank: &Bank, rewards: &[StakeReward]) {
-        let rent = Rent::free();
+        let rent = &bank.rent_collector.rent;
         let validator_pubkey = Pubkey::new_unique();
         let validator_vote_pubkey = Pubkey::new_unique();
 
         let validator_vote_account = vote_state::create_v4_account_with_authorized(
             &validator_pubkey,
             &validator_vote_pubkey,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &validator_vote_pubkey,
-            None,
             1000,
+            &validator_vote_pubkey,
+            0,
+            &validator_vote_pubkey,
             20,
         );
 
@@ -422,7 +434,7 @@ mod tests {
                 &stake_reward.stake_pubkey,
                 &validator_vote_pubkey,
                 &validator_vote_account,
-                &rent,
+                rent,
                 lamports,
             );
             bank.store_account(&stake_reward.stake_pubkey, &validator_stake_account);
@@ -459,7 +471,7 @@ mod tests {
         // Set up a partition of rewards to distribute
         let expected_num = 100;
         let stake_rewards = (0..expected_num)
-            .map(|_| StakeReward::new_random())
+            .map(|_| StakeReward::new_random(&bank.rent_collector.rent))
             .collect::<Vec<_>>();
         let rewards_to_distribute = stake_rewards
             .iter()
@@ -506,7 +518,7 @@ mod tests {
         let expected_num = 12345;
 
         let mut stake_rewards = (0..expected_num)
-            .map(|_| StakeReward::new_random())
+            .map(|_| StakeReward::new_random(&bank.rent_collector.rent))
             .collect::<Vec<_>>();
         populate_starting_stake_accounts_from_stake_rewards(&bank, &stake_rewards);
 
@@ -516,7 +528,7 @@ mod tests {
             .sum::<i64>() as u64;
 
         // Push extra StakeReward to simulate non-existent account
-        stake_rewards.push(StakeReward::new_random());
+        stake_rewards.push(StakeReward::new_random(&bank.rent_collector.rent));
 
         let stake_rewards = convert_rewards(stake_rewards);
 
@@ -569,7 +581,7 @@ mod tests {
             let mut expected_num = 100;
 
             let mut stake_rewards = (0..expected_num)
-                .map(|_| StakeReward::new_random())
+                .map(|_| StakeReward::new_random(&bank.rent_collector.rent))
                 .collect::<Vec<_>>();
 
             let mut rng = rand::rng();
@@ -596,7 +608,7 @@ mod tests {
                     assert_eq!(
                         (
                             &expected_stake_reward.stake_pubkey,
-                            &expected_stake_reward.stake_reward_info
+                            &RewardInfo::from(expected_stake_reward.stake_reward_info),
                         ),
                         (k, reward_info)
                     );
@@ -621,19 +633,19 @@ mod tests {
             credits_observed: 42,
         };
         let stake_reward = 100;
-        let commission = 42;
+        let commission_bps = 4_200;
 
         let nonexistent_account = Pubkey::new_unique();
         let partitioned_stake_reward = PartitionedStakeReward {
             stake_pubkey: nonexistent_account,
             stake: new_stake,
             stake_reward,
-            commission,
+            commission_bps,
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         assert_eq!(
-            Bank::build_updated_stake_reward(stakes_cache_accounts, &partitioned_stake_reward)
+            Bank::build_updated_stake_reward(stakes_cache_accounts, &partitioned_stake_reward,)
                 .unwrap_err(),
             DistributionError::AccountNotFound
         );
@@ -659,12 +671,12 @@ mod tests {
             stake_pubkey: overflowing_account,
             stake: new_stake,
             stake_reward,
-            commission,
+            commission_bps,
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         assert_eq!(
-            Bank::build_updated_stake_reward(stakes_cache_accounts, &partitioned_stake_reward)
+            Bank::build_updated_stake_reward(stakes_cache_accounts, &partitioned_stake_reward,)
                 .unwrap_err(),
             DistributionError::ArithmeticOverflow
         );
@@ -698,7 +710,7 @@ mod tests {
             stake_pubkey: successful_account,
             stake: new_stake,
             stake_reward,
-            commission,
+            commission_bps,
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
@@ -715,18 +727,19 @@ mod tests {
                 StakeFlags::default(),
             ))
             .unwrap();
+
         let expected_stake_reward = StakeReward {
             stake_pubkey: successful_account,
             stake_account: expected_stake_account,
-            stake_reward_info: RewardInfo {
+            stake_reward_info: StakeRewardInfo {
                 reward_type: RewardType::Staking,
                 lamports: stake_reward as i64,
                 post_balance: expected_lamports,
-                commission: Some(commission),
+                commission_bps: Some(commission_bps),
             },
         };
         assert_eq!(
-            Bank::build_updated_stake_reward(stakes_cache_accounts, &partitioned_stake_reward)
+            Bank::build_updated_stake_reward(stakes_cache_accounts, &partitioned_stake_reward,)
                 .unwrap(),
             expected_stake_reward
         );
@@ -753,7 +766,7 @@ mod tests {
         let expected_num = 100;
 
         let stake_rewards = (0..expected_num)
-            .map(|_| StakeReward::new_random())
+            .map(|_| StakeReward::new_random(&bank.rent_collector.rent))
             .collect::<Vec<_>>();
         populate_starting_stake_accounts_from_stake_rewards(&bank, &stake_rewards);
         let converted_rewards = convert_rewards(stake_rewards);

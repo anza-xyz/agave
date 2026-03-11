@@ -1,20 +1,12 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 
 pub use {
     crate::extract_memos::extract_and_fmt_memos,
     solana_reward_info::RewardType,
     solana_transaction_status_client_types::{
-        option_serializer, ConfirmedTransactionStatusWithSignature, EncodeError,
-        EncodedConfirmedBlock, EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
+        ConfirmedTransactionStatusWithSignature, EncodeError, EncodedConfirmedBlock,
+        EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
         EncodedTransactionWithStatusMeta, InnerInstruction, InnerInstructions, Reward, Rewards,
         TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionDetails,
         TransactionStatus, TransactionStatusMeta, TransactionTokenBalance, UiAccountsList,
@@ -22,33 +14,36 @@ pub use {
         UiInstruction, UiLoadedAddresses, UiMessage, UiParsedInstruction, UiParsedMessage,
         UiPartiallyDecodedInstruction, UiRawMessage, UiReturnDataEncoding, UiTransaction,
         UiTransactionEncoding, UiTransactionReturnData, UiTransactionStatusMeta,
-        UiTransactionTokenBalance,
+        UiTransactionTokenBalance, option_serializer,
     },
 };
 use {
     crate::{
         option_serializer::OptionSerializer,
-        parse_accounts::{parse_legacy_message_accounts, parse_v0_message_accounts},
+        parse_accounts::{
+            parse_legacy_message_accounts, parse_v0_message_accounts, parse_v1_message_accounts,
+        },
         parse_instruction::parse,
     },
     agave_reserved_account_keys::ReservedAccountKeys,
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     serde::{Deserialize, Serialize},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_message::{
+        AccountKeys, Message, VersionedMessage,
         compiled_instruction::CompiledInstruction,
         v0::{self, LoadedAddresses, LoadedMessage},
-        AccountKeys, Message, VersionedMessage,
     },
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_transaction::{
-        versioned::{TransactionVersion, VersionedTransaction},
         Transaction,
+        versioned::{TransactionVersion, VersionedTransaction},
     },
     solana_transaction_error::TransactionError,
+    solana_transaction_status_client_types::UiTransactionConfig,
     std::collections::HashSet,
     thiserror::Error,
 };
@@ -570,6 +565,7 @@ impl VersionedTransactionWithStatusMeta {
                 );
                 parse_v0_message_accounts(&loaded_message)
             }
+            VersionedMessage::V1(message) => parse_v1_message_accounts(message),
         };
 
         Ok(EncodedTransactionWithStatusMeta {
@@ -596,6 +592,7 @@ pub struct ConfirmedTransactionWithStatusMeta {
     pub slot: Slot,
     pub tx_with_meta: TransactionWithStatusMeta,
     pub block_time: Option<UnixTimestamp>,
+    pub index: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -619,6 +616,7 @@ impl ConfirmedTransactionWithStatusMeta {
                 true,
             )?,
             block_time: self.block_time,
+            transaction_index: Some(self.index),
         })
     }
 
@@ -656,6 +654,9 @@ impl EncodableWithMeta for VersionedTransaction {
                     VersionedMessage::V0(message) => {
                         message.encode_with_meta(UiTransactionEncoding::JsonParsed, meta)
                     }
+                    VersionedMessage::V1(message) => {
+                        message.encode(UiTransactionEncoding::JsonParsed)
+                    }
                 },
             }),
         }
@@ -666,6 +667,7 @@ impl EncodableWithMeta for VersionedTransaction {
             message: match &self.message {
                 VersionedMessage::Legacy(message) => message.encode(UiTransactionEncoding::Json),
                 VersionedMessage::V0(message) => message.json_encode(),
+                VersionedMessage::V1(message) => message.encode(UiTransactionEncoding::Json),
             },
         })
     }
@@ -694,6 +696,9 @@ impl Encodable for VersionedTransaction {
                             message.encode(UiTransactionEncoding::JsonParsed)
                         }
                         VersionedMessage::V0(message) => {
+                            message.encode(UiTransactionEncoding::JsonParsed)
+                        }
+                        VersionedMessage::V1(message) => {
                             message.encode(UiTransactionEncoding::JsonParsed)
                         }
                     },
@@ -758,6 +763,7 @@ impl Encodable for Message {
                     })
                     .collect(),
                 address_table_lookups: None,
+                transaction_config: None,
             })
         } else {
             UiMessage::Raw(UiRawMessage {
@@ -772,6 +778,7 @@ impl Encodable for Message {
                     })
                     .collect(),
                 address_table_lookups: None,
+                transaction_config: None,
             })
         }
     }
@@ -800,6 +807,7 @@ impl Encodable for v0::Message {
                     })
                     .collect(),
                 address_table_lookups: None,
+                transaction_config: None,
             })
         } else {
             UiMessage::Raw(UiRawMessage {
@@ -814,6 +822,7 @@ impl Encodable for v0::Message {
                     })
                     .collect(),
                 address_table_lookups: None,
+                transaction_config: None,
             })
         }
     }
@@ -851,6 +860,7 @@ impl EncodableWithMeta for v0::Message {
                 address_table_lookups: Some(
                     self.address_table_lookups.iter().map(Into::into).collect(),
                 ),
+                transaction_config: None,
             })
         } else {
             self.json_encode()
@@ -871,7 +881,49 @@ impl EncodableWithMeta for v0::Message {
             address_table_lookups: Some(
                 self.address_table_lookups.iter().map(Into::into).collect(),
             ),
+            transaction_config: None,
         })
+    }
+}
+
+impl Encodable for solana_message::v1::Message {
+    type Encoded = UiMessage;
+    fn encode(&self, encoding: UiTransactionEncoding) -> Self::Encoded {
+        if encoding == UiTransactionEncoding::JsonParsed {
+            let account_keys = AccountKeys::new(&self.account_keys, None);
+            UiMessage::Parsed(UiParsedMessage {
+                account_keys: parse_v1_message_accounts(self),
+                recent_blockhash: self.lifetime_specifier.to_string(),
+                instructions: self
+                    .instructions
+                    .iter()
+                    .map(|instruction| {
+                        parse_ui_instruction(
+                            instruction,
+                            &account_keys,
+                            Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32),
+                        )
+                    })
+                    .collect(),
+                address_table_lookups: None,
+                transaction_config: Some(UiTransactionConfig::from(&self.config)),
+            })
+        } else {
+            UiMessage::Raw(UiRawMessage {
+                header: self.header,
+                account_keys: self.account_keys.iter().map(ToString::to_string).collect(),
+                recent_blockhash: self.lifetime_specifier.to_string(),
+                instructions: self
+                    .instructions
+                    .iter()
+                    .map(|ix| {
+                        UiCompiledInstruction::from(ix, Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32))
+                    })
+                    .collect(),
+                address_table_lookups: None,
+                transaction_config: Some(UiTransactionConfig::from(&self.config)),
+            })
+        }
     }
 }
 
@@ -963,5 +1015,64 @@ mod test {
             serde_json::to_value(ui_meta_parse_no_rewards).unwrap(),
             expected_json_output_value
         );
+    }
+
+    #[test]
+    fn test_confirmed_transaction_with_status_meta_encode() {
+        use solana_transaction::versioned::VersionedTransaction;
+
+        let pubkey1 = solana_pubkey::new_rand();
+        let pubkey2 = solana_pubkey::new_rand();
+
+        let message = solana_message::v0::Message {
+            header: solana_message::MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 1,
+            },
+            account_keys: vec![pubkey1, pubkey2],
+            recent_blockhash: solana_hash::Hash::default(),
+            instructions: vec![],
+            address_table_lookups: vec![],
+        };
+
+        let tx = VersionedTransaction {
+            signatures: vec![solana_signature::Signature::from([1u8; 64])],
+            message: solana_message::VersionedMessage::V0(message),
+        };
+
+        let meta = TransactionStatusMeta {
+            status: Ok(()),
+            fee: 5000,
+            pre_balances: vec![1_000_000, 0],
+            post_balances: vec![994_900, 100],
+            inner_instructions: None,
+            log_messages: None,
+            pre_token_balances: None,
+            post_token_balances: None,
+            rewards: None,
+            loaded_addresses: LoadedAddresses::default(),
+            return_data: None,
+            compute_units_consumed: None,
+            cost_units: None,
+        };
+
+        let confirmed_tx = ConfirmedTransactionWithStatusMeta {
+            slot: 42,
+            tx_with_meta: TransactionWithStatusMeta::Complete(VersionedTransactionWithStatusMeta {
+                transaction: tx,
+                meta,
+            }),
+            block_time: Some(1234567890),
+            index: 7,
+        };
+
+        let encoded = confirmed_tx
+            .encode(UiTransactionEncoding::Base64, Some(0))
+            .unwrap();
+
+        assert_eq!(encoded.slot, 42);
+        assert_eq!(encoded.block_time, Some(1234567890));
+        assert_eq!(encoded.transaction_index, Some(7));
     }
 }

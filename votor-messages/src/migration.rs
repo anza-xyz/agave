@@ -43,7 +43,10 @@
 //!   TowerBFT slots pre alpenglow genesis in order to help other cluster participants catchup.
 //! - When in `FullAlpenglowEpoch` we completely shutdown these TowerBFT threads (AncestorHashesService and ClusterSlotsService)
 use {
-    crate::consensus_message::{Block, Certificate, CertificateType},
+    crate::{
+        consensus_message::{Block, Certificate, CertificateType},
+        fraction::Fraction,
+    },
     log::*,
     solana_address::Address,
     solana_clock::{Epoch, Slot},
@@ -51,8 +54,8 @@ use {
     solana_pubkey::Pubkey,
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Condvar, LazyLock, Mutex, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         time::Duration,
     },
@@ -77,7 +80,7 @@ pub const MIGRATION_MALICIOUS_THRESHOLD: f64 = 20.0 / 100.0;
 /// `SWITCH_FORK_THRESHOLD` - (1 - `GENESIS_VOTE_THRESHOLD`) = `MIGRATION_MALICIOUS_THRESHOLD` malicious stake.
 ///
 /// Using 38% as the `SWITCH_FORK_THRESHOLD` gives us 82% for `GENESIS_VOTE_THRESHOLD`.
-pub const GENESIS_VOTE_THRESHOLD: f64 = 82.0 / 100.0;
+pub const GENESIS_VOTE_THRESHOLD: Fraction = Fraction::from_percentage(82);
 
 /// The interval at which we refresh our genesis vote
 pub const GENESIS_VOTE_REFRESH: Duration = Duration::from_millis(400);
@@ -141,14 +144,14 @@ impl MigrationPhase {
         matches!(self, MigrationPhase::PreFeatureActivation)
     }
 
-    /// Check if we are ready to enable
-    fn is_ready_to_enable(&self) -> bool {
-        matches!(self, MigrationPhase::ReadyToEnable { .. })
-    }
-
     /// Check if we are in the migrationary period
     fn is_in_migration(&self) -> bool {
         matches!(self, MigrationPhase::Migration { .. })
+    }
+
+    /// Check if we are ready to enable
+    fn is_ready_to_enable(&self) -> bool {
+        matches!(self, MigrationPhase::ReadyToEnable { .. })
     }
 
     /// Is alpenglow enabled. This can be either in the migration epoch after we have certified
@@ -163,6 +166,20 @@ impl MigrationPhase {
     /// Check if we are in the full alpenglow epoch
     fn is_full_alpenglow_epoch(&self) -> bool {
         matches!(self, MigrationPhase::FullAlpenglowEpoch { .. })
+    }
+
+    /// Is this block an alpenglow block?
+    /// We only treat blocks as alpenglow after the migration has succeeded and slot > genesis_slot
+    fn is_alpenglow_block(&self, slot: Slot) -> bool {
+        match self {
+            MigrationPhase::PreFeatureActivation
+            | MigrationPhase::Migration { .. }
+            | MigrationPhase::ReadyToEnable { .. } => false,
+            MigrationPhase::AlpenglowEnabled { genesis_cert } => {
+                slot > genesis_cert.cert_type.slot()
+            }
+            MigrationPhase::FullAlpenglowEpoch { .. } => true,
+        }
     }
 
     /// Check if we are in the process of discovering the genesis block, and `slot` could qualify
@@ -238,17 +255,9 @@ impl MigrationPhase {
     }
 
     /// Should we send `VotorEvent`s for this slot?
-    /// Only send events once alpenglow is enabled for slots > alpenglow genesis
+    /// Only send events for alpenglow blocks
     fn should_send_votor_event(&self, slot: Slot) -> bool {
-        match self {
-            MigrationPhase::PreFeatureActivation
-            | MigrationPhase::Migration { .. }
-            | MigrationPhase::ReadyToEnable { .. } => false,
-            MigrationPhase::AlpenglowEnabled { genesis_cert } => {
-                slot > genesis_cert.cert_type.slot()
-            }
-            MigrationPhase::FullAlpenglowEpoch { .. } => true,
-        }
+        self.is_alpenglow_block(slot)
     }
 
     /// Should we respond to ancestor hashes repair requests  for this slot?
@@ -259,14 +268,18 @@ impl MigrationPhase {
 
     /// Should this block only have an alpentick (1 tick at the end of the block)?
     fn should_have_alpenglow_ticks(&self, slot: Slot) -> bool {
-        // Same as votor events, all other blocks are expected to have normal PoH ticks
-        self.should_send_votor_event(slot)
+        self.is_alpenglow_block(slot)
     }
 
     /// Should this block be allowed to have block markers?
     fn should_allow_block_markers(&self, slot: Slot) -> bool {
-        // Same as votor events, TowerBFT blocks should not have markers
-        self.should_send_votor_event(slot)
+        // Only allow for alpenglow blocks, TowerBFT blocks should not have markers
+        self.is_alpenglow_block(slot)
+    }
+
+    /// Should this block allow the UpdateParent marker, i.e., support fast leader handover?
+    fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool {
+        self.is_alpenglow_block(slot)
     }
 }
 
@@ -405,6 +418,7 @@ impl MigrationStatus {
     dispatch!(pub fn should_respond_to_ancestor_hashes_requests(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_have_alpenglow_ticks(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_allow_block_markers(&self, slot: Slot) -> bool);
+    dispatch!(pub fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool);
 
     /// The alpenglow feature flag has been activated in slot `slot`.
     /// This should only be called using the feature account of a *rooted* slot,

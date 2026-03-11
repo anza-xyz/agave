@@ -9,7 +9,7 @@ use {
     solana_runtime::{
         bank::Bank,
         bank_client::BankClient,
-        genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        genesis_utils::{GenesisConfigInfo, create_genesis_config},
         loader_utils::load_program_of_loader_v4,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,

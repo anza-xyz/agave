@@ -34,4 +34,5 @@ if [ "$BEFORE_HASH" = "$AFTER_HASH" ]; then
     echo "✓ Hash unchanged"
 else
     echo "✗ Hash changed"
+    exit 1
 fi

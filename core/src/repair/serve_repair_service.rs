@@ -1,13 +1,13 @@
 use {
     crate::repair::{quic_endpoint::RemoteRequest, serve_repair::ServeRepair},
     bytes::Bytes,
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    crossbeam_channel::{Receiver, Sender, unbounded},
     solana_net_utils::SocketAddrSpace,
     solana_perf::{packet::PacketBatch, recycler::Recycler},
     solana_streamer::streamer::{self, StreamerReceiveStats},
     std::{
         net::{SocketAddr, UdpSocket},
-        sync::{atomic::AtomicBool, Arc},
+        sync::{Arc, atomic::AtomicBool},
         thread::{self, Builder, JoinHandle},
         time::Duration,
     },
@@ -40,7 +40,6 @@ impl ServeRepairService {
             Arc::new(StreamerReceiveStats::new("serve_repair_receiver")),
             Some(Duration::from_millis(1)), // coalesce
             false,                          // use_pinned_memory
-            None,                           // in_vote_only_mode
             false,                          // is_staked_service
         );
         let t_packet_adapter = Builder::new()

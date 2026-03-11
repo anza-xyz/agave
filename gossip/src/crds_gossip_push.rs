@@ -34,8 +34,8 @@ use {
         net::SocketAddr,
         ops::{DerefMut, RangeBounds},
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Mutex, RwLock,
+            atomic::{AtomicUsize, Ordering},
         },
     },
 };
@@ -72,7 +72,7 @@ impl Default for CrdsGossipPush {
         Self {
             active_set: RwLock::default(),
             crds_cursor: Mutex::default(),
-            received_cache: Mutex::new(ReceivedCache::new(2 * CRDS_UNIQUE_PUBKEY_CAPACITY)),
+            received_cache: Mutex::new(ReceivedCache::new(CRDS_UNIQUE_PUBKEY_CAPACITY)),
             push_fanout: CRDS_GOSSIP_PUSH_FANOUT,
             msg_timeout: CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS,
             prune_timeout: CRDS_GOSSIP_PRUNE_MSG_TIMEOUT_MS,
@@ -147,7 +147,7 @@ impl CrdsGossipPush {
                         received_cache.record(origin, from, usize::from(num_dups));
                         self.num_old.fetch_add(1, Ordering::Relaxed);
                     }
-                    Err(CrdsError::InsertFailed | CrdsError::UnknownStakes) => {
+                    Err(CrdsError::InsertFailed) => {
                         received_cache.record(origin, from, /*num_dups:*/ usize::MAX);
                         self.num_old.fetch_add(1, Ordering::Relaxed);
                     }
@@ -348,9 +348,10 @@ mod tests {
         assert_eq!(crds.read().unwrap().get::<&CrdsValue>(&label), Some(&value));
 
         // push it again
-        assert!(push
-            .process_push_message(&crds, vec![(Pubkey::default(), vec![value])], 0)
-            .is_empty());
+        assert!(
+            push.process_push_message(&crds, vec![(Pubkey::default(), vec![value])], 0)
+                .is_empty()
+        );
     }
     #[test]
     fn test_process_push_old_version() {
@@ -369,9 +370,10 @@ mod tests {
         // push an old version
         ci.set_wallclock(0);
         let value = CrdsValue::new_unsigned(CrdsData::from(ci));
-        assert!(push
-            .process_push_message(&crds, vec![(Pubkey::default(), vec![value])], 0)
-            .is_empty());
+        assert!(
+            push.process_push_message(&crds, vec![(Pubkey::default(), vec![value])], 0)
+                .is_empty()
+        );
     }
     #[test]
     fn test_process_push_timeout() {
@@ -383,16 +385,18 @@ mod tests {
         // push a version to far in the future
         ci.set_wallclock(timeout + 1);
         let value = CrdsValue::new_unsigned(CrdsData::from(&ci));
-        assert!(push
-            .process_push_message(&crds, vec![(Pubkey::default(), vec![value])], 0)
-            .is_empty());
+        assert!(
+            push.process_push_message(&crds, vec![(Pubkey::default(), vec![value])], 0)
+                .is_empty()
+        );
 
         // push a version to far in the past
         ci.set_wallclock(0);
         let value = CrdsValue::new_unsigned(CrdsData::from(ci));
-        assert!(push
-            .process_push_message(&crds, vec![(Pubkey::default(), vec![value])], timeout + 1)
-            .is_empty());
+        assert!(
+            push.process_push_message(&crds, vec![(Pubkey::default(), vec![value])], timeout + 1)
+                .is_empty()
+        );
     }
     #[test]
     fn test_process_push_update() {
@@ -641,13 +645,15 @@ mod tests {
         );
 
         // push it again
-        assert!(push
-            .process_push_message(&crds, vec![(Pubkey::default(), vec![value.clone()])], 0)
-            .is_empty());
+        assert!(
+            push.process_push_message(&crds, vec![(Pubkey::default(), vec![value.clone()])], 0)
+                .is_empty()
+        );
 
         // push it again
-        assert!(push
-            .process_push_message(&crds, vec![(Pubkey::default(), vec![value])], 0)
-            .is_empty());
+        assert!(
+            push.process_push_message(&crds, vec![(Pubkey::default(), vec![value])], 0)
+                .is_empty()
+        );
     }
 }

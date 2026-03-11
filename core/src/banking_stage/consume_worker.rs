@@ -12,8 +12,8 @@ use {
     solana_time_utils::AtomicInterval,
     std::{
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         },
         time::{Duration, Instant},
     },
@@ -94,7 +94,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
                     sleep_duration = backoff(idle_duration, &sleep_duration);
                 }
                 Err(TryRecvError::Disconnected) => {
-                    return Err(ConsumeWorkerError::Recv(TryRecvError::Disconnected))
+                    return Err(ConsumeWorkerError::Recv(TryRecvError::Disconnected));
                 }
             }
         }
@@ -121,7 +121,10 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             bank,
             &work.transactions,
             &work.max_ages,
-            ExecutionFlags::default(),
+            ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing: false,
+            },
         );
         self.metrics.update_for_consume(&output);
         self.metrics.has_data.store(true, Ordering::Relaxed);
@@ -181,18 +184,18 @@ pub(crate) mod external {
             committer::CommitTransactionDetails,
             scheduler_messages::MaxAge,
             transaction_scheduler::receive_and_buffer::{
-                translate_to_runtime_view, PacketHandlingError,
+                PacketHandlingError, translate_to_runtime_view,
             },
         },
         agave_scheduler_bindings::{
+            MAX_TRANSACTIONS_PER_MESSAGE, PackToWorkerMessage, SharablePubkeys,
+            TransactionResponseRegion, WorkerToPackMessage,
             pack_message_flags::{self, check_flags, execution_flags},
             processed_codes,
             worker_message_types::{
-                fee_payer_balance_flags, not_included_reasons, parsing_and_sanitization_flags,
-                resolve_flags, status_check_flags, CheckResponse, ExecutionResponse,
+                CheckResponse, ExecutionResponse, fee_payer_balance_flags, not_included_reasons,
+                parsing_and_sanitization_flags, resolve_flags, status_check_flags,
             },
-            PackToWorkerMessage, SharablePubkeys, TransactionResponseRegion, WorkerToPackMessage,
-            MAX_TRANSACTIONS_PER_MESSAGE,
         },
         agave_scheduling_utils::{
             error::transaction_error_to_not_included_reason,
@@ -204,7 +207,7 @@ pub(crate) mod external {
             transaction_data::TransactionData, transaction_view::SanitizedTransactionView,
         },
         solana_account::ReadableAccount,
-        solana_clock::{Slot, MAX_PROCESSING_AGE},
+        solana_clock::{MAX_PROCESSING_AGE, Slot},
         solana_cost_model::cost_model::CostModel,
         solana_message::v0::LoadedAddresses,
         solana_pubkey::Pubkey,
@@ -325,7 +328,7 @@ pub(crate) mod external {
                 .num_messages_processed
                 .fetch_add(1, Ordering::Relaxed);
 
-            if message.flags & pack_message_flags::EXECUTE == 1 {
+            if message.flags & pack_message_flags::EXECUTE != 0 {
                 self.execute_batch(message, should_drain_executes)
             } else {
                 self.check_batch(message).map(|()| false)
@@ -343,21 +346,18 @@ pub(crate) mod external {
                     .return_not_included_with_reason(
                         message,
                         not_included_reasons::BANK_NOT_AVAILABLE,
+                        0,
                     )
                     .map(|()| true);
             }
-
-            let BankPair {
-                root_bank,
-                working_bank: _,
-            } = self.sharable_banks.load();
 
             // Loop here to avoid exposing internal error to external scheduler.
             // In the vast majority of cases, this will iterate a single time;
             // If we began execution when a slot was still in process, and could
             // not record at the end because the slot has ended, we will retry
             // on the next slot.
-            for _ in 0..1 {
+            let mut last_attempted_slot = 0;
+            for _ in 0..2 {
                 let Some(leader_state) =
                     active_leader_state_with_timeout(&self.shared_leader_state)
                 else {
@@ -365,6 +365,7 @@ pub(crate) mod external {
                         .return_not_included_with_reason(
                             message,
                             not_included_reasons::BANK_NOT_AVAILABLE,
+                            last_attempted_slot,
                         )
                         .map(|()| true);
                 };
@@ -372,6 +373,7 @@ pub(crate) mod external {
                 let bank = leader_state
                     .working_bank()
                     .expect("active_leader_state_with_timeout should only return an active bank");
+                last_attempted_slot = bank.slot();
                 if bank.slot() > message.max_working_slot {
                     return self
                         .return_unprocessed_message(
@@ -390,7 +392,7 @@ pub(crate) mod external {
                     )
                 };
                 let (translation_results, transactions, max_ages) =
-                    Self::translate_transaction_batch(&batch, bank, &root_bank);
+                    Self::translate_transaction_batch(&batch, bank);
 
                 // Enforce all or nothing on translation_results.
                 let execution_flags = ExecutionFlags {
@@ -401,7 +403,7 @@ pub(crate) mod external {
                 {
                     self.send_execution_response(
                         message,
-                        Self::all_or_nothing_translate_iterator(&translation_results),
+                        Self::all_or_nothing_translate_iterator(&translation_results, bank.slot()),
                     )?;
 
                     return Ok(false);
@@ -444,8 +446,12 @@ pub(crate) mod external {
 
             // If not successfully recorded even after second attempt, then we
             // just return immediately as if a bank is not available.
-            self.return_not_included_with_reason(message, not_included_reasons::BANK_NOT_AVAILABLE)
-                .map(|()| false)
+            self.return_not_included_with_reason(
+                message,
+                not_included_reasons::BANK_NOT_AVAILABLE,
+                last_attempted_slot,
+            )
+            .map(|()| false)
         }
 
         fn check_batch(
@@ -502,7 +508,7 @@ pub(crate) mod external {
 
             // Do resolving next since we (currently) need resolved transactions for status checks.
             let (parsing_and_resolve_results, txs, max_ages) =
-                Self::translate_transaction_batch(&batch, &working_bank, &root_bank);
+                Self::translate_transaction_batch(&batch, &root_bank);
 
             if message.flags & check_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
                 self.check_resolve_pubkeys(
@@ -559,15 +565,19 @@ pub(crate) mod external {
 
         fn all_or_nothing_translate_iterator(
             translation_results: &[Result<(), PacketHandlingError>],
+            execution_slot: u64,
         ) -> impl ExactSizeIterator<Item = ExecutionResponse> + '_ {
-            translation_results.iter().map(|res| ExecutionResponse {
-                not_included_reason: match res {
-                    Ok(_) => not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
-                    Err(err) => Self::reason_from_packet_handling_error(err),
-                },
-                cost_units: 0,
-                fee_payer_balance: 0,
-            })
+            translation_results
+                .iter()
+                .map(move |res| ExecutionResponse {
+                    execution_slot,
+                    not_included_reason: match res {
+                        Ok(_) => not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+                        Err(err) => Self::reason_from_packet_handling_error(err),
+                    },
+                    cost_units: 0,
+                    fee_payer_balance: 0,
+                })
         }
 
         fn consume_response_iterator<'a>(
@@ -594,6 +604,7 @@ pub(crate) mod external {
                         Self::response_from_commit_details(tx, commit_details, bank)
                     }
                     Err(err) => ExecutionResponse {
+                        execution_slot: bank.slot(),
                         not_included_reason: Self::reason_from_packet_handling_error(err),
                         cost_units: 0,
                         fee_payer_balance: 0,
@@ -607,10 +618,12 @@ pub(crate) mod external {
             &mut self,
             message: &PackToWorkerMessage,
             reason: u8,
+            execution_slot: u64,
         ) -> Result<(), ExternalConsumeWorkerError> {
             let response_region = execution_responses_from_iter(
                 &self.allocator,
                 (0..message.batch.num_transactions).map(|_| ExecutionResponse {
+                    execution_slot,
                     not_included_reason: reason,
                     cost_units: 0,
                     fee_payer_balance: 0,
@@ -756,16 +769,16 @@ pub(crate) mod external {
             Vec<TxView>,
             &'a mut [CheckResponse],
         ) {
-            let enable_static_instruction_limit = bank
+            let enable_instruction_accounts_limit = bank
                 .feature_set
-                .is_active(&agave_feature_set::static_instruction_limit::ID);
+                .is_active(&agave_feature_set::limit_instruction_accounts::ID);
             let mut parsing_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut parsed_transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             for (tx_ptr, _) in batch.iter() {
                 // Parsing and basic sanitization checks
                 match SanitizedTransactionView::try_new_sanitized(
                     tx_ptr,
-                    enable_static_instruction_limit,
+                    enable_instruction_accounts_limit,
                 ) {
                     Ok(view) => {
                         parsing_results.push(Ok(()));
@@ -879,7 +892,6 @@ pub(crate) mod external {
                 let fee_payer_balance = working_bank
                     .rc
                     .accounts
-                    .accounts_db
                     .load_with_fixed_root(
                         &working_bank.ancestors,
                         &transaction.static_account_keys()[0],
@@ -944,13 +956,12 @@ pub(crate) mod external {
         /// Translate batch of transactions into usable
         fn translate_transaction_batch(
             batch: &TransactionPtrBatch,
-            working_bank: &Bank,
-            root_bank: &Bank,
+            bank: &Bank,
         ) -> (Vec<Result<(), PacketHandlingError>>, Vec<Tx>, Vec<MaxAge>) {
-            let enable_static_instruction_limit = root_bank
+            let enable_instruction_accounts_limit = bank
                 .feature_set
-                .is_active(&agave_feature_set::static_instruction_limit::ID);
-            let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
+                .is_active(&agave_feature_set::limit_instruction_accounts::ID);
+            let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
 
             let mut translation_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
@@ -958,10 +969,9 @@ pub(crate) mod external {
             for (transaction_ptr, _) in batch.iter() {
                 match Self::translate_transaction(
                     transaction_ptr,
-                    working_bank,
-                    root_bank,
-                    enable_static_instruction_limit,
+                    bank,
                     transaction_account_lock_limit,
+                    enable_instruction_accounts_limit,
                 ) {
                     Ok((tx, max_age)) => {
                         transactions.push(tx);
@@ -977,23 +987,21 @@ pub(crate) mod external {
 
         fn translate_transaction(
             transaction_ptr: TransactionPtr,
-            working_bank: &Bank,
-            root_bank: &Bank,
-            enable_static_instruction_limit: bool,
+            bank: &Bank,
             transaction_account_lock_limit: usize,
+            enable_instruction_accounts_limit: bool,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
             translate_to_runtime_view(
                 transaction_ptr,
-                working_bank,
-                root_bank,
-                enable_static_instruction_limit,
+                bank,
                 transaction_account_lock_limit,
+                enable_instruction_accounts_limit,
             )
             .map(|(view, deactivation_slot)| {
                 (
                     view,
                     MaxAge {
-                        sanitized_epoch: root_bank.epoch(),
+                        sanitized_epoch: bank.epoch(),
                         alt_invalidation_slot: deactivation_slot,
                     },
                 )
@@ -1027,7 +1035,9 @@ pub(crate) mod external {
 
         fn validate_message_flags(flags: u16) -> bool {
             if flags & pack_message_flags::EXECUTE != 0 {
-                const ALLOWED_EXECUTE_FLAGS: u16 = pack_message_flags::EXECUTE;
+                const ALLOWED_EXECUTE_FLAGS: u16 = pack_message_flags::EXECUTE
+                    | execution_flags::DROP_ON_FAILURE
+                    | execution_flags::ALL_OR_NOTHING;
 
                 flags & !ALLOWED_EXECUTE_FLAGS == 0
             } else {
@@ -1052,6 +1062,7 @@ pub(crate) mod external {
                     fee_payer_post_balance,
                     ..
                 } => ExecutionResponse {
+                    execution_slot: bank.slot(),
                     not_included_reason: not_included_reasons::NONE,
                     cost_units: CostModel::calculate_cost_for_executed_transaction(
                         tx,
@@ -1063,6 +1074,7 @@ pub(crate) mod external {
                     fee_payer_balance: *fee_payer_post_balance,
                 },
                 CommitTransactionDetails::NotCommitted(transaction_error) => ExecutionResponse {
+                    execution_slot: bank.slot(),
                     not_included_reason: transaction_error_to_not_included_reason(
                         transaction_error,
                     ),
@@ -1120,9 +1132,27 @@ pub(crate) mod external {
 
         #[test]
         fn test_validate_message_flags() {
+            // Execute flags
             assert!(ExternalWorker::validate_message_flags(
                 pack_message_flags::EXECUTE
             ));
+            assert!(ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE | execution_flags::DROP_ON_FAILURE
+            ));
+            assert!(ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE | execution_flags::ALL_OR_NOTHING
+            ));
+            assert!(ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE
+                    | execution_flags::DROP_ON_FAILURE
+                    | execution_flags::ALL_OR_NOTHING
+            ));
+            // Invalid execute flag
+            assert!(!ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE | (1 << 15)
+            ));
+
+            // Check flags
             assert!(ExternalWorker::validate_message_flags(
                 pack_message_flags::CHECK
                     | agave_scheduler_bindings::pack_message_flags::check_flags::LOAD_ADDRESS_LOOKUP_TABLES
@@ -1147,9 +1177,8 @@ pub(crate) mod external {
                     translate_to_runtime_view(
                         &simple_tx[..],
                         &bank,
-                        &bank,
-                        true,
                         bank.get_transaction_account_lock_limit(),
+                        true,
                     )
                     .ok()
                     .unwrap()
@@ -1193,21 +1222,25 @@ pub(crate) mod external {
                 responses,
                 &[
                     ExecutionResponse {
+                        execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::SANITIZE_FAILURE,
                         cost_units: 0,
                         fee_payer_balance: 0
                     },
                     ExecutionResponse {
+                        execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::NONE,
                         cost_units: 1337,
                         fee_payer_balance: 1_000_000,
                     },
                     ExecutionResponse {
+                        execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::NONE,
                         cost_units: 1341,
                         fee_payer_balance: 2_000_000,
                     },
                     ExecutionResponse {
+                        execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::INSUFFICIENT_FUNDS_FOR_FEE,
                         cost_units: 0,
                         fee_payer_balance: 0,
@@ -1219,24 +1252,29 @@ pub(crate) mod external {
         #[test]
         fn test_all_or_nothing_translate_iterator() {
             let translation_results = vec![Ok(()), Err(PacketHandlingError::Sanitization), Ok(())];
+            let test_slot = 42;
 
-            let responses = ExternalWorker::all_or_nothing_translate_iterator(&translation_results)
-                .collect::<Vec<_>>();
+            let responses =
+                ExternalWorker::all_or_nothing_translate_iterator(&translation_results, test_slot)
+                    .collect::<Vec<_>>();
 
             assert_eq!(
                 responses,
                 &[
                     ExecutionResponse {
+                        execution_slot: test_slot,
                         not_included_reason: not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
                         cost_units: 0,
                         fee_payer_balance: 0
                     },
                     ExecutionResponse {
+                        execution_slot: test_slot,
                         not_included_reason: not_included_reasons::SANITIZE_FAILURE,
                         cost_units: 0,
                         fee_payer_balance: 0,
                     },
                     ExecutionResponse {
+                        execution_slot: test_slot,
                         not_included_reason: not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
                         cost_units: 0,
                         fee_payer_balance: 0,
@@ -2108,16 +2146,16 @@ mod tests {
             tests::{create_slow_genesis_config, sanitize_transactions},
         },
         crossbeam_channel::unbounded,
-        solana_clock::{Slot, MAX_PROCESSING_AGE},
+        solana_clock::{MAX_PROCESSING_AGE, Slot},
         solana_genesis_config::GenesisConfig,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::{
-            v0::{self, LoadedAddresses},
             AddressLookupTableAccount, SimpleAddressLoader, VersionedMessage,
+            v0::{self, LoadedAddresses},
         },
         solana_poh::{
-            record_channels::{record_channels, RecordReceiver},
+            record_channels::{RecordReceiver, record_channels},
             transaction_recorder::TransactionRecorder,
         },
         solana_pubkey::Pubkey,
@@ -2136,7 +2174,7 @@ mod tests {
         solana_transaction_error::TransactionError,
         std::{
             collections::HashSet,
-            sync::{atomic::AtomicBool, RwLock},
+            sync::{RwLock, atomic::AtomicBool},
         },
         test_case::test_case,
     };
@@ -2167,7 +2205,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         // Warp to next epoch for MaxAge tests.
         let mut bank = Bank::new_from_parent(
             bank.clone(),
@@ -2528,7 +2566,7 @@ mod tests {
                 loader,
                 &HashSet::default(),
                 bank.feature_set
-                    .is_active(&agave_feature_set::static_instruction_limit::id()),
+                    .is_active(&agave_feature_set::limit_instruction_accounts::id()),
             )
             .unwrap()
         };

@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 //! A client for the ledger state, from the perspective of an arbitrary validator.
 //!
 //! Use start_tcp_client() to create a client and then import BanksClientExt to
@@ -21,7 +13,7 @@ pub use {
 use {
     borsh::BorshDeserialize,
     futures::future::join_all,
-    solana_account::{from_account, Account},
+    solana_account::{Account, from_account},
     solana_banks_interface::{
         BanksRequest, BanksResponse, BanksTransactionResultWithMetadata,
         BanksTransactionResultWithSimulation,
@@ -37,10 +29,10 @@ use {
     solana_sysvar::SysvarSerialize,
     solana_transaction::versioned::VersionedTransaction,
     tarpc::{
+        ClientMessage, Response, Transport,
         client::{self, NewClient, RequestDispatch},
         context::{self, Context},
         serde_transport::tcp,
-        ClientMessage, Response, Transport,
     },
     tokio::net::ToSocketAddrs,
     tokio_serde::formats::Bincode,
@@ -553,7 +545,7 @@ mod tests {
         tarpc::transport,
         tokio::{
             runtime::Runtime,
-            time::{sleep, Duration},
+            time::{Duration, sleep},
         },
     };
 

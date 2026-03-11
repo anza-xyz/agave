@@ -21,7 +21,6 @@ solana-pubkey = { workspace = true }
 solana-sbf-rust-invoked-dep = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-sysvar = { workspace = true }
 
 [lints]
 workspace = true

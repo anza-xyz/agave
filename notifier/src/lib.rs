@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 /// To activate Slack, Discord, PagerDuty and/or Telegram notifications, define these environment variables
 /// before using the `Notifier`
 /// ```bash
@@ -34,7 +26,7 @@
 /// ```
 use log::*;
 use {
-    reqwest::{blocking::Client, StatusCode},
+    reqwest::{StatusCode, blocking::Client},
     serde_json::json,
     solana_hash::Hash,
     std::{env, str::FromStr, thread::sleep, time::Duration},

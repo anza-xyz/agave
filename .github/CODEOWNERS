@@ -1,9 +1,12 @@
 # Please keep this file sorted
 /bloom/ @anza-xyz/networking
 /compute-budget-instruction/ @anza-xyz/fees
-/core/src/repair/ @anza-xyz/networking
+/core/src/consensus.rs @anza-xyz/consensus
+/core/src/consensus/ @anza-xyz/consensus
+/core/src/repair/ @anza-xyz/networking @anza-xyz/consensus
 /fee/ @anza-xyz/fees
 /gossip/ @anza-xyz/networking
+/gossip/src/duplicate*.rs @anza-xyz/networking @anza-xyz/consensus
 /log-collector/ @anza-xyz/svm
 /net-utils/ @anza-xyz/networking
 /program-runtime/ @anza-xyz/svm
@@ -18,4 +21,6 @@
 /transaction-context/ @anza-xyz/svm
 /transaction-view/ @anza-xyz/tx-metadata
 /turbine/ @anza-xyz/networking
+/votor/ @anza-xyz/consensus
+/votor-messages/ @anza-xyz/consensus
 /xdp/ @anza-xyz/networking

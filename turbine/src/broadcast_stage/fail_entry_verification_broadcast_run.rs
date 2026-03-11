@@ -5,7 +5,6 @@ use {
     solana_keypair::Keypair,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     std::{thread::sleep, time::Duration},
-    tokio::sync::mpsc::Sender as AsyncSender,
 };
 
 pub const NUM_BAD_SLOTS: u64 = 10;
@@ -181,7 +180,6 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
         cluster_info: &ClusterInfo,
         sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
-        quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
         let (shreds, _) = receiver.recv()?;
         broadcast_shreds(
@@ -193,7 +191,6 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
             cluster_info,
             bank_forks,
             cluster_info.socket_addr_space(),
-            quic_endpoint_sender,
         )
     }
     fn record(&mut self, receiver: &RecordReceiver, blockstore: &Blockstore) -> Result<()> {

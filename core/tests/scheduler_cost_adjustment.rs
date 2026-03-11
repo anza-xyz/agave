@@ -5,8 +5,8 @@ use {
     solana_compute_budget::compute_budget_limits::MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_cost_model::cost_model::CostModel,
-    solana_genesis_config::{create_genesis_config, GenesisConfig},
-    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+    solana_genesis_config::{GenesisConfig, create_genesis_config},
+    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_keypair::Keypair,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
@@ -282,7 +282,7 @@ fn test_builtin_ix_cost_adjustment_with_memo_no_cu_limit() {
     };
     assert_eq!(
         expected,
-        test_setup.execute_test_transaction(&[test_setup.transfer_ix(), memo_ix.clone()],)
+        test_setup.execute_test_transaction(&[test_setup.transfer_ix(), memo_ix],)
     );
 }
 
@@ -310,7 +310,7 @@ fn test_builtin_ix_cost_adjustment_with_memo_and_cu_limit() {
         expected,
         test_setup.execute_test_transaction(&[
             test_setup.transfer_ix(),
-            memo_ix.clone(),
+            memo_ix,
             test_setup.set_cu_limit_ix(cu_limit)
         ],)
     );

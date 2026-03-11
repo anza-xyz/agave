@@ -69,6 +69,9 @@ pub enum SnapshotError {
     #[error("snapshot epoch stakes are invalid: {0}")]
     VerifyEpochStakes(#[from] VerifyEpochStakesError),
 
+    #[error("slot in storages map {0} exceeds snapshot slot: {1}")]
+    MismatchedSnapshotStorageSlot(Slot, Slot),
+
     #[error("bank_snapshot_info new_from_dir failed: {0}")]
     NewFromDir(#[from] SnapshotNewFromDirError),
 
@@ -95,6 +98,9 @@ pub enum SnapshotError {
 
     #[error("failed to rebuild snapshot storages: {0}")]
     RebuildStorages(String),
+
+    #[error("capitalization mismatch: expected: {0}, calculated: {1}")]
+    MismatchedCapitalization(u64, u64),
 }
 
 impl From<SendError<FileInfo>> for SnapshotError {

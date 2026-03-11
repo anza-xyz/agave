@@ -33,13 +33,13 @@ impl WaitableCondvar {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use {
         super::*,
         std::{
             sync::{
-                atomic::{AtomicBool, Ordering},
                 Arc,
+                atomic::{AtomicBool, Ordering},
             },
             thread::Builder,
         },

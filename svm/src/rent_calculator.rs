@@ -6,7 +6,7 @@ use {
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_transaction_context::{IndexOfAccount, TransactionContext},
+    solana_transaction_context::{IndexOfAccount, transaction::TransactionContext},
     solana_transaction_error::{TransactionError, TransactionResult},
 };
 

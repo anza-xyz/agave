@@ -48,9 +48,6 @@ pub struct SnapshotConfig {
     /// Maximum number of incremental snapshot archives to retain
     /// NOTE: Incremental snapshots will only be kept for the latest full snapshot
     pub maximum_incremental_snapshot_archives_to_retain: NonZeroUsize,
-
-    // Thread niceness adjustment for snapshot packager service
-    pub packager_thread_niceness_adj: i8,
 }
 
 impl Default for SnapshotConfig {
@@ -73,7 +70,6 @@ impl Default for SnapshotConfig {
             maximum_full_snapshot_archives_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
             maximum_incremental_snapshot_archives_to_retain:
                 DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-            packager_thread_niceness_adj: 0,
         }
     }
 }
@@ -83,6 +79,18 @@ impl SnapshotConfig {
     pub fn new_load_only() -> Self {
         Self {
             usage: SnapshotUsage::LoadOnly,
+            full_snapshot_archive_interval: SnapshotInterval::Disabled,
+            incremental_snapshot_archive_interval: SnapshotInterval::Disabled,
+            ..Self::default()
+        }
+    }
+
+    /// A new snapshot config used for loading at startup and generating
+    /// snapshots during runtime. Snapshot generation intervals are disabled
+    /// to indicate that snapshots will be generated externally.
+    pub fn new_generate_snapshots_externally() -> Self {
+        Self {
+            usage: SnapshotUsage::LoadAndGenerate,
             full_snapshot_archive_interval: SnapshotInterval::Disabled,
             incremental_snapshot_archive_interval: SnapshotInterval::Disabled,
             ..Self::default()
@@ -122,4 +130,63 @@ pub enum SnapshotUsage {
     /// Snapshots are used everywhere; both at startup (i.e. load) and steady-state (i.e.
     /// generate).  This enables taking snapshots.
     LoadAndGenerate,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_load_only() {
+        let cfg = SnapshotConfig::new_load_only();
+
+        assert!(!cfg.should_generate_snapshots());
+        assert!(cfg.should_load_snapshots());
+
+        assert_eq!(
+            cfg.full_snapshot_archive_interval,
+            SnapshotInterval::Disabled
+        );
+        assert_eq!(
+            cfg.incremental_snapshot_archive_interval,
+            SnapshotInterval::Disabled
+        );
+    }
+
+    #[test]
+    fn test_new_disabled() {
+        let cfg = SnapshotConfig::new_disabled();
+
+        assert!(!cfg.should_generate_snapshots());
+        assert!(!cfg.should_load_snapshots());
+
+        assert_eq!(
+            cfg.full_snapshot_archive_interval,
+            SnapshotInterval::Disabled
+        );
+        assert_eq!(
+            cfg.incremental_snapshot_archive_interval,
+            SnapshotInterval::Disabled
+        );
+    }
+
+    #[test]
+    fn test_new_generate_snapshots_externally() {
+        let cfg = SnapshotConfig::new_generate_snapshots_externally();
+
+        // Even though intervals are disabled (snapshots handled externally),
+        // usage indicates load+generate semantics.
+        assert_eq!(cfg.usage, SnapshotUsage::LoadAndGenerate);
+        assert!(cfg.should_generate_snapshots());
+        assert!(cfg.should_load_snapshots());
+
+        assert_eq!(
+            cfg.full_snapshot_archive_interval,
+            SnapshotInterval::Disabled
+        );
+        assert_eq!(
+            cfg.incremental_snapshot_archive_interval,
+            SnapshotInterval::Disabled
+        );
+    }
 }

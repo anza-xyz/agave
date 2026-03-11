@@ -1,6 +1,6 @@
 use {
-    criterion::{criterion_group, criterion_main, Criterion},
-    solana_account::{state_traits::StateMut, AccountSharedData},
+    criterion::{Criterion, criterion_group, criterion_main},
+    solana_account::{AccountSharedData, state_traits::StateMut},
     solana_bpf_loader_program::Entrypoint,
     solana_instruction::AccountMeta,
     solana_loader_v3_interface::{

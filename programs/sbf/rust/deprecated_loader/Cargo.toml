@@ -16,7 +16,6 @@ solana-account-info = { workspace = true }
 solana-instruction = { workspace = true }
 solana-msg = { workspace = true }
 solana-program = { workspace = true }
-solana-program-entrypoint = { workspace = true }
 solana-program-error = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sbf-rust-invoke-dep = { workspace = true }
