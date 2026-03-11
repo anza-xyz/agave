@@ -12,7 +12,7 @@ fn platform_tools_path() -> PathBuf {
     PathBuf::from(tools_path)
         .join(".cache")
         .join("solana")
-        .join("v1.53")
+        .join("v1.54")
         .join("platform-tools")
 }
 
