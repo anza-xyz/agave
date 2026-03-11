@@ -397,10 +397,11 @@ pub fn parse_program_v4_subcommand(
             let authority_signer_index = signer_info
                 .index_of(authority_pubkey)
                 .expect("Authority signer is missing");
-            assert!(
-                program_address.is_some() != program_signer_index.is_some(),
-                "Requires either --program-keypair or --program-id",
-            );
+            if program_address.is_some() == program_signer_index.is_some() {
+                return Err(CliError::BadParameter(
+                    "Requires either --program-keypair or --program-id".to_string(),
+                ));
+            }
 
             CliCommandInfo {
                 command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
