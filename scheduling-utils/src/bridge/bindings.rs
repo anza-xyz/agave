@@ -1,6 +1,6 @@
 use {
     crate::{
-        handshake::client::{ClientSession, ClientWorkerSession},
+        handshake::{ClientSession, ClientWorkerSession},
         pubkeys_ptr::PubkeysPtr,
         transaction_ptr::{TransactionPtr, TransactionPtrBatch},
     },
