@@ -27,7 +27,7 @@ cargo_build_sbf_sanity() {
   for program in "${rust_programs[@]}"
   do
     pushd "$program"
-    $cargo_build_sbf --arch "$1"
+    $cargo_build_sbf --arch "$1" --tools-version v1.54
     popd
   done
   popd
