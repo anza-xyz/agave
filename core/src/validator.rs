@@ -876,6 +876,7 @@ impl Validator {
         let (
             accounts_update_notifier,
             transaction_notifier,
+            deshred_transaction_notifier,
             entry_notifier,
             block_metadata_notifier,
             slot_status_notifier,
@@ -883,19 +884,21 @@ impl Validator {
             (
                 service.get_accounts_update_notifier(),
                 service.get_transaction_notifier(),
+                service.get_deshred_transaction_notifier(),
                 service.get_entry_notifier(),
                 service.get_block_metadata_notifier(),
                 service.get_slot_status_notifier(),
             )
         } else {
-            (None, None, None, None, None)
+            (None, None, None, None, None, None)
         };
 
         info!(
             "Geyser plugin: accounts_update_notifier: {}, transaction_notifier: {}, \
-             entry_notifier: {}",
+             deshred_transaction_notifier: {}, entry_notifier: {}",
             accounts_update_notifier.is_some(),
             transaction_notifier.is_some(),
+            deshred_transaction_notifier.is_some(),
             entry_notifier.is_some()
         );
 
@@ -1354,8 +1357,10 @@ impl Validator {
                         completed_data_sets_receiver,
                         blockstore.clone(),
                         rpc_subscriptions.clone(),
+                        deshred_transaction_notifier.clone(),
                         exit.clone(),
                         max_slots.clone(),
+                        bank_forks.clone(),
                     );
                     (
                         Some(completed_data_sets_sender),
