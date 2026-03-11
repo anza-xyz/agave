@@ -930,7 +930,8 @@ pub fn mock_compile_message<A>(
     loader_key: &Pubkey,
 ) -> Option<(SanitizedMessage, Vec<(Pubkey, AccountSharedData)>)>
 where
-    A: Into<AccountSharedData> + Clone,
+    AccountSharedData: From<A>,
+    A: Clone,
 {
     let message = Message::new(std::slice::from_ref(instruction), None);
     let transaction_accounts: Vec<_> = message
@@ -940,7 +941,7 @@ where
             let account = accounts
                 .iter()
                 .find(|(k, _)| k == key)
-                .map(|(_, a)| a.clone().into())
+                .map(|(_, a)| AccountSharedData::from(a.clone()))
                 .unwrap_or_else(|| {
                     if key == program_id {
                         let mut account = AccountSharedData::new(0, 0, loader_key);
