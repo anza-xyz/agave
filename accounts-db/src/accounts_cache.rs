@@ -40,16 +40,19 @@ impl MaxFlushedRoot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotStatus {
     /// Slot is in the ancestors list and not a root being flushed root. Slot is guaranteed to be
-    /// the newest version of the account so the cached copy can be used without checking storage
-    /// NOTE: A slot in this state may also be an Unflushedroot
+    /// the newest version of the account on this fork so the cached copy can be used without
+    /// checking storage
     Ancestor,
+    /// Slot is in the ancestors list but is also a root being flushed. The version found in the
+    /// accounts cache may not be the newest version of the account, and the storage should be
+    /// checked for newer versions
+    AncestorBeingFlushed,
     /// Slot is a root that has not yet been claimed for flushing. Slot is guaranteed to be the
     /// newest version of the account so the cached copy can be used without checking storage
     UnflushedRoot,
     /// Slot is a root that is currently being flushed. The version found in the accounts cache
     /// may not be the newest version of the account, and the storage should be checked for newer
     /// versions
-    /// NOTE: A slot in this state may also be an Ancestor
     RootBeingFlushed,
 }
 
@@ -341,22 +344,10 @@ impl AccountsCache {
         result
     }
 
-    /// Returns the minimum visible slot across ancestors, unflushed roots, and roots
-    /// being flushed. Returns `None` if all three sources are empty
-    fn min_visible_slot(&self, ancestors: &Ancestors) -> Option<Slot> {
-        let unflushed_first = self.maybe_unflushed_roots.read().unwrap().first().copied();
-        let flushing_first = self.roots_being_flushed.read().unwrap().first().copied();
-
-        [ancestors.min_slot(), unflushed_first, flushing_first]
-            .into_iter()
-            .flatten()
-            .min()
-    }
-
-    /// Finds the newest write-cache entry for `pubkey` by scanning visible slots in descending
-    /// order. The scan range is bounded by the index's max_slot for the pubkey and the min
-    /// of all visibility sets (ancestors, unflushed roots, roots being flushed)
-    /// Returns the account, the slot it was found in, and where the slot was found
+    /// Finds the best write-cache entry for `pubkey` visible from `ancestors`. Searches
+    /// ancestors first (highest to lowest), then unflushed roots, then roots being flushed.
+    /// Ancestors are checked exhaustively before roots, so a lower-slot ancestor wins over a
+    /// higher-slot root. Returns the account, slot, and status, or `None` if not found.
     pub fn load_latest(
         &self,
         pubkey: &Pubkey,
@@ -364,47 +355,44 @@ impl AccountsCache {
     ) -> Option<(Arc<CachedAccount>, Slot, SlotStatus)> {
         // Exit early if the pubkey isn't in the cache
         let index_max_slot = self.index.max_slot_for_pubkey(pubkey)?;
-        let min_visible = self.min_visible_slot(ancestors)?;
 
-        // Iterate from max_slot down to min_visible. Check slot_status first before hitting the
-        // per-slot DashMap. The common case — newest slot is valid — returns on the first iteration
-        for slot in (min_visible..=index_max_slot).rev() {
-            if let Some(status) = self.slot_status(ancestors, slot) {
-                if let Some(account) = self.load(slot, pubkey) {
-                    return Some((account, slot, status));
+        if let Some(ancestors_min_slot) = ancestors.min_slot() {
+            // Iterate every slot in the range in descending order. Check ancestors first as it
+            // requires no RwLocks
+            for slot in (ancestors_min_slot..=index_max_slot).rev() {
+                if ancestors.contains_key(&slot) {
+                    if let Some(account) = self.load(slot, pubkey) {
+                        // Need to check flush status of the slot even for ancestors, because
+                        // there could be newer version of the account that has already been
+                        // flushed
+                        if self.roots_being_flushed.read().unwrap().contains(&slot) {
+                            return Some((account, slot, SlotStatus::AncestorBeingFlushed));
+                        } else {
+                            return Some((account, slot, SlotStatus::Ancestor));
+                        };
+                    }
                 }
             }
         }
-        None
-    }
 
-    /// Returns the status of `slot` if it is visible (as an unflushed root, a root being
-    /// flushed, or an ancestor)
-    ///
-    /// Only `RootBeingFlushed` requires the caller to also check storage, since the cached entry
-    /// may be stale. All other visible statuses guarantee the cached entry is the newest version
-    ///
-    /// Checks ancestors first (cheap HashMap lookup, no lock) since the common case is an
-    /// ancestor that is not a root. When the slot is an ancestor we only need to check
-    /// `roots_being_flushed` — distinguishing unrooted from unflushed-root
-    /// is unnecessary because both guarantee the cached entry is newest
-    pub(crate) fn slot_status(&self, ancestors: &Ancestors, slot: Slot) -> Option<SlotStatus> {
-        if ancestors.contains_key(&slot) {
-            // Ancestor: check if root being flushed, which may require checking storage
-            return if self.roots_being_flushed.read().unwrap().contains(&slot) {
-                Some(SlotStatus::RootBeingFlushed)
-            } else {
-                Some(SlotStatus::Ancestor)
-            };
+        // If the slot is not found in the ancestors fall back to searching roots
+        let unflushed_roots = self.maybe_unflushed_roots.read().unwrap();
+        for &slot in unflushed_roots.range(..=index_max_slot).rev() {
+            if let Some(account) = self.load(slot, pubkey) {
+                return Some((account, slot, SlotStatus::UnflushedRoot));
+            }
         }
+        drop(unflushed_roots);
 
-        // Not an ancestor — check root sets for visibility
-        if self.maybe_unflushed_roots.read().unwrap().contains(&slot) {
-            return Some(SlotStatus::UnflushedRoot);
+        let flushing_roots = self.roots_being_flushed.read().unwrap();
+        for &slot in flushing_roots.range(..=index_max_slot).rev() {
+            if let Some(account) = self.load(slot, pubkey) {
+                return Some((account, slot, SlotStatus::RootBeingFlushed));
+            }
         }
-        if self.roots_being_flushed.read().unwrap().contains(&slot) {
-            return Some(SlotStatus::RootBeingFlushed);
-        }
+        drop(flushing_roots);
+
+        // Found nothing, the version of the account in the cache must be on a different fork
         None
     }
 
@@ -642,64 +630,73 @@ mod tests {
         assert!(cache.index.max_slot_for_pubkey(&pk1).is_none());
     }
 
-    #[test_case(true, false, false, Some(SlotStatus::Ancestor); "ancestor unrooted slot")]
-    #[test_case(true, true, false, Some(SlotStatus::Ancestor); "ancestor rooted unflushed slot")]
-    #[test_case(true, true, true, Some(SlotStatus::RootBeingFlushed); "ancestor rooted slot being flushed")]
-    #[test_case(false, true, false, Some(SlotStatus::UnflushedRoot); "rooted unflushed slot")]
-    #[test_case(false, true, true, Some(SlotStatus::RootBeingFlushed); "rooted slot being flushed")]
-    #[test_case(false, false, false, None; "not ancestor not root")]
-    fn test_slot_status(
-        in_ancestors: bool,
-        is_root: bool,
-        is_flushing: bool,
-        expected_status: Option<SlotStatus>,
+    /// Tests that `load_latest` returns the correct slot, status, and account value
+    /// given various combinations of ancestor slots, root slots, and flushing state.
+    ///
+    /// Ancestors always take priority over roots regardless of slot
+    // None case
+    #[test_case(&[], &[], &[], None; "not ancestor not root")]
+    #[test_case(&[10], &[], &[], Some((10, SlotStatus::Ancestor)); "ancestor only")]
+    #[test_case(&[5, 10, 15], &[], &[], Some((15, SlotStatus::Ancestor)); "highest ancestor returned")]
+    #[test_case(&[], &[10, 20], &[], Some((20, SlotStatus::UnflushedRoot)); "rooted, with no ancestors")]
+    #[test_case(&[], &[], &[10], Some((10, SlotStatus::RootBeingFlushed)); "root being flushed")]
+    #[test_case(&[10], &[], &[10], Some((10, SlotStatus::AncestorBeingFlushed)); "ancestor being flushed")]
+    #[test_case(&[5], &[20], &[], Some((5, SlotStatus::Ancestor)); "ancestor wins over higher root")]
+    #[test_case(&[], &[20], &[10], Some((20, SlotStatus::UnflushedRoot));"unflushed root over flushing root")]
+    #[test_case(&[5], &[20], &[10], Some((5, SlotStatus::Ancestor));"ancestor over unflushed and flushing roots")]
+    fn test_load_latest_slot_priority(
+        ancestor_slots: &[Slot],
+        unflushed_root_slots: &[Slot],
+        flushing_root_slots: &[Slot],
+        expected: Option<(Slot, SlotStatus)>,
     ) {
         let cache = AccountsCache::default();
         let pk = Pubkey::new_unique();
-        let slot = 10;
 
-        cache.store(
-            slot,
-            &pk,
-            AccountSharedData::new(100, 0, &Pubkey::default()),
-        );
-
-        if is_root {
+        for &slot in ancestor_slots {
+            cache.store(
+                slot,
+                &pk,
+                AccountSharedData::new(slot, 0, &Pubkey::default()),
+            );
+        }
+        for &slot in unflushed_root_slots.iter().chain(flushing_root_slots) {
+            cache.store(
+                slot,
+                &pk,
+                AccountSharedData::new(slot, 0, &Pubkey::default()),
+            );
             cache.add_root(slot);
         }
-        if is_flushing {
-            cache.begin_flush_roots(None);
+        if let Some(&max) = flushing_root_slots.iter().max() {
+            cache.begin_flush_roots(Some(max));
         }
 
-        let ancestors = if in_ancestors {
-            Ancestors::from(vec![(slot, 1)])
-        } else {
-            Ancestors::default()
-        };
-
-        // Invalid configuration: a slot must never be in both unflushed roots and roots being
-        // flushed — begin_flush_roots drains unflushed into flushing, so overlap is impossible
-        // If this is hit, it is likely a test setup issue
-        let in_unflushed = cache.maybe_unflushed_roots.read().unwrap().contains(&slot);
-        let in_flushing = cache.roots_being_flushed.read().unwrap().contains(&slot);
-        assert!(!(in_unflushed && in_flushing));
-
-        // Verify slot_status returns the expected status
-        assert_eq!(cache.slot_status(&ancestors, slot), expected_status);
-
-        // Verify load_latest is consistent with slot_status
-        if let Some(expected) = expected_status {
-            let (account, loaded_slot, status) = cache.load_latest(&pk, &ancestors).unwrap();
-            assert_eq!(loaded_slot, slot);
-            assert_eq!(status, expected);
-            assert_eq!(account.account.lamports(), 100);
-        } else {
-            assert!(cache.load_latest(&pk, &ancestors).is_none());
-        }
+        let ancestors = Ancestors::from(ancestor_slots.to_vec());
+        let result = cache
+            .load_latest(&pk, &ancestors)
+            .map(|(account, slot, status)| {
+                assert_eq!(account.account.lamports(), slot);
+                (slot, status)
+            });
+        assert_eq!(result, expected);
     }
 
     #[test]
-    fn test_slot_status_visibility_after_flush() {
+    fn test_load_latest_ignores_non_ancestor_non_root_slot() {
+        let cache = AccountsCache::default();
+        let pk = Pubkey::new_unique();
+
+        // Store an account at slot 10, but don't add it as an ancestor or root.
+        cache.store(10, &pk, AccountSharedData::new(10, 0, &Pubkey::default()));
+
+        let ancestors = Ancestors::from(vec![5, 15]);
+        let result = cache.load_latest(&pk, &ancestors);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_visibility_after_flush() {
         let cache = AccountsCache::default();
         let pk = Pubkey::new_unique();
 
@@ -710,7 +707,6 @@ mod tests {
 
         // After clearing flushed roots, slot is no longer visible
         let empty = Ancestors::default();
-        assert_eq!(cache.slot_status(&empty, 10), None);
         assert!(cache.load_latest(&pk, &empty).is_none());
     }
 
@@ -735,17 +731,6 @@ mod tests {
         assert!(cache.roots_being_flushed.read().unwrap().contains(&3));
         assert!(cache.roots_being_flushed.read().unwrap().contains(&5));
         assert!(!cache.roots_being_flushed.read().unwrap().contains(&7));
-
-        // slot_status should reflect the transition
-        let empty = Ancestors::default();
-        assert_eq!(
-            cache.slot_status(&empty, 3),
-            Some(SlotStatus::RootBeingFlushed)
-        );
-        assert_eq!(
-            cache.slot_status(&empty, 7),
-            Some(SlotStatus::UnflushedRoot)
-        );
 
         cache.end_flush_roots();
     }
@@ -793,18 +778,10 @@ mod tests {
         let taken = cache.begin_flush_roots(None);
         assert_eq!(taken, BTreeSet::from([1, 2]));
 
-        let empty = Ancestors::default();
-        assert_eq!(
-            cache.slot_status(&empty, 1),
-            Some(SlotStatus::RootBeingFlushed)
-        );
-
         cache.end_flush_roots();
 
         // After clear, roots_being_flushed is empty
         assert!(cache.roots_being_flushed.read().unwrap().is_empty());
-        // Slots are no longer visible
-        assert_eq!(cache.slot_status(&empty, 1), None);
 
         // Second cycle works without panic
         cache.add_root(3);
@@ -814,23 +791,26 @@ mod tests {
     }
 
     #[test]
-    fn test_load_latest_root_being_flushed() {
+    fn test_load_latest_multiple_ancestors_one_being_flushed() {
         let cache = AccountsCache::default();
         let pk = Pubkey::new_unique();
 
-        cache.store(10, &pk, AccountSharedData::new(500, 0, &Pubkey::default()));
+        // Store at slots 5 and 10, both will be ancestors
+        cache.store(5, &pk, AccountSharedData::new(5, 0, &Pubkey::default()));
+        cache.store(10, &pk, AccountSharedData::new(10, 0, &Pubkey::default()));
+
+        // Slot 10 is also a root that gets claimed for flushing
         cache.add_root(10);
         cache.begin_flush_roots(None);
 
-        // Account should still be loadable with RootBeingFlushed status
-        let empty = Ancestors::default();
-        let (account, slot, status) = cache.load_latest(&pk, &empty).unwrap();
-        assert_eq!(slot, 10);
-        assert_eq!(status, SlotStatus::RootBeingFlushed);
-        assert_eq!(account.account.lamports(), 500);
+        let ancestors = Ancestors::from(vec![5, 10]);
+        let (account, slot, status) = cache.load_latest(&pk, &ancestors).unwrap();
 
-        // After end_flush_roots, the slot is no longer visible
+        // Slot 10 is highest ancestor but is being flushed, so should return AncestorBeingFlushed
+        assert_eq!(slot, 10);
+        assert_eq!(status, SlotStatus::AncestorBeingFlushed);
+        assert_eq!(account.account.lamports(), 10);
+
         cache.end_flush_roots();
-        assert!(cache.load_latest(&pk, &empty).is_none());
     }
 }
