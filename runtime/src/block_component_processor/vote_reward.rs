@@ -89,6 +89,7 @@ impl VoteRewardAccountState {
     }
 
     /// Returns the amount of lamports needed to store this account.
+    #[allow(dead_code)] // TODO(akhi): caller not yet upstreamed
     #[cfg(test)]
     pub(crate) fn rent_needed_for_account(bank: &Bank) -> u64 {
         let state = Self {
