@@ -268,14 +268,20 @@ version = "4.1.0-alpha.0"
 name = "agave-scheduling-utils"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-feature-set",
  "agave-scheduler-bindings",
  "agave-transaction-view",
  "ahash 0.8.12",
+ "bincode",
  "libc",
  "nix",
  "rts-alloc",
  "shaq",
+ "slotmap",
+ "solana-fee",
+ "solana-packet 4.1.0",
  "solana-pubkey 4.1.0",
+ "solana-transaction",
  "solana-transaction-error",
  "tempfile",
  "thiserror 2.0.18",
@@ -6128,10 +6134,10 @@ dependencies = [
 [[package]]
 name = "rts-alloc"
 version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a0d46bfcacc6e65b67c547e5083ffd549fe80dee8ec337507dd7f01d26763f4"
+source = "git+https://github.com/anza-xyz/rts-alloc?rev=0a3787adc7f4523de3515115f735de83cee01124#0a3787adc7f4523de3515115f735de83cee01124"
 dependencies = [
  "libc",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6641,10 +6647,10 @@ dependencies = [
 [[package]]
 name = "shaq"
 version = "1.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7ff8d8358f614b394c8011e4aca6eb9c0bba29bd73d16be593745bd47838cb8"
+source = "git+https://github.com/anza-xyz/shaq?rev=6e26410140a7d40b2ce65adc0a556e788d184877#6e26410140a7d40b2ce65adc0a556e788d184877"
 dependencies = [
  "libc",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6761,6 +6767,15 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+
+[[package]]
+name = "slotmap"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdd58c3c93c3d278ca835519292445cb4b0d4dc59ccfdf7ceadaab3f8aeb4038"
+dependencies = [
+ "version_check",
+]
 
 [[package]]
 name = "smallvec"

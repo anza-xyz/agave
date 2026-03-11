@@ -11,20 +11,27 @@ edition = { workspace = true }
 
 [features]
 agave-unstable-api = []
+dev-context-only-utils = ["dep:bincode", "dep:solana-transaction"]
 
 [dependencies]
+agave-feature-set = { workspace = true, features = ["agave-unstable-api"] }
 agave-scheduler-bindings = { workspace = true }
-ahash = { workspace = true }
-solana-pubkey = { workspace = true }
-solana-transaction-error = { workspace = true }
-
-[target."cfg(unix)".dependencies]
 agave-transaction-view = { workspace = true }
-libc = { workspace = true }
-nix = { workspace = true, features = ["socket", "uio"] }
+ahash.workspace = true
+bincode = { workspace = true, optional = true }
 rts-alloc = { workspace = true }
 shaq = { workspace = true }
+slotmap = { workspace = true }
+solana-fee = { workspace = true, features = ["agave-unstable-api"] }
+solana-packet = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-transaction = { workspace = true, optional = true, features = ["serde"] }
+solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
+
+[target."cfg(unix)".dependencies]
+libc = { workspace = true }
+nix = { workspace = true, features = ["socket", "uio"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
