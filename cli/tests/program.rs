@@ -754,7 +754,7 @@ async fn test_cli_program_deploy_with_authority() {
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
-        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
+        lamports: 1000 * minimum_balance_for_programdata + minimum_balance_for_program,
     };
     process_command(&config).await.unwrap();
 
