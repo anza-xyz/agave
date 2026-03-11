@@ -26,16 +26,16 @@ use {
 pub struct TxLoopConfigBuilder {
     zero_copy: bool,
     maybe_src_mac: Option<MacAddress>,
-    maybe_src_ip: Option<Ipv4Addr>,
+    src_ip: Ipv4Addr,
     src_port: u16,
 }
 
 impl TxLoopConfigBuilder {
-    pub fn new(src_port: u16) -> Self {
+    pub fn new(src_ip: Ipv4Addr, src_port: u16) -> Self {
         Self {
             zero_copy: false,
             maybe_src_mac: None,
-            maybe_src_ip: None,
+            src_ip,
             src_port,
         }
     }
@@ -50,16 +50,11 @@ impl TxLoopConfigBuilder {
         self
     }
 
-    pub fn override_src_ip(&mut self, ip: Ipv4Addr) -> &mut Self {
-        self.maybe_src_ip = Some(ip);
-        self
-    }
-
     pub fn build_with_src_device(self, src_device: &NetworkDevice) -> TxLoopConfig {
         let Self {
             zero_copy,
             maybe_src_mac,
-            maybe_src_ip,
+            src_ip,
             src_port,
         } = self;
 
@@ -68,13 +63,6 @@ impl TxLoopConfigBuilder {
             src_device
                 .mac_addr()
                 .expect("no src_mac provided, device must have a MAC address")
-        });
-
-        let src_ip = maybe_src_ip.unwrap_or_else(|| {
-            // if no source IP is provided, use the device's IPv4 address
-            src_device
-                .ipv4_addr()
-                .expect("no src_ip provided, device must have an IPv4 address")
         });
 
         TxLoopConfig {

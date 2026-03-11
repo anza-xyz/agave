@@ -146,7 +146,7 @@ impl XdpRetransmitBuilder {
     pub fn new(
         config: XdpConfig,
         src_port: u16,
-        src_ip: Option<Ipv4Addr>,
+        src_ip: Ipv4Addr,
         exit: Arc<AtomicBool>,
     ) -> Result<Self, Box<dyn Error>> {
         use {
@@ -169,11 +169,8 @@ impl XdpRetransmitBuilder {
             NetworkDevice::new_from_default_route().unwrap()
         });
 
-        let mut tx_loop_config_builder = TxLoopConfigBuilder::new(src_port);
+        let mut tx_loop_config_builder = TxLoopConfigBuilder::new(src_ip, src_port);
         tx_loop_config_builder.zero_copy(zero_copy);
-        if let Some(src_ip) = src_ip {
-            tx_loop_config_builder.override_src_ip(src_ip);
-        }
         let tx_loop_config = tx_loop_config_builder.build_with_src_device(&dev);
 
         let reserved_cores = cpus.iter().cloned().collect::<HashSet<_>>();
@@ -340,29 +337,4 @@ impl XdpRetransmitter {
         }
         Ok(())
     }
-}
-
-/// Returns the IPv4 address of the master interface if the given interface is part of a bond.
-#[cfg(target_os = "linux")]
-pub fn master_ip_if_bonded(interface: &str) -> Option<Ipv4Addr> {
-    let master_ifindex_path = format!("/sys/class/net/{interface}/master/ifindex");
-    if let Ok(contents) = std::fs::read_to_string(&master_ifindex_path) {
-        let idx = contents.trim().parse().unwrap();
-        return Some(
-            NetworkDevice::new_from_index(idx)
-                .and_then(|dev| dev.ipv4_addr())
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "failed to open bond master interface for {interface}: master index \
-                         {idx}: {e}"
-                    )
-                }),
-        );
-    }
-    None
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn master_ip_if_bonded(_interface: &str) -> Option<Ipv4Addr> {
-    None
 }

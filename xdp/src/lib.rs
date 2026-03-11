@@ -32,7 +32,7 @@ pub mod xdp_retransmitter;
 
 #[cfg(target_os = "linux")]
 pub use program::load_xdp_program;
-use std::io;
+use std::{io, net::Ipv4Addr};
 
 #[cfg(target_os = "linux")]
 pub fn set_cpu_affinity(cpus: impl IntoIterator<Item = usize>) -> Result<(), io::Error> {
@@ -77,4 +77,46 @@ pub fn get_cpu() -> Result<usize, io::Error> {
 #[cfg(not(target_os = "linux"))]
 pub fn get_cpu() -> Result<usize, io::Error> {
     unimplemented!()
+}
+
+#[cfg(target_os = "linux")]
+/// Get the IPv4 address of the device
+pub fn get_src_device_ip(maybe_interface: Option<String>) -> Ipv4Addr {
+    let src_device = if let Some(interface) = maybe_interface {
+        if let Some(ip) = master_ip_if_bonded(&interface) {
+            return ip;
+        } else {
+            crate::device::NetworkDevice::new(interface).unwrap()
+        }
+    } else {
+        crate::device::NetworkDevice::new_from_default_route().unwrap()
+    };
+    src_device
+        .ipv4_addr()
+        .expect("no src_ip provided, device must have an IPv4 address")
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn get_src_device_ip(_maybe_interface: Option<String>) -> Ipv4Addr {
+    unimplemented!()
+}
+
+/// Returns the IPv4 address of the master interface if the given interface is part of a bond.
+#[cfg(target_os = "linux")]
+fn master_ip_if_bonded(interface: &str) -> Option<Ipv4Addr> {
+    let master_ifindex_path = format!("/sys/class/net/{interface}/master/ifindex");
+    if let Ok(contents) = std::fs::read_to_string(&master_ifindex_path) {
+        let idx = contents.trim().parse().unwrap();
+        return Some(
+            crate::device::NetworkDevice::new_from_index(idx)
+                .and_then(|dev| dev.ipv4_addr())
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "failed to open bond master interface for {interface}: master index \
+                         {idx}: {e}"
+                    )
+                }),
+        );
+    }
+    None
 }

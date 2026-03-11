@@ -264,7 +264,7 @@ pub fn execute(
     #[cfg(target_os = "linux")]
     let maybe_xdp_retransmit_builder = {
         use {
-            agave_xdp::xdp_retransmitter::{XdpRetransmitBuilder, master_ip_if_bonded},
+            agave_xdp::{get_src_device_ip, xdp_retransmitter::XdpRetransmitBuilder},
             caps::{
                 CapSet,
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
@@ -340,11 +340,8 @@ pub fn execute(
                 .expect("failed to get local address")
                 .port();
             let src_ip = match node.bind_ip_addrs.active() {
-                IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
-                IpAddr::V4(_unspecified) => xdp_config
-                    .interface
-                    .as_ref()
-                    .and_then(|iface| master_ip_if_bonded(iface)),
+                IpAddr::V4(ip) if !ip.is_unspecified() => ip,
+                IpAddr::V4(_unspecified) => get_src_device_ip(xdp_config.interface.clone()),
                 _ => panic!("IPv6 not supported"),
             };
             XdpRetransmitBuilder::new(xdp_config, src_port, src_ip, exit.clone())
