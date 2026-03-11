@@ -52,12 +52,10 @@ use {
 pub const DEFAULT_WAIT_FOR_CHUNK_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Parked re-check base progression: 10 -> 20 -> 40 -> 80ms (cap at 80ms).
+/// Jitter of up to 20ms is added to spread wakeups and avoid herd behavior.
 const PARK_RECHECK_BASE_MS: u64 = 10;
 const PARK_RECHECK_BASE_CAP_MS: u64 = 80;
-/// Add fixed jitter to spread wakeups and avoid herd behavior.
 const PARK_RECHECK_JITTER_MAX_MS: u64 = 20;
-/// Hard cap on effective sleep.
-const PARK_RECHECK_SLEEP_CAP_MS: u64 = 100;
 
 pub const ALPN_TPU_PROTOCOL_ID: &[u8] = b"solana-tpu";
 
@@ -109,11 +107,7 @@ impl ParkRecheckBackoff {
     }
 
     fn next_delay(&mut self) -> Duration {
-        let jitter_ms = rng().random_range(0..=PARK_RECHECK_JITTER_MAX_MS);
-        let delay_ms = self
-            .base_ms
-            .saturating_add(jitter_ms)
-            .min(PARK_RECHECK_SLEEP_CAP_MS);
+        let delay_ms = rng().random_range(self.base_ms..=self.base_ms + PARK_RECHECK_JITTER_MAX_MS);
         self.base_ms = self.base_ms.saturating_mul(2).min(PARK_RECHECK_BASE_CAP_MS);
         Duration::from_millis(delay_ms)
     }
@@ -1196,10 +1190,7 @@ pub mod test {
                 "delay_ms={delay_ms}, expected_base={expected_base}"
             );
             assert!(
-                delay_ms
-                    <= expected_base
-                        .saturating_add(PARK_RECHECK_JITTER_MAX_MS)
-                        .min(PARK_RECHECK_SLEEP_CAP_MS),
+                delay_ms <= expected_base + PARK_RECHECK_JITTER_MAX_MS,
                 "delay_ms={delay_ms}, expected_base={expected_base}"
             );
         }

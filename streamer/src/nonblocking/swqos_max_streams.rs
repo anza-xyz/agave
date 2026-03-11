@@ -182,6 +182,8 @@ impl SwQosMaxStreams {
                         .map(|c| c.connection_count.load(Ordering::Relaxed))
                         .unwrap_or(1)
                         .max(1) as u32;
+                    // At least 1: peers that passed the min-stake threshold in
+                    // build_connection_context should not be parked.
                     let per_conn = (quota / num_connections).max(1);
                     // Don't exceed the unsaturated limit.
                     Some(per_conn.min(staked_unsat_max.max(1)))
@@ -557,12 +559,26 @@ pub mod test {
         });
         SwQosMaxStreamsConnectionContext {
             peer_type: ConnectionPeerType::Staked(stake),
-            remote_pubkey: None,
+            remote_pubkey: Some(solana_pubkey::Pubkey::new_unique()),
             total_stake,
             in_staked_table: true,
             last_update: Arc::new(AtomicU64::new(0)),
             stream_counter: Some(counter),
         }
+    }
+
+    /// Expected saturated quota: capacity_tps * stake/total_stake * rtt_secs / num_connections
+    fn expected_saturated_quota(
+        max_streams_per_ms: u64,
+        stake: u64,
+        total_stake: u64,
+        rtt: Duration,
+        num_connections: u32,
+    ) -> u32 {
+        let capacity_tps = max_streams_per_ms * 1000;
+        let share_tps = (capacity_tps as u128 * stake as u128 / total_stake as u128) as u64;
+        let quota = (share_tps as f64 * rtt.as_secs_f64()) as u32;
+        (quota / num_connections).max(1)
     }
 
     // -- Saturated path --
@@ -579,30 +595,56 @@ pub mod test {
 
     #[test]
     fn test_saturated_staked_proportional_quota() {
-        // 500K/s capacity, 1% stake, 50ms RTT -> 5000 * 0.05 = 250
+        // 500K/s capacity, 1% stake, 50ms RTT
+        let max_streams_per_ms = 500;
         let swqos = make_swqos(SwQosMaxStreamsConfig {
-            max_streams_per_ms: 500,
+            max_streams_per_ms,
             ..SwQosMaxStreamsConfig::default()
         });
-        let ctx = staked_context(1_000, 100_000, 1);
+        let (stake, total_stake) = (1_000, 100_000);
+        let rtt = Duration::from_millis(50);
+        let ctx = staked_context(stake, total_stake, 1);
+        let expected = expected_saturated_quota(max_streams_per_ms, stake, total_stake, rtt, 1);
         assert_eq!(
-            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50), true),
-            Some(250),
+            swqos.compute_max_streams_for_rtt(&ctx, rtt, true),
+            Some(expected),
         );
     }
 
     #[test]
     fn test_saturated_quota_scales_with_rtt() {
         // Same stake, double RTT -> double quota (throughput stays the same)
+        let max_streams_per_ms = 500;
         let swqos = make_swqos(SwQosMaxStreamsConfig {
-            max_streams_per_ms: 500,
+            max_streams_per_ms,
             ..SwQosMaxStreamsConfig::default()
         });
-        let ctx = staked_context(1_000, 100_000, 1);
-        let q50 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50), true);
-        let q100 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(100), true);
-        assert_eq!(q50, Some(250));
-        assert_eq!(q100, Some(500));
+        let (stake, total_stake) = (1_000, 100_000);
+        let ctx = staked_context(stake, total_stake, 1);
+        let rtt50 = Duration::from_millis(50);
+        let rtt100 = Duration::from_millis(100);
+        let q50 = swqos.compute_max_streams_for_rtt(&ctx, rtt50, true);
+        let q100 = swqos.compute_max_streams_for_rtt(&ctx, rtt100, true);
+        assert_eq!(
+            q50,
+            Some(expected_saturated_quota(
+                max_streams_per_ms,
+                stake,
+                total_stake,
+                rtt50,
+                1
+            ))
+        );
+        assert_eq!(
+            q100,
+            Some(expected_saturated_quota(
+                max_streams_per_ms,
+                stake,
+                total_stake,
+                rtt100,
+                1
+            ))
+        );
     }
 
     #[test]

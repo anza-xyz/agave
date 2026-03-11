@@ -770,7 +770,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .possible_values(&["sleep", "max-streams"])
             .default_value("sleep")
-            .hidden(hidden_unless_forced())
             .help(
                 "SwQoS mode: 'sleep' (legacy sleep-based throttling) or 'max-streams' (QUIC \
                  MAX_STREAMS flow control)",

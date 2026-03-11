@@ -970,7 +970,7 @@ pub fn execute(
     let tpu_max_connections_per_ipaddr_per_minute: u64 =
         value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
     let max_streams_per_ms = value_t_or_exit!(matches, "tpu_max_streams_per_ms", u64);
-    let tpu_swqos_mode = matches.value_of("tpu_swqos_mode").unwrap_or("sleep");
+    let tpu_swqos_mode = matches.value_of("tpu_swqos_mode").unwrap();
     info!("TPU SwQoS mode: {tpu_swqos_mode}");
 
     let cluster_entrypoints = entrypoint_addrs

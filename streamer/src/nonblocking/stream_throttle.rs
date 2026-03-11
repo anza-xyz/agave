@@ -201,12 +201,6 @@ pub struct ConnectionStreamCounter {
 
 impl OpaqueStreamerCounter for ConnectionStreamCounter {}
 
-impl Default for ConnectionStreamCounter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ConnectionStreamCounter {
     pub fn new() -> Self {
         Self {
