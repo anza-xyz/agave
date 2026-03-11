@@ -147,7 +147,7 @@ impl CrdsGossipPush {
                         received_cache.record(origin, from, usize::from(num_dups));
                         self.num_old.fetch_add(1, Ordering::Relaxed);
                     }
-                    Err(CrdsError::InsertFailed | CrdsError::UnknownStakes) => {
+                    Err(CrdsError::InsertFailed) => {
                         received_cache.record(origin, from, /*num_dups:*/ usize::MAX);
                         self.num_old.fetch_add(1, Ordering::Relaxed);
                     }

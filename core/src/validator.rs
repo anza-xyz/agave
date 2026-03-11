@@ -937,6 +937,11 @@ impl Validator {
             socket_addr_space,
         );
         cluster_info.set_contact_debug_interval(config.contact_debug_interval);
+        if let Some(known_validators) = &config.known_validators {
+            cluster_info
+                .set_trim_keep_pubkeys(known_validators.iter().copied())
+                .expect("set_trim_keep_pubkeys should succeed as ClusterInfo was just created");
+        }
         cluster_info.set_entrypoints(cluster_entrypoints);
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
         cluster_info.set_bind_ip_addrs(node.bind_ip_addrs.clone());
