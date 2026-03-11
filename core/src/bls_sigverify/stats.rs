@@ -1,7 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
-    histogram::Histogram,
+    agave_math_utils::welford_stats::WelfordStats,
     std::time::{Duration, Instant},
 };
 
@@ -15,11 +15,11 @@ pub(super) struct SigVerifierStats {
     /// Stats for sigverifying certs.
     pub(super) cert_stats: SigVerifyCertStats,
     /// Stats on how long [`verify_and_send_batch`] took.
-    pub(super) verify_and_send_batch_us: Histogram,
+    pub(super) verify_and_send_batch_us: WelfordStats,
     /// Stats on how long [`extract_and_filter_msgs`] took.
-    pub(super) extract_filter_msgs_us: Histogram,
+    pub(super) extract_filter_msgs_us: WelfordStats,
     /// Number of packets received.
-    pub(super) num_pkts: Histogram,
+    pub(super) num_pkts: WelfordStats,
     /// Number of discarded packets received from the streamer.
     pub(super) num_discarded_pkts: u64,
     /// Number of times we failed to deserialize a packet.
@@ -43,8 +43,8 @@ impl Default for SigVerifierStats {
         Self {
             vote_stats: SigVerifyVoteStats::default(),
             cert_stats: SigVerifyCertStats::default(),
-            extract_filter_msgs_us: Histogram::new(),
-            num_pkts: Histogram::default(),
+            extract_filter_msgs_us: WelfordStats::default(),
+            num_pkts: WelfordStats::default(),
             discard_vote_invalid_rank: 0,
             num_discarded_pkts: 0,
             num_malformed_pkts: 0,
@@ -52,7 +52,7 @@ impl Default for SigVerifierStats {
             num_old_votes_received: 0,
             num_old_certs_received: 0,
             num_verified_certs_received: 0,
-            verify_and_send_batch_us: Histogram::default(),
+            verify_and_send_batch_us: WelfordStats::default(),
             last_report: Instant::now(),
         }
     }
@@ -85,7 +85,7 @@ impl SigVerifierStats {
             "bls_sig_verifier_stats",
             (
                 "extract_and_verify_us_count",
-                extract_filter_msgs_us.entries(),
+                extract_filter_msgs_us.count(),
                 i64
             ),
             (
@@ -109,16 +109,6 @@ impl SigVerifierStats {
             ("num_malformed_pkts", *num_malformed_pkts, i64),
             ("num_old_certs_received", *num_old_certs_received, i64),
             (
-                "verify_and_send_batch_us_90pct",
-                verify_and_send_batch_us.percentile(90.0).unwrap_or(0),
-                i64
-            ),
-            (
-                "verify_and_send_batch_us_min",
-                verify_and_send_batch_us.minimum().unwrap_or(0),
-                i64
-            ),
-            (
                 "verify_and_send_batch_us_max",
                 verify_and_send_batch_us.maximum().unwrap_or(0),
                 i64
@@ -130,18 +120,12 @@ impl SigVerifierStats {
             ),
             (
                 "verify_and_send_batch_us_count",
-                verify_and_send_batch_us.entries(),
+                verify_and_send_batch_us.count(),
                 i64
             ),
-            (
-                "num_pkts_90pct",
-                num_pkts.percentile(90.0).unwrap_or(0),
-                i64
-            ),
-            ("num_pkts_min", num_pkts.minimum().unwrap_or(0), i64),
             ("num_pkts_max", num_pkts.maximum().unwrap_or(0), i64),
             ("num_pkts_mean", num_pkts.mean().unwrap_or(0), i64),
-            ("num_pkts_count", num_pkts.entries(), i64),
+            ("num_pkts_count", num_pkts.count(), i64),
         );
         *self = SigVerifierStats::default();
     }
@@ -168,7 +152,7 @@ pub(super) struct SigVerifyCertStats {
     pub(super) pool_channel_full: u64,
 
     /// Stats for [`verify_and_send_certificates`].
-    pub(super) fn_verify_and_send_certs_stats: Histogram,
+    pub(super) fn_verify_and_send_certs_stats: WelfordStats,
 }
 
 impl SigVerifyCertStats {
@@ -191,7 +175,7 @@ impl SigVerifyCertStats {
         self.pool_sent += pool_sent;
         self.pool_channel_full += pool_channel_full;
         self.fn_verify_and_send_certs_stats
-            .merge(&fn_verify_and_send_certs_stats);
+            .merge(fn_verify_and_send_certs_stats);
     }
 
     pub(super) fn report(&self) {
@@ -220,7 +204,7 @@ impl SigVerifyCertStats {
             ("pool_channel_full", *pool_channel_full, i64),
             (
                 "fn_verify_and_send_certs_count",
-                fn_verify_and_send_certs_stats.entries(),
+                fn_verify_and_send_certs_stats.count(),
                 i64
             ),
             (
@@ -262,14 +246,14 @@ pub(super) struct SigVerifyVoteStats {
     pub(super) repair_channel_full: u64,
 
     /// Stats for [`verify_and_send_votes`].
-    pub(super) fn_verify_and_send_votes_stats: Histogram,
+    pub(super) fn_verify_and_send_votes_stats: WelfordStats,
     /// Stats for [`verify_votes_optimistic`].
-    pub(super) fn_verify_votes_optimistic_stats: Histogram,
+    pub(super) fn_verify_votes_optimistic_stats: WelfordStats,
     /// Stats for [`verify_individual_votes`].
-    pub(super) fn_verify_individual_votes_stats: Histogram,
+    pub(super) fn_verify_individual_votes_stats: WelfordStats,
 
     /// Stats for number of distinct votes in batches.
-    pub(super) distinct_votes_stats: Histogram,
+    pub(super) distinct_votes_stats: WelfordStats,
 }
 
 impl SigVerifyVoteStats {
@@ -303,12 +287,12 @@ impl SigVerifyVoteStats {
         self.pool_sent += pool_sent;
         self.pool_channel_full += pool_channel_full;
         self.fn_verify_and_send_votes_stats
-            .merge(&fn_verify_and_send_votes_stats);
+            .merge(fn_verify_and_send_votes_stats);
         self.fn_verify_votes_optimistic_stats
-            .merge(&fn_verify_votes_optimistic_stats);
+            .merge(fn_verify_votes_optimistic_stats);
         self.fn_verify_individual_votes_stats
-            .merge(&fn_verify_individual_votes_stats);
-        self.distinct_votes_stats.merge(&distinct_votes_stats);
+            .merge(fn_verify_individual_votes_stats);
+        self.distinct_votes_stats.merge(distinct_votes_stats);
     }
 
     pub(super) fn report(&self) {
@@ -344,7 +328,7 @@ impl SigVerifyVoteStats {
             ("pool_channel_full", *pool_channel_full, i64),
             (
                 "fn_verify_and_send_votes_count",
-                fn_verify_and_send_votes_stats.entries(),
+                fn_verify_and_send_votes_stats.count(),
                 i64
             ),
             (
@@ -354,7 +338,7 @@ impl SigVerifyVoteStats {
             ),
             (
                 "fn_verify_votes_optimistic_count",
-                fn_verify_votes_optimistic_stats.entries(),
+                fn_verify_votes_optimistic_stats.count(),
                 i64
             ),
             (
@@ -364,7 +348,7 @@ impl SigVerifyVoteStats {
             ),
             (
                 "fn_verify_individual_votes_count",
-                fn_verify_individual_votes_stats.entries(),
+                fn_verify_individual_votes_stats.count(),
                 i64
             ),
             (
@@ -372,7 +356,7 @@ impl SigVerifyVoteStats {
                 fn_verify_individual_votes_stats.mean().unwrap_or(0),
                 i64
             ),
-            ("distinct_votes_count", distinct_votes_stats.entries(), i64),
+            ("distinct_votes_count", distinct_votes_stats.count(), i64),
             (
                 "distinct_votes_mean",
                 distinct_votes_stats.mean().unwrap_or(0),

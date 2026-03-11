@@ -6540,6 +6540,7 @@ dependencies = [
  "agave-bls-cert-verify",
  "agave-feature-set",
  "agave-logger",
+ "agave-math-utils",
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
  "agave-snapshots",

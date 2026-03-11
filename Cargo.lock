@@ -7870,6 +7870,7 @@ dependencies = [
  "agave-bls-cert-verify",
  "agave-feature-set",
  "agave-logger",
+ "agave-math-utils",
  "agave-reserved-account-keys",
  "agave-scheduler-bindings",
  "agave-scheduling-utils",

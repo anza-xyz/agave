@@ -98,8 +98,7 @@ pub(super) fn verify_and_send_votes(
     measure.stop();
     stats
         .fn_verify_and_send_votes_stats
-        .increment(measure.as_us())
-        .unwrap();
+        .add_sample(measure.as_us());
     Ok(stats)
 }
 
@@ -201,10 +200,7 @@ fn verify_votes(
     // Fallback to individual verification
     let (verified_votes, time_us) =
         measure_us!(verify_individual_votes(votes_to_verify, thread_pool));
-    stats
-        .fn_verify_individual_votes_stats
-        .increment(time_us)
-        .unwrap();
+    stats.fn_verify_individual_votes_stats.add_sample(time_us);
     verified_votes
 }
 
@@ -261,8 +257,7 @@ fn verify_votes_optimistic(
     measure.stop();
     stats
         .fn_verify_votes_optimistic_stats
-        .increment(measure.as_us())
-        .unwrap();
+        .add_sample(measure.as_us());
     verified
 }
 
@@ -297,8 +292,7 @@ fn aggregate_pubkeys_by_payload(
 
     stats
         .distinct_votes_stats
-        .increment(grouped_votes.len() as u64)
-        .unwrap();
+        .add_sample(grouped_votes.len() as u64);
 
     let (distinct_payloads, distinct_pubkeys_results): (Vec<_>, Vec<_>) = grouped_votes
         .into_par_iter()

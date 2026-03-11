@@ -148,8 +148,7 @@ impl SigVerifier {
             let (verify_res, verify_time_us) = measure_us!(self.verify_and_send_batches(batches));
             self.stats
                 .verify_and_send_batch_us
-                .increment(verify_time_us)
-                .unwrap();
+                .add_sample(verify_time_us);
             self.stats.maybe_report();
             if let Err(e) = verify_res {
                 error!("verify_and_send_batch() failed with {e}. Exiting.");
@@ -166,8 +165,7 @@ impl SigVerifier {
             measure_us!(self.extract_and_filter_msgs(batches, &root_bank,));
         self.stats
             .extract_filter_msgs_us
-            .increment(extract_msgs_us)
-            .unwrap();
+            .add_sample(extract_msgs_us);
 
         let (votes_result, certs_result) = self.thread_pool.join(
             || {
@@ -251,7 +249,7 @@ impl SigVerifier {
                 }
             }
         }
-        self.stats.num_pkts.increment(num_pkts).unwrap();
+        self.stats.num_pkts.add_sample(num_pkts);
         (certs, votes)
     }
 
@@ -488,7 +486,6 @@ mod tests {
         assert_eq!(receiver.try_iter().flatten().count(), 2);
         assert_eq!(verifier.stats.vote_stats.pool_sent, 1);
         assert_eq!(verifier.stats.cert_stats.pool_sent, 1);
-        assert_eq!(verifier.stats.num_pkts.get(2).unwrap(), 1);
         let received_verified_votes1 = votes_for_repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes1,
@@ -513,7 +510,6 @@ mod tests {
         assert_eq!(receiver.try_iter().flatten().count(), 1);
         assert_eq!(verifier.stats.vote_stats.pool_sent, 1);
         assert_eq!(verifier.stats.cert_stats.pool_sent, 0);
-        assert_eq!(verifier.stats.num_pkts.get(1).unwrap(), 1);
         let received_verified_votes2 = votes_for_repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes2,
@@ -536,7 +532,7 @@ mod tests {
             .unwrap();
         assert_eq!(receiver.try_iter().flatten().count(), 1);
         assert_eq!(verifier.stats.vote_stats.pool_sent, 1);
-        assert_eq!(verifier.stats.num_pkts.get(1).unwrap(), 1);
+        assert_eq!(verifier.stats.cert_stats.pool_sent, 0);
         let received_verified_votes3 = votes_for_repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes3,
@@ -555,8 +551,8 @@ mod tests {
         let packets = vec![Packet::default()];
         let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
         verifier.verify_and_send_batches(packet_batches).unwrap();
-
-        assert_eq!(verifier.stats.num_pkts.get(1).unwrap(), 1);
+        assert_eq!(verifier.stats.vote_stats.pool_sent, 0);
+        assert_eq!(verifier.stats.cert_stats.pool_sent, 0);
         assert_eq!(verifier.stats.num_malformed_pkts, 1);
 
         // Expect no messages since the packet was malformed
@@ -673,7 +669,6 @@ mod tests {
         verifier.verify_and_send_batches(packet_batches).unwrap();
         expect_no_receive(&receiver);
         assert_eq!(verifier.stats.vote_stats.pool_sent, 0);
-        assert_eq!(verifier.stats.num_pkts.get(1).unwrap(), 1);
         assert_eq!(verifier.stats.num_discarded_pkts, 1);
     }
 
@@ -755,13 +750,13 @@ mod tests {
             num_votes,
             "Did not send all valid packets"
         );
-        assert_eq!(verifier.stats.vote_stats.distinct_votes_stats.entries(), 1);
+        assert_eq!(verifier.stats.vote_stats.distinct_votes_stats.count(), 1);
         assert_eq!(
             verifier
                 .stats
                 .vote_stats
                 .distinct_votes_stats
-                .mean()
+                .mean::<u64>()
                 .unwrap(),
             2
         );
@@ -1304,7 +1299,7 @@ mod tests {
 
         assert_eq!(message_receiver.try_iter().flatten().count(), 1);
         assert_eq!(verifier.stats.num_verified_certs_received, 0);
-        assert_eq!(verifier.stats.num_pkts.get(1).unwrap(), 1);
+        assert_eq!(verifier.stats.cert_stats.certs_to_sig_verify, 1);
 
         vote_messages.pop(); // Remove one signature
         let mut builder2 = CertificateBuilder::new(cert_type);
@@ -1318,8 +1313,8 @@ mod tests {
         verifier.stats = SigVerifierStats::default();
         verifier.verify_and_send_batches(packet_batches2).unwrap();
         expect_no_receive(&message_receiver);
-        assert_eq!(verifier.stats.num_pkts.get(1).unwrap(), 1);
         assert_eq!(verifier.stats.num_verified_certs_received, 1);
+        assert_eq!(verifier.stats.cert_stats.certs_to_sig_verify, 0);
     }
 
     fn messages_to_batches(messages: &[ConsensusMessage]) -> Vec<PacketBatch> {

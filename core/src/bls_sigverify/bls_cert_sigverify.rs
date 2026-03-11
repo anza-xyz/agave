@@ -69,8 +69,7 @@ pub(super) fn verify_and_send_certificates(
     measure.stop();
     stats
         .fn_verify_and_send_certs_stats
-        .increment(measure.as_us())
-        .unwrap();
+        .add_sample(measure.as_us());
     Ok(stats)
 }
 
