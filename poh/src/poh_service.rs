@@ -625,24 +625,22 @@ impl PohService {
         mut service_message: PohServiceMessageGuard,
         record_receiver: &mut RecordReceiver,
     ) {
-        {
-            let mut recorder = poh_recorder.write().unwrap();
-            match service_message.take() {
-                PohServiceMessage::Reset {
-                    reset_bank,
-                    next_leader_slot,
-                } => {
-                    recorder.reset(reset_bank, next_leader_slot);
-                }
-                PohServiceMessage::SetBank { bank } => {
-                    let bank_id = bank.bank_id();
-                    let bank_max_tick_height = bank.max_tick_height();
-                    recorder.set_bank(bank);
-                    let should_restart =
-                        recorder.tick_height() < bank_max_tick_height.saturating_sub(1);
-                    if should_restart {
-                        record_receiver.restart(bank_id);
-                    }
+        let mut recorder = poh_recorder.write().unwrap();
+        match service_message.take() {
+            PohServiceMessage::Reset {
+                reset_bank,
+                next_leader_slot,
+            } => {
+                recorder.reset(reset_bank, next_leader_slot);
+            }
+            PohServiceMessage::SetBank { bank } => {
+                let bank_id = bank.bank_id();
+                let bank_max_tick_height = bank.max_tick_height();
+                recorder.set_bank(bank);
+                let should_restart =
+                    recorder.tick_height() < bank_max_tick_height.saturating_sub(1);
+                if should_restart {
+                    record_receiver.restart(bank_id);
                 }
             }
         }
