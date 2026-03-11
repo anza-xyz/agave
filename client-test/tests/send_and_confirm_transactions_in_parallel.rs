@@ -40,7 +40,7 @@ fn test_send_and_confirm_transactions_in_parallel_without_tpu_client() {
 
     let alice = Keypair::new();
     let test_validator =
-        TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
+        TestValidator::start_with_config(alice.pubkey(), None, SocketAddrSpace::Unspecified);
 
     let bob_pubkey = solana_pubkey::new_rand();
     let alice_pubkey = alice.pubkey();
@@ -97,7 +97,7 @@ fn test_send_and_confirm_transactions_in_parallel_with_tpu_client() {
 
     let alice = Keypair::new();
     let test_validator =
-        TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
+        TestValidator::start_with_config(alice.pubkey(), None, SocketAddrSpace::Unspecified);
 
     let bob_pubkey = solana_pubkey::new_rand();
     let alice_pubkey = alice.pubkey();

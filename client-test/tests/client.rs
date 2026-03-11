@@ -61,7 +61,7 @@ fn test_rpc_client() {
 
     let alice = Keypair::new();
     let test_validator =
-        TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
+        TestValidator::start_with_config(alice.pubkey(), None, SocketAddrSpace::Unspecified);
 
     let bob_pubkey = solana_pubkey::new_rand();
 

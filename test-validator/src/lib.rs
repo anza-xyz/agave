@@ -808,15 +808,12 @@ pub struct TestValidator {
 impl TestValidator {
     /// Create a configured genesis and start validator
     /// Sync only; calling from a tokio runtime will panic due to nested runtimes.
-    fn start_with_config(
+    pub fn start_with_config(
         mint_address: Pubkey,
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
-        target_lamports_per_signature: u64,
-        wait_for_fees: bool,
     ) -> Self {
         let test_validator = TestValidatorGenesis::default()
-            .fee_rate_governor(FeeRateGovernor::new(target_lamports_per_signature, 0))
             .rent(Rent {
                 lamports_per_byte: 1,
                 ..Rent::default()
@@ -824,27 +821,16 @@ impl TestValidator {
             .faucet_addr(faucet_addr)
             .start_with_mint_address(mint_address, socket_addr_space)
             .expect("validator start failed");
-
-        if wait_for_fees {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_io()
-                .enable_time()
-                .build()
-                .unwrap();
-            runtime.block_on(test_validator.wait_for_nonzero_fees());
-        }
         test_validator
     }
 
     /// Create a configured genesis and start validator (async version)
-    async fn async_start_with_config(
+    pub async fn async_start_with_config(
         mint_keypair: &Keypair,
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
-        target_lamports_per_signature: u64,
     ) -> Self {
         TestValidatorGenesis::default()
-            .fee_rate_governor(FeeRateGovernor::new(target_lamports_per_signature, 0))
             .rent(Rent {
                 lamports_per_byte: 1,
                 ..Rent::default()
@@ -853,68 +839,6 @@ impl TestValidator {
             .start_async_with_mint_address(mint_keypair, socket_addr_space)
             .await
             .expect("validator start failed")
-    }
-
-    /// Create and start a `TestValidator` with no transaction fees and minimal rent.
-    /// Faucet optional.
-    ///
-    /// This function panics on initialization failure.
-    pub fn with_no_fees(
-        mint_address: Pubkey,
-        faucet_addr: Option<SocketAddr>,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self::start_with_config(mint_address, faucet_addr, socket_addr_space, 0, false)
-    }
-
-    /// Create and start a `TestValidator` with custom transaction fees and minimal rent.
-    /// Faucet optional.
-    ///
-    /// This function panics on initialization failure.
-    pub fn with_custom_fees(
-        mint_address: Pubkey,
-        target_lamports_per_signature: u64,
-        faucet_addr: Option<SocketAddr>,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self::start_with_config(
-            mint_address,
-            faucet_addr,
-            socket_addr_space,
-            target_lamports_per_signature,
-            true,
-        )
-    }
-
-    /// Create and start a `TestValidator` with no transaction fees and minimal rent (async version).
-    /// Faucet optional.
-    ///
-    /// This function panics on initialization failure.
-    pub async fn async_with_no_fees(
-        mint_keypair: &Keypair,
-        faucet_addr: Option<SocketAddr>,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self::async_start_with_config(mint_keypair, faucet_addr, socket_addr_space, 0).await
-    }
-
-    /// Create and start a `TestValidator` with custom transaction fees and minimal rent (async version).
-    /// Faucet optional.
-    ///
-    /// This function panics on initialization failure.
-    pub async fn async_with_custom_fees(
-        mint_keypair: &Keypair,
-        target_lamports_per_signature: u64,
-        faucet_addr: Option<SocketAddr>,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self::async_start_with_config(
-            mint_keypair,
-            faucet_addr,
-            socket_addr_space,
-            target_lamports_per_signature,
-        )
-        .await
     }
 
     /// Initialize the ledger directory

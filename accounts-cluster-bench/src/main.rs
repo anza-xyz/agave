@@ -1558,9 +1558,8 @@ pub mod test {
             None, /* per_time_cap */
             0,    /* port */
         );
-        let test_validator = TestValidator::with_custom_fees(
+        let test_validator = TestValidator::start_with_config(
             mint_pubkey,
-            1,
             Some(faucet_addr),
             SocketAddrSpace::Unspecified,
         );
