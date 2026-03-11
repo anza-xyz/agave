@@ -76,23 +76,7 @@ impl BlockComponentProcessor {
             return Ok(());
         }
 
-        // TODO(ksn): uncomment this as we continue upstreaming
-        //
-        // // If we encounter an UpdateParent when fast leader handover is disabled, error.
-        // if !migration_status.should_allow_fast_leader_handover(slot) && self.update_parent.is_some()
-        // {
-        //     return Err(BlockComponentProcessorError::SpuriousUpdateParent);
-        // }
-
-        // // Post-migration: both header and footer are required
-        // if !self.has_footer {
-        //     return Err(BlockComponentProcessorError::MissingBlockFooter);
-        // }
-
-        // if !self.has_header && self.update_parent.is_none() {
-        //     return Err(BlockComponentProcessorError::MissingParentMarker);
-        // }
-
+        // TODO(ksn): re-introduce on-final logic as we continue upstreaming
         Ok(())
     }
 
@@ -109,13 +93,7 @@ impl BlockComponentProcessor {
             return Ok(());
         }
 
-        // TODO(ksn): uncomment this as we continue upstreaming
-        //
-        // We must have either a header or an update parent prior to processing entry batches.
-        // if !self.has_header && self.update_parent.is_none() {
-        //     return Err(BlockComponentProcessorError::MissingParentMarker);
-        // }
-
+        // TODO(ksn): re-introduce on_entry_batch logic as we continue upstreaming
         Ok(())
     }
 
