@@ -118,11 +118,6 @@ pub struct UiDelegation {
     pub stake: StringAmount,
     pub activation_epoch: StringAmount,
     pub deactivation_epoch: StringAmount,
-    #[deprecated(
-        since = "1.16.7",
-        note = "Please use `solana_stake_interface::state::warmup_cooldown_rate()` instead"
-    )]
-    pub warmup_cooldown_rate: f64,
 }
 
 impl From<Delegation> for UiDelegation {
@@ -133,7 +128,6 @@ impl From<Delegation> for UiDelegation {
             stake: delegation.stake.to_string(),
             activation_epoch: delegation.activation_epoch.to_string(),
             deactivation_epoch: delegation.deactivation_epoch.to_string(),
-            warmup_cooldown_rate: delegation.warmup_cooldown_rate,
         }
     }
 }
@@ -222,7 +216,6 @@ mod test {
                         stake: 20.to_string(),
                         activation_epoch: 2.to_string(),
                         deactivation_epoch: u64::MAX.to_string(),
-                        warmup_cooldown_rate: 0.25,
                     },
                     credits_observed: 10,
                 })
