@@ -52,7 +52,7 @@ pub struct SimpleQosBanlist {
 }
 
 impl SimpleQosBanlist {
-    fn new() -> (Self, Receiver<Pubkey>) {
+    pub fn new() -> (Self, Receiver<Pubkey>) {
         let (eviction_sender, eviction_receiver) = channel(MAX_IN_FLIGHT_EVICTIONS);
         (
             Self {

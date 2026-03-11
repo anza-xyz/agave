@@ -2,7 +2,7 @@
 
 use {
     super::{
-        bls_cert_sigverify::verify_and_send_certificates,
+        bls_cert_sigverify::{CertPayload, verify_and_send_certificates},
         bls_vote_sigverify::{VotePayload, verify_and_send_votes},
         errors::SigVerifyError,
         stats::SigVerifierStats,
@@ -13,7 +13,7 @@ use {
         consensus_rewards::{self},
     },
     agave_votor_messages::{
-        consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
+        consensus_message::{CertificateType, ConsensusMessage, VoteMessage},
         migration::MigrationStatus,
         reward_certificate::AddVoteMessage,
     },
@@ -26,7 +26,7 @@ use {
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
-    solana_streamer::packet::PacketBatch,
+    solana_streamer::{nonblocking::simple_qos::SimpleQosBanlist, packet::PacketBatch},
     std::{
         collections::HashSet,
         sync::{
@@ -45,12 +45,17 @@ use {
 /// This also sets an upper bound on how much storage the various structs in this module require.
 pub(super) const NUM_SLOTS_FOR_VERIFY: Slot = 90_000;
 
+/// If we receive an invalid certificate or vote from a QUIC connection, we ban the sender.
+/// We ban the sender for 2 days which roughly corresponds to an epoch
+pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
+
 /// Starts the BLS sigverifier service in its own dedicated thread.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_service(
     exit: Arc<AtomicBool>,
     migration_status: Arc<MigrationStatus>,
     packet_receiver: Receiver<PacketBatch>,
+    banlist: Arc<SimpleQosBanlist>,
     sharable_banks: SharableBanks,
     channel_to_repair: VerifiedVoterSlotsSender,
     channel_to_reward: Sender<AddVoteMessage>,
@@ -62,6 +67,7 @@ pub(crate) fn spawn_service(
 ) -> thread::JoinHandle<()> {
     let verifier = SigVerifier::new(
         migration_status,
+        banlist,
         sharable_banks,
         channel_to_repair,
         channel_to_reward,
@@ -80,6 +86,7 @@ pub(crate) fn spawn_service(
 
 struct SigVerifier {
     migration_status: Arc<MigrationStatus>,
+    banlist: Arc<SimpleQosBanlist>,
     /// Channel to send msgs to repair on.
     channel_to_repair: VerifiedVoterSlotsSender,
     /// Channel to send msgs to consensus rewards container to.
@@ -102,8 +109,10 @@ struct SigVerifier {
 }
 
 impl SigVerifier {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         migration_status: Arc<MigrationStatus>,
+        banlist: Arc<SimpleQosBanlist>,
         sharable_banks: SharableBanks,
         channel_to_repair: VerifiedVoterSlotsSender,
         channel_to_reward: Sender<AddVoteMessage>,
@@ -120,13 +129,14 @@ impl SigVerifier {
             .unwrap();
         Self {
             migration_status,
-            sharable_banks,
+            banlist,
             channel_to_repair,
             channel_to_reward,
             channel_to_pool,
+            channel_to_metrics,
+            sharable_banks,
             stats: SigVerifierStats::default(),
             verified_certs: HashSet::new(),
-            channel_to_metrics,
             last_checked_root_slot: 0,
             cluster_info,
             leader_schedule,
@@ -178,6 +188,7 @@ impl SigVerifier {
                     &self.channel_to_repair,
                     &self.channel_to_reward,
                     &self.channel_to_metrics,
+                    &self.banlist,
                     &self.thread_pool,
                 )
             },
@@ -187,6 +198,7 @@ impl SigVerifier {
                     certs_to_verify,
                     &root_bank,
                     &self.channel_to_pool,
+                    &self.banlist,
                     &self.thread_pool,
                 )
             },
@@ -211,7 +223,7 @@ impl SigVerifier {
         &mut self,
         batches: Vec<PacketBatch>,
         root_bank: &Bank,
-    ) -> (Vec<Certificate>, Vec<VotePayload>) {
+    ) -> (Vec<CertPayload>, Vec<VotePayload>) {
         let root_slot = root_bank.slot();
         let mut certs = Vec::new();
         let mut votes = Vec::new();
@@ -226,6 +238,11 @@ impl SigVerifier {
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };
+            let Some(remote_pubkey) = packet.meta().remote_pubkey() else {
+                debug_assert!(false, "BLS packet missing remote pubkey");
+                self.stats.num_malformed_pkts += 1;
+                continue;
+            };
             match msg {
                 ConsensusMessage::Vote(vote) => {
                     if let Some((pubkey, bls_pubkey)) = self.keep_vote(&vote, root_bank) {
@@ -233,6 +250,7 @@ impl SigVerifier {
                             vote_message: vote,
                             bls_pubkey,
                             pubkey,
+                            remote_pubkey,
                         });
                     }
                 }
@@ -245,7 +263,10 @@ impl SigVerifier {
                         self.stats.num_verified_certs_received += 1;
                         continue;
                     }
-                    certs.push(cert);
+                    certs.push(CertPayload {
+                        cert,
+                        remote_pubkey,
+                    });
                 }
             }
         }
@@ -335,6 +356,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_net_utils::SocketAddrSpace,
         solana_perf::packet::{Packet, RecycledPacketBatch},
+        solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -346,11 +368,38 @@ mod tests {
         solana_signer_store::encode_base2,
     };
 
+    fn new_test_banlist() -> Arc<SimpleQosBanlist> {
+        let (banlist, _banlist_eviction_receiver) = SimpleQosBanlist::new();
+        Arc::new(banlist)
+    }
+
+    fn create_keypairs_and_bls_sig_verifier_with_channels_and_banlist(
+        votes_for_repair_sender: VerifiedVoterSlotsSender,
+        message_sender: Sender<Vec<ConsensusMessage>>,
+        consensus_metrics_sender: ConsensusMetricsEventSender,
+        reward_votes_sender: Sender<AddVoteMessage>,
+    ) -> (
+        Vec<ValidatorVoteKeypairs>,
+        SigVerifier,
+        Arc<SimpleQosBanlist>,
+    ) {
+        let banlist = new_test_banlist();
+        let (validator_keypairs, verifier) = create_keypairs_and_bls_sig_verifier_with_channels(
+            votes_for_repair_sender,
+            message_sender,
+            consensus_metrics_sender,
+            reward_votes_sender,
+            banlist.clone(),
+        );
+        (validator_keypairs, verifier, banlist)
+    }
+
     fn create_keypairs_and_bls_sig_verifier_with_channels(
         votes_for_repair_sender: VerifiedVoterSlotsSender,
         message_sender: Sender<Vec<ConsensusMessage>>,
         consensus_metrics_sender: ConsensusMetricsEventSender,
         reward_votes_sender: Sender<AddVoteMessage>,
+        banlist: Arc<SimpleQosBanlist>,
     ) -> (Vec<ValidatorVoteKeypairs>, SigVerifier) {
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
@@ -379,6 +428,7 @@ mod tests {
             validator_keypairs,
             SigVerifier::new(
                 Arc::new(MigrationStatus::default()),
+                banlist,
                 sharable_banks,
                 votes_for_repair_sender,
                 reward_votes_sender,
@@ -413,12 +463,44 @@ mod tests {
             message_sender,
             consensus_metrics_sender,
             reward_votes_sender,
+            new_test_banlist(),
         );
         (
             keypairs,
             verifier,
             votes_for_repair_receiver,
             message_receiver,
+        )
+    }
+
+    fn create_keypairs_and_bls_sig_verifier_with_banlist() -> (
+        Vec<ValidatorVoteKeypairs>,
+        SigVerifier,
+        VerifiedVoterSlotsReceiver,
+        Receiver<Vec<ConsensusMessage>>,
+        Arc<SimpleQosBanlist>,
+    ) {
+        let (votes_for_repair_sender, votes_for_repair_receiver) = crossbeam_channel::unbounded();
+        let (message_sender, message_receiver) = crossbeam_channel::unbounded();
+        let (consensus_metrics_sender, consensus_metrics_receiver) = crossbeam_channel::unbounded();
+        let (reward_votes_sender, reward_votes_receiver) = crossbeam_channel::unbounded();
+        std::thread::spawn(move || {
+            while consensus_metrics_receiver.recv().is_ok() {}
+            while reward_votes_receiver.recv().is_ok() {}
+        });
+        let (keypairs, verifier, banlist) =
+            create_keypairs_and_bls_sig_verifier_with_channels_and_banlist(
+                votes_for_repair_sender,
+                message_sender,
+                consensus_metrics_sender,
+                reward_votes_sender,
+            );
+        (
+            keypairs,
+            verifier,
+            votes_for_repair_receiver,
+            message_receiver,
+            banlist,
         )
     }
 
@@ -463,6 +545,13 @@ mod tests {
                 panic!("unexpected error {e:?}");
             }
         }
+    }
+
+    fn message_to_packet(message: &ConsensusMessage, remote_pubkey: Pubkey) -> Packet {
+        let mut packet = Packet::default();
+        packet.populate_packet(None, message).unwrap();
+        packet.meta_mut().set_remote_pubkey(remote_pubkey);
+        packet
     }
 
     #[test]
@@ -607,6 +696,7 @@ mod tests {
             message_sender,
             consensus_metrics_sender,
             reward_votes_sender,
+            new_test_banlist(),
         );
 
         let msg1 = ConsensusMessage::Vote(create_signed_vote_message(
@@ -661,10 +751,7 @@ mod tests {
             Vote::new_finalization_vote(5),
             0,
         ));
-        let mut packet = Packet::default();
-        packet
-            .populate_packet(None, &message)
-            .expect("Failed to populate packet");
+        let mut packet = message_to_packet(&message, Pubkey::new_unique());
         packet.meta_mut().set_discard(true); // Manually discard
 
         let packets = vec![packet];
@@ -695,9 +782,7 @@ mod tests {
                 signature,
                 rank,
             });
-            let mut packet = Packet::default();
-            packet.populate_packet(None, &consensus_message).unwrap();
-            packets.push(packet);
+            packets.push(message_to_packet(&consensus_message, Pubkey::new_unique()));
         }
 
         let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
@@ -728,9 +813,7 @@ mod tests {
         for (i, _) in validator_keypairs.iter().enumerate().take(num_votes_group1) {
             let msg =
                 ConsensusMessage::Vote(create_signed_vote_message(&validator_keypairs, vote1, i));
-            let mut p = Packet::default();
-            p.populate_packet(None, &msg).unwrap();
-            packets.push(p);
+            packets.push(message_to_packet(&msg, Pubkey::new_unique()));
         }
 
         // Group 2 votes
@@ -742,9 +825,7 @@ mod tests {
         {
             let msg =
                 ConsensusMessage::Vote(create_signed_vote_message(&validator_keypairs, vote2, i));
-            let mut p = Packet::default();
-            p.populate_packet(None, &msg).unwrap();
-            packets.push(p);
+            packets.push(message_to_packet(&msg, Pubkey::new_unique()));
         }
 
         let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
@@ -804,9 +885,7 @@ mod tests {
                 signature,
                 rank,
             });
-            let mut packet = Packet::default();
-            packet.populate_packet(None, &consensus_message).unwrap();
-            packets.push(packet);
+            packets.push(message_to_packet(&consensus_message, Pubkey::new_unique()));
         }
 
         let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
@@ -859,9 +938,7 @@ mod tests {
 
             consensus_messages.push(consensus_message.clone());
 
-            let mut packet = Packet::default();
-            packet.populate_packet(None, &consensus_message).unwrap();
-            packets.push(packet);
+            packets.push(message_to_packet(&consensus_message, Pubkey::new_unique()));
         }
 
         let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
@@ -1126,9 +1203,7 @@ mod tests {
                 signature,
                 rank,
             });
-            let mut packet = Packet::default();
-            packet.populate_packet(None, &consensus_message).unwrap();
-            packets.push(packet);
+            packets.push(message_to_packet(&consensus_message, Pubkey::new_unique()));
         }
 
         let num_cert_signers = 7;
@@ -1152,11 +1227,10 @@ mod tests {
             .expect("Failed to aggregate votes for certificate");
         let cert = builder.build().expect("Failed to build certificate");
         let consensus_message_cert = ConsensusMessage::Certificate(cert);
-        let mut cert_packet = Packet::default();
-        cert_packet
-            .populate_packet(None, &consensus_message_cert)
-            .unwrap();
-        packets.push(cert_packet);
+        packets.push(message_to_packet(
+            &consensus_message_cert,
+            Pubkey::new_unique(),
+        ));
 
         let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
         verifier.verify_and_send_batches(packet_batches).unwrap();
@@ -1226,6 +1300,7 @@ mod tests {
         let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
         let mut sig_verifier = SigVerifier::new(
             Arc::new(MigrationStatus::default()),
+            new_test_banlist(),
             sharable_banks,
             votes_for_repair_sender,
             reward_votes_sender,
@@ -1321,14 +1396,139 @@ mod tests {
         assert_eq!(verifier.stats.cert_stats.certs_to_sig_verify, 0);
     }
 
+    #[test]
+    fn test_banlist_not_updated_for_valid_vote_and_cert() {
+        let (validator_keypairs, mut verifier, _, message_receiver, banlist) =
+            create_keypairs_and_bls_sig_verifier_with_banlist();
+
+        let vote_message = ConsensusMessage::Vote(create_signed_vote_message(
+            &validator_keypairs,
+            Vote::new_skip_vote(42),
+            0,
+        ));
+        let cert_message = ConsensusMessage::Certificate(create_signed_certificate_message(
+            &validator_keypairs,
+            CertificateType::Notarize(43, Hash::new_unique()),
+            &(0..7).collect::<Vec<_>>(),
+        ));
+        let vote_sender = Pubkey::new_unique();
+        let cert_sender = Pubkey::new_unique();
+        let packet_batches = messages_to_batches_with_remote_pubkeys(&[
+            (vote_message, vote_sender),
+            (cert_message, cert_sender),
+        ]);
+
+        verifier.verify_and_send_batches(packet_batches).unwrap();
+        assert_eq!(message_receiver.try_iter().flatten().count(), 2);
+        assert!(!banlist.is_banned(&vote_sender));
+        assert!(!banlist.is_banned(&cert_sender));
+    }
+
+    #[test]
+    fn test_banlist_updates_for_invalid_votes() {
+        let (validator_keypairs, mut verifier, _, message_receiver, banlist) =
+            create_keypairs_and_bls_sig_verifier_with_banlist();
+
+        let vote = Vote::new_skip_vote(42);
+        let valid_payload = bincode::serialize(&vote).unwrap();
+        let invalid_payload = bincode::serialize(&Vote::new_skip_vote(999)).unwrap();
+        let invalid_indexes = [1usize, 3usize];
+        let messages: Vec<_> = validator_keypairs
+            .iter()
+            .enumerate()
+            .take(5)
+            .map(|(i, keypair)| {
+                let signature = if invalid_indexes.contains(&i) {
+                    keypair.bls_keypair.sign(&invalid_payload).into()
+                } else {
+                    keypair.bls_keypair.sign(&valid_payload).into()
+                };
+                let message = ConsensusMessage::Vote(VoteMessage {
+                    vote,
+                    signature,
+                    rank: i as u16,
+                });
+                (message, Pubkey::new_unique())
+            })
+            .collect();
+
+        verifier
+            .verify_and_send_batches(messages_to_batches_with_remote_pubkeys(&messages))
+            .unwrap();
+        assert_eq!(message_receiver.try_iter().flatten().count(), 3);
+
+        for (i, (_, sender)) in messages.iter().enumerate() {
+            if invalid_indexes.contains(&i) {
+                assert!(
+                    banlist.is_banned(sender),
+                    "invalid sender {i} should be banned"
+                );
+            } else {
+                assert!(
+                    !banlist.is_banned(sender),
+                    "valid sender {i} should not be banned"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_banlist_updates_for_invalid_certificates() {
+        let (validator_keypairs, mut verifier, _, message_receiver, banlist) =
+            create_keypairs_and_bls_sig_verifier_with_banlist();
+
+        let invalid_indexes = [0usize, 4usize];
+        let messages: Vec<_> = (0..5)
+            .map(|i| {
+                let slot = 10 + i as u64;
+                let cert_type = CertificateType::Notarize(slot, Hash::new_unique());
+                let mut cert = create_signed_certificate_message(
+                    &validator_keypairs,
+                    cert_type,
+                    &(0..7).collect::<Vec<_>>(),
+                );
+                if invalid_indexes.contains(&i) {
+                    cert.signature = BLSSignature::default();
+                }
+                (ConsensusMessage::Certificate(cert), Pubkey::new_unique())
+            })
+            .collect();
+
+        verifier
+            .verify_and_send_batches(messages_to_batches_with_remote_pubkeys(&messages))
+            .unwrap();
+        assert_eq!(message_receiver.try_iter().flatten().count(), 3);
+
+        for (i, (_, sender)) in messages.iter().enumerate() {
+            if invalid_indexes.contains(&i) {
+                assert!(
+                    banlist.is_banned(sender),
+                    "invalid sender {i} should be banned"
+                );
+            } else {
+                assert!(
+                    !banlist.is_banned(sender),
+                    "valid sender {i} should not be banned"
+                );
+            }
+        }
+    }
+
     fn messages_to_batches(messages: &[ConsensusMessage]) -> Vec<PacketBatch> {
+        let messages_with_remote_pubkeys: Vec<_> = messages
+            .iter()
+            .cloned()
+            .map(|message| (message, Pubkey::new_unique()))
+            .collect();
+        messages_to_batches_with_remote_pubkeys(&messages_with_remote_pubkeys)
+    }
+
+    fn messages_to_batches_with_remote_pubkeys(
+        messages: &[(ConsensusMessage, Pubkey)],
+    ) -> Vec<PacketBatch> {
         let packets: Vec<_> = messages
             .iter()
-            .map(|msg| {
-                let mut p = Packet::default();
-                p.populate_packet(None, msg).unwrap();
-                p
-            })
+            .map(|(message, remote_pubkey)| message_to_packet(message, *remote_pubkey))
             .collect();
         vec![RecycledPacketBatch::new(packets).into()]
     }

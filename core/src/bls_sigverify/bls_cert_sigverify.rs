@@ -1,5 +1,5 @@
 use {
-    super::{errors::SigVerifyCertError, stats::SigVerifyCertStats},
+    super::{bls_sigverifier::BAN_TIMEOUT, errors::SigVerifyCertError, stats::SigVerifyCertStats},
     crate::bls_sigverify::{bls_sigverifier::NUM_SLOTS_FOR_VERIFY, utils::send_certs_to_pool},
     agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
     agave_votor_messages::{
@@ -13,10 +13,18 @@ use {
     },
     solana_clock::Slot,
     solana_measure::measure::Measure,
+    solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
+    solana_streamer::nonblocking::simple_qos::SimpleQosBanlist,
     std::{collections::HashSet, num::NonZeroU64},
     thiserror::Error,
 };
+
+#[derive(Clone, Debug)]
+pub(super) struct CertPayload {
+    pub(super) cert: Certificate,
+    pub(super) remote_pubkey: Pubkey,
+}
 
 #[derive(Debug, Error)]
 enum CertVerifyError {
@@ -32,20 +40,22 @@ enum CertVerifyError {
     TooFarInFuture { cert_slot: Slot, root_slot: Slot },
 }
 
-/// Verifies certs and sends the verified certs to the consensus pool.
+/// Verifies certificates and sends the verified certificates to the consensus pool.
 ///
-/// Additionally inserts valid [`CertificateType`]s into [`verified_certs_sets`].
+/// Additionally inserts valid [`CertificateType`]s into `verified_certs_set`.
+/// Any certificate that fails verification will have its sender banlisted.
 ///
 /// Function expects that the caller has already deduped the certs to verify i.e.
 /// none of the certs appear in the [`verified_certs_set`].
 pub(super) fn verify_and_send_certificates(
     verified_certs_set: &mut HashSet<CertificateType>,
-    certs: Vec<Certificate>,
+    certs: Vec<CertPayload>,
     root_bank: &Bank,
     channel_to_pool: &Sender<Vec<ConsensusMessage>>,
+    banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
 ) -> Result<SigVerifyCertStats, SigVerifyCertError> {
-    for cert in certs.iter() {
+    for cert in certs.iter().map(|cert_payload| &cert_payload.cert) {
         debug_assert!(!verified_certs_set.contains(&cert.cert_type));
     }
     let mut measure = Measure::start("verify_and_send_certificates");
@@ -61,6 +71,7 @@ pub(super) fn verify_and_send_certificates(
         root_bank,
         verified_certs_set,
         &mut stats,
+        banlist,
         thread_pool,
     );
     stats.sig_verified_certs += messages.len() as u64;
@@ -76,45 +87,50 @@ pub(super) fn verify_and_send_certificates(
 /// Verifies certificates in `certs`, stores a local copy, and prepares them for forwarding.
 ///
 /// The valid certs are inserted into the [`verified_certs_set`].
+/// Invalid cert senders are banlisted.
 /// Returns a Vec of [`ConsensusMessage`] constructed from the valid certs.
 fn verify_certs(
-    certs: Vec<Certificate>,
+    certs: Vec<CertPayload>,
     root_bank: &Bank,
     verified_certs_set: &mut HashSet<CertificateType>,
     stats: &mut SigVerifyCertStats,
+    banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
 ) -> Vec<ConsensusMessage> {
     let verified = thread_pool.install(|| {
         certs
             .into_par_iter()
-            .map(|cert| {
-                let res = verify_cert(&cert, root_bank);
-                (cert, res)
+            .map(|cert_payload| {
+                let res = verify_cert(&cert_payload.cert, root_bank);
+                (cert_payload, res)
             })
             .collect::<Vec<_>>()
     });
 
     verified
         .into_iter()
-        .filter_map(|(cert, res)| match res {
+        .filter_map(|(cert_payload, res)| match res {
             Ok(()) => {
+                let cert = cert_payload.cert;
                 verified_certs_set.insert(cert.cert_type);
                 Some(ConsensusMessage::Certificate(cert))
             }
-            Err(e) => match e {
-                CertVerifyError::NotEnoughStake { .. } => {
-                    stats.stake_verification_failed += 1;
-                    None
-                }
-                CertVerifyError::CertVerifyFailed(_) => {
-                    stats.signature_verification_failed += 1;
-                    None
-                }
-                CertVerifyError::TooFarInFuture { .. } => {
-                    stats.too_far_in_future += 1;
-                    None
-                }
-            },
+            Err(e) => {
+                banlist.ban(cert_payload.remote_pubkey, BAN_TIMEOUT);
+
+                match e {
+                    CertVerifyError::NotEnoughStake { .. } => {
+                        stats.stake_verification_failed += 1;
+                    }
+                    CertVerifyError::CertVerifyFailed(_) => {
+                        stats.signature_verification_failed += 1;
+                    }
+                    CertVerifyError::TooFarInFuture { .. } => {
+                        stats.too_far_in_future += 1;
+                    }
+                };
+                None
+            }
         })
         .collect()
 }

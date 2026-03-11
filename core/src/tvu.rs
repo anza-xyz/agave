@@ -277,7 +277,7 @@ impl Tvu {
                     thread: bls_streamer_t,
                     key_updater: bls_key_updater,
                 },
-                _banlist,
+                banlist,
             ) = {
                 let quic_server_params = QuicStreamerConfig {
                     num_threads: NonZeroUsize::new(4.min(num_cpus::get())).unwrap(),
@@ -310,6 +310,7 @@ impl Tvu {
                 exit.clone(),
                 migration_status.clone(),
                 bls_packet_receiver,
+                banlist,
                 sharable_banks,
                 verified_voter_slots_sender,
                 reward_votes_sender,
