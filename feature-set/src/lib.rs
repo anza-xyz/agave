@@ -2508,6 +2508,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0449: Direct Account Pointers in Program Input",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
+        /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
     ]
     .iter()
     .cloned()
