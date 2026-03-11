@@ -85,7 +85,7 @@ use {
         rc::Rc,
         result::Result,
         sync::{
-            Arc, Mutex, RwLock, RwLockReadGuard,
+            Arc, Mutex, OnceLock, RwLock, RwLockReadGuard,
             atomic::{AtomicBool, Ordering},
         },
         thread::{Builder, JoinHandle, sleep},
@@ -154,6 +154,8 @@ pub struct ClusterInfo {
     keypair: ArcSwap<Keypair>,
     /// Network entrypoints
     entrypoints: RwLock<Vec<ContactInfo>>,
+    /// Additional pubkeys to preserve during CRDS table trimming.
+    known_validators: OnceLock<HashSet<Pubkey>>,
     outbound_budget: DataBudget,
     my_contact_info: RwLock<ContactInfo>,
     ping_cache: Mutex<PingCache>,
@@ -177,6 +179,7 @@ impl ClusterInfo {
             gossip: CrdsGossip::default(),
             keypair: ArcSwap::from(keypair),
             entrypoints: RwLock::default(),
+            known_validators: OnceLock::new(),
             outbound_budget: DataBudget::default(),
             my_contact_info: RwLock::new(contact_info),
             ping_cache: Mutex::new(PingCache::new(
@@ -255,6 +258,16 @@ impl ClusterInfo {
 
     pub fn set_entrypoints(&self, entrypoints: Vec<ContactInfo>) {
         *self.entrypoints.write().unwrap() = entrypoints;
+    }
+
+    /// Pubkeys that should be preserved during CRDS trim.
+    /// Returns `Err` when called more than once.
+    pub fn set_trim_keep_pubkeys(
+        &self,
+        pubkeys: impl IntoIterator<Item = Pubkey>,
+    ) -> Result<(), HashSet<Pubkey>> {
+        let pubkeys = pubkeys.into_iter().collect();
+        self.known_validators.set(pubkeys)
     }
 
     pub fn save_contact_info(&self) {
@@ -1352,7 +1365,7 @@ impl ClusterInfo {
         if !self.gossip.crds.read().unwrap().should_trim(cap) {
             return;
         }
-        let keep: Vec<_> = self
+        let keep: HashSet<_> = self
             .entrypoints
             .read()
             .unwrap()
@@ -1360,22 +1373,14 @@ impl ClusterInfo {
             .map(ContactInfo::pubkey)
             .copied()
             .chain(std::iter::once(self.id()))
+            .chain(self.known_validators.get().into_iter().flatten().copied())
             .collect();
         self.stats.trim_crds_table.add_relaxed(1);
         let mut gossip_crds = self.gossip.crds.write().unwrap();
-        match gossip_crds.trim(cap, &keep, stakes, timestamp()) {
-            Err(err) => {
-                self.stats.trim_crds_table_failed.add_relaxed(1);
-                // TODO: Stakes are coming from the root-bank. Debug why/when
-                // they are empty/zero.
-                debug!("crds table trim failed: {err:?}");
-            }
-            Ok(num_purged) => {
-                self.stats
-                    .trim_crds_table_purged_values_count
-                    .add_relaxed(num_purged as u64);
-            }
-        }
+        let num_purged = gossip_crds.trim(cap, &keep, stakes, timestamp());
+        self.stats
+            .trim_crds_table_purged_values_count
+            .add_relaxed(num_purged as u64);
     }
 
     /// randomly pick a node and ask them for updates asynchronously
