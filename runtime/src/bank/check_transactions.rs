@@ -167,7 +167,10 @@ impl Bank {
         } else if let Some((nonce_address, _)) =
             self.check_nonce_transaction_validity(tx, next_durable_nonce)
         {
-            Ok(CheckedTransactionDetails::new(Some(nonce_address), compute_budget))
+            Ok(CheckedTransactionDetails::new(
+                Some(nonce_address),
+                compute_budget,
+            ))
         } else {
             error_counters.blockhash_not_found += 1;
             Err(TransactionError::BlockhashNotFound)

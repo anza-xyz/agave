@@ -2923,7 +2923,10 @@ impl Bank {
         Some(self.get_fee_for_message_with_lamports_per_signature(message))
     }
 
-    pub fn get_fee_for_message_with_lamports_per_signature(&self, message: &impl SVMMessage) -> u64 {
+    pub fn get_fee_for_message_with_lamports_per_signature(
+        &self,
+        message: &impl SVMMessage,
+    ) -> u64 {
         let fee_budget_limits = FeeBudgetLimits::from(
             process_compute_budget_instructions(
                 message.program_instructions_iter(),
