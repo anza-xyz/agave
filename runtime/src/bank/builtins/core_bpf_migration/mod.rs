@@ -1485,7 +1485,7 @@ pub(crate) mod tests {
 
         // Add the feature to the bank's inactive feature set.
         let mut feature_set = FeatureSet::all_enabled();
-        feature_set.inactive_mut().insert(*feature_id);
+        feature_set.deactivate(feature_id);
         root_bank.feature_set = Arc::new(feature_set);
 
         // Initialize the source buffer account.
@@ -1570,7 +1570,7 @@ pub(crate) mod tests {
 
         // Set up the feature set with the migration feature marked as active.
         let mut feature_set = FeatureSet::all_enabled();
-        feature_set.active_mut().insert(*feature_id, 0);
+        feature_set.activate(feature_id, 0);
         bank.feature_set = Arc::new(feature_set);
         bank.store_account_and_update_capitalization(
             feature_id,
@@ -1744,7 +1744,7 @@ pub(crate) mod tests {
         // Now, add the feature ID as active, and run `finish_init` again to
         // make sure the feature is idempotent.
         let mut feature_set = FeatureSet::all_enabled();
-        feature_set.active_mut().insert(*feature_id, 0);
+        feature_set.activate(feature_id, 0);
         bank.feature_set = Arc::new(feature_set);
         bank.store_account_and_update_capitalization(
             feature_id,
@@ -2017,7 +2017,7 @@ pub(crate) mod tests {
 
         // Add the feature to the bank's inactive feature set.
         let mut feature_set = FeatureSet::all_enabled();
-        feature_set.inactive_mut().insert(*feature_id);
+        feature_set.deactivate(feature_id);
         root_bank.feature_set = Arc::new(feature_set);
 
         // Initialize the source buffer account.

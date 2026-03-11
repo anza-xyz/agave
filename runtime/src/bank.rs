@@ -5455,15 +5455,13 @@ impl Bank {
 
     pub fn deactivate_feature(&mut self, id: &Pubkey) {
         let mut feature_set = Arc::make_mut(&mut self.feature_set).clone();
-        feature_set.active_mut().remove(id);
-        feature_set.inactive_mut().insert(*id);
+        feature_set.deactivate(id);
         self.feature_set = Arc::new(feature_set);
     }
 
     pub fn activate_feature(&mut self, id: &Pubkey) {
         let mut feature_set = Arc::make_mut(&mut self.feature_set).clone();
-        feature_set.inactive_mut().remove(id);
-        feature_set.active_mut().insert(*id, 0);
+        feature_set.activate(id, 0);
         self.feature_set = Arc::new(feature_set);
     }
 
