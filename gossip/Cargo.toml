@@ -98,9 +98,9 @@ criterion = { workspace = true }
 num_cpus = { workspace = true }
 serial_test = { workspace = true }
 solana-gossip = { path = ".", features = ["agave-unstable-api"] }
-solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
-solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-system-transaction = { workspace = true }
 solana-vote-interface = { workspace = true }

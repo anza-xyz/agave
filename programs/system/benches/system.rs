@@ -483,7 +483,6 @@ impl TestSetup {
     fn run(&self) {
         mock_process_instruction(
             &solana_system_program::id(),
-            None,
             &self.instruction_data,
             self.transaction_accounts.clone(),
             self.instruction_accounts.clone(),

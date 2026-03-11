@@ -27,6 +27,8 @@ dlopen2 = { workspace = true }
 log = { workspace = true }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
+smallvec = { workspace = true }
+solana-address = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
 solana-hash = { workspace = true, features = ["wincode"] }
@@ -44,15 +46,15 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
-agave-reserved-account-keys = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 proptest = { workspace = true }
 rand = { workspace = true }
 solana-entry = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-message = { workspace = true }
-solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
+solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }

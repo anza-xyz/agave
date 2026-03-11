@@ -76,21 +76,7 @@ impl BlockComponentProcessor {
             return Ok(());
         }
 
-        // If we encounter an UpdateParent when fast leader handover is disabled, error.
-        if !migration_status.should_allow_fast_leader_handover(slot) && self.update_parent.is_some()
-        {
-            return Err(BlockComponentProcessorError::SpuriousUpdateParent);
-        }
-
-        // Post-migration: both header and footer are required
-        if !self.has_footer {
-            return Err(BlockComponentProcessorError::MissingBlockFooter);
-        }
-
-        if !self.has_header && self.update_parent.is_none() {
-            return Err(BlockComponentProcessorError::MissingParentMarker);
-        }
-
+        // TODO(ksn): re-introduce on-final logic as we continue upstreaming
         Ok(())
     }
 
@@ -101,16 +87,13 @@ impl BlockComponentProcessor {
     pub fn on_entry_batch(
         &mut self,
         migration_status: &MigrationStatus,
+        slot: Slot,
     ) -> Result<(), BlockComponentProcessorError> {
-        if !migration_status.is_alpenglow_enabled() {
+        if !migration_status.should_allow_block_markers(slot) {
             return Ok(());
         }
 
-        // We must have either a header or an update parent prior to processing entry batches.
-        if !self.has_header && self.update_parent.is_none() {
-            return Err(BlockComponentProcessorError::MissingParentMarker);
-        }
-
+        // TODO(ksn): re-introduce on_entry_batch logic as we continue upstreaming
         Ok(())
     }
 
@@ -434,20 +417,24 @@ mod tests {
         ))
     }
 
+    // TODO(ksn): re-enable once broadcast stage produces block headers
     #[test]
+    #[ignore]
     fn test_missing_header_error_on_entry_batch() {
         let migration_status = MigrationStatus::post_migration_status();
         let mut processor = BlockComponentProcessor::default();
 
         // Try to process entry batch without header - should fail
-        let result = processor.on_entry_batch(&migration_status);
+        let result = processor.on_entry_batch(&migration_status, 1);
         assert_eq!(
             result,
             Err(BlockComponentProcessorError::MissingParentMarker)
         );
     }
 
+    // TODO(ksn): re-enable once broadcast stage produces block footers
     #[test]
+    #[ignore]
     fn test_missing_footer_error_on_slot_full() {
         let migration_status = MigrationStatus::post_migration_status();
         let processor = BlockComponentProcessor {
@@ -638,7 +625,7 @@ mod tests {
         processor.on_header(&header).unwrap();
 
         // Process some entry batches (not full yet)
-        assert!(processor.on_entry_batch(&migration_status).is_ok());
+        assert!(processor.on_entry_batch(&migration_status, 1).is_ok());
 
         // Process footer with valid timestamp
         let footer = VersionedBlockFooter::V1(BlockFooterV1 {
@@ -657,7 +644,7 @@ mod tests {
         assert_eq!(bank.clock().unix_timestamp, expected_time_secs);
 
         // Entry batch after footer should still succeed
-        let result = processor.on_entry_batch(&migration_status);
+        let result = processor.on_entry_batch(&migration_status, 1);
         assert!(result.is_ok());
     }
 
@@ -727,11 +714,11 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
 
         // Processing entry batches pre-migration (without markers) should succeed
-        let result = processor.on_entry_batch(&migration_status);
+        let result = processor.on_entry_batch(&migration_status, 1);
         assert!(result.is_ok());
 
         // Even with slot full
-        let result = processor.on_entry_batch(&migration_status);
+        let result = processor.on_entry_batch(&migration_status, 1);
         assert!(result.is_ok());
     }
 
@@ -758,7 +745,7 @@ mod tests {
             .unwrap();
 
         // Process entry batches
-        assert!(processor.on_entry_batch(&migration_status).is_ok());
+        assert!(processor.on_entry_batch(&migration_status, 1).is_ok());
 
         // Calculate valid timestamp based on parent's time
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
@@ -782,7 +769,7 @@ mod tests {
         assert_eq!(bank.clock().unix_timestamp, expected_time_secs);
 
         // Entry batch after footer should still succeed
-        let result = processor.on_entry_batch(&migration_status);
+        let result = processor.on_entry_batch(&migration_status, 1);
         assert!(result.is_ok());
     }
 
@@ -853,7 +840,7 @@ mod tests {
         };
 
         // Process entry batch with header but not full - should succeed even without footer
-        let result = processor.on_entry_batch(&migration_status);
+        let result = processor.on_entry_batch(&migration_status, 1);
         assert!(result.is_ok());
     }
 
@@ -1134,7 +1121,7 @@ mod tests {
             }))
             .unwrap();
 
-        assert!(processor.on_entry_batch(&migration_status).is_ok());
+        assert!(processor.on_entry_batch(&migration_status, 1).is_ok());
 
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
         let footer = VersionedBlockFooter::V1(BlockFooterV1 {

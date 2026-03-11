@@ -684,7 +684,7 @@ mod tests {
 
     #[test]
     fn test_load_lookup_table_addresses_account_not_found() {
-        let ancestors = vec![(0, 0)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![0]);
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
@@ -707,7 +707,7 @@ mod tests {
 
     #[test]
     fn test_load_lookup_table_addresses_invalid_account_owner() {
-        let ancestors = vec![(0, 0)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![0]);
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
@@ -735,7 +735,7 @@ mod tests {
 
     #[test]
     fn test_load_lookup_table_addresses_invalid_account_data() {
-        let ancestors = vec![(0, 0)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![0]);
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
@@ -763,7 +763,7 @@ mod tests {
 
     #[test]
     fn test_load_lookup_table_addresses() {
-        let ancestors = vec![(1, 1), (0, 0)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![1, 0]);
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
@@ -1439,7 +1439,7 @@ mod tests {
         let account2 = AccountSharedData::new(41, 0, &Pubkey::default());
         accounts.store_for_tests(0, &pubkey2, &account2);
 
-        let ancestors = vec![(0, 0)].into_iter().collect();
+        let ancestors = Ancestors::from(vec![0]);
         let all_pubkeys: HashSet<_> = vec![pubkey0, pubkey1, pubkey2].into_iter().collect();
 
         // num == 0 should always return empty set

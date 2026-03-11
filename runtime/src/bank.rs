@@ -43,6 +43,7 @@ use {
             },
         },
         bank_forks::BankForks,
+        block_component_processor::BlockComponentProcessor,
         epoch_stakes::{
             BLSPubkeyToRankMap, DeserializableVersionedEpochStakes, NodeVoteAccounts,
             VersionedEpochStakes,
@@ -120,7 +121,9 @@ use {
     solana_keypair::Keypair,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{measure::Measure, measure_time, measure_us},
-    solana_message::{AccountKeys, SanitizedMessage, inner_instruction::InnerInstructions},
+    solana_message::{
+        AccountKeys, SanitizedMessage, VersionedMessage, inner_instruction::InnerInstructions,
+    },
     solana_packet::PACKET_DATA_SIZE,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
@@ -596,6 +599,7 @@ impl PartialEq for Bank {
             expected_bank_hash: _,
             bank_hash_stats: _,
             epoch_rewards_calculation_cache: _,
+            block_component_processor: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -938,6 +942,11 @@ pub struct Bank {
     /// This is used to avoid recalculating the same epoch rewards at epoch boundary.
     /// The hashmap is keyed by parent_hash.
     epoch_rewards_calculation_cache: Arc<Mutex<HashMap<Hash, Arc<PartitionedRewardsCalculation>>>>,
+
+    /// Block component processor for validating block headers/footers and clock bounds. We
+    /// currently write to this during replay, as we process block components one at a time, and
+    /// read from this once replay is complete.
+    pub block_component_processor: RwLock<BlockComponentProcessor>,
 }
 
 #[derive(Debug)]
@@ -1146,6 +1155,7 @@ impl Bank {
             expected_bank_hash: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
+            block_component_processor: RwLock::new(BlockComponentProcessor::default()),
         };
 
         bank.transaction_processor =
@@ -1398,6 +1408,7 @@ impl Bank {
             expected_bank_hash: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: parent.epoch_rewards_calculation_cache.clone(),
+            block_component_processor: RwLock::new(BlockComponentProcessor::default()),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1957,6 +1968,7 @@ impl Bank {
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
             expected_bank_hash: RwLock::new(None),
+            block_component_processor: RwLock::new(BlockComponentProcessor::default()),
         };
 
         // Sanity assertions between bank snapshot and genesis config
@@ -2220,44 +2232,37 @@ impl Bank {
     }
 
     pub fn update_last_restart_slot(&self) {
-        let feature_flag = self
-            .feature_set
-            .is_active(&feature_set::last_restart_slot_sysvar::id());
+        // First, see what the currently stored last restart slot is.
+        let current_last_restart_slot = self
+            .get_account(&sysvar::last_restart_slot::id())
+            .and_then(|account| {
+                let lrs: Option<LastRestartSlot> = from_account(&account);
+                lrs
+            })
+            .map(|account| account.last_restart_slot);
 
-        if feature_flag {
-            // First, see what the currently stored last restart slot is. This
-            // account may not exist yet if the feature was just activated.
-            let current_last_restart_slot = self
-                .get_account(&sysvar::last_restart_slot::id())
-                .and_then(|account| {
-                    let lrs: Option<LastRestartSlot> = from_account(&account);
-                    lrs
-                })
-                .map(|account| account.last_restart_slot);
+        let last_restart_slot = {
+            let slot = self.slot;
+            let hard_forks_r = self.hard_forks.read().unwrap();
 
-            let last_restart_slot = {
-                let slot = self.slot;
-                let hard_forks_r = self.hard_forks.read().unwrap();
+            // Only consider hard forks <= this bank's slot to avoid prematurely applying
+            // a hard fork that is set to occur in the future.
+            hard_forks_r
+                .iter()
+                .rev()
+                .find(|(hard_fork, _)| *hard_fork <= slot)
+                .map(|(slot, _)| *slot)
+                .unwrap_or(0)
+        };
 
-                // Only consider hard forks <= this bank's slot to avoid prematurely applying
-                // a hard fork that is set to occur in the future.
-                hard_forks_r
-                    .iter()
-                    .rev()
-                    .find(|(hard_fork, _)| *hard_fork <= slot)
-                    .map(|(slot, _)| *slot)
-                    .unwrap_or(0)
-            };
-
-            // Only need to write if the last restart has changed
-            if current_last_restart_slot != Some(last_restart_slot) {
-                self.update_sysvar_account(&sysvar::last_restart_slot::id(), |account| {
-                    create_account(
-                        &LastRestartSlot { last_restart_slot },
-                        self.inherit_specially_retained_account_fields(account),
-                    )
-                });
-            }
+        // Only need to write if the last restart has changed
+        if current_last_restart_slot != Some(last_restart_slot) {
+            self.update_sysvar_account(&sysvar::last_restart_slot::id(), |account| {
+                create_account(
+                    &LastRestartSlot { last_restart_slot },
+                    self.inherit_specially_retained_account_fields(account),
+                )
+            });
         }
     }
 
@@ -4953,37 +4958,61 @@ impl Bank {
         }
     }
 
+    /// Verify the transaction signatures, hash and other metadata.
     pub fn verify_transaction(
         &self,
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        let enable_instruction_account_limit = self
-            .feature_set
-            .is_active(&agave_feature_set::limit_instruction_accounts::id());
-
         // Discard v1 transactions until support is added.
         if tx.version() == TransactionVersion::Number(1) {
             return Err(TransactionError::UnsupportedVersion);
         }
 
+        let serialized_message = tx.message.serialize();
+        self.verify_transaction_with_serialized_message(tx, &serialized_message, verification_mode)
+    }
+
+    /// Verify the transaction signatures, hash and other metadata, using the provided serialized
+    /// message.
+    ///
+    /// Verifying a transaction requires the serialized message to calculate the message hash. Use
+    /// this function if the message is already available. Note that the serialized message MUST
+    /// correspond to the transaction's message.
+    pub fn verify_transaction_with_serialized_message(
+        &self,
+        tx: VersionedTransaction,
+        serialized_message: &[u8],
+        verification_mode: TransactionVerificationMode,
+    ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
+        // Discard v1 transactions until support is added.
+        if tx.version() == TransactionVersion::Number(1) {
+            return Err(TransactionError::UnsupportedVersion);
+        }
+
+        let enable_instruction_account_limit = self
+            .feature_set
+            .is_active(&agave_feature_set::limit_instruction_accounts::id());
+
         let sanitized_tx = {
             let size =
-                bincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
+                wincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
             if size > PACKET_DATA_SIZE as u64 {
                 return Err(TransactionError::SanitizeFailure);
             }
+
+            // SIMD-0160, check instruction limit before signature verification
+            if tx.message.instructions().len()
+                > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
+            {
+                return Err(solana_transaction_error::TransactionError::SanitizeFailure);
+            }
+
             let message_hash = if verification_mode == TransactionVerificationMode::FullVerification
             {
-                // SIMD-0160, check instruction limit before signature verificaton
-                if tx.message.instructions().len()
-                    > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
-                {
-                    return Err(solana_transaction_error::TransactionError::SanitizeFailure);
-                }
                 tx.verify_and_hash_message()?
             } else {
-                tx.message.hash()
+                VersionedMessage::hash_raw_message(serialized_message)
             };
 
             RuntimeTransaction::try_create(
@@ -5447,15 +5476,13 @@ impl Bank {
 
     pub fn deactivate_feature(&mut self, id: &Pubkey) {
         let mut feature_set = Arc::make_mut(&mut self.feature_set).clone();
-        feature_set.active_mut().remove(id);
-        feature_set.inactive_mut().insert(*id);
+        feature_set.deactivate(id);
         self.feature_set = Arc::new(feature_set);
     }
 
     pub fn activate_feature(&mut self, id: &Pubkey) {
         let mut feature_set = Arc::make_mut(&mut self.feature_set).clone();
-        feature_set.inactive_mut().remove(id);
-        feature_set.active_mut().insert(*id, 0);
+        feature_set.activate(id, 0);
         self.feature_set = Arc::new(feature_set);
     }
 

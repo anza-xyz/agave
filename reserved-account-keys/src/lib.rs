@@ -228,7 +228,7 @@ mod tests {
 
         // Updating the active set with an activated feature should also activate
         // the corresponding reserved key from inactive to active
-        feature_set.active_mut().insert(feature_ids[0], 0);
+        feature_set.activate(&feature_ids[0], 0);
         reserved_account_keys.update_active_set(&feature_set);
 
         assert!(reserved_account_keys.is_reserved(&active_reserved_key));
@@ -237,7 +237,7 @@ mod tests {
 
         // Update the active set again to ensure that the inactive map is
         // properly retained
-        feature_set.active_mut().insert(feature_ids[1], 0);
+        feature_set.activate(&feature_ids[1], 0);
         reserved_account_keys.update_active_set(&feature_set);
 
         assert!(reserved_account_keys.is_reserved(&active_reserved_key));

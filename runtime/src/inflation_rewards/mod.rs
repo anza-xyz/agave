@@ -28,6 +28,7 @@ struct CalculatedStakeRewards {
 /// * Stakers reward
 /// * Voters reward
 /// * Updated stake information
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn redeem_rewards(
     rewarded_epoch: Epoch,
     stake_state: &StakeStateV2,
@@ -38,8 +39,9 @@ pub(crate) fn redeem_rewards(
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
     commission_rate_in_basis_points: bool,
+    stake_account_lamports_for_trace: u64,
 ) -> Result<(u64, u64, Stake), InstructionError> {
-    if let StakeStateV2::Stake(meta, stake, _stake_flags) = stake_state {
+    if let StakeStateV2::Stake(_meta, stake, _stake_flags) = stake_state {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
             inflation_point_calc_tracer(
                 &InflationPointCalculationEvent::EffectiveStakeAtRewardedEpoch(stake.stake(
@@ -48,8 +50,8 @@ pub(crate) fn redeem_rewards(
                     new_rate_activation_epoch,
                 )),
             );
-            inflation_point_calc_tracer(&InflationPointCalculationEvent::RentExemptReserve(
-                meta.rent_exempt_reserve,
+            inflation_point_calc_tracer(&InflationPointCalculationEvent::PriorTotalLamports(
+                stake_account_lamports_for_trace,
             ));
             // Choose which trace to emit based on the `commission_rate_in_basis_points` feature.
             if commission_rate_in_basis_points {

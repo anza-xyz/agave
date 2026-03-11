@@ -49,4 +49,7 @@ DCOU_TAINTED_PACKAGES=(
   solana-banking-bench
   solana-bench-tps
   solana-local-cluster
+  solana-svm-test-harness
+  solana-svm-test-harness-fixture
+  solana-svm-test-harness-instr
 )

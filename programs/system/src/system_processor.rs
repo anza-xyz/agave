@@ -616,7 +616,6 @@ mod tests {
     ) -> Vec<AccountSharedData> {
         mock_process_instruction(
             &system_program::id(),
-            None,
             instruction_data,
             transaction_accounts,
             instruction_accounts,
@@ -1613,7 +1612,6 @@ mod tests {
             ]);
         mock_process_instruction(
             &system_program::id(),
-            None,
             &serialize(&SystemInstruction::AdvanceNonceAccount).unwrap(),
             vec![
                 (nonce_address, accounts[0].clone()),
@@ -1909,7 +1907,6 @@ mod tests {
         let new_recent_blockhashes_account = create_recent_blockhashes_account_for_test(vec![]);
         mock_process_instruction(
             &system_program::id(),
-            None,
             &serialize(&SystemInstruction::AdvanceNonceAccount).unwrap(),
             vec![
                 (nonce_address, accounts[0].clone()),
@@ -2166,7 +2163,6 @@ mod tests {
         use solana_program_runtime::invoke_context::mock_process_instruction_with_feature_set;
         mock_process_instruction_with_feature_set(
             &system_program::id(),
-            None,
             &bincode::serialize(&SystemInstruction::CreateAccountAllowPrefund {
                 lamports: 50,
                 space: 0,

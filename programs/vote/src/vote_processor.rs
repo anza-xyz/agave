@@ -541,7 +541,6 @@ mod tests {
         let cu_consumed = RefCell::new(0u64);
         let accounts = mock_process_instruction_with_feature_set(
             &id(),
-            None,
             instruction_data,
             transaction_accounts,
             instruction_accounts,
@@ -4767,9 +4766,8 @@ mod tests {
                     is_writable: false,
                 },
             ],
-            // CPI dedup resolves to index 0 (non-signer), causing escalation.
-            Err(InstructionError::PrivilegeEscalation),
-            DEFAULT_COMPUTE_UNITS,
+            Err(InstructionError::InvalidArgument),
+            DEPOSIT_DELEGATOR_REWARDS_COMPUTE_UNITS,
         );
 
         // Fail - deposit overflow.

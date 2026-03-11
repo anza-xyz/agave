@@ -119,6 +119,7 @@ pub fn execute(
         tvu_receive_threads,
         tvu_retransmit_threads,
         tvu_sigverify_threads,
+        tvu_bls_sigverify_threads,
     } = cli::thread_args::parse_num_threads_args(matches);
 
     let identity_keypair = Arc::new(run_args.identity_keypair);
@@ -830,6 +831,7 @@ pub fn execute(
         replay_forks_threads,
         replay_transactions_threads,
         tvu_shred_sigverify_threads: tvu_sigverify_threads,
+        tvu_bls_sigverify_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
         turbine_disabled: Arc::<AtomicBool>::default(),
@@ -888,17 +890,6 @@ pub fn execute(
         value_t_or_exit!(matches, "minimal_snapshot_download_speed", f32);
     let maximum_snapshot_download_abort =
         value_t_or_exit!(matches, "maximum_snapshot_download_abort", u64);
-
-    if matches!(
-        validator_config.block_production_method,
-        BlockProductionMethod::UnifiedScheduler
-    ) {
-        warn!(
-            "Currently, the unified-scheduler method is experimental for block-production. It has \
-             known security issues and should be used only for developing and benchmarking \
-             purposes"
-        );
-    }
 
     let public_rpc_addr = matches
         .value_of("public_rpc_addr")

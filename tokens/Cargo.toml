@@ -17,7 +17,7 @@ remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]
 chrono = { workspace = true, features = ["default", "serde"] }
-clap = "2.33.0"
+clap = { version = "2.33.0", default-features = false, features = ["suggestions"] }
 console = { workspace = true }
 csv = { workspace = true }
 ctrlc = { workspace = true, features = ["termination"] }
@@ -58,8 +58,8 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
-solana-test-validator = { workspace = true }
+solana-test-validator = { path = "../test-validator" }
 solana-transaction-error = { workspace = true }

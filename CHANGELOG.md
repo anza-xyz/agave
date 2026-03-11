@@ -39,10 +39,13 @@ Release channels have their own copy of this changelog:
   * `--accounts-db-hash-threads`
   * `--accounts-db-read-cache-limit-mb`
   * `--accounts-hash-cache-path`
+  * `--cuda`
   * `--disable-accounts-disk-index`
   * `--dev-halt-at-slot`
   * `--monitor` (`exit` subcommand)
+  * `--transaction-struct`
   * `--wait-for-exit` (`exit` subcommand)
+  * `--tpu-coalesce-ms`
   * `--tpu-disable-quic`
   * `--tpu-enable-udp`
 * `--block-verification-method blockstore-processor` is no longer supported. Remove the argument or switch to `--block-verification-method unified-scheduler` instead.
