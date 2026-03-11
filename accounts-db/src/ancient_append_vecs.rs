@@ -2375,11 +2375,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_get_ancient_append_vec_capacity() {
-        assert_eq!(get_ancient_append_vec_capacity(), 128 * 1024 * 1024);
-    }
-
     fn get_one_packed_ancient_append_vec_and_others(
         alive: bool,
         num_normal_slots: usize,

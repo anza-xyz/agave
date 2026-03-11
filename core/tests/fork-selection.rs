@@ -73,7 +73,6 @@
 //! ```
 #![allow(clippy::arithmetic_side_effects)]
 
-extern crate rand;
 use {
     rand::{Rng, rng},
     std::collections::{HashMap, VecDeque},

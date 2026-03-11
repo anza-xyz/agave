@@ -45,7 +45,6 @@ log = { workspace = true }
 num-traits = { workspace = true }
 pretty-hex = { workspace = true }
 reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "rustls-tls-native-roots", "json"] }
-semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 solana-account = { workspace = true }
@@ -94,14 +93,10 @@ solana-signer = { workspace = true }
 solana-slot-history = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-system-interface = { workspace = true, features = ["bincode"] }
-solana-sysvar = { workspace = true }
-solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
-solana-transaction-status-client-types = { workspace = true }
-solana-udp-client = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
 spl-memo-interface = { workspace = true }
@@ -119,6 +114,5 @@ solana-presigner = { workspace = true }
 solana-rpc = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-test-validator = { workspace = true }
-solana-tps-client = { workspace = true, features = ["dev-context-only-utils"] }
 tempfile = { workspace = true }
 test-case = { workspace = true }

@@ -85,7 +85,7 @@ use {
         rc::Rc,
         result::Result,
         sync::{
-            Arc, Mutex, RwLock, RwLockReadGuard,
+            Arc, Mutex, OnceLock, RwLock, RwLockReadGuard,
             atomic::{AtomicBool, Ordering},
         },
         thread::{Builder, JoinHandle, sleep},
@@ -154,6 +154,8 @@ pub struct ClusterInfo {
     keypair: ArcSwap<Keypair>,
     /// Network entrypoints
     entrypoints: RwLock<Vec<ContactInfo>>,
+    /// Additional pubkeys to preserve during CRDS table trimming.
+    known_validators: OnceLock<HashSet<Pubkey>>,
     outbound_budget: DataBudget,
     my_contact_info: RwLock<ContactInfo>,
     ping_cache: Mutex<PingCache>,
@@ -177,6 +179,7 @@ impl ClusterInfo {
             gossip: CrdsGossip::default(),
             keypair: ArcSwap::from(keypair),
             entrypoints: RwLock::default(),
+            known_validators: OnceLock::new(),
             outbound_budget: DataBudget::default(),
             my_contact_info: RwLock::new(contact_info),
             ping_cache: Mutex::new(PingCache::new(
@@ -255,6 +258,16 @@ impl ClusterInfo {
 
     pub fn set_entrypoints(&self, entrypoints: Vec<ContactInfo>) {
         *self.entrypoints.write().unwrap() = entrypoints;
+    }
+
+    /// Pubkeys that should be preserved during CRDS trim.
+    /// Returns `Err` when called more than once.
+    pub fn set_trim_keep_pubkeys(
+        &self,
+        pubkeys: impl IntoIterator<Item = Pubkey>,
+    ) -> Result<(), HashSet<Pubkey>> {
+        let pubkeys = pubkeys.into_iter().collect();
+        self.known_validators.set(pubkeys)
     }
 
     pub fn save_contact_info(&self) {
@@ -1352,7 +1365,7 @@ impl ClusterInfo {
         if !self.gossip.crds.read().unwrap().should_trim(cap) {
             return;
         }
-        let keep: Vec<_> = self
+        let keep: HashSet<_> = self
             .entrypoints
             .read()
             .unwrap()
@@ -1360,22 +1373,14 @@ impl ClusterInfo {
             .map(ContactInfo::pubkey)
             .copied()
             .chain(std::iter::once(self.id()))
+            .chain(self.known_validators.get().into_iter().flatten().copied())
             .collect();
         self.stats.trim_crds_table.add_relaxed(1);
         let mut gossip_crds = self.gossip.crds.write().unwrap();
-        match gossip_crds.trim(cap, &keep, stakes, timestamp()) {
-            Err(err) => {
-                self.stats.trim_crds_table_failed.add_relaxed(1);
-                // TODO: Stakes are coming from the root-bank. Debug why/when
-                // they are empty/zero.
-                debug!("crds table trim failed: {err:?}");
-            }
-            Ok(num_purged) => {
-                self.stats
-                    .trim_crds_table_purged_values_count
-                    .add_relaxed(num_purged as u64);
-            }
-        }
+        let num_purged = gossip_crds.trim(cap, &keep, stakes, timestamp());
+        self.stats
+            .trim_crds_table_purged_values_count
+            .add_relaxed(num_purged as u64);
     }
 
     /// randomly pick a node and ask them for updates asynchronously
@@ -1746,7 +1751,7 @@ impl ClusterInfo {
             .add_relaxed(pull_stats.success as u64);
 
         (
-            pull_stats.failed_insert + pull_stats.failed_timeout,
+            pull_stats.failed_insert,
             pull_stats.failed_timeout,
             pull_stats.success,
         )
@@ -2564,8 +2569,6 @@ mod tests {
             let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
             ClusterInfo::new(node.info, keypair, SocketAddrSpace::Unspecified)
         });
-        let entrypoint_pubkey = solana_pubkey::new_rand();
-        let data = test_crds_values(entrypoint_pubkey);
         let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
         let timeouts = CrdsTimeouts::new(
             cluster_info.id(),
@@ -2573,10 +2576,27 @@ mod tests {
             Duration::from_secs(48 * 3600),   // epoch_duration
             &stakes,
         );
+
+        // Generate CRDS value w/ expired timestamp.
+        let entrypoint_pubkey = solana_pubkey::new_rand();
+        let entrypoint_ci = ContactInfo::new_localhost(&entrypoint_pubkey, 0);
+        let entrypoint_crdsvalue = CrdsValue::new_unsigned(CrdsData::from(entrypoint_ci));
+        let data = vec![entrypoint_crdsvalue];
+
+        // Should fail for expired timestamp.
+        assert_eq!(
+            (1, 1, 0),
+            cluster_info.handle_pull_response(data, &timeouts)
+        );
+
+        // Expect pull response to be successfully inserted.
+        let data = test_crds_values(entrypoint_pubkey);
         assert_eq!(
             (0, 0, 1),
             cluster_info.handle_pull_response(data.clone(), &timeouts)
         );
+
+        // Should fail insertion because it was already inserted.
         assert_eq!(
             (1, 0, 0),
             cluster_info.handle_pull_response(data, &timeouts)
@@ -3407,47 +3427,6 @@ mod tests {
         );
         assert!(entrypoints_processed);
         assert_eq!(cluster_info.my_shred_version(), 2); // <--- No change to shred version
-    }
-
-    #[test]
-    #[ignore] // TODO: debug why this is flaky on buildkite!
-    fn test_pull_request_time_pruning() {
-        let node = Node::new_localhost();
-        let cluster_info = Arc::new(ClusterInfo::new(
-            node.info,
-            Arc::new(Keypair::new()),
-            SocketAddrSpace::Unspecified,
-        ));
-        let entrypoint_pubkey = solana_pubkey::new_rand();
-        let entrypoint = ContactInfo::new_localhost(&entrypoint_pubkey, timestamp());
-        cluster_info.set_entrypoint(entrypoint);
-
-        let mut rng = rand::rng();
-        let shred_version = cluster_info.my_shred_version();
-        let mut peers: Vec<Pubkey> = vec![];
-
-        const NO_ENTRIES: usize = CRDS_UNIQUE_PUBKEY_CAPACITY + 128;
-        let data: Vec<_> = repeat_with(|| {
-            let keypair = Keypair::new();
-            peers.push(keypair.pubkey());
-            let mut rand_ci = ContactInfo::new_rand(&mut rng, Some(keypair.pubkey()));
-            rand_ci.set_shred_version(shred_version);
-            rand_ci.set_wallclock(timestamp());
-            CrdsValue::new(CrdsData::from(rand_ci), &keypair)
-        })
-        .take(NO_ENTRIES)
-        .collect();
-        let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
-        let timeouts = CrdsTimeouts::new(
-            cluster_info.id(),
-            CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS * 4, // default_timeout
-            Duration::from_secs(48 * 3600),       // epoch_duration
-            &stakes,
-        );
-        assert_eq!(
-            (0, 0, NO_ENTRIES),
-            cluster_info.handle_pull_response(data, &timeouts)
-        );
     }
 
     #[test]

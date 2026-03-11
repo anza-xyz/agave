@@ -28,7 +28,6 @@ quinn = { workspace = true }
 rustls = { workspace = true }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
-solana-epoch-schedule = { workspace = true }
 solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true, optional = true }

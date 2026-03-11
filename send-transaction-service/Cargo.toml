@@ -21,8 +21,6 @@ async-trait = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
-solana-client = { workspace = true }
-solana-clock = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-measure = { workspace = true }

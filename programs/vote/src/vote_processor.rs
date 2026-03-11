@@ -1025,15 +1025,24 @@ mod tests {
         let vote_account = AccountSharedData::new(100, vote_state_size_of(vote_state_v4), &id());
         let node_pubkey = solana_pubkey::new_rand();
         let node_account = AccountSharedData::default();
+        let authorized_voter = solana_pubkey::new_rand();
+        let authorized_withdrawer = solana_pubkey::new_rand();
         let (bls_pubkey, bls_proof_of_possession) =
             create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+        let inflation_rewards_collector = solana_pubkey::new_rand();
+        let block_revenue_collector = solana_pubkey::new_rand();
+        let inflation_rewards_commission_bps = 1_234;
+        let block_revenue_commission_bps = 5_678;
         let instruction_data = serialize(&VoteInstruction::InitializeAccountV2(VoteInitV2 {
             node_pubkey,
-            authorized_voter: vote_pubkey,
-            authorized_withdrawer: vote_pubkey,
+            authorized_voter,
             authorized_voter_bls_pubkey: bls_pubkey,
             authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
-            ..Default::default()
+            authorized_withdrawer,
+            inflation_rewards_commission_bps,
+            inflation_rewards_collector,
+            block_revenue_commission_bps,
+            block_revenue_collector,
         }))
         .unwrap();
         let mut instruction_accounts = vec![
@@ -1105,6 +1114,27 @@ mod tests {
             Ok(()),
             DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
         );
+
+        // Verify every field in the V4 state matches VoteInitV2.
+        let v4 = deserialize_vote_state_for_test(true, accounts[0].data(), &vote_pubkey);
+        let v4 = v4.as_ref_v4();
+        assert_eq!(v4.node_pubkey, node_pubkey);
+        assert_eq!(v4.authorized_withdrawer, authorized_withdrawer);
+        assert_eq!(v4.bls_pubkey_compressed, Some(bls_pubkey));
+        assert_eq!(
+            v4.inflation_rewards_commission_bps,
+            inflation_rewards_commission_bps
+        );
+        assert_eq!(v4.inflation_rewards_collector, inflation_rewards_collector);
+        assert_eq!(
+            v4.block_revenue_commission_bps,
+            block_revenue_commission_bps
+        );
+        assert_eq!(v4.block_revenue_collector, block_revenue_collector);
+        assert_eq!(v4.pending_delegator_rewards, 0);
+        assert!(v4.votes.is_empty());
+        assert!(v4.epoch_credits.is_empty());
+        assert_eq!(v4.root_slot, None);
 
         // reinit should fail
         process_instruction(

@@ -26,4 +26,5 @@ cargo +"$rust_nightly" hack check \
 	--each-feature \
 	--exclude-features "$(IFS=,; echo "${exclude_features[*]}")" \
 	--exclude-all-features \
-	--partition "$partition"
+	--partition "$partition" \
+	--config build.rustflags='"--deny=warnings"'

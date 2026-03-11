@@ -27,7 +27,6 @@ frozen-abi = [
 
 [dependencies]
 bincode = { workspace = true, optional = true }
-itertools = { workspace = true }
 log = { workspace = true }
 rand = { version = "0.9.2", optional = true }
 serde = { workspace = true, features = ["rc"] }

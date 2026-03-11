@@ -100,7 +100,7 @@ pub fn get_best_repair_shreds(
         if let Some(slot_meta) = slot_meta {
             match next {
                 Visit::Unvisited(slot) => {
-                    let new_repairs = RepairService::generate_repairs_for_slot_throttled_by_tick(
+                    let new_repairs = RepairService::generate_repairs_for_slot(
                         blockstore,
                         slot,
                         slot_meta,
@@ -285,10 +285,10 @@ pub mod test {
         let keypair = Keypair::new();
         let reed_solomon_cache = ReedSolomonCache::default();
 
-        let completed_shreds: Vec<Shred> = [0, 2, 4, 6]
+        let completed_shreds: Vec<Shred> = [(0, 0), (2, 1), (4, 2), (6, best_overall_slot)]
             .iter()
-            .flat_map(|slot| {
-                let shredder = Shredder::new(*slot, slot.saturating_sub(1), 0, 42).unwrap();
+            .flat_map(|(slot, parent_slot)| {
+                let shredder = Shredder::new(*slot, *parent_slot, 0, 42).unwrap();
                 let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
                     &keypair,
                     &[],

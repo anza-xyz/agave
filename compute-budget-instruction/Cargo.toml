@@ -22,7 +22,6 @@ dev-context-only-utils = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
-log = { workspace = true }
 solana-borsh = { workspace = true }
 solana-builtins-default-costs = { workspace = true }
 solana-compute-budget = { workspace = true }
@@ -33,7 +32,6 @@ solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
-thiserror = { workspace = true }
 
 [dev-dependencies]
 bincode = { workspace = true }

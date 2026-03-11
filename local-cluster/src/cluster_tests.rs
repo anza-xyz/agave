@@ -476,7 +476,7 @@ pub fn start_quic_streamer_to_listen_for_votes_and_certs(
         Arc::new(stakes),
         HashMap::<Pubkey, u64>::default(), // overrides
     )));
-    let result = spawn_simple_qos_server(
+    let (result, _banlist) = spawn_simple_qos_server(
         "solAlpenglowTest",
         "alpenglow_local_cluster_test",
         [vote_listener_socket.into()],

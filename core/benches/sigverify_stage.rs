@@ -1,7 +1,5 @@
 #![allow(clippy::arithmetic_side_effects)]
 
-extern crate solana_core;
-
 use {
     bencher::{Bencher, TDynBenchFn, TestDesc, TestDescAndFn, TestFn, benchmark_main},
     crossbeam_channel::unbounded,

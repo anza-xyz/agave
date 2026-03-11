@@ -1,17 +1,24 @@
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    crate::loaded_programs::ProgramCacheEntry,
+    solana_account::{AccountSharedData, create_account_shared_data_for_test},
+    solana_epoch_schedule::EpochSchedule,
+    solana_instruction::AccountMeta,
+    solana_sdk_ids::sysvar,
+    solana_svm_type_overrides::sync::Arc,
+    solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
+};
 use {
     crate::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         loaded_programs::{
-            ProgramCacheEntry, ProgramCacheEntryType, ProgramCacheForTxBatch,
-            ProgramRuntimeEnvironments,
+            ProgramCacheEntryType, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
         },
         stable_log,
         sysvar_cache::SysvarCache,
     },
-    solana_account::{AccountSharedData, create_account_shared_data_for_test},
-    solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
+    solana_instruction::{Instruction, error::InstructionError},
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
@@ -22,7 +29,7 @@ use {
         vm::{Config, ContextObject, EbpfVm},
     },
     solana_sdk_ids::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader, sysvar,
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
     solana_svm_callback::InvokeContextCallback,
     solana_svm_feature_set::SVMFeatureSet,
@@ -30,11 +37,9 @@ use {
     solana_svm_measure::measure::Measure,
     solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{
         IndexOfAccount, MAX_ACCOUNTS_PER_TRANSACTION, instruction::InstructionContext,
         instruction_accounts::InstructionAccount, transaction::TransactionContext,
-        transaction_accounts::KeyedAccountSharedData,
     },
     std::{
         alloc::Layout,
@@ -574,8 +579,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         let logger = self.get_log_collector();
         stable_log::program_invoke(&logger, &program_id, self.get_stack_height());
         let pre_remaining_units = self.get_remaining();
-        // In program-runtime v2 we will create this VM instance only once per transaction.
-        // `program_runtime_environment_v2.get_config()` will be used instead of `mock_config`.
         // For now, only built-ins are invoked from here, so the VM and its Config are irrelevant.
         let mock_config = Config::default();
         let empty_memory_mapping =
@@ -583,7 +586,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         let mut vm = EbpfVm::new(
             self.environment_config
                 .program_runtime_environments_for_execution
-                .program_runtime_v2
+                .program_runtime_v1
                 .clone(),
             SBPFVersion::V0,
             // Removes lifetime tracking
@@ -787,6 +790,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 #[macro_export]
 macro_rules! with_mock_invoke_context_with_feature_set {
     (
@@ -803,7 +807,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
-                loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+                loaded_programs::{ProgramCacheForTxBatch, get_mock_program_runtime_environments},
                 sysvar_cache::SysvarCache,
             },
         };
@@ -839,7 +843,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 }
             }
         });
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = get_mock_program_runtime_environments();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
@@ -856,9 +860,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             environment_config,
             Some(LogCollector::new_ref()),
             compute_budget,
-            SVMTransactionExecutionCost::new_with_defaults(
-                $feature_set.increase_cpi_account_info_limit,
-            ),
+            SVMTransactionExecutionCost::default(),
         );
     };
     (
@@ -877,6 +879,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
     };
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 #[macro_export]
 macro_rules! with_mock_invoke_context {
     (
@@ -908,6 +911,7 @@ macro_rules! with_mock_invoke_context {
     };
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 #[expect(clippy::too_many_arguments)]
 pub fn mock_process_instruction_with_feature_set<
     F: FnMut(&mut InvokeContext),
@@ -997,6 +1001,7 @@ pub fn mock_process_instruction_with_feature_set<
     transaction_accounts
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut InvokeContext)>(
     loader_id: &Pubkey,
     program_index: Option<IndexOfAccount>,

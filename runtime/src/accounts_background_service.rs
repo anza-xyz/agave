@@ -258,6 +258,7 @@ impl SnapshotRequestHandler {
                     .accounts_db
                     .accounts_cache
                     .fetch_max_flush_root()
+                    .expect("Roots have been flushed")
         );
         flush_accounts_cache_time.stop();
 

@@ -142,7 +142,7 @@ pub(crate) fn spawn_server<Q, C>(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
-    qos: Arc<Q>,
+    qos: Q,
     cancel: CancellationToken,
 ) -> Result<SpawnNonBlockingServerResult, QuicServerError>
 where
@@ -169,22 +169,15 @@ where
 
     let max_concurrent_connections = qos.max_concurrent_connections();
     let handle = tokio::spawn({
-        let endpoints = endpoints.clone();
-        let stats = stats.clone();
-        async move {
-            let tasks = run_server(
-                name,
-                endpoints.clone(),
-                packet_sender,
-                stats.clone(),
-                quic_server_params,
-                cancel,
-                qos,
-            )
-            .await;
-            tasks.close();
-            tasks.wait().await;
-        }
+        run_server(
+            name,
+            endpoints.clone(),
+            packet_sender,
+            stats.clone(),
+            quic_server_params,
+            cancel,
+            qos,
+        )
     });
 
     Ok(SpawnNonBlockingServerResult {
@@ -248,8 +241,8 @@ async fn run_server<Q, C>(
     stats: Arc<StreamerStats>,
     quic_server_params: QuicStreamerConfig,
     cancel: CancellationToken,
-    qos: Arc<Q>,
-) -> TaskTracker
+    qos: Q,
+) -> ()
 where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
@@ -286,7 +279,9 @@ where
             })
         })
         .collect::<FuturesUnordered<_>>();
-
+    let mut qos = qos;
+    qos.spawn_background_tasks();
+    let qos = Arc::new(qos);
     let tasks = TaskTracker::new();
     loop {
         let timeout_connection = select! {
@@ -386,7 +381,8 @@ where
             debug!("accept(): Timed out waiting for connection");
         }
     }
-    tasks
+    tasks.close();
+    tasks.wait().await;
 }
 
 pub fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {
@@ -1069,6 +1065,27 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
             0
         }
     }
+
+    /// Removes all connections associated with `key`.
+    ///
+    /// Returns the number of removed connections.
+    pub(crate) fn remove_connections_by_key(&mut self, key: ConnectionTableKey) -> usize {
+        self.table
+            .swap_remove(&key)
+            .map(|connections| {
+                let num_removed = connections.len();
+                debug_assert!(
+                    self.total_size >= num_removed,
+                    "connection table size underflow while removing by key; total_size={}, \
+                     removed={}",
+                    self.total_size,
+                    num_removed
+                );
+                self.total_size = self.total_size.saturating_sub(num_removed);
+                num_removed
+            })
+            .unwrap_or_default()
+    }
 }
 
 struct EndpointAccept<'a> {
@@ -1719,6 +1736,55 @@ pub mod test {
         }
         assert_eq!(table.total_size, 0);
         assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_remove_connections_by_key() {
+        agave_logger::setup();
+        let cancel = CancellationToken::new();
+        let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
+        let pubkey1 = Pubkey::new_unique();
+        let pubkey2 = Pubkey::new_unique();
+        let max_connections_per_peer = 10;
+        let stats = Arc::new(StreamerStats::default());
+
+        (0..2).for_each(|i| {
+            table
+                .try_add_connection(
+                    ConnectionTableKey::Pubkey(pubkey1),
+                    0,
+                    ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
+                    None,
+                    ConnectionPeerType::Unstaked,
+                    Arc::new(AtomicU64::new(i)),
+                    max_connections_per_peer,
+                    || Arc::new(NullStreamerCounter {}),
+                )
+                .unwrap();
+        });
+        table
+            .try_add_connection(
+                ConnectionTableKey::Pubkey(pubkey2),
+                0,
+                ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
+                None,
+                ConnectionPeerType::Unstaked,
+                Arc::new(AtomicU64::new(2)),
+                max_connections_per_peer,
+                || Arc::new(NullStreamerCounter {}),
+            )
+            .unwrap();
+
+        assert_eq!(table.total_size, 3);
+        let removed = table.remove_connections_by_key(ConnectionTableKey::Pubkey(pubkey1));
+        assert_eq!(removed, 2);
+        assert_eq!(table.total_size, 1);
+        assert_eq!(table.table.len(), 1);
+        assert!(
+            table
+                .table
+                .contains_key(&ConnectionTableKey::Pubkey(pubkey2))
+        );
     }
 
     #[test]

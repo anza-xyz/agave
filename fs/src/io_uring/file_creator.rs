@@ -11,7 +11,6 @@ use {
         },
     },
     agave_io_uring::{Completion, FixedSlab, Ring, RingAccess, RingOp},
-    core::slice,
     io_uring::{IoUring, opcode, squeue, types},
     libc::{O_CREAT, O_DIRECT, O_NOATIME, O_NOFOLLOW, O_RDWR, O_TRUNC},
     smallvec::SmallVec,
@@ -222,7 +221,7 @@ impl FileCreator for IoUringFileCreator<'_> {
         contents: &mut dyn Read,
     ) -> io::Result<()> {
         let file_key = self.open(path, mode, parent_dir_handle)?;
-        self.write_and_close(contents, file_key)
+        self.schedule_all_writes(contents, file_key)
     }
 
     fn file_complete(&mut self, file: File, path: PathBuf, size: FileSize) {
@@ -272,38 +271,47 @@ impl IoUringFileCreator<'_> {
         Ok(file_key)
     }
 
-    fn write_and_close(&mut self, mut src: impl Read, file_key: usize) -> io::Result<()> {
-        let mut offset = 0;
-        let mut reached_eof = false;
-        while !reached_eof {
-            let buf = self.wait_free_buf()?;
+    fn schedule_all_writes(&mut self, mut src: impl Read, file_key: usize) -> io::Result<()> {
+        let mut file_offset = 0;
+        loop {
+            let mut buf = self.wait_free_buf()?;
 
-            let state = self.ring.context_mut();
-            let file_state = state.files.get_mut(file_key).unwrap();
+            let write_len = buf.fill_from_reader(&mut src)?;
+            let reached_eof = write_len < buf.len();
+            self.schedule_write(file_key, file_offset, reached_eof, buf, write_len)?;
 
-            // Safety: the buffer points to the valid memory backed by `self._backing_buffer`.
-            // It's obtained from the queue of free buffers and is written to exclusively
-            // here before being handled to the kernel or backlog in `file`.
-            let mut mut_slice =
-                unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len() as usize) };
-            // Fill as much of the buffer as possible to avoid excess IO operations
-            let mut write_len;
-            loop {
-                let len = src.read(mut_slice)?;
-                if len == 0 {
-                    reached_eof = true;
-                    write_len = buf.len() - mut_slice.len() as IoSize;
-                    file_state.size_on_eof = Some(write_len as FileSize + offset);
-                    break;
-                }
-                if len == mut_slice.len() {
-                    write_len = buf.len();
-                    break;
-                }
-                mut_slice = &mut mut_slice[len..];
+            if reached_eof {
+                break;
             }
 
-            if self.write_with_direct_io && write_len < buf.len() {
+            file_offset += write_len as FileSize;
+        }
+        Ok(())
+    }
+
+    /// Schedule writing data from `buf[..write_len]` into file at `file_offset`
+    ///
+    /// `is_final_write` indicates that no more writes will be scheduled and enables file to be
+    /// finalized once all writes scheduled so far are done. It should equal to `true` if
+    /// `write_len < buf.len()`, but may be indicated earlier, e.g. if data size is multiple of
+    /// buffer size.
+    ///
+    /// Write operation can be immediately added to ring or put into file state for future execution.
+    fn schedule_write(
+        &mut self,
+        file_key: usize,
+        file_offset: FileSize,
+        is_final_write: bool,
+        buf: IoBufferChunk,
+        mut write_len: IoSize,
+    ) -> io::Result<()> {
+        let state = self.ring.context_mut();
+        let file_state = state.files.get_mut(file_key).unwrap();
+        if is_final_write {
+            // Note: this marker allows file to be finalized once all completions run
+            file_state.size_on_eof = Some(file_offset + write_len as FileSize);
+
+            if self.write_with_direct_io {
                 let align_truncated_write_len =
                     write_len / DIRECT_IO_WRITE_LEN_ALIGNMENT * DIRECT_IO_WRITE_LEN_ALIGNMENT;
                 if align_truncated_write_len != write_len {
@@ -311,51 +319,48 @@ impl IoUringFileCreator<'_> {
                     // non-aligned write can be postponed until that is done
                     file_state.non_dio_eof_write = Some(FinalNonDirectIoWrite {
                         buf: None,
-                        file_offset: offset + align_truncated_write_len as FileSize,
+                        file_offset: file_offset + align_truncated_write_len as FileSize,
                         buf_offset: align_truncated_write_len,
                         write_len: write_len - align_truncated_write_len,
                     });
                     write_len = align_truncated_write_len;
                 }
             }
-
-            file_state.writes_started += 1;
-            if let Some(file) = &file_state.open_file {
-                let fd = types::Fd(file.as_raw_fd());
-                if write_len == 0 {
-                    // EOF was reached consuming `src` *and* there isn't any data left to write
-                    // immediately (there might be some stored for non-direct IO mode). Treat it as
-                    // a successful write, perform proper accounting and pass `buf` to the next
-                    // write operation.
-                    //
-                    // Note: this logic might be happening with no pending writes (e.g. if `buf`
-                    // was obtained just before `src` reached EOF), so it's possible that file
-                    // completion will be triggered immediately.
-                    return FileCreatorState::mark_write_completed(
-                        &mut self.ring,
-                        file_key,
-                        fd,
-                        true,
-                        buf,
-                    );
-                }
-
-                let op = WriteOp {
+        }
+        file_state.writes_started += 1;
+        if let Some(file) = &file_state.open_file {
+            let fd = types::Fd(file.as_raw_fd());
+            if write_len == 0 {
+                // EOF was reached consuming input *and* there isn't any data left to write
+                // immediately (there might be some stored for non-direct IO mode). Treat it as
+                // a successful write, perform proper accounting and pass `buf` to the next
+                // write operation.
+                //
+                // Note: this logic might be happening with no pending writes (e.g. if `buf`
+                // was obtained just before reading reached EOF), so it's possible that file
+                // completion will be triggered immediately.
+                return FileCreatorState::mark_write_completed(
+                    &mut self.ring,
                     file_key,
                     fd,
-                    offset,
+                    true,
                     buf,
-                    buf_offset: 0,
-                    write_len,
-                };
-                state.submitted_writes_size += write_len as usize;
-                self.ring.push(FileCreatorOp::Write(op))?;
-            } else {
-                // Note: `write_len` might be 0 here, but it's handled on open op completion
-                file_state.backlog.push((buf, offset, write_len));
+                );
             }
 
-            offset += write_len as FileSize;
+            let op = WriteOp {
+                file_key,
+                fd,
+                offset: file_offset,
+                buf,
+                buf_offset: 0,
+                write_len,
+            };
+            state.submitted_writes_size += write_len as usize;
+            self.ring.push(FileCreatorOp::Write(op))?;
+        } else {
+            // Note: `write_len` might be 0 here, but it's handled on open op completion
+            file_state.backlog.push((buf, file_offset, write_len));
         }
 
         Ok(())

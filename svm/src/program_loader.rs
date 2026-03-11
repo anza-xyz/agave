@@ -237,7 +237,8 @@ mod tests {
         solana_account::WritableAccount,
         solana_program_runtime::{
             loaded_programs::{
-                BlockRelation, ForkGraph, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
+                BlockRelation, ForkGraph, ProgramRuntimeEnvironment,
+                get_mock_program_runtime_environments,
             },
             solana_sbpf::program::BuiltinProgram,
         },
@@ -573,7 +574,7 @@ mod tests {
             &mut ExecuteTimings::default(),
         );
 
-        let environments = ProgramRuntimeEnvironments::default();
+        let environments = get_mock_program_runtime_environments();
         let expected = ProgramCacheEntry::new(
             account_data.owner(),
             environments.program_runtime_v1.clone(),
@@ -667,7 +668,7 @@ mod tests {
         account_data
             .set_data(data[UpgradeableLoaderState::size_of_programdata_metadata()..].to_vec());
 
-        let environments = ProgramRuntimeEnvironments::default();
+        let environments = get_mock_program_runtime_environments();
         let expected = ProgramCacheEntry::new(
             account_data.owner(),
             environments.program_runtime_v1.clone(),
@@ -752,7 +753,7 @@ mod tests {
             .borrow_mut()
             .insert(key, (account_data.clone(), 0));
 
-        let environments = ProgramRuntimeEnvironments::default();
+        let environments = get_mock_program_runtime_environments();
         let expected = ProgramCacheEntry::new(
             account_data.owner(),
             environments.program_runtime_v1.clone(),
@@ -773,7 +774,7 @@ mod tests {
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(bpf_loader::id());
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        let upcoming_environments = ProgramRuntimeEnvironments::default();
+        let upcoming_environments = get_mock_program_runtime_environments();
         let current_environments = batch_processor.environments.clone();
         {
             let mut epoch_boundary_preparation =

@@ -66,15 +66,13 @@ use {
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
     agave_bls_cert_verify::cert_verify::{self, Error as CertVerifyError},
     agave_feature_set::{
-        self as feature_set, FeatureSet, increase_cpi_account_info_limit,
-        raise_cpi_nesting_limit_to_8, relax_programdata_account_check_migration,
+        self as feature_set, FeatureSet, raise_cpi_nesting_limit_to_8,
+        relax_programdata_account_check_migration,
     },
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::snapshot_hash::SnapshotHash,
-    agave_syscalls::{
-        create_program_runtime_environment_v1, create_program_runtime_environment_v2,
-    },
+    agave_syscalls::create_program_runtime_environment_v1,
     agave_votor_messages::{
         consensus_message::Certificate, migration::GENESIS_CERTIFICATE_ACCOUNT,
     },
@@ -123,7 +121,9 @@ use {
     solana_keypair::Keypair,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{measure::Measure, measure_time, measure_us},
-    solana_message::{AccountKeys, SanitizedMessage, inner_instruction::InnerInstructions},
+    solana_message::{
+        AccountKeys, SanitizedMessage, VersionedMessage, inner_instruction::InnerInstructions,
+    },
     solana_packet::PACKET_DATA_SIZE,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
@@ -471,11 +471,9 @@ pub struct BankFieldsToDeserialize {
     pub(crate) genesis_creation_time: UnixTimestamp,
     pub(crate) slots_per_year: f64,
     pub(crate) slot: Slot,
-    pub(crate) epoch: Epoch,
     pub(crate) block_height: u64,
     pub(crate) leader_id: Pubkey,
     pub(crate) fee_rate_governor: FeeRateGovernor,
-    pub(crate) rent_collector: RentCollector,
     pub(crate) epoch_schedule: EpochSchedule,
     pub(crate) inflation: Inflation,
     pub(crate) stakes: DeserializableStakes<Delegation>,
@@ -514,11 +512,9 @@ pub struct BankFieldsToSerialize {
     pub genesis_creation_time: UnixTimestamp,
     pub slots_per_year: f64,
     pub slot: Slot,
-    pub epoch: Epoch,
     pub block_height: u64,
     pub leader_id: Pubkey,
     pub fee_rate_governor: FeeRateGovernor,
-    pub rent_collector: RentCollector,
     pub epoch_schedule: EpochSchedule,
     pub inflation: Inflation,
     pub stakes: Stakes<StakeAccount<Delegation>>,
@@ -664,11 +660,9 @@ impl BankFieldsToSerialize {
             genesis_creation_time: UnixTimestamp::default(),
             slots_per_year: f64::default(),
             slot: Slot::default(),
-            epoch: Epoch::default(),
             block_height: u64::default(),
             leader_id: Pubkey::default(),
             fee_rate_governor: FeeRateGovernor::default(),
-            rent_collector: RentCollector::default(),
             epoch_schedule: EpochSchedule::default(),
             inflation: Inflation::default(),
             stakes: Stakes::<StakeAccount<Delegation>>::default(),
@@ -1603,14 +1597,18 @@ impl Bank {
             }
             epoch_boundary_preparation.upcoming_epoch = self.epoch.saturating_add(1);
             epoch_boundary_preparation.upcoming_environments = Some(upcoming_environments);
-            epoch_boundary_preparation.programs_to_recompile = program_cache
-                .get_flattened_entries(changed_program_runtime_v1, changed_program_runtime_v2)
-                .into_iter()
-                .map(|(id, _last_modification_slot, entry)| (id, entry))
-                .collect();
-            epoch_boundary_preparation
-                .programs_to_recompile
-                .sort_by_cached_key(|(_id, program)| program.decayed_usage_counter(self.slot));
+            if changed_program_runtime_v1 {
+                epoch_boundary_preparation.programs_to_recompile = program_cache
+                    .get_flattened_entries()
+                    .into_iter()
+                    .map(|(id, _last_modification_slot, entry)| (id, entry))
+                    .collect();
+                epoch_boundary_preparation
+                    .programs_to_recompile
+                    .sort_by_cached_key(|(_id, program)| program.decayed_usage_counter(self.slot));
+            } else {
+                epoch_boundary_preparation.programs_to_recompile.clear();
+            }
         }
     }
 
@@ -1866,6 +1864,7 @@ impl Bank {
     ) -> Self {
         let now = Instant::now();
         let slot = fields.slot;
+        let epoch = fields.epoch_schedule.get_epoch(slot);
         let ancestors = Ancestors::from(vec![slot]);
         // For backward compatibility, we can only serialize and deserialize
         // Stakes<Delegation> in BankFieldsTo{Serialize,Deserialize}. But Bank
@@ -1899,6 +1898,17 @@ impl Bank {
             "should be populated (from fields.versioned_epoch_stakes)"
         );
         let stakes_accounts_load_duration = now.elapsed();
+        // The serialized rent collector is deprecated. Instead, reconstruct from fields plus
+        // the rent sysvar account state.
+        let rent = {
+            let rent_sysvar = bank_rc
+                .accounts
+                .load_with_fixed_root_do_not_populate_read_cache(&ancestors, &sysvar::rent::id())
+                .expect("snapshot must contain rent sysvar account")
+                .0;
+            from_account::<sysvar::rent::Rent, _>(&rent_sysvar)
+                .expect("snapshot must contain well-formed rent sysvar account")
+        };
         let mut bank = Self {
             rc: bank_rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
@@ -1924,12 +1934,16 @@ impl Bank {
             slots_per_year: fields.slots_per_year,
             slot,
             bank_id: 0,
-            epoch: fields.epoch,
+            epoch,
             block_height: fields.block_height,
             leader_id: fields.leader_id,
             fee_rate_governor: fields.fee_rate_governor,
-            // clone()-ing is needed to consider a gated behavior in rent_collector
-            rent_collector: Self::get_rent_collector_from(&fields.rent_collector, fields.epoch),
+            rent_collector: RentCollector::new(
+                epoch,
+                fields.epoch_schedule.clone(),
+                fields.slots_per_year,
+                rent,
+            ),
             epoch_schedule: fields.epoch_schedule,
             inflation: Arc::new(RwLock::new(fields.inflation)),
             stakes_cache: StakesCache::new(stakes),
@@ -1994,7 +2008,6 @@ impl Bank {
             )
         );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
-        assert_eq!(bank.epoch, bank.epoch_schedule.get_epoch(bank.slot));
 
         bank.initialize_after_snapshot_restore(|| {
             ThreadPoolBuilder::new()
@@ -2043,11 +2056,9 @@ impl Bank {
             genesis_creation_time: self.genesis_creation_time,
             slots_per_year: self.slots_per_year,
             slot: self.slot,
-            epoch: self.epoch,
             block_height: self.block_height,
             leader_id: self.leader_id,
             fee_rate_governor: self.fee_rate_governor.clone(),
-            rent_collector: self.rent_collector.clone(),
             epoch_schedule: self.epoch_schedule.clone(),
             inflation: *self.inflation.read().unwrap(),
             stakes: self.stakes_cache.stakes().clone(),
@@ -2621,8 +2632,6 @@ impl Bank {
             slot_duration,
             epoch_start_timestamp,
             max_allowable_drift,
-            self.feature_set
-                .is_active(&feature_set::warp_timestamp_again::id()),
         );
         get_timestamp_estimate_time.stop();
         datapoint_info!(
@@ -3229,9 +3238,6 @@ impl Bank {
         &self,
         txs: Vec<VersionedTransaction>,
     ) -> Result<TransactionBatch<'_, '_, RuntimeTransaction<SanitizedTransaction>>> {
-        let enable_static_instruction_limit = self
-            .feature_set
-            .is_active(&agave_feature_set::static_instruction_limit::id());
         let enable_instruction_account_limit = self
             .feature_set
             .is_active(&agave_feature_set::limit_instruction_accounts::id());
@@ -3244,7 +3250,6 @@ impl Bank {
                     None,
                     self,
                     self.get_reserved_account_keys(),
-                    enable_static_instruction_limit,
                     enable_instruction_account_limit,
                 )
             })
@@ -4390,29 +4395,14 @@ impl Bank {
         self.rc.accounts.clone()
     }
 
-    fn apply_simd_0306_cost_tracker_changes(&mut self) {
-        let mut cost_tracker = self.write_cost_tracker().unwrap();
-        let block_cost_limit = cost_tracker.get_block_limit();
-        let vote_cost_limit = cost_tracker.get_vote_limit();
-        // SIMD-0306 makes account cost limit 40% of the block cost limit.
-        let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
-        cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
-    }
-
     fn apply_simd_0339_invoke_cost_changes(&mut self) {
         let simd_0268_active = self
             .feature_set
             .is_active(&raise_cpi_nesting_limit_to_8::id());
-        let simd_0339_active = self
-            .feature_set
-            .is_active(&increase_cpi_account_info_limit::id());
         let compute_budget = self
             .compute_budget()
             .as_ref()
-            .unwrap_or(&ComputeBudget::new_with_defaults(
-                simd_0268_active,
-                simd_0339_active,
-            ))
+            .unwrap_or(&ComputeBudget::new_with_defaults(simd_0268_active))
             .to_cost();
 
         self.transaction_processor
@@ -4441,24 +4431,12 @@ impl Bank {
         {
             let block_cost_limit = simd_0286_block_limits();
             let mut cost_tracker = self.write_cost_tracker().unwrap();
-            let account_cost_limit = cost_tracker.get_account_limit();
+            let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
             let vote_cost_limit = cost_tracker.get_vote_limit();
             cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
         }
 
-        if self
-            .feature_set
-            .is_active(&feature_set::raise_account_cu_limit::id())
-        {
-            self.apply_simd_0306_cost_tracker_changes();
-        }
-
-        if self
-            .feature_set
-            .is_active(&feature_set::increase_cpi_account_info_limit::id())
-        {
-            self.apply_simd_0339_invoke_cost_changes();
-        }
+        self.apply_simd_0339_invoke_cost_changes();
 
         let environments = self.create_program_runtime_environments(&self.feature_set);
         self.transaction_processor
@@ -4479,29 +4457,23 @@ impl Bank {
         feature_set: &FeatureSet,
     ) -> ProgramRuntimeEnvironments {
         let simd_0268_active = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
-        let simd_0339_active = feature_set.is_active(&increase_cpi_account_info_limit::id());
         let compute_budget = self
             .compute_budget()
             .as_ref()
-            .unwrap_or(&ComputeBudget::new_with_defaults(
-                simd_0268_active,
-                simd_0339_active,
-            ))
+            .unwrap_or(&ComputeBudget::new_with_defaults(simd_0268_active))
             .to_budget();
-        ProgramRuntimeEnvironments {
-            program_runtime_v1: Arc::new(
-                create_program_runtime_environment_v1(
-                    &feature_set.runtime_features(),
-                    &compute_budget,
-                    false, /* deployment */
-                    false, /* debugging_features */
-                )
-                .unwrap(),
-            ),
-            program_runtime_v2: Arc::new(create_program_runtime_environment_v2(
+        let program_runtime_environment = Arc::new(
+            create_program_runtime_environment_v1(
+                &feature_set.runtime_features(),
                 &compute_budget,
+                false, /* deployment */
                 false, /* debugging_features */
-            )),
+            )
+            .unwrap(),
+        );
+        ProgramRuntimeEnvironments {
+            program_runtime_v1: program_runtime_environment.clone(),
+            program_runtime_v2: program_runtime_environment,
         }
     }
 
@@ -5008,41 +4980,61 @@ impl Bank {
         }
     }
 
+    /// Verify the transaction signatures, hash and other metadata.
     pub fn verify_transaction(
         &self,
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        let enable_static_instruction_limit = self
-            .feature_set
-            .is_active(&agave_feature_set::static_instruction_limit::id());
-        let enable_instruction_account_limit = self
-            .feature_set
-            .is_active(&agave_feature_set::limit_instruction_accounts::id());
-
         // Discard v1 transactions until support is added.
         if tx.version() == TransactionVersion::Number(1) {
             return Err(TransactionError::UnsupportedVersion);
         }
 
+        let serialized_message = tx.message.serialize();
+        self.verify_transaction_with_serialized_message(tx, &serialized_message, verification_mode)
+    }
+
+    /// Verify the transaction signatures, hash and other metadata, using the provided serialized
+    /// message.
+    ///
+    /// Verifying a transaction requires the serialized message to calculate the message hash. Use
+    /// this function if the message is already available. Note that the serialized message MUST
+    /// correspond to the transaction's message.
+    pub fn verify_transaction_with_serialized_message(
+        &self,
+        tx: VersionedTransaction,
+        serialized_message: &[u8],
+        verification_mode: TransactionVerificationMode,
+    ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
+        // Discard v1 transactions until support is added.
+        if tx.version() == TransactionVersion::Number(1) {
+            return Err(TransactionError::UnsupportedVersion);
+        }
+
+        let enable_instruction_account_limit = self
+            .feature_set
+            .is_active(&agave_feature_set::limit_instruction_accounts::id());
+
         let sanitized_tx = {
             let size =
-                bincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
+                wincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
             if size > PACKET_DATA_SIZE as u64 {
                 return Err(TransactionError::SanitizeFailure);
             }
+
+            // SIMD-0160, check instruction limit before signature verification
+            if tx.message.instructions().len()
+                > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
+            {
+                return Err(solana_transaction_error::TransactionError::SanitizeFailure);
+            }
+
             let message_hash = if verification_mode == TransactionVerificationMode::FullVerification
             {
-                // SIMD-0160, check instruction limit before signature verificaton
-                if enable_static_instruction_limit
-                    && tx.message.instructions().len()
-                        > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
-                {
-                    return Err(solana_transaction_error::TransactionError::SanitizeFailure);
-                }
                 tx.verify_and_hash_message()?
             } else {
-                tx.message.hash()
+                VersionedMessage::hash_raw_message(serialized_message)
             };
 
             RuntimeTransaction::try_create(
@@ -5051,7 +5043,6 @@ impl Bank {
                 None,
                 self,
                 self.get_reserved_account_keys(),
-                enable_static_instruction_limit,
                 enable_instruction_account_limit,
             )
         }?;
@@ -5676,21 +5667,9 @@ impl Bank {
         if new_feature_activations.contains(&feature_set::raise_block_limits_to_100m::id()) {
             let block_cost_limit = simd_0286_block_limits();
             let mut cost_tracker = self.write_cost_tracker().unwrap();
-            let account_cost_limit = cost_tracker.get_account_limit();
+            let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
             let vote_cost_limit = cost_tracker.get_vote_limit();
             cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
-            drop(cost_tracker);
-
-            if self
-                .feature_set
-                .is_active(&feature_set::raise_account_cu_limit::id())
-            {
-                self.apply_simd_0306_cost_tracker_changes();
-            }
-        }
-
-        if new_feature_activations.contains(&feature_set::raise_account_cu_limit::id()) {
-            self.apply_simd_0306_cost_tracker_changes();
         }
 
         if new_feature_activations.contains(&feature_set::vote_state_v4::id()) {
@@ -5702,10 +5681,6 @@ impl Bank {
                 error!("Failed to upgrade Core BPF Stake program: {e}");
             }
         }
-        if new_feature_activations.contains(&feature_set::increase_cpi_account_info_limit::id()) {
-            self.apply_simd_0339_invoke_cost_changes();
-        }
-
         if new_feature_activations.contains(&feature_set::replace_spl_token_with_p_token::id()) {
             if let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
                 &feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID,

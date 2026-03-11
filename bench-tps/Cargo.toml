@@ -43,7 +43,6 @@ solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-fee-calculator = { workspace = true }
 solana-genesis = { workspace = true }
 solana-genesis-config = { workspace = true }
-solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
@@ -58,7 +57,6 @@ solana-quic-client = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
-solana-rpc-client-nonce-utils = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
@@ -71,7 +69,6 @@ solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 spl-instruction-padding-interface = { version = "=1.0.0" }
-thiserror = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }

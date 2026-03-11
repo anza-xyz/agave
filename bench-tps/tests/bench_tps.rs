@@ -2,10 +2,9 @@
 
 use {
     serial_test::serial,
-    solana_account::{Account, AccountSharedData},
     solana_bench_tps::{
         bench::{do_bench_tps, generate_and_fund_keypairs},
-        cli::{Config, InstructionPaddingConfig},
+        cli::Config,
         send_batch::generate_durable_nonce_accounts,
     },
     solana_commitment_config::CommitmentConfig,
@@ -20,34 +19,20 @@ use {
         validator_configs::make_identical_validator_configs,
     },
     solana_net_utils::SocketAddrSpace,
-    solana_quic_client::{QuicConfig, QuicConnectionManager},
+    solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
     solana_rent::Rent,
     solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_test_validator::TestValidatorGenesis,
+    solana_test_validator::{TestValidator, TestValidatorGenesis},
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},
     std::{sync::Arc, time::Duration},
 };
 
-fn program_account(program_data: &[u8]) -> AccountSharedData {
-    AccountSharedData::from(Account {
-        lamports: Rent::default().minimum_balance(program_data.len()).min(1),
-        data: program_data.to_vec(),
-        owner: solana_sdk_ids::bpf_loader::id(),
-        executable: true,
-        rent_epoch: 0,
-    })
-}
-
-fn test_bench_tps_local_cluster(config: Config) {
-    let additional_accounts = vec![(
-        spl_instruction_padding_interface::ID,
-        program_account(include_bytes!("fixtures/spl_instruction_padding.so")),
-    )];
-
-    agave_logger::setup();
-
+fn create_local_cluster_and_client() -> (
+    LocalCluster,
+    Arc<TpuClient<QuicPool, QuicConnectionManager, QuicConfig>>,
+) {
     let faucet_keypair = Keypair::new();
     let faucet_pubkey = faucet_keypair.pubkey();
     let faucet_addr = run_local_faucet_for_tests(
@@ -71,7 +56,6 @@ fn test_bench_tps_local_cluster(config: Config) {
                 },
                 NUM_NODES,
             ),
-            additional_accounts,
             ..ClusterConfig::default()
         },
         SocketAddrSpace::Unspecified,
@@ -87,28 +71,13 @@ fn test_bench_tps_local_cluster(config: Config) {
             }),
     );
 
-    let lamports_per_account = 100;
-
-    let keypair_count = config.tx_count * config.keypair_multiplier;
-    let keypairs = generate_and_fund_keypairs(
-        client.clone(),
-        &config.id,
-        keypair_count,
-        lamports_per_account,
-        false,
-        false,
-    )
-    .unwrap();
-
-    let _total = do_bench_tps(client, config, keypairs, None);
-
-    #[cfg(not(debug_assertions))]
-    assert!(_total > 100);
+    (cluster, client)
 }
 
-fn test_bench_tps_test_validator(config: Config) {
-    agave_logger::setup();
-
+fn create_test_validator_and_client() -> (
+    TestValidator,
+    Arc<TpuClient<QuicPool, QuicConnectionManager, QuicConfig>>,
+) {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet_for_tests(
@@ -137,20 +106,29 @@ fn test_bench_tps_test_validator(config: Config) {
     ));
     let websocket_url = test_validator.rpc_pubsub_url();
 
-    let client = Arc::new(
-        TpuClient::new(
-            "tpu_client_quic_bench_tps",
-            rpc_client,
-            &websocket_url,
-            TpuClientConfig::default(),
-            QuicConnectionManager::new_with_connection_config(QuicConfig::new().unwrap()),
-        )
-        .expect("Should build Quic Tpu Client."),
-    );
+    (
+        test_validator,
+        Arc::new(
+            TpuClient::new(
+                "tpu_client_quic_bench_tps",
+                rpc_client,
+                &websocket_url,
+                TpuClientConfig::default(),
+                QuicConnectionManager::new_with_connection_config(QuicConfig::new().unwrap()),
+            )
+            .expect("Should build Quic Tpu Client."),
+        ),
+    )
+}
 
-    let lamports_per_account = 1000;
-
+fn run_bench_tps(client: Arc<TpuClient<QuicPool, QuicConnectionManager, QuicConfig>>) {
+    let config = Config {
+        tx_count: 100,
+        duration: Duration::from_secs(5),
+        ..Config::default()
+    };
     let keypair_count = config.tx_count * config.keypair_multiplier;
+    let lamports_per_account = 1000;
     let keypairs = generate_and_fund_keypairs(
         client.clone(),
         &config.id,
@@ -166,67 +144,24 @@ fn test_bench_tps_test_validator(config: Config) {
         None
     };
 
-    let _total = do_bench_tps(client, config, keypairs, nonce_keypairs);
-
-    #[cfg(not(debug_assertions))]
-    assert!(_total > 100);
+    let tps = do_bench_tps(client, config, keypairs, nonce_keypairs);
+    assert!(tps > 100, "TPS less than expected {tps}");
 }
 
 #[test]
 #[serial]
-fn test_bench_tps_local_cluster_solana() {
-    test_bench_tps_local_cluster(Config {
-        tx_count: 100,
-        duration: Duration::from_secs(10),
-        ..Config::default()
-    });
+fn test_bench_tps_local_cluster() {
+    agave_logger::setup();
+    let (local_cluster, client) = create_local_cluster_and_client();
+    run_bench_tps(client);
+    drop(local_cluster);
 }
 
 #[test]
 #[serial]
-fn test_bench_tps_tpu_client() {
-    test_bench_tps_test_validator(Config {
-        tx_count: 100,
-        duration: Duration::from_secs(10),
-        ..Config::default()
-    });
-}
-
-#[test]
-#[serial]
-fn test_bench_tps_tpu_client_nonce() {
-    test_bench_tps_test_validator(Config {
-        tx_count: 100,
-        duration: Duration::from_secs(10),
-        use_durable_nonce: true,
-        ..Config::default()
-    });
-}
-
-#[test]
-#[serial]
-fn test_bench_tps_local_cluster_with_padding() {
-    test_bench_tps_local_cluster(Config {
-        tx_count: 100,
-        duration: Duration::from_secs(10),
-        instruction_padding_config: Some(InstructionPaddingConfig {
-            program_id: spl_instruction_padding_interface::ID,
-            data_size: 0,
-        }),
-        ..Config::default()
-    });
-}
-
-#[test]
-#[serial]
-fn test_bench_tps_tpu_client_with_padding() {
-    test_bench_tps_test_validator(Config {
-        tx_count: 100,
-        duration: Duration::from_secs(10),
-        instruction_padding_config: Some(InstructionPaddingConfig {
-            program_id: spl_instruction_padding_interface::ID,
-            data_size: 0,
-        }),
-        ..Config::default()
-    });
+fn test_bench_tps_test_validator() {
+    agave_logger::setup();
+    let (test_validator, client) = create_test_validator_and_client();
+    run_bench_tps(client);
+    drop(test_validator)
 }

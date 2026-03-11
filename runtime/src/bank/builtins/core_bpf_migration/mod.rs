@@ -148,7 +148,7 @@ impl Bank {
             let compute_budget = self
                 .compute_budget()
                 .unwrap_or(ComputeBudget::new_with_defaults(
-                    /* simd_0268_active */ false, /* simd_0339_active */ false,
+                    /* simd_0268_active */ false,
                 ));
             let mut sysvar_cache = SysvarCache::default();
             sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
@@ -730,7 +730,7 @@ pub(crate) mod tests {
                 .global_program_cache
                 .read()
                 .unwrap();
-            let entries = program_cache.get_flattened_entries(true, true);
+            let entries = program_cache.get_flattened_entries();
             let target_entry = entries
                 .iter()
                 .find(|(program_id, _last_modification_slot, _entry)| {
