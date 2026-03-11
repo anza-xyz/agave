@@ -1,7 +1,6 @@
 #![cfg(test)]
 use {
     solana_account::{Account, ReadableAccount},
-    solana_clock::MAX_PROCESSING_AGE,
     solana_compute_budget::compute_budget_limits::MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_cost_model::cost_model::CostModel,
@@ -88,7 +87,7 @@ impl TestSetup {
         let commit_result = bank
             .load_execute_and_commit_transactions(
                 &batch,
-                MAX_PROCESSING_AGE,
+                bank.max_processing_age(),
                 ExecutionRecordingConfig::new_single_setting(false),
                 &mut ExecuteTimings::default(),
                 None,

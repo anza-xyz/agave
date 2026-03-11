@@ -17,7 +17,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
-    solana_clock::{MAX_PROCESSING_AGE, UnixTimestamp},
+    solana_clock::UnixTimestamp,
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
@@ -151,7 +151,7 @@ fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> Transact
     let mut commit_results = bank
         .load_execute_and_commit_transactions(
             &tx_batch,
-            MAX_PROCESSING_AGE,
+            bank.max_processing_age(),
             ExecutionRecordingConfig {
                 enable_cpi_recording: true,
                 enable_log_recording: true,
@@ -5580,7 +5580,7 @@ fn test_function_call_args() {
     let result = bank
         .load_execute_and_commit_transactions(
             &tx_batch,
-            MAX_PROCESSING_AGE,
+            bank.max_processing_age(),
             ExecutionRecordingConfig {
                 enable_cpi_recording: false,
                 enable_log_recording: false,
