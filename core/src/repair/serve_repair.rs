@@ -20,7 +20,7 @@ use {
     bincode::{Options, serialize},
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvTimeoutError},
-    lru::LruCache,
+    lazy_lru::LruCache,
     rand::{
         Rng,
         distr::{
