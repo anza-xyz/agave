@@ -18,6 +18,7 @@ bench = false
 agave-unstable-api = []
 
 [dependencies]
+agave-instant = { workspace = true }
 agave-logger = { workspace = true }
 clap = { workspace = true }
 log = { workspace = true }

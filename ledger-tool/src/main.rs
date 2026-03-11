@@ -844,6 +844,7 @@ static GLOBAL: Jemalloc = Jemalloc;
 
 #[allow(clippy::cognitive_complexity)]
 fn main() {
+    agave_instant::Instant::memoize();
     // Ignore SIGUSR1 to prevent long-running calls being killed by logrotate
     // in warehouse deployments
     #[cfg(unix)]

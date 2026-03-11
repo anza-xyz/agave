@@ -187,6 +187,7 @@ shaq = { workspace = true }
 sysctl = { workspace = true }
 
 [dev-dependencies]
+agave-instant = { workspace = true }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 agave-scheduler-bindings = { path = "../scheduler-bindings", features = ["agave-unstable-api"] }
 bencher = { workspace = true }

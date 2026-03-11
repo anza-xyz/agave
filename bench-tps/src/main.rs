@@ -162,6 +162,7 @@ fn create_client(
 }
 
 fn main() {
+    agave_instant::Instant::memoize();
     agave_logger::setup_with_default_filter();
     solana_metrics::set_panic_hook("bench-tps", /*version:*/ None);
 

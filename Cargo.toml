@@ -42,6 +42,7 @@ members = [
     "gossip",
     "gossip-cli",
     "install",
+    "instant",
     "io-uring",
     "keygen",
     "lattice-hash",
@@ -193,6 +194,7 @@ agave-bls12-381 = { path = "bls12-381", version = "=4.1.0-alpha.0", features = [
 agave-feature-set = { path = "feature-set", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=4.1.0-alpha.0" }
+agave-instant = { path = "instant", version = "=4.1.0-alpha.0" }
 agave-io-uring = { path = "io-uring", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-logger = { path = "logger", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-math-utils = { path = "math-utils", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }

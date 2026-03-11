@@ -16,6 +16,7 @@ agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
+agave-instant = { workspace = true }
 agave-logger = { workspace = true }
 clap = { workspace = true }
 log = { workspace = true }

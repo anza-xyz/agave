@@ -1,6 +1,5 @@
 [package]
-name = "solana-measure"
-documentation = "https://docs.rs/solana-measure"
+name = "agave-instant"
 version = { workspace = true }
 authors = { workspace = true }
 description = { workspace = true }
@@ -9,11 +8,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-
 [features]
-agave-unstable-api = []
+default = []
+rdtsc = []
 
-[dependencies]
-agave-instant = { workspace = true }
+[lints]
+workspace = true

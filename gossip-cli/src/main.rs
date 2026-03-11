@@ -400,6 +400,7 @@ fn get_gossip_address(matches: &ArgMatches, entrypoint_addrs: &[SocketAddr]) -> 
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
+    agave_instant::Instant::memoize();
     agave_logger::setup_with_default_filter();
 
     let matches = parse_matches();

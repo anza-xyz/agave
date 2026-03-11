@@ -232,6 +232,7 @@ fn send_and_confirm_messages<S: Signers>(
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    agave_instant::Instant::memoize();
     let command_args = parse_args(env::args_os());
     let config = Config::load(&command_args.config_file).unwrap_or_default();
     let json_rpc_url = command_args.url.unwrap_or(config.json_rpc_url);

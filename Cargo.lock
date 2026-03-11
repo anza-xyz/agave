@@ -142,6 +142,7 @@ dependencies = [
 name = "agave-install"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-instant",
  "agave-logger",
  "bincode",
  "bzip2",
@@ -176,6 +177,10 @@ dependencies = [
  "winapi",
  "winreg",
 ]
+
+[[package]]
+name = "agave-instant"
+version = "4.1.0-alpha.0"
 
 [[package]]
 name = "agave-io-uring"
@@ -398,6 +403,7 @@ dependencies = [
 name = "agave-validator"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-instant",
  "agave-logger",
  "agave-snapshots",
  "agave-votor",
@@ -565,6 +571,7 @@ dependencies = [
 name = "agave-watchtower"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-instant",
  "agave-logger",
  "clap 2.33.3",
  "humantime",
@@ -6929,6 +6936,7 @@ dependencies = [
 name = "solana-accounts-cluster-bench"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-instant",
  "agave-logger",
  "clap 2.33.3",
  "log",
@@ -7189,6 +7197,7 @@ dependencies = [
 name = "solana-bench-streamer"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-instant",
  "clap 3.2.23",
  "crossbeam-channel",
  "solana-net-utils",
@@ -7491,6 +7500,7 @@ name = "solana-cli"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-instant",
  "agave-logger",
  "agave-syscalls",
  "agave-votor-messages",
@@ -7869,6 +7879,7 @@ dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-bls-cert-verify",
  "agave-feature-set",
+ "agave-instant",
  "agave-logger",
  "agave-math-utils",
  "agave-reserved-account-keys",
@@ -8323,6 +8334,7 @@ dependencies = [
 name = "solana-faucet-cli"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-instant",
  "agave-logger",
  "clap 2.33.3",
  "log",
@@ -8440,6 +8452,7 @@ name = "solana-genesis"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-instant",
  "agave-logger",
  "agave-snapshots",
  "base64 0.22.1",
@@ -8631,6 +8644,7 @@ dependencies = [
 name = "solana-gossip-cli"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-instant",
  "agave-logger",
  "clap 2.33.3",
  "log",
@@ -8758,6 +8772,7 @@ dependencies = [
 name = "solana-keygen"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-instant",
  "agave-votor-messages",
  "bs58",
  "clap 3.2.23",
@@ -9096,6 +9111,9 @@ dependencies = [
 [[package]]
 name = "solana-measure"
 version = "4.1.0-alpha.0"
+dependencies = [
+ "agave-instant",
+]
 
 [[package]]
 name = "solana-merkle-tree"
@@ -9357,6 +9375,7 @@ dependencies = [
 name = "solana-poh-bench"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-instant",
  "agave-logger",
  "clap 3.2.23",
  "num_cpus",
@@ -10491,6 +10510,7 @@ dependencies = [
 name = "solana-stake-accounts"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-instant",
  "clap 2.33.3",
  "solana-account 4.1.0",
  "solana-clap-utils",
@@ -10748,6 +10768,9 @@ dependencies = [
 [[package]]
 name = "solana-svm-measure"
 version = "4.1.0-alpha.0"
+dependencies = [
+ "agave-instant",
+]
 
 [[package]]
 name = "solana-svm-test-harness"
@@ -11040,6 +11063,7 @@ dependencies = [
 name = "solana-tokens"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-instant",
  "agave-logger",
  "assert_matches",
  "bincode",

@@ -452,6 +452,7 @@ fn validate_endpoints(
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
+    agave_instant::Instant::memoize();
     agave_logger::setup_with_default_filter();
     solana_metrics::set_panic_hook("watchtower", /*version:*/ None);
 

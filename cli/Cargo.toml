@@ -28,6 +28,7 @@ remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-instant = { workspace = true }
 agave-logger = { workspace = true }
 agave-syscalls = { workspace = true }
 agave-votor-messages = { workspace = true }

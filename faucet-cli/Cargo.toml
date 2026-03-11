@@ -17,6 +17,7 @@ name = "solana-faucet"
 path = "src/main.rs"
 
 [dependencies]
+agave-instant = { workspace = true }
 agave-logger = { workspace = true }
 clap = { workspace = true }
 log = { workspace = true }
