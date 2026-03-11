@@ -12,8 +12,7 @@ use {
     },
     crossbeam_channel::{SendError, Sender},
     solana_bls_signatures::{
-        BlsError, Pubkey as BLSPubkey, keypair::Keypair as BLSKeypair,
-        pubkey::PubkeyCompressed as BLSPubkeyCompressed,
+        BlsError, keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
     },
     solana_clock::Slot,
     solana_keypair::Keypair,
@@ -214,7 +213,7 @@ pub fn generate_vote_tx(
 
     let bls_keypair = get_or_insert_bls_keypair(derived_bls_keypairs, &authorized_voter_keypair)
         .unwrap_or_else(|e| panic!("Failed to derive my own BLS keypair: {e:?}"));
-    let my_bls_pubkey: BLSPubkey = bls_keypair.public.into();
+    let my_bls_pubkey = bls_keypair.public;
     if my_bls_pubkey != bls_pubkey_in_vote_account {
         panic!(
             "Vote account bls_pubkey mismatch: {bls_pubkey_in_vote_account:?} (expected: \
@@ -222,22 +221,14 @@ pub fn generate_vote_tx(
         );
     }
     let vote_serialized = bincode::serialize(&vote).unwrap();
-
-    let epoch = bank.epoch_schedule().get_epoch(vote.slot());
-
-    let Some(epoch_stakes) = bank.epoch_stakes(epoch) else {
-        panic!(
-            "The bank {} doesn't have its own epoch_stakes for {}",
-            bank.slot(),
-            epoch
-        );
-    };
-    let Some(my_rank) = epoch_stakes
-        .bls_pubkey_to_rank_map()
-        .get_rank(&my_bls_pubkey)
-    else {
+    let rank_map = bank
+        .epoch_stakes_from_slot(vote.slot())
+        .unwrap_or_else(|| panic!("could not find epoch stakes for slot {}", vote.slot()))
+        .bls_pubkey_to_rank_map();
+    let Some(my_rank) = rank_map.get_rank(&my_bls_pubkey) else {
         return GenerateVoteTxResult::NoRankFound;
     };
+
     GenerateVoteTxResult::ConsensusMessage(ConsensusMessage::Vote(VoteMessage {
         vote: *vote,
         signature: bls_keypair.sign(&vote_serialized).into(),
@@ -589,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "The bank 0 doesn't have its own epoch_stakes for")]
+    #[should_panic(expected = "could not find epoch stakes for slot 1000000000")]
     fn test_panic_on_future_slot() {
         agave_logger::setup();
         let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
