@@ -423,6 +423,17 @@ impl SlotMeta {
         self.is_connected()
     }
 
+    /// Clear the parent_connected and connected flags.
+    /// Returns true if the slot was previously parent-connected (signaling
+    /// that children need clearing too).
+    pub fn clear_parent_connected(&mut self) -> bool {
+        let was_parent_connected = self.is_parent_connected();
+        self.connected_flags
+            .set(ConnectedFlags::PARENT_CONNECTED, false);
+        self.connected_flags.set(ConnectedFlags::CONNECTED, false);
+        was_parent_connected
+    }
+
     /// Dangerous.
     #[cfg(feature = "dev-context-only-utils")]
     pub fn unset_parent(&mut self) {
@@ -657,6 +668,20 @@ pub struct ParentMeta {
     pub parent_slot: Slot,
     pub parent_block_id: Hash,
     pub replay_fec_set_index: u32,
+}
+
+impl ParentMeta {
+    pub fn populated_from_update_parent(&self) -> bool {
+        self.replay_fec_set_index > 0
+    }
+
+    pub fn populated_from_block_header(&self) -> bool {
+        self.replay_fec_set_index == 0
+    }
+
+    pub fn block(&self) -> (Slot, Hash) {
+        (self.parent_slot, self.parent_block_id)
+    }
 }
 
 #[cfg(test)]
