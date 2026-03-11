@@ -11,11 +11,21 @@ use {
     std::sync::LazyLock,
 };
 
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub struct FeatureSnapshot {}
+
+impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
+    fn from(_active: &AHashMap<Pubkey, u64>) -> Self {
+        Self {}
+    }
+}
+
 #[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FeatureSet {
     active: AHashMap<Pubkey, u64>,
     inactive: AHashSet<Pubkey>,
+    snapshot: FeatureSnapshot,
 }
 
 impl Default for FeatureSet {
@@ -24,13 +34,19 @@ impl Default for FeatureSet {
             // All features disabled
             active: AHashMap::new(),
             inactive: AHashSet::from_iter((*FEATURE_NAMES).keys().cloned()),
+            snapshot: FeatureSnapshot::default(),
         }
     }
 }
 
 impl FeatureSet {
     pub fn new(active: AHashMap<Pubkey, u64>, inactive: AHashSet<Pubkey>) -> Self {
-        Self { active, inactive }
+        let feature_snapshot = FeatureSnapshot::from(&active);
+        Self {
+            active,
+            inactive,
+            snapshot: feature_snapshot,
+        }
     }
 
     pub fn active(&self) -> &AHashMap<Pubkey, u64> {
@@ -53,12 +69,14 @@ impl FeatureSet {
     pub fn activate(&mut self, feature_id: &Pubkey, slot: u64) {
         self.inactive.remove(feature_id);
         self.active.insert(*feature_id, slot);
+        self.snapshot = FeatureSnapshot::from(&self.active);
     }
 
     /// Deactivate a feature
     pub fn deactivate(&mut self, feature_id: &Pubkey) {
         self.active.remove(feature_id);
         self.inactive.insert(*feature_id);
+        self.snapshot = FeatureSnapshot::from(&self.active);
     }
 
     /// List of enabled features that trigger full inflation
@@ -82,15 +100,22 @@ impl FeatureSet {
 
     /// All features enabled, useful for testing
     pub fn all_enabled() -> Self {
+        let active = AHashMap::from_iter((*FEATURE_NAMES).keys().cloned().map(|key| (key, 0)));
+        let feature_snapshot = FeatureSnapshot::from(&active);
         Self {
-            active: AHashMap::from_iter((*FEATURE_NAMES).keys().cloned().map(|key| (key, 0))),
+            active,
             inactive: AHashSet::new(),
+            snapshot: feature_snapshot,
         }
     }
 
     pub fn new_warmup_cooldown_rate_epoch(&self, epoch_schedule: &EpochSchedule) -> Option<u64> {
         self.activated_slot(&reduce_stake_warmup_cooldown::id())
             .map(|slot| epoch_schedule.get_epoch(slot))
+    }
+
+    pub fn snapshot(&self) -> &FeatureSnapshot {
+        &self.snapshot
     }
 
     pub fn runtime_features(&self) -> SVMFeatureSet {
@@ -1130,7 +1155,9 @@ pub mod alpenglow {
     // Used to activate alpenglow in local-cluster tests without exposing the actual feature's private key
     #[cfg(feature = "dev-context-only-utils")]
     pub static TEST_KEYPAIR: LazyLock<Keypair> = LazyLock::new(|| {
-        let keypair = Keypair::from_base58_string("2Vzd6oTWU4RtM5UmsSyBH3tAhPSi1sKqMeMC8bF1jzHHLBMRhEWtrfmBV4EmwQbGSwkunk5Wy67kXNAL1ZL1xQhR");
+        let keypair = Keypair::from_base58_string(
+            "2Vzd6oTWU4RtM5UmsSyBH3tAhPSi1sKqMeMC8bF1jzHHLBMRhEWtrfmBV4EmwQbGSwkunk5Wy67kXNAL1ZL1xQhR",
+        );
         assert_eq!(keypair.pubkey(), super::alpenglow::id());
         keypair
     });
