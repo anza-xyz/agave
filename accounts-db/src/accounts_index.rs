@@ -3129,6 +3129,15 @@ mod tests {
                 .unwrap(),
             3
         );
+
+        // Given ancestors that are *older* than the newest root, return the newest root
+        let ancestors = Ancestors::from(vec![3]);
+        assert_eq!(
+            index
+                .latest_slot(Some(&ancestors), &slot_slice, None)
+                .unwrap(),
+            1
+        );
     }
 
     fn make_empty_token_account_data() -> Vec<u8> {
