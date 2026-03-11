@@ -19,10 +19,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_transaction::versioned::VersionedTransaction,
-    std::{
-        ops::{Deref, DerefMut},
-        os::fd::IntoRawFd,
-    },
+    std::ops::{Deref, DerefMut},
 };
 
 pub struct TestBridge<M>
@@ -76,8 +73,7 @@ where
         };
 
         let (agave, files) = Server::setup_session(logon).unwrap();
-        let fds: Vec<_> = files.into_iter().map(|f| f.into_raw_fd()).collect();
-        let client_session = client::setup_session(&logon, fds).unwrap();
+        let client_session = client::setup_session(&logon, files).unwrap();
 
         Self {
             bridge: SchedulerBindingsBridge::new(client_session),
