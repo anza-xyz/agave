@@ -1295,6 +1295,7 @@ impl JsonRpcRequestProcessor {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     pub async fn get_block(
         &self,
         slot: Slot,
@@ -2209,6 +2210,7 @@ impl JsonRpcRequestProcessor {
     }
 
     /// Use a set of filters to get an iterator of keyed program accounts from a bank
+    #[allow(clippy::result_large_err)]
     async fn get_filtered_program_accounts(
         &self,
         bank: Arc<Bank>,
