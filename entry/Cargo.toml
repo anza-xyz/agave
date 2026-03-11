@@ -29,6 +29,7 @@ log = { workspace = true }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
+smallvec = { workspace = true }
 solana-address = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }

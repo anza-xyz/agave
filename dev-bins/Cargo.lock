@@ -7084,6 +7084,7 @@ dependencies = [
  "num_cpus",
  "rayon",
  "serde",
+ "smallvec",
  "solana-address 2.2.0",
  "solana-bls-signatures",
  "solana-clock",
