@@ -1272,7 +1272,10 @@ impl LocalCluster {
     }
 
     fn required_validator_funding(stake: u64) -> u64 {
-        stake.saturating_mul(2).saturating_add(2)
+        stake
+            .saturating_mul(2)
+            .saturating_add(2) // 1 lamport for each new account
+            .saturating_add(1_000 * 5_000) // enough lamports for 1_000 slots of voting
     }
 }
 
