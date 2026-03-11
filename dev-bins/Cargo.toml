@@ -189,3 +189,7 @@ lto = "thin"
 inherits = "release"
 lto = "fat"
 codegen-units = 1
+
+[patch.crates-io]
+shaq = { git = "https://github.com/anza-xyz/shaq", rev = "6e26410140a7d40b2ce65adc0a556e788d184877" }
+rts-alloc = { git = "https://github.com/anza-xyz/rts-alloc", rev = "0a3787adc7f4523de3515115f735de83cee01124" }
