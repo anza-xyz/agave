@@ -740,7 +740,9 @@ impl Blockstore {
             let shred_bytes =
                 self.get_shred_from_just_inserted_or_db(just_inserted_shreds, shred_id);
             (shred_bytes, next_fec_set_index)
-        } else if current_index.is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK as u32) && current_index > 0 {
+        } else if current_index.is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK as u32)
+            && current_index > 0
+        {
             // Case (b): Current shred is the 0th shred of the FEC set
             // Check if the PREVIOUS shred had DATA_COMPLETE=true
             let prev_shred_index = current_index - 1;
@@ -2038,7 +2040,11 @@ impl Blockstore {
         // Validate parent meta before persisting the shred. If the shred
         // contains conflicting parent information the slot is marked dead and
         // the shred is not inserted.
-        if shred.index().is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK as u32) || shred.data_complete() {
+        if shred
+            .index()
+            .is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK as u32)
+            || shred.data_complete()
+        {
             self.maybe_update_parent_meta(
                 &shred,
                 slot,
