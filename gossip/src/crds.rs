@@ -41,22 +41,14 @@ use {
         set::IndexSet,
     },
     lru::LruCache,
-<<<<<<< HEAD
+    rand::seq::IteratorRandom,
     rayon::{prelude::*, ThreadPool},
-=======
-    rand::{rng, seq::IteratorRandom},
-    rayon::{ThreadPool, prelude::*},
->>>>>>> a8125ecba (gossip: clean up crds table (#11140))
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     std::{
         cmp::Ordering,
-<<<<<<< HEAD
-        collections::{hash_map, BTreeMap, HashMap, VecDeque},
-=======
-        collections::{BTreeMap, HashMap, HashSet, VecDeque, hash_map},
->>>>>>> a8125ecba (gossip: clean up crds table (#11140))
+        collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque},
         ops::{Bound, Index, IndexMut},
         sync::Mutex,
     },
@@ -688,7 +680,7 @@ impl Crds {
 
     // Drop `size` many pubkeys randomly
     fn drop_random(&mut self, size: usize, keep: &HashSet<Pubkey>, now: u64) -> usize {
-        let mut rng = rng();
+        let mut rng = rand::thread_rng();
         let keys: Vec<_> = self
             .records
             .iter()

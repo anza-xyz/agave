@@ -90,12 +90,8 @@ use {
         rc::Rc,
         result::Result,
         sync::{
-<<<<<<< HEAD
-=======
-            Arc, Mutex, OnceLock, RwLock, RwLockReadGuard,
->>>>>>> a8125ecba (gossip: clean up crds table (#11140))
             atomic::{AtomicBool, Ordering},
-            Arc, Mutex, RwLock, RwLockReadGuard,
+            Arc, Mutex, OnceLock, RwLock, RwLockReadGuard,
         },
         thread::{sleep, Builder, JoinHandle},
         time::{Duration, Instant},
