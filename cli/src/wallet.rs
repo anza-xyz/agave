@@ -498,6 +498,95 @@ pub fn parse_create_address_with_seed(
     })
 }
 
+fn parse_structured_seed(value: &str) -> Result<Vec<u8>, CliError> {
+    let (prefix, value) = value
+        .split_once(':')
+        .ok_or_else(|| CliError::BadParameter("SEED".to_string()))?;
+
+    let invalid_seed =
+        |err: String| CliError::BadParameter(format!("Invalid seed {prefix}:{value}: {err}"));
+
+    match prefix {
+        "pubkey" => Ok(Pubkey::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_bytes()
+            .to_vec()),
+        "string" => Ok(value.as_bytes().to_vec()),
+        "hex" => Ok(Vec::<u8>::from_hex(value).map_err(|err| invalid_seed(err.to_string()))?),
+        "u8" => Ok(u8::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_le_bytes()
+            .to_vec()),
+        "u16le" => Ok(u16::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_le_bytes()
+            .to_vec()),
+        "u32le" => Ok(u32::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_le_bytes()
+            .to_vec()),
+        "u64le" => Ok(u64::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_le_bytes()
+            .to_vec()),
+        "u128le" => Ok(u128::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_le_bytes()
+            .to_vec()),
+        "i16le" => Ok(i16::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_le_bytes()
+            .to_vec()),
+        "i32le" => Ok(i32::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_le_bytes()
+            .to_vec()),
+        "i64le" => Ok(i64::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_le_bytes()
+            .to_vec()),
+        "i128le" => Ok(i128::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_le_bytes()
+            .to_vec()),
+        "u16be" => Ok(u16::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_be_bytes()
+            .to_vec()),
+        "u32be" => Ok(u32::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_be_bytes()
+            .to_vec()),
+        "u64be" => Ok(u64::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_be_bytes()
+            .to_vec()),
+        "u128be" => Ok(u128::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_be_bytes()
+            .to_vec()),
+        "i16be" => Ok(i16::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_be_bytes()
+            .to_vec()),
+        "i32be" => Ok(i32::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_be_bytes()
+            .to_vec()),
+        "i64be" => Ok(i64::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_be_bytes()
+            .to_vec()),
+        "i128be" => Ok(i128::from_str(value)
+            .map_err(|err| invalid_seed(err.to_string()))?
+            .to_be_bytes()
+            .to_vec()),
+        _ => Err(CliError::BadParameter(format!(
+            "Invalid seed prefix: {prefix}"
+        ))),
+    }
+}
+
 pub fn parse_find_program_derived_address(
     matches: &ArgMatches<'_>,
 ) -> Result<CliCommandInfo, CliError> {
@@ -507,35 +596,10 @@ pub fn parse_find_program_derived_address(
         .values_of("seeds")
         .map(|seeds| {
             seeds
-                .map(|value| {
-                    let (prefix, value) = value.split_once(':').unwrap();
-                    match prefix {
-                        "pubkey" => Pubkey::from_str(value).unwrap().to_bytes().to_vec(),
-                        "string" => value.as_bytes().to_vec(),
-                        "hex" => Vec::<u8>::from_hex(value).unwrap(),
-                        "u8" => u8::from_str(value).unwrap().to_le_bytes().to_vec(),
-                        "u16le" => u16::from_str(value).unwrap().to_le_bytes().to_vec(),
-                        "u32le" => u32::from_str(value).unwrap().to_le_bytes().to_vec(),
-                        "u64le" => u64::from_str(value).unwrap().to_le_bytes().to_vec(),
-                        "u128le" => u128::from_str(value).unwrap().to_le_bytes().to_vec(),
-                        "i16le" => i16::from_str(value).unwrap().to_le_bytes().to_vec(),
-                        "i32le" => i32::from_str(value).unwrap().to_le_bytes().to_vec(),
-                        "i64le" => i64::from_str(value).unwrap().to_le_bytes().to_vec(),
-                        "i128le" => i128::from_str(value).unwrap().to_le_bytes().to_vec(),
-                        "u16be" => u16::from_str(value).unwrap().to_be_bytes().to_vec(),
-                        "u32be" => u32::from_str(value).unwrap().to_be_bytes().to_vec(),
-                        "u64be" => u64::from_str(value).unwrap().to_be_bytes().to_vec(),
-                        "u128be" => u128::from_str(value).unwrap().to_be_bytes().to_vec(),
-                        "i16be" => i16::from_str(value).unwrap().to_be_bytes().to_vec(),
-                        "i32be" => i32::from_str(value).unwrap().to_be_bytes().to_vec(),
-                        "i64be" => i64::from_str(value).unwrap().to_be_bytes().to_vec(),
-                        "i128be" => i128::from_str(value).unwrap().to_be_bytes().to_vec(),
-                        // Must be unreachable due to arg validator
-                        _ => unreachable!("parse_find_program_derived_address: {prefix}:{value}"),
-                    }
-                })
-                .collect::<Vec<_>>()
+                .map(parse_structured_seed)
+                .collect::<Result<Vec<_>, CliError>>()
         })
+        .transpose()?
         .unwrap_or_default();
 
     Ok(CliCommandInfo::without_signers(
