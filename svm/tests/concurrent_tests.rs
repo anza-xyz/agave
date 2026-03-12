@@ -144,7 +144,7 @@ fn svm_concurrent() {
         5,
         2,
         Arc::downgrade(&fork_graph),
-        Some(Arc::new(create_custom_loader())),
+        Some(create_custom_loader()),
     ));
 
     mock_bank.configure_sysvars();

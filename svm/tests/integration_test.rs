@@ -138,7 +138,7 @@ impl SvmTestEnvironment<'_> {
             EXECUTION_SLOT,
             EXECUTION_EPOCH,
             Arc::downgrade(&fork_graph),
-            Some(Arc::new(create_custom_loader())),
+            Some(create_custom_loader()),
         );
 
         // The sysvars must be put in the cache

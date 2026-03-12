@@ -24,7 +24,7 @@ use {
 };
 
 fn morph_into_deployment_environment<'a>(
-    from: Arc<BuiltinProgram<InvokeContext<'a, 'a>>>,
+    from: ProgramRuntimeEnvironment,
 ) -> Result<BuiltinProgram<InvokeContext<'a, 'a>>, ElfError> {
     let mut config = from.get_config().clone();
     config.reject_broken_elfs = true;
