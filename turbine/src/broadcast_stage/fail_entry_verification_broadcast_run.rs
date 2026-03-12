@@ -1,6 +1,8 @@
 use {
     super::*,
     crate::cluster_nodes::ClusterNodesCache,
+    agave_votor_messages::migration::MigrationStatus,
+    solana_entry::block_component::BlockComponent,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
@@ -21,10 +23,11 @@ pub(super) struct FailEntryVerificationBroadcastRun {
     next_code_index: u32,
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
     reed_solomon_cache: Arc<ReedSolomonCache>,
+    migration_status: Arc<MigrationStatus>,
 }
 
 impl FailEntryVerificationBroadcastRun {
-    pub(super) fn new(shred_version: u16) -> Self {
+    pub(super) fn new(shred_version: u16, migration_status: Arc<MigrationStatus>) -> Self {
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
             CLUSTER_NODES_CACHE_TTL,
@@ -39,6 +42,7 @@ impl FailEntryVerificationBroadcastRun {
             next_code_index: 0,
             cluster_nodes_cache,
             reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
+            migration_status,
         }
     }
 }
@@ -59,7 +63,7 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
         let bank = receive_results.bank.clone();
         let last_tick_height = receive_results.last_tick_height;
 
-        if bank.slot() != self.current_slot {
+        let send_header = if bank.slot() != self.current_slot {
             self.chained_merkle_root = broadcast_utils::get_chained_merkle_root_from_parent(
                 bank.slot(),
                 bank.parent_slot(),
@@ -69,7 +73,11 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
             self.next_shred_index = 0;
             self.next_code_index = 0;
             self.current_slot = bank.slot();
-        }
+
+            true
+        } else {
+            false
+        };
 
         // 2) If we're past SLOT_TO_RESOLVE, insert the correct shreds so validators can repair
         // and make progress
@@ -99,6 +107,42 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
             self.shred_version,
         )
         .expect("Expected to create a new shredder");
+
+        // Generate header shreds for new slot
+        if send_header
+            && self
+                .migration_status
+                .should_allow_block_markers(bank.slot())
+        {
+            let header =
+                BlockComponent::new_block_header(bank.parent_slot(), self.chained_merkle_root);
+            let header_shreds: Vec<_> = shredder
+                .make_merkle_shreds_from_component(
+                    keypair,
+                    &header,
+                    false,
+                    self.chained_merkle_root,
+                    self.next_shred_index,
+                    self.next_code_index,
+                    &self.reed_solomon_cache,
+                    &mut stats,
+                )
+                .collect();
+            for shred in &header_shreds {
+                if shred.is_data() {
+                    self.next_shred_index = self.next_shred_index.max(shred.index() + 1);
+                } else {
+                    self.next_code_index = self.next_code_index.max(shred.index() + 1);
+                }
+            }
+            if let Some(shred) = header_shreds
+                .iter()
+                .filter(|s| s.is_data())
+                .max_by_key(|shred| shred.index())
+            {
+                self.chained_merkle_root = shred.merkle_root().unwrap();
+            }
+        }
 
         let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             keypair,
