@@ -7,7 +7,6 @@ use {
     },
     agave_feature_set::{FeatureSet, bls_pubkey_management_in_vote_account, vote_state_v4},
     agave_snapshots::{paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig},
-    agave_votor_messages::migration::GENESIS_CERTIFICATE_ACCOUNT,
     itertools::izip,
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount},
@@ -78,10 +77,8 @@ const DUMMY_SNAPSHOT_CONFIG_PATH_MARKER: &str = "dummy";
 pub enum AlpenglowMode {
     /// No alpenglow
     Disabled,
-    /// Full alpenglow - creates vote accounts w/ bls pubkeys and activates alpenglow feature and set GenesisCertificate
+    /// Full alpenglow - Activates alpenglow feature and set GenesisCertificate
     Enabled,
-    /// Pre-migration mode - creates V4 vote accounts w/ bls pubkeys but does NOT activate alpenglow feature or set GenesisCertificate
-    PreMigration,
 }
 
 pub struct ClusterConfig {
@@ -209,13 +206,6 @@ impl LocalCluster {
         Self::init(config, socket_addr_space, AlpenglowMode::Enabled)
     }
 
-    pub fn new_pre_migration_alpenglow(
-        config: &mut ClusterConfig,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self::init(config, socket_addr_space, AlpenglowMode::PreMigration)
-    }
-
     pub fn init(
         config: &mut ClusterConfig,
         socket_addr_space: SocketAddrSpace,
@@ -330,16 +320,8 @@ impl LocalCluster {
             stakes_in_genesis,
             config.cluster_type,
             &feature_set,
-            !matches!(alpenglow_mode, AlpenglowMode::Disabled), /* is_alpenglow */
+            matches!(alpenglow_mode, AlpenglowMode::Enabled), /* is_alpenglow */
         );
-
-        // Remove the alpenglow feature and genesis certificate for PreMigration mode
-        if alpenglow_mode == AlpenglowMode::PreMigration {
-            genesis_config
-                .accounts
-                .remove(&agave_feature_set::alpenglow::id());
-            genesis_config.accounts.remove(&GENESIS_CERTIFICATE_ACCOUNT);
-        }
 
         genesis_config.accounts.extend(
             config

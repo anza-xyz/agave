@@ -6145,10 +6145,7 @@ fn test_alpenglow_migration(num_nodes: usize) {
     };
 
     // Create local cluster with alpenglow accounts but feature not activated
-    let cluster = LocalCluster::new_pre_migration_alpenglow(
-        &mut cluster_config,
-        SocketAddrSpace::Unspecified,
-    );
+    let cluster = LocalCluster::new(&mut cluster_config, SocketAddrSpace::Unspecified);
 
     let validator_keys: Vec<Arc<Keypair>> = cluster
         .validators
