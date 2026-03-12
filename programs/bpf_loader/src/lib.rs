@@ -1144,13 +1144,9 @@ mod test_utils {
     use solana_program_runtime::loaded_programs::LoadProgramMetrics;
     #[cfg(feature = "svm-internal")]
     use {
-        super::*,
-        agave_syscalls::create_program_runtime_environment,
-        solana_account::ReadableAccount,
-        solana_loader_v4_interface::state::LoaderV4State,
-        solana_program_runtime::loaded_programs::{
-            DELAY_VISIBILITY_SLOT_OFFSET, ProgramRuntimeEnvironment,
-        },
+        super::*, agave_syscalls::create_program_runtime_environment,
+        solana_account::ReadableAccount, solana_loader_v4_interface::state::LoaderV4State,
+        solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
         solana_sdk_ids::loader_v4,
     };
 
@@ -1170,8 +1166,8 @@ mod test_utils {
             invoke_context.get_compute_budget(),
             false, /* deployment */
             false, /* debugging_features */
-        );
-        let program_runtime_environment = Arc::new(program_runtime_environment.unwrap());
+        )
+        .unwrap();
         let num_accounts = invoke_context.transaction_context.get_number_of_accounts();
         for index in 0..num_accounts {
             let account = invoke_context
@@ -1199,7 +1195,7 @@ mod test_utils {
                 let effective_slot = DELAY_VISIBILITY_SLOT_OFFSET;
                 let loaded_program = ProgramCacheEntry::new(
                     owner,
-                    ProgramRuntimeEnvironment::from_ref(&program_runtime_environment).clone(),
+                    program_runtime_environment.clone(),
                     0,
                     effective_slot,
                     programdata,

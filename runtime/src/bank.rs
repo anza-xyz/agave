@@ -4451,15 +4451,13 @@ impl Bank {
             .as_ref()
             .unwrap_or(&ComputeBudget::new_with_defaults(simd_0268_active))
             .to_budget();
-        ProgramRuntimeEnvironment::from(
-            create_program_runtime_environment(
-                &feature_set.runtime_features(),
-                &compute_budget,
-                false, /* deployment */
-                false, /* debugging_features */
-            )
-            .unwrap(),
+        create_program_runtime_environment(
+            &feature_set.runtime_features(),
+            &compute_budget,
+            false, /* deployment */
+            false, /* debugging_features */
         )
+        .unwrap()
     }
 
     pub fn set_tick_height(&self, tick_height: u64) {
