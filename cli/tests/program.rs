@@ -19,7 +19,9 @@ use {
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_fee_calculator::FeeRateGovernor,
     solana_keypair::Keypair,
+    solana_loader_v3_interface::instruction as loader_v3_instruction,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
+    solana_message::Message,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -136,10 +138,11 @@ async fn test_cli_program_deploy_non_upgradeable() {
         .unwrap();
 
     let keypair = Keypair::new();
+    let fee_headroom = 1_000_000;
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
-        lamports: 4 * minimum_balance_for_programdata, // min balance for rent exemption for three programs + leftover for tx processing
+        lamports: 4 * minimum_balance_for_programdata + fee_headroom,
     };
     process_command(&config).await.unwrap();
 
@@ -1165,10 +1168,11 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
     let upgrade_authority = Keypair::new();
 
     let keypair = Keypair::new();
+    let fee_headroom = 100_000;
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
-        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
+        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program + fee_headroom,
     };
     process_command(&config).await.unwrap();
 
@@ -1329,10 +1333,11 @@ async fn test_cli_program_close_program() {
     let upgrade_authority = Keypair::new();
 
     let keypair = Keypair::new();
+    let fee_headroom = 1_000_000;
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
-        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
+        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program + fee_headroom,
     };
     process_command(&config).await.unwrap();
 
@@ -1451,10 +1456,11 @@ async fn test_cli_program_extend_program() {
     let upgrade_authority = Keypair::new();
 
     let keypair = Keypair::new();
+    let fee_headroom = 1_000_000;
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
-        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
+        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program + fee_headroom,
     };
     config.send_transaction_config = RpcSendTransactionConfig {
         skip_preflight: false,
@@ -2020,6 +2026,20 @@ async fn test_cli_program_write_buffer() {
         .await
         .unwrap()
         .lamports;
+    let mut close_message = Message::new(
+        &[loader_v3_instruction::close_any(
+            &new_buffer_pubkey,
+            &keypair.pubkey(),
+            Some(&keypair.pubkey()),
+            None,
+        )],
+        Some(&keypair.pubkey()),
+    );
+    close_message.recent_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
+    let close_fee = rpc_client
+        .get_fee_for_message(&close_message)
+        .await
+        .unwrap();
     config.signers = vec![&keypair];
     config.command = CliCommand::Program(ProgramCliCommand::Close {
         account_pubkey: Some(new_buffer_pubkey),
@@ -2037,7 +2057,7 @@ async fn test_cli_program_write_buffer() {
     .await;
     let recipient_account = rpc_client.get_account(&keypair.pubkey()).await.unwrap();
     assert_eq!(
-        pre_lamports + minimum_balance_for_buffer,
+        pre_lamports + minimum_balance_for_buffer - close_fee,
         recipient_account.lamports
     );
 
