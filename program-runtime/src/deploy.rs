@@ -23,9 +23,9 @@ use {
     std::{cell::RefCell, rc::Rc},
 };
 
-fn morph_into_deployment_environment<'a>(
+fn morph_into_deployment_environment(
     from: ProgramRuntimeEnvironment,
-) -> Result<BuiltinProgram<InvokeContext<'a, 'a>>, ElfError> {
+) -> Result<BuiltinProgram<InvokeContext<'static, 'static>>, ElfError> {
     let mut config = from.get_config().clone();
     config.reject_broken_elfs = true;
     // Once the tests are being build using a toolchain which supports the newer SBPF versions,

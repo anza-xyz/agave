@@ -288,12 +288,12 @@ macro_rules! register_feature_gated_function {
     };
 }
 
-pub fn create_program_runtime_environment<'a, 'ix_data>(
+pub fn create_program_runtime_environment(
     feature_set: &SVMFeatureSet,
     compute_budget: &SVMTransactionExecutionBudget,
     reject_deployment_of_broken_elfs: bool,
     debugging_features: bool,
-) -> Result<BuiltinProgram<InvokeContext<'a, 'ix_data>>, Error> {
+) -> Result<BuiltinProgram<InvokeContext<'static, 'static>>, Error> {
     let enable_alt_bn128_syscall = feature_set.enable_alt_bn128_syscall;
     let enable_alt_bn128_compression_syscall = feature_set.enable_alt_bn128_compression_syscall;
     let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall;
