@@ -81,6 +81,7 @@ fn test_rpc_client() {
     let blockhash = client.get_latest_blockhash().unwrap();
 
     let tx = system_transaction::transfer(&alice, &bob_pubkey, 20 * LAMPORTS_PER_SOL, blockhash);
+    let fee = client.get_fee_for_message(tx.message()).unwrap();
     let signature = client.send_transaction(&tx).unwrap();
 
     let mut confirmed_tx = false;
@@ -113,7 +114,7 @@ fn test_rpc_client() {
             .get_balance_with_commitment(&alice.pubkey(), CommitmentConfig::processed())
             .unwrap()
             .value,
-        original_alice_balance - 20 * LAMPORTS_PER_SOL
+        original_alice_balance - 20 * LAMPORTS_PER_SOL - fee
     );
 }
 
