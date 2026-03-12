@@ -19,8 +19,9 @@ use {
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_fee_calculator::FeeRateGovernor,
     solana_keypair::Keypair,
-    solana_loader_v3_interface::instruction as loader_v3_instruction,
-    solana_loader_v3_interface::state::UpgradeableLoaderState,
+    solana_loader_v3_interface::{
+        instruction as loader_v3_instruction, state::UpgradeableLoaderState,
+    },
     solana_message::Message,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
@@ -1172,7 +1173,9 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
-        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program + fee_headroom,
+        lamports: 100 * minimum_balance_for_programdata
+            + minimum_balance_for_program
+            + fee_headroom,
     };
     process_command(&config).await.unwrap();
 
@@ -1337,7 +1340,9 @@ async fn test_cli_program_close_program() {
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
-        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program + fee_headroom,
+        lamports: 100 * minimum_balance_for_programdata
+            + minimum_balance_for_program
+            + fee_headroom,
     };
     process_command(&config).await.unwrap();
 
@@ -1460,7 +1465,9 @@ async fn test_cli_program_extend_program() {
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
-        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program + fee_headroom,
+        lamports: 100 * minimum_balance_for_programdata
+            + minimum_balance_for_program
+            + fee_headroom,
     };
     config.send_transaction_config = RpcSendTransactionConfig {
         skip_preflight: false,

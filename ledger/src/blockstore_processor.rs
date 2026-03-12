@@ -3417,7 +3417,7 @@ pub mod tests {
     fn test_process_ledger_simple() {
         agave_logger::setup();
         let leader_pubkey = solana_pubkey::new_rand();
-        let mint = 100;
+        let mint = 100_000;
         let hashes_per_tick = 10;
         let GenesisConfigInfo {
             mut genesis_config,
@@ -3430,6 +3430,7 @@ pub mod tests {
         debug!("ledger_path: {ledger_path:?}");
 
         let deducted_from_mint = 3;
+        let invalid_transfer_amount = mint + 1;
         let mut entries = vec![];
         let blockhash = genesis_config.hash();
         for _ in 0..deducted_from_mint {
@@ -3442,8 +3443,12 @@ pub mod tests {
             // Add a second Transaction that will produce a
             // InstructionError<0, ResultWithNegativeLamports> error when processed
             let keypair2 = Keypair::new();
-            let tx =
-                system_transaction::transfer(&mint_keypair, &keypair2.pubkey(), 101, blockhash);
+            let tx = system_transaction::transfer(
+                &mint_keypair,
+                &keypair2.pubkey(),
+                invalid_transfer_amount,
+                blockhash,
+            );
             let entry = next_entry_mut(&mut last_entry_hash, 1, vec![tx]);
             entries.push(entry);
         }
@@ -3486,9 +3491,10 @@ pub mod tests {
         assert_eq!(bank_forks.working_bank().slot(), 1);
 
         let bank = bank_forks[1].clone();
+        let tx_fee = bank.fee_structure().lamports_per_signature;
         assert_eq!(
             bank.get_balance(&mint_keypair.pubkey()),
-            mint - deducted_from_mint
+            mint - deducted_from_mint - 2 * deducted_from_mint * tx_fee
         );
         assert_eq!(bank.tick_height(), 2 * genesis_config.ticks_per_slot);
         assert_eq!(bank.last_blockhash(), last_blockhash);
