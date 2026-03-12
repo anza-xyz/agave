@@ -106,12 +106,12 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         &self,
         work: ConsumeWork<Tx>,
     ) -> Result<ProcessingStatus<Tx>, ConsumeWorkerError<Tx>> {
-        let Some(leader_state) = active_leader_state_with_timeout(&self.shared_leader_state) else {
+        let Some(leader_state) = active_leader_state(&self.shared_leader_state) else {
             return Ok(ProcessingStatus::CouldNotProcess(work));
         };
         let bank = leader_state
             .working_bank()
-            .expect("active_leader_state_with_timeout should only return an active bank");
+            .expect("active_leader_state should only return an active bank");
         self.metrics
             .count_metrics
             .num_messages_processed
@@ -358,9 +358,7 @@ pub(crate) mod external {
             // on the next slot.
             let mut last_attempted_slot = 0;
             for _ in 0..2 {
-                let Some(leader_state) =
-                    active_leader_state_with_timeout(&self.shared_leader_state)
-                else {
+                let Some(leader_state) = active_leader_state(&self.shared_leader_state) else {
                     return self
                         .return_not_included_with_reason(
                             message,
@@ -372,7 +370,7 @@ pub(crate) mod external {
 
                 let bank = leader_state
                     .working_bank()
-                    .expect("active_leader_state_with_timeout should only return an active bank");
+                    .expect("active_leader_state should only return an active bank");
                 last_attempted_slot = bank.slot();
                 if bank.slot() > message.max_working_slot {
                     return self
@@ -1533,33 +1531,6 @@ pub(crate) mod external {
 /// starting with the given work item.
 fn try_drain_iter<T>(work: T, receiver: &Receiver<T>) -> impl Iterator<Item = T> + '_ {
     std::iter::once(work).chain(receiver.try_iter())
-}
-
-/// Get active bank with timeout.
-fn active_leader_state_with_timeout(
-    shared_leader_state: &SharedLeaderState,
-) -> Option<arc_swap::Guard<Arc<LeaderState>>> {
-    // Do an initial bank load without sampling time. If we're in a hot loop
-    // of work this saves us from checking the time at all and we'd only end up
-    // checking between or after our leader slots.
-    if let Some(guard) = active_leader_state(shared_leader_state) {
-        return Some(guard);
-    }
-
-    // If the initial check above didn't find a bank, we will
-    // spin up to some timeout to wait for a bank to execute on.
-    // This is conservatively long because transitions between slots
-    // can occasionally be slow.
-    const TIMEOUT: Duration = Duration::from_millis(50);
-    let now = Instant::now();
-    while now.elapsed() < TIMEOUT {
-        if let Some(guard) = active_leader_state(shared_leader_state) {
-            return Some(guard);
-        }
-        core::hint::spin_loop();
-    }
-
-    None
 }
 
 /// Returns an active leader state if available, otherwise None.
