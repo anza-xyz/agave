@@ -83,7 +83,7 @@ RUN \
   rustup target add wasm32-unknown-unknown && \
   cargo install cargo-audit && \
   cargo install cargo-hack && \
-  cargo install cargo-sort@^2 && \
+  cargo install taplo-cli && \
   cargo install mdbook && \
   cargo install mdbook-linkcheck && \
   cargo install svgbob_cli && \
