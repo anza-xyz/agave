@@ -986,11 +986,6 @@ pub struct AccountsDb {
     /// Members are Slot and capacity. If capacity is smaller, then
     /// that means the storage was already shrunk.
     pub(crate) best_ancient_slots_to_shrink: RwLock<VecDeque<(Slot, u64)>>,
-
-    /// Flag to indicate if the experimental obsolete account tracking feature is enabled.
-    /// This feature tracks obsolete accounts in the account storage entry allowing
-    /// for earlier cleaning of obsolete accounts in the storages and index.
-    pub mark_obsolete_accounts: MarkObsoleteAccounts,
 }
 
 pub fn quarter_thread_count() -> usize {
@@ -1141,7 +1136,6 @@ impl AccountsDb {
             accounts_file_provider: AccountsFileProvider::default(),
             latest_full_snapshot_slot: SeqLock::new(None),
             best_ancient_slots_to_shrink: RwLock::default(),
-            mark_obsolete_accounts: MarkObsoleteAccounts::Enabled,
         };
 
         {
@@ -4602,9 +4596,7 @@ impl AccountsDb {
         // should_flush_f is set to None when
         // 1) There's an ongoing scan to avoid reclaiming accounts being scanned.
         // 2) The slot is > max_clean_root to prevent unrooted slots from reclaiming rooted versions.
-        let reclaim_method = if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
-            && should_flush_f.is_some()
-        {
+        let reclaim_method = if should_flush_f.is_some() {
             UpsertReclaim::ReclaimOldSlots
         } else {
             UpsertReclaim::IgnoreReclaims
