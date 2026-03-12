@@ -182,7 +182,7 @@ impl SimpleQos {
         mut connection_table_l: MutexGuard<ConnectionTable<TokenBucket>>,
         conn_context: &SimpleQosConnectionContext,
     ) -> Result<(Arc<AtomicU64>, CancellationToken, Arc<TokenBucket>), ConnectionHandlerError> {
-        let remote_addr = connection.remote_address();
+        let remote_addr = conn_context.remote_address;
 
         // this will never overflow u32 for reasonable MAX_RTT
         let rtt = connection.rtt().clamp(MIN_RTT, MAX_RTT).as_millis() as u32;
@@ -291,7 +291,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
             const PRUNE_RANDOM_SAMPLE_SIZE: usize = 2;
             let remote_pubkey = conn_context.remote_pubkey()?;
             if self.banlist.is_banned(&remote_pubkey) {
-                let remote_address = connection.remote_address();
+                let remote_address = conn_context.remote_address;
                 info!("Rejecting banned pubkey {remote_pubkey} from {remote_address:?}");
                 self.stats
                     .connection_add_failed_banned
@@ -314,8 +314,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
                         debug!(
                             "Pruned {} staked connections to make room for new staked connection \
                              from {}",
-                            num_pruned,
-                            connection.remote_address(),
+                            num_pruned, conn_context.remote_address,
                         );
                         self.stats
                             .num_evictions_staked
@@ -361,7 +360,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
     ) -> impl Future<Output = usize> + Send {
         async move {
             let stable_id = connection.stable_id();
-            let remote_addr = connection.remote_address();
+            let remote_addr = conn_context.remote_address;
 
             let mut connection_table = self.staked_connection_table.lock().await;
             let removed_connection_count = connection_table.remove_connection(
