@@ -135,11 +135,10 @@ pub(crate) struct LoadedTransactionAccount {
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
 #[cfg_attr(
     feature = "dev-context-only-utils",
-    field_qualifiers(program_indices(pub), compute_budget(pub))
+    field_qualifiers(compute_budget(pub))
 )]
 pub struct LoadedTransaction {
     pub accounts: Vec<KeyedAccountSharedData>,
-    pub(crate) program_indices: Vec<IndexOfAccount>,
     pub fee_details: FeeDetails,
     pub rollback_accounts: RollbackAccounts,
     pub(crate) compute_budget: SVMTransactionExecutionBudget,
@@ -422,7 +421,6 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
             match load_result {
                 Ok(loaded_tx_accounts) => TransactionLoadResult::Loaded(LoadedTransaction {
                     accounts: loaded_tx_accounts.accounts,
-                    program_indices: loaded_tx_accounts.program_indices,
                     fee_details: tx_details.fee_details,
                     rollback_accounts: tx_details.rollback_accounts,
                     compute_budget: tx_details.compute_budget,
@@ -441,7 +439,6 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
 #[derive(PartialEq, Eq, Debug, Clone)]
 struct LoadedTransactionAccounts {
     pub(crate) accounts: Vec<KeyedAccountSharedData>,
-    pub(crate) program_indices: Vec<IndexOfAccount>,
     pub(crate) loaded_accounts_data_size: u32,
 }
 
@@ -483,7 +480,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
 
     let mut loaded_transaction_accounts = LoadedTransactionAccounts {
         accounts: Vec::with_capacity(account_keys.len()),
-        program_indices: Vec::with_capacity(message.num_instructions()),
         loaded_accounts_data_size: 0,
     };
 
@@ -565,7 +561,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         collect_loaded_account(account_loader, account_key, loaded_account)?;
     }
 
-    for (program_id, instruction) in message.program_instructions_iter() {
+    for (program_id, _) in message.program_instructions_iter() {
         let Some(program_account) = account_loader.load_account(program_id) else {
             error_metrics.account_not_found += 1;
             return Err(TransactionError::ProgramAccountNotFound);
@@ -576,10 +572,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             error_metrics.invalid_program_for_execution += 1;
             return Err(TransactionError::InvalidProgramForExecution);
         }
-
-        loaded_transaction_accounts
-            .program_indices
-            .push(instruction.program_id_index as IndexOfAccount);
     }
 
     Ok(loaded_transaction_accounts)
@@ -966,8 +958,6 @@ mod tests {
                 assert_eq!(loaded_transaction.accounts.len(), 2);
                 assert_eq!(loaded_transaction.accounts[0].1, accounts[0].1);
                 assert_eq!(loaded_transaction.accounts[1].1, accounts[1].1);
-                assert_eq!(loaded_transaction.program_indices.len(), 1);
-                assert_eq!(loaded_transaction.program_indices[0], 1);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
             TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
@@ -1026,9 +1016,6 @@ mod tests {
             TransactionLoadResult::Loaded(loaded_transaction) => {
                 assert_eq!(loaded_transaction.accounts.len(), 3);
                 assert_eq!(loaded_transaction.accounts[0].1, accounts[0].1);
-                assert_eq!(loaded_transaction.program_indices.len(), 2);
-                assert_eq!(loaded_transaction.program_indices[0], 1);
-                assert_eq!(loaded_transaction.program_indices[1], 2);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
             TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
@@ -1140,7 +1127,6 @@ mod tests {
         let mut error_metrics = TransactionErrorMetrics::default();
         let mut acc = LoadedTransactionAccounts {
             accounts: vec![],
-            program_indices: vec![],
             loaded_accounts_data_size: 0,
         };
 
@@ -1360,7 +1346,6 @@ mod tests {
             result.unwrap(),
             LoadedTransactionAccounts {
                 accounts: vec![(fee_payer_address, fee_payer_account)],
-                program_indices: vec![],
                 loaded_accounts_data_size: 0,
             }
         );
@@ -1574,7 +1559,6 @@ mod tests {
                         mock_bank.accounts_map[&key1.pubkey()].0.clone()
                     ),
                 ],
-                program_indices: vec![1],
                 loaded_accounts_data_size,
             }
         );
@@ -1762,7 +1746,6 @@ mod tests {
                         mock_bank.accounts_map[&key1.pubkey()].0.clone()
                     ),
                 ],
-                program_indices: vec![1],
                 loaded_accounts_data_size,
             }
         );
@@ -1852,7 +1835,6 @@ mod tests {
                     ),
                     (key3.pubkey(), account_data),
                 ],
-                program_indices: vec![1, 1],
                 loaded_accounts_data_size,
             }
         );
@@ -2011,7 +1993,6 @@ mod tests {
                     ),
                     (key3.pubkey(), account_data),
                 ],
-                program_indices: vec![1, 1],
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::default(),
                 compute_budget: SVMTransactionExecutionBudget::default(),

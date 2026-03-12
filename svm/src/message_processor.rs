@@ -719,11 +719,6 @@ mod tests {
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
         );
-
-        for item in message.instructions_iter() {
-            std::println!("pid: {}", item.program_id_index);
-        }
-
         let result = process_message(
             &message,
             &mut invoke_context,
