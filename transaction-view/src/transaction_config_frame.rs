@@ -128,10 +128,18 @@ impl TransactionConfigFrame {
 
     /// Validate mask semantics.
     ///
+    /// Check unknown / reserved bits are not used; And
     /// Bits 0 and 1 together encode one logical 8-byte priority-fee field,
     /// so they must either both be set or both be clear.
     #[inline(always)]
     fn sanitize_mask(mask: u32) -> Result<()> {
+        const ALLOWED_TRANSACTION_CONFIG_MASK: u32 = 0b1_1111;
+
+        // Reject unknown / reserved bits
+        if mask & !ALLOWED_TRANSACTION_CONFIG_MASK != 0 {
+            return Err(TransactionViewError::SanitizeError);
+        }
+
         let bit0 = Self::has_bit(mask, 0);
         let bit1 = Self::has_bit(mask, 1);
         if bit0 ^ bit1 {
