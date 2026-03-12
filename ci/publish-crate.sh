@@ -87,10 +87,6 @@ for Cargo_toml in $Cargo_tomls; do
       fi
     done
   )
-
-  # crates.io allows a burst of 30 new versions, then 1 per minute.
-  # Sleep between each crate to stay within the sustained rate limit.
-  sleep 60
 done
 
 exit 0
