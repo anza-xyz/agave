@@ -1875,8 +1875,8 @@ impl Default for ConsumeWorkerCountMetrics {
 
 impl ConsumeWorkerCountMetrics {
     fn report_and_reset(&self, id: &str) {
-        datapoint_info!(
-            "banking_stage_worker_counts",
+        let datapoint = create_datapoint!(
+            @point "banking_stage_worker_counts",
             "id" => id,
             ("max_queue_len", self.max_queue_len.swap(0, Ordering::Relaxed), i64),
             (
@@ -1929,6 +1929,7 @@ impl ConsumeWorkerCountMetrics {
                 i64
             ),
         );
+        solana_metrics::submit(datapoint, log::Level::Trace);
     }
 }
 
@@ -1947,8 +1948,8 @@ struct ConsumeWorkerTimingMetrics {
 
 impl ConsumeWorkerTimingMetrics {
     fn report_and_reset(&self, id: &str) {
-        datapoint_info!(
-            "banking_stage_worker_timing",
+        let datapoint = create_datapoint!(
+            @point "banking_stage_worker_timing",
             "id" => id,
             (
                 "cost_model_us",
@@ -1988,6 +1989,7 @@ impl ConsumeWorkerTimingMetrics {
                 i64
             ),
         );
+        solana_metrics::submit(datapoint, log::Level::Trace);
     }
 }
 
@@ -2021,8 +2023,8 @@ struct ConsumeWorkerTransactionErrorMetrics {
 
 impl ConsumeWorkerTransactionErrorMetrics {
     fn report_and_reset(&self, id: &str) {
-        datapoint_info!(
-            "banking_stage_worker_error_metrics",
+        let datapoint = create_datapoint!(
+            @point "banking_stage_worker_error_metrics",
             "id" => id,
             ("total", self.total.swap(0, Ordering::Relaxed), i64),
             (
@@ -2132,6 +2134,7 @@ impl ConsumeWorkerTransactionErrorMetrics {
                 i64
             ),
         );
+        solana_metrics::submit(datapoint, log::Level::Trace);
     }
 }
 
