@@ -7,6 +7,7 @@ use {
         result::{Result, TransactionViewError},
         signature_frame::SignatureFrame,
         static_account_keys_frame::StaticAccountKeysFrame,
+        transaction_config_frame::TransactionConfigFrame,
         transaction_version::TransactionVersion,
     },
     solana_hash::Hash,
@@ -28,6 +29,8 @@ pub(crate) struct TransactionFrame {
     instructions: InstructionsFrame,
     /// Address table lookup framing data.
     address_table_lookup: AddressTableLookupFrame,
+    /// Tranasaction config framing data
+    transaction_config_frame: TransactionConfigFrame,
 }
 
 impl TransactionFrame {
@@ -68,6 +71,7 @@ impl TransactionFrame {
             recent_blockhash_offset,
             instructions,
             address_table_lookup,
+            transaction_config_frame: TransactionConfigFrame::not_applicable(),
         })
     }
 
@@ -135,6 +139,35 @@ impl TransactionFrame {
     #[inline]
     pub(crate) fn message_offset(&self) -> u16 {
         self.message_header.offset
+    }
+
+    /// Return transaction_config.priority_fee_lamports if txv1, otherwise
+    /// default `0` lamports
+    #[inline]
+    pub fn priority_fee_lamports(&self) -> u64 {
+        self.transaction_config_frame.priority_fee_lamports
+    }
+
+    /// Return transaction_config.compute_unit_limit if txv1, otherwise
+    /// default value `0`
+    #[inline]
+    pub fn compute_unit_limit(&self) -> u32 {
+        self.transaction_config_frame.compute_unit_limit
+    }
+
+    /// Return transaction_config.loaded_accounts_bytes_size_limit if txv1, otherwise
+    /// default value `0`
+    #[inline]
+    pub fn loaded_accounts_data_size_limit(&self) -> u32 {
+        self.transaction_config_frame
+            .loaded_accounts_data_size_limit
+    }
+
+    /// Return transaction_config.requested_heap_size if txv1, otherwise
+    /// default DEFAULT_REQUESTED_HEAP_SIZE`
+    #[inline]
+    pub fn requested_heap_size(&self) -> u32 {
+        self.transaction_config_frame.requested_heap_size
     }
 }
 
