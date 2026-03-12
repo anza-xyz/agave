@@ -351,105 +351,89 @@ pub(crate) mod external {
                     .map(|()| true);
             }
 
-            // Loop here to avoid exposing internal error to external scheduler.
-            // In the vast majority of cases, this will iterate a single time;
-            // If we began execution when a slot was still in process, and could
-            // not record at the end because the slot has ended, we will retry
-            // on the next slot.
-            let mut last_attempted_slot = 0;
-            for _ in 0..2 {
-                let Some(leader_state) = active_leader_state(&self.shared_leader_state) else {
-                    return self
-                        .return_not_included_with_reason(
-                            message,
-                            not_included_reasons::BANK_NOT_AVAILABLE,
-                            last_attempted_slot,
-                        )
-                        .map(|()| true);
-                };
-
-                let bank = leader_state
-                    .working_bank()
-                    .expect("active_leader_state should only return an active bank");
-                last_attempted_slot = bank.slot();
-                if bank.slot() > message.max_working_slot {
-                    return self
-                        .return_unprocessed_message(
-                            message,
-                            agave_scheduler_bindings::processed_codes::MAX_WORKING_SLOT_EXCEEDED,
-                        )
-                        .map(|()| false);
-                }
-
-                // SAFETY: Assumption that external scheduler does not pass messages with batch regions
-                //         not pointing to valid regions in the allocator.
-                let batch = unsafe {
-                    TransactionPtrBatch::from_sharable_transaction_batch_region(
-                        &message.batch,
-                        &self.allocator,
-                    )
-                };
-                let (translation_results, transactions, max_ages) =
-                    Self::translate_transaction_batch(&batch, bank);
-
-                // Enforce all or nothing on translation_results.
-                let execution_flags = ExecutionFlags {
-                    drop_on_failure: message.flags & execution_flags::DROP_ON_FAILURE != 0,
-                    all_or_nothing: message.flags & execution_flags::ALL_OR_NOTHING != 0,
-                };
-                if execution_flags.all_or_nothing && translation_results.len() != transactions.len()
-                {
-                    self.send_execution_response(
+            let Some(leader_state) = active_leader_state(&self.shared_leader_state) else {
+                return self
+                    .return_not_included_with_reason(
                         message,
-                        Self::all_or_nothing_translate_iterator(&translation_results, bank.slot()),
-                    )?;
+                        not_included_reasons::BANK_NOT_AVAILABLE,
+                        0,
+                    )
+                    .map(|()| true);
+            };
 
-                    return Ok(false);
-                }
+            let bank = leader_state
+                .working_bank()
+                .expect("active_leader_state should only return an active bank");
+            if bank.slot() > message.max_working_slot {
+                return self
+                    .return_unprocessed_message(
+                        message,
+                        agave_scheduler_bindings::processed_codes::MAX_WORKING_SLOT_EXCEEDED,
+                    )
+                    .map(|()| false);
+            }
 
-                let output = self.consumer.process_and_record_aged_transactions(
-                    bank,
-                    &transactions,
-                    &max_ages,
-                    execution_flags,
-                );
+            // SAFETY: Assumption that external scheduler does not pass messages with batch regions
+            //         not pointing to valid regions in the allocator.
+            let batch = unsafe {
+                TransactionPtrBatch::from_sharable_transaction_batch_region(
+                    &message.batch,
+                    &self.allocator,
+                )
+            };
+            let (translation_results, transactions, max_ages) =
+                Self::translate_transaction_batch(&batch, bank);
 
-                self.metrics.update_for_consume(&output);
-                self.metrics.has_data.store(true, Ordering::Relaxed);
-
-                let Ok(commit_results) = output
-                    .execute_and_commit_transactions_output
-                    .commit_transactions_result
-                else {
-                    // If already ON the last possible execution slot,
-                    // immediately give up instead of trying on next slot.
-                    if bank.slot() == message.max_working_slot {
-                        break;
-                    }
-                    continue; // recording failed, try again on next slot if possible.
-                };
-
+            // Enforce all or nothing on translation_results.
+            let execution_flags = ExecutionFlags {
+                drop_on_failure: message.flags & execution_flags::DROP_ON_FAILURE != 0,
+                all_or_nothing: message.flags & execution_flags::ALL_OR_NOTHING != 0,
+            };
+            if execution_flags.all_or_nothing && translation_results.len() != transactions.len() {
                 self.send_execution_response(
                     message,
-                    Self::consume_response_iterator(
-                        &translation_results,
-                        &transactions,
-                        &commit_results,
-                        bank,
-                    ),
+                    Self::all_or_nothing_translate_iterator(&translation_results, bank.slot()),
                 )?;
 
                 return Ok(false);
             }
 
-            // If not successfully recorded even after second attempt, then we
-            // just return immediately as if a bank is not available.
-            self.return_not_included_with_reason(
+            let output = self.consumer.process_and_record_aged_transactions(
+                bank,
+                &transactions,
+                &max_ages,
+                execution_flags,
+            );
+
+            self.metrics.update_for_consume(&output);
+            self.metrics.has_data.store(true, Ordering::Relaxed);
+
+            let Ok(commit_results) = output
+                .execute_and_commit_transactions_output
+                .commit_transactions_result
+            else {
+                // Recording failed (slot ended during processing).
+                // Return as bank not available so the scheduler can retry.
+                return self
+                    .return_not_included_with_reason(
+                        message,
+                        not_included_reasons::BANK_NOT_AVAILABLE,
+                        bank.slot(),
+                    )
+                    .map(|()| true);
+            };
+
+            self.send_execution_response(
                 message,
-                not_included_reasons::BANK_NOT_AVAILABLE,
-                last_attempted_slot,
-            )
-            .map(|()| false)
+                Self::consume_response_iterator(
+                    &translation_results,
+                    &transactions,
+                    &commit_results,
+                    bank,
+                ),
+            )?;
+
+            Ok(false)
         }
 
         fn check_batch(
