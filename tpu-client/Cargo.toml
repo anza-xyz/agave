@@ -17,11 +17,7 @@ default = ["spinner"]
 agave-unstable-api = []
 # Support tpu-client methods that feature a spinner progress bar for
 # command-line interfaces
-spinner = [
-    "dep:indicatif",
-    "dep:solana-message",
-    "solana-rpc-client/spinner",
-]
+spinner = ["dep:indicatif", "dep:solana-message", "solana-rpc-client/spinner"]
 
 [dependencies]
 bincode = { workspace = true }
