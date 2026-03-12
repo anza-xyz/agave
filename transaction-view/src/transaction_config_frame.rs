@@ -253,6 +253,39 @@ impl TransactionConfigFrame {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TransactionConfigView<'a> {
+    pub(crate) transaction_config_frame: &'a TransactionConfigFrame,
+}
+
+impl<'a> TransactionConfigView<'a> {
+    #[inline(always)]
+    pub fn priority_fee_lamports(&self) -> u64 {
+        self.transaction_config_frame.priority_fee_lamports
+    }
+
+    #[inline(always)]
+    pub fn compute_unit_limit(&self) -> u32 {
+        self.transaction_config_frame.compute_unit_limit
+    }
+
+    #[inline(always)]
+    pub fn loaded_accounts_data_size_limit(&self) -> u32 {
+        self.transaction_config_frame
+            .loaded_accounts_data_size_limit
+    }
+
+    #[inline(always)]
+    pub fn requested_heap_size(&self) -> u32 {
+        self.transaction_config_frame.requested_heap_size
+    }
+
+    #[inline(always)]
+    pub fn mask(&self) -> u32 {
+        self.transaction_config_frame.mask
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

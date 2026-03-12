@@ -141,33 +141,10 @@ impl TransactionFrame {
         self.message_header.offset
     }
 
-    /// Return transaction_config.priority_fee_lamports if txv1, otherwise
-    /// default `0` lamports
+    /// Return transaction_config_frame
     #[inline]
-    pub fn priority_fee_lamports(&self) -> u64 {
-        self.transaction_config_frame.priority_fee_lamports
-    }
-
-    /// Return transaction_config.compute_unit_limit if txv1, otherwise
-    /// default value `0`
-    #[inline]
-    pub fn compute_unit_limit(&self) -> u32 {
-        self.transaction_config_frame.compute_unit_limit
-    }
-
-    /// Return transaction_config.loaded_accounts_bytes_size_limit if txv1, otherwise
-    /// default value `0`
-    #[inline]
-    pub fn loaded_accounts_data_size_limit(&self) -> u32 {
-        self.transaction_config_frame
-            .loaded_accounts_data_size_limit
-    }
-
-    /// Return transaction_config.requested_heap_size if txv1, otherwise
-    /// default DEFAULT_REQUESTED_HEAP_SIZE`
-    #[inline]
-    pub fn requested_heap_size(&self) -> u32 {
-        self.transaction_config_frame.requested_heap_size
+    pub(crate) fn transaction_config_frame(&self) -> &TransactionConfigFrame {
+        &self.transaction_config_frame
     }
 }
 

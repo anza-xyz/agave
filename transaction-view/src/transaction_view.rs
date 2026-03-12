@@ -2,8 +2,8 @@ use {
     crate::{
         address_table_lookup_frame::AddressTableLookupIterator,
         instructions_frame::InstructionsIterator, result::Result, sanitize::sanitize,
-        transaction_data::TransactionData, transaction_frame::TransactionFrame,
-        transaction_version::TransactionVersion,
+        transaction_config_frame::TransactionConfigView, transaction_data::TransactionData,
+        transaction_frame::TransactionFrame, transaction_version::TransactionVersion,
     },
     core::fmt::{Debug, Formatter},
     solana_hash::Hash,
@@ -160,33 +160,19 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
         unsafe { self.frame.address_table_lookup_iter(data) }
     }
 
-    /// Return transaction_config.priority_fee_lamports if txv1, otherwise
-    /// default `0` lamports
+    /// Return Some(TransactionConfigView) for V1, None for legacy/V0
     #[inline]
-    pub fn priority_fee_lamports(&self) -> u64 {
-        self.frame.priority_fee_lamports()
+    pub fn transaction_config(&self) -> Option<TransactionConfigView<'_>> {
+        let transaction_config_frame = self.frame.transaction_config_frame();
+        if transaction_config_frame.is_present() {
+            Some(TransactionConfigView {
+                transaction_config_frame,
+            })
+        } else {
+            None
+        }
     }
 
-    /// Return transaction_config.compute_unit_limit if txv1, otherwise
-    /// default value `0`
-    #[inline]
-    pub fn compute_unit_limit(&self) -> u32 {
-        self.frame.compute_unit_limit()
-    }
-
-    /// Return transaction_config.loaded_accounts_data_size_limit if txv1, otherwise
-    /// default value `0`
-    #[inline]
-    pub fn loaded_accounts_data_size_limit(&self) -> u32 {
-        self.frame.loaded_accounts_data_size_limit()
-    }
-
-    /// Return transaction_config.requested_heap_size if txv1, otherwise
-    /// default DEFAULT_REQUESTED_HEAP_SIZE`
-    #[inline]
-    pub fn requested_heap_size(&self) -> u32 {
-        self.frame.requested_heap_size()
-    }
     /// Return the full serialized transaction data.
     #[inline]
     pub fn data(&self) -> &[u8] {
@@ -419,6 +405,8 @@ mod tests {
                 .map(|x| x.len() as u8)
                 .unwrap_or(0)
         );
+
+        assert!(view.transaction_config().is_none());
     }
 
     fn multiple_transfers() -> VersionedTransaction {
