@@ -53,7 +53,7 @@ pub struct CompletedDataIndexes {
     index: BitVec<MAX_DATA_SHREDS_PER_SLOT>,
 }
 
-// API for CompletedDataIndexesV2 that mirrors BTreeSet<u32>.
+// API of CompletedDataIndexes that semantically mirrors BTreeSet<u32>.
 impl CompletedDataIndexes {
     #[inline]
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
@@ -733,7 +733,7 @@ mod test {
     }
 
     #[test]
-    fn test_shred_index_v2_range_bounds() {
+    fn test_shred_index_range_bounds() {
         let mut index = ShredIndex::default();
 
         index.insert(10);
@@ -770,7 +770,7 @@ mod test {
     }
 
     #[test]
-    fn test_shred_index_v2_boundary_conditions() {
+    fn test_shred_index_boundary_conditions() {
         let mut index = ShredIndex::default();
 
         // First possible index
