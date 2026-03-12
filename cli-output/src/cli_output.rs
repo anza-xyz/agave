@@ -2121,6 +2121,7 @@ pub struct CliSupply {
     pub circulating: u64,
     pub non_circulating: u64,
     pub non_circulating_accounts: Vec<String>,
+    pub timestamp: Option<UnixTimestamp>,
     #[serde(skip_serializing)]
     pub print_accounts: bool,
 }
@@ -2132,6 +2133,7 @@ impl From<RpcSupply> for CliSupply {
             circulating: rpc_supply.circulating,
             non_circulating: rpc_supply.non_circulating,
             non_circulating_accounts: rpc_supply.non_circulating_accounts,
+            timestamp: None,
             print_accounts: false,
         }
     }
@@ -2163,6 +2165,16 @@ impl fmt::Display for CliSupply {
                 build_balance_message(self.non_circulating, false, false)
             ),
         )?;
+
+        if let Some(timestamp) = self.timestamp {
+            let snapshot_time = Utc
+                .timestamp_opt(timestamp, 0)
+                .single()
+                .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_else(|| unix_timestamp_to_string(timestamp));
+            writeln_name_value(f, "Snapshot Time (UTC):", &snapshot_time)?;
+        }
+
         if self.print_accounts {
             writeln!(f)?;
             writeln_name_value(f, "Non-Circulating Accounts:", " ")?;
