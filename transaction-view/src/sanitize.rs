@@ -1,7 +1,13 @@
-use crate::{
-    result::{Result, TransactionViewError},
-    transaction_data::TransactionData,
-    transaction_view::UnsanitizedTransactionView,
+use {
+    crate::{
+        result::{Result, TransactionViewError},
+        transaction_data::TransactionData,
+        transaction_view::UnsanitizedTransactionView,
+    },
+    solana_program_runtime::execution_budget::{
+        MAX_COMPUTE_UNIT_LIMIT, MAX_HEAP_FRAME_BYTES, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+        MIN_HEAP_FRAME_BYTES,
+    },
 };
 
 pub(crate) fn sanitize(
@@ -115,10 +121,25 @@ fn sanitize_address_table_lookups(
 }
 
 fn sanitize_transaction_config(
-    _view: &UnsanitizedTransactionView<impl TransactionData>,
+    view: &UnsanitizedTransactionView<impl TransactionData>,
 ) -> Result<()> {
-    // NOTE: necessary to validate configured values here? Particularly requested-heap-size
-    // should be multiple of 1024?
+    let compute_unit_limit = view.compute_unit_limit();
+    if compute_unit_limit > MAX_COMPUTE_UNIT_LIMIT {
+        return Err(TransactionViewError::SanitizeError);
+    }
+
+    let loaded_accounts_data_size_limit = view.loaded_accounts_data_size_limit();
+    if loaded_accounts_data_size_limit > MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.into() {
+        return Err(TransactionViewError::SanitizeError);
+    }
+
+    let requested_heap_size = view.requested_heap_size();
+    if !(MIN_HEAP_FRAME_BYTES..=MAX_HEAP_FRAME_BYTES).contains(&requested_heap_size)
+        || !requested_heap_size.is_multiple_of(1024)
+    {
+        return Err(TransactionViewError::SanitizeError);
+    }
+
     Ok(())
 }
 

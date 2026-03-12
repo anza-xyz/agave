@@ -3,7 +3,7 @@ use {
         bytes::{advance_offset_for_array, check_remaining},
         result::{Result, TransactionViewError},
     },
-    core::fmt::Debug,
+    solana_program_runtime::execution_budget::MIN_HEAP_FRAME_BYTES,
 };
 
 /// Metadata for accessing the tx-v1 transaction config section.
@@ -52,7 +52,6 @@ pub(crate) struct TransactionConfigFrame {
 impl TransactionConfigFrame {
     pub(crate) const MASK_SIZE: usize = core::mem::size_of::<u32>();
     pub(crate) const CONFIG_VALUE_SIZE: usize = 4;
-    pub(crate) const DEFAULT_REQUESTED_HEAP_SIZE: u32 = 32 * 1024;
 
     /// Sentinel for legacy / v0 transactions.
     #[inline(always)]
@@ -65,7 +64,7 @@ impl TransactionConfigFrame {
             priority_fee_lamports: 0,
             compute_unit_limit: 0,
             loaded_accounts_data_size_limit: 0,
-            requested_heap_size: Self::DEFAULT_REQUESTED_HEAP_SIZE,
+            requested_heap_size: MIN_HEAP_FRAME_BYTES,
         }
     }
 
@@ -115,7 +114,7 @@ impl TransactionConfigFrame {
             priority_fee_lamports: 0,
             compute_unit_limit: 0,
             loaded_accounts_data_size_limit: 0,
-            requested_heap_size: Self::DEFAULT_REQUESTED_HEAP_SIZE,
+            requested_heap_size: MIN_HEAP_FRAME_BYTES,
         };
 
         // parse and read actual config values if set
@@ -272,10 +271,7 @@ mod tests {
         assert_eq!(frame.priority_fee_lamports, 0);
         assert_eq!(frame.compute_unit_limit, 0);
         assert_eq!(frame.loaded_accounts_data_size_limit, 0);
-        assert_eq!(
-            frame.requested_heap_size,
-            TransactionConfigFrame::DEFAULT_REQUESTED_HEAP_SIZE
-        );
+        assert_eq!(frame.requested_heap_size, MIN_HEAP_FRAME_BYTES);
     }
 
     #[test]
@@ -358,10 +354,7 @@ mod tests {
         assert_eq!(frame.priority_fee_lamports, 0);
         assert_eq!(frame.compute_unit_limit, 0);
         assert_eq!(frame.loaded_accounts_data_size_limit, 0);
-        assert_eq!(
-            frame.requested_heap_size,
-            TransactionConfigFrame::DEFAULT_REQUESTED_HEAP_SIZE
-        );
+        assert_eq!(frame.requested_heap_size, MIN_HEAP_FRAME_BYTES);
     }
 
     #[test]
@@ -387,10 +380,7 @@ mod tests {
         assert_eq!(frame.num_values, 2);
         assert_eq!(frame.priority_fee_lamports, fee);
         assert_eq!(frame.compute_unit_limit, 0);
-        assert_eq!(
-            frame.requested_heap_size,
-            TransactionConfigFrame::DEFAULT_REQUESTED_HEAP_SIZE
-        );
+        assert_eq!(frame.requested_heap_size, MIN_HEAP_FRAME_BYTES);
     }
 
     #[test]

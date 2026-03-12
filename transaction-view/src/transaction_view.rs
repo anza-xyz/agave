@@ -160,6 +160,33 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
         unsafe { self.frame.address_table_lookup_iter(data) }
     }
 
+    /// Return transaction_config.priority_fee_lamports if txv1, otherwise
+    /// default `0` lamports
+    #[inline]
+    pub fn priority_fee_lamports(&self) -> u64 {
+        self.frame.priority_fee_lamports()
+    }
+
+    /// Return transaction_config.compute_unit_limit if txv1, otherwise
+    /// default value `0`
+    #[inline]
+    pub fn compute_unit_limit(&self) -> u32 {
+        self.frame.compute_unit_limit()
+    }
+
+    /// Return transaction_config.loaded_accounts_data_size_limit if txv1, otherwise
+    /// default value `0`
+    #[inline]
+    pub fn loaded_accounts_data_size_limit(&self) -> u32 {
+        self.frame.loaded_accounts_data_size_limit()
+    }
+
+    /// Return transaction_config.requested_heap_size if txv1, otherwise
+    /// default DEFAULT_REQUESTED_HEAP_SIZE`
+    #[inline]
+    pub fn requested_heap_size(&self) -> u32 {
+        self.frame.requested_heap_size()
+    }
     /// Return the full serialized transaction data.
     #[inline]
     pub fn data(&self) -> &[u8] {
@@ -237,34 +264,6 @@ impl<D: TransactionData> TransactionView<true, D> {
             )
             .wrapping_add(self.total_writable_lookup_accounts()),
         )
-    }
-
-    /// Return transaction_config.priority_fee_lamports if txv1, otherwise
-    /// default `0` lamports
-    #[inline]
-    pub fn priority_fee_lamports(&self) -> u64 {
-        self.frame.priority_fee_lamports()
-    }
-
-    /// Return transaction_config.compute_unit_limit if txv1, otherwise
-    /// default value `0`
-    #[inline]
-    pub fn compute_unit_limit(&self) -> u32 {
-        self.frame.compute_unit_limit()
-    }
-
-    /// Return transaction_config.loaded_accounts_data_size_limit if txv1, otherwise
-    /// default value `0`
-    #[inline]
-    pub fn loaded_accounts_data_size_limit(&self) -> u32 {
-        self.frame.loaded_accounts_data_size_limit()
-    }
-
-    /// Return transaction_config.requested_heap_size if txv1, otherwise
-    /// default DEFAULT_REQUESTED_HEAP_SIZE`
-    #[inline]
-    pub fn requested_heap_size(&self) -> u32 {
-        self.frame.requested_heap_size()
     }
 }
 
