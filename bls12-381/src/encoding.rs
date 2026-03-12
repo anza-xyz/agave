@@ -48,19 +48,15 @@ impl PodG1Point {
     /// Checks: Field validity, Curve equation (`y^2 = x^3 + 4`).
     /// Skips: Subgroup membership
     pub fn to_affine_subgroup_unchecked(&self, endianness: Endianness) -> Option<G1Affine> {
-        let mut bytes = self.0;
-
-        if matches!(endianness, Endianness::LE) {
-            swap_fq_endianness(&mut bytes);
+        match endianness {
+            // `G1Affine::from_uncompressed_unchecked` already performs field and on-curve checks
+            Endianness::BE => G1Affine::from_uncompressed_unchecked(&self.0).into_option(),
+            Endianness::LE => {
+                let mut bytes = self.0;
+                swap_fq_endianness(&mut bytes);
+                G1Affine::from_uncompressed_unchecked(&bytes).into_option()
+            }
         }
-
-        // reject point if the compressed or parity flag is set
-        if bytes[0] & 0xa0 != 0 {
-            return None;
-        }
-
-        // `G1Affine::from_uncompressed_unchecked` already performs field and on-curve checks
-        G1Affine::from_uncompressed_unchecked(&bytes).into_option()
     }
 
     /// Deserializes to an affine point with full validation.
@@ -93,20 +89,16 @@ impl PodG2Point {
     /// Checks: Field validity, Curve equation (`y^2 = x^3 + 4(1+u)^{-1}`).
     /// Skips: Subgroup membership
     pub fn to_affine_subgroup_unchecked(&self, endianness: Endianness) -> Option<G2Affine> {
-        let mut bytes = self.0;
-
-        if matches!(endianness, Endianness::LE) {
-            swap_fq_endianness(&mut bytes);
-            swap_g2_c0_c1(&mut bytes);
+        match endianness {
+            // `G2Affine::from_uncompressed_unchecked` already performs field and on-curve checks
+            Endianness::BE => G2Affine::from_uncompressed_unchecked(&self.0).into_option(),
+            Endianness::LE => {
+                let mut bytes = self.0;
+                swap_fq_endianness(&mut bytes);
+                swap_g2_c0_c1(&mut bytes);
+                G2Affine::from_uncompressed_unchecked(&bytes).into_option()
+            }
         }
-
-        // reject point if the compressed or parity flag is set
-        if bytes[0] & 0xa0 != 0 {
-            return None;
-        }
-
-        // `G2Affine::from_uncompressed_unchecked` already performs field and on-curve checks
-        G2Affine::from_uncompressed_unchecked(&bytes).into_option()
     }
 
     /// Deserializes to an affine point with full validation.
