@@ -85,6 +85,10 @@ prerelease version. The new interpretation is as follows:
     * { min: 0x4002, patch: 0x0002 } -> X.2.0-rc.2
     * { min: 0x8003, patch: 0x0001 } -> X.3.0-beta.1
     * { min: 0xC004, patch: 0x0000 } -> X.4.0-alpha.0
+* Blockstore `SlotMeta` and `Index` columns legacy format removed.
+  * The `Index` column was updated in v2.2 to write `IndexV2`.
+  * The `SlotMeta` column format was updated in v3.1 to write `SlotMetaV2`.
+  * The old formats, `SlotMetaV1` and `IndexV1`, will no longer be supported for fallback reads as of v4.0
 
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
