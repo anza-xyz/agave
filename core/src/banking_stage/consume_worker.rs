@@ -2258,6 +2258,58 @@ mod tests {
     }
 
     #[test]
+    fn test_worker_consume_no_bank_drains_queue() {
+        let (test_frame, worker) = setup_test_frame(true);
+        let TestFrame {
+            mint_keypair,
+            genesis_config,
+            bank,
+            consume_sender,
+            consumed_receiver,
+            ..
+        } = &test_frame;
+
+        // Queue up 5 batches.
+        let num_batches: usize = 5;
+        for i in 0..num_batches {
+            let transactions = sanitize_transactions(vec![system_transaction::transfer(
+                mint_keypair,
+                &Pubkey::new_unique(),
+                1,
+                genesis_config.hash(),
+            )]);
+            consume_sender
+                .send(ConsumeWork {
+                    batch_id: TransactionBatchId::new(i as u64),
+                    ids: vec![i],
+                    transactions,
+                    max_ages: vec![MaxAge {
+                        sanitized_epoch: bank.epoch(),
+                        alt_invalidation_slot: bank.slot(),
+                    }],
+                })
+                .unwrap();
+        }
+
+        // Start the worker with 5 pending batches.
+        let worker_thread = std::thread::spawn(move || worker.run());
+
+        // All batches should be returned as retryable (no bank available).
+        for i in 0..num_batches {
+            let consumed = consumed_receiver.recv().unwrap();
+            assert_eq!(consumed.work.batch_id, TransactionBatchId::new(i as u64));
+            assert_eq!(
+                consumed.retryable_indexes,
+                vec![RetryableIndex::new(0, true)]
+            );
+        }
+
+        // Cleanup.
+        drop(test_frame);
+        let _ = worker_thread.join().unwrap();
+    }
+
+    #[test]
     fn test_worker_consume_simple() {
         let (mut test_frame, worker) = setup_test_frame(true);
         let TestFrame {
