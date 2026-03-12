@@ -34,8 +34,7 @@ async fn test_show_validators() {
 
     let validator = &result.validators[0];
 
-    // The mock vote account has inflation_rewards_commission_bps=Some(10000) which
-    // maps to 10000 bps (100.00%)
+    // commission=100 -> commission_bps = 100 * 100 = 10000
     assert_eq!(validator.commission_bps, 10000);
 
     // Mock returns the validator as delinquent with last_vote=0

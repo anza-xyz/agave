@@ -1188,7 +1188,7 @@ impl JsonRpcRequestProcessor {
                     commission: if commission_rate_in_basis_points {
                         // Derive percent from native bps, clamping to u8::MAX.
                         let bps = vote_state_view.inflation_rewards_commission();
-                        (bps / 100).min(u8::MAX as u16) as u8
+                        bps.div_ceil(100).min(u8::MAX as u16) as u8
                     } else {
                         vote_state_view.commission()
                     },
