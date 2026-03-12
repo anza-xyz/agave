@@ -28,7 +28,7 @@ use {
     },
     solana_bls_signatures::{
         BlsError,
-        pubkey::{Pubkey as BlsPubkey, PubkeyProjective, VerifiablePubkey},
+        pubkey::{PubkeyAffine as BlsPubkeyAffine, PubkeyProjective, VerifiablePubkey},
         signature::SignatureProjective,
     },
     solana_clock::Slot,
@@ -45,7 +45,7 @@ use {
 #[derive(Clone, Debug)]
 pub(super) struct VotePayload {
     pub vote_message: VoteMessage,
-    pub bls_pubkey: BlsPubkey,
+    pub bls_pubkey: BlsPubkeyAffine,
     pub pubkey: Pubkey,
 }
 
@@ -281,7 +281,7 @@ fn aggregate_pubkeys_by_payload(
     stats: &mut SigVerifyVoteStats,
 ) -> (Vec<Vec<u8>>, Result<Vec<PubkeyProjective>, BlsError>) {
     debug_assert!(current_thread_index().is_some());
-    let mut grouped_votes: HashMap<&Vote, Vec<&BlsPubkey>> = HashMap::new();
+    let mut grouped_votes: HashMap<&Vote, Vec<&BlsPubkeyAffine>> = HashMap::new();
 
     for v in votes {
         grouped_votes

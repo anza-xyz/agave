@@ -506,6 +506,7 @@ mod tests {
         solana_clock::Slot,
         solana_instruction::AccountMeta,
         solana_program_runtime::invoke_context::mock_process_instruction,
+        solana_sbpf::program::BuiltinFunctionDefinition,
         solana_sysvar::{clock, rent},
         solana_transaction_context::IndexOfAccount,
         std::{fs::File, io::Read, path::Path},
@@ -550,7 +551,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             expected_result,
-            Entrypoint::vm,
+            Entrypoint::register,
             |invoke_context| {
                 test_utils::load_all_invoked_programs(invoke_context);
             },

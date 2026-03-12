@@ -19,7 +19,7 @@ use {
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
     rayon::{ThreadPool, ThreadPoolBuilder},
-    solana_bls_signatures::pubkey::Pubkey as BlsPubkey,
+    solana_bls_signatures::pubkey::PubkeyAffine as BlsPubkeyAffine,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
@@ -254,7 +254,11 @@ impl SigVerifier {
     }
 
     /// If this vote should be verified, then returns the sender's Pubkey and BlsPubkey.
-    fn keep_vote(&mut self, vote: &VoteMessage, root_bank: &Bank) -> Option<(Pubkey, BlsPubkey)> {
+    fn keep_vote(
+        &mut self,
+        vote: &VoteMessage,
+        root_bank: &Bank,
+    ) -> Option<(Pubkey, BlsPubkeyAffine)> {
         let root_slot = root_bank.slot();
         let Some(rank_map) = root_bank.get_rank_map(vote.vote.slot()) else {
             self.stats.discard_vote_no_epoch_stakes += 1;

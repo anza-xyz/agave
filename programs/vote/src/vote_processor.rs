@@ -427,7 +427,8 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_program_runtime::{
             invoke_context::mock_process_instruction_with_feature_set,
-            loaded_programs::ProgramCacheEntry, solana_sbpf::vm::ContextObject,
+            loaded_programs::ProgramCacheEntry,
+            solana_sbpf::{program::BuiltinFunctionDefinition, vm::ContextObject},
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
@@ -545,7 +546,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             expected_result,
-            Entrypoint::vm,
+            Entrypoint::register,
             |invoke_context| {
                 // Register system program for CPI support.
                 invoke_context.program_cache_for_tx_batch.replenish(
@@ -553,7 +554,7 @@ mod tests {
                     Arc::new(ProgramCacheEntry::new_builtin(
                         0,
                         0,
-                        solana_system_program::system_processor::Entrypoint::vm,
+                        solana_system_program::system_processor::Entrypoint::register,
                     )),
                 );
                 *cu_consumed.borrow_mut() = invoke_context.get_remaining();

@@ -1234,7 +1234,7 @@ mod tests {
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_sbpf::program::BuiltinProgram,
+        solana_sbpf::program::{BuiltinFunctionDefinition, BuiltinProgram},
         solana_sdk_ids::{system_program, sysvar},
         solana_svm_type_overrides::sync::atomic::Ordering,
         std::{fs::File, io::Read, ops::Range, sync::atomic::AtomicU64},
@@ -1253,7 +1253,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             expected_result,
-            Entrypoint::vm,
+            Entrypoint::register,
             |invoke_context| {
                 test_utils::load_all_invoked_programs(invoke_context);
             },
@@ -1336,7 +1336,7 @@ mod tests {
             vec![(program_id, program_account)],
             Vec::new(),
             Err(InstructionError::ProgramFailedToComplete),
-            Entrypoint::vm,
+            Entrypoint::register,
             |invoke_context| {
                 invoke_context.mock_set_remaining(0);
                 test_utils::load_all_invoked_programs(invoke_context);
@@ -1351,7 +1351,7 @@ mod tests {
             vec![(program_id, parameter_account.clone())],
             Vec::new(),
             Err(InstructionError::UnsupportedProgramId),
-            Entrypoint::vm,
+            Entrypoint::register,
             |invoke_context| {
                 test_utils::load_all_invoked_programs(invoke_context);
             },
@@ -1877,7 +1877,7 @@ mod tests {
                 transaction_accounts,
                 instruction_accounts,
                 expected_result,
-                Entrypoint::vm,
+                Entrypoint::register,
                 |_invoke_context| {},
                 |_invoke_context| {},
             )
@@ -2026,7 +2026,7 @@ mod tests {
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(InstructionError::InvalidAccountData),
-            Entrypoint::vm,
+            Entrypoint::register,
             |invoke_context| {
                 test_utils::load_all_invoked_programs(invoke_context);
             },

@@ -121,6 +121,7 @@ use {
     solana_gossip::contact_info::ContactInfo,
     solana_ledger::get_tmp_ledger_path,
     solana_net_utils::SocketAddrSpace,
+    solana_program_runtime::solana_sbpf::program::BuiltinFunctionDefinition,
     solana_runtime::commitment::CommitmentSlots,
     solana_send_transaction_service::{
         send_transaction_service::Config as SendTransactionServiceConfig,
@@ -4705,14 +4706,14 @@ pub mod tests {
     declare_builtin_function!(
         TestBuiltinEntrypoint,
         fn rust(
-            invoke_context: &mut InvokeContext,
+            invoke_context: &mut InvokeContext<'_, '_>,
             _arg0: u64,
             _arg1: u64,
             _arg2: u64,
             _arg3: u64,
             _arg4: u64,
             _memory_mapping: &mut MemoryMapping,
-        ) -> std::result::Result<u64, Box<dyn std::error::Error>> {
+        ) -> Result<u64, Box<dyn std::error::Error>> {
             test_builtin_processor(invoke_context)
         }
     );
@@ -4724,7 +4725,7 @@ pub mod tests {
             solana_pubkey::pubkey!("TestProgram11111111111111111111111111111111");
 
         fn cache_entry() -> ProgramCacheEntry {
-            ProgramCacheEntry::new_builtin(0, Self::NAME.len(), Self::vm)
+            ProgramCacheEntry::new_builtin(0, Self::NAME.len(), Self::register)
         }
 
         fn instruction(

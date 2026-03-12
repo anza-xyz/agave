@@ -84,6 +84,7 @@ use {
         declare_process_instruction,
         execution_budget::{self, MAX_COMPUTE_UNIT_LIMIT},
         loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType},
+        solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,
     solana_rent::{DEFAULT_LAMPORTS_PER_BYTE, Rent},
@@ -3483,7 +3484,7 @@ fn test_add_builtin() {
     });
 
     assert!(bank.get_account(&mock_vote_program_id()).is_none());
-    bank.add_mockup_builtin(mock_vote_program_id(), MockBuiltin::vm);
+    bank.add_mockup_builtin(mock_vote_program_id(), MockBuiltin::register);
     assert!(bank.get_account(&mock_vote_program_id()).is_some());
 
     let mock_account = Keypair::new();
@@ -3558,7 +3559,7 @@ fn test_add_duplicate_static_program() {
 
     let slot = bank.slot().saturating_add(1);
     let mut bank = Bank::new_from_parent(bank, &Pubkey::default(), slot);
-    bank.add_mockup_builtin(solana_vote_program::id(), MockBuiltin::vm);
+    bank.add_mockup_builtin(solana_vote_program::id(), MockBuiltin::register);
     let bank = bank_forks
         .write()
         .unwrap()
@@ -3625,12 +3626,12 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
         bank.add_builtin(
             vote_id,
             "mock_program1",
-            ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm),
+            ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register),
         );
         bank.add_builtin(
             stake_id,
             "mock_program2",
-            ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm),
+            ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register),
         );
         {
             let stakes = bank.stakes_cache.stakes();
@@ -3656,8 +3657,8 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
 
         // Re-adding builtin programs should be no-op
         let old_hash = bank.calculate_accounts_lt_hash_for_tests();
-        bank.add_mockup_builtin(vote_id, MockBuiltin::vm);
-        bank.add_mockup_builtin(stake_id, MockBuiltin::vm);
+        bank.add_mockup_builtin(vote_id, MockBuiltin::register);
+        bank.add_mockup_builtin(stake_id, MockBuiltin::register);
         add_root_and_flush_write_cache(&bank);
         let new_hash = bank.calculate_accounts_lt_hash_for_tests();
         assert_eq!(old_hash, new_hash);
@@ -4691,8 +4692,11 @@ fn test_transaction_with_duplicate_accounts_in_instruction() {
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee_no_rent(500);
 
     let mock_program_id = Pubkey::from([2u8; 32]);
-    let (bank, _bank_forks) =
-        Bank::new_with_mockup_builtin_for_tests(&genesis_config, mock_program_id, MockBuiltin::vm);
+    let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
+        &genesis_config,
+        mock_program_id,
+        MockBuiltin::register,
+    );
 
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
         let transaction_context = &invoke_context.transaction_context;
@@ -4747,8 +4751,11 @@ fn test_transaction_with_program_ids_passed_to_programs() {
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee_no_rent(500);
 
     let mock_program_id = Pubkey::from([2u8; 32]);
-    let (bank, _bank_forks) =
-        Bank::new_with_mockup_builtin_for_tests(&genesis_config, mock_program_id, MockBuiltin::vm);
+    let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
+        &genesis_config,
+        mock_program_id,
+        MockBuiltin::register,
+    );
 
     let from_pubkey = solana_pubkey::new_rand();
     let to_pubkey = solana_pubkey::new_rand();
@@ -4802,7 +4809,7 @@ fn test_account_ids_after_program_ids() {
 
     let slot = bank.slot().saturating_add(1);
     let mut bank = Bank::new_from_parent(bank, &Pubkey::default(), slot);
-    bank.add_mockup_builtin(solana_vote_program::id(), MockBuiltin::vm);
+    bank.add_mockup_builtin(solana_vote_program::id(), MockBuiltin::register);
     let bank = bank_forks
         .write()
         .unwrap()
@@ -4852,7 +4859,7 @@ fn test_duplicate_account_key() {
     let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
         &genesis_config,
         solana_vote_program::id(),
-        MockBuiltin::vm,
+        MockBuiltin::register,
     );
 
     let from_pubkey = solana_pubkey::new_rand();
@@ -4883,7 +4890,7 @@ fn test_process_transaction_with_too_many_account_locks() {
     let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
         &genesis_config,
         solana_vote_program::id(),
-        MockBuiltin::vm,
+        MockBuiltin::register,
     );
 
     let from_pubkey = solana_pubkey::new_rand();
@@ -4925,7 +4932,7 @@ fn test_program_id_as_payer() {
         AccountMeta::new(to_pubkey, false),
     ];
 
-    bank.add_mockup_builtin(solana_vote_program::id(), MockBuiltin::vm);
+    bank.add_mockup_builtin(solana_vote_program::id(), MockBuiltin::register);
 
     let instruction = Instruction::new_with_bincode(solana_vote_program::id(), &10, account_metas);
     let mut tx = Transaction::new_signed_with_payer(
@@ -4970,7 +4977,7 @@ fn test_ref_account_key_after_program_id() {
 
     let slot = bank.slot().saturating_add(1);
     let mut bank = Bank::new_from_parent(bank, &Pubkey::default(), slot);
-    bank.add_mockup_builtin(solana_vote_program::id(), MockBuiltin::vm);
+    bank.add_mockup_builtin(solana_vote_program::id(), MockBuiltin::register);
     let bank = bank_forks
         .write()
         .unwrap()
@@ -5009,7 +5016,7 @@ fn test_fuzz_instructions() {
             bank.add_builtin(
                 key,
                 name.as_str(),
-                ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm),
+                ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register),
             );
             (key, name.as_bytes().to_vec())
         })
@@ -5252,8 +5259,11 @@ fn test_same_program_id_uses_unique_executable_accounts() {
 
     let (genesis_config, mint_keypair) = create_genesis_config(50000);
     let program1_pubkey = solana_pubkey::new_rand();
-    let (bank, _bank_forks) =
-        Bank::new_with_mockup_builtin_for_tests(&genesis_config, program1_pubkey, MockBuiltin::vm);
+    let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
+        &genesis_config,
+        program1_pubkey,
+        MockBuiltin::register,
+    );
 
     // Add a new program owned by the first
     let program2_pubkey = solana_pubkey::new_rand();
@@ -5357,13 +5367,13 @@ fn test_add_builtin_no_overwrite() {
 
     Arc::get_mut(&mut bank)
         .unwrap()
-        .add_mockup_builtin(program_id, MockBuiltin::vm);
+        .add_mockup_builtin(program_id, MockBuiltin::register);
     assert_eq!(bank.get_account_modified_slot(&program_id).unwrap().1, slot);
 
     let mut bank = Arc::new(new_from_parent(bank));
     Arc::get_mut(&mut bank)
         .unwrap()
-        .add_mockup_builtin(program_id, MockBuiltin::vm);
+        .add_mockup_builtin(program_id, MockBuiltin::register);
     assert_eq!(bank.get_account_modified_slot(&program_id).unwrap().1, slot);
 }
 
@@ -5378,13 +5388,13 @@ fn test_add_builtin_loader_no_overwrite() {
 
     Arc::get_mut(&mut bank)
         .unwrap()
-        .add_mockup_builtin(loader_id, MockBuiltin::vm);
+        .add_mockup_builtin(loader_id, MockBuiltin::register);
     assert_eq!(bank.get_account_modified_slot(&loader_id).unwrap().1, slot);
 
     let mut bank = Arc::new(new_from_parent(bank));
     Arc::get_mut(&mut bank)
         .unwrap()
-        .add_mockup_builtin(loader_id, MockBuiltin::vm);
+        .add_mockup_builtin(loader_id, MockBuiltin::register);
     assert_eq!(bank.get_account_modified_slot(&loader_id).unwrap().1, slot);
 }
 
@@ -8266,8 +8276,11 @@ fn test_tx_return_data() {
         bootstrap_validator_stake_lamports(),
     );
     let mock_program_id = Pubkey::from([2u8; 32]);
-    let (bank, _bank_forks) =
-        Bank::new_with_mockup_builtin_for_tests(&genesis_config, mock_program_id, MockBuiltin::vm);
+    let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
+        &genesis_config,
+        mock_program_id,
+        MockBuiltin::register,
+    );
 
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
         let mock_program_id = Pubkey::from([2u8; 32]);
@@ -8469,7 +8482,7 @@ fn test_transfer_sysvar() {
     let program_id = solana_pubkey::new_rand();
 
     let (bank, _bank_forks) =
-        Bank::new_with_mockup_builtin_for_tests(&genesis_config, program_id, MockBuiltin::vm);
+        Bank::new_with_mockup_builtin_for_tests(&genesis_config, program_id, MockBuiltin::register);
 
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
         let transaction_context = &invoke_context.transaction_context;
@@ -8672,7 +8685,7 @@ fn test_compute_budget_program_noop() {
     );
     let program_id = solana_pubkey::new_rand();
     let (bank, _bank_forks) =
-        Bank::new_with_mockup_builtin_for_tests(&genesis_config, program_id, MockBuiltin::vm);
+        Bank::new_with_mockup_builtin_for_tests(&genesis_config, program_id, MockBuiltin::register);
 
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
         let compute_budget = ComputeBudget::from_budget_and_cost(
@@ -8724,7 +8737,7 @@ fn test_compute_request_instruction() {
     );
     let program_id = solana_pubkey::new_rand();
     let (bank, _bank_forks) =
-        Bank::new_with_mockup_builtin_for_tests(&genesis_config, program_id, MockBuiltin::vm);
+        Bank::new_with_mockup_builtin_for_tests(&genesis_config, program_id, MockBuiltin::register);
 
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
         let compute_budget = ComputeBudget::from_budget_and_cost(
@@ -8777,7 +8790,7 @@ fn test_failed_compute_request_instruction() {
 
     let program_id = solana_pubkey::new_rand();
     let (bank, _bank_forks) =
-        Bank::new_with_mockup_builtin_for_tests(&genesis_config, program_id, MockBuiltin::vm);
+        Bank::new_with_mockup_builtin_for_tests(&genesis_config, program_id, MockBuiltin::register);
 
     let payer0_keypair = Keypair::new();
     let payer1_keypair = Keypair::new();
@@ -9518,7 +9531,7 @@ fn test_invalid_rent_state_changes_existing_accounts() {
     let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
         &genesis_config,
         mock_program_id,
-        MockTransferBuiltin::vm,
+        MockTransferBuiltin::register,
     );
     let recent_blockhash = bank.last_blockhash();
 
@@ -9571,7 +9584,7 @@ fn test_invalid_rent_state_changes_new_accounts() {
     let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
         &genesis_config,
         mock_program_id,
-        MockTransferBuiltin::vm,
+        MockTransferBuiltin::register,
     );
     let recent_blockhash = bank.last_blockhash();
 
@@ -9633,7 +9646,7 @@ fn test_drained_created_account() {
     let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
         &genesis_config,
         mock_program_id,
-        MockTransferBuiltin::vm,
+        MockTransferBuiltin::register,
     );
     let recent_blockhash = bank.last_blockhash();
 
@@ -10088,7 +10101,7 @@ fn test_resize_and_rent() {
     let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
         &genesis_config,
         mock_program_id,
-        MockReallocBuiltin::vm,
+        MockReallocBuiltin::register,
     );
 
     let recent_blockhash = bank.last_blockhash();
@@ -10301,7 +10314,7 @@ fn test_accounts_data_size_and_resize_transactions() {
     let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
         &genesis_config,
         mock_program_id,
-        MockReallocBuiltin::vm,
+        MockReallocBuiltin::register,
     );
 
     let recent_blockhash = bank.last_blockhash();
@@ -11206,7 +11219,7 @@ fn test_failed_simulation_compute_units() {
     let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
     let program_id = Pubkey::new_unique();
     let (bank, _bank_forks) =
-        Bank::new_with_mockup_builtin_for_tests(&genesis_config, program_id, MockBuiltin::vm);
+        Bank::new_with_mockup_builtin_for_tests(&genesis_config, program_id, MockBuiltin::register);
 
     const TEST_UNITS: u64 = 10_000;
     const MOCK_BUILTIN_UNITS: u64 = 1;

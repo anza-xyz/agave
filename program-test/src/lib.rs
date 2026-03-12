@@ -37,7 +37,7 @@ use {
     solana_program_entrypoint::{SUCCESS, deserialize},
     solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
-        invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
+        invoke_context::BuiltinFunctionRegisterer, loaded_programs::ProgramCacheEntry,
         serialization::serialize_parameters, stable_log, sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -80,6 +80,8 @@ pub use {
     solana_program_runtime::invoke_context::InvokeContext,
     solana_sbpf::{
         error::EbpfError,
+        memory_region::MemoryMapping,
+        program::BuiltinFunctionDefinition,
         vm::{EbpfVm, get_runtime_environment_key},
     },
     solana_transaction_context::IndexOfAccount,
@@ -209,18 +211,42 @@ pub fn invoke_builtin_function(
 /// use with `ProgramTest::add_program`
 #[macro_export]
 macro_rules! processor {
-    ($builtin_function:expr) => {
-        Some(|vm, _arg0, _arg1, _arg2, _arg3, _arg4| {
-            let vm = unsafe {
-                &mut *((vm as *mut u64).offset(-($crate::get_runtime_environment_key() as isize))
-                    as *mut $crate::EbpfVm<$crate::InvokeContext>)
-            };
-            vm.program_result =
-                $crate::invoke_builtin_function($builtin_function, vm.context_object_pointer)
-                    .map_err(|err| $crate::EbpfError::SyscallError(err))
-                    .into();
-        })
-    };
+    ($builtin_function:expr) => {{
+        struct Converter;
+        impl $crate::BuiltinFunctionDefinition<$crate::InvokeContext<'_, '_>> for Converter {
+            type Error = Box<dyn std::error::Error>;
+            fn rust(
+                _: &mut $crate::InvokeContext<'_, '_>,
+                _: u64,
+                _: u64,
+                _: u64,
+                _: u64,
+                _: u64,
+                _: &mut $crate::MemoryMapping,
+            ) -> Result<u64, Box<dyn std::error::Error>> {
+                unreachable!()
+            }
+            fn vm(
+                vm: *mut $crate::EbpfVm<$crate::InvokeContext>,
+                _: u64,
+                _: u64,
+                _: u64,
+                _: u64,
+                _: u64,
+            ) {
+                let vm = unsafe {
+                    &mut *((vm as *mut u64)
+                        .offset(-($crate::get_runtime_environment_key() as isize))
+                        as *mut $crate::EbpfVm<$crate::InvokeContext>)
+                };
+                vm.program_result =
+                    $crate::invoke_builtin_function($builtin_function, vm.context_object_pointer)
+                        .map_err(|err| $crate::EbpfError::SyscallError(err))
+                        .into();
+            }
+        };
+        Some(<Converter as $crate::BuiltinFunctionDefinition<_>>::register)
+    }};
 }
 
 fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned + Clone>(
@@ -632,10 +658,10 @@ impl ProgramTest {
     pub fn new(
         program_name: &'static str,
         program_id: Pubkey,
-        builtin_function: Option<BuiltinFunctionWithContext>,
+        builtin: Option<BuiltinFunctionRegisterer>,
     ) -> Self {
         let mut me = Self::default();
-        me.add_program(program_name, program_id, builtin_function);
+        me.add_program(program_name, program_id, builtin);
         me
     }
 
@@ -759,7 +785,7 @@ impl ProgramTest {
         &mut self,
         program_name: &'static str,
         program_id: Pubkey,
-        builtin_function: Option<BuiltinFunctionWithContext>,
+        builtin_function: Option<BuiltinFunctionRegisterer>,
     ) {
         let add_bpf = |this: &mut ProgramTest, program_file: PathBuf| {
             let data = read_file(&program_file);
@@ -863,13 +889,13 @@ impl ProgramTest {
         &mut self,
         program_name: &'static str,
         program_id: Pubkey,
-        builtin_function: BuiltinFunctionWithContext,
+        builtin: BuiltinFunctionRegisterer,
     ) {
         info!("\"{program_name}\" builtin program");
         self.builtin_programs.push((
             program_id,
             program_name,
-            ProgramCacheEntry::new_builtin(0, program_name.len(), builtin_function),
+            ProgramCacheEntry::new_builtin(0, program_name.len(), builtin),
         ));
     }
 
