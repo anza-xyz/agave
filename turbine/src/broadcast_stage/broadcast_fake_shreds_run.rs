@@ -1,5 +1,6 @@
 use {
     super::*,
+    agave_votor_messages::migration::MigrationStatus,
     solana_entry::entry::Entry,
     solana_gossip::contact_info::ContactInfo,
     solana_hash::Hash,
@@ -13,19 +14,27 @@ pub(super) struct BroadcastFakeShredsRun {
     carryover_entry: Option<WorkingBankEntry>,
     partition: usize,
     shred_version: u16,
+    current_slot: Slot,
+    chained_merkle_root: Hash,
+    next_shred_index: u32,
     next_code_index: u32,
     reed_solomon_cache: Arc<ReedSolomonCache>,
+    migration_status: Arc<MigrationStatus>,
 }
 
 impl BroadcastFakeShredsRun {
-    pub(super) fn new(partition: usize, shred_version: u16) -> Self {
+    pub(super) fn new(partition: usize, shred_version: u16, migration_status: Arc<MigrationStatus>) -> Self {
         Self {
             last_blockhash: Hash::default(),
             carryover_entry: None,
             partition,
             shred_version,
+            current_slot: 0,
+            chained_merkle_root: Hash::default(),
+            next_shred_index: 0,
             next_code_index: 0,
             reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
+            migration_status,
         }
     }
 }
@@ -48,25 +57,34 @@ impl BroadcastRun for BroadcastFakeShredsRun {
         let bank = receive_results.bank;
         let last_tick_height = receive_results.last_tick_height;
 
-        let next_shred_index = blockstore
-            .meta(bank.slot())
-            .expect("Database error")
-            .map(|meta| meta.consumed)
-            .unwrap_or(0) as u32;
-        let chained_merkle_root = match next_shred_index.checked_sub(1) {
-            None => broadcast_utils::get_chained_merkle_root_from_parent(
+        let send_header = if bank.slot() != self.current_slot {
+            self.chained_merkle_root = broadcast_utils::get_chained_merkle_root_from_parent(
                 bank.slot(),
                 bank.parent_slot(),
                 blockstore,
             )
-            .unwrap(),
-            Some(index) => {
+            .unwrap();
+            self.next_shred_index = 0;
+            self.next_code_index = 0;
+            self.current_slot = bank.slot();
+
+            true
+        } else {
+            let next_shred_index = blockstore
+                .meta(bank.slot())
+                .expect("Database error")
+                .map(|meta| meta.consumed)
+                .unwrap_or(0) as u32;
+            self.next_shred_index = next_shred_index;
+            if let Some(index) = next_shred_index.checked_sub(1) {
                 let shred = blockstore
                     .get_data_shred(bank.slot(), u64::from(index))
                     .unwrap()
                     .unwrap();
-                shred::layout::get_merkle_root(&shred).unwrap()
+                self.chained_merkle_root = shred::layout::get_merkle_root(&shred).unwrap();
             }
+
+            false
         };
 
         let num_entries = receive_results.entries.len();
@@ -79,12 +97,38 @@ impl BroadcastRun for BroadcastFakeShredsRun {
         )
         .expect("Expected to create a new shredder");
 
+        // Generate header shreds for new slot
+        if send_header && self.migration_status.should_allow_block_markers(bank.slot()) {
+            let header = produce_block_header(bank.parent_slot(), self.chained_merkle_root);
+            let component = solana_entry::block_component::BlockComponent::new_block_marker(header);
+            let header_shreds: Vec<_> = shredder
+                .make_merkle_shreds_from_component(
+                    keypair,
+                    &component,
+                    false,
+                    self.chained_merkle_root,
+                    self.next_shred_index,
+                    self.next_code_index,
+                    &self.reed_solomon_cache,
+                    &mut ProcessShredsStats::default(),
+                )
+                .collect();
+            for shred in &header_shreds {
+                if shred.is_data() {
+                    self.next_shred_index = self.next_shred_index.max(shred.index() + 1);
+                    self.chained_merkle_root = shred.merkle_root().unwrap();
+                } else {
+                    self.next_code_index = self.next_code_index.max(shred.index() + 1);
+                }
+            }
+        }
+
         let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             keypair,
             &receive_results.entries,
             last_tick_height == bank.max_tick_height(),
-            chained_merkle_root,
-            next_shred_index,
+            self.chained_merkle_root,
+            self.next_shred_index,
             self.next_code_index,
             &self.reed_solomon_cache,
             &mut ProcessShredsStats::default(),
@@ -104,8 +148,8 @@ impl BroadcastRun for BroadcastFakeShredsRun {
             keypair,
             &fake_entries,
             last_tick_height == bank.max_tick_height(),
-            chained_merkle_root,
-            next_shred_index,
+            self.chained_merkle_root,
+            self.next_shred_index,
             self.next_code_index,
             &self.reed_solomon_cache,
             &mut ProcessShredsStats::default(),

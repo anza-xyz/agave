@@ -8,7 +8,7 @@ use {
     crate::cluster_nodes::ClusterNodesCache,
     agave_votor::event::VotorEventSender,
     agave_votor_messages::migration::MigrationStatus,
-    solana_entry::entry::Entry,
+    solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
@@ -159,6 +159,51 @@ impl StandardBroadcastRun {
         Ok(shreds)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn component_to_shreds(
+        &mut self,
+        keypair: &Keypair,
+        component: &BlockComponent,
+        reference_tick: u8,
+        is_slot_end: bool,
+        process_stats: &mut ProcessShredsStats,
+        max_data_shreds_per_slot: u32,
+        max_code_shreds_per_slot: u32,
+    ) -> std::result::Result<Vec<Shred>, BroadcastError> {
+        let shreds: Vec<_> =
+            Shredder::new(self.slot, self.parent, reference_tick, self.shred_version)
+                .unwrap()
+                .make_merkle_shreds_from_component(
+                    keypair,
+                    component,
+                    is_slot_end,
+                    self.chained_merkle_root,
+                    self.next_shred_index,
+                    self.next_code_index,
+                    &self.reed_solomon_cache,
+                    process_stats,
+                )
+                .inspect(|shred| {
+                    process_stats.record_shred(shred);
+                    let next_index = match shred.shred_type() {
+                        ShredType::Code => &mut self.next_code_index,
+                        ShredType::Data => &mut self.next_shred_index,
+                    };
+                    *next_index = (*next_index).max(shred.index() + 1);
+                })
+                .collect();
+        if let Some(shred) = shreds.iter().max_by_key(|shred| shred.fec_set_index()) {
+            self.chained_merkle_root = shred.merkle_root().unwrap();
+        }
+        if self.next_shred_index > max_data_shreds_per_slot {
+            return Err(BroadcastError::TooManyShreds);
+        }
+        if self.next_code_index > max_code_shreds_per_slot {
+            return Err(BroadcastError::TooManyShreds);
+        }
+        Ok(shreds)
+    }
+
     #[cfg(test)]
     fn test_process_receive_results(
         &mut self,
@@ -202,7 +247,7 @@ impl StandardBroadcastRun {
 
         let mut to_shreds_time = Measure::start("broadcast_to_shreds");
 
-        if self.slot != bank.slot() {
+        let send_header = if self.slot != bank.slot() {
             // Finish previous slot if it was interrupted.
             if !self.completed {
                 let shreds = self.finish_prev_slot(keypair, bank.ticks_per_slot() as u8);
@@ -257,7 +302,11 @@ impl StandardBroadcastRun {
             self.num_batches = 0;
             process_stats.receive_elapsed = 0;
             process_stats.coalesce_elapsed = 0;
-        }
+
+            true
+        } else {
+            false
+        };
 
         // 2) Convert entries to shreds and coding shreds
         let is_last_in_slot = last_tick_height == bank.max_tick_height();
@@ -266,7 +315,26 @@ impl StandardBroadcastRun {
         let reference_tick = last_tick_height
             .saturating_add(bank.ticks_per_slot())
             .saturating_sub(bank.max_tick_height());
-        let shreds = self
+
+        let mut header_shreds = if send_header
+            && self.migration_status.should_allow_block_markers(bank.slot())
+        {
+            let header = produce_block_header(self.parent, self.chained_merkle_root);
+            self.component_to_shreds(
+                keypair,
+                &BlockComponent::new_block_marker(header),
+                reference_tick as u8,
+                false,
+                process_stats,
+                MAX_DATA_SHREDS_PER_SLOT as u32,
+                MAX_CODE_SHREDS_PER_SLOT as u32,
+            )
+            .unwrap()
+        } else {
+            vec![]
+        };
+
+        let component_shreds = self
             .entries_to_shreds(
                 keypair,
                 &entries,
@@ -277,6 +345,13 @@ impl StandardBroadcastRun {
                 MAX_CODE_SHREDS_PER_SLOT as u32,
             )
             .unwrap();
+
+        let shreds = if send_header {
+            header_shreds.extend_from_slice(&component_shreds);
+            header_shreds
+        } else {
+            component_shreds
+        };
         // Insert the first data shred synchronously so that blockstore stores
         // that the leader started this block. This must be done before the
         // blocks are sent out over the wire, so that the slots we have already
@@ -617,9 +692,10 @@ mod test {
                 &bank_forks,
             )
             .unwrap();
+        // Since this is a new slot, it includes both header shreds and component shreds
         assert_eq!(
             standard_broadcast_run.next_shred_index as u64,
-            num_shreds_per_slot
+            2 * num_shreds_per_slot
         );
         assert_eq!(standard_broadcast_run.slot, 0);
         assert_eq!(standard_broadcast_run.parent, 0);
@@ -651,8 +727,11 @@ mod test {
         );
         // Try to fetch ticks from blockstore, nothing should break
         assert_eq!(blockstore.get_slot_entries(0, 0).unwrap(), ticks0);
+        // Now with block headers, we have 2x shreds, so fetch from 2 * num_shreds_per_slot
         assert_eq!(
-            blockstore.get_slot_entries(0, num_shreds_per_slot).unwrap(),
+            blockstore
+                .get_slot_entries(0, 2 * num_shreds_per_slot)
+                .unwrap(),
             vec![],
         );
 
@@ -686,9 +765,10 @@ mod test {
 
         // The shred index should have reset to 0, which makes it possible for the
         // index < the previous shred index for slot 0
+        // Since this is a new slot, it includes both header shreds and component shreds
         assert_eq!(
             standard_broadcast_run.next_shred_index as usize,
-            DATA_SHREDS_PER_FEC_BLOCK
+            2 * DATA_SHREDS_PER_FEC_BLOCK
         );
         assert_eq!(standard_broadcast_run.slot, 2);
         assert_eq!(standard_broadcast_run.parent, 0);
