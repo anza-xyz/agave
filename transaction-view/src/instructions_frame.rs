@@ -26,6 +26,7 @@ pub(crate) struct InstructionFrame {
     ///
     /// - legacy/v0: start of the serialized CompiledInstruction
     /// - v1: start of the 4-byte InstructionHeader entry
+    #[allow(dead_code)]
     offset: u16,
 
     program_id_index: u8,
@@ -47,6 +48,7 @@ pub(crate) enum InstructionFrameRepr {
 
     /// V1:
     /// header lives at `offset`, payload lives elsewhere.
+    #[allow(dead_code)]
     V1 {
         /// Start of this instruction's payload:
         /// [account_indexes...][instruction_data...]
@@ -54,6 +56,7 @@ pub(crate) enum InstructionFrameRepr {
     },
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 struct V1InstructionHeader {
     offset: u16,
@@ -135,6 +138,7 @@ impl InstructionsFrame {
         })
     }
 
+    #[allow(dead_code)]
     #[inline(always)]
     pub(crate) fn try_new_for_v1(
         bytes: &[u8],
@@ -155,6 +159,7 @@ impl InstructionsFrame {
         })
     }
 
+    #[allow(dead_code)]
     fn parse_v1_instruction_headers(
         bytes: &[u8],
         offset: &mut usize,
@@ -183,6 +188,7 @@ impl InstructionsFrame {
         Ok(headers)
     }
 
+    #[allow(dead_code)]
     fn build_v1_instruction_frames(
         bytes: &[u8],
         headers: &[V1InstructionHeader],
