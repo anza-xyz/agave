@@ -8,6 +8,7 @@ use {
     solana_sdk_ids::sysvar,
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
+    std::collections::{HashMap, HashSet},
 };
 use {
     crate::{
@@ -46,7 +47,6 @@ use {
         alloc::Layout,
         borrow::Cow,
         cell::RefCell,
-        collections::{HashMap, HashSet},
         fmt::{self, Debug},
         rc::Rc,
     },
