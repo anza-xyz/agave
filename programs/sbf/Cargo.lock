@@ -2171,12 +2171,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a47c1c47d2f5964e29c61246e81db715514cd532db6b5116a25ea3c03d6780a2"
 
 [[package]]
-name = "elf"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55dd888a213fc57e957abf2aa305ee3e8a28dbe05687a251f33b637cd46b0070"
-
-[[package]]
 name = "elliptic-curve"
 version = "0.13.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3887,15 +3881,6 @@ dependencies = [
  "libc",
  "wasi 0.11.0+wasi-snapshot-preview1",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "miow"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "536bfad37a309d62069485248eeaba1e8d9853aaf951caaeaed0585a95346f08"
-dependencies = [
- "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -8286,22 +8271,13 @@ dependencies = [
  "agave-feature-set",
  "agave-logger",
  "agave-reserved-account-keys",
- "agave-syscalls",
  "agave-validator",
  "bincode",
  "borsh",
- "byteorder",
- "elf",
  "itertools 0.14.0",
  "log",
- "miow",
- "net2",
  "solana-account 4.1.0",
- "solana-account-decoder",
  "solana-account-info",
- "solana-accounts-db",
- "solana-bpf-loader-program",
- "solana-cli-output",
  "solana-client-traits",
  "solana-clock",
  "solana-cluster-type",
@@ -8311,17 +8287,12 @@ dependencies = [
  "solana-fee",
  "solana-fee-calculator",
  "solana-fee-structure",
- "solana-genesis-config",
  "solana-hash 4.2.0",
  "solana-instruction",
  "solana-keypair",
- "solana-ledger",
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
- "solana-measure",
  "solana-message",
- "solana-program",
- "solana-program-entrypoint",
  "solana-program-runtime",
  "solana-pubkey 4.1.0",
  "solana-rent 4.1.0",
@@ -8330,14 +8301,11 @@ dependencies = [
  "solana-sbf-rust-invoke-dep",
  "solana-sbf-rust-realloc-dep",
  "solana-sbf-rust-realloc-invoke-dep",
- "solana-sbpf",
  "solana-sdk-ids",
  "solana-signer",
  "solana-stake-interface",
  "solana-svm",
- "solana-svm-callback",
  "solana-svm-feature-set",
- "solana-svm-log-collector",
  "solana-svm-test-harness-instr",
  "solana-svm-timings",
  "solana-svm-transaction",
@@ -8345,9 +8313,7 @@ dependencies = [
  "solana-system-interface 3.1.0",
  "solana-sysvar",
  "solana-transaction",
- "solana-transaction-context",
  "solana-transaction-error",
- "solana-transaction-status",
  "solana-vote",
  "solana-vote-interface",
  "solana-vote-program",
@@ -9810,7 +9776,6 @@ name = "solana-transaction-context"
 version = "4.1.0-alpha.0"
 dependencies = [
  "bincode",
- "qualifier_attr",
  "serde",
  "solana-account 4.1.0",
  "solana-instruction",
