@@ -8,10 +8,7 @@ use {
                 ConnectionTable, ConnectionTableKey, ConnectionTableType, get_connection_stake,
                 update_open_connections_stat,
             },
-            stream_throttle::{
-                ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL_MS, StakedStreamLoadEMA,
-                throttle_stream,
-            },
+            stream_throttle::{ConnectionStreamCounter, StakedStreamLoadEMA, throttle_stream},
         },
         quic::{
             DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
@@ -53,6 +50,10 @@ const REFERENCE_RTT_MS: u32 = 50;
 
 /// Above this RTT we stop scaling for BDP
 const MAX_RTT_MS: u32 = 350;
+
+/// Mimimal amount of lamports staked after which a remote peer is considered staked
+/// Currently set to 10K SOL.
+const STAKED_CONNECTION_MIN_LAMPORTS: u64 = 10000 * 1_000_000_000;
 
 #[derive(Clone)]
 pub struct SwQosConfig {
@@ -302,44 +303,30 @@ impl SwQos {
 
 impl QosController<SwQosConnectionContext> for SwQos {
     fn build_connection_context(&self, connection: &Connection) -> SwQosConnectionContext {
-        get_connection_stake(connection, &self.staked_nodes).map_or(
-            SwQosConnectionContext {
-                peer_type: ConnectionPeerType::Unstaked,
-                total_stake: 0,
-                remote_pubkey: None,
-                in_staked_table: false,
-                remote_address: connection.remote_address(),
-                stream_counter: None,
-                last_update: Arc::new(AtomicU64::new(timing::timestamp())),
-            },
-            |(pubkey, stake, total_stake)| {
-                // The heuristic is that the stake should be large enough to have 1 stream pass through within one throttle
-                // interval during which we allow max (MAX_STREAMS_PER_MS * STREAM_THROTTLING_INTERVAL_MS) streams.
+        let remote_address = connection.remote_address();
+        let last_update = Arc::new(AtomicU64::new(timing::timestamp()));
 
-                let peer_type = {
-                    let max_streams_per_ms = self.staked_stream_load_ema.max_streams_per_ms();
-                    let min_stake_ratio =
-                        1_f64 / (max_streams_per_ms * STREAM_THROTTLING_INTERVAL_MS) as f64;
-                    let stake_ratio = stake as f64 / total_stake as f64;
-                    if stake_ratio < min_stake_ratio {
-                        // If it is a staked connection with ultra low stake ratio, treat it as unstaked.
-                        ConnectionPeerType::Unstaked
-                    } else {
-                        ConnectionPeerType::Staked(stake)
-                    }
-                };
-
-                SwQosConnectionContext {
-                    peer_type,
-                    total_stake,
-                    remote_pubkey: Some(pubkey),
-                    in_staked_table: false,
-                    remote_address: connection.remote_address(),
-                    last_update: Arc::new(AtomicU64::new(timing::timestamp())),
-                    stream_counter: None,
+        let (peer_type, total_stake, remote_pubkey) =
+            match get_connection_stake(connection, &self.staked_nodes) {
+                None => (ConnectionPeerType::Unstaked, 0, None),
+                Some((_, stake, _)) if stake < STAKED_CONNECTION_MIN_LAMPORTS => {
+                    // If it is a connection with ultra low stake, treat it as unstaked.
+                    (ConnectionPeerType::Unstaked, 0, None)
                 }
-            },
-        )
+                Some((pubkey, stake, total_stake)) => {
+                    (ConnectionPeerType::Staked(stake), total_stake, Some(pubkey))
+                }
+            };
+
+        SwQosConnectionContext {
+            peer_type,
+            total_stake,
+            remote_pubkey,
+            in_staked_table: false,
+            remote_address,
+            stream_counter: None,
+            last_update,
+        }
     }
 
     #[allow(clippy::manual_async_fn)]

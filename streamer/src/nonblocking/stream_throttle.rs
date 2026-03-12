@@ -39,7 +39,6 @@ pub(crate) struct StakedStreamLoadEMA {
     stats: Arc<StreamerStats>,
     max_staked_load_in_throttling_window: u64,
     max_unstaked_load_in_throttling_window: u64,
-    max_streams_per_ms: u64,
     staked_throttling_on_load_threshold: u64, // in streams/STREAM_LOAD_EMA_INTERVAL_MS
     staked_throttling_enabled: AtomicBool,
 }
@@ -79,7 +78,6 @@ impl StakedStreamLoadEMA {
             stats,
             max_staked_load_in_throttling_window,
             max_unstaked_load_in_throttling_window,
-            max_streams_per_ms,
             staked_throttling_on_load_threshold,
             staked_throttling_enabled: AtomicBool::new(false),
         }
@@ -186,10 +184,6 @@ impl StakedStreamLoadEMA {
                 }
             }
         }
-    }
-
-    pub(crate) fn max_streams_per_ms(&self) -> u64 {
-        self.max_streams_per_ms
     }
 }
 
