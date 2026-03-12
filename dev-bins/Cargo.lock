@@ -9356,7 +9356,6 @@ dependencies = [
 name = "solana-tps-client"
 version = "4.1.0-alpha.0"
 dependencies = [
- "bincode",
  "log",
  "solana-account",
  "solana-client",
@@ -9378,13 +9377,10 @@ dependencies = [
  "solana-signer",
  "solana-streamer",
  "solana-tpu-client",
- "solana-tpu-client-next",
  "solana-transaction",
  "solana-transaction-error",
  "solana-transaction-status",
  "thiserror 2.0.18",
- "tokio",
- "tokio-util 0.7.18",
 ]
 
 [[package]]
@@ -9437,7 +9433,6 @@ dependencies = [
  "solana-metrics",
  "solana-packet 4.1.0",
  "solana-pubkey 4.1.0",
- "solana-pubsub-client",
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-streamer",
@@ -9445,7 +9440,6 @@ dependencies = [
  "solana-tls-utils",
  "thiserror 2.0.18",
  "tokio",
- "tokio-stream",
  "tokio-util 0.7.18",
 ]
 
