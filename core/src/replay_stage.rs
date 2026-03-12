@@ -4688,6 +4688,7 @@ pub(crate) mod tests {
         crossbeam_channel::unbounded,
         itertools::Itertools,
         solana_account::{ReadableAccount, state_traits::StateMut},
+        solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_client::connection_cache::ConnectionCache,
         solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
         solana_entry::entry::{self, Entry},
@@ -4712,6 +4713,7 @@ pub(crate) mod tests {
             slot_status_notifier::SlotStatusNotifierInterface,
         },
         solana_runtime::{
+            bank::BankTestConfig,
             commitment::{BlockCommitment, VOTE_THRESHOLD_SIZE},
             genesis_utils::{GenesisConfigInfo, ValidatorVoteKeypairs},
         },
@@ -9198,7 +9200,16 @@ pub(crate) mod tests {
         num_keys: usize,
         generate_votes: Option<GenerateVotes>,
     ) -> (VoteSimulator, Blockstore) {
-        let mut vote_simulator = VoteSimulator::new(num_keys);
+        let ledger_path = get_tmp_ledger_path!();
+        let mut vote_simulator = VoteSimulator::new_with(
+            num_keys,
+            BankTestConfig {
+                accounts_db_config: AccountsDbConfig {
+                    bank_hash_details_dir: ledger_path.clone(),
+                    ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+                },
+            },
+        );
         let pubkeys: Vec<Pubkey> = vote_simulator
             .validator_keypairs
             .values()
@@ -9208,7 +9219,6 @@ pub(crate) mod tests {
             .map(|generate_votes| generate_votes(pubkeys))
             .unwrap_or_default();
         vote_simulator.fill_bank_forks(tree.clone(), &cluster_votes, true);
-        let ledger_path = get_tmp_ledger_path!();
         let blockstore = Blockstore::open(&ledger_path).unwrap();
         blockstore.add_tree(tree, false, true, 2, Hash::default());
         (vote_simulator, blockstore)
