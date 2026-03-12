@@ -41,13 +41,14 @@ use {
         set::IndexSet,
     },
     lru::LruCache,
+    rand::seq::IteratorRandom,
     rayon::{prelude::*, ThreadPool},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     std::{
         cmp::Ordering,
-        collections::{hash_map, BTreeMap, HashMap, VecDeque},
+        collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque},
         ops::{Bound, Index, IndexMut},
         sync::Mutex,
     },
@@ -90,7 +91,6 @@ pub struct Crds {
 pub enum CrdsError {
     DuplicatePush(/*num dups:*/ u8),
     InsertFailed,
-    UnknownStakes,
 }
 
 #[derive(Clone, Copy)]
@@ -625,35 +625,36 @@ impl Crds {
         10 * self.records.len() > 11 * cap
     }
 
-    /// Trims the table by dropping all values associated with the pubkeys with
-    /// the lowest stake, so that the number of unique pubkeys are bounded.
+    /// Trims the table so that the number of unique pubkeys are bounded.
     pub(crate) fn trim(
         &mut self,
         cap: usize, // Capacity hint for number of unique pubkeys.
         // Set of pubkeys to never drop.
-        // e.g. known validators, self pubkey, ...
-        keep: &[Pubkey],
+        // e.g. known validators, self pubkey, entrypoints, ...
+        keep: &HashSet<Pubkey>,
         stakes: &HashMap<Pubkey, u64>,
         now: u64,
-    ) -> Result</*num purged:*/ usize, CrdsError> {
+    ) -> usize {
         if self.should_trim(cap) {
             let size = self.records.len().saturating_sub(cap);
             self.drop(size, keep, stakes, now)
         } else {
-            Ok(0)
+            0
         }
     }
 
-    // Drops 'size' many pubkeys with the lowest stake.
+    // Drops 'size' many pubkeys with the lowest stake if stakes are known
+    // Otherwise select and drop a random sample of `size` many pubkeys
     fn drop(
         &mut self,
         size: usize,
-        keep: &[Pubkey],
+        keep: &HashSet<Pubkey>,
         stakes: &HashMap<Pubkey, u64>,
         now: u64,
-    ) -> Result</*num purged:*/ usize, CrdsError> {
+    ) -> usize {
         if stakes.values().all(|&stake| stake == 0) {
-            return Err(CrdsError::UnknownStakes);
+            // Stakes are unavailable, evict amount above cap
+            return self.drop_random(size, keep, now);
         }
         let mut keys: Vec<_> = self
             .records
@@ -674,7 +675,25 @@ impl Crds {
         for key in &keys {
             self.remove(key, now);
         }
-        Ok(keys.len())
+        keys.len()
+    }
+
+    // Drop `size` many pubkeys randomly
+    fn drop_random(&mut self, size: usize, keep: &HashSet<Pubkey>, now: u64) -> usize {
+        let mut rng = rand::thread_rng();
+        let keys: Vec<_> = self
+            .records
+            .iter()
+            .filter(|(pubkey, _)| !keep.contains(pubkey))
+            .choose_multiple(&mut rng, size)
+            .into_iter()
+            .flat_map(|(_, indices)| indices.iter().copied())
+            .map(|index| self.table.get_index(index).unwrap().0.clone())
+            .collect();
+        for key in &keys {
+            self.remove(key, now);
+        }
+        keys.len()
     }
 
     pub(crate) fn take_stats(&self) -> CrdsStats {
@@ -784,7 +803,12 @@ mod tests {
         solana_keypair::Keypair,
         solana_signer::Signer,
         solana_time_utils::timestamp,
-        std::{collections::HashSet, iter::repeat_with, net::Ipv4Addr, time::Duration},
+        std::{
+            collections::{HashMap, HashSet},
+            iter::repeat_with,
+            net::Ipv4Addr,
+            time::Duration,
+        },
     };
 
     #[test]
@@ -1357,7 +1381,7 @@ mod tests {
         assert!(!crds.should_trim(num_pubkeys));
         assert!(crds.should_trim(num_pubkeys * 5 / 6));
         let values: Vec<_> = crds.table.values().cloned().collect();
-        crds.drop(16, &[], &stakes, /*now=*/ 0).unwrap();
+        crds.drop(16, &HashSet::new(), &stakes, /*now=*/ 0);
         let purged: Vec<_> = {
             let purged: HashSet<_> = crds.purged.iter().map(|(hash, _)| hash).copied().collect();
             values
