@@ -1,9 +1,5 @@
 use {
-<<<<<<< HEAD
-    dashmap::{mapref::entry::Entry::Occupied, DashMap},
-=======
-    dashmap::{DashMap, mapref::entry::Entry as DashMapEntry},
->>>>>>> 803eae73c (Patches race in secondary index w.r.t. insert and remove (#10908))
+    dashmap::{mapref::entry::Entry as DashMapEntry, DashMap},
     log::*,
     solana_pubkey::Pubkey,
     solana_time_utils::AtomicInterval,
