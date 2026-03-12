@@ -1251,7 +1251,7 @@ pub mod custom_commission_collector {
 }
 
 pub mod enable_bls12_381_syscall {
-    solana_pubkey::declare_id!("b1sraWPVFdcUizB2LV5wQTeMuK8M313bi5bHjco5eVU");
+    solana_pubkey::declare_id!("b1sgUiJ3qu7hYm3tNDyyqZNQd6gLGJmJppnLNa93PCQ");
 }
 
 // SIMD-0437 feature gates
