@@ -88,7 +88,12 @@ impl<'ix_data> TransactionContext<'ix_data> {
         let transaction_frame = TransactionFrame {
             return_data_pubkey: Pubkey::default(),
             return_data_scratchpad: VmSlice::new(RETURN_DATA_SCRATCHPAD, 0),
-            cpi_scratchpad: VmSlice::new(0, 0),
+            cpi_scratchpad: VmSlice::new(
+                GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(
+                    GUEST_REGION_SIZE.saturating_mul(number_of_top_level_instructions as u64),
+                ),
+                0,
+            ),
             current_executing_instruction: 0,
             total_number_of_instructions_in_trace: number_of_top_level_instructions as u16,
             number_of_cpis_in_trace: 0,
@@ -292,14 +297,13 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 .total_number_of_instructions_in_trace
                 .saturating_add(1);
             instruction.index_of_caller_instruction = caller_index;
+            let next_ptr = self
+                .transaction_frame
+                .cpi_scratchpad
+                .ptr()
+                .saturating_add(GUEST_REGION_SIZE);
+            self.transaction_frame.cpi_scratchpad = VmSlice::new(next_ptr, 0);
         }
-
-        self.transaction_frame.cpi_scratchpad = VmSlice::new(
-            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(
-                self.transaction_frame.total_number_of_instructions_in_trace as u64,
-            )),
-            0,
-        );
 
         instruction.program_account_index_in_tx = program_index;
         instruction.configure_vm_slices(
