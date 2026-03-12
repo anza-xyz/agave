@@ -108,7 +108,11 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
         .expect("Expected to create a new shredder");
 
         // Generate header shreds for new slot
-        if send_header && self.migration_status.should_allow_block_markers(bank.slot()) {
+        if send_header
+            && self
+                .migration_status
+                .should_allow_block_markers(bank.slot())
+        {
             let header = produce_block_header(bank.parent_slot(), self.chained_merkle_root);
             let component = solana_entry::block_component::BlockComponent::new_block_marker(header);
             let header_shreds: Vec<_> = shredder

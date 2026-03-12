@@ -317,7 +317,9 @@ impl StandardBroadcastRun {
             .saturating_sub(bank.max_tick_height());
 
         let mut header_shreds = if send_header
-            && self.migration_status.should_allow_block_markers(bank.slot())
+            && self
+                .migration_status
+                .should_allow_block_markers(bank.slot())
         {
             let header = produce_block_header(self.parent, self.chained_merkle_root);
             self.component_to_shreds(

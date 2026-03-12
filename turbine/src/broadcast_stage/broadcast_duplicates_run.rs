@@ -198,7 +198,9 @@ impl BroadcastRun for BroadcastDuplicatesRun {
 
         // Generate header shreds for new slot
         let header_data_shreds = if send_header
-            && self.migration_status.should_allow_block_markers(bank.slot())
+            && self
+                .migration_status
+                .should_allow_block_markers(bank.slot())
         {
             let header = produce_block_header(bank.parent_slot(), self.chained_merkle_root);
             let component = solana_entry::block_component::BlockComponent::new_block_marker(header);
