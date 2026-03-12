@@ -1600,7 +1600,9 @@ impl Bank {
                 .transaction_processor
                 .program_runtime_environment
                 .clone();
-            let changed_program_runtime_environment = *upcoming_environment != *new_environment;
+            // Here we actually want to compare the content of the environments, thus use `inner`
+            let changed_program_runtime_environment =
+                upcoming_environment.inner() != new_environment.inner();
             if changed_program_runtime_environment {
                 upcoming_environment = new_environment;
                 epoch_boundary_preparation.programs_to_recompile = program_cache
@@ -4449,7 +4451,7 @@ impl Bank {
             .as_ref()
             .unwrap_or(&ComputeBudget::new_with_defaults(simd_0268_active))
             .to_budget();
-        Arc::new(
+        ProgramRuntimeEnvironment::from(
             create_program_runtime_environment(
                 &feature_set.runtime_features(),
                 &compute_budget,

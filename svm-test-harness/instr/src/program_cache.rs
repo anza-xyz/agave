@@ -42,7 +42,7 @@ pub fn add_program(
     feature_set: &SVMFeatureSet,
     compute_budget: &ComputeBudget,
 ) {
-    let program_runtime_environment = Arc::new(
+    let program_runtime_environment = ProgramRuntimeEnvironment::from(
         create_program_runtime_environment(
             feature_set,
             &compute_budget.to_budget(),

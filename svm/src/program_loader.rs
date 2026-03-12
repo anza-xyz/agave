@@ -463,7 +463,7 @@ mod tests {
         let loader = bpf_loader_upgradeable::id();
         let size = buffer.len();
         let slot: Slot = 2;
-        let environment = ProgramRuntimeEnvironment::new(BuiltinProgram::new_mock());
+        let environment = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
 
         let result = ProgramCacheEntry::new(
             &loader,
@@ -790,17 +790,11 @@ mod tests {
             .unwrap();
             assert_ne!(
                 is_upcoming_env,
-                Arc::ptr_eq(
-                    result.program.get_environment().unwrap(),
-                    &current_environment,
-                )
+                result.program.get_environment().unwrap() == &current_environment,
             );
             assert_eq!(
                 is_upcoming_env,
-                Arc::ptr_eq(
-                    result.program.get_environment().unwrap(),
-                    &upcoming_environment,
-                )
+                result.program.get_environment().unwrap() == &upcoming_environment,
             );
         }
     }

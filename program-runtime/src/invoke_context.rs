@@ -586,6 +586,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         let mut vm = EbpfVm::new(
             self.environment_config
                 .program_runtime_environment_for_execution
+                .inner()
                 .clone(),
             SBPFVersion::V0,
             // Removes lifetime tracking

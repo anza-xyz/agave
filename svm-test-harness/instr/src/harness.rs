@@ -7,7 +7,7 @@ use {
     solana_instruction_error::InstructionError,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext, mock_compile_message},
-        loaded_programs::ProgramCacheForTxBatch,
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -16,7 +16,7 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_transaction_context::transaction::TransactionContext,
-    std::{rc::Rc, sync::Arc},
+    std::rc::Rc,
 };
 
 /// Default callback with no precompile support.
@@ -72,7 +72,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         sanitized_message.num_instructions(),
     );
 
-    let environment = Arc::new(
+    let environment = ProgramRuntimeEnvironment::from(
         create_program_runtime_environment(
             &input.feature_set,
             &compute_budget.to_budget(),

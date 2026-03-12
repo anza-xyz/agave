@@ -395,5 +395,5 @@ pub fn create_custom_loader() -> ProgramRuntimeEnvironment {
         .expect("Registration failed");
     SyscallGetEpochScheduleSysvar::register(&mut loader, "sol_get_epoch_schedule_sysvar")
         .expect("Registration failed");
-    Arc::new(loader)
+    ProgramRuntimeEnvironment::from(loader)
 }

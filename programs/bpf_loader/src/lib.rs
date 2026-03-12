@@ -1144,9 +1144,13 @@ mod test_utils {
     use solana_program_runtime::loaded_programs::LoadProgramMetrics;
     #[cfg(feature = "svm-internal")]
     use {
-        super::*, agave_syscalls::create_program_runtime_environment,
-        solana_account::ReadableAccount, solana_loader_v4_interface::state::LoaderV4State,
-        solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
+        super::*,
+        agave_syscalls::create_program_runtime_environment,
+        solana_account::ReadableAccount,
+        solana_loader_v4_interface::state::LoaderV4State,
+        solana_program_runtime::loaded_programs::{
+            DELAY_VISIBILITY_SLOT_OFFSET, ProgramRuntimeEnvironment,
+        },
         solana_sdk_ids::loader_v4,
     };
 
@@ -1192,11 +1196,10 @@ mod test_utils {
                     .data()
                     .get(programdata_data_offset.min(account.data().len())..)
                     .unwrap();
-                let program_runtime_environment = program_runtime_environment.clone();
                 let effective_slot = DELAY_VISIBILITY_SLOT_OFFSET;
                 let loaded_program = ProgramCacheEntry::new(
                     owner,
-                    program_runtime_environment,
+                    ProgramRuntimeEnvironment::from_ref(&program_runtime_environment).clone(),
                     0,
                     effective_slot,
                     programdata,
@@ -1229,8 +1232,8 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_instruction::{AccountMeta, error::InstructionError},
         solana_program_runtime::{
-            invoke_context::mock_process_instruction, vm::calculate_heap_cost,
-            with_mock_invoke_context,
+            invoke_context::mock_process_instruction, loaded_programs::ProgramRuntimeEnvironment,
+            vm::calculate_heap_cost, with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
@@ -3371,7 +3374,7 @@ mod tests {
         )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
-        let env = Arc::new(BuiltinProgram::new_mock());
+        let env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
         let program = ProgramCacheEntry {
             program: ProgramCacheEntryType::Unloaded(env),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
@@ -3413,7 +3416,7 @@ mod tests {
         )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
-        let env = Arc::new(BuiltinProgram::new_mock());
+        let env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
         let program = ProgramCacheEntry {
             program: ProgramCacheEntryType::Unloaded(env),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
