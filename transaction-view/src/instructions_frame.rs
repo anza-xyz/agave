@@ -449,12 +449,14 @@ mod tests {
 
     #[test]
     fn test_txv1_instruction_data() {
-        let mut message = solana_message::v1::Message::default();
-        message.instructions = vec![CompiledInstruction {
-            program_id_index: 0,
-            accounts: vec![1, 2, 3],
-            data: vec![4, 5, 6, 7, 8, 9, 10],
-        }];
+        let message = solana_message::v1::Message {
+            instructions: vec![CompiledInstruction {
+                program_id_index: 0,
+                accounts: vec![1, 2, 3],
+                data: vec![4, 5, 6, 7, 8, 9, 10],
+            }],
+            ..solana_message::v1::Message::default()
+        };
 
         let serialized = solana_message::v1::serialize(&message);
 
@@ -476,19 +478,21 @@ mod tests {
 
     #[test]
     fn test_txv1_instructions_iterator() {
-        let mut message = solana_message::v1::Message::default();
-        message.instructions = vec![
-            CompiledInstruction {
-                program_id_index: 0,
-                accounts: vec![1, 2, 3],
-                data: vec![4, 5, 6, 7, 8, 9, 10],
-            },
-            CompiledInstruction {
-                program_id_index: 10,
-                accounts: vec![11, 12],
-                data: vec![13, 14, 15, 16, 17, 18, 19, 20],
-            },
-        ];
+        let message = solana_message::v1::Message {
+            instructions: vec![
+                CompiledInstruction {
+                    program_id_index: 0,
+                    accounts: vec![1, 2, 3],
+                    data: vec![4, 5, 6, 7, 8, 9, 10],
+                },
+                CompiledInstruction {
+                    program_id_index: 10,
+                    accounts: vec![11, 12],
+                    data: vec![13, 14, 15, 16, 17, 18, 19, 20],
+                },
+            ],
+            ..solana_message::v1::Message::default()
+        };
 
         let serialized = solana_message::v1::serialize(&message);
 
