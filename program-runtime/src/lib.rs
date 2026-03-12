@@ -14,6 +14,7 @@ pub mod memory;
 pub mod serialization;
 pub mod stable_log;
 pub mod sysvar_cache;
+mod time;
 pub mod vm;
 
 // re-exports for macros

@@ -118,7 +118,7 @@ pub(crate) fn process_instruction_inner<'a>(
 
     // Program Invocation
     let mut get_or_create_executor_time = Measure::start("get_or_create_executor_time");
-    let executor = invoke_context
+    let cache_entry = invoke_context
         .program_cache_for_tx_batch
         .find(program_id)
         .ok_or_else(|| {
@@ -128,7 +128,7 @@ pub(crate) fn process_instruction_inner<'a>(
     get_or_create_executor_time.stop();
     invoke_context.timings.get_or_create_executor_us += get_or_create_executor_time.as_us();
 
-    match &executor.program {
+    match &cache_entry.program {
         ProgramCacheEntryType::FailedVerification(_)
         | ProgramCacheEntryType::Closed
         | ProgramCacheEntryType::DelayVisibility => {
@@ -136,15 +136,7 @@ pub(crate) fn process_instruction_inner<'a>(
             Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>)
         }
         ProgramCacheEntryType::Loaded(executable) => {
-            let mut timer = Measure::start("execute");
-            let result = execute(executable, invoke_context);
-            timer.stop();
-            if executable.get_compiled_program().is_some() {
-                executor.stats.jit_executed(timer.as_us());
-            } else {
-                executor.stats.interpreter_executed(timer.as_us());
-            }
-            result
+            execute(executable, invoke_context, &cache_entry)
         }
         _ => Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>),
     }

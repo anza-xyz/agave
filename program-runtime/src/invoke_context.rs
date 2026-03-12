@@ -18,6 +18,7 @@ use {
         },
         stable_log,
         sysvar_cache::SysvarCache,
+        time::Stopwatch,
     },
     solana_hash::Hash,
     solana_instruction::{Instruction, error::InstructionError},
@@ -36,7 +37,6 @@ use {
     solana_svm_callback::InvokeContextCallback,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::{LogCollector, ic_msg},
-    solana_svm_measure::measure::Measure,
     solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::{
@@ -206,7 +206,7 @@ pub struct InvokeContext<'a, 'ix_data> {
     compute_meter: RefCell<u64>,
     log_collector: Option<Rc<RefCell<LogCollector>>>,
     /// Latest measurement not yet accumulated in [ExecuteDetailsTimings::execute_us]
-    pub execute_time: Option<Measure>,
+    pub(crate) execute_time: Stopwatch,
     pub timings: ExecuteDetailsTimings,
     pub syscall_context: Vec<Option<SyscallContext>>,
     /// Pairs of index in TX instruction trace and VM register trace
@@ -233,7 +233,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             compute_budget,
             execution_cost,
             compute_meter: RefCell::new(compute_budget.compute_unit_limit),
-            execute_time: None,
+            execute_time: Stopwatch::default(),
             timings: ExecuteDetailsTimings::default(),
             syscall_context: Vec::new(),
             register_traces: Vec::new(),
@@ -544,7 +544,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         timings: &mut ExecuteTimings,
     ) -> Result<(), InstructionError> {
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
-        let process_executable_chain_time = Measure::start("process_executable_chain_time");
+        let mut process_executable_chain_time = Stopwatch::new_running();
 
         let builtin_id = {
             let owner_id = instruction_context.get_program_owner()?;
@@ -628,7 +628,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         timings
             .execute_accessories
             .process_instructions
-            .process_executable_chain_us += process_executable_chain_time.end_as_us();
+            .process_executable_chain_us += process_executable_chain_time.read_us();
         result
     }
 

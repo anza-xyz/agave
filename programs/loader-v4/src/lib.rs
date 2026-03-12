@@ -469,7 +469,7 @@ fn process_instruction_inner<'a>(
         .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
     } else {
         let mut get_or_create_executor_time = Measure::start("get_or_create_executor_time");
-        let loaded_program = invoke_context
+        let cache_entry = invoke_context
             .program_cache_for_tx_batch
             .find(program_id)
             .ok_or_else(|| {
@@ -478,14 +478,16 @@ fn process_instruction_inner<'a>(
             })?;
         get_or_create_executor_time.stop();
         invoke_context.timings.get_or_create_executor_us += get_or_create_executor_time.as_us();
-        match &loaded_program.program {
+        match &cache_entry.program {
             ProgramCacheEntryType::FailedVerification(_)
             | ProgramCacheEntryType::Closed
             | ProgramCacheEntryType::DelayVisibility => {
                 ic_logger_msg!(log_collector, "Program is not deployed");
                 Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>)
             }
-            ProgramCacheEntryType::Loaded(executable) => execute(executable, invoke_context),
+            ProgramCacheEntryType::Loaded(executable) => {
+                execute(executable, invoke_context, &cache_entry)
+            }
             _ => {
                 Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>)
             }

@@ -1,7 +1,10 @@
 #[cfg(feature = "metrics")]
 use solana_svm_timings::ExecuteDetailsTimings;
 use {
-    crate::invoke_context::{BuiltinFunctionRegisterer, InvokeContext},
+    crate::{
+        invoke_context::{BuiltinFunctionRegisterer, InvokeContext},
+        time::Stopwatch,
+    },
     log::{debug, error, log_enabled, trace},
     percentage::PercentageInteger,
     solana_clock::{Epoch, Slot},
@@ -10,7 +13,6 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
-    solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::{
         rand::{Rng, rng},
         sync::{
@@ -250,7 +252,7 @@ impl ProgramStatistics {
             .expect("unreachable: closure always returns a Some");
     }
 
-    /// JIT compilation happened. Record information about this event.
+    /// Record information about how long it took to JIT compile a program.
     pub fn jit_compiled(&self, duration_us: u64) {
         let ord = Ordering::Relaxed;
         self.compilations.fetch_add(1, ord);
@@ -258,7 +260,7 @@ impl ProgramStatistics {
         Self::observe_ema::<COMPILATION_EMA_WINDOW_SIZE>(&self.compilation_time_ema, duration_us);
     }
 
-    /// JIT compilation happened. Record information about this event.
+    /// Record information about how long it took to execute a JIT-compiled program.
     pub fn jit_executed(&self, duration_us: u64) {
         let ord = Ordering::Relaxed;
         self.jit_invocations.fetch_add(1, ord);
@@ -266,7 +268,7 @@ impl ProgramStatistics {
         Self::observe_ema::<EXECUTION_EMA_WINDOW_SIZE>(&self.jit_execution_time_ema, duration_us);
     }
 
-    /// JIT compilation happened. Record information about this event.
+    /// Record information about how long it took to interpret a program.
     pub fn interpreter_executed(&self, duration_us: u64) {
         let ord = Ordering::Relaxed;
         self.interpreted_invocations.fetch_add(1, ord);
@@ -275,6 +277,9 @@ impl ProgramStatistics {
         Self::observe_ema::<EXECUTION_EMA_WINDOW_SIZE>(&self.interpretation_time_ema, duration_us);
     }
 
+    /// Merge observations from another instance of [`ProgramStatistics`].
+    ///
+    /// This is a non-trivial operation, use sparingly.
     pub fn merge_from(&self, other: &ProgramStatistics) {
         let ord = Ordering::Relaxed;
         self.uses.fetch_add(other.uses.load(ord), ord);
@@ -538,30 +543,27 @@ impl ProgramCacheEntry {
         reloading: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let entry_stats = ProgramStatistics::default();
-        #[cfg(feature = "metrics")]
-        let load_elf_time = Measure::start("load_elf_time");
-        let executable = Executable::load(elf_bytes, program_runtime_environment.clone())?;
+        let mut stopwatch = Stopwatch::new_running();
 
+        let executable = Executable::load(elf_bytes, program_runtime_environment.clone())?;
         #[cfg(feature = "metrics")]
         {
-            metrics.load_elf_us = load_elf_time.end_as_us();
+            metrics.load_elf_us = stopwatch.take_us();
         }
 
         if !reloading {
-            #[cfg(feature = "metrics")]
-            let verify_code_time = Measure::start("verify_code_time");
             executable.verify::<RequisiteVerifier>()?;
             #[cfg(feature = "metrics")]
             {
-                metrics.verify_code_us = verify_code_time.end_as_us();
+                metrics.verify_code_us = stopwatch.take_us();
             }
         }
 
         #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
         {
-            let jit_compile_time = Measure::start("jit_compile_time");
+            stopwatch.reset();
             executable.jit_compile()?;
-            let jit_compile_time = jit_compile_time.end_as_us();
+            let jit_compile_time = stopwatch.take_us();
             entry_stats.jit_compiled(jit_compile_time);
             #[cfg(feature = "metrics")]
             {
