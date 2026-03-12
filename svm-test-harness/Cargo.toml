@@ -13,7 +13,7 @@ publish = false
 [[bin]]
 name = "test_exec_instr"
 path = "bin/test_exec_instr.rs"
-required-features = ["fuzz"]
+required-features = ["fuzz", "dev-context-only-utils"]
 
 [features]
 agave-unstable-api = []

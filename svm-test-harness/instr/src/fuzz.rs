@@ -1,8 +1,9 @@
 #![allow(clippy::missing_safety_doc)]
 
+#[cfg(feature = "dev-context-only-utils")]
+use crate::execute_instr_with_callback;
 use {
     crate::{
-        execute_instr_with_callback,
         fixture::{
             instr_context::InstrContext,
             proto::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
@@ -62,6 +63,7 @@ pub unsafe extern "C" fn sol_compat_init(_log_level: i32) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sol_compat_fini() {}
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects> {
     let cu_avail = input.cu_avail;
 
@@ -120,6 +122,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
     instr_effects.map(Into::into)
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sol_compat_instr_execute_v1(
     out_ptr: *mut u8,

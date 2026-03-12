@@ -18,7 +18,7 @@ cargo_build_sbf_sanity() {
   pushd programs/sbf
   # Generate the sanity programs list
   if [ ! -f target/sanity_programs.txt ]; then
-    cargo test --features="sbf_rust,sbf_sanity_list" --test programs test_program_sbf_sanity
+    cargo test --features="sbf_rust,sbf_sanity_list,dev_context_only_utils" --test programs test_program_sbf_sanity
   fi
   mapfile -t rust_programs < <(cat target/sanity_programs.txt)
 
@@ -32,7 +32,7 @@ cargo_build_sbf_sanity() {
   done
   popd
 
-  SBF_OUT_DIR=target/deploy cargo test --features=sbf_rust --test programs test_program_sbf_sanity
+  SBF_OUT_DIR=target/deploy cargo test --features="sbf_rust,dev_context_only_utils" --test programs test_program_sbf_sanity
   popd
 }
 

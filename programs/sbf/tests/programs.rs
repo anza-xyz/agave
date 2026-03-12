@@ -271,7 +271,7 @@ fn test_program_sbf_sanity() {
         }
     }
 
-    #[cfg(not(feature = "sbf_sanity_list"))]
+    #[cfg(all(not(feature = "sbf_sanity_list"), feature = "dev_context_only_utils"))]
     for program in programs.iter() {
         println!("Test program: {:?}", program.0);
 
@@ -324,7 +324,10 @@ fn test_program_sbf_sanity() {
 }
 
 #[test]
-#[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
+#[cfg(all(
+    any(feature = "sbf_c", feature = "sbf_rust"),
+    feature = "dev_context_only_utils"
+))]
 fn test_program_sbf_loader_deprecated() {
     agave_logger::setup();
 
@@ -460,7 +463,7 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "dev_context_only_utils"))]
 fn test_program_sbf_duplicate_accounts() {
     agave_logger::setup();
 
@@ -574,7 +577,7 @@ fn test_program_sbf_duplicate_accounts() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "dev_context_only_utils"))]
 fn test_program_sbf_error_handling() {
     agave_logger::setup();
 
@@ -669,7 +672,10 @@ fn test_program_sbf_error_handling() {
 }
 
 #[test]
-#[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
+#[cfg(all(
+    any(feature = "sbf_c", feature = "sbf_rust"),
+    feature = "dev_context_only_utils"
+))]
 fn test_return_data_and_log_data_syscall() {
     agave_logger::setup();
 
@@ -1398,7 +1404,7 @@ fn test_program_sbf_invoke_sanity() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "dev_context_only_utils"))]
 fn test_program_sbf_program_id_spoofing() {
     let spoof1_elf = harness::file::load_program_elf("solana_sbf_rust_spoof1");
     let spoof1_system_elf = harness::file::load_program_elf("solana_sbf_rust_spoof1_system");
@@ -1528,7 +1534,7 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "dev_context_only_utils"))]
 fn test_program_sbf_ro_modify() {
     agave_logger::setup();
 
@@ -1579,7 +1585,7 @@ fn test_program_sbf_ro_modify() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "dev_context_only_utils"))]
 fn test_program_sbf_call_depth() {
     agave_logger::setup();
 
@@ -1617,7 +1623,7 @@ fn test_program_sbf_call_depth() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "dev_context_only_utils"))]
 fn test_program_sbf_compute_budget() {
     agave_logger::setup();
 
@@ -1657,6 +1663,7 @@ fn test_program_sbf_compute_budget() {
 }
 
 #[test]
+#[cfg(feature = "dev_context_only_utils")]
 fn assert_instruction_count() {
     agave_logger::setup();
 
@@ -1816,7 +1823,7 @@ fn test_program_sbf_instruction_introspection() {
     [1, 10, 50, 100, 255, 500, 1000, 1024]  // MAX_RETURN_DATA = 1024
 )]
 #[allow(clippy::arithmetic_side_effects)]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "dev_context_only_utils"))]
 fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_len: usize) {
     agave_logger::setup();
 
@@ -2354,7 +2361,10 @@ fn test_program_sbf_invoke_in_same_tx_as_undeployment() {
 }
 
 #[test]
-#[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
+#[cfg(all(
+    any(feature = "sbf_c", feature = "sbf_rust"),
+    feature = "dev_context_only_utils"
+))]
 fn test_program_sbf_disguised_as_sbf_loader() {
     agave_logger::setup();
 
@@ -2406,7 +2416,7 @@ fn test_program_sbf_disguised_as_sbf_loader() {
 }
 
 #[test]
-#[cfg(feature = "sbf_c")]
+#[cfg(all(feature = "sbf_c", feature = "dev_context_only_utils"))]
 fn test_program_reads_from_program_account() {
     use solana_loader_v4_interface::state::LoaderV4State;
     agave_logger::setup();
@@ -2467,7 +2477,7 @@ fn test_program_reads_from_program_account() {
 }
 
 #[test]
-#[cfg(feature = "sbf_c")]
+#[cfg(all(feature = "sbf_c", feature = "dev_context_only_utils"))]
 fn test_program_sbf_c_dup() {
     agave_logger::setup();
 
@@ -2711,7 +2721,7 @@ fn test_program_sbf_upgrade_via_cpi() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "dev_context_only_utils"))]
 fn test_program_sbf_ro_account_modify() {
     agave_logger::setup();
 
@@ -4677,7 +4687,7 @@ fn test_deplete_cost_meter_with_access_violation() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "dev_context_only_utils"))]
 fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
     agave_logger::setup();
 
@@ -5759,7 +5769,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
     [1, 10, 50, 100, 255, 500, 1000, 1024]
 )]
 #[allow(clippy::arithmetic_side_effects)]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", feature = "dev_context_only_utils"))]
 fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data_len: usize) {
     agave_logger::setup();
 
