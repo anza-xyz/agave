@@ -103,7 +103,6 @@ mod tests {
         solana_signer::Signer,
         solana_svm_callback::InvokeContextCallback,
         solana_svm_feature_set::SVMFeatureSet,
-        solana_svm_transaction::svm_message::SVMStaticMessage,
         solana_transaction_context::transaction::TransactionContext,
         std::{
             collections::{HashMap, HashSet},
