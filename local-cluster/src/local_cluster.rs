@@ -190,6 +190,7 @@ impl LocalCluster {
                 .0,
         ];
         config.tower_storage = Arc::new(FileTowerStorage::new(ledger_path.to_path_buf()));
+        config.accounts_db_config.bank_hash_details_dir = ledger_path.to_path_buf();
 
         let snapshot_config = &mut config.snapshot_config;
         let dummy: PathBuf = DUMMY_SNAPSHOT_CONFIG_PATH_MARKER.into();
