@@ -147,7 +147,7 @@ dependencies = [
  "bzip2",
  "chrono",
  "clap 2.33.3",
- "console 0.16.2",
+ "console 0.16.3",
  "crossbeam-channel",
  "ctrlc",
  "dirs-next",
@@ -406,7 +406,7 @@ dependencies = [
  "caps",
  "chrono",
  "clap 2.33.3",
- "console 0.16.2",
+ "console 0.16.3",
  "core_affinity",
  "crossbeam-channel",
  "fd-lock",
@@ -1933,13 +1933,12 @@ dependencies = [
 
 [[package]]
 name = "console"
-version = "0.16.2"
+version = "0.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03e45a4a8926227e4197636ba97a9fc9b00477e9f4bd711395687c5f0734bec4"
+checksum = "d64e8af5551369d19cf50138de61f1c42074ab970f74e99be916646777f8fc87"
 dependencies = [
  "encode_unicode",
  "libc",
- "once_cell",
  "unicode-width 0.2.0",
  "windows-sys 0.61.0",
 ]
@@ -2447,7 +2446,7 @@ version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25f104b501bf2364e78d0d3974cbc774f738f5865306ed128e1e0d7499c0ad96"
 dependencies = [
- "console 0.16.2",
+ "console 0.16.3",
  "shell-words",
  "tempfile",
  "zeroize",
@@ -3904,7 +3903,7 @@ version = "0.18.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25470f23803092da7d239834776d653104d551bc4d7eacaf31e6837854b8e9eb"
 dependencies = [
- "console 0.16.2",
+ "console 0.16.3",
  "portable-atomic",
  "unicode-width 0.2.0",
  "unit-prefix",
@@ -7498,7 +7497,7 @@ dependencies = [
  "bincode",
  "bs58",
  "clap 2.33.3",
- "console 0.16.2",
+ "console 0.16.3",
  "const_format",
  "criterion-stats",
  "crossbeam-channel",
@@ -7600,7 +7599,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap 2.33.3",
- "console 0.16.2",
+ "console 0.16.3",
  "humantime",
  "indicatif",
  "pretty-hex",
@@ -9723,7 +9722,7 @@ name = "solana-remote-wallet"
 version = "4.1.0-alpha.0"
 dependencies = [
  "assert_matches",
- "console 0.16.2",
+ "console 0.16.3",
  "dialoguer",
  "hidapi",
  "log",
@@ -11045,7 +11044,7 @@ dependencies = [
  "bincode",
  "chrono",
  "clap 2.33.3",
- "console 0.16.2",
+ "console 0.16.3",
  "csv",
  "ctrlc",
  "indexmap 2.13.0",
