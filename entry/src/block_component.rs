@@ -517,25 +517,16 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for BlockComponent {
     type Dst = Self;
 
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        // Read the entry count (first 8 bytes) to determine variant
-        let count_bytes = reader.fill_array::<8>()?;
-        let entry_count = u64::from_le_bytes(*count_bytes);
+        let entries =
+            <WincodeVec<Entry, MaxDataShredsLen> as SchemaRead<'de, C>>::get(reader.by_ref())?;
 
-        if entry_count == 0 {
-            // This is a BlockMarker - consume the count bytes and read the marker
-            // SAFETY: fill_array::<8>() above guarantees at least 8 bytes are available
-            unsafe { reader.consume_unchecked(8) };
+        if entries.is_empty() {
             dst.write(Self::BlockMarker(<VersionedBlockMarker as SchemaRead<
                 C,
             >>::get(reader)?));
+        } else if entries.len() >= Self::MAX_ENTRIES {
+            return Err(wincode::ReadError::Custom("Too many entries"));
         } else {
-            let entries: Vec<Entry> =
-                <WincodeVec<Entry, MaxDataShredsLen> as SchemaRead<'de, C>>::get(reader)?;
-
-            if entries.len() >= Self::MAX_ENTRIES {
-                return Err(wincode::ReadError::Custom("Too many entries"));
-            }
-
             dst.write(Self::EntryBatch(entries));
         }
 
