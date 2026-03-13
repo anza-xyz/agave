@@ -10,17 +10,18 @@ use {
     solana_rpc_client_api::config::RpcBlockConfig,
     solana_runtime::bank_client::BankClient,
     solana_signature::Signature,
-    solana_transaction::Transaction,
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionResult as Result,
     solana_transaction_status::UiConfirmedBlock,
 };
 
 impl TpsClient for BankClient {
-    fn send_transaction(&self, transaction: Transaction) -> TpsClientResult<Signature> {
-        AsyncClient::async_send_transaction(self, transaction).map_err(|err| err.into())
+    fn send_transaction(&self, transaction: VersionedTransaction) -> TpsClientResult<Signature> {
+        AsyncClient::async_send_versioned_transaction(self, transaction).map_err(|err| err.into())
     }
-    fn send_batch(&self, transactions: Vec<Transaction>) -> TpsClientResult<()> {
-        AsyncClient::async_send_batch(self, transactions).map_err(|err| err.into())
+    fn send_batch(&self, transactions: Vec<VersionedTransaction>) -> TpsClientResult<()> {
+        AsyncClient::async_send_versioned_transaction_batch(self, transactions)
+            .map_err(|err| err.into())
     }
     fn get_latest_blockhash(&self) -> TpsClientResult<Hash> {
         SyncClient::get_latest_blockhash(self).map_err(|err| err.into())
