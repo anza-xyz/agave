@@ -287,8 +287,14 @@ pub(crate) mod external {
                     Some(message) => {
                         did_work = true;
                         self.sender.sync();
+
+                        // Process message, if bank is unavailable enable draining for the
+                        // remainder of the current batch (i.e. what our `receiver.sync()`
+                        // fetched).
                         should_drain_executes |=
                             self.process_message(message, should_drain_executes)?;
+
+                        // Publish our send & read offsets.
                         self.sender.commit();
                         receiver.finalize();
                     }
