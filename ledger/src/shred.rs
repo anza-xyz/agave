@@ -243,10 +243,10 @@ enum ShredVariant {
     // proof_size is the number of Merkle proof entries, and is encoded in the
     // lowest 4 bits of the binary representation. The first 4 bits identify
     // the shred variant:
-    //   0b0110_????  MerkleCode chained
-    //   0b0111_????  MerkleCode chained resigned
-    //   0b1001_????  MerkleData chained
-    //   0b1011_????  MerkleData chained resigned
+    //   0b0110_???? MerkleCode
+    //   0b0111_???? MerkleCode resigned
+    //   0b1001_???? MerkleData
+    //   0b1011_???? MerkleData resigned
     MerkleCode { proof_size: u8, resigned: bool }, // 0b01??_????
     MerkleData { proof_size: u8, resigned: bool }, // 0b10??_????
 }
