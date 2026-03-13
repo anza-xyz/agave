@@ -53,6 +53,7 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { workspace = true }
+agave-votor-messages = { path = "../votor-messages", features = ["dev-context-only-utils"] }
 assert_matches = { workspace = true }
 bencher = { workspace = true }
 bs58 = { workspace = true }

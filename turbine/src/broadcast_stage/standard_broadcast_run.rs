@@ -584,6 +584,7 @@ mod test {
         solana_runtime::bank::Bank,
         solana_signer::Signer,
         std::{ops::Deref, sync::Arc, time::Duration},
+        test_case::test_case,
     };
 
     #[allow(clippy::type_complexity)]
@@ -665,8 +666,9 @@ mod test {
         assert!(shred.verify(&keypair.pubkey()));
     }
 
-    #[test]
-    fn test_slot_interrupt() {
+    #[test_case(MigrationStatus::default(), 1 ; "pre_migration")]
+    #[test_case(MigrationStatus::post_migration_status(), 2 ; "alpenglow_enabled")]
+    fn test_slot_interrupt(migration_status: MigrationStatus, shred_multiplier: u64) {
         // Setup
         let num_shreds_per_slot = DATA_SHREDS_PER_FEC_BLOCK as u64;
         let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
@@ -683,7 +685,7 @@ mod test {
         // Step 1: Make an incomplete transmission for slot 0
         let (votor_event_sender, _votor_event_receiver) = unbounded();
         let mut standard_broadcast_run =
-            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
+            StandardBroadcastRun::new(0, Arc::new(migration_status), votor_event_sender);
         standard_broadcast_run
             .test_process_receive_results(
                 &leader_keypair,
@@ -694,10 +696,10 @@ mod test {
                 &bank_forks,
             )
             .unwrap();
-        // Since this is a new slot, it includes both header shreds and component shreds
+        // When alpenglow is enabled, new slots include both header and component shreds
         assert_eq!(
             standard_broadcast_run.next_shred_index as u64,
-            2 * num_shreds_per_slot
+            shred_multiplier * num_shreds_per_slot
         );
         assert_eq!(standard_broadcast_run.slot, 0);
         assert_eq!(standard_broadcast_run.parent, 0);
@@ -729,10 +731,9 @@ mod test {
         );
         // Try to fetch ticks from blockstore, nothing should break
         assert_eq!(blockstore.get_slot_entries(0, 0).unwrap(), ticks0);
-        // Now with block headers, we have 2x shreds, so fetch from 2 * num_shreds_per_slot
         assert_eq!(
             blockstore
-                .get_slot_entries(0, 2 * num_shreds_per_slot)
+                .get_slot_entries(0, shred_multiplier * num_shreds_per_slot)
                 .unwrap(),
             vec![],
         );
@@ -767,10 +768,10 @@ mod test {
 
         // The shred index should have reset to 0, which makes it possible for the
         // index < the previous shred index for slot 0
-        // Since this is a new slot, it includes both header shreds and component shreds
+        // When alpenglow is enabled, new slots include both header and component shreds
         assert_eq!(
             standard_broadcast_run.next_shred_index as usize,
-            2 * DATA_SHREDS_PER_FEC_BLOCK
+            shred_multiplier as usize * DATA_SHREDS_PER_FEC_BLOCK
         );
         assert_eq!(standard_broadcast_run.slot, 2);
         assert_eq!(standard_broadcast_run.parent, 0);
