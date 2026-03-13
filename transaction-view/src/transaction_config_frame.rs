@@ -1,6 +1,6 @@
 use {
     crate::{
-        bytes::{advance_offset_for_array, check_remaining},
+        bytes::{advance_offset_for_array, check_remaining, unchecked_read_slice_data},
         result::{Result, TransactionViewError},
     },
     solana_program_runtime::execution_budget::MIN_HEAP_FRAME_BYTES,
@@ -40,12 +40,6 @@ pub(crate) struct TransactionConfigFrame {
 
     /// Number of 4-byte words in ConfigValues.
     pub(crate) num_values: u8,
-
-    /// priority fee in lamports
-    pub(crate) priority_fee_lamports: u64,
-    pub(crate) compute_unit_limit: u32,
-    pub(crate) loaded_accounts_data_size_limit: u32,
-    pub(crate) requested_heap_size: u32,
 }
 
 #[allow(dead_code)]
@@ -61,10 +55,6 @@ impl TransactionConfigFrame {
             mask: 0,
             values_offset: 0,
             num_values: 0,
-            priority_fee_lamports: 0,
-            compute_unit_limit: 0,
-            loaded_accounts_data_size_limit: 0,
-            requested_heap_size: MIN_HEAP_FRAME_BYTES,
         }
     }
 
@@ -105,25 +95,12 @@ impl TransactionConfigFrame {
         // advance offset
         advance_offset_for_array::<u32>(bytes, offset, num_values as u16)?;
 
-        // create frame with default config values
-        let mut frame = Self {
+        Ok(Self {
             mask_offset,
             mask,
             values_offset,
             num_values,
-            priority_fee_lamports: 0,
-            compute_unit_limit: 0,
-            loaded_accounts_data_size_limit: 0,
-            requested_heap_size: MIN_HEAP_FRAME_BYTES,
-        };
-
-        // parse and read actual config values if set
-        frame.priority_fee_lamports(bytes)?;
-        frame.compute_unit_limit(bytes)?;
-        frame.loaded_accounts_data_size_limit(bytes)?;
-        frame.requested_heap_size(bytes)?;
-
-        Ok(frame)
+        })
     }
 
     /// Validate mask semantics.
@@ -140,6 +117,7 @@ impl TransactionConfigFrame {
             return Err(TransactionViewError::SanitizeError);
         }
 
+        // priority fee uses first 2 bits
         let bit0 = Self::has_bit(mask, 0);
         let bit1 = Self::has_bit(mask, 1);
         if bit0 ^ bit1 {
@@ -152,70 +130,6 @@ impl TransactionConfigFrame {
     #[inline(always)]
     fn has_bit(mask: u32, bit: u8) -> bool {
         bit < 32 && ((mask >> bit) & 1) != 0
-    }
-
-    /// Bits 0 and 1 form one logical 8-byte priority-fee field.
-    #[inline(always)]
-    fn priority_fee_lamports(&mut self, bytes: &[u8]) -> Result<()> {
-        let bit0 = Self::has_bit(self.mask, 0);
-        let bit1 = Self::has_bit(self.mask, 1);
-
-        if !bit0 && !bit1 {
-            return Ok(());
-        }
-        if bit0 ^ bit1 {
-            return Err(TransactionViewError::SanitizeError);
-        }
-
-        let lo_offset = self
-            .word_offset(0)
-            .ok_or(TransactionViewError::ParseError)?;
-        let hi_offset = self
-            .word_offset(1)
-            .ok_or(TransactionViewError::ParseError)?;
-
-        let lo = bytes
-            .get(lo_offset..lo_offset.wrapping_add(Self::CONFIG_VALUE_SIZE))
-            .ok_or(TransactionViewError::ParseError)?;
-        let hi = bytes
-            .get(hi_offset..hi_offset.wrapping_add(Self::CONFIG_VALUE_SIZE))
-            .ok_or(TransactionViewError::ParseError)?;
-
-        let mut out = [0u8; 8];
-        out[..Self::CONFIG_VALUE_SIZE].copy_from_slice(lo);
-        out[Self::CONFIG_VALUE_SIZE..].copy_from_slice(hi);
-        self.priority_fee_lamports = u64::from_le_bytes(out);
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn compute_unit_limit(&mut self, bytes: &[u8]) -> Result<()> {
-        if Self::has_bit(self.mask, 2) {
-            self.compute_unit_limit = self
-                .read_u32_for_bit(bytes, 2)
-                .ok_or(TransactionViewError::ParseError)?;
-        }
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn loaded_accounts_data_size_limit(&mut self, bytes: &[u8]) -> Result<()> {
-        if Self::has_bit(self.mask, 3) {
-            self.loaded_accounts_data_size_limit = self
-                .read_u32_for_bit(bytes, 3)
-                .ok_or(TransactionViewError::ParseError)?;
-        }
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn requested_heap_size(&mut self, bytes: &[u8]) -> Result<()> {
-        if Self::has_bit(self.mask, 4) {
-            self.requested_heap_size = self
-                .read_u32_for_bit(bytes, 4)
-                .ok_or(TransactionViewError::ParseError)?;
-        }
-        Ok(())
     }
 
     /// Return the packed word index for a given set bit. Eg: counts
@@ -244,40 +158,79 @@ impl TransactionConfigFrame {
                 .wrapping_add(word_index.wrapping_mul(Self::CONFIG_VALUE_SIZE)),
         )
     }
-
-    #[inline(always)]
-    pub(crate) fn read_u32_for_bit(&self, bytes: &[u8], bit: u8) -> Option<u32> {
-        let offset = self.word_offset(bit)?;
-        let word = bytes.get(offset..offset.wrapping_add(4))?;
-        Some(u32::from_le_bytes(word.try_into().ok()?))
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TransactionConfigView<'a> {
     pub(crate) transaction_config_frame: &'a TransactionConfigFrame,
+    pub(crate) bytes: &'a [u8],
 }
 
 impl<'a> TransactionConfigView<'a> {
     #[inline(always)]
     pub fn priority_fee_lamports(&self) -> u64 {
-        self.transaction_config_frame.priority_fee_lamports
+        // bit 0 and 1 have been sanitized to be in same state,
+        // return default if bits not set
+        if let Some(mut lo_offset) = self.transaction_config_frame.word_offset(0) {
+            // SAFETY:
+            // - The offsets are checked to be valid in the byte slice.
+            let value: [u8; 8] =
+                unsafe { unchecked_read_slice_data::<u8>(self.bytes, &mut lo_offset, 8) }
+                    .try_into()
+                    .unwrap();
+            u64::from_le_bytes(value)
+        } else {
+            // return default
+            0
+        }
     }
 
     #[inline(always)]
     pub fn compute_unit_limit(&self) -> u32 {
-        self.transaction_config_frame.compute_unit_limit
+        if let Some(mut value_offset) = self.transaction_config_frame.word_offset(2) {
+            // SAFETY:
+            // - The offsets are checked to be valid in the byte slice.
+            let value: [u8; 4] =
+                unsafe { unchecked_read_slice_data::<u8>(self.bytes, &mut value_offset, 4) }
+                    .try_into()
+                    .unwrap();
+            u32::from_le_bytes(value)
+        } else {
+            // return default
+            0
+        }
     }
 
     #[inline(always)]
     pub fn loaded_accounts_data_size_limit(&self) -> u32 {
-        self.transaction_config_frame
-            .loaded_accounts_data_size_limit
+        if let Some(mut value_offset) = self.transaction_config_frame.word_offset(3) {
+            // SAFETY:
+            // - The offsets are checked to be valid in the byte slice.
+            let value: [u8; 4] =
+                unsafe { unchecked_read_slice_data::<u8>(self.bytes, &mut value_offset, 4) }
+                    .try_into()
+                    .unwrap();
+            u32::from_le_bytes(value)
+        } else {
+            // return default
+            0
+        }
     }
 
     #[inline(always)]
     pub fn requested_heap_size(&self) -> u32 {
-        self.transaction_config_frame.requested_heap_size
+        if let Some(mut value_offset) = self.transaction_config_frame.word_offset(4) {
+            // SAFETY:
+            // - The offsets are checked to be valid in the byte slice.
+            let value: [u8; 4] =
+                unsafe { unchecked_read_slice_data::<u8>(self.bytes, &mut value_offset, 4) }
+                    .try_into()
+                    .unwrap();
+            u32::from_le_bytes(value)
+        } else {
+            // return default
+            MIN_HEAP_FRAME_BYTES
+        }
     }
 
     #[inline(always)]
@@ -309,10 +262,6 @@ mod tests {
         assert!(frame.is_not_applicable());
         assert!(!frame.is_present());
         assert_eq!(TransactionConfigFrame::sanitize_mask(frame.mask), Ok(()));
-        assert_eq!(frame.priority_fee_lamports, 0);
-        assert_eq!(frame.compute_unit_limit, 0);
-        assert_eq!(frame.loaded_accounts_data_size_limit, 0);
-        assert_eq!(frame.requested_heap_size, MIN_HEAP_FRAME_BYTES);
     }
 
     #[test]
@@ -391,11 +340,15 @@ mod tests {
         let mut offset = bytes.len();
         let frame =
             TransactionConfigFrame::try_new(&bytes, mask_offset, mask, &mut offset).unwrap();
+        let view = TransactionConfigView {
+            transaction_config_frame: &frame,
+            bytes: &bytes,
+        };
 
-        assert_eq!(frame.priority_fee_lamports, 0);
-        assert_eq!(frame.compute_unit_limit, 0);
-        assert_eq!(frame.loaded_accounts_data_size_limit, 0);
-        assert_eq!(frame.requested_heap_size, MIN_HEAP_FRAME_BYTES);
+        assert_eq!(view.priority_fee_lamports(), 0);
+        assert_eq!(view.compute_unit_limit(), 0);
+        assert_eq!(view.loaded_accounts_data_size_limit(), 0);
+        assert_eq!(view.requested_heap_size(), MIN_HEAP_FRAME_BYTES);
     }
 
     #[test]
@@ -416,12 +369,17 @@ mod tests {
         let frame = TransactionConfigFrame::try_new(&bytes, mask_offset, mask, &mut offset)
             .inspect(|_| assert_eq!(offset, bytes.len()))
             .unwrap();
-
         assert!(frame.is_present());
         assert_eq!(frame.num_values, 2);
-        assert_eq!(frame.priority_fee_lamports, fee);
-        assert_eq!(frame.compute_unit_limit, 0);
-        assert_eq!(frame.requested_heap_size, MIN_HEAP_FRAME_BYTES);
+
+        let view = TransactionConfigView {
+            transaction_config_frame: &frame,
+            bytes: &bytes,
+        };
+        assert_eq!(view.priority_fee_lamports(), fee);
+        assert_eq!(view.compute_unit_limit(), 0);
+        assert_eq!(view.loaded_accounts_data_size_limit(), 0);
+        assert_eq!(view.requested_heap_size(), MIN_HEAP_FRAME_BYTES);
     }
 
     #[test]
@@ -450,13 +408,17 @@ mod tests {
         let frame = TransactionConfigFrame::try_new(&bytes, mask_offset, mask, &mut offset)
             .inspect(|_| assert_eq!(offset, bytes.len()))
             .unwrap();
-
         assert!(frame.is_present());
         assert_eq!(frame.num_values, 5);
-        assert_eq!(frame.priority_fee_lamports, fee);
-        assert_eq!(frame.compute_unit_limit, cu);
-        assert_eq!(frame.loaded_accounts_data_size_limit, loaded);
-        assert_eq!(frame.requested_heap_size, heap);
+
+        let view = TransactionConfigView {
+            transaction_config_frame: &frame,
+            bytes: &bytes,
+        };
+        assert_eq!(view.priority_fee_lamports(), fee);
+        assert_eq!(view.compute_unit_limit(), cu);
+        assert_eq!(view.loaded_accounts_data_size_limit(), loaded);
+        assert_eq!(view.requested_heap_size(), heap);
     }
 
     #[test]
@@ -478,14 +440,18 @@ mod tests {
         let frame = TransactionConfigFrame::try_new(&bytes, mask_offset, mask, &mut offset)
             .inspect(|_| assert_eq!(offset, bytes.len()))
             .unwrap();
-
         assert_eq!(frame.word_index_for_bit(2), Some(0));
         assert_eq!(frame.word_index_for_bit(4), Some(1));
         assert_eq!(frame.word_index_for_bit(3), None);
 
-        assert_eq!(frame.compute_unit_limit, cu);
-        assert_eq!(frame.loaded_accounts_data_size_limit, 0);
-        assert_eq!(frame.requested_heap_size, heap);
+        let view = TransactionConfigView {
+            transaction_config_frame: &frame,
+            bytes: &bytes,
+        };
+        assert_eq!(view.priority_fee_lamports(), 0);
+        assert_eq!(view.compute_unit_limit(), cu);
+        assert_eq!(view.loaded_accounts_data_size_limit(), 0);
+        assert_eq!(view.requested_heap_size(), heap);
     }
 
     #[test]
@@ -504,26 +470,5 @@ mod tests {
             TransactionConfigFrame::try_new(&bytes, mask_offset, mask, &mut offset),
             Err(TransactionViewError::ParseError)
         );
-    }
-
-    #[test]
-    fn test_sanitize_values_region_after_attach() {
-        let mask = 0b00100u32; // one value
-        let value = 123u32;
-
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&[8u8; 6]);
-        let mask_offset = bytes.len();
-        bytes.extend_from_slice(&mask.to_le_bytes());
-        let values_offset = bytes.len();
-        bytes.extend_from_slice(&value.to_le_bytes());
-        let eof = bytes.len();
-
-        let mut offset = values_offset;
-        let frame = TransactionConfigFrame::try_new(&bytes, mask_offset, mask, &mut offset)
-            .inspect(|_| assert_eq!(offset, eof))
-            .unwrap();
-
-        assert_eq!(frame.compute_unit_limit, value);
     }
 }

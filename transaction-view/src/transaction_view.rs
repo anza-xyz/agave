@@ -167,6 +167,7 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
         if transaction_config_frame.is_present() {
             Some(TransactionConfigView {
                 transaction_config_frame,
+                bytes: self.data(),
             })
         } else {
             None
