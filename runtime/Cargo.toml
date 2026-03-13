@@ -185,6 +185,7 @@ wincode = { workspace = true }
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-transaction-view = { path = "../transaction-view", features = ["agave-unstable-api"] }
 bitvec = { workspace = true }
+criterion = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
 proptest = { workspace = true }
@@ -206,8 +207,15 @@ solana-vote-program = { path = "../programs/vote", default-features = false, fea
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
+jemallocator = { workspace = true }
+
 [[bench]]
 name = "prioritization_fee_cache"
+
+[[bench]]
+name = "epoch_turnover"
+harness = false
 
 [lints]
 workspace = true
