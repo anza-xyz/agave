@@ -374,7 +374,7 @@ serde_yaml = "0.9.34"
 serial_test = "3.4.0"
 sha2 = "0.10.9"
 sha3 = "0.10.8"
-shaq = { version = "1.0.2" }
+shaq = { version = "2.0.0" }
 shuttle = "0.7.1"
 signal-hook = "0.4.3"
 siphasher = "1.0.2"
@@ -658,5 +658,4 @@ codegen-units = 1
 [patch.crates-io]
 # for details, see https://github.com/anza-xyz/crossbeam/commit/fd279d707025f0e60951e429bf778b4813d1b6bf
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d707025f0e60951e429bf778b4813d1b6bf" }
-shaq = { git = "https://github.com/anza-xyz/shaq", rev = "6e26410140a7d40b2ce65adc0a556e788d184877" }
 rts-alloc = { git = "https://github.com/anza-xyz/rts-alloc", rev = "0a3787adc7f4523de3515115f735de83cee01124" }
