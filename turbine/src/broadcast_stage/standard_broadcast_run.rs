@@ -740,9 +740,7 @@ mod test {
         // so entry data starts at that offset.
         let header_shred_offset = (shred_multiplier - 1) * num_shreds_per_slot;
         assert_eq!(
-            blockstore
-                .get_slot_entries(0, header_shred_offset)
-                .unwrap(),
+            blockstore.get_slot_entries(0, header_shred_offset).unwrap(),
             ticks0
         );
         assert_eq!(
@@ -816,9 +814,7 @@ mod test {
 
         // Try to fetch the incomplete ticks from blockstore, should succeed
         assert_eq!(
-            blockstore
-                .get_slot_entries(0, header_shred_offset)
-                .unwrap(),
+            blockstore.get_slot_entries(0, header_shred_offset).unwrap(),
             ticks0
         );
         assert_eq!(
