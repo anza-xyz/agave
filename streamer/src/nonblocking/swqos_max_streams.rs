@@ -455,10 +455,9 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
     fn compute_max_streams(
         &self,
         context: &SwQosMaxStreamsConnectionContext,
-        connection: &Connection,
+        rtt: Duration,
     ) -> MaxStreamsAction {
         let saturated = self.load_tracker.is_saturated();
-        let rtt = connection.rtt();
         match self.compute_max_streams_for_rtt(context, rtt, saturated) {
             Some(0) => MaxStreamsAction::Park,
             Some(max_streams) => MaxStreamsAction::Set(max_streams),

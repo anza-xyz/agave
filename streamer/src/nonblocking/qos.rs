@@ -1,7 +1,7 @@
 use {
     crate::nonblocking::quic::{ClientConnectionTracker, ConnectionPeerType},
     quinn::Connection,
-    std::future::Future,
+    std::{future::Future, time::Duration},
     tokio_util::sync::CancellationToken,
 };
 
@@ -66,8 +66,8 @@ pub(crate) trait QosController<C: ConnectionContext> {
     fn spawn_background_tasks(&mut self) {}
 
     /// Desired MAX_STREAMS action for this connection.
-    fn compute_max_streams(&self, context: &C, connection: &Connection) -> MaxStreamsAction {
-        let _ = (context, connection);
+    fn compute_max_streams(&self, context: &C, rtt: Duration) -> MaxStreamsAction {
+        let _ = (context, rtt);
         MaxStreamsAction::Unmanaged
     }
 

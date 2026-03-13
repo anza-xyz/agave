@@ -618,7 +618,7 @@ async fn handle_connection<Q, C>(
     // it is not the end of the world.
     let rtt = connection.rtt();
     'conn: loop {
-        match qos.compute_max_streams(&context, &connection) {
+        match qos.compute_max_streams(&context, rtt) {
             MaxStreamsAction::Unmanaged => {}
             MaxStreamsAction::Set(max_streams) => {
                 debug_assert!(max_streams > 0, "Set(0) should use Park");
