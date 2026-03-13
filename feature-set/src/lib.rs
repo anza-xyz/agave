@@ -109,8 +109,6 @@ impl FeatureSet {
             abort_on_invalid_curve: self.is_active(&abort_on_invalid_curve::id()),
             blake3_syscall_enabled: self.is_active(&blake3_syscall_enabled::id()),
             curve25519_syscall_enabled: self.is_active(&curve25519_syscall_enabled::id()),
-            disable_deploy_of_alloc_free_syscall: self
-                .is_active(&disable_deploy_of_alloc_free_syscall::id()),
             disable_fees_sysvar: self.is_active(&disable_fees_sysvar::id()),
             disable_sbpf_v0_execution: self.is_active(&disable_sbpf_v0_execution::id()),
             enable_alt_bn128_compression_syscall: self

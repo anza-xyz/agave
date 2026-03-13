@@ -301,8 +301,6 @@ pub fn create_program_runtime_environment<'a, 'ix_data>(
     let curve25519_syscall_enabled = feature_set.curve25519_syscall_enabled;
     let enable_bls12_381_syscall = feature_set.enable_bls12_381_syscall;
     let disable_fees_sysvar = feature_set.disable_fees_sysvar;
-    let disable_deploy_of_alloc_free_syscall =
-        reject_deployment_of_broken_elfs && feature_set.disable_deploy_of_alloc_free_syscall;
     let last_restart_slot_syscall_enabled = feature_set.last_restart_slot_sysvar;
     let enable_poseidon_syscall = feature_set.enable_poseidon_syscall;
     let remaining_compute_units_syscall_enabled =
@@ -461,7 +459,7 @@ pub fn create_program_runtime_environment<'a, 'ix_data>(
     // Memory allocator
     register_feature_gated_function!(
         result,
-        !disable_deploy_of_alloc_free_syscall,
+        !reject_deployment_of_broken_elfs,
         "sol_alloc_free_",
         SyscallAllocFree
     )?;

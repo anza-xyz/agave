@@ -343,10 +343,7 @@ fn test_program_sbf_loader_deprecated() {
         let program_elf = harness::file::load_program_elf(program);
         let program_id = Pubkey::new_unique();
 
-        let feature_set = SVMFeatureSet {
-            disable_deploy_of_alloc_free_syscall: false,
-            ..SVMFeatureSet::all_enabled()
-        };
+        let feature_set = SVMFeatureSet::all_enabled();
 
         let compute_budget = ComputeBudget::new_with_defaults(false);
 
