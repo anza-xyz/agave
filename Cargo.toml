@@ -360,7 +360,7 @@ reqwest = { version = "0.12.28", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
-rts-alloc = { version = "2.0.0" }
+rts-alloc = { version = "3.0.0" }
 rustls = { version = "0.23.37", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.27"
@@ -658,4 +658,3 @@ codegen-units = 1
 [patch.crates-io]
 # for details, see https://github.com/anza-xyz/crossbeam/commit/fd279d707025f0e60951e429bf778b4813d1b6bf
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d707025f0e60951e429bf778b4813d1b6bf" }
-rts-alloc = { git = "https://github.com/anza-xyz/rts-alloc", rev = "0a3787adc7f4523de3515115f735de83cee01124" }
