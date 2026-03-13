@@ -25,5 +25,8 @@ unwrap_none = { workspace = true }
 [dev-dependencies]
 solana-instruction = { workspace = true }
 solana-message = { workspace = true }
-solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime-transaction = { path = "../runtime-transaction", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 test-case = { workspace = true }

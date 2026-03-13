@@ -194,15 +194,25 @@ solana-instruction-error = { workspace = true }
 solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"] }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime-transaction = { path = "../runtime-transaction", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 solana-sdk-ids = { workspace = true }
 solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 solana-signature = { workspace = true, features = ["std"] }
 solana-signer-store = { workspace = true }
 solana-stake-interface = { workspace = true, features = ["sysvar"] }
 solana-svm = { path = "../svm", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
-solana-vote-program = { path = "../programs/vote", default-features = false, features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-transaction-context = { path = "../transaction-context", features = [
+    "agave-unstable-api",
+    "bincode",
+    "dev-context-only-utils",
+] }
+solana-vote-program = { path = "../programs/vote", default-features = false, features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 

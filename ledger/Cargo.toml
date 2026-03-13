@@ -128,9 +128,9 @@ wincode = { workspace = true }
 [dependencies.rocksdb]
 # Avoid the vendored bzip2 within rocksdb-sys that can cause linker conflicts
 # when also using the bzip2 crate
-version = "0.24.0"
 default-features = false
 features = ["lz4"]
+version = "0.24.0"
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }

@@ -68,7 +68,10 @@ agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["
 itertools = { workspace = true }
 rand = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-compute-budget-instruction = { path = "../compute-budget-instruction", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-compute-budget-instruction = { path = "../compute-budget-instruction", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { path = "../programs/compute-budget", features = ["agave-unstable-api"] }
 solana-cost-model = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
@@ -76,7 +79,10 @@ solana-hash = { workspace = true, features = ["atomic"] }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime-transaction = { path = "../runtime-transaction", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 solana-signer = { workspace = true }
 solana-system-program = { path = "../programs/system", features = ["agave-unstable-api"] }
 solana-system-transaction = { workspace = true }

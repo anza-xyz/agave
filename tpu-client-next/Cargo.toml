@@ -55,4 +55,8 @@ solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { path = "../streamer", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-tpu-client-next = { path = ".", features = ["agave-unstable-api", "websocket-node-address-service", "dev-context-only-utils"] }
+solana-tpu-client-next = { path = ".", features = [
+    "agave-unstable-api",
+    "websocket-node-address-service",
+    "dev-context-only-utils",
+] }

@@ -72,7 +72,11 @@ solana-program-runtime = { path = "../program-runtime", features = ["agave-unsta
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-slot-hashes = { workspace = true }
-solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
+solana-transaction-context = { path = "../transaction-context", features = [
+    "agave-unstable-api",
+    "bincode",
+    "dev-context-only-utils",
+] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 

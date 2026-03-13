@@ -196,7 +196,9 @@ fs_extra = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
 solana-account = { workspace = true, features = ["dev-context-only-utils"] }
-solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api"] }
+solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = [
+    "agave-unstable-api",
+] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { path = "../programs/compute-budget", features = ["agave-unstable-api"] }
@@ -212,7 +214,10 @@ solana-program-runtime = { path = "../program-runtime", features = ["agave-unsta
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signer-store = { workspace = true }
 solana-system-program = { path = "../programs/system", features = ["agave-unstable-api"] }
-solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 spl-memo-interface = { workspace = true }
 static_assertions = { workspace = true }

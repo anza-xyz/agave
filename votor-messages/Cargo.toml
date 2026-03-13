@@ -25,7 +25,8 @@ log = { workspace = true }
 serde = { workspace = true }
 solana-address = { workspace = true, features = ["curve25519"] }
 solana-bls-signatures = { workspace = true, features = [
-    "bytemuck", "solana-signer-derive",
+    "bytemuck",
+    "solana-signer-derive",
 ] }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }

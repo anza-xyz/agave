@@ -117,9 +117,15 @@ solana-program-runtime = { path = "../program-runtime", features = ["agave-unsta
 solana-rent = { workspace = true }
 solana-rpc = { path = ".", features = ["dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime-transaction = { path = "../runtime-transaction", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 solana-sdk-ids = { workspace = true }
-solana-send-transaction-service = { path = "../send-transaction-service", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-send-transaction-service = { path = "../send-transaction-service", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 solana-sha256-hasher = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-svm-log-collector = { path = "../svm-log-collector", features = ["agave-unstable-api"] }
