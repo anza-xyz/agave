@@ -243,7 +243,7 @@ pub fn parse_nonce_create_account(
     let (nonce_account, nonce_account_pubkey) =
         signer_of(matches, "nonce_account_keypair", wallet_manager)?;
     let seed = matches.value_of("seed").map(|s| s.to_string());
-    let amount = SpendAmount::new_from_matches(matches, "amount");
+    let amount = SpendAmount::new_from_matches(matches, "amount")?;
     let nonce_authority = pubkey_of_signer(matches, NONCE_AUTHORITY_ARG.name, wallet_manager)?;
     let memo = matches.value_of(MEMO_ARG.name).map(String::from);
 

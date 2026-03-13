@@ -817,7 +817,7 @@ pub fn parse_create_stake_account(
         )
     };
 
-    let amount = SpendAmount::new_from_matches(matches, "amount");
+    let amount = SpendAmount::new_from_matches(matches, "amount")?;
     let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
     let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
     let blockhash_query = BlockhashQuery::new_from_matches(matches);
@@ -1206,7 +1206,7 @@ pub fn parse_stake_withdraw_stake(
         pubkey_of_signer(matches, "stake_account_pubkey", wallet_manager)?.unwrap();
     let destination_account_pubkey =
         pubkey_of_signer(matches, "destination_account_pubkey", wallet_manager)?.unwrap();
-    let amount = SpendAmount::new_from_matches(matches, "amount");
+    let amount = SpendAmount::new_from_matches(matches, "amount")?;
     let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
     let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
     let blockhash_query = BlockhashQuery::new_from_matches(matches);
