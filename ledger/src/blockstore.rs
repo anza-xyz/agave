@@ -963,29 +963,27 @@ impl Blockstore {
                     };
                 }
                 ShredType::Code => {
-                    if let Err(err) = self.check_insert_coding_shred(
+                    match self.check_insert_coding_shred(
                         shred,
                         shred_insertion_tracker,
                         is_trusted,
                         shred_source,
                         metrics,
                     ) {
-                        match err {
-                            InsertCodingShredError::Exists => {}
-                            InsertCodingShredError::InvalidShred
-                            | InsertCodingShredError::InvalidErasureConfig => {
-                                self.mark_slot_dead_in_write_batch(
-                                    slot,
-                                    &mut shred_insertion_tracker.write_batch,
-                                );
-                            }
-                            InsertCodingShredError::BlockstoreError(err) => {
-                                self.mark_slot_dead_in_write_batch(
-                                    slot,
-                                    &mut shred_insertion_tracker.write_batch,
-                                );
-                                error!("blockstore error during coding shred insertion: {err}");
-                            }
+                        Ok(()) | Err(InsertCodingShredError::Exists) => {}
+                        Err(InsertCodingShredError::InvalidShred)
+                        | Err(InsertCodingShredError::InvalidErasureConfig) => {
+                            self.mark_slot_dead_in_write_batch(
+                                slot,
+                                &mut shred_insertion_tracker.write_batch,
+                            );
+                        }
+                        Err(InsertCodingShredError::BlockstoreError(err)) => {
+                            self.mark_slot_dead_in_write_batch(
+                                slot,
+                                &mut shred_insertion_tracker.write_batch,
+                            );
+                            error!("blockstore error during coding shred insertion: {err}");
                         }
                     }
                 }
