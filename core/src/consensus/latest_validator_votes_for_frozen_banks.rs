@@ -43,10 +43,17 @@ impl LatestValidatorVotesForFrozenBanks {
                             // because votes in gossip are not consistently observable
                             // if the validator is replacing them.
                             self.fork_choice_dirty_set
-                                .insert(vote_pubkey, (vote_slot, vec![frozen_hash]));
+                                .entry(vote_pubkey)
+                                .and_modify(|(s, hashes)| {
+                                    *s = vote_slot;
+                                    hashes.clear();
+                                    hashes.push(frozen_hash);
+                                })
+                                .or_insert((vote_slot, vec![frozen_hash]));
                         }
                         *latest_frozen_vote_slot = vote_slot;
-                        *latest_frozen_vote_hashes = vec![frozen_hash];
+                        latest_frozen_vote_hashes.clear();
+                        latest_frozen_vote_hashes.push(frozen_hash);
                         return (true, Some(vote_slot));
                     } else if vote_slot == *latest_frozen_vote_slot
                         && !latest_frozen_vote_hashes.contains(&frozen_hash)
