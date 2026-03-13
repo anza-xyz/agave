@@ -666,8 +666,14 @@ mod test {
         assert!(shred.verify(&keypair.pubkey()));
     }
 
+    fn alpenglow_migration_status() -> MigrationStatus {
+        let status = MigrationStatus::post_migration_status();
+        status.alpenglow_rooted_new_epoch(0);
+        status
+    }
+
     #[test_case(MigrationStatus::default(), 1 ; "pre_migration")]
-    #[test_case(MigrationStatus::post_migration_status(), 2 ; "alpenglow_enabled")]
+    #[test_case(alpenglow_migration_status(), 2 ; "alpenglow_enabled")]
     fn test_slot_interrupt(migration_status: MigrationStatus, shred_multiplier: u64) {
         // Setup
         let num_shreds_per_slot = DATA_SHREDS_PER_FEC_BLOCK as u64;
@@ -729,8 +735,16 @@ mod test {
                 .num_batches(),
             1
         );
-        // Try to fetch ticks from blockstore, nothing should break
-        assert_eq!(blockstore.get_slot_entries(0, 0).unwrap(), ticks0);
+        // Try to fetch ticks from blockstore, nothing should break.
+        // When headers are enabled, header shreds occupy the first num_shreds_per_slot indices,
+        // so entry data starts at that offset.
+        let header_shred_offset = (shred_multiplier - 1) * num_shreds_per_slot;
+        assert_eq!(
+            blockstore
+                .get_slot_entries(0, header_shred_offset)
+                .unwrap(),
+            ticks0
+        );
         assert_eq!(
             blockstore
                 .get_slot_entries(0, shred_multiplier * num_shreds_per_slot)
@@ -801,9 +815,16 @@ mod test {
         );
 
         // Try to fetch the incomplete ticks from blockstore, should succeed
-        assert_eq!(blockstore.get_slot_entries(0, 0).unwrap(), ticks0);
         assert_eq!(
-            blockstore.get_slot_entries(0, num_shreds_per_slot).unwrap(),
+            blockstore
+                .get_slot_entries(0, header_shred_offset)
+                .unwrap(),
+            ticks0
+        );
+        assert_eq!(
+            blockstore
+                .get_slot_entries(0, shred_multiplier * num_shreds_per_slot)
+                .unwrap(),
             vec![],
         );
     }
