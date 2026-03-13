@@ -1529,12 +1529,12 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             ProgramCacheEntryType::DelayVisibility => "DelayVisibility",
                             ProgramCacheEntryType::Unloaded(_) => "Unloaded",
                             ProgramCacheEntryType::Builtin(_) => "Builtin",
+                            #[cfg(not(all(not(target_os = "windows"), target_arch = "x86_64")))]
+                            ProgramCacheEntryType::Loaded(_) => "Loaded",
+                            #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
                             ProgramCacheEntryType::Loaded(executable) => {
-                                if executable.get_compiled_program().is_some() {
-                                    "JitCompiled"
-                                } else {
-                                    "Loaded"
-                                }
+                                let compiled = executable.get_compiled_program().is_some();
+                                if compiled { "JitCompiled" } else { "Loaded" }
                             }
                         };
                         let stats = &entry.stats;
