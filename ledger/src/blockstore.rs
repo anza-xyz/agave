@@ -1233,21 +1233,25 @@ impl Blockstore {
         location: BlockLocation,
         erasure_set: ErasureSetId,
         merkle_root_metas: &HashMap<(BlockLocation, ErasureSetId), WorkingEntry<MerkleRootMeta>>,
-    ) -> Option<Hash> {
+    ) -> Result<Option<Hash>> {
+        let err = || {
+            BlockstoreError::MissingMerkleRoot(
+                erasure_set.slot(),
+                erasure_set.fec_set_index() as u64,
+            )
+        };
         // First check the tracker
         if let Some(working_entry) = merkle_root_metas.get(&(location, erasure_set)) {
-            return Some(
-                working_entry
-                    .as_ref()
-                    .merkle_root()
-                    .expect("No more legacy shreds"),
-            );
+            return Ok(Some(working_entry.as_ref().merkle_root().ok_or_else(err)?));
         }
 
         // Fall back to the db
         self.merkle_root_meta_from_location(erasure_set, location)
-            .expect("Blockstore operations must succeed")
-            .map(|meta| meta.merkle_root().expect("No more legacy shreds"))
+            .and_then(|maybe_meta| {
+                maybe_meta
+                    .map(|meta| meta.merkle_root().ok_or_else(err))
+                    .transpose()
+            })
     }
 
     fn commit_updates_to_write_batch(
@@ -2568,7 +2572,7 @@ impl Blockstore {
         let Some(index) = self.get_index_from_location(slot, location)? else {
             return Ok(Vec::new());
         };
-        let num_shreds = index.data().num_shreds();
+        let num_shreds = index.data().range(start_index..).count();
         let mut shreds = Vec::with_capacity(num_shreds);
 
         let shred_bytes_iter: Box<dyn Iterator<Item = Box<[u8]>>> = match location {

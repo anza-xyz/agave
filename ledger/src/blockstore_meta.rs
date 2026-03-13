@@ -334,7 +334,7 @@ impl ShredIndex {
         }
     }
 
-    pub fn contains(&self, idx: u64) -> bool {
+    pub(crate) fn contains(&self, idx: u64) -> bool {
         self.index.contains(idx as usize)
     }
 
@@ -572,7 +572,7 @@ impl MerkleRootMeta {
         }
     }
 
-    pub fn merkle_root(&self) -> Option<Hash> {
+    pub(crate) fn merkle_root(&self) -> Option<Hash> {
         self.merkle_root
     }
 
