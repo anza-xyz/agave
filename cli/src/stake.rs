@@ -1859,6 +1859,58 @@ pub fn process_withdraw_stake(
 
     let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
 
+    let mut amount = amount;
+    if amount == SpendAmount::All {
+        let stake_account = rpc_client.get_account(&stake_account_address)?;
+        let stake_state: StakeStateV2 = stake_account.state().map_err(|err| {
+            CliError::RpcRequestError(format!(
+                "Account data could not be deserialized to stake state: {err}"
+            ))
+        })?;
+
+        let stake_history_account = rpc_client.get_account(&stake_history::id())?;
+        let stake_history = from_account(&stake_history_account).ok_or_else(|| {
+            CliError::RpcRequestError("Failed to deserialize stake history".to_string())
+        })?;
+        let clock_account = rpc_client.get_account(&clock::id())?;
+        let clock: Clock = from_account(&clock_account).ok_or_else(|| {
+            CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
+        })?;
+        let new_rate_activation_epoch = get_feature_activation_epoch(
+            rpc_client,
+            &feature_set::reduce_stake_warmup_cooldown::id(),
+        )?;
+
+        let reserve = match &stake_state {
+            StakeStateV2::Stake(meta, stake, _) => {
+                let staked = if clock.epoch >= stake.delegation.deactivation_epoch {
+                    stake
+                        .delegation
+                        .stake(clock.epoch, &stake_history, new_rate_activation_epoch)
+                } else {
+                    stake.delegation.stake
+                };
+                staked.saturating_add(meta.rent_exempt_reserve)
+            }
+            StakeStateV2::Initialized(meta) => meta.rent_exempt_reserve,
+            StakeStateV2::Uninitialized => 0,
+            _ => {
+                return Err(
+                    CliError::RpcRequestError("Invalid stake account state".to_string()).into(),
+                );
+            }
+        };
+
+        let withdrawable = stake_account.lamports.saturating_sub(reserve);
+        if withdrawable == 0 {
+            return Err(CliError::RpcRequestError(
+                "No withdrawable amount in stake account".to_string(),
+            )
+            .into());
+        }
+        amount = SpendAmount::Some(withdrawable);
+    }
+
     let fee_payer = config.signers[fee_payer];
     let nonce_authority = config.signers[nonce_authority];
 
