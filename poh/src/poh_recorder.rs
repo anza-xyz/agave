@@ -57,7 +57,7 @@ pub enum PohRecorderError {
     MinHeightNotReached,
 
     #[error("send WorkingBankEntry error")]
-    SendError(#[from] SendError<WorkingBankEntryMarker>),
+    SendError(#[from] Box<SendError<WorkingBankEntryMarker>>),
 
     #[error("channel full")]
     ChannelFull,
@@ -371,7 +371,7 @@ impl PohRecorder {
                         ))
                     );
                     self.metrics.send_entry_us += send_batches_us;
-                    send_entry_res?;
+                    send_entry_res.map_err(Box::new)?;
                 }
 
                 return Ok(RecordSummary {
