@@ -1,6 +1,6 @@
 use {
     super::*,
-    solana_entry::entry::Entry,
+    solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_gossip::contact_info::ContactInfo,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -10,7 +10,7 @@ use {
 #[derive(Clone)]
 pub(super) struct BroadcastFakeShredsRun {
     last_blockhash: Hash,
-    carryover_entry: Option<WorkingBankEntry>,
+    carryover_entry: Option<WorkingBankEntryMarker>,
     partition: usize,
     shred_version: u16,
     next_code_index: u32,
@@ -35,7 +35,7 @@ impl BroadcastRun for BroadcastFakeShredsRun {
         &mut self,
         keypair: &Keypair,
         blockstore: &Blockstore,
-        receiver: &Receiver<WorkingBankEntry>,
+        receiver: &Receiver<WorkingBankEntryMarker>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
@@ -69,7 +69,10 @@ impl BroadcastRun for BroadcastFakeShredsRun {
             }
         };
 
-        let num_entries = receive_results.entries.len();
+        let num_entries = match &receive_results.component {
+            BlockComponent::EntryBatch(entries) => entries.len(),
+            BlockComponent::BlockMarker(_) => 0,
+        };
 
         let shredder = Shredder::new(
             bank.slot(),
@@ -79,9 +82,9 @@ impl BroadcastRun for BroadcastFakeShredsRun {
         )
         .expect("Expected to create a new shredder");
 
-        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
+        let (data_shreds, coding_shreds) = shredder.component_to_merkle_shreds_for_tests(
             keypair,
-            &receive_results.entries,
+            &receive_results.component,
             last_tick_height == bank.max_tick_height(),
             chained_merkle_root,
             next_shred_index,

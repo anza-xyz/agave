@@ -21,7 +21,10 @@ use {
     rand::{Rng, rng},
     rayon::prelude::*,
     solana_core::{banking_stage::BankingStage, banking_trace::BankingTracer},
-    solana_entry::entry::{Entry, next_hash},
+    solana_entry::{
+        entry::{Entry, next_hash},
+        entry_marker::EntryMarker,
+    },
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -33,7 +36,7 @@ use {
     },
     solana_message::Message,
     solana_perf::packet::to_packet_batches,
-    solana_poh::poh_recorder::{WorkingBankEntry, create_test_recorder},
+    solana_poh::poh_recorder::{WorkingBankEntryMarker, create_test_recorder},
     solana_pubkey as pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signature::Signature,
@@ -50,11 +53,13 @@ use {
     test::Bencher,
 };
 
-fn check_txs(receiver: &Arc<Receiver<WorkingBankEntry>>, ref_tx_count: usize) {
+fn check_txs(receiver: &Arc<Receiver<WorkingBankEntryMarker>>, ref_tx_count: usize) {
     let mut total = 0;
     let now = Instant::now();
     loop {
-        if let Ok((_bank, (entry, _tick_height))) = receiver.recv_timeout(Duration::new(1, 0)) {
+        if let Ok((_bank, (EntryMarker::Entry(entry), _tick_height))) =
+            receiver.recv_timeout(Duration::new(1, 0))
+        {
             total += entry.transactions.len();
         }
         if total >= ref_tx_count {
