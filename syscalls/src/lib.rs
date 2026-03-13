@@ -7723,4 +7723,42 @@ mod tests {
 
         assert_eq!(0, result.unwrap());
     }
+
+    #[test]
+    fn test_sol_alloc_free_registration() {
+        let feature_set = SVMFeatureSet::all_enabled();
+        let compute_budget = SVMTransactionExecutionBudget::default();
+
+        // Execution environment: sol_alloc_free_ should be registered.
+        {
+            let env = create_program_runtime_environment(
+                &feature_set,
+                &compute_budget,
+                /* reject_deployment_of_broken_elfs */ false,
+                /* debugging_features */ false,
+            )
+            .unwrap();
+            assert!(
+                env.get_function_registry()
+                    .lookup_by_name(b"sol_alloc_free_")
+                    .is_some()
+            );
+        }
+
+        // Deployment environment: sol_alloc_free_ should NOT be registered.
+        {
+            let env = create_program_runtime_environment(
+                &feature_set,
+                &compute_budget,
+                /* reject_deployment_of_broken_elfs */ true,
+                /* debugging_features */ false,
+            )
+            .unwrap();
+            assert!(
+                env.get_function_registry()
+                    .lookup_by_name(b"sol_alloc_free_")
+                    .is_none()
+            );
+        }
+    }
 }
