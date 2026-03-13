@@ -322,7 +322,10 @@ mod tests {
     use {
         super::*,
         crate::cluster_info_vote_listener::VerifiedVoterSlotsReceiver,
-        agave_votor::consensus_pool::certificate_builder::CertificateBuilder,
+        agave_votor::{
+            consensus_metrics::ConsensusMetricsEventReceiver,
+            consensus_pool::certificate_builder::CertificateBuilder,
+        },
         agave_votor_messages::{
             consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
             vote::Vote,
@@ -352,64 +355,63 @@ mod tests {
         Arc::new(banlist)
     }
 
-    fn create_keypairs_and_bls_sig_verifier_with_channels_and_banlist(
-        votes_for_repair_sender: VerifiedVoterSlotsSender,
-        message_sender: Sender<Vec<ConsensusMessage>>,
-        consensus_metrics_sender: ConsensusMetricsEventSender,
-        reward_votes_sender: Sender<AddVoteMessage>,
-    ) -> (
-        Vec<ValidatorVoteKeypairs>,
-        SigVerifier,
-        Arc<SimpleQosBanlist>,
-    ) {
-        let banlist = new_test_banlist();
-        let (validator_keypairs, verifier) = create_keypairs_and_bls_sig_verifier_with_channels(
-            votes_for_repair_sender,
-            message_sender,
-            consensus_metrics_sender,
-            reward_votes_sender,
-            banlist.clone(),
-        );
-        (validator_keypairs, verifier, banlist)
+    struct TestContext {
+        verifier: SigVerifier,
+        validator_keypairs: Vec<ValidatorVoteKeypairs>,
+        banlist: Arc<SimpleQosBanlist>,
+
+        _packet_sender: Sender<PacketBatch>,
+        repair_receiver: VerifiedVoterSlotsReceiver,
+        _reward_receiver: Receiver<AddVoteMessage>,
+        pool_receiver: Receiver<Vec<ConsensusMessage>>,
+        _metrics_receiver: ConsensusMetricsEventReceiver,
     }
 
-    fn create_keypairs_and_bls_sig_verifier_with_channels(
-        votes_for_repair_sender: VerifiedVoterSlotsSender,
-        message_sender: Sender<Vec<ConsensusMessage>>,
-        consensus_metrics_sender: ConsensusMetricsEventSender,
-        reward_votes_sender: Sender<AddVoteMessage>,
-        banlist: Arc<SimpleQosBanlist>,
-    ) -> (Vec<ValidatorVoteKeypairs>, SigVerifier) {
-        // Create 10 node validatorvotekeypairs vec
-        let validator_keypairs = (0..10)
-            .map(|_| ValidatorVoteKeypairs::new_rand())
-            .collect::<Vec<_>>();
-        let stakes_vec = (0..validator_keypairs.len())
-            .map(|i| 1_000 - i as u64)
-            .collect::<Vec<_>>();
-        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            stakes_vec,
-        );
-        let bank0 = Bank::new_for_tests(&genesis.genesis_config);
-        let bank_forks = BankForks::new_rw_arc(bank0);
-        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let keypair = Keypair::new();
-        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = Arc::new(ClusterInfo::new(
-            contact_info,
-            Arc::new(keypair),
-            SocketAddrSpace::Unspecified,
-        ));
-        let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
-        let (_packet_sender, packet_receiver) = crossbeam_channel::unbounded();
-        (
-            validator_keypairs,
-            SigVerifier::new(
+    impl TestContext {
+        fn new() -> Self {
+            let (channel_to_pool, pool_receiver) = crossbeam_channel::unbounded();
+            Self::new_with_pool_channel(channel_to_pool, pool_receiver)
+        }
+
+        fn new_with_pool_channel(
+            channel_to_pool: Sender<Vec<ConsensusMessage>>,
+            pool_receiver: Receiver<Vec<ConsensusMessage>>,
+        ) -> Self {
+            let num_validators = 10;
+            let validator_keypairs = (0..num_validators)
+                .map(|_| ValidatorVoteKeypairs::new_rand())
+                .collect::<Vec<_>>();
+            let stakes_vec = (0..validator_keypairs.len())
+                .map(|i| 1_000 - i as u64)
+                .collect::<Vec<_>>();
+            let genesis = create_genesis_config_with_alpenglow_vote_accounts(
+                1_000_000_000,
+                &validator_keypairs,
+                stakes_vec,
+            );
+            let bank0 = Bank::new_for_tests(&genesis.genesis_config);
+            let bank_forks = BankForks::new_rw_arc(bank0);
+            let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+            let keypair = Keypair::new();
+            let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
+            let cluster_info = Arc::new(ClusterInfo::new(
+                contact_info,
+                Arc::new(keypair),
+                SocketAddrSpace::Unspecified,
+            ));
+            let leader_schedule =
+                Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
+
+            let (channel_to_repair, repair_receiver) = crossbeam_channel::unbounded();
+            let (channel_to_reward, reward_receiver) = crossbeam_channel::unbounded();
+            let (packet_sender, packet_receiver) = crossbeam_channel::unbounded();
+            let (channel_to_metrics, metrics_receiver) = crossbeam_channel::unbounded();
+
+            let banlist = new_test_banlist();
+            let verifier = SigVerifier::new(
                 SigVerifierContext {
                     migration_status: Arc::new(MigrationStatus::default()),
-                    banlist,
+                    banlist: banlist.clone(),
                     sharable_banks,
                     cluster_info,
                     leader_schedule,
@@ -417,76 +419,23 @@ mod tests {
                 },
                 SigVerifierChannels {
                     packet_receiver,
-                    channel_to_repair: votes_for_repair_sender,
-                    channel_to_reward: reward_votes_sender,
-                    channel_to_pool: message_sender,
-                    channel_to_metrics: consensus_metrics_sender,
+                    channel_to_repair,
+                    channel_to_reward,
+                    channel_to_pool,
+                    channel_to_metrics,
                 },
-            ),
-        )
-    }
-
-    fn create_keypairs_and_bls_sig_verifier() -> (
-        Vec<ValidatorVoteKeypairs>,
-        SigVerifier,
-        VerifiedVoterSlotsReceiver,
-        Receiver<Vec<ConsensusMessage>>,
-    ) {
-        let (votes_for_repair_sender, votes_for_repair_receiver) = crossbeam_channel::unbounded();
-        let (message_sender, message_receiver) = crossbeam_channel::unbounded();
-        let (consensus_metrics_sender, consensus_metrics_receiver) = crossbeam_channel::unbounded();
-        let (reward_votes_sender, reward_votes_receiver) = crossbeam_channel::unbounded();
-        // the sigverifier sends msgs on some channels which the tests do not inspect.
-        // use a thread to keep the receive side of these channels alive so that the sending of msgs doesn't fail.
-        // the thread does not need to be joined and will exit when the sigverifier is dropped.
-        std::thread::spawn(move || {
-            while consensus_metrics_receiver.recv().is_ok() {}
-            while reward_votes_receiver.recv().is_ok() {}
-        });
-        let (keypairs, verifier) = create_keypairs_and_bls_sig_verifier_with_channels(
-            votes_for_repair_sender,
-            message_sender,
-            consensus_metrics_sender,
-            reward_votes_sender,
-            new_test_banlist(),
-        );
-        (
-            keypairs,
-            verifier,
-            votes_for_repair_receiver,
-            message_receiver,
-        )
-    }
-
-    fn create_keypairs_and_bls_sig_verifier_with_banlist() -> (
-        Vec<ValidatorVoteKeypairs>,
-        SigVerifier,
-        VerifiedVoterSlotsReceiver,
-        Receiver<Vec<ConsensusMessage>>,
-        Arc<SimpleQosBanlist>,
-    ) {
-        let (votes_for_repair_sender, votes_for_repair_receiver) = crossbeam_channel::unbounded();
-        let (message_sender, message_receiver) = crossbeam_channel::unbounded();
-        let (consensus_metrics_sender, consensus_metrics_receiver) = crossbeam_channel::unbounded();
-        let (reward_votes_sender, reward_votes_receiver) = crossbeam_channel::unbounded();
-        std::thread::spawn(move || {
-            while consensus_metrics_receiver.recv().is_ok() {}
-            while reward_votes_receiver.recv().is_ok() {}
-        });
-        let (keypairs, verifier, banlist) =
-            create_keypairs_and_bls_sig_verifier_with_channels_and_banlist(
-                votes_for_repair_sender,
-                message_sender,
-                consensus_metrics_sender,
-                reward_votes_sender,
             );
-        (
-            keypairs,
-            verifier,
-            votes_for_repair_receiver,
-            message_receiver,
-            banlist,
-        )
+            Self {
+                validator_keypairs,
+                verifier,
+                banlist,
+                _packet_sender: packet_sender,
+                repair_receiver,
+                _reward_receiver: reward_receiver,
+                pool_receiver,
+                _metrics_receiver: metrics_receiver,
+            }
+        }
     }
 
     fn create_signed_vote_message(
@@ -541,81 +490,81 @@ mod tests {
 
     #[test]
     fn test_blssigverifier_send_packets() {
-        let (validator_keypairs, mut verifier, votes_for_repair_receiver, receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let vote_rank1 = 2;
         let cert_ranks = [0, 2, 3, 4, 5, 7, 8, 9];
         let cert_type = CertificateType::Finalize(4);
         let vote_message1 = create_signed_vote_message(
-            &validator_keypairs,
+            &ctx.validator_keypairs,
             Vote::new_finalization_vote(5),
             vote_rank1,
         );
-        let cert = create_signed_certificate_message(&validator_keypairs, cert_type, &cert_ranks);
+        let cert =
+            create_signed_certificate_message(&ctx.validator_keypairs, cert_type, &cert_ranks);
         let messages1 = vec![
             ConsensusMessage::Vote(vote_message1),
             ConsensusMessage::Certificate(cert),
         ];
 
-        verifier
+        ctx.verifier
             .verify_and_send_batches(messages_to_batches(&messages1))
             .unwrap();
-        assert_eq!(receiver.try_iter().flatten().count(), 2);
-        assert_eq!(verifier.stats.vote_stats.pool_sent, 1);
-        assert_eq!(verifier.stats.cert_stats.pool_sent, 1);
-        let received_verified_votes1 = votes_for_repair_receiver.try_recv().unwrap();
+        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 2);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 1);
+        let received_verified_votes1 = ctx.repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes1,
             (
-                validator_keypairs[vote_rank1].vote_keypair.pubkey(),
+                ctx.validator_keypairs[vote_rank1].vote_keypair.pubkey(),
                 vec![5]
             )
         );
 
         let vote_rank2 = 3;
         let vote_message2 = create_signed_vote_message(
-            &validator_keypairs,
+            &ctx.validator_keypairs,
             Vote::new_notarization_vote(6, Hash::new_unique()),
             vote_rank2,
         );
         let messages2 = vec![ConsensusMessage::Vote(vote_message2)];
-        verifier.stats = SigVerifierStats::default();
-        verifier
+        ctx.verifier.stats = SigVerifierStats::default();
+        ctx.verifier
             .verify_and_send_batches(messages_to_batches(&messages2))
             .unwrap();
 
-        assert_eq!(receiver.try_iter().flatten().count(), 1);
-        assert_eq!(verifier.stats.vote_stats.pool_sent, 1);
-        assert_eq!(verifier.stats.cert_stats.pool_sent, 0);
-        let received_verified_votes2 = votes_for_repair_receiver.try_recv().unwrap();
+        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 0);
+        let received_verified_votes2 = ctx.repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes2,
             (
-                validator_keypairs[vote_rank2].vote_keypair.pubkey(),
+                ctx.validator_keypairs[vote_rank2].vote_keypair.pubkey(),
                 vec![6]
             )
         );
 
         let vote_rank3 = 9;
         let vote_message3 = create_signed_vote_message(
-            &validator_keypairs,
+            &ctx.validator_keypairs,
             Vote::new_notarization_fallback_vote(7, Hash::new_unique()),
             vote_rank3,
         );
         let messages3 = vec![ConsensusMessage::Vote(vote_message3)];
-        verifier.stats = SigVerifierStats::default();
-        verifier
+        ctx.verifier.stats = SigVerifierStats::default();
+        ctx.verifier
             .verify_and_send_batches(messages_to_batches(&messages3))
             .unwrap();
-        assert_eq!(receiver.try_iter().flatten().count(), 1);
-        assert_eq!(verifier.stats.vote_stats.pool_sent, 1);
-        assert_eq!(verifier.stats.cert_stats.pool_sent, 0);
-        let received_verified_votes3 = votes_for_repair_receiver.try_recv().unwrap();
+        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 0);
+        let received_verified_votes3 = ctx.repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes3,
             (
-                validator_keypairs[vote_rank3].vote_keypair.pubkey(),
+                ctx.validator_keypairs[vote_rank3].vote_keypair.pubkey(),
                 vec![7]
             )
         );
@@ -623,35 +572,36 @@ mod tests {
 
     #[test]
     fn test_blssigverifier_verify_malformed() {
-        let (validator_keypairs, mut verifier, _, receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let packets = vec![Packet::default()];
         let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
-        verifier.verify_and_send_batches(packet_batches).unwrap();
-        assert_eq!(verifier.stats.vote_stats.pool_sent, 0);
-        assert_eq!(verifier.stats.cert_stats.pool_sent, 0);
-        assert_eq!(verifier.stats.num_malformed_pkts, 1);
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 0);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 0);
+        assert_eq!(ctx.verifier.stats.num_malformed_pkts, 1);
 
         // Expect no messages since the packet was malformed
-        expect_no_receive(&receiver);
+        expect_no_receive(&ctx.pool_receiver);
 
         // Send a packet with no epoch stakes
         let vote_message_no_stakes = create_signed_vote_message(
-            &validator_keypairs,
+            &ctx.validator_keypairs,
             Vote::new_finalization_vote(5_000_000_000), // very high slot
             0,
         );
         let messages_no_stakes = vec![ConsensusMessage::Vote(vote_message_no_stakes)];
 
-        verifier
+        ctx.verifier
             .verify_and_send_batches(messages_to_batches(&messages_no_stakes))
             .unwrap();
 
-        assert_eq!(verifier.stats.discard_vote_no_epoch_stakes, 1);
+        assert_eq!(ctx.verifier.stats.discard_vote_no_epoch_stakes, 1);
 
         // Expect no messages since the packet was malformed
-        expect_no_receive(&receiver);
+        expect_no_receive(&ctx.pool_receiver);
 
         // Send a packet with invalid rank
         let messages_invalid_rank = vec![ConsensusMessage::Vote(VoteMessage {
@@ -659,80 +609,71 @@ mod tests {
             signature: Signature::default(),
             rank: 1000, // Invalid rank
         })];
-        verifier
+        ctx.verifier
             .verify_and_send_batches(messages_to_batches(&messages_invalid_rank))
             .unwrap();
-        assert_eq!(verifier.stats.discard_vote_invalid_rank, 1);
+        assert_eq!(ctx.verifier.stats.discard_vote_invalid_rank, 1);
 
         // Expect no messages since the packet was malformed
-        expect_no_receive(&receiver);
+        expect_no_receive(&ctx.pool_receiver);
     }
 
     #[test]
     fn test_blssigverifier_send_packets_channel_full() {
         agave_logger::setup();
-        let (votes_for_repair_sender, _votes_for_repair_receiver) = crossbeam_channel::unbounded();
-        let (message_sender, message_receiver) = crossbeam_channel::bounded(1);
-        let (consensus_metrics_sender, _consensus_metrics_receiver) =
-            crossbeam_channel::unbounded();
-        let (reward_votes_sender, _reward_votes_receiver) = crossbeam_channel::unbounded();
-        let (validator_keypairs, mut verifier) = create_keypairs_and_bls_sig_verifier_with_channels(
-            votes_for_repair_sender,
-            message_sender,
-            consensus_metrics_sender,
-            reward_votes_sender,
-            new_test_banlist(),
-        );
+        let (channel_to_pool, pool_receiver) = crossbeam_channel::bounded(1);
+        let mut ctx = TestContext::new_with_pool_channel(channel_to_pool, pool_receiver);
 
         let msg1 = ConsensusMessage::Vote(create_signed_vote_message(
-            &validator_keypairs,
+            &ctx.validator_keypairs,
             Vote::new_finalization_vote(5),
             0,
         ));
         let msg2 = ConsensusMessage::Vote(create_signed_vote_message(
-            &validator_keypairs,
+            &ctx.validator_keypairs,
             Vote::new_notarization_fallback_vote(6, Hash::new_unique()),
             2,
         ));
-        verifier
+        ctx.verifier
             .verify_and_send_batches(messages_to_batches(std::slice::from_ref(&msg1)))
             .unwrap();
-        verifier
+        ctx.verifier
             .verify_and_send_batches(messages_to_batches(&[msg2]))
             .unwrap();
 
         // We failed to send the second message because the channel is full.
-        let msgs = message_receiver.try_iter().flatten().collect::<Vec<_>>();
+        let msgs = ctx.pool_receiver.try_iter().flatten().collect::<Vec<_>>();
+        assert_eq!(msgs.len(), 1);
         assert_eq!(msgs, vec![msg1]);
-        assert_eq!(verifier.stats.vote_stats.pool_sent, 1);
-        assert_eq!(verifier.stats.vote_stats.pool_channel_full, 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_channel_full, 1);
     }
 
     #[test]
     fn test_blssigverifier_send_packets_receiver_closed() {
-        let (validator_keypairs, mut verifier, _, receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
-        // Close the receiver to simulate a disconnected channel.
-        drop(receiver);
+        // Close the pool receiver to simulate a disconnected channel.
+        drop(ctx.pool_receiver);
 
         let msg = ConsensusMessage::Vote(create_signed_vote_message(
-            &validator_keypairs,
+            &ctx.validator_keypairs,
             Vote::new_finalization_vote(5),
             0,
         ));
         let messages = vec![msg];
-        let result = verifier.verify_and_send_batches(messages_to_batches(&messages));
+        let result = ctx
+            .verifier
+            .verify_and_send_batches(messages_to_batches(&messages));
         assert!(result.is_err());
     }
 
     #[test]
     fn test_blssigverifier_send_discarded_packets() {
-        let (validator_keypairs, mut verifier, _, receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let message = ConsensusMessage::Vote(create_signed_vote_message(
-            &validator_keypairs,
+            &ctx.validator_keypairs,
             Vote::new_finalization_vote(5),
             0,
         ));
@@ -742,23 +683,24 @@ mod tests {
         let packets = vec![packet];
         let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
 
-        verifier.verify_and_send_batches(packet_batches).unwrap();
-        expect_no_receive(&receiver);
-        assert_eq!(verifier.stats.vote_stats.pool_sent, 0);
-        assert_eq!(verifier.stats.num_discarded_pkts, 1);
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
+        expect_no_receive(&ctx.pool_receiver);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, 0);
+        assert_eq!(ctx.verifier.stats.num_discarded_pkts, 1);
     }
 
     #[test]
     fn test_blssigverifier_verify_votes_all_valid() {
-        let (validator_keypairs, mut verifier, _, message_receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let num_votes = 5;
         let mut packets = Vec::with_capacity(num_votes);
         let vote = Vote::new_skip_vote(42);
         let vote_payload = bincode::serialize(&vote).expect("Failed to serialize vote");
 
-        for (i, validator_keypair) in validator_keypairs.iter().enumerate().take(num_votes) {
+        for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
             let bls_keypair = &validator_keypair.bls_keypair;
             let signature: BLSSignature = bls_keypair.sign(&vote_payload).into();
@@ -771,9 +713,11 @@ mod tests {
         }
 
         let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
-        verifier.verify_and_send_batches(packet_batches).unwrap();
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
         assert_eq!(
-            message_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().flatten().count(),
             num_votes,
             "Did not send all valid packets"
         );
@@ -781,8 +725,7 @@ mod tests {
 
     #[test]
     fn test_blssigverifier_verify_votes_two_distinct_messages() {
-        let (validator_keypairs, mut verifier, _repair_channel, message_receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let num_votes_group1 = 3;
         let num_votes_group2 = 4;
@@ -795,34 +738,51 @@ mod tests {
         let _vote2_payload = bincode::serialize(&vote2).expect("Failed to serialize vote");
 
         // Group 1 votes
-        for (i, _) in validator_keypairs.iter().enumerate().take(num_votes_group1) {
-            let msg =
-                ConsensusMessage::Vote(create_signed_vote_message(&validator_keypairs, vote1, i));
+        for (i, _) in ctx
+            .validator_keypairs
+            .iter()
+            .enumerate()
+            .take(num_votes_group1)
+        {
+            let msg = ConsensusMessage::Vote(create_signed_vote_message(
+                &ctx.validator_keypairs,
+                vote1,
+                i,
+            ));
             packets.push(message_to_packet(&msg, Pubkey::new_unique()));
         }
 
         // Group 2 votes
-        for (i, _) in validator_keypairs
+        for (i, _) in ctx
+            .validator_keypairs
             .iter()
             .enumerate()
             .skip(num_votes_group1)
             .take(num_votes_group2)
         {
-            let msg =
-                ConsensusMessage::Vote(create_signed_vote_message(&validator_keypairs, vote2, i));
+            let msg = ConsensusMessage::Vote(create_signed_vote_message(
+                &ctx.validator_keypairs,
+                vote2,
+                i,
+            ));
             packets.push(message_to_packet(&msg, Pubkey::new_unique()));
         }
 
         let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
-        verifier.verify_and_send_batches(packet_batches).unwrap();
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
         assert_eq!(
-            message_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().flatten().count(),
             num_votes,
             "Did not send all valid packets"
         );
-        assert_eq!(verifier.stats.vote_stats.distinct_votes_stats.count(), 1);
         assert_eq!(
-            verifier
+            ctx.verifier.stats.vote_stats.distinct_votes_stats.count(),
+            1
+        );
+        assert_eq!(
+            ctx.verifier
                 .stats
                 .vote_stats
                 .distinct_votes_stats
@@ -834,8 +794,7 @@ mod tests {
 
     #[test]
     fn test_blssigverifier_verify_votes_invalid_in_two_distinct_messages() {
-        let (validator_keypairs, mut verifier, _, message_receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let num_votes = 5;
         let invalid_rank = 3; // This voter will sign vote 2 with an invalid signature.
@@ -848,7 +807,7 @@ mod tests {
         let invalid_payload =
             bincode::serialize(&Vote::new_skip_vote(99)).expect("Failed to serialize vote");
 
-        for (i, validator_keypair) in validator_keypairs.iter().enumerate().take(num_votes) {
+        for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
             let bls_keypair = &validator_keypair.bls_keypair;
 
@@ -874,8 +833,10 @@ mod tests {
         }
 
         let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
-        verifier.verify_and_send_batches(packet_batches).unwrap();
-        let sent_messages: Vec<_> = message_receiver.try_iter().flatten().collect();
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
+        let sent_messages: Vec<_> = ctx.pool_receiver.try_iter().flatten().collect();
         assert_eq!(
             sent_messages.len(),
             num_votes - 1,
@@ -892,8 +853,7 @@ mod tests {
 
     #[test]
     fn test_blssigverifier_verify_votes_one_invalid_signature() {
-        let (validator_keypairs, mut verifier, _, message_receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let num_votes = 5;
         let invalid_rank = 2;
@@ -905,7 +865,7 @@ mod tests {
         let invalid_vote_payload =
             bincode::serialize(&Vote::new_skip_vote(99)).expect("Failed to serialize vote");
 
-        for (i, validator_keypair) in validator_keypairs.iter().enumerate().take(num_votes) {
+        for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
             let bls_keypair = &validator_keypair.bls_keypair;
 
@@ -927,8 +887,10 @@ mod tests {
         }
 
         let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
-        verifier.verify_and_send_batches(packet_batches).unwrap();
-        let sent_messages: Vec<_> = message_receiver.try_iter().flatten().collect();
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
+        let sent_messages: Vec<_> = ctx.pool_receiver.try_iter().flatten().collect();
         assert_eq!(
             sent_messages.len(),
             num_votes - 1,
@@ -947,22 +909,23 @@ mod tests {
 
     #[test]
     fn test_verify_certificate_base2_valid() {
-        let (validator_keypairs, mut verifier, _, message_receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let num_signers = 7; // > 2/3 of 10 validators
         let cert_type = CertificateType::Notarize(10, Hash::new_unique());
         let cert = create_signed_certificate_message(
-            &validator_keypairs,
+            &ctx.validator_keypairs,
             cert_type,
             &(0..num_signers).collect::<Vec<_>>(),
         );
         let consensus_message = ConsensusMessage::Certificate(cert);
         let packet_batches = messages_to_batches(&[consensus_message]);
 
-        verifier.verify_and_send_batches(packet_batches).unwrap();
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
         assert_eq!(
-            message_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().flatten().count(),
             1,
             "Valid Base2 certificate should be sent"
         );
@@ -970,22 +933,23 @@ mod tests {
 
     #[test]
     fn test_verify_certificate_base2_just_enough_stake() {
-        let (validator_keypairs, mut verifier, _, message_receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let num_signers = 6; // = 60% of 10 validators
         let cert_type = CertificateType::Notarize(10, Hash::new_unique());
         let cert = create_signed_certificate_message(
-            &validator_keypairs,
+            &ctx.validator_keypairs,
             cert_type,
             &(0..num_signers).collect::<Vec<_>>(),
         );
         let consensus_message = ConsensusMessage::Certificate(cert);
         let packet_batches = messages_to_batches(&[consensus_message]);
 
-        verifier.verify_and_send_batches(packet_batches).unwrap();
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
         assert_eq!(
-            message_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().flatten().count(),
             1,
             "Valid Base2 certificate should be sent"
         );
@@ -993,13 +957,12 @@ mod tests {
 
     #[test]
     fn test_verify_certificate_base2_not_enough_stake() {
-        let (validator_keypairs, mut verifier, _, message_receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let num_signers = 5; // < 60% of 10 validators
         let cert_type = CertificateType::Notarize(10, Hash::new_unique());
         let cert = create_signed_certificate_message(
-            &validator_keypairs,
+            &ctx.validator_keypairs,
             cert_type,
             &(0..num_signers).collect::<Vec<_>>(),
         );
@@ -1007,19 +970,20 @@ mod tests {
         let packet_batches = messages_to_batches(&[consensus_message]);
 
         // The call still succeeds, but the packet is marked for discard.
-        verifier.verify_and_send_batches(packet_batches).unwrap();
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
         assert_eq!(
-            message_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().flatten().count(),
             0,
             "This certificate should be invalid"
         );
-        assert_eq!(verifier.stats.cert_stats.stake_verification_failed, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.stake_verification_failed, 1);
     }
 
     #[test]
     fn test_verify_certificate_base3_valid() {
-        let (validator_keypairs, mut verifier, _, message_receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let slot = 20;
         let block_hash = Hash::new_unique();
@@ -1028,14 +992,14 @@ mod tests {
         let mut all_vote_messages = Vec::new();
         (0..4).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
-                &validator_keypairs,
+                &ctx.validator_keypairs,
                 notarize_vote,
                 i,
             ))
         });
         (4..7).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
-                &validator_keypairs,
+                &ctx.validator_keypairs,
                 notarize_fallback_vote,
                 i,
             ))
@@ -1049,9 +1013,11 @@ mod tests {
         let consensus_message = ConsensusMessage::Certificate(cert);
         let packet_batches = messages_to_batches(&[consensus_message]);
 
-        verifier.verify_and_send_batches(packet_batches).unwrap();
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
         assert_eq!(
-            message_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().flatten().count(),
             1,
             "Valid Base3 certificate should be sent"
         );
@@ -1059,8 +1025,7 @@ mod tests {
 
     #[test]
     fn test_verify_certificate_base3_just_enough_stake() {
-        let (validator_keypairs, mut verifier, _, message_receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let slot = 20;
         let block_hash = Hash::new_unique();
@@ -1069,14 +1034,14 @@ mod tests {
         let mut all_vote_messages = Vec::new();
         (0..4).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
-                &validator_keypairs,
+                &ctx.validator_keypairs,
                 notarize_vote,
                 i,
             ))
         });
         (4..6).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
-                &validator_keypairs,
+                &ctx.validator_keypairs,
                 notarize_fallback_vote,
                 i,
             ))
@@ -1090,9 +1055,11 @@ mod tests {
         let consensus_message = ConsensusMessage::Certificate(cert);
         let packet_batches = messages_to_batches(&[consensus_message]);
 
-        verifier.verify_and_send_batches(packet_batches).unwrap();
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
         assert_eq!(
-            message_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().flatten().count(),
             1,
             "Valid Base3 certificate should be sent"
         );
@@ -1100,8 +1067,7 @@ mod tests {
 
     #[test]
     fn test_verify_certificate_base3_not_enough_stake() {
-        let (validator_keypairs, mut verifier, _, message_receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let slot = 20;
         let block_hash = Hash::new_unique();
@@ -1110,14 +1076,14 @@ mod tests {
         let mut all_vote_messages = Vec::new();
         (0..4).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
-                &validator_keypairs,
+                &ctx.validator_keypairs,
                 notarize_vote,
                 i,
             ))
         });
         (4..5).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
-                &validator_keypairs,
+                &ctx.validator_keypairs,
                 notarize_fallback_vote,
                 i,
             ))
@@ -1131,19 +1097,20 @@ mod tests {
         let consensus_message = ConsensusMessage::Certificate(cert);
         let packet_batches = messages_to_batches(&[consensus_message]);
 
-        verifier.verify_and_send_batches(packet_batches).unwrap();
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
         assert_eq!(
-            message_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().flatten().count(),
             0,
             "This certificate should be invalid"
         );
-        assert_eq!(verifier.stats.cert_stats.stake_verification_failed, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.stake_verification_failed, 1);
     }
 
     #[test]
     fn test_verify_certificate_invalid_signature() {
-        let (_validator_keypairs, mut verifier, _, message_receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let num_signers = 7;
         let slot = 10;
@@ -1164,22 +1131,26 @@ mod tests {
         let consensus_message = ConsensusMessage::Certificate(cert);
         let packet_batches = messages_to_batches(&[consensus_message]);
 
-        verifier.verify_and_send_batches(packet_batches).unwrap();
-        expect_no_receive(&message_receiver);
-        assert_eq!(verifier.stats.cert_stats.signature_verification_failed, 1);
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
+        expect_no_receive(&ctx.pool_receiver);
+        assert_eq!(
+            ctx.verifier.stats.cert_stats.signature_verification_failed,
+            1
+        );
     }
 
     #[test]
     fn test_verify_mixed_valid_batch() {
-        let (validator_keypairs, mut verifier, _, message_receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let mut packets = Vec::new();
         let num_votes = 2;
 
         let vote = Vote::new_skip_vote(42);
         let vote_payload = bincode::serialize(&vote).unwrap();
-        for (i, validator_keypair) in validator_keypairs.iter().enumerate().take(num_votes) {
+        for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
             let bls_keypair = &validator_keypair.bls_keypair;
             let signature: BLSSignature = bls_keypair.sign(&vote_payload).into();
@@ -1198,7 +1169,7 @@ mod tests {
 
         let cert_vote_messages: Vec<VoteMessage> = (0..num_cert_signers)
             .map(|i| {
-                let signature = validator_keypairs[i].bls_keypair.sign(&cert_payload);
+                let signature = ctx.validator_keypairs[i].bls_keypair.sign(&cert_payload);
                 VoteMessage {
                     vote: cert_original_vote,
                     signature: signature.into(),
@@ -1218,25 +1189,26 @@ mod tests {
         ));
 
         let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
-        verifier.verify_and_send_batches(packet_batches).unwrap();
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
         assert_eq!(
-            message_receiver.try_iter().flatten().count(),
+            ctx.pool_receiver.try_iter().flatten().count(),
             num_votes + 1,
             "All valid messages in a mixed batch should be sent"
         );
-        assert_eq!(verifier.stats.vote_stats.pool_sent, num_votes as u64);
-        assert_eq!(verifier.stats.cert_stats.pool_sent, 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent, num_votes as u64);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent, 1);
     }
 
     #[test]
     fn test_verify_vote_with_invalid_rank() {
-        let (validator_keypairs, mut verifier, _, message_receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let invalid_rank = 999;
         let vote = Vote::new_skip_vote(42);
         let vote_payload = bincode::serialize(&vote).unwrap();
-        let bls_keypair = &validator_keypairs[0].bls_keypair;
+        let bls_keypair = &ctx.validator_keypairs[0].bls_keypair;
         let signature: BLSSignature = bls_keypair.sign(&vote_payload).into();
 
         let consensus_message = ConsensusMessage::Vote(VoteMessage {
@@ -1246,9 +1218,11 @@ mod tests {
         });
 
         let packet_batches = messages_to_batches(&[consensus_message]);
-        verifier.verify_and_send_batches(packet_batches).unwrap();
-        expect_no_receive(&message_receiver);
-        assert_eq!(verifier.stats.discard_vote_invalid_rank, 1);
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
+        expect_no_receive(&ctx.pool_receiver);
+        assert_eq!(ctx.verifier.stats.discard_vote_invalid_rank, 1);
     }
 
     #[test]
@@ -1337,8 +1311,7 @@ mod tests {
 
     #[test]
     fn test_verified_certs_are_skipped() {
-        let (validator_keypairs, mut verifier, _, message_receiver) =
-            create_keypairs_and_bls_sig_verifier();
+        let mut ctx = TestContext::new();
 
         let num_signers = 8;
         let slot = 10;
@@ -1348,7 +1321,7 @@ mod tests {
         let signed_payload = bincode::serialize(&original_vote).unwrap();
         let mut vote_messages: Vec<VoteMessage> = (0..num_signers)
             .map(|i| {
-                let signature = validator_keypairs[i].bls_keypair.sign(&signed_payload);
+                let signature = ctx.validator_keypairs[i].bls_keypair.sign(&signed_payload);
                 VoteMessage {
                     vote: original_vote,
                     signature: signature.into(),
@@ -1365,11 +1338,13 @@ mod tests {
         let consensus_message1 = ConsensusMessage::Certificate(cert1);
         let packet_batches1 = messages_to_batches(&[consensus_message1]);
 
-        verifier.verify_and_send_batches(packet_batches1).unwrap();
+        ctx.verifier
+            .verify_and_send_batches(packet_batches1)
+            .unwrap();
 
-        assert_eq!(message_receiver.try_iter().flatten().count(), 1);
-        assert_eq!(verifier.stats.num_verified_certs_received, 0);
-        assert_eq!(verifier.stats.cert_stats.certs_to_sig_verify, 1);
+        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 1);
+        assert_eq!(ctx.verifier.stats.num_verified_certs_received, 0);
+        assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify, 1);
 
         vote_messages.pop(); // Remove one signature
         let mut builder2 = CertificateBuilder::new(cert_type);
@@ -1380,25 +1355,26 @@ mod tests {
         let consensus_message2 = ConsensusMessage::Certificate(cert2);
         let packet_batches2 = messages_to_batches(&[consensus_message2]);
 
-        verifier.stats = SigVerifierStats::default();
-        verifier.verify_and_send_batches(packet_batches2).unwrap();
-        expect_no_receive(&message_receiver);
-        assert_eq!(verifier.stats.num_verified_certs_received, 1);
-        assert_eq!(verifier.stats.cert_stats.certs_to_sig_verify, 0);
+        ctx.verifier.stats = SigVerifierStats::default();
+        ctx.verifier
+            .verify_and_send_batches(packet_batches2)
+            .unwrap();
+        expect_no_receive(&ctx.pool_receiver);
+        assert_eq!(ctx.verifier.stats.num_verified_certs_received, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify, 0);
     }
 
     #[test]
     fn test_banlist_not_updated_for_valid_vote_and_cert() {
-        let (validator_keypairs, mut verifier, _, message_receiver, banlist) =
-            create_keypairs_and_bls_sig_verifier_with_banlist();
+        let mut ctx = TestContext::new();
 
         let vote_message = ConsensusMessage::Vote(create_signed_vote_message(
-            &validator_keypairs,
+            &ctx.validator_keypairs,
             Vote::new_skip_vote(42),
             0,
         ));
         let cert_message = ConsensusMessage::Certificate(create_signed_certificate_message(
-            &validator_keypairs,
+            &ctx.validator_keypairs,
             CertificateType::Notarize(43, Hash::new_unique()),
             &(0..7).collect::<Vec<_>>(),
         ));
@@ -1409,22 +1385,24 @@ mod tests {
             (cert_message, cert_sender),
         ]);
 
-        verifier.verify_and_send_batches(packet_batches).unwrap();
-        assert_eq!(message_receiver.try_iter().flatten().count(), 2);
-        assert!(!banlist.is_banned(&vote_sender));
-        assert!(!banlist.is_banned(&cert_sender));
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
+        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 2);
+        assert!(!ctx.banlist.is_banned(&vote_sender));
+        assert!(!ctx.banlist.is_banned(&cert_sender));
     }
 
     #[test]
     fn test_banlist_updates_for_invalid_votes() {
-        let (validator_keypairs, mut verifier, _, message_receiver, banlist) =
-            create_keypairs_and_bls_sig_verifier_with_banlist();
+        let mut ctx = TestContext::new();
 
         let vote = Vote::new_skip_vote(42);
         let valid_payload = bincode::serialize(&vote).unwrap();
         let invalid_payload = bincode::serialize(&Vote::new_skip_vote(999)).unwrap();
         let invalid_indexes = [1usize, 3usize];
-        let messages: Vec<_> = validator_keypairs
+        let messages: Vec<_> = ctx
+            .validator_keypairs
             .iter()
             .enumerate()
             .take(5)
@@ -1443,20 +1421,20 @@ mod tests {
             })
             .collect();
 
-        verifier
+        ctx.verifier
             .verify_and_send_batches(messages_to_batches_with_remote_pubkeys(&messages))
             .unwrap();
-        assert_eq!(message_receiver.try_iter().flatten().count(), 3);
+        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 3);
 
         for (i, (_, sender)) in messages.iter().enumerate() {
             if invalid_indexes.contains(&i) {
                 assert!(
-                    banlist.is_banned(sender),
+                    ctx.banlist.is_banned(sender),
                     "invalid sender {i} should be banned"
                 );
             } else {
                 assert!(
-                    !banlist.is_banned(sender),
+                    !ctx.banlist.is_banned(sender),
                     "valid sender {i} should not be banned"
                 );
             }
@@ -1465,8 +1443,7 @@ mod tests {
 
     #[test]
     fn test_banlist_updates_for_invalid_certificates() {
-        let (validator_keypairs, mut verifier, _, message_receiver, banlist) =
-            create_keypairs_and_bls_sig_verifier_with_banlist();
+        let mut ctx = TestContext::new();
 
         let invalid_indexes = [0usize, 4usize];
         let messages: Vec<_> = (0..5)
@@ -1474,7 +1451,7 @@ mod tests {
                 let slot = 10 + i as u64;
                 let cert_type = CertificateType::Notarize(slot, Hash::new_unique());
                 let mut cert = create_signed_certificate_message(
-                    &validator_keypairs,
+                    &ctx.validator_keypairs,
                     cert_type,
                     &(0..7).collect::<Vec<_>>(),
                 );
@@ -1485,20 +1462,20 @@ mod tests {
             })
             .collect();
 
-        verifier
+        ctx.verifier
             .verify_and_send_batches(messages_to_batches_with_remote_pubkeys(&messages))
             .unwrap();
-        assert_eq!(message_receiver.try_iter().flatten().count(), 3);
+        assert_eq!(ctx.pool_receiver.try_iter().flatten().count(), 3);
 
         for (i, (_, sender)) in messages.iter().enumerate() {
             if invalid_indexes.contains(&i) {
                 assert!(
-                    banlist.is_banned(sender),
+                    ctx.banlist.is_banned(sender),
                     "invalid sender {i} should be banned"
                 );
             } else {
                 assert!(
-                    !banlist.is_banned(sender),
+                    !ctx.banlist.is_banned(sender),
                     "valid sender {i} should not be banned"
                 );
             }
