@@ -39,7 +39,7 @@ use {
             UninstalledScheduler, UninstalledSchedulerBox, initialized_result_with_timings,
         },
         prioritization_fee_cache::PrioritizationFeeCache,
-        vote_sender_types::ReplayVoteSender,
+        vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_svm::transaction_processing_result::ProcessedTransaction,
@@ -1291,6 +1291,13 @@ impl TaskHandler for DefaultTaskHandler {
             bank,
             handler_context.transaction_status_sender.as_ref(),
             handler_context.replay_vote_sender.as_ref(),
+            match scheduling_context.mode() {
+                BlockVerification => ReplayVoteSendType::Executed {
+                    replay_bank_id: bank.bank_id(),
+                    replay_slot: bank.slot(),
+                },
+                BlockProduction => ReplayVoteSendType::VerifiedExecuted,
+            },
             timings,
             handler_context.log_messages_bytes_limit,
             handler_context.prioritization_fee_cache.as_deref(),

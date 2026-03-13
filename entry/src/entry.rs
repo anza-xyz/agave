@@ -9,18 +9,18 @@ use {
     log::*,
     rayon::{ThreadPool, prelude::*},
     serde::{Deserialize, Serialize},
+    smallvec::SmallVec,
+    solana_address::Address,
     solana_hash::Hash,
     solana_merkle_tree::MerkleTree,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_signature::Signature,
-    solana_transaction::{
-        Transaction, TransactionVerificationMode, versioned::VersionedTransaction,
-    },
-    solana_transaction_error::TransactionResult as Result,
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::{
         ffi::OsStr,
         iter::repeat_with,
-        sync::{Arc, Once, OnceLock},
+        sync::{Once, OnceLock},
         time::Instant,
     },
     wincode::{SchemaRead, SchemaWrite, containers::Vec as WincodeVec, len::BincodeLen},
@@ -194,6 +194,56 @@ pub enum EntryType<Tx: TransactionWithMeta> {
     Tick(Hash),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TxVerificationData {
+    is_simple_vote: bool,
+    signatures: SmallVec<[Signature; 2]>,
+    signer_pubkeys: SmallVec<[Address; 2]>,
+    serialized_message: Vec<u8>,
+}
+
+pub struct UnverifiedSignatures {
+    signatures: Vec<TxVerificationData>,
+}
+
+impl UnverifiedSignatures {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            signatures: Vec::with_capacity(capacity),
+        }
+    }
+
+    pub fn verify(&self) -> Result<()> {
+        self.signatures.par_iter().try_for_each(|tx_signatures| {
+            if tx_signatures
+                .signatures
+                .iter()
+                .zip(tx_signatures.signer_pubkeys.iter())
+                .all(|(signature, pubkey)| {
+                    signature.verify(pubkey.as_ref(), &tx_signatures.serialized_message)
+                })
+            {
+                Ok(())
+            } else {
+                Err(TransactionError::SignatureFailure)
+            }
+        })
+    }
+
+    pub fn vote_transaction_signatures(&self) -> Vec<Signature> {
+        self.signatures
+            .iter()
+            .filter(|tx_signatures| tx_signatures.is_simple_vote)
+            .filter_map(|tx_signatures| tx_signatures.signatures.first().copied())
+            .collect()
+    }
+}
+
+pub struct ValidatedHashedTransactions<Tx: TransactionWithMeta> {
+    pub entries: Vec<EntryType<Tx>>,
+    pub unverified_signatures: UnverifiedSignatures,
+}
+
 impl Entry {
     /// Creates the next Entry `num_hashes` after `start_hash`.
     pub fn new(prev_hash: &Hash, mut num_hashes: u64, transactions: Vec<Transaction>) -> Self {
@@ -301,20 +351,6 @@ pub struct EntryVerificationState {
     poh_duration_us: u64,
 }
 
-pub struct EntrySigVerificationState<Tx: TransactionWithMeta> {
-    verification_status: bool,
-    entries: Option<Vec<EntryType<Tx>>>,
-}
-
-impl<Tx: TransactionWithMeta> EntrySigVerificationState<Tx> {
-    pub fn entries(&mut self) -> Option<Vec<EntryType<Tx>>> {
-        self.entries.take()
-    }
-    pub fn status(&self) -> bool {
-        self.verification_status
-    }
-}
-
 impl EntryVerificationState {
     pub fn status(&self) -> bool {
         self.verification_status
@@ -325,65 +361,99 @@ impl EntryVerificationState {
     }
 }
 
-pub fn verify_transactions<Tx: TransactionWithMeta + Send + Sync>(
+fn validate_and_hash_entry_transactions<Tx: TransactionWithMeta, F>(
+    entry: Entry,
+    verify: &F,
+    unverified_signatures: &mut UnverifiedSignatures,
+) -> Result<EntryType<Tx>>
+where
+    F: Fn(VersionedTransaction, &[u8]) -> Result<Tx>,
+{
+    if entry.transactions.is_empty() {
+        return Ok(EntryType::Tick(entry.hash));
+    }
+
+    let verified_transactions = entry
+        .transactions
+        .into_iter()
+        .map(|versioned_tx| {
+            let num_signers = usize::from(versioned_tx.message.header().num_required_signatures);
+            let static_account_keys = versioned_tx.message.static_account_keys();
+            if static_account_keys.len() < num_signers {
+                return Err(TransactionError::SanitizeFailure);
+            }
+            let signatures = versioned_tx.signatures.iter().copied().collect();
+            let signer_pubkeys = static_account_keys[..num_signers].iter().copied().collect();
+            let serialized_message = versioned_tx.message.serialize();
+            let verified_transaction = verify(versioned_tx, &serialized_message)?;
+            unverified_signatures.signatures.push(TxVerificationData {
+                is_simple_vote: verified_transaction.is_simple_vote_transaction(),
+                signatures,
+                serialized_message,
+                signer_pubkeys,
+            });
+
+            Ok(verified_transaction)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(EntryType::Transactions(verified_transactions))
+}
+
+/// Validates and hashes the transactions included in the given entries.
+///
+/// The function does NOT verify transaction signatures. The caller is expected to call
+/// `UnverifiedSignatures::verify()` on the returned `unverified_signatures`.
+pub fn validate_and_hash_transactions<Tx: TransactionWithMeta + Send + Sync, F>(
     entries: Vec<Entry>,
+    num_txs: usize,
     thread_pool: &ThreadPool,
-    verify: Arc<dyn Fn(VersionedTransaction) -> Result<Tx> + Send + Sync>,
-) -> Result<Vec<EntryType<Tx>>> {
-    thread_pool.install(|| {
+    verify: F,
+) -> Result<ValidatedHashedTransactions<Tx>>
+where
+    F: Fn(VersionedTransaction, &[u8]) -> Result<Tx> + Send + Sync,
+{
+    const PARALLEL_VERIFY_THRESHOLD: usize = 200;
+    if num_txs < PARALLEL_VERIFY_THRESHOLD {
+        let mut unverified_signatures = UnverifiedSignatures::with_capacity(num_txs);
+        let entries = entries
+            .into_iter()
+            .map(|entry| {
+                validate_and_hash_entry_transactions(entry, &verify, &mut unverified_signatures)
+            })
+            .collect::<Result<_>>()?;
+        return Ok(ValidatedHashedTransactions {
+            entries,
+            unverified_signatures,
+        });
+    }
+
+    let verified = thread_pool.install(|| {
         entries
             .into_par_iter()
             .map(|entry| {
-                if entry.transactions.is_empty() {
-                    Ok(EntryType::Tick(entry.hash))
-                } else {
-                    Ok(EntryType::Transactions(
-                        entry
-                            .transactions
-                            .into_par_iter()
-                            .map(verify.as_ref())
-                            .collect::<Result<Vec<_>>>()?,
-                    ))
-                }
+                let mut unverified_signatures =
+                    UnverifiedSignatures::with_capacity(entry.transactions.len());
+                let verified_entry = validate_and_hash_entry_transactions(
+                    entry,
+                    &verify,
+                    &mut unverified_signatures,
+                )?;
+                Ok((verified_entry, unverified_signatures))
             })
-            .collect()
-    })
-}
+            .collect::<Result<Vec<_>>>()
+    })?;
 
-pub fn start_verify_transactions<Tx: TransactionWithMeta + Send + Sync + 'static>(
-    entries: Vec<Entry>,
-    skip_verification: bool,
-    thread_pool: &ThreadPool,
-    verify: Arc<
-        dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<Tx> + Send + Sync,
-    >,
-) -> Result<EntrySigVerificationState<Tx>> {
-    start_verify_transactions_cpu(entries, skip_verification, thread_pool, verify)
-}
-
-fn start_verify_transactions_cpu<Tx: TransactionWithMeta + Send + Sync + 'static>(
-    entries: Vec<Entry>,
-    skip_verification: bool,
-    thread_pool: &ThreadPool,
-    verify: Arc<
-        dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<Tx> + Send + Sync,
-    >,
-) -> Result<EntrySigVerificationState<Tx>> {
-    let verify_func = {
-        let mode = if skip_verification {
-            TransactionVerificationMode::HashOnly
-        } else {
-            TransactionVerificationMode::FullVerification
-        };
-
-        move |versioned_tx| verify(versioned_tx, mode)
-    };
-
-    let entries = verify_transactions(entries, thread_pool, Arc::new(verify_func))?;
-
-    Ok(EntrySigVerificationState {
-        verification_status: true,
-        entries: Some(entries),
+    let mut entries = Vec::with_capacity(verified.len());
+    let mut unverified_signatures = UnverifiedSignatures::with_capacity(num_txs);
+    for (entry, mut tx_unverified_signatures) in verified {
+        entries.push(entry);
+        unverified_signatures
+            .signatures
+            .append(&mut tx_unverified_signatures.signatures);
+    }
+    Ok(ValidatedHashedTransactions {
+        entries,
+        unverified_signatures,
     })
 }
 
@@ -418,7 +488,7 @@ fn verify_entries_cpu_generic(
         num_hashes: 0,
         hash: *start_hash,
         num_transactions: 0,
-        signatures: vec![],
+        signatures: Vec::new(),
     }];
     let entry_pairs = genesis.par_iter().chain(entries).zip(entries);
     let res = entry_pairs.all(|(x0, x1)| {
@@ -449,7 +519,7 @@ fn verify_entries_cpu_x86_simd(
         num_hashes: 0,
         hash: *start_hash,
         num_transactions: 0,
-        signatures: vec![],
+        signatures: Vec::new(),
     }];
 
     let aligned_len = entries.len().div_ceil(simd_len) * simd_len;
@@ -707,26 +777,14 @@ mod tests {
         entries: Vec<Entry>,
         skip_verification: bool,
         thread_pool: &ThreadPool,
-        verify: Arc<
-            dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<Tx> + Send + Sync,
-        >,
+        verify: impl Fn(VersionedTransaction, &[u8]) -> Result<Tx> + Send + Sync,
     ) -> bool {
-        let verify_func = {
-            let verify = verify.clone();
-            let verification_mode = if skip_verification {
-                TransactionVerificationMode::HashOnly
-            } else {
-                TransactionVerificationMode::FullVerification
-            };
-            move |versioned_tx: VersionedTransaction| -> Result<Tx> {
-                verify(versioned_tx, verification_mode)
-            }
+        let num_txs = entries.iter().map(|entry| entry.transactions.len()).sum();
+        let txs = validate_and_hash_transactions(entries, num_txs, thread_pool, verify);
+        let Ok(txs) = txs else {
+            return false;
         };
-
-        let cpu_verify_result =
-            verify_transactions(entries.clone(), thread_pool, Arc::new(verify_func));
-
-        cpu_verify_result.is_ok()
+        skip_verification || txs.unverified_signatures.verify().is_ok()
     }
 
     #[test]
@@ -750,24 +808,19 @@ mod tests {
         // Next, verify entry slice
         let verify_transaction = {
             move |versioned_tx: VersionedTransaction,
-                  _mode: TransactionVerificationMode|
+                  message_bytes: &[u8]|
                   -> Result<RuntimeTransaction<SanitizedTransaction>> {
-                let sanitized_tx = {
-                    let message_hash = versioned_tx.verify_and_hash_message()?;
-                    RuntimeTransaction::try_create(
-                        versioned_tx,
-                        MessageHash::Precomputed(message_hash),
-                        None,
-                        SimpleAddressLoader::Disabled,
-                        &ReservedAccountKeys::empty_key_set(),
-                        true,
-                        true,
-                    )
-                }?;
-
-                sanitized_tx.verify()?;
-
-                Ok(sanitized_tx)
+                RuntimeTransaction::try_create(
+                    versioned_tx,
+                    MessageHash::Precomputed(solana_message::VersionedMessage::hash_raw_message(
+                        message_bytes,
+                    )),
+                    None,
+                    SimpleAddressLoader::Disabled,
+                    &ReservedAccountKeys::empty_key_set(),
+                    true,
+                    true,
+                )
             }
         };
 
@@ -775,7 +828,50 @@ mod tests {
             es,
             false,
             &thread_pool,
-            Arc::new(verify_transaction)
+            verify_transaction
+        ));
+    }
+
+    #[test]
+    fn test_validate_and_hash_transactions_and_signatures() {
+        let thread_pool = ThreadPoolBuilder::new().build().unwrap();
+        let zero = Hash::default();
+        let keypair = Keypair::new();
+        let tx = system_transaction::transfer(&keypair, &keypair.pubkey(), 1, zero);
+        let entries = vec![Entry::new(&zero, 0, vec![tx])];
+
+        let validate_and_hash_transaction =
+            move |versioned_tx: VersionedTransaction,
+                  message_bytes: &[u8]|
+                  -> Result<RuntimeTransaction<SanitizedTransaction>> {
+                RuntimeTransaction::try_create(
+                    versioned_tx,
+                    MessageHash::Precomputed(solana_message::VersionedMessage::hash_raw_message(
+                        message_bytes,
+                    )),
+                    None,
+                    SimpleAddressLoader::Disabled,
+                    &ReservedAccountKeys::empty_key_set(),
+                    true,
+                    true,
+                )
+            };
+        let txs =
+            validate_and_hash_transactions(entries, 1, &thread_pool, validate_and_hash_transaction)
+                .expect("transaction validation and hashing must not verify signatures");
+        assert_eq!(txs.entries.len(), 1);
+        assert!(txs.unverified_signatures.verify().is_ok());
+
+        let mut tx = system_transaction::transfer(&keypair, &keypair.pubkey(), 1, zero);
+        tx.signatures[0] = solana_signature::Signature::default();
+        let entries = vec![Entry::new(&zero, 0, vec![tx])];
+        let txs =
+            validate_and_hash_transactions(entries, 1, &thread_pool, validate_and_hash_transaction)
+                .expect("transaction validation and hashing must not verify signatures");
+        assert_eq!(txs.entries.len(), 1);
+        assert!(matches!(
+            txs.unverified_signatures.verify(),
+            Err(solana_transaction_error::TransactionError::SignatureFailure)
         ));
     }
 
