@@ -12,7 +12,7 @@ use {
         net::{SocketAddr, UdpSocket},
         sync::{Arc, atomic::AtomicBool},
         thread::{self, Builder, JoinHandle},
-        time::Duration,
+        time::{Duration, Instant},
     },
     tokio::sync::mpsc::Sender as AsyncSender,
 };
@@ -30,7 +30,7 @@ struct ServeRepairStats {
 }
 
 impl ServeRepairStats {
-    const CADENCE: std::time::Duration = std::time::Duration::from_secs(5);
+    const CADENCE: Duration = Duration::from_secs(5);
     fn report(&mut self) {
         let dropped_batches = std::mem::replace(&mut self.dropped_batches, 0);
         let dropped_packets = std::mem::replace(&mut self.dropped_packets, 0);
@@ -39,6 +39,14 @@ impl ServeRepairStats {
             ("dropped_packets", dropped_packets, i64),
             ("dropped_batches", dropped_batches, i64),
         );
+    }
+
+    fn periodic_report(&mut self, last_report: &mut Instant) {
+        let now = Instant::now();
+        if now.duration_since(*last_report) > ServeRepairStats::CADENCE {
+            *last_report = now;
+            self.report();
+        }
     }
 }
 
@@ -106,8 +114,8 @@ pub(crate) fn adapt_repair_requests_packets(
     remote_request_sender: Sender<RemoteRequest>,
 ) {
     let mut stats = ServeRepairStats::default();
-    let mut last_report = std::time::Instant::now();
-    'recv_batch: for packets in packets_receiver {
+    let mut last_report = Instant::now();
+    for packets in packets_receiver {
         let total_packets = packets.len();
         for (i, packet) in packets.iter().enumerate() {
             let Some(bytes) = packet.data(..).map(Vec::from) else {
@@ -123,16 +131,12 @@ pub(crate) fn adapt_repair_requests_packets(
                 Err(crossbeam_channel::TrySendError::Full(_)) => {
                     stats.dropped_batches += 1;
                     stats.dropped_packets += total_packets.saturating_sub(i) as i64;
-                    continue 'recv_batch;
+                    break;
                 }
                 Err(crossbeam_channel::TrySendError::Disconnected(_)) => return,
             }
         }
-        let now = std::time::Instant::now();
-        if now.duration_since(last_report) > ServeRepairStats::CADENCE {
-            last_report = now;
-            stats.report();
-        }
+        stats.periodic_report(&mut last_report);
     }
     stats.report();
 }

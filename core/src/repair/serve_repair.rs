@@ -192,6 +192,7 @@ struct ServeRepairStats {
     window_index_misses: usize,
     ping_cache_check_failed: usize,
     pings_sent: usize,
+    pings_lost: usize,
     decode_time_us: u64,
     handle_requests_time_us: u64,
     handle_requests_staked: usize,
@@ -881,6 +882,7 @@ impl ServeRepair {
                 i64
             ),
             ("pings_sent", stats.pings_sent, i64),
+            ("pings_lost", stats.pings_lost, i64),
             ("decode_time_us", stats.decode_time_us, i64),
             (
                 "handle_requests_time_us",
@@ -1136,9 +1138,12 @@ impl ServeRepair {
         }
 
         if !pending_pings.is_empty() {
-            stats.pings_sent += pending_pings.len();
+            let ping_count = pending_pings.len();
+            stats.pings_sent += ping_count;
             let batch = RecycledPacketBatch::new(pending_pings);
-            let _ = packet_batch_sender.try_send(batch.into());
+            if packet_batch_sender.try_send(batch.into()).is_err() {
+                stats.pings_lost += ping_count;
+            };
         }
     }
 
