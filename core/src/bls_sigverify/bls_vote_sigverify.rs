@@ -2,26 +2,18 @@
 use qualifier_attr::qualifiers;
 use {
     super::{errors::SigVerifyVoteError, stats::SigVerifyVoteStats},
-    crate::{
-        bls_sigverify::{
-            bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY},
-            utils::{
-                send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair,
-                send_votes_to_rewards,
-            },
+    crate::bls_sigverify::{
+        bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
+        utils::{
+            send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
         },
-        cluster_info_vote_listener::VerifiedVoterSlotsSender,
     },
-    agave_votor::{
-        consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
-        consensus_rewards,
-    },
+    agave_votor::{consensus_metrics::ConsensusMetricsEvent, consensus_rewards},
     agave_votor_messages::{
         consensus_message::{ConsensusMessage, VoteMessage},
         reward_certificate::AddVoteMessage,
         vote::Vote,
     },
-    crossbeam_channel::Sender,
     rayon::{
         ThreadPool, current_thread_index,
         iter::{Either, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
@@ -67,18 +59,14 @@ impl VotePayload {
 /// to rewards container and repair.
 ///
 /// Any vote that fails fallback individual signature verification will have its sender banlisted.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn verify_and_send_votes(
     votes_to_verify: Vec<VotePayload>,
     root_bank: &Bank,
     cluster_info: &ClusterInfo,
     leader_schedule: &LeaderScheduleCache,
-    channel_to_pool: &Sender<Vec<ConsensusMessage>>,
-    channel_to_repair: &VerifiedVoterSlotsSender,
-    channel_to_reward: &Sender<AddVoteMessage>,
-    channel_to_metrics: &ConsensusMetricsEventSender,
     banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
+    channels: &SigVerifierChannels,
 ) -> Result<SigVerifyVoteStats, SigVerifyVoteError> {
     let mut measure = Measure::start("verify_and_send_votes");
     let mut stats = SigVerifyVoteStats::default();
@@ -92,10 +80,10 @@ pub(super) fn verify_and_send_votes(
     let (votes_for_pool, msgs_for_repair, msg_for_reward, msg_for_metrics) =
         process_verified_votes(&verified_votes, root_bank, cluster_info, leader_schedule);
 
-    send_votes_to_pool(votes_for_pool, channel_to_pool, &mut stats)?;
-    send_votes_to_repair(msgs_for_repair, channel_to_repair, &mut stats)?;
-    send_votes_to_rewards(msg_for_reward, channel_to_reward, &mut stats)?;
-    send_votes_to_metrics(msg_for_metrics, channel_to_metrics, &mut stats)?;
+    send_votes_to_pool(votes_for_pool, &channels.channel_to_pool, &mut stats)?;
+    send_votes_to_repair(msgs_for_repair, &channels.channel_to_repair, &mut stats)?;
+    send_votes_to_rewards(msg_for_reward, &channels.channel_to_reward, &mut stats)?;
+    send_votes_to_metrics(msg_for_metrics, &channels.channel_to_metrics, &mut stats)?;
 
     measure.stop();
     stats

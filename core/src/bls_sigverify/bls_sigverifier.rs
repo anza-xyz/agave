@@ -49,52 +49,41 @@ pub(super) const NUM_SLOTS_FOR_VERIFY: Slot = 90_000;
 /// We ban the sender for 2 days which roughly corresponds to an epoch
 pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
 
+pub(crate) struct SigVerifierContext {
+    pub(crate) migration_status: Arc<MigrationStatus>,
+    pub(crate) banlist: Arc<SimpleQosBanlist>,
+    pub(crate) sharable_banks: SharableBanks,
+    pub(crate) cluster_info: Arc<ClusterInfo>,
+    pub(crate) leader_schedule: Arc<LeaderScheduleCache>,
+    pub(crate) num_threads: usize,
+}
+
+pub(crate) struct SigVerifierChannels {
+    pub(crate) packet_receiver: Receiver<PacketBatch>,
+    pub(crate) channel_to_repair: VerifiedVoterSlotsSender,
+    pub(crate) channel_to_reward: Sender<AddVoteMessage>,
+    pub(crate) channel_to_pool: Sender<Vec<ConsensusMessage>>,
+    pub(crate) channel_to_metrics: ConsensusMetricsEventSender,
+}
+
 /// Starts the BLS sigverifier service in its own dedicated thread.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_service(
     exit: Arc<AtomicBool>,
-    migration_status: Arc<MigrationStatus>,
-    packet_receiver: Receiver<PacketBatch>,
-    banlist: Arc<SimpleQosBanlist>,
-    sharable_banks: SharableBanks,
-    channel_to_repair: VerifiedVoterSlotsSender,
-    channel_to_reward: Sender<AddVoteMessage>,
-    channel_to_pool: Sender<Vec<ConsensusMessage>>,
-    channel_to_metrics: ConsensusMetricsEventSender,
-    cluster_info: Arc<ClusterInfo>,
-    leader_schedule: Arc<LeaderScheduleCache>,
-    num_threads: usize,
+    context: SigVerifierContext,
+    channels: SigVerifierChannels,
 ) -> thread::JoinHandle<()> {
-    let verifier = SigVerifier::new(
-        migration_status,
-        banlist,
-        sharable_banks,
-        channel_to_repair,
-        channel_to_reward,
-        channel_to_pool,
-        channel_to_metrics,
-        cluster_info,
-        leader_schedule,
-        num_threads,
-    );
+    let verifier = SigVerifier::new(context, channels);
 
     Builder::new()
         .name("solSigVerBLS".to_string())
-        .spawn(move || verifier.run(exit, packet_receiver))
+        .spawn(move || verifier.run(exit))
         .unwrap()
 }
 
 struct SigVerifier {
     migration_status: Arc<MigrationStatus>,
     banlist: Arc<SimpleQosBanlist>,
-    /// Channel to send msgs to repair on.
-    channel_to_repair: VerifiedVoterSlotsSender,
-    /// Channel to send msgs to consensus rewards container to.
-    channel_to_reward: Sender<AddVoteMessage>,
-    /// Channel to send msgs to consensus pool to.
-    channel_to_pool: Sender<Vec<ConsensusMessage>>,
-    /// Channel to send msgs to consensus metrics container to.
-    channel_to_metrics: ConsensusMetricsEventSender,
+    channels: SigVerifierChannels,
     /// Container to look up root banks from.
     sharable_banks: SharableBanks,
     stats: SigVerifierStats,
@@ -109,19 +98,15 @@ struct SigVerifier {
 }
 
 impl SigVerifier {
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        migration_status: Arc<MigrationStatus>,
-        banlist: Arc<SimpleQosBanlist>,
-        sharable_banks: SharableBanks,
-        channel_to_repair: VerifiedVoterSlotsSender,
-        channel_to_reward: Sender<AddVoteMessage>,
-        channel_to_pool: Sender<Vec<ConsensusMessage>>,
-        channel_to_metrics: ConsensusMetricsEventSender,
-        cluster_info: Arc<ClusterInfo>,
-        leader_schedule: Arc<LeaderScheduleCache>,
-        num_threads: usize,
-    ) -> Self {
+    fn new(context: SigVerifierContext, channels: SigVerifierChannels) -> Self {
+        let SigVerifierContext {
+            migration_status,
+            banlist,
+            sharable_banks,
+            cluster_info,
+            leader_schedule,
+            num_threads,
+        } = context;
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .thread_name(|i| format!("solSigVerBLS{i:02}"))
@@ -130,10 +115,7 @@ impl SigVerifier {
         Self {
             migration_status,
             banlist,
-            channel_to_repair,
-            channel_to_reward,
-            channel_to_pool,
-            channel_to_metrics,
+            channels,
             sharable_banks,
             stats: SigVerifierStats::default(),
             verified_certs: HashSet::new(),
@@ -144,10 +126,10 @@ impl SigVerifier {
         }
     }
 
-    fn run(mut self, exit: Arc<AtomicBool>, packet_receiver: Receiver<PacketBatch>) {
+    fn run(mut self, exit: Arc<AtomicBool>) {
         while !exit.load(Ordering::Relaxed) {
             const SOFT_RECEIVE_CAP: usize = 5000;
-            let Ok(batches) = recv_batches(&packet_receiver, SOFT_RECEIVE_CAP) else {
+            let Ok(batches) = recv_batches(&self.channels.packet_receiver, SOFT_RECEIVE_CAP) else {
                 error!("packet_receiver disconnected:  Exiting.");
                 return;
             };
@@ -184,12 +166,9 @@ impl SigVerifier {
                     &root_bank,
                     &self.cluster_info,
                     &self.leader_schedule,
-                    &self.channel_to_pool,
-                    &self.channel_to_repair,
-                    &self.channel_to_reward,
-                    &self.channel_to_metrics,
                     &self.banlist,
                     &self.thread_pool,
+                    &self.channels,
                 )
             },
             || {
@@ -197,7 +176,7 @@ impl SigVerifier {
                     &mut self.verified_certs,
                     certs_to_verify,
                     &root_bank,
-                    &self.channel_to_pool,
+                    &self.channels.channel_to_pool,
                     &self.banlist,
                     &self.thread_pool,
                 )
@@ -424,19 +403,25 @@ mod tests {
             SocketAddrSpace::Unspecified,
         ));
         let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
+        let (_packet_sender, packet_receiver) = crossbeam_channel::unbounded();
         (
             validator_keypairs,
             SigVerifier::new(
-                Arc::new(MigrationStatus::default()),
-                banlist,
-                sharable_banks,
-                votes_for_repair_sender,
-                reward_votes_sender,
-                message_sender,
-                consensus_metrics_sender,
-                cluster_info,
-                leader_schedule,
-                4,
+                SigVerifierContext {
+                    migration_status: Arc::new(MigrationStatus::default()),
+                    banlist,
+                    sharable_banks,
+                    cluster_info,
+                    leader_schedule,
+                    num_threads: 4,
+                },
+                SigVerifierChannels {
+                    packet_receiver,
+                    channel_to_repair: votes_for_repair_sender,
+                    channel_to_reward: reward_votes_sender,
+                    channel_to_pool: message_sender,
+                    channel_to_metrics: consensus_metrics_sender,
+                },
             ),
         )
     }
@@ -1298,17 +1283,23 @@ mod tests {
             SocketAddrSpace::Unspecified,
         ));
         let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
+        let (_packet_sender, packet_receiver) = crossbeam_channel::unbounded();
         let mut sig_verifier = SigVerifier::new(
-            Arc::new(MigrationStatus::default()),
-            new_test_banlist(),
-            sharable_banks,
-            votes_for_repair_sender,
-            reward_votes_sender,
-            message_sender,
-            consensus_metrics_sender,
-            cluster_info,
-            leader_schedule,
-            4,
+            SigVerifierContext {
+                migration_status: Arc::new(MigrationStatus::default()),
+                banlist: new_test_banlist(),
+                sharable_banks,
+                cluster_info,
+                leader_schedule,
+                num_threads: 4,
+            },
+            SigVerifierChannels {
+                packet_receiver,
+                channel_to_repair: votes_for_repair_sender,
+                channel_to_reward: reward_votes_sender,
+                channel_to_pool: message_sender,
+                channel_to_metrics: consensus_metrics_sender,
+            },
         );
 
         let vote = Vote::new_skip_vote(2);

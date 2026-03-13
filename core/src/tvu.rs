@@ -6,7 +6,7 @@ use {
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_trace::BankingTracer,
         block_creation_loop::ReplayHighestFrozen,
-        bls_sigverify::bls_sigverifier,
+        bls_sigverify::bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
             VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, VoteTracker,
@@ -308,17 +308,21 @@ impl Tvu {
             let sharable_banks = bank_forks.read().unwrap().sharable_banks();
             let bls_sigverifier_t = bls_sigverifier::spawn_service(
                 exit.clone(),
-                migration_status.clone(),
-                bls_packet_receiver,
-                banlist,
-                sharable_banks,
-                verified_voter_slots_sender,
-                reward_votes_sender,
-                consensus_message_sender.clone(),
-                consensus_metrics_sender.clone(),
-                cluster_info.clone(),
-                leader_schedule_cache.clone(),
-                tvu_config.bls_sigverify_threads.get(),
+                SigVerifierContext {
+                    migration_status: migration_status.clone(),
+                    banlist,
+                    sharable_banks,
+                    cluster_info: cluster_info.clone(),
+                    leader_schedule: leader_schedule_cache.clone(),
+                    num_threads: tvu_config.bls_sigverify_threads.get(),
+                },
+                SigVerifierChannels {
+                    packet_receiver: bls_packet_receiver,
+                    channel_to_repair: verified_voter_slots_sender,
+                    channel_to_reward: reward_votes_sender,
+                    channel_to_pool: consensus_message_sender.clone(),
+                    channel_to_metrics: consensus_metrics_sender.clone(),
+                },
             );
 
             let mut key_notifiers = key_notifiers.write().unwrap();
