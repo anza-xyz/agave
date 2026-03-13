@@ -287,8 +287,20 @@ pub(crate) mod external {
                     Some(message) => {
                         did_work = true;
                         self.sender.sync();
-                        should_drain_executes |=
-                            self.process_message(message, should_drain_executes)?;
+
+                        // Process the next message.
+                        let should_drain = self.process_message(message, should_drain_executes)?;
+
+                        // If we just now lost our bank, resync and if still no bank drain
+                        // the full queue.
+                        if should_drain && !should_drain_executes {
+                            receiver.sync();
+                            if active_leader_state(&self.shared_leader_state).is_none() {
+                                should_drain_executes = true;
+                            }
+                        }
+
+                        // Commit our queues.
                         self.sender.commit();
                         receiver.finalize();
                     }
