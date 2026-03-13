@@ -15,13 +15,9 @@ eval "$(ci/channel-info.sh)"
 export RUST_BACKTRACE=1
 export RUSTFLAGS="-D warnings -A incomplete_features"
 
-# sort
-if [[ -n $CI ]]; then
-  # exclude from printing "Checking xxx ..."
-  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check > /dev/null
-else
-  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check
-fi
+# toml format & lint
+_ taplo check
+_ taplo fmt --check
 
 # check dev-context-only-utils isn't used in normal dependencies
 _ scripts/check-dev-context-only-utils.sh tree

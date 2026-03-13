@@ -1,0 +1,26 @@
+exclude = [
+    ".direnv/**",
+    ".venv/**",
+    ".cargo/**",
+]
+
+[formatting]
+allowed_blank_lines = 1
+array_auto_expand = true
+array_auto_collapse = false
+column_width = 120
+indent_string = "    "
+
+[[rule]]
+keys = [
+    "lints.clippy",
+    "dependencies",
+    "dev-dependencies",
+    "build-dependencies",
+    "toolchain",
+    "workspace.dependencies",
+    "patch",
+]
+
+[rule.formatting]
+reorder_keys = true
