@@ -149,7 +149,7 @@ dependencies = [
  "agave-syscalls",
  "assert_cmd",
  "chrono",
- "clap",
+ "clap 4.6.0",
  "crossbeam-channel",
  "csv",
  "dashmap",
@@ -322,7 +322,7 @@ name = "agave-store-tool"
 version = "4.1.0-alpha.0"
 dependencies = [
  "ahash 0.8.12",
- "clap",
+ "clap 4.6.0",
  "rayon",
  "solana-account 4.1.0",
  "solana-accounts-db",
@@ -1530,6 +1530,32 @@ dependencies = [
  "textwrap",
  "unicode-width 0.1.14",
 ]
+
+[[package]]
+name = "clap"
+version = "4.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b193af5b67834b676abd72466a96c1024e6a6ad978a1f484bd90b85c94041351"
+dependencies = [
+ "clap_builder",
+]
+
+[[package]]
+name = "clap_builder"
+version = "4.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "714a53001bf66416adb0e2ef5ac857140e7dc3a0c48fb28b2f10762fc4b5069f"
+dependencies = [
+ "anstyle",
+ "clap_lex",
+ "strsim 0.11.1",
+]
+
+[[package]]
+name = "clap_lex"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "colorchoice"
@@ -6057,7 +6083,7 @@ dependencies = [
  "agave-feature-set",
  "agave-logger",
  "chrono",
- "clap",
+ "clap 4.6.0",
  "crossbeam-channel",
  "csv",
  "log",
@@ -6291,7 +6317,7 @@ name = "solana-clap-utils"
 version = "4.1.0-alpha.0"
 dependencies = [
  "chrono",
- "clap",
+ "clap 2.34.0",
  "rpassword",
  "solana-bls-signatures",
  "solana-clock",
@@ -6334,7 +6360,7 @@ dependencies = [
  "agave-reserved-account-keys",
  "base64 0.22.1",
  "chrono",
- "clap",
+ "clap 2.34.0",
  "console 0.16.2",
  "humantime",
  "indicatif",
@@ -6971,7 +6997,7 @@ dependencies = [
  "agave-snapshots",
  "base64 0.22.1",
  "bincode",
- "clap",
+ "clap 4.6.0",
  "itertools 0.14.0",
  "serde",
  "serde_json",
