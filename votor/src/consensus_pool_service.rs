@@ -14,7 +14,7 @@ use {
         voting_service::BLSOp,
     },
     agave_votor_messages::{
-        consensus_message::{Certificate, ConsensusMessage},
+        consensus_message::{Certificate, CertificateType, ConsensusMessage},
         migration::MigrationStatus,
     },
     crossbeam_channel::{Receiver, Sender, TrySendError, select},
@@ -54,6 +54,7 @@ pub(crate) struct ConsensusPoolContext {
     // consider adding a separate pathway in consensus_pool.add_message() for ingesting own votes
     pub(crate) consensus_message_receiver: Receiver<Vec<ConsensusMessage>>,
 
+    pub(crate) channel_to_bls_sigverifier: Sender<Vec<CertificateType>>,
     pub(crate) bls_sender: Sender<BLSOp>,
     pub(crate) event_sender: VotorEventSender,
     pub(crate) commitment_sender: Sender<CommitmentAggregationData>,
@@ -80,6 +81,7 @@ impl ConsensusPoolService {
     fn maybe_update_root_and_send_new_certificates(
         consensus_pool: &mut ConsensusPool,
         sharable_banks: &SharableBanks,
+        channel_to_bls_sigverifier: &Sender<Vec<CertificateType>>,
         bls_sender: &Sender<BLSOp>,
         new_finalized_slot: Option<Slot>,
         new_certificates_to_send: Vec<Arc<Certificate>>,
@@ -95,10 +97,24 @@ impl ConsensusPoolService {
         let bank = sharable_banks.root();
         consensus_pool.prune_old_state(bank.slot());
         stats.prune_old_state_called += 1;
-        // Send new certificates to peers
+        Self::send_to_bls_sigverifier(channel_to_bls_sigverifier, &new_certificates_to_send)?;
         Self::send_certificates(bls_sender, new_certificates_to_send, stats)
     }
 
+    /// Sends generated certs to the bls sigverifier.
+    fn send_to_bls_sigverifier(
+        channel_to_bls_sigverifier: &Sender<Vec<CertificateType>>,
+        certs: &[Arc<Certificate>],
+    ) -> Result<(), AddVoteError> {
+        let msg = certs.iter().map(|c| c.cert_type).collect::<Vec<_>>();
+        match channel_to_bls_sigverifier.try_send(msg) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => unimplemented!(),
+            Err(TrySendError::Disconnected(_)) => unimplemented!(),
+        }
+    }
+
+    /// Sends generated certs to peers.
     fn send_certificates(
         bls_sender: &Sender<BLSOp>,
         certificates_to_send: Vec<Arc<Certificate>>,
@@ -158,6 +174,7 @@ impl ConsensusPoolService {
         Self::maybe_update_root_and_send_new_certificates(
             consensus_pool,
             &ctx.sharable_banks,
+            &ctx.channel_to_bls_sigverifier,
             &ctx.bls_sender,
             new_finalized_slot,
             new_certificates_to_send,
@@ -470,6 +487,8 @@ mod tests {
         consensus_pool: ConsensusPool,
         bls_sender: Sender<BLSOp>,
         bls_receiver: Receiver<BLSOp>,
+        channel_to_bls_sigverifier: Sender<Vec<CertificateType>>,
+        _cert_types_receiver: Receiver<Vec<CertificateType>>,
         commitment_sender: Sender<CommitmentAggregationData>,
         commitment_receiver: Receiver<CommitmentAggregationData>,
         validator_keypairs: Vec<ValidatorVoteKeypairs>,
@@ -485,6 +504,7 @@ mod tests {
         fn default() -> Self {
             let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
             let (commitment_sender, commitment_receiver) = crossbeam_channel::unbounded();
+            let (channel_to_bls_sigverifier, cert_types_receiver) = crossbeam_channel::unbounded();
 
             // Create 10 node validatorvotekeypairs vec
             let validator_keypairs = (0..10)
@@ -519,6 +539,8 @@ mod tests {
                 consensus_pool,
                 bls_sender,
                 bls_receiver,
+                channel_to_bls_sigverifier,
+                _cert_types_receiver: cert_types_receiver,
                 commitment_sender,
                 commitment_receiver,
                 validator_keypairs,
@@ -584,6 +606,7 @@ mod tests {
                 ConsensusPoolService::maybe_update_root_and_send_new_certificates(
                     &mut ctx.consensus_pool,
                     &ctx.sharable_banks,
+                    &ctx.channel_to_bls_sigverifier,
                     &ctx.bls_sender,
                     new_finalized_slot,
                     new_certificates_to_send,
@@ -663,6 +686,7 @@ mod tests {
         ConsensusPoolService::maybe_update_root_and_send_new_certificates(
             &mut ctx.consensus_pool,
             &ctx.sharable_banks,
+            &ctx.channel_to_bls_sigverifier,
             &ctx.bls_sender,
             new_finalized_slot,
             new_certificates_to_send,
@@ -733,6 +757,7 @@ mod tests {
             leader_schedule_cache: ctx.leader_schedule_cache.clone(),
             consensus_message_receiver: crossbeam_channel::unbounded().1,
             bls_sender: ctx.bls_sender.clone(),
+            channel_to_bls_sigverifier: ctx.channel_to_bls_sigverifier.clone(),
             event_sender: crossbeam_channel::unbounded().0,
             commitment_sender: ctx.commitment_sender.clone(),
         };
@@ -842,6 +867,7 @@ mod tests {
         let result = ConsensusPoolService::maybe_update_root_and_send_new_certificates(
             &mut ctx.consensus_pool,
             &ctx.sharable_banks,
+            &ctx.channel_to_bls_sigverifier,
             &ctx.bls_sender,
             Some(5), // new finalized slot
             certificates,

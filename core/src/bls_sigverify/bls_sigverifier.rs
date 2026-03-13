@@ -17,7 +17,7 @@ use {
         migration::MigrationStatus,
         reward_certificate::AddVoteMessage,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
+    crossbeam_channel::{Receiver, Sender, TryRecvError, select},
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_bls_signatures::pubkey::PubkeyAffine as BlsPubkeyAffine,
     solana_clock::Slot,
@@ -64,6 +64,7 @@ pub(crate) struct SigVerifierChannels {
     pub(crate) channel_to_reward: Sender<AddVoteMessage>,
     pub(crate) channel_to_pool: Sender<Vec<ConsensusMessage>>,
     pub(crate) channel_to_metrics: ConsensusMetricsEventSender,
+    pub(crate) channel_from_pool: Receiver<Vec<CertificateType>>,
 }
 
 /// Starts the BLS sigverifier service in its own dedicated thread.
@@ -73,11 +74,18 @@ pub(crate) fn spawn_service(
     channels: SigVerifierChannels,
 ) -> thread::JoinHandle<()> {
     let verifier = SigVerifier::new(context, channels);
-
     Builder::new()
         .name("solSigVerBLS".to_string())
         .spawn(move || verifier.run(exit))
         .unwrap()
+}
+
+enum RecvMsgsResult {
+    Batches(Vec<PacketBatch>),
+    GeneratedCerts(Vec<CertificateType>),
+    Timeout,
+    PacketReceiverDisconnected,
+    ChannelFromPoolDisconnected,
 }
 
 struct SigVerifier {
@@ -128,25 +136,54 @@ impl SigVerifier {
 
     fn run(mut self, exit: Arc<AtomicBool>) {
         while !exit.load(Ordering::Relaxed) {
-            const SOFT_RECEIVE_CAP: usize = 5000;
-            let Ok(batches) = recv_batches(&self.channels.packet_receiver, SOFT_RECEIVE_CAP) else {
-                error!("packet_receiver disconnected:  Exiting.");
-                return;
-            };
-            if batches.is_empty() || self.migration_status.is_pre_feature_activation() {
+            if self.migration_status.is_pre_feature_activation() {
+                thread::sleep(Duration::from_secs(1));
                 continue;
             }
 
-            let (verify_res, verify_time_us) = measure_us!(self.verify_and_send_batches(batches));
-            self.stats
-                .verify_and_send_batch_us
-                .add_sample(verify_time_us);
-            self.stats.maybe_report();
-            if let Err(e) = verify_res {
-                error!("verify_and_send_batch() failed with {e}. Exiting.");
-                break;
+            match self.recv_msgs() {
+                RecvMsgsResult::Timeout => continue,
+                RecvMsgsResult::PacketReceiverDisconnected => {
+                    error!("packet_receiver disconnected:  Exiting.");
+                    break;
+                }
+                RecvMsgsResult::ChannelFromPoolDisconnected => {
+                    error!("channel from pool disconnected:  Exiting.");
+                    break;
+                }
+                RecvMsgsResult::GeneratedCerts(certs) => {
+                    self.handle_generated_certs(certs);
+                }
+                RecvMsgsResult::Batches(batches) => {
+                    if let Err(()) = self.handle_batches(batches) {
+                        break;
+                    }
+                }
             }
+            self.stats.maybe_report();
         }
+        self.stats.do_report();
+    }
+
+    /// Handles received `batches` from the network.
+    fn handle_batches(&mut self, batches: Vec<PacketBatch>) -> Result<(), ()> {
+        if batches.is_empty() {
+            return Ok(());
+        }
+        let (verify_res, verify_time_us) = measure_us!(self.verify_and_send_batches(batches));
+        self.stats
+            .verify_and_send_batch_us
+            .add_sample(verify_time_us);
+        if let Err(e) = verify_res {
+            error!("verify_and_send_batch() failed with {e}. Exiting.");
+            return Err(());
+        }
+        Ok(())
+    }
+
+    /// Handles certs that were generated from our own consensus pool.
+    fn handle_generated_certs(&mut self, certs: Vec<CertificateType>) {
+        self.verified_certs.extend(certs);
     }
 
     fn verify_and_send_batches(&mut self, batches: Vec<PacketBatch>) -> Result<(), SigVerifyError> {
@@ -281,40 +318,49 @@ impl SigVerifier {
         self.stats.num_old_votes_received += 1;
         None
     }
-}
 
-/// Receives a `Vec<PacketBatch>` from the `receiver` while adhering to the `soft_receive_cap` limit.
-///
-/// Returns `Err(())` if the channel disconnected.
-fn recv_batches(
-    receiver: &Receiver<PacketBatch>,
-    soft_receive_cap: usize,
-) -> Result<Vec<PacketBatch>, ()> {
-    let batch = match receiver.recv_timeout(Duration::from_secs(1)) {
-        Ok(b) => b,
-        Err(e) => match e {
-            RecvTimeoutError::Timeout => {
-                return Ok(vec![]);
-            }
-            RecvTimeoutError::Disconnected => {
-                return Err(());
-            }
-        },
-    };
-    let mut batches = Vec::with_capacity(soft_receive_cap);
-    batches.push(batch);
-    while batches.len() < soft_receive_cap {
-        match receiver.try_recv() {
-            Ok(b) => {
-                batches.push(b);
-            }
-            Err(e) => match e {
-                TryRecvError::Empty => return Ok(batches),
-                TryRecvError::Disconnected => return Err(()),
+    /// Receives messages from various channels.
+    ///
+    /// Concurrently polls the channels to receive [`PacketBatch`] from the network and
+    /// generated [`CertificateType`] from the consensus pool.
+    ///
+    /// When receiving [`PacketBatch`], attempts to perform additional batching.
+    fn recv_msgs(&self) -> RecvMsgsResult {
+        let batch = select! {
+            recv(&self.channels.packet_receiver) -> res => {
+                match res {
+                    Err(_) => return RecvMsgsResult::PacketReceiverDisconnected,
+                    Ok(batch) => batch,
+                }
             },
+            recv(&self.channels.channel_from_pool) -> res => {
+                match res {
+                    Err(_) => return RecvMsgsResult::ChannelFromPoolDisconnected,
+                    Ok(certs) => return RecvMsgsResult::GeneratedCerts(certs)
+                }
+            }
+            default(Duration::from_secs(1)) => return RecvMsgsResult::Timeout
+
+        };
+
+        const SOFT_RECEIVE_CAP: usize = 5000;
+        let mut batches = Vec::with_capacity(SOFT_RECEIVE_CAP);
+        batches.push(batch);
+        while batches.len() < SOFT_RECEIVE_CAP {
+            match self.channels.packet_receiver.try_recv() {
+                Ok(b) => {
+                    batches.push(b);
+                }
+                Err(e) => match e {
+                    TryRecvError::Empty => break,
+                    TryRecvError::Disconnected => {
+                        return RecvMsgsResult::ChannelFromPoolDisconnected;
+                    }
+                },
+            }
         }
+        RecvMsgsResult::Batches(batches)
     }
-    Ok(batches)
 }
 
 #[cfg(test)]
@@ -365,6 +411,7 @@ mod tests {
         _reward_receiver: Receiver<AddVoteMessage>,
         pool_receiver: Receiver<Vec<ConsensusMessage>>,
         _metrics_receiver: ConsensusMetricsEventReceiver,
+        _cert_types_sender: Sender<Vec<CertificateType>>,
     }
 
     impl TestContext {
@@ -406,6 +453,7 @@ mod tests {
             let (channel_to_reward, reward_receiver) = crossbeam_channel::unbounded();
             let (packet_sender, packet_receiver) = crossbeam_channel::unbounded();
             let (channel_to_metrics, metrics_receiver) = crossbeam_channel::unbounded();
+            let (cert_types_sender, channel_from_pool) = crossbeam_channel::unbounded();
 
             let banlist = new_test_banlist();
             let verifier = SigVerifier::new(
@@ -423,6 +471,7 @@ mod tests {
                     channel_to_reward,
                     channel_to_pool,
                     channel_to_metrics,
+                    channel_from_pool,
                 },
             );
             Self {
@@ -434,6 +483,7 @@ mod tests {
                 _reward_receiver: reward_receiver,
                 pool_receiver,
                 _metrics_receiver: metrics_receiver,
+                _cert_types_sender: cert_types_sender,
             }
         }
     }
@@ -1231,6 +1281,7 @@ mod tests {
         let (votes_for_repair_sender, _) = crossbeam_channel::unbounded();
         let (consensus_metrics_sender, _) = crossbeam_channel::unbounded();
         let (reward_votes_sender, _reward_votes_receiver) = crossbeam_channel::unbounded();
+        let (_cert_types_sender, channel_from_pool) = crossbeam_channel::unbounded();
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
@@ -1273,6 +1324,7 @@ mod tests {
                 channel_to_reward: reward_votes_sender,
                 channel_to_pool: message_sender,
                 channel_to_metrics: consensus_metrics_sender,
+                channel_from_pool,
             },
         );
 

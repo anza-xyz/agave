@@ -262,6 +262,7 @@ impl Tvu {
         // streamer and sigverify for A2A BLS messages
         let (consensus_message_sender, consensus_message_receiver) =
             bounded(MAX_ALPENGLOW_PACKET_NUM);
+        let (cert_types_sender, cert_types_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
         let (reward_votes_sender, reward_votes_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
         let (consensus_metrics_sender, consensus_metrics_receiver) =
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
@@ -322,6 +323,7 @@ impl Tvu {
                     channel_to_reward: reward_votes_sender,
                     channel_to_pool: consensus_message_sender.clone(),
                     channel_to_metrics: consensus_metrics_sender.clone(),
+                    channel_from_pool: cert_types_receiver,
                 },
             );
 
@@ -471,6 +473,7 @@ impl Tvu {
             rpc_subscriptions: rpc_subscriptions.clone(),
             snapshot_controller: snapshot_controller.clone(),
             bls_sender: bls_sender.clone(),
+            channel_to_bls_sigverifier: cert_types_sender,
             commitment_sender: votor_commitment_sender,
             drop_bank_sender: drop_bank_sender.clone(),
             bank_notification_sender: bank_notification_sender.clone(),

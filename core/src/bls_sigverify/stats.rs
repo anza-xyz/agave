@@ -59,7 +59,7 @@ impl Default for SigVerifierStats {
 }
 
 impl SigVerifierStats {
-    pub(super) fn maybe_report(&mut self) {
+    pub(super) fn do_report(&mut self) {
         let Self {
             vote_stats,
             cert_stats,
@@ -73,12 +73,8 @@ impl SigVerifierStats {
             discard_vote_invalid_rank,
             discard_vote_no_epoch_stakes,
             verify_and_send_batch_us,
-            last_report,
+            last_report: _,
         } = self;
-        if last_report.elapsed() < STATS_INTERVAL_DURATION {
-            return;
-        }
-
         vote_stats.report();
         cert_stats.report();
         datapoint_info!(
@@ -128,6 +124,13 @@ impl SigVerifierStats {
             ("num_pkts_count", num_pkts.count(), i64),
         );
         *self = SigVerifierStats::default();
+    }
+
+    pub(super) fn maybe_report(&mut self) {
+        if self.last_report.elapsed() < STATS_INTERVAL_DURATION {
+            return;
+        }
+        self.do_report();
     }
 }
 

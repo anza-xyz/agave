@@ -59,7 +59,7 @@ use {
         voting_utils::VotingContext,
     },
     agave_votor_messages::{
-        consensus_message::ConsensusMessage,
+        consensus_message::{CertificateType, ConsensusMessage},
         reward_certificate::{AddVoteMessage, BuildRewardCertsRequest, BuildRewardCertsResponse},
     },
     crossbeam_channel::{Receiver, Sender},
@@ -108,6 +108,7 @@ pub struct VotorConfig {
     // Senders / Notifiers
     pub snapshot_controller: Option<Arc<SnapshotController>>,
     pub bls_sender: Sender<BLSOp>,
+    pub channel_to_bls_sigverifier: Sender<Vec<CertificateType>>,
     pub commitment_sender: Sender<CommitmentAggregationData>,
     pub drop_bank_sender: Sender<Vec<BankWithScheduler>>,
     pub bank_notification_sender: Option<BankNotificationSenderConfig>,
@@ -161,6 +162,7 @@ impl Votor {
             rpc_subscriptions,
             snapshot_controller,
             bls_sender,
+            channel_to_bls_sigverifier,
             commitment_sender,
             drop_bank_sender,
             bank_notification_sender,
@@ -243,6 +245,7 @@ impl Votor {
             sharable_banks: sharable_banks.clone(),
             leader_schedule_cache: leader_schedule_cache.clone(),
             consensus_message_receiver,
+            channel_to_bls_sigverifier,
             bls_sender,
             event_sender,
             commitment_sender,
