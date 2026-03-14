@@ -2,11 +2,12 @@
 use {
     crate::{
         blockstore::error::Result,
-        blockstore_meta::{self, PerfSample},
+        blockstore_meta::{self, BlockLocation, PerfSample},
     },
     bincode::Options as BincodeOptions,
     serde::{Serialize, de::DeserializeOwned},
     solana_clock::{Slot, UnixTimestamp},
+    solana_hash::{HASH_BYTES, Hash},
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
     solana_signature::{SIGNATURE_BYTES, Signature},
     solana_storage_proto::convert::generated,
@@ -208,6 +209,16 @@ pub mod columns {
     /// * index type: `crate::shred::ErasureSetId` `(Slot, fec_set_index: u32)`
     /// * value type: [`blockstore_meta::MerkleRootMeta`]`
     pub struct MerkleRootMeta;
+
+    #[derive(Debug)]
+    /// The parent metadata column
+    ///
+    /// This column stores metadata about parent blocks for each slot and block location. We update
+    /// this column on receiving BlockHeader and UpdateParent BlockComponents.
+    ///
+    /// * index type: `(Slot, BlockLocation)`
+    /// * value type: [`blockstore_meta::ParentMeta`]
+    pub struct ParentMeta;
 }
 
 macro_rules! convert_column_index_to_key_bytes {
@@ -815,4 +826,53 @@ impl ColumnName for columns::MerkleRootMeta {
 }
 impl TypedColumn for columns::MerkleRootMeta {
     type Type = blockstore_meta::MerkleRootMeta;
+}
+
+impl Column for columns::ParentMeta {
+    type Index = (Slot, BlockLocation);
+    // Key size: Slot (8 bytes) + Hash (32 bytes)
+    // When BlockLocation::Original, the hash is Hash::default().
+    type Key = [u8; std::mem::size_of::<Slot>() + HASH_BYTES];
+
+    #[inline]
+    fn key((slot, location): &Self::Index) -> Self::Key {
+        let mut key = [0u8; std::mem::size_of::<Slot>() + HASH_BYTES];
+        key[..8].copy_from_slice(&slot.to_le_bytes());
+
+        let hash_bytes = match location {
+            BlockLocation::Original => &Hash::default().to_bytes(),
+            BlockLocation::Alternate { block_id } => &block_id.to_bytes(),
+        };
+
+        key[8..40].copy_from_slice(hash_bytes);
+
+        key
+    }
+
+    fn index(key: &[u8]) -> Self::Index {
+        let slot = Slot::from_le_bytes(key[0..8].try_into().unwrap());
+        let hash = Hash::new_from_array(key[8..40].try_into().unwrap());
+        let location = match hash == Hash::default() {
+            true => BlockLocation::Original,
+            false => BlockLocation::Alternate { block_id: hash },
+        };
+
+        (slot, location)
+    }
+
+    fn as_index(slot: Slot) -> Self::Index {
+        (slot, BlockLocation::Original)
+    }
+
+    fn slot((slot, _location): Self::Index) -> Slot {
+        slot
+    }
+}
+
+impl ColumnName for columns::ParentMeta {
+    const NAME: &'static str = "parent_meta";
+}
+
+impl TypedColumn for columns::ParentMeta {
+    type Type = blockstore_meta::ParentMeta;
 }
