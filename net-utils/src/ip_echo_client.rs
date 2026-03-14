@@ -3,7 +3,6 @@ use {
         HEADER_LENGTH, IP_ECHO_SERVER_RESPONSE_LENGTH, MAX_PORT_COUNT_PER_MESSAGE,
         ip_echo_server::{IpEchoServerMessage, IpEchoServerResponse},
     },
-    anyhow::bail,
     bytes::{BufMut, BytesMut},
     itertools::Itertools,
     log::*,
@@ -21,6 +20,18 @@ use {
     },
 };
 
+#[derive(Debug, thiserror::Error)]
+pub enum IpEchoClientError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Timeout(#[from] tokio::time::error::Elapsed),
+    #[error(transparent)]
+    BincodeError(#[from] bincode::Error),
+    #[error("{0}")]
+    InvalidResponse(String),
+}
+
 /// Applies to all operations with the echo server.
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -29,7 +40,7 @@ pub(crate) async fn ip_echo_server_request_with_binding(
     ip_echo_server_addr: SocketAddr,
     msg: IpEchoServerMessage,
     bind_address: IpAddr,
-) -> anyhow::Result<IpEchoServerResponse> {
+) -> Result<IpEchoServerResponse, IpEchoClientError> {
     let socket = TcpSocket::new_v4()?;
     socket.bind(SocketAddr::new(bind_address, 0))?;
 
@@ -42,7 +53,7 @@ pub(crate) async fn ip_echo_server_request_with_binding(
 pub(crate) async fn ip_echo_server_request(
     ip_echo_server_addr: SocketAddr,
     msg: IpEchoServerMessage,
-) -> anyhow::Result<IpEchoServerResponse> {
+) -> Result<IpEchoServerResponse, IpEchoClientError> {
     let socket = TcpSocket::new_v4()?;
     let response =
         tokio::time::timeout(TIMEOUT, make_request(socket, ip_echo_server_addr, msg)).await??;
@@ -54,7 +65,7 @@ async fn make_request(
     socket: TcpSocket,
     ip_echo_server_addr: SocketAddr,
     msg: IpEchoServerMessage,
-) -> anyhow::Result<BytesMut> {
+) -> Result<BytesMut, IpEchoClientError> {
     let mut stream = socket.connect(ip_echo_server_addr).await?;
     // Start with HEADER_LENGTH null bytes to avoid looking like an HTTP GET/POST request
     let mut bytes = BytesMut::with_capacity(IP_ECHO_SERVER_RESPONSE_LENGTH);
@@ -77,20 +88,25 @@ async fn make_request(
 fn parse_response(
     response: BytesMut,
     ip_echo_server_addr: SocketAddr,
-) -> anyhow::Result<IpEchoServerResponse> {
+) -> Result<IpEchoServerResponse, IpEchoClientError> {
     // It's common for users to accidentally confuse the validator's gossip port and JSON
     // RPC port.  Attempt to detect when this occurs by looking for the standard HTTP
     // response header and provide the user with a helpful error message
     if response.len() < HEADER_LENGTH {
-        bail!("Response too short, received {} bytes", response.len());
+        return Err(IpEchoClientError::InvalidResponse(format!(
+            "Response too short, received {} bytes",
+            response.len()
+        )));
     }
 
     let (response_header, body) =
         response
             .split_first_chunk::<HEADER_LENGTH>()
-            .ok_or(anyhow::anyhow!(
-                "Not enough data in the response from {ip_echo_server_addr}!"
-            ))?;
+            .ok_or_else(|| {
+                IpEchoClientError::InvalidResponse(format!(
+                    "Not enough data in the response from {ip_echo_server_addr}!"
+                ))
+            })?;
     let payload = match response_header {
         [0, 0, 0, 0] => {
             bincode::deserialize(&response[HEADER_LENGTH..IP_ECHO_SERVER_RESPONSE_LENGTH])?
@@ -98,20 +114,25 @@ fn parse_response(
         [b'H', b'T', b'T', b'P'] => {
             let http_response = std::str::from_utf8(body);
             match http_response {
-                Ok(r) => bail!(
-                    "Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port \
-                     replying with {r}"
-                ),
-                Err(_) => bail!(
-                    "Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port."
-                ),
+                Ok(r) => {
+                    return Err(IpEchoClientError::InvalidResponse(format!(
+                        "Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP \
+                         port replying with {r}"
+                    )));
+                }
+                Err(_) => {
+                    return Err(IpEchoClientError::InvalidResponse(format!(
+                        "Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP \
+                         port."
+                    )));
+                }
             }
         }
         _ => {
-            bail!(
+            return Err(IpEchoClientError::InvalidResponse(format!(
                 "Invalid gossip entrypoint. {ip_echo_server_addr} provided unexpected header \
                  bytes {response_header:?} "
-            );
+            )));
         }
     };
     Ok(payload)

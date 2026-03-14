@@ -7589,7 +7589,6 @@ checksum = "ae8dd4c280dca9d046139eb5b7a5ac9ad10403fbd64964c7d7571214950d758f"
 name = "solana-net-utils"
 version = "4.1.0-alpha.0"
 dependencies = [
- "anyhow",
  "bincode",
  "bytes",
  "cfg-if 1.0.4",
@@ -7602,6 +7601,7 @@ dependencies = [
  "socket2 0.6.3",
  "solana-serde",
  "solana-svm-type-overrides",
+ "thiserror 2.0.18",
  "tokio",
  "url 2.5.8",
 ]
