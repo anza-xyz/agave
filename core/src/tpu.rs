@@ -25,7 +25,6 @@ use {
         validator::{BlockProductionMethod, GeneratorConfig},
     },
     agave_votor::event::VotorEventSender,
-    agave_xdp::xdp_retransmitter::XdpSender,
     crossbeam_channel::{Receiver, bounded, unbounded},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -56,7 +55,10 @@ use {
         quic_socket::QuicSocket,
         streamer::StakedNodes,
     },
-    solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
+    solana_turbine::{
+        XdpSender,
+        broadcast_stage::{BroadcastStage, BroadcastStageType},
+    },
     std::{
         collections::HashMap,
         net::UdpSocket,
@@ -116,7 +118,7 @@ impl Tpu {
         entry_notification_sender: Option<EntryNotifierSender>,
         blockstore: Arc<Blockstore>,
         broadcast_type: &BroadcastStageType,
-        xdp_sender: Option<XdpSender>,
+        turbine_xdp_sender: Option<XdpSender>,
         exit: Arc<AtomicBool>,
         shred_version: u16,
         vote_tracker: Arc<VoteTracker>,
@@ -363,7 +365,7 @@ impl Tpu {
             blockstore,
             bank_forks,
             shred_version,
-            xdp_sender,
+            turbine_xdp_sender,
             votor_event_sender,
         );
 
