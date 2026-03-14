@@ -113,6 +113,16 @@ impl GeyserPluginManager {
         false
     }
 
+    /// Check if there is any plugin interested in deshred transaction data
+    pub fn deshred_transaction_notifications_enabled(&self) -> bool {
+        for plugin in &self.plugins {
+            if plugin.deshred_transaction_notifications_enabled() {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Admin RPC request handler
     pub(crate) fn list_plugins(&self) -> JsonRpcResult<Vec<String>> {
         Ok(self.plugins.iter().map(|p| p.name().to_owned()).collect())
