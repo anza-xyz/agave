@@ -2585,7 +2585,11 @@ fn get_spl_token_owner_filter(
             RpcFilterType::TokenAccountState => token_account_state_filter = true,
         }
     }
-    if data_size_filter == Some(account_packed_len as u64)
+    // For Token-2022, if we have an owner_key, use secondary index without additional validation
+    // For SPL Token, require additional validation (dataSize, account type, or state filter)
+    if *program_id == token_2022::id() && owner_key.is_some() {
+        Ok(owner_key)
+    } else if data_size_filter == Some(account_packed_len as u64)
         || memcmp_filter == Some(&[ACCOUNTTYPE_ACCOUNT])
         || token_account_state_filter
     {
@@ -2636,7 +2640,11 @@ fn get_spl_token_mint_filter(
             RpcFilterType::TokenAccountState => token_account_state_filter = true,
         }
     }
-    if data_size_filter == Some(account_packed_len as u64)
+    // For Token-2022, if we have a mint, use secondary index without additional validation
+    // For SPL Token, require additional validation (dataSize, account type, or state filter)
+    if *program_id == token_2022::id() && mint.is_some() {
+        Ok(mint)
+    } else if data_size_filter == Some(account_packed_len as u64)
         || memcmp_filter == Some(&[ACCOUNTTYPE_ACCOUNT])
         || token_account_state_filter
     {
