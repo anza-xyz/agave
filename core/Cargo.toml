@@ -12,6 +12,15 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[package.metadata.cargo-machete]
+ignored = [
+    "serde_bytes",
+    "solana-bloom",
+    "solana-frozen-abi",
+    "solana-program-runtime",
+    "solana-short-vec",
+]
+
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
@@ -192,8 +201,6 @@ agave-scheduler-bindings = { path = "../scheduler-bindings", features = ["agave-
 bencher = { workspace = true }
 bitvec = { workspace = true }
 criterion = { workspace = true }
-fs_extra = { workspace = true }
-serde_json = { workspace = true }
 serial_test = { workspace = true }
 solana-account = { workspace = true, features = ["dev-context-only-utils"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api"] }

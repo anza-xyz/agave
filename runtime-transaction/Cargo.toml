@@ -38,7 +38,6 @@ agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 bincode = { workspace = true }
 criterion = { workspace = true }
-rand = { workspace = true }
 solana-compute-budget-instruction = { path = "../compute-budget-instruction", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-compute-budget-interface = { workspace = true }
 solana-instruction = { workspace = true }

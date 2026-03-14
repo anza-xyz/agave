@@ -12,6 +12,9 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[package.metadata.cargo-machete]
+ignored = ["solana-frozen-abi"]
+
 [lib]
 name = "solana_version"
 

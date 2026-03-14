@@ -48,4 +48,3 @@ solana-udp-client = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
-crossbeam-channel = { workspace = true }

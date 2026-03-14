@@ -14,6 +14,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
+[package.metadata.cargo-machete]
+ignored = ["solana-frozen-abi-macro"]
+
 [features]
 agave-unstable-api = []
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
@@ -30,9 +33,7 @@ solana-pubkey = { workspace = true, default-features = false }
 solana-sdk-ids = { workspace = true }
 
 [dev-dependencies]
-solana-message = { workspace = true }
 solana-pubkey = { workspace = true, default-features = false, features = ["std"] }
-solana-sysvar = { workspace = true }
 
 [lints]
 workspace = true

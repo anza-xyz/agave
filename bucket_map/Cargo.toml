@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.cargo-machete]
+ignored = ["solana-bucket-map"]
+
 [lib]
 crate-type = ["lib"]
 name = "solana_bucket_map"
@@ -33,7 +36,5 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
-fs_extra = { workspace = true }
-rayon = { workspace = true }
 solana-bucket-map = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }

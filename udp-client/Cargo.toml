@@ -23,5 +23,4 @@ solana-transaction-error = { workspace = true }
 
 [dev-dependencies]
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-packet = { workspace = true }
 solana-streamer = { path = "../streamer", features = ["agave-unstable-api", "dev-context-only-utils"] }

@@ -34,16 +34,13 @@ solana-svm-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 
 [dev-dependencies]
-bincode = { workspace = true }
 criterion = { workspace = true }
-rand = { workspace = true }
 solana-builtins-default-costs = { path = "../builtins-default-costs", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-compute-budget-instruction = { path = ".", features = ["agave-unstable-api"] }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-message = { workspace = true }
 solana-signer = { workspace = true }
-solana-stake-interface = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true, features = ["blake3"] }
 

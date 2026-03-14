@@ -48,8 +48,6 @@ tracing = { workspace = true, optional = true }
 [dev-dependencies]
 crossbeam-channel = { workspace = true }
 futures = { workspace = true }
-serde_json = { workspace = true }
-solana-cli-config = { path = "../cli-config" }
 solana-commitment-config = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true }

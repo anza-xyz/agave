@@ -12,6 +12,9 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[package.metadata.cargo-machete]
+ignored = ["prost", "protobuf-src", "tonic-prost-build"]
+
 [lib]
 crate-type = ["lib"]
 name = "solana_storage_proto"

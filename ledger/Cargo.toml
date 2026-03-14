@@ -12,6 +12,9 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[package.metadata.cargo-machete]
+ignored = ["solana-frozen-abi"]
+
 [lib]
 crate-type = ["lib"]
 name = "solana_ledger"
@@ -138,15 +141,12 @@ solana-account-decoder = { path = "../account-decoder", features = ["agave-unsta
 solana-bls-signatures = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-ledger = { path = ".", features = ["dev-context-only-utils", "agave-unstable-api"] }
-solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-program-option = { workspace = true }
-solana-program-pack = { workspace = true }
-solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
+solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
+solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 spl-generic-token = { workspace = true }
-spl-pod = { workspace = true }
 test-case = { workspace = true }
 
 [[bench]]

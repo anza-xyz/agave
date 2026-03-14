@@ -12,6 +12,9 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[package.metadata.cargo-machete]
+ignored = ["solana-instruction-error", "solana-perf", "strum"]
+
 [lib]
 crate-type = ["lib"]
 name = "solana_runtime"
@@ -140,7 +143,6 @@ solana-poh-config = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true }
 solana-reward-info = { workspace = true }
 solana-runtime-transaction = { workspace = true }
@@ -186,7 +188,6 @@ agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-transaction-view = { path = "../transaction-view", features = ["agave-unstable-api"] }
 bitvec = { workspace = true }
 libsecp256k1 = { workspace = true }
-memoffset = { workspace = true }
 proptest = { workspace = true }
 solana-accounts-db = { path = "../accounts-db", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-builtins = { path = "../builtins", features = ["agave-unstable-api", "dev-context-only-utils"] }

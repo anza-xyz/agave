@@ -12,6 +12,9 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[package.metadata.cargo-machete]
+ignored = ["solana-frozen-abi"]
+
 [lib]
 crate-type = ["lib"]
 name = "solana_vote_program"
@@ -59,7 +62,6 @@ assert_matches = { workspace = true }
 criterion = { workspace = true }
 solana-account = { workspace = true }
 solana-clock = { workspace = true }
-solana-fee-calculator = { workspace = true }
 solana-hash = { workspace = true, features = ["atomic"] }
 solana-instruction = { workspace = true }
 solana-program-runtime = { path = "../../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }

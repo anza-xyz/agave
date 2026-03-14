@@ -14,6 +14,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
+[package.metadata.cargo-machete]
+ignored = ["solana-transaction-context"]
+
 [features]
 agave-unstable-api = []
 bincode = ["dep:bincode", "serde", "solana-account/bincode"]
@@ -33,7 +36,6 @@ serde = { workspace = true, optional = true }
 solana-rent = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-signature = { workspace = true, optional = true }
 
 [dev-dependencies]
 solana-account-info = { workspace = true }

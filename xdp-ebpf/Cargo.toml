@@ -9,6 +9,9 @@ license = { workspace = true }
 edition = { workspace = true }
 include = ["Cargo.toml", "src/**", "README", "agave-xdp-prog"]
 
+[package.metadata.cargo-machete]
+ignored = ["aya"]
+
 [[bin]]
 name = "agave-xdp-prog"
 path = "src/bin/agave-xdp-prog.rs"

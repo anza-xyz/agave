@@ -19,7 +19,6 @@ agave-unstable-api = []
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-bincode = { workspace = true }
 solana-account = { workspace = true }
 solana-bpf-loader-program = { path = "../bpf_loader", default-features = false, features = ["agave-unstable-api"] }
 solana-instruction = { workspace = true }

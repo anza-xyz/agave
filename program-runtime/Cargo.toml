@@ -12,6 +12,9 @@ edition = "2024"
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[package.metadata.cargo-machete]
+ignored = ["solana-frozen-abi-macro", "solana-program-runtime"]
+
 [lib]
 crate-type = ["lib"]
 name = "solana_program_runtime"
@@ -78,7 +81,6 @@ thiserror = { workspace = true }
 assert_matches = { workspace = true }
 solana-account-info = { workspace = true }
 solana-instruction = { workspace = true, features = ["bincode"] }
-solana-instruction-error = { workspace = true, features = ["serde"] }
 solana-keypair = { workspace = true }
 solana-program-runtime = { path = ".", features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }

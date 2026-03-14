@@ -9,6 +9,9 @@ license = { workspace = true }
 edition = { workspace = true }
 readme = false
 
+[package.metadata.cargo-machete]
+ignored = ["solana-frozen-abi"]
+
 [features]
 agave-unstable-api = []
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]

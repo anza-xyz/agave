@@ -105,10 +105,7 @@ assert_cmd = { workspace = true }
 predicates = { workspace = true }
 pretty_assertions = { workspace = true }
 scopeguard = { workspace = true }
-solana-account-decoder = { path = "../account-decoder", features = ["agave-unstable-api"] }
 solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-program-option = { workspace = true }
-solana-program-pack = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-time-utils = { workspace = true }
 tempfile = { workspace = true }

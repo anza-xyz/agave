@@ -258,7 +258,6 @@ dependencies = [
  "solana-hash 4.2.0",
  "solana-instruction",
  "solana-keccak-hasher",
- "solana-loader-v3-interface",
  "solana-poseidon",
  "solana-program-entrypoint",
  "solana-program-runtime",
@@ -272,8 +271,6 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
- "solana-svm-measure",
- "solana-svm-timings",
  "solana-svm-type-overrides",
  "solana-sysvar",
  "solana-sysvar-id",
@@ -6189,13 +6186,8 @@ version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "ahash 0.8.12",
- "log",
- "solana-bpf-loader-program",
- "solana-compute-budget-program",
- "solana-loader-v4-program",
  "solana-pubkey 4.1.0",
  "solana-sdk-ids",
- "solana-system-program",
  "solana-vote-program",
 ]
 
@@ -8031,7 +8023,6 @@ dependencies = [
  "log",
  "reqwest 0.12.28",
  "reqwest-middleware",
- "semver",
  "serde",
  "serde_json",
  "solana-account 4.1.0",
@@ -8081,7 +8072,6 @@ dependencies = [
  "solana-account 4.1.0",
  "solana-commitment-config",
  "solana-hash 4.2.0",
- "solana-message",
  "solana-nonce",
  "solana-pubkey 4.1.0",
  "solana-rpc-client",
@@ -8199,7 +8189,6 @@ dependencies = [
  "solana-precompile-error",
  "solana-program-runtime",
  "solana-pubkey 4.1.0",
- "solana-rayon-threadlimit",
  "solana-rent 4.1.0",
  "solana-reward-info",
  "solana-runtime-transaction",
@@ -9284,7 +9273,6 @@ name = "solana-storage-bigtable"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-reserved-account-keys",
- "base64 0.22.1",
  "bincode",
  "bzip2",
  "enum-iterator",

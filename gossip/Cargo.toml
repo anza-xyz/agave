@@ -95,7 +95,6 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 bs58 = { workspace = true }
 criterion = { workspace = true }
-num_cpus = { workspace = true }
 serial_test = { workspace = true }
 solana-gossip = { path = ".", features = ["agave-unstable-api"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }

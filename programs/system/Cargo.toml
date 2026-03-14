@@ -12,6 +12,9 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[package.metadata.cargo-machete]
+ignored = ["solana-svm-callback"]
+
 [lib]
 crate-type = ["lib"]
 name = "solana_system_program"
@@ -40,7 +43,6 @@ solana-transaction-context = { workspace = true, features = ["bincode"] }
 [dev-dependencies]
 assert_matches = { workspace = true }
 criterion = { workspace = true }
-solana-compute-budget = { path = "../../compute-budget", features = ["agave-unstable-api"] }
 solana-hash = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }

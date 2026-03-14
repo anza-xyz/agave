@@ -12,6 +12,9 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[package.metadata.cargo-machete]
+ignored = ["solana-frozen-abi"]
+
 [lib]
 crate-type = ["lib"]
 name = "solana_vote"
@@ -54,7 +57,6 @@ solana-vote-interface = { workspace = true, features = ["bincode"] }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 arbitrary = { workspace = true }
 bencher = { workspace = true }
 bincode = { workspace = true }

@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.cargo-machete]
+ignored = ["agave-votor-messages", "solana-frozen-abi"]
+
 [features]
 agave-unstable-api = []
 dev-context-only-utils = []
@@ -44,7 +47,6 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 agave-votor-messages = { path = ".", features = ["dev-context-only-utils"] }
-tempfile = { workspace = true }
 
 [lints]
 workspace = true
