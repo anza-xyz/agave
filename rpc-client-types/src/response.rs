@@ -406,8 +406,17 @@ pub struct RpcVoteAccountInfo {
     /// The current stake, in lamports, delegated to this vote account
     pub activated_stake: u64,
 
-    /// An 8-bit integer used as a fraction (commission/MAX_U8) for rewards payout
+    /// An 8-bit unsigned integer used as a fraction (commission/100) for
+    /// rewards payout. Before SIMD-0291 activation, this is the native
+    /// commission value. After activation, this is derived from basis
+    /// points: `(bps / 100).min(255)`.
     pub commission: u8,
+
+    /// A 16-bit integer used as a fraction (commission_bps/10_000) for
+    /// rewards payout. Before SIMD-0291 activation, this is derived from
+    /// the percentage commission: `percent * 100`. After activation, this
+    /// is the native basis points value.
+    pub inflation_rewards_commission_bps: u16,
 
     /// Whether this account is staked for the current epoch
     pub epoch_vote_account: bool,
