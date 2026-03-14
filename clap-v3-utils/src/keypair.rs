@@ -170,11 +170,11 @@ impl DefaultSigner {
                         Ok(())
                     }
                 })
-                .map_err(|_| {
+                .map_err(|err| {
                     std::io::Error::other(format!(
-                        "No default signer found, run \"solana-keygen new -o {}\" to create a new \
-                         one",
-                        self.path
+                        "could not read keypair file \"{}\". \
+                         Run \"solana-keygen new -o {}\" to create a new one: {err}",
+                        self.path, self.path
                     ))
                 })?;
             *self.is_path_checked.borrow_mut() = true;
