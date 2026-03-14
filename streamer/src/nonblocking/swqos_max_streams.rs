@@ -457,8 +457,7 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
         context: &SwQosMaxStreamsConnectionContext,
         rtt: Duration,
     ) -> MaxStreamsAction {
-        self.load_tracker.try_refill();
-        let saturated = self.load_tracker.is_saturated();
+        let saturated = self.load_tracker.try_refill_and_is_saturated();
         match self.compute_max_streams_for_rtt(context, rtt, saturated) {
             Some(0) => MaxStreamsAction::Park,
             Some(max_streams) => MaxStreamsAction::Set(max_streams),
@@ -467,10 +466,8 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
     }
 
     fn on_stream_accepted(&self, context: &SwQosMaxStreamsConnectionContext) {
-        self.load_tracker.acquire();
-        if matches!(context.peer_type, ConnectionPeerType::Staked(_))
-            && self.load_tracker.is_saturated()
-        {
+        let saturated = self.load_tracker.acquire_and_is_saturated();
+        if matches!(context.peer_type, ConnectionPeerType::Staked(_)) && saturated {
             self.stats
                 .saturated_staked_streams
                 .fetch_add(1, Ordering::Relaxed);

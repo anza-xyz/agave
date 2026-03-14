@@ -85,34 +85,38 @@ impl LoadDebtTracker {
         }
     }
 
-    /// Consume one token (pure atomic decrement, no syscalls).
-    /// Crossing 1 -> 0 latches saturation immediately without a clock read.
-    pub(crate) fn acquire(&self) {
+    /// Consume one token and return whether the system is saturated after the
+    /// decrement. This avoids an extra atomic load in callers that need both.
+    pub(crate) fn acquire_and_is_saturated(&self) -> bool {
         let prev = self.bucket.fetch_sub(1, Ordering::Relaxed);
         if prev == 1 {
             self.saturated.store(true, Ordering::Relaxed);
             log::warn!("LoadDebtTracker: system saturated (bucket=0)");
+            return true;
         }
+
+        prev <= 0 || self.saturated.load(Ordering::Relaxed)
     }
 
     /// Whether the system is saturated (pure atomic loads, no syscalls).
     /// Debt enters saturation immediately; the flag keeps saturation latched
-    /// until [`try_refill`] clears it at the recovery threshold.
+    /// until [`try_refill_and_is_saturated`] clears it at the recovery threshold.
     pub fn is_saturated(&self) -> bool {
         self.bucket.load(Ordering::Relaxed) <= 0 || self.saturated.load(Ordering::Relaxed)
     }
 
-    /// Refill the bucket if the refill interval has elapsed, then update the
-    /// saturation flag. Callers should invoke this once per stream (once per
-    /// loop iteration) so that both [`acquire`] and [`is_saturated`] can
-    /// remain pure atomic operations.
-    pub(crate) fn try_refill(&self) {
+    /// Refill the bucket if needed and return whether the system is saturated.
+    /// This lets callers avoid a separate [`is_saturated`] call on the hot path.
+    /// Callers should invoke this once per stream (once per loop iteration).
+    pub(crate) fn try_refill_and_is_saturated(&self) -> bool {
         // Fast path: bucket is healthy and not saturated — nothing to do.
-        if self.bucket.load(Ordering::Relaxed) > 0 && !self.saturated.load(Ordering::Relaxed) {
-            return;
+        let bucket = self.bucket.load(Ordering::Relaxed);
+        let saturated = self.saturated.load(Ordering::Relaxed);
+        if bucket > 0 && !saturated {
+            return false;
         }
         let now_nanos = self.nanos_since_epoch();
-        self.try_refill_at(now_nanos);
+        self.try_refill_at_inner(now_nanos, true)
     }
 
     /// Return the current bucket level (testing only).
@@ -127,15 +131,20 @@ impl LoadDebtTracker {
 
     /// Refill + update saturation flag at a caller-supplied timestamp.
     /// Exposed for deterministic testing.
-    fn try_refill_at(&self, now_nanos: u64) {
+    #[cfg(test)]
+    fn try_refill_at(&self, now_nanos: u64) -> bool {
+        self.try_refill_at_inner(now_nanos, self.is_saturated())
+    }
+
+    fn try_refill_at_inner(&self, now_nanos: u64, fallback_saturated: bool) -> bool {
         let raw = self.last_refill_nanos.load(Ordering::Relaxed);
         if raw & LOCK_BIT != 0 {
-            return;
+            return fallback_saturated;
         }
 
         let last_nanos = raw & NANO_MASK;
         if now_nanos.saturating_sub(last_nanos) < self.refill_interval_nanos {
-            return;
+            return fallback_saturated;
         }
 
         // ── Acquire lock ──
@@ -144,7 +153,7 @@ impl LoadDebtTracker {
             .compare_exchange(raw, raw | LOCK_BIT, Ordering::AcqRel, Ordering::Relaxed)
             .is_err()
         {
-            return;
+            return fallback_saturated;
         }
 
         // ── Refill ──
@@ -163,14 +172,18 @@ impl LoadDebtTracker {
         let was_sat = self.saturated.load(Ordering::Relaxed);
         let mut log_enter_saturated = false;
         let mut log_recovered = false;
-        if !was_sat && level <= 0 {
+        let saturated = if !was_sat && level <= 0 {
             // Backstop in case the latch was missed or state was externally reset.
             self.saturated.store(true, Ordering::Relaxed);
             log_enter_saturated = true;
+            true
         } else if was_sat && level >= self.recovery_threshold {
             self.saturated.store(false, Ordering::Relaxed);
             log_recovered = true;
-        }
+            false
+        } else {
+            was_sat
+        };
 
         // ── Release lock ──
         self.last_refill_nanos
@@ -181,6 +194,8 @@ impl LoadDebtTracker {
         } else if log_recovered {
             log::info!("LoadDebtTracker: system recovered (bucket={level})");
         }
+
+        level <= 0 || saturated
     }
 }
 
@@ -195,7 +210,7 @@ mod tests {
 
     fn acquire_n(g: &LoadDebtTracker, n: u64) {
         for _ in 0..n {
-            g.acquire();
+            let _ = g.acquire_and_is_saturated();
         }
     }
 
@@ -361,8 +376,8 @@ mod tests {
             handles.push(thread::spawn(move || {
                 start.wait();
                 for _ in 0..ITERS {
-                    g.try_refill();
-                    g.acquire();
+                    let _ = g.try_refill_and_is_saturated();
+                    let _ = g.acquire_and_is_saturated();
                 }
             }));
         }
@@ -375,7 +390,7 @@ mod tests {
             handles.push(thread::spawn(move || {
                 start.wait();
                 for _ in 0..ITERS {
-                    g.try_refill();
+                    let _ = g.try_refill_and_is_saturated();
                     let saturated = g.is_saturated();
                     let level = g.bucket_level();
                     if (level <= -MARGIN && !saturated)
@@ -442,7 +457,7 @@ mod tests {
                     let g = Arc::clone(&g);
                     thread::spawn(move || {
                         for _ in 0..64 {
-                            g.acquire();
+                            let _ = g.acquire_and_is_saturated();
                             thread::yield_now();
                         }
                     })
@@ -463,7 +478,7 @@ mod tests {
                     let g = Arc::clone(&g);
                     thread::spawn(move || {
                         for _ in 0..64 {
-                            g.try_refill();
+                            let _ = g.try_refill_and_is_saturated();
                             let _ = g.is_saturated();
                             thread::yield_now();
                         }
@@ -484,7 +499,7 @@ mod tests {
                     level <= g.burst_capacity,
                     "bucket overflowed past burst capacity: {level}"
                 );
-                g.try_refill();
+                let _ = g.try_refill_and_is_saturated();
                 let saturated = g.is_saturated();
                 if level <= 0 {
                     assert!(saturated, "debt should imply saturated");
