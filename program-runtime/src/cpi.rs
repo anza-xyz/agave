@@ -15,7 +15,6 @@ use {
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, native_loader},
     solana_stable_layout::stable_instruction::StableInstruction,
     solana_svm_log_collector::ic_msg,
-    solana_svm_measure::measure::Measure,
     solana_svm_timings::ExecuteTimings,
     solana_transaction_context::{
         IndexOfAccount, MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN,
@@ -834,10 +833,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
         invoke_context,
         invoke_context.get_execution_cost().invoke_units,
     )?;
-    if let Some(execute_time) = invoke_context.execute_time.as_mut() {
-        execute_time.stop();
-        invoke_context.timings.execute_us += execute_time.as_us();
-    }
+    invoke_context.execute_time.stop();
     let syscall_parameter_address_restrictions = invoke_context
         .get_feature_set()
         .syscall_parameter_address_restrictions;
@@ -944,7 +940,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
         }
     }
 
-    invoke_context.execute_time = Some(Measure::start("execute"));
+    invoke_context.execute_time.resume();
     Ok(SUCCESS)
 }
 

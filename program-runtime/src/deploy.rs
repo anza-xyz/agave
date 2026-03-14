@@ -1,7 +1,7 @@
 //! Program deployment functionality.
 
 #[cfg(feature = "metrics")]
-use {crate::loaded_programs::LoadProgramMetrics, solana_svm_measure::measure::Measure};
+use crate::{loaded_programs::LoadProgramMetrics, time::Stopwatch};
 use {
     crate::{
         invoke_context::InvokeContext,
@@ -19,7 +19,7 @@ use {
         verifier::RequisiteVerifier,
     },
     solana_svm_log_collector::{LogCollector, ic_logger_msg},
-    solana_svm_type_overrides::sync::{Arc, atomic::Ordering},
+    solana_svm_type_overrides::sync::Arc,
     std::{cell::RefCell, rc::Rc},
 };
 
@@ -60,7 +60,7 @@ pub fn deploy_program(
     deployment_slot: Slot,
 ) -> Result<(), InstructionError> {
     #[cfg(feature = "metrics")]
-    let mut register_syscalls_time = Measure::start("register_syscalls_time");
+    let mut stopwatch = Stopwatch::new_running();
     let deployment_program_runtime_environment =
         morph_into_deployment_environment(program_runtime_environment.clone()).map_err(|e| {
             ic_logger_msg!(log_collector, "Failed to register syscalls: {}", e);
@@ -68,12 +68,9 @@ pub fn deploy_program(
         })?;
     #[cfg(feature = "metrics")]
     {
-        register_syscalls_time.stop();
-        load_program_metrics.register_syscalls_us = register_syscalls_time.as_us();
+        load_program_metrics.register_syscalls_us = stopwatch.take_us();
     }
     // Verify using stricter deployment_program_runtime_environment
-    #[cfg(feature = "metrics")]
-    let mut load_elf_time = Measure::start("load_elf_time");
     let executable = Executable::<InvokeContext>::load(
         programdata,
         Arc::new(deployment_program_runtime_environment),
@@ -84,19 +81,15 @@ pub fn deploy_program(
     })?;
     #[cfg(feature = "metrics")]
     {
-        load_elf_time.stop();
-        load_program_metrics.load_elf_us = load_elf_time.as_us();
+        load_program_metrics.load_elf_us = stopwatch.take_us();
     }
-    #[cfg(feature = "metrics")]
-    let mut verify_code_time = Measure::start("verify_code_time");
     executable.verify::<RequisiteVerifier>().map_err(|err| {
         ic_logger_msg!(log_collector, "{}", err);
         InstructionError::InvalidAccountData
     })?;
     #[cfg(feature = "metrics")]
     {
-        verify_code_time.stop();
-        load_program_metrics.verify_code_us = verify_code_time.as_us();
+        load_program_metrics.verify_code_us = stopwatch.take_us();
     }
     // Reload but with program_runtime_environment
     let executor = unsafe {
@@ -117,10 +110,7 @@ pub fn deploy_program(
         InstructionError::InvalidAccountData
     })?;
     if let Some(old_entry) = program_cache_for_tx_batch.find(program_id) {
-        executor.tx_usage_counter.store(
-            old_entry.tx_usage_counter.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
+        executor.stats.merge_from(&old_entry.stats);
     }
     #[cfg(feature = "metrics")]
     {

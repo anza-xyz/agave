@@ -6,8 +6,10 @@ use {
     crate::{
         execution_budget::MAX_INSTRUCTION_STACK_DEPTH,
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
+        loaded_programs::ProgramCacheEntry,
         mem_pool::VmMemoryPool,
         serialization, stable_log,
+        time::Stopwatch,
     },
     solana_instruction::error::InstructionError,
     solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
@@ -20,7 +22,6 @@ use {
     },
     solana_sdk_ids::bpf_loader_deprecated,
     solana_svm_log_collector::ic_logger_msg,
-    solana_svm_measure::measure::Measure,
     solana_transaction_context::{IndexOfAccount, transaction::TransactionContext},
     std::{cell::RefCell, mem},
 };
@@ -155,7 +156,9 @@ macro_rules! create_vm {
 pub fn execute<'a, 'b: 'a>(
     executable: &'a Executable<InvokeContext<'static, 'static>>,
     invoke_context: &'a mut InvokeContext<'b, 'b>,
+    cache_entry: &ProgramCacheEntry,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut stopwatch = Stopwatch::new_running();
     // We dropped the lifetime tracking in the Executor by setting it to 'static,
     // thus we need to reintroduce the correct lifetime of InvokeContext here again.
     let executable = unsafe {
@@ -181,7 +184,6 @@ pub fn execute<'a, 'b: 'a>(
         .get_feature_set()
         .direct_account_pointers_in_program_input;
 
-    let mut serialize_time = Measure::start("serialize");
     let (parameter_bytes, regions, accounts_metadata, instruction_data_offset) =
         serialization::serialize_parameters(
             &instruction_context,
@@ -189,7 +191,8 @@ pub fn execute<'a, 'b: 'a>(
             account_data_direct_mapping,
             direct_account_pointers_in_program_input,
         )?;
-    serialize_time.stop();
+
+    invoke_context.timings.serialize_us += stopwatch.take_us();
 
     // save the account addresses so in case we hit an AccessViolation error we
     // can map to a more specific error
@@ -208,10 +211,10 @@ pub fn execute<'a, 'b: 'a>(
         })
         .collect::<Vec<_>>();
 
-    let mut create_vm_time = Measure::start("create_vm");
+    #[cfg_attr(feature = "sbpf-debugger", expect(unused_assignments))]
+    let mut execution_mode = ExecutionMode::PreferJit;
     let execution_result = {
-        #[cfg_attr(feature = "sbpf-debugger", expect(unused_assignments))]
-        let mut execution_mode = ExecutionMode::PreferJit;
+        stopwatch.take_us();
         #[cfg(feature = "sbpf-debugger")]
         let (debug_port, debug_metadata) = {
             execution_mode = ExecutionMode::Interpreted;
@@ -245,19 +248,18 @@ pub fn execute<'a, 'b: 'a>(
                 return Err(Box::new(InstructionError::ProgramEnvironmentSetupFailure));
             }
         };
-        create_vm_time.stop();
         #[cfg(feature = "sbpf-debugger")]
         {
             vm.debug_port = debug_port;
             vm.debug_metadata = Some(debug_metadata);
         }
-        vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
         vm.registers[1] = ebpf::MM_INPUT_START;
-
         // SIMD-0321: Provide offset to instruction data in VM register 2.
         if provide_instruction_data_offset_in_vm_r2 {
             vm.registers[2] = instruction_data_offset as u64;
         }
+        vm.context_object_pointer.timings.create_vm_us += stopwatch.take_us();
+        vm.context_object_pointer.execute_time.resume();
         let (compute_units_consumed, result) = vm.execute_program(executable, &mut execution_mode);
         let register_trace = std::mem::take(&mut vm.register_trace);
         MEMORY_POOL.with_borrow_mut(|memory_pool| {
@@ -268,9 +270,12 @@ pub fn execute<'a, 'b: 'a>(
         });
         drop(vm);
         invoke_context.insert_register_trace(register_trace);
-        if let Some(execute_time) = invoke_context.execute_time.as_mut() {
-            execute_time.stop();
-            invoke_context.timings.execute_us += execute_time.as_us();
+        let exec_us = invoke_context.execute_time.stop().read_us();
+        invoke_context.timings.execute_us += exec_us;
+        match execution_mode {
+            ExecutionMode::Interpreted => cache_entry.stats.interpreter_executed(exec_us),
+            ExecutionMode::Jit => cache_entry.stats.jit_executed(exec_us),
+            ExecutionMode::PreferJit => { /* did not execute at all? */ }
         }
 
         ic_logger_msg!(
@@ -400,7 +405,7 @@ pub fn execute<'a, 'b: 'a>(
         )
     }
 
-    let mut deserialize_time = Measure::start("deserialize");
+    stopwatch.reset().resume();
     let execute_or_deserialize_result = execution_result.and_then(|_| {
         deserialize_parameters(
             invoke_context,
@@ -410,12 +415,7 @@ pub fn execute<'a, 'b: 'a>(
         )
         .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
     });
-    deserialize_time.stop();
-
-    // Update the timings
-    invoke_context.timings.serialize_us += serialize_time.as_us();
-    invoke_context.timings.create_vm_us += create_vm_time.as_us();
-    invoke_context.timings.deserialize_us += deserialize_time.as_us();
+    invoke_context.timings.deserialize_us += stopwatch.take_us();
 
     execute_or_deserialize_result
 }
