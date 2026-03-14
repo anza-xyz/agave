@@ -24,6 +24,7 @@ use {
     solana_clock::{BankId, NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
     solana_entry::{
         entry::Entry,
+        entry_marker::EntryMarker,
         poh::{Poh, PohEntry},
     },
     solana_hash::Hash,
@@ -56,7 +57,7 @@ pub enum PohRecorderError {
     MinHeightNotReached,
 
     #[error("send WorkingBankEntry error")]
-    SendError(#[from] SendError<WorkingBankEntry>),
+    SendError(#[from] Box<SendError<WorkingBankEntryMarker>>),
 
     #[error("channel full")]
     ChannelFull,
@@ -67,7 +68,7 @@ pub enum PohRecorderError {
 
 pub(crate) type Result<T> = std::result::Result<T, PohRecorderError>;
 
-pub type WorkingBankEntry = (Arc<Bank>, (Entry, u64));
+pub type WorkingBankEntryMarker = (Arc<Bank>, (EntryMarker, u64));
 
 #[derive(Debug)]
 pub struct RecordSummary {
@@ -175,7 +176,7 @@ pub struct PohRecorder {
     /// This field MUST be kept consistent with the `shared_leader_state` field.
     working_bank: Option<WorkingBank>,
     shared_leader_state: SharedLeaderState,
-    working_bank_sender: Sender<WorkingBankEntry>,
+    working_bank_sender: Sender<WorkingBankEntryMarker>,
     leader_last_tick_height: u64, // zero if none
     grace_ticks: u64,
     blockstore: Arc<Blockstore>,
@@ -209,7 +210,7 @@ impl PohRecorder {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>) {
+    ) -> (Self, Receiver<WorkingBankEntryMarker>) {
         let delay_leader_block_for_pending_fork = false;
         Self::new_with_clear_signal(
             tick_height,
@@ -239,7 +240,7 @@ impl PohRecorder {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>) {
+    ) -> (Self, Receiver<WorkingBankEntryMarker>) {
         let tick_number = 0;
         let poh = Arc::new(Mutex::new(Poh::new_with_slot_info(
             last_entry_hash,
@@ -355,20 +356,22 @@ impl PohRecorder {
             if mixed_in {
                 debug_assert_eq!(self.entries.len(), mixins.len());
                 for (entry, transactions) in self.entries.drain(..).zip(transaction_batches) {
-                    let (send_entry_res, send_batches_us) =
-                        measure_us!(self.working_bank_sender.send((
+                    let (send_entry_res, send_batches_us) = measure_us!(
+                        self.working_bank_sender.send((
                             working_bank.bank.clone(),
                             (
                                 Entry {
                                     num_hashes: entry.num_hashes,
                                     hash: entry.hash,
                                     transactions,
-                                },
+                                }
+                                .into(),
                                 tick_height, // `record_batches` guarantees that mixins are **not** split across ticks.
                             ),
-                        )));
+                        ))
+                    );
                     self.metrics.send_entry_us += send_batches_us;
-                    send_entry_res?;
+                    send_entry_res.map_err(Box::new)?;
                 }
 
                 return Ok(RecordSummary {
@@ -568,7 +571,7 @@ impl PohRecorder {
             .iter()
             .take_while(|x| x.1 <= working_bank.max_tick_height)
             .count();
-        let mut send_result: std::result::Result<(), SendError<WorkingBankEntry>> = Ok(());
+        let mut send_result: std::result::Result<(), SendError<WorkingBankEntryMarker>> = Ok(());
 
         if entry_count > 0 {
             trace!(
@@ -579,8 +582,11 @@ impl PohRecorder {
                 entry_count,
             );
 
-            for tick in &self.tick_cache[..entry_count] {
-                working_bank.bank.register_tick(&tick.0.hash);
+            for (entry, tick_height) in &self.tick_cache[..entry_count] {
+                working_bank.bank.register_tick(&entry.hash);
+
+                let tick = (EntryMarker::from(entry.clone()), *tick_height);
+
                 send_result = self
                     .working_bank_sender
                     .send((working_bank.bank.clone(), tick.clone()));
@@ -961,7 +967,7 @@ fn do_create_test_recorder(
     PohController,
     TransactionRecorder,
     PohService,
-    Receiver<WorkingBankEntry>,
+    Receiver<WorkingBankEntryMarker>,
 ) {
     let leader_schedule_cache = match leader_schedule_cache {
         Some(provided_cache) => provided_cache,
@@ -1026,7 +1032,7 @@ pub fn create_test_recorder(
     PohController,
     TransactionRecorder,
     PohService,
-    Receiver<WorkingBankEntry>,
+    Receiver<WorkingBankEntryMarker>,
 ) {
     do_create_test_recorder(bank, blockstore, poh_config, leader_schedule_cache, false)
 }
@@ -1460,11 +1466,11 @@ mod tests {
         //tick in the cache + entry
         for _ in 0..min_tick_height {
             let (_bank, (e, _tick_height)) = entry_receiver.recv().unwrap();
-            assert!(e.is_tick());
+            assert!(e.as_entry().map(|e| e.is_tick()).unwrap());
         }
 
         let (_bank, (e, _tick_height)) = entry_receiver.recv().unwrap();
-        assert!(!e.is_tick());
+        assert!(!e.as_entry().map(|e| e.is_tick()).unwrap());
     }
 
     #[test]
@@ -1501,7 +1507,7 @@ mod tests {
         );
         for _ in 0..num_ticks_to_max {
             let (_bank, (entry, _tick_height)) = entry_receiver.recv().unwrap();
-            assert!(entry.is_tick());
+            assert!(entry.as_entry().map(|e| e.is_tick()).unwrap());
         }
     }
 
