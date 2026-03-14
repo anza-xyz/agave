@@ -16,6 +16,8 @@ Release channels have their own copy of this changelog:
 ## 4.1.0-Unreleased
 ### RPC
 #### Breaking
+#### Deprecations
+* The `getLargestAccounts` RPC method is now deprecated.
 #### Changes
 ### Validator
 #### Breaking

@@ -1357,6 +1357,7 @@ pub async fn process_show_block_production(
     Ok(config.output_format.formatted_string(&block_production))
 }
 
+#[allow(deprecated)]
 pub async fn process_largest_accounts(
     rpc_client: &RpcClient,
     config: &CliConfig<'_>,

@@ -10,7 +10,9 @@ use {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum RpcRequest {
-    Custom { method: &'static str },
+    Custom {
+        method: &'static str,
+    },
     DeregisterNode,
     GetAccountInfo,
     GetBalance,
@@ -31,6 +33,11 @@ pub enum RpcRequest {
     GetInflationGovernor,
     GetInflationRate,
     GetInflationReward,
+    #[deprecated(
+        since = "4.1.0",
+        note = "This uses the deprecated `getLargestAccounts` RPC method and may be removed in a \
+                future major release"
+    )]
     GetLargestAccounts,
     GetLatestBlockhash,
     GetLeaderSchedule,

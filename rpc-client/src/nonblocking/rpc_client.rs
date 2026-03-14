@@ -2125,6 +2125,7 @@ impl RpcClient {
     /// # Examples
     ///
     /// ```
+    /// # #![allow(deprecated)]
     /// # use solana_rpc_client_api::{
     /// #     client_error::Error,
     /// #     config::RpcLargestAccountsConfig,
@@ -2147,6 +2148,12 @@ impl RpcClient {
     /// # })?;
     /// # Ok::<(), Error>(())
     /// ```
+    #[allow(deprecated)]
+    #[deprecated(
+        since = "4.1.0",
+        note = "This uses the deprecated `getLargestAccounts` RPC method and may be removed in a \
+                future major release"
+    )]
     pub async fn get_largest_accounts_with_config(
         &self,
         config: RpcLargestAccountsConfig,

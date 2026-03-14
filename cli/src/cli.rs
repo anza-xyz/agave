@@ -907,6 +907,10 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
         CliCommand::GetSlot => process_get_slot(&rpc_client, config).await,
         CliCommand::GetBlockHeight => process_get_block_height(&rpc_client, config).await,
         CliCommand::LargestAccounts { filter } => {
+            eprintln!(
+                "Warning: This command uses the deprecated 'getLargestAccounts' RPC method and \
+                 may be removed in a future major release."
+            );
             process_largest_accounts(&rpc_client, config, filter.clone()).await
         }
         CliCommand::GetTransactionCount => process_get_transaction_count(&rpc_client, config).await,
