@@ -7,10 +7,10 @@ use {
         socket::{Rx, Socket},
         umem::{FrameOffset, PageAlignedMemory, SliceUmem, SliceUmemFrame, Umem},
     },
-    aya::{maps::XskMap, Ebpf},
+    aya::{Ebpf, maps::XskMap},
     bytes::Bytes,
     crossbeam_channel::Sender,
-    libc::{sysconf, _SC_PAGESIZE},
+    libc::{_SC_PAGESIZE, sysconf},
     std::os::fd::AsFd,
 };
 
