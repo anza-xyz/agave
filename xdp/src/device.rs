@@ -5,8 +5,8 @@ use {
         umem::{Frame, FrameOffset, SliceUmem, Umem},
     },
     libc::{
-        ifreq, mmap, munmap, sendto, socket, syscall, xdp_ring_offset, AF_INET, IF_NAMESIZE,
-        SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM, SYS_ioctl, XDP_RING_NEED_WAKEUP,
+        AF_INET, IF_NAMESIZE, SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM, SYS_ioctl,
+        XDP_RING_NEED_WAKEUP, ifreq, mmap, munmap, sendto, socket, syscall, xdp_ring_offset,
     },
     std::{
         ffi::{CStr, CString, c_char},
