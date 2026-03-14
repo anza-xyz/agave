@@ -9183,6 +9183,7 @@ dependencies = [
  "solana-net-utils",
  "solana-serde",
  "solana-svm-type-overrides",
+ "thiserror 2.0.18",
  "tokio",
  "url 2.5.8",
 ]
