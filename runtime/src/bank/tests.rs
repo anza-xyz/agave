@@ -10640,10 +10640,10 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
             .unwrap();
         let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
         assert_eq!(slot_versions.len(), 1);
-        assert!(Arc::ptr_eq(
+        assert_eq!(
             slot_versions[0].program.get_environment().unwrap(),
-            &current_env
-        ));
+            &current_env,
+        );
     }
     goto_end_of_slot(bank.clone());
     let bank = new_from_parent_with_fork_next_slot(bank, bank_forks.as_ref());
@@ -10655,14 +10655,14 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
             .unwrap();
         let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
         assert_eq!(slot_versions.len(), 2);
-        assert!(Arc::ptr_eq(
+        assert_eq!(
             slot_versions[0].program.get_environment().unwrap(),
-            &upcoming_env
-        ));
-        assert!(Arc::ptr_eq(
+            &upcoming_env,
+        );
+        assert_eq!(
             slot_versions[1].program.get_environment().unwrap(),
-            &current_env
-        ));
+            &current_env,
+        );
     }
 
     // Advance the bank to cross the epoch boundary and activate the feature.

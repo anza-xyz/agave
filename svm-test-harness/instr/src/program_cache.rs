@@ -42,15 +42,13 @@ pub fn add_program(
     feature_set: &SVMFeatureSet,
     compute_budget: &ComputeBudget,
 ) {
-    let program_runtime_environment = Arc::new(
-        create_program_runtime_environment(
-            feature_set,
-            &compute_budget.to_budget(),
-            false, /* reject_deployment_of_broken_elfs */
-            false, /* debugging_features */
-        )
-        .unwrap(),
-    );
+    let program_runtime_environment = create_program_runtime_environment(
+        feature_set,
+        &compute_budget.to_budget(),
+        false, /* reject_deployment_of_broken_elfs */
+        false, /* debugging_features */
+    )
+    .unwrap();
 
     let entry = ProgramCacheEntry::new(
         loader_key,

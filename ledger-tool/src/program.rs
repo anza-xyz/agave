@@ -285,7 +285,7 @@ fn load_program<'a>(
     let mut verified_executable = if is_elf {
         let result = ProgramCacheEntry::new(
             &loader_key,
-            Arc::new(program_runtime_environment),
+            program_runtime_environment.clone(),
             slot,
             slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             &contents,
@@ -302,7 +302,7 @@ fn load_program<'a>(
     } else {
         assemble::<InvokeContext>(
             std::str::from_utf8(contents.as_slice()).unwrap(),
-            Arc::new(program_runtime_environment),
+            program_runtime_environment.inner().clone(),
         )
         .map_err(|err| format!("Assembling executable failed: {err:?}"))
         .and_then(|executable| {

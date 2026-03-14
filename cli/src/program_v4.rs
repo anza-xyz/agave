@@ -767,9 +767,11 @@ pub async fn process_deploy_program(
         )
         .into());
     }
-    let executable =
-        Executable::<InvokeContext>::from_elf(program_data, Arc::new(program_runtime_environment))
-            .map_err(|err| format!("ELF error: {err}"))?;
+    let executable = Executable::<InvokeContext>::from_elf(
+        program_data,
+        program_runtime_environment.inner().clone(),
+    )
+    .map_err(|err| format!("ELF error: {err}"))?;
     executable
         .verify::<RequisiteVerifier>()
         .map_err(|err| format!("ELF error: {err}"))?;

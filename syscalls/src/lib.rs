@@ -24,6 +24,7 @@ use {
         cpi::CpiError,
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
+        loaded_programs::ProgramRuntimeEnvironment,
         memory::{MemoryTranslationError, translate_vm_slice},
         stable_log, translate_inner, translate_slice_inner, translate_type_inner,
     },
@@ -288,12 +289,12 @@ macro_rules! register_feature_gated_function {
     };
 }
 
-pub fn create_program_runtime_environment<'a, 'ix_data>(
+pub fn create_program_runtime_environment(
     feature_set: &SVMFeatureSet,
     compute_budget: &SVMTransactionExecutionBudget,
     reject_deployment_of_broken_elfs: bool,
     debugging_features: bool,
-) -> Result<BuiltinProgram<InvokeContext<'a, 'ix_data>>, Error> {
+) -> Result<ProgramRuntimeEnvironment, Error> {
     let enable_alt_bn128_syscall = feature_set.enable_alt_bn128_syscall;
     let enable_alt_bn128_compression_syscall = feature_set.enable_alt_bn128_compression_syscall;
     let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall;
@@ -523,7 +524,7 @@ pub fn create_program_runtime_environment<'a, 'ix_data>(
     // Log data
     SyscallLogData::register(&mut result, "sol_log_data")?;
 
-    Ok(result)
+    Ok(ProgramRuntimeEnvironment::from(result))
 }
 
 fn translate_type<T>(

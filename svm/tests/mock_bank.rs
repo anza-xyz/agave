@@ -16,7 +16,7 @@ use {
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
-        loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
+        loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry, ProgramRuntimeEnvironment},
         solana_sbpf::{
             program::{BuiltinProgram, SBPFVersion},
             vm::Config,
@@ -356,7 +356,7 @@ pub fn register_builtins(
     );
 }
 
-pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a, 'a>> {
+pub fn create_custom_loader() -> ProgramRuntimeEnvironment {
     let compute_budget = SVMTransactionExecutionBudget::default();
     let vm_config = Config {
         max_call_depth: compute_budget.max_call_depth,
@@ -395,5 +395,5 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a, 'a>> {
         .expect("Registration failed");
     SyscallGetEpochScheduleSysvar::register(&mut loader, "sol_get_epoch_schedule_sysvar")
         .expect("Registration failed");
-    loader
+    ProgramRuntimeEnvironment::from(loader)
 }

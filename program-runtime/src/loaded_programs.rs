@@ -25,13 +25,41 @@ use {
 #[cfg(feature = "metrics")]
 use {solana_svm_measure::measure::Measure, solana_svm_timings::ExecuteDetailsTimings};
 
-pub type ProgramRuntimeEnvironment = Arc<BuiltinProgram<InvokeContext<'static, 'static>>>;
+#[derive(Clone, Debug)]
+pub struct ProgramRuntimeEnvironment(Arc<BuiltinProgram<InvokeContext<'static, 'static>>>);
+impl std::hash::Hash for ProgramRuntimeEnvironment {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        Arc::<BuiltinProgram<InvokeContext<'static, 'static>>>::as_ptr(&self.0).hash(state);
+    }
+}
+impl PartialEq for ProgramRuntimeEnvironment {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for ProgramRuntimeEnvironment {}
+impl ProgramRuntimeEnvironment {
+    pub fn from(inner: BuiltinProgram<InvokeContext<'static, 'static>>) -> Self {
+        Self(Arc::new(inner))
+    }
+
+    pub const fn from_ref<'a>(
+        inner: &'a Arc<BuiltinProgram<InvokeContext<'static, 'static>>>,
+    ) -> &'a Self {
+        // Safety: This wrapper type is transparent and shares the same representation as the underlying type
+        unsafe { std::mem::transmute(inner) }
+    }
+
+    pub fn inner(&self) -> &Arc<BuiltinProgram<InvokeContext<'static, 'static>>> {
+        &self.0
+    }
+}
 #[cfg(feature = "dev-context-only-utils")]
 pub fn get_mock_program_runtime_environment() -> ProgramRuntimeEnvironment {
     static MOCK_ENVIRONMENT: std::sync::OnceLock<ProgramRuntimeEnvironment> =
         std::sync::OnceLock::<ProgramRuntimeEnvironment>::new();
     MOCK_ENVIRONMENT
-        .get_or_init(|| Arc::new(BuiltinProgram::new_mock()))
+        .get_or_init(|| ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock()))
         .clone()
 }
 
@@ -177,7 +205,9 @@ impl ProgramCacheEntryType {
     /// Returns a reference to its environment if it has one
     pub fn get_environment(&self) -> Option<&ProgramRuntimeEnvironment> {
         match self {
-            ProgramCacheEntryType::Loaded(program) => Some(program.get_loader()),
+            ProgramCacheEntryType::Loaded(program) => {
+                Some(ProgramRuntimeEnvironment::from_ref(program.get_loader()))
+            }
             ProgramCacheEntryType::FailedVerification(env)
             | ProgramCacheEntryType::Unloaded(env) => Some(env),
             _ => None,
@@ -346,7 +376,7 @@ impl ProgramCacheEntry {
     /// hasn't changed since it was unloaded.
     pub unsafe fn reload(
         loader_key: &Pubkey,
-        program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static, 'static>>>,
+        program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
         effective_slot: Slot,
         elf_bytes: &[u8],
@@ -368,7 +398,7 @@ impl ProgramCacheEntry {
 
     fn new_internal(
         loader_key: &Pubkey,
-        program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static, 'static>>>,
+        program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
         effective_slot: Slot,
         elf_bytes: &[u8],
@@ -378,7 +408,7 @@ impl ProgramCacheEntry {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         #[cfg(feature = "metrics")]
         let load_elf_time = Measure::start("load_elf_time");
-        let executable = Executable::load(elf_bytes, program_runtime_environment.clone())?;
+        let executable = Executable::load(elf_bytes, program_runtime_environment.inner().clone())?;
 
         #[cfg(feature = "metrics")]
         {
@@ -822,7 +852,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             env_opt: Option<&ProgramRuntimeEnvironment>,
         ) -> bool {
             env_opt
-                .map(|env| Arc::ptr_eq(env, program_runtime_environment))
+                .map(|env| env == program_runtime_environment)
                 .unwrap_or(true)
         }
         match &mut self.index {
@@ -893,7 +923,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             .program
                             .get_environment()
                             .zip(entry.program.get_environment())
-                            .map(|(a, b)| !Arc::ptr_eq(a, b))
+                            .map(|(a, b)| a != b)
                             .unwrap_or(false)
                         || existing == &entry
                 });
@@ -959,7 +989,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 // getting used by an older slot.
                                 if let Some(entry_env) = entry.program.get_environment()
                                     && let Some(env) = first_ancestor_env
-                                    && !Arc::ptr_eq(entry_env, env)
+                                    && entry_env != env
                                 {
                                     return true;
                                 }
@@ -1000,7 +1030,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         let Some(environment) = entry.program.get_environment() else {
             return true;
         };
-        Arc::ptr_eq(environment, program_runtime_environment)
+        environment == program_runtime_environment
     }
 
     fn matches_criteria(
@@ -1407,7 +1437,7 @@ mod tests {
             .unwrap()
             .read_to_end(&mut elf)
             .unwrap();
-        let executable = Executable::load(&elf, env).unwrap();
+        let executable = Executable::load(&elf, env.inner().clone()).unwrap();
         ProgramCacheEntryType::Loaded(executable)
     }
 
@@ -1542,7 +1572,7 @@ mod tests {
             });
 
         // Add tombstones entries for program
-        let env = Arc::new(BuiltinProgram::new_mock());
+        let env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
         for slot in 21..31 {
             set_tombstone(
                 cache,
@@ -1834,7 +1864,9 @@ mod tests {
             let mut cache = ProgramCache::<TestForkGraph>::new(0);
             for (deployment_slot, effective_slot) in entries {
                 let entry = Arc::new(ProgramCacheEntry {
-                    program: new_loaded_entry(Arc::new(BuiltinProgram::new_mock())), // Assign them different environments
+                    program: new_loaded_entry(ProgramRuntimeEnvironment::from(
+                        BuiltinProgram::new_mock(),
+                    )), // Assign them different environments
                     account_owner: ProgramCacheEntryOwner::LoaderV2,
                     account_size: 0,
                     deployment_slot,
@@ -1924,7 +1956,9 @@ mod tests {
     }
 
     #[test_case(
-        ProgramCacheEntryType::Unloaded(Arc::new(BuiltinProgram::new_mock())),
+        ProgramCacheEntryType::Unloaded(ProgramRuntimeEnvironment::from(
+            BuiltinProgram::new_mock()
+        )),
         new_loaded_entry(get_mock_program_runtime_environment())
     )]
     #[test_case(
@@ -1998,7 +2032,9 @@ mod tests {
             latest_access_slot: AtomicU64::default(),
         });
         let loaded_entry_upcoming_env = Arc::new(ProgramCacheEntry {
-            program: ProgramCacheEntryType::Unloaded(Arc::new(BuiltinProgram::new_mock())),
+            program: ProgramCacheEntryType::Unloaded(ProgramRuntimeEnvironment::from(
+                BuiltinProgram::new_mock(),
+            )),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             account_size: 0,
             deployment_slot: 10,
@@ -2159,7 +2195,7 @@ mod tests {
 
         let program1 = Pubkey::new_unique();
         cache.assign_program(&env, program1, 10, new_test_entry(10, 10));
-        let new_env = Arc::new(BuiltinProgram::new_mock());
+        let new_env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
         let upcoming_environment = Some(new_env.clone());
         let updated_program = Arc::new(ProgramCacheEntry {
             program: new_loaded_entry(new_env.clone()),
@@ -2634,7 +2670,7 @@ mod tests {
     fn test_extract_different_environment() {
         let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
         let env = get_mock_program_runtime_environment();
-        let other_env = Arc::new(BuiltinProgram::new_mock());
+        let other_env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
 
         // Fork graph created for the test
         //                0
