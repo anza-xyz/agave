@@ -111,7 +111,7 @@ impl Rocks {
         fs::create_dir_all(&path)?;
 
         // Use default database options
-        let mut db_options = get_db_options(&options);
+        let mut db_options = get_db_options(&options, &path)?;
         if let Some(recovery_mode) = recovery_mode {
             db_options.set_wal_recovery_mode(recovery_mode.into());
         }
@@ -1144,12 +1144,26 @@ fn process_cf_options_advanced<C: 'static + Column + ColumnName>(
     }
 }
 
-fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
+fn get_db_options(
+    blockstore_options: &BlockstoreOptions,
+    path: &PathBuf,
+) -> std::io::Result<Options> {
     let mut options = Options::default();
 
     // Create missing items to support a clean start
     options.create_if_missing(true);
     options.create_missing_column_families(true);
+
+    // Direct io
+    #[cfg(target_os = "linux")]
+    {
+        use agave_fs::metadata::DirectIoSupport;
+
+        if agave_fs::metadata::check_direct_io_capability(path)? == DirectIoSupport::Supported {
+            options.set_use_direct_io_for_flush_and_compaction(true);
+            options.set_use_direct_reads(true);
+        }
+    }
 
     // rocksdb builds two threadpools: low and high priority. The low priority
     // pool is used for compactions whereas the high priority pool is used for
@@ -1183,7 +1197,7 @@ fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
     // it is not required for read-only access, but should be fine with our high ulimit.
     options.set_max_open_files(-1);
 
-    options
+    Ok(options)
 }
 
 /// The default number of threads to use for rocksdb compaction in the rocksdb
