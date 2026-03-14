@@ -1,7 +1,7 @@
 use {
     super::{StakeAccount, Stakes},
     crate::stake_history::StakeHistory,
-    im::HashMap as ImHashMap,
+    imbl::HashMap as ImblHashMap,
     serde::{Deserialize, Serialize, Serializer, ser::SerializeMap},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
@@ -145,7 +145,7 @@ struct SerdeStakeAccountsToStakeFormat {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeAccountMapToDelegationFormat(ImHashMap<Pubkey, StakeAccount>);
+struct SerdeStakeAccountMapToDelegationFormat(ImblHashMap<Pubkey, StakeAccount>);
 impl Serialize for SerdeStakeAccountMapToDelegationFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -160,7 +160,7 @@ impl Serialize for SerdeStakeAccountMapToDelegationFormat {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeAccountMapToStakeFormat(ImHashMap<Pubkey, StakeAccount>);
+struct SerdeStakeAccountMapToStakeFormat(ImblHashMap<Pubkey, StakeAccount>);
 impl Serialize for SerdeStakeAccountMapToStakeFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -177,7 +177,7 @@ impl Serialize for SerdeStakeAccountMapToStakeFormat {
 /// Simplified, intermediate representation of [`Stakes<T>`]
 ///
 /// Its bincode serializaiton format is identical as Stakes<T>, but allows faster
-/// deserialization without creating im::HashMap (such conversion is deferred until
+/// deserialization without creating imbl::HashMap (such conversion is deferred until
 /// data is actually needed).
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct DeserializableStakes<T> {
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn test_serde_stakes_to_stake_format() {
-        let mut stake_delegations = ImHashMap::new();
+        let mut stake_delegations = ImblHashMap::new();
         let vote_pubkey = Pubkey::new_unique();
         let node_pubkey = Pubkey::new_unique();
         stake_delegations.insert(
