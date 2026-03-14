@@ -1,7 +1,13 @@
-use crate::{
-    result::{Result, TransactionViewError},
-    transaction_data::TransactionData,
-    transaction_view::UnsanitizedTransactionView,
+use {
+    crate::{
+        result::{Result, TransactionViewError},
+        transaction_data::TransactionData,
+        transaction_view::UnsanitizedTransactionView,
+    },
+    solana_program_runtime::execution_budget::{
+        MAX_COMPUTE_UNIT_LIMIT, MAX_HEAP_FRAME_BYTES, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+        MIN_HEAP_FRAME_BYTES,
+    },
 };
 
 pub(crate) fn sanitize(
@@ -11,7 +17,8 @@ pub(crate) fn sanitize(
     sanitize_signatures(view)?;
     sanitize_account_access(view)?;
     sanitize_instructions(view, enable_instruction_accounts_limit)?;
-    sanitize_address_table_lookups(view)
+    sanitize_address_table_lookups(view)?;
+    sanitize_transaction_config(view)
 }
 
 fn sanitize_signatures(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
@@ -105,6 +112,32 @@ fn sanitize_address_table_lookups(
         // Check that there is at least one account lookup.
         if address_table_lookup.writable_indexes.is_empty()
             && address_table_lookup.readonly_indexes.is_empty()
+        {
+            return Err(TransactionViewError::SanitizeError);
+        }
+    }
+
+    Ok(())
+}
+
+fn sanitize_transaction_config(
+    view: &UnsanitizedTransactionView<impl TransactionData>,
+) -> Result<()> {
+    if let Some(transaction_config_view) = view.transaction_config() {
+        let compute_unit_limit = transaction_config_view.compute_unit_limit();
+        if compute_unit_limit > MAX_COMPUTE_UNIT_LIMIT {
+            return Err(TransactionViewError::SanitizeError);
+        }
+
+        let loaded_accounts_data_size_limit =
+            transaction_config_view.loaded_accounts_data_size_limit();
+        if loaded_accounts_data_size_limit > MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.into() {
+            return Err(TransactionViewError::SanitizeError);
+        }
+
+        let requested_heap_size = transaction_config_view.requested_heap_size();
+        if !(MIN_HEAP_FRAME_BYTES..=MAX_HEAP_FRAME_BYTES).contains(&requested_heap_size)
+            || !requested_heap_size.is_multiple_of(1024)
         {
             return Err(TransactionViewError::SanitizeError);
         }
