@@ -4,12 +4,6 @@ use {
     std::collections::HashMap,
 };
 
-pub(crate) enum GossipFilterDirection {
-    Ingress,
-    EgressPush,
-    EgressPullResponse,
-}
-
 /// Minimum number of staked nodes for enforcing stakes in gossip.
 const MIN_NUM_STAKED_NODES: usize = 500;
 
@@ -18,16 +12,9 @@ const MIN_NUM_STAKED_NODES: usize = 500;
 pub(crate) const MIN_STAKE_FOR_GOSSIP: u64 = solana_native_token::LAMPORTS_PER_SOL;
 
 /// Returns false if the CRDS value should be discarded.
-/// `direction` controls whether we are looking at
-/// incoming packet (via Push or PullResponse) or
-/// we are about to make a packet
 #[inline]
 #[must_use]
-pub(crate) fn should_retain_crds_value(
-    value: &CrdsValue,
-    stakes: &HashMap<Pubkey, u64>,
-    direction: GossipFilterDirection,
-) -> bool {
+pub(crate) fn should_retain_crds_value(value: &CrdsValue, stakes: &HashMap<Pubkey, u64>) -> bool {
     let retain_if_staked = || {
         stakes.len() < MIN_NUM_STAKED_NODES || {
             let stake = stakes.get(&value.pubkey()).copied();
@@ -35,7 +22,6 @@ pub(crate) fn should_retain_crds_value(
         }
     };
 
-    use GossipFilterDirection::*;
     match value.data() {
         // All nodes can send ContactInfo
         CrdsData::ContactInfo(_) => true,
@@ -45,20 +31,11 @@ pub(crate) fn should_retain_crds_value(
         CrdsData::DuplicateShred(_, _)
         | CrdsData::LowestSlot(0, _)
         | CrdsData::RestartHeaviestFork(_)
-        | CrdsData::RestartLastVotedForkSlots(_) => retain_if_staked(),
+        | CrdsData::RestartLastVotedForkSlots(_)
         // Unstaked nodes can technically send EpochSlots, but we do not want them
         // eating gossip bandwidth
-        CrdsData::EpochSlots(_, _) => match direction {
-            // always store if we have received them
-            // to avoid getting them again in PullResponses
-            Ingress => true,
-            // only forward if the origin is staked
-            EgressPush | EgressPullResponse => retain_if_staked(),
-        },
-        CrdsData::Vote(_, _) => match direction {
-            Ingress | EgressPush => true,
-            EgressPullResponse => retain_if_staked(),
-        },
+        | CrdsData::EpochSlots(_, _)
+        | CrdsData::Vote(_, _) => retain_if_staked(),
         // Fully deprecated messages
         CrdsData::AccountsHashes(_) => false,
         CrdsData::LegacyContactInfo(_) => false,
