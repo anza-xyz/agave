@@ -355,16 +355,17 @@ impl Rocks {
     }
 
     fn multi_get_cf<'a, K, I>(
-        &self,
+        &'a self,
         cf: &ColumnFamily,
         keys: I,
-    ) -> impl Iterator<Item = Result<Option<DBPinnableSlice<'_>>>> + use<'_, K, I>
+    ) -> impl Iterator<Item = Result<Option<DBPinnableSlice<'a>>>> + use<'a, K, I>
     where
-        K: AsRef<[u8]> + 'a + ?Sized,
-        I: IntoIterator<Item = &'a K>,
+        K: AsRef<[u8]>,
+        I: IntoIterator<Item = K>,
     {
+        let key_storage: Vec<K> = keys.into_iter().collect();
         self.db
-            .batched_multi_get_cf(cf, keys, /*sorted_input:*/ false)
+            .batched_multi_get_cf(cf, key_storage.iter(), /*sorted_input:*/ false)
             .into_iter()
             .map(|out| out.map_err(BlockstoreError::RocksDb))
     }
@@ -598,23 +599,22 @@ where
         result
     }
 
-    /// Create a key type suitable for use with multi_get_bytes() and
-    /// multi_get(). Those functions return iterators, so the keys must be
-    /// created with a separate function in order to live long enough
-    pub(crate) fn multi_get_keys<I>(&self, keys: I) -> Vec<<C as Column>::Key>
+    /// Create an iterator over keys suitable for use with multi_get_bytes()
+    /// and multi_get().
+    pub(crate) fn multi_get_keys<I>(
+        &self,
+        keys: I,
+    ) -> impl Iterator<Item = <C as Column>::Key> + use<C, I>
     where
         I: IntoIterator<Item = C::Index>,
     {
-        keys.into_iter().map(|index| C::key(&index)).collect()
+        keys.into_iter().map(|index| C::key(&index))
     }
 
-    pub(crate) fn multi_get_bytes<'a, K>(
+    pub(crate) fn multi_get_bytes<'a>(
         &'a self,
-        keys: impl IntoIterator<Item = &'a K> + 'a,
-    ) -> impl Iterator<Item = Result<Option<BlockstoreByteReference<'a>>>> + 'a
-    where
-        K: AsRef<[u8]> + 'a + ?Sized,
-    {
+        keys: impl IntoIterator<Item = <C as Column>::Key> + 'a,
+    ) -> impl Iterator<Item = Result<Option<BlockstoreByteReference<'a>>>> + 'a {
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.read_perf_status,
@@ -786,13 +786,10 @@ impl<C> LedgerColumn<C>
 where
     C: TypedColumn + ColumnName,
 {
-    pub(crate) fn multi_get<'a, K>(
+    pub(crate) fn multi_get<'a>(
         &'a self,
-        keys: impl IntoIterator<Item = &'a K> + 'a,
-    ) -> impl Iterator<Item = Result<Option<C::Type>>> + 'a
-    where
-        K: AsRef<[u8]> + 'a + ?Sized,
-    {
+        keys: impl IntoIterator<Item = <C as Column>::Key> + 'a,
+    ) -> impl Iterator<Item = Result<Option<C::Type>>> + 'a {
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.read_perf_status,
