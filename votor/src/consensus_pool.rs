@@ -29,9 +29,9 @@ use {
     solana_runtime::{bank::Bank, epoch_stakes::VersionedEpochStakes},
     std::{
         cmp::Ordering,
-        collections::{BTreeMap, HashMap},
+        collections::{BTreeMap, HashMap, HashSet},
         num::NonZeroU64,
-        sync::Arc,
+        sync::{Arc, RwLock},
     },
     thiserror::Error,
 };
@@ -99,6 +99,7 @@ fn get_key_and_stakes(
     }
     Ok((*vote_key, stake, epoch_stakes.total_stake()))
 }
+
 /// Container to store received votes and certificates.
 ///
 /// Based on received votes and certificates, generates new `VotorEvent`s and generates new certificates.
@@ -108,6 +109,7 @@ pub(crate) struct ConsensusPool {
     vote_pools: BTreeMap<PoolId, VotePool>,
     /// Completed certificates
     completed_certificates: BTreeMap<CertificateType, Arc<Certificate>>,
+    generated_cert_types: RwLock<HashSet<CertificateType>>,
     /// Tracks slots which have reached the parent ready condition:
     /// - They have a potential parent block with a NotarizeFallback certificate
     /// - All slots from the parent have a Skip certificate
@@ -126,6 +128,15 @@ pub(crate) struct ConsensusPool {
 }
 
 impl ConsensusPool {
+    // TODO: this should be optimised so that we take the lock only once for a list of certs.
+    pub fn wants_cert(&self, cert: &Certificate) -> bool {
+        !self
+            .generated_cert_types
+            .read()
+            .unwrap()
+            .contains(&cert.cert_type)
+    }
+
     pub(crate) fn new_from_root_bank_pre_migration(
         my_pubkey: Pubkey,
         bank: &Bank,
@@ -146,6 +157,7 @@ impl ConsensusPool {
             my_pubkey,
             vote_pools: BTreeMap::new(),
             completed_certificates: BTreeMap::new(),
+            generated_cert_types: RwLock::new(HashSet::new()),
             highest_finalized_slot: None,
             highest_finalized_with_notarize: None,
             parent_ready_tracker,
@@ -246,6 +258,8 @@ impl ConsensusPool {
             });
             let new_cert = Arc::new(cert_builder.build()?);
             self.insert_certificate(cert_type, new_cert.clone(), events);
+            // TODO: move out of the for loop to reduce how many times we take the lock.
+            self.generated_cert_types.write().unwrap().insert(cert_type);
             self.stats.incr_cert_type(&new_cert.cert_type, true);
             new_certificates_to_send.push(new_cert);
         }
@@ -622,6 +636,10 @@ impl ConsensusPool {
                 | CertificateType::Genesis(s, _)
                 | CertificateType::Skip(s) => s >= &root_slot,
             });
+        self.generated_cert_types
+            .write()
+            .unwrap()
+            .retain(|c| c.slot() >= root_slot);
         self.vote_pools = self.vote_pools.split_off(&(root_slot, VoteType::Finalize));
         self.slot_stake_counters_map = self.slot_stake_counters_map.split_off(&root_slot);
         self.parent_ready_tracker.set_root(root_slot);
