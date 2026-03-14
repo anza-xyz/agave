@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 cd "$(dirname "$0")/.."
 source ci/semver_bash/semver.sh
 source ci/rust-version.sh stable
@@ -38,7 +38,8 @@ done
 Cargo_tomls=$(ci/order-crates-for-publishing.py)
 
 for Cargo_toml in $Cargo_tomls; do
-  echo "--- $Cargo_toml"
+  crate_name=$(grep -m 1 '^name = ' "$Cargo_toml" | cut -f 3 -d ' ' | tr -d \")
+  echo "--- $crate_name"
 
   # check the version which doesn't inherit from worksapce
   if ! grep -q "^version = { workspace = true }$" "$Cargo_toml"; then
@@ -48,8 +49,6 @@ for Cargo_toml in $Cargo_tomls; do
       exit 1
     }
   fi
-
-  crate_name=$(grep -m 1 '^name = ' "$Cargo_toml" | cut -f 3 -d ' ' | tr -d \")
 
   if grep -q "^publish = false" "$Cargo_toml"; then
     echo "$crate_name is marked as unpublishable"
@@ -62,8 +61,6 @@ for Cargo_toml in $Cargo_tomls; do
   fi
 
   (
-    set -x
-
     crate=$(dirname "$Cargo_toml")
     cargoCommand="cargo publish --token $CRATES_IO_TOKEN"
 
@@ -72,12 +69,18 @@ for Cargo_toml in $Cargo_tomls; do
       echo "Attempt ${i} of ${numRetries}"
       # The rocksdb package does not build with the stock rust docker image so use
       # the solana rust docker image
-      if ci/docker-run-default-image.sh bash -exc "cd $crate; $cargoCommand"; then
+      if output=$(ci/docker-run-default-image.sh bash -exc "cd $crate; $cargoCommand" 2>&1 | tee /dev/fd/2); then
         break
       fi
 
       if [ "$i" -lt "$numRetries" ]; then
-        sleep 3
+        retry_after=$(sed -n 's/.*Please try again after \(.*\) or email.*/\1/p' <<< "$output")
+        if [[ -n "$retry_after" ]]; then
+          backoff=$(( $(date -d "$retry_after" +%s) - $(date +%s) ))
+          [[ $backoff -gt 0 ]] && sleep "$backoff"
+        else
+          sleep 3
+        fi
       else
         echo "couldn't publish '$crate_name'"
         exit 1
