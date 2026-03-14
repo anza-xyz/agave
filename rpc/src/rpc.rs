@@ -3914,7 +3914,7 @@ pub mod rpc_full {
                     }
                     return Err(RpcCustomError::SendTransactionPreflightFailure {
                         message: format!("Transaction simulation failed: {err}"),
-                        result: RpcSimulateTransactionResult {
+                        result: Box::new(RpcSimulateTransactionResult {
                             err: Some(err.into()),
                             logs: Some(logs),
                             accounts: None,
@@ -3929,7 +3929,7 @@ pub mod rpc_full {
                             pre_token_balances: None,
                             post_token_balances: None,
                             loaded_addresses: None,
-                        },
+                        }),
                     }
                     .into());
                 }
