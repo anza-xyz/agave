@@ -1421,58 +1421,6 @@ fn test_clean_zero_lamport_and_old_roots() {
 }
 
 #[test]
-fn test_clean_old_with_normal_account() {
-    agave_logger::setup();
-
-    let accounts = AccountsDb::new_single_for_tests();
-
-    let pubkey = solana_pubkey::new_rand();
-    let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
-    //store an account
-    accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
-    accounts.store_for_tests((1, [(&pubkey, &account)].as_slice()));
-
-    // simulate slots are rooted after while
-    accounts.add_root_and_flush_write_cache(0);
-    accounts.add_root_and_flush_write_cache(1);
-
-    assert_eq!(accounts.alive_account_count_in_slot(1), 1);
-
-    //now old state is cleaned up
-    assert_eq!(accounts.alive_account_count_in_slot(0), 0);
-    assert_eq!(accounts.alive_account_count_in_slot(1), 1);
-}
-
-#[test]
-fn test_clean_old_with_zero_lamport_account() {
-    agave_logger::setup();
-
-    let accounts = AccountsDb::new_single_for_tests();
-
-    let pubkey1 = solana_pubkey::new_rand();
-    let pubkey2 = solana_pubkey::new_rand();
-    let normal_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
-    let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-    //store an account
-    accounts.store_for_tests((0, [(&pubkey1, &normal_account)].as_slice()));
-    accounts.store_for_tests((1, [(&pubkey1, &zero_account)].as_slice()));
-    accounts.store_for_tests((0, [(&pubkey2, &normal_account)].as_slice()));
-    accounts.store_for_tests((1, [(&pubkey2, &normal_account)].as_slice()));
-
-    //simulate slots are rooted after while
-    accounts.add_root_and_flush_write_cache(0);
-    accounts.add_root_and_flush_write_cache(1);
-
-    assert_eq!(accounts.alive_account_count_in_slot(1), 2);
-
-    accounts.print_accounts_stats("");
-
-    //Old state behind zero-lamport account is cleaned up
-    assert_eq!(accounts.alive_account_count_in_slot(0), 0);
-    assert_eq!(accounts.alive_account_count_in_slot(1), 2);
-}
-
-#[test]
 fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
     agave_logger::setup();
 
