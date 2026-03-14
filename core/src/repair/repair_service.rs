@@ -1219,6 +1219,7 @@ mod test {
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_runtime::bank::Bank,
         solana_signer::Signer,
+        solana_streamer::packet::BytesPacketBatch,
         solana_time_utils::timestamp,
         std::collections::HashSet,
     };
@@ -1253,8 +1254,8 @@ mod test {
         );
 
         // Receive and translate repair packet
-        let mut packets = vec![solana_packet::Packet::default(); 1];
-        let _recv_count = solana_streamer::recvmmsg::recv_mmsg(&reader, &mut packets[..]).unwrap();
+        let mut packets = BytesPacketBatch::with_capacity(1);
+        let _recv_count = solana_streamer::recvmmsg::recv_mmsg(&reader, &mut packets).unwrap();
         let packet = &packets[0];
         let Some(bytes) = packet.data(..).map(Vec::from) else {
             panic!("packet data not found");

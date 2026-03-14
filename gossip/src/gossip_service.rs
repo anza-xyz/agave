@@ -10,7 +10,6 @@ use {
     crossbeam_channel::Sender,
     solana_keypair::Keypair,
     solana_net_utils::{DEFAULT_IP_ECHO_SERVER_THREADS, SocketAddrSpace},
-    solana_perf::recycler::Recycler,
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
@@ -63,10 +62,8 @@ impl GossipService {
             cluster_info.bind_ip_addrs(),
             exit.clone(),
             request_sender,
-            Recycler::default(),
             gossip_receiver_stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
-            false,
             false,
         );
         let (consume_sender, listen_receiver) =

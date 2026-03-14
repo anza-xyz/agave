@@ -12,9 +12,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::shred::{self, ShredFetchStats, should_discard_shred},
     solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::{
-        BytesPacket, BytesPacketBatch, PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef,
-    },
+    solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch, PacketFlags, PacketRef},
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     solana_streamer::{
@@ -185,7 +183,6 @@ impl ShredFetchStage {
         sockets: Vec<Arc<UdpSocket>>,
         exit: Arc<AtomicBool>,
         sender: EvictingSender<PacketBatch>,
-        recycler: PacketBatchRecycler,
         bank_forks: Arc<RwLock<BankForks>>,
         shred_version: u16,
         name: &'static str,
@@ -207,10 +204,8 @@ impl ShredFetchStage {
                     socket,
                     exit.clone(),
                     packet_sender.clone(),
-                    recycler.clone(),
                     receiver_stats.clone(),
                     Some(Duration::from_millis(5)), // coalesce
-                    true,                           // use_pinned_memory
                     false,                          // is_staked_service
                 )
             })
@@ -247,7 +242,6 @@ impl ShredFetchStage {
         turbine_disabled: Arc<AtomicBool>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let recycler = PacketBatchRecycler::warmed(100, 1024);
         let repair_context = RepairContext {
             repair_socket: repair_socket.clone(),
             cluster_info,
@@ -260,7 +254,6 @@ impl ShredFetchStage {
             sockets,
             exit.clone(),
             sender.clone(),
-            recycler.clone(),
             bank_forks.clone(),
             shred_version,
             "shred_fetch",
@@ -276,7 +269,6 @@ impl ShredFetchStage {
             vec![repair_socket],
             exit.clone(),
             sender.clone(),
-            recycler,
             bank_forks.clone(),
             shred_version,
             "shred_fetch_repair",
