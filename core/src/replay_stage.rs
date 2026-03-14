@@ -4682,6 +4682,7 @@ pub(crate) mod tests {
             replay_stage::ReplayStage,
             vote_simulator::{self, VoteSimulator},
         },
+        async_trait::async_trait,
         blockstore_processor::{
             ProcessOptions, confirm_full_slot, fill_blockstore_slot_with_ticks, process_bank_0,
         },
@@ -4693,7 +4694,7 @@ pub(crate) mod tests {
         solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
         solana_entry::entry::{self, Entry},
         solana_genesis_config as genesis_config,
-        solana_gossip::{crds::Cursor, node::Node},
+        solana_gossip::{contact_info::Protocol, crds::Cursor, node::Node},
         solana_hash::Hash,
         solana_instruction::error::InstructionError,
         solana_keypair::Keypair,
@@ -4719,7 +4720,11 @@ pub(crate) mod tests {
         },
         solana_sha256_hasher::hash,
         solana_system_transaction as system_transaction,
-        solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
+        solana_tpu_client_next::{
+            leader_updater::LeaderUpdater, Client as TpuClientNextClient, ClientBuilder,
+            TransactionSender,
+        },
+        solana_transaction::Transaction,
         solana_transaction_error::TransactionError,
         solana_transaction_status::VersionedTransactionWithStatusMeta,
         solana_vote::vote_transaction,
@@ -4727,12 +4732,117 @@ pub(crate) mod tests {
         std::{
             fs::remove_dir_all,
             iter,
-            sync::{Arc, Mutex, RwLock, atomic::AtomicU64},
+            net::{IpAddr, Ipv4Addr, SocketAddr},
+            sync::{atomic::AtomicU64, Arc, Mutex, RwLock},
         },
         tempfile::tempdir,
         test_case::test_case,
-        trees::{Tree, tr},
+        tokio_util::sync::CancellationToken,
+        trees::{tr, Tree},
     };
+
+    struct TestPinnedLeaderUpdater {
+        address: Vec<SocketAddr>,
+    }
+
+    #[async_trait]
+    impl LeaderUpdater for TestPinnedLeaderUpdater {
+        fn next_leaders(&mut self, _lookahead_leaders: usize) -> Vec<SocketAddr> {
+            self.address.clone()
+        }
+
+        async fn stop(&mut self) {}
+    }
+
+    struct ReplayStageVoteClient {
+        sender: TransactionSender,
+        cancel: CancellationToken,
+        _client: TpuClientNextClient,
+        _runtime: tokio::runtime::Runtime,
+    }
+
+    impl ReplayStageVoteClient {
+        fn new(cluster_info: &ClusterInfo) -> Self {
+            let cancel = CancellationToken::new();
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("failed to create tokio runtime for replay_stage vote tests");
+
+            let bind_socket =
+                solana_net_utils::sockets::bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
+                    .expect("failed to bind replay_stage vote test socket");
+
+            let leader_updater = Box::new(TestPinnedLeaderUpdater {
+                address: vec![cluster_info
+                    .my_contact_info()
+                    .tpu(Protocol::QUIC)
+                    .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))],
+            });
+
+            let (sender, client) = ClientBuilder::new(leader_updater)
+                .runtime_handle(runtime.handle().clone())
+                .cancel_token(cancel.clone())
+                .bind_socket(bind_socket)
+                .leader_send_fanout(1)
+                .max_cache_size(1)
+                .build()
+                .expect("failed to build tpu-client-next for replay_stage vote tests");
+
+            Self {
+                sender,
+                cancel,
+                _client: client,
+                _runtime: runtime,
+            }
+        }
+
+        fn send_vote(&self, transaction: &Transaction) {
+            let buf = bincode::serialize(transaction).expect("vote serialization failed");
+            self.sender
+                .try_send_transactions_in_batch(vec![buf])
+                .expect("failed to send vote via tpu-client-next");
+        }
+    }
+
+    impl Drop for ReplayStageVoteClient {
+        fn drop(&mut self) {
+            self.cancel.cancel();
+        }
+    }
+
+    fn handle_vote_with_tpu_client_next(
+        cluster_info: &ClusterInfo,
+        tower_storage: &dyn TowerStorage,
+        vote_op: VoteOp,
+        vote_client: &ReplayStageVoteClient,
+    ) {
+        if let VoteOp::PushVote { saved_tower, .. } = &vote_op {
+            tower_storage
+                .store(saved_tower)
+                .expect("failed to store tower in replay_stage vote test");
+        }
+
+        let tx = match &vote_op {
+            VoteOp::PushVote { tx, .. } | VoteOp::RefreshVote { tx, .. } => tx,
+        };
+        vote_client.send_vote(tx);
+
+        match vote_op {
+            VoteOp::PushVote {
+                tx, tower_slots, ..
+            } => {
+                cluster_info.push_vote(&tower_slots, tx);
+            }
+            VoteOp::RefreshVote {
+                tx,
+                last_voted_slot,
+            } => {
+                cluster_info.refresh_vote(tx, last_voted_slot);
+            }
+        }
+    }
 
     #[test]
     fn test_is_partition_detected() {
@@ -8010,7 +8120,7 @@ pub(crate) mod tests {
     fn test_replay_stage_refresh_last_vote() {
         let ReplayBlockstoreComponents {
             cluster_info,
-            poh_recorder,
+            poh_recorder: _poh_recorder,
             mut tower,
             my_pubkey,
             vote_simulator,
@@ -8044,6 +8154,7 @@ pub(crate) mod tests {
         );
 
         let (voting_sender, voting_receiver) = unbounded();
+        let vote_client = ReplayStageVoteClient::new(&cluster_info);
 
         // Simulate landing a vote for slot 0 landing in slot 1
         let bank1 = Bank::new_from_parent_with_bank_forks(
@@ -8075,25 +8186,7 @@ pub(crate) mod tests {
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
 
-        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic_for_tests(
-                "connection_cache_vote_quic",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        } else {
-            ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        };
-
-        crate::voting_service::VotingService::handle_vote(
-            &cluster_info,
-            &poh_recorder,
-            &tower_storage,
-            vote_info,
-            Arc::new(connection_cache),
-        );
+        handle_vote_with_tpu_client_next(&cluster_info, &tower_storage, vote_info, &vote_client);
 
         let mut cursor = Cursor::default();
         let votes = cluster_info.get_votes(&mut cursor);
@@ -8173,25 +8266,7 @@ pub(crate) mod tests {
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
 
-        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic_for_tests(
-                "connection_cache_vote_quic",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        } else {
-            ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        };
-
-        crate::voting_service::VotingService::handle_vote(
-            &cluster_info,
-            &poh_recorder,
-            &tower_storage,
-            vote_info,
-            Arc::new(connection_cache),
-        );
+        handle_vote_with_tpu_client_next(&cluster_info, &tower_storage, vote_info, &vote_client);
 
         let votes = cluster_info.get_votes(&mut cursor);
         assert_eq!(votes.len(), 1);
@@ -8301,25 +8376,7 @@ pub(crate) mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
-        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic_for_tests(
-                "connection_cache_vote_quic",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        } else {
-            ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        };
-
-        crate::voting_service::VotingService::handle_vote(
-            &cluster_info,
-            &poh_recorder,
-            &tower_storage,
-            vote_info,
-            Arc::new(connection_cache),
-        );
+        handle_vote_with_tpu_client_next(&cluster_info, &tower_storage, vote_info, &vote_client);
 
         assert!(last_vote_refresh_time.last_refresh_time > clone_refresh_time);
         let votes = cluster_info.get_votes(&mut cursor);
@@ -8418,12 +8475,12 @@ pub(crate) mod tests {
         voting_sender: &Sender<VoteOp>,
         voting_receiver: &Receiver<VoteOp>,
         cluster_info: &ClusterInfo,
-        poh_recorder: &RwLock<PohRecorder>,
         tower_storage: &dyn TowerStorage,
         make_it_landing: bool,
         cursor: &mut Cursor,
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
+        vote_client: &ReplayStageVoteClient,
     ) -> Arc<Bank> {
         let my_vote_pubkey = &my_vote_keypair[0].pubkey();
         tower.record_bank_vote(&parent_bank);
@@ -8443,25 +8500,7 @@ pub(crate) mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
-        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic_for_tests(
-                "connection_cache_vote_quic",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        } else {
-            ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        };
-
-        crate::voting_service::VotingService::handle_vote(
-            cluster_info,
-            poh_recorder,
-            tower_storage,
-            vote_info,
-            Arc::new(connection_cache),
-        );
+        handle_vote_with_tpu_client_next(cluster_info, tower_storage, vote_info, vote_client);
 
         let votes = cluster_info.get_votes(cursor);
         assert_eq!(votes.len(), 1);
@@ -8504,7 +8543,7 @@ pub(crate) mod tests {
         agave_logger::setup();
         let ReplayBlockstoreComponents {
             cluster_info,
-            poh_recorder,
+            poh_recorder: _poh_recorder,
             mut tower,
             my_pubkey,
             vote_simulator,
@@ -8556,6 +8595,7 @@ pub(crate) mod tests {
 
         let (voting_sender, voting_receiver) = unbounded();
         let mut cursor = Cursor::default();
+        let vote_client = ReplayStageVoteClient::new(&cluster_info);
 
         let mut new_bank = send_vote_in_new_bank(
             bank0,
@@ -8568,12 +8608,12 @@ pub(crate) mod tests {
             &voting_sender,
             &voting_receiver,
             &cluster_info,
-            &poh_recorder,
             &tower_storage,
             true,
             &mut cursor,
             &bank_forks,
             &mut progress,
+            &vote_client,
         );
         new_bank = send_vote_in_new_bank(
             new_bank.clone(),
@@ -8586,12 +8626,12 @@ pub(crate) mod tests {
             &voting_sender,
             &voting_receiver,
             &cluster_info,
-            &poh_recorder,
             &tower_storage,
             false,
             &mut cursor,
             &bank_forks,
             &mut progress,
+            &vote_client,
         );
         // Create enough banks on the fork so last vote is outside SlotHash, make sure
         // we now vote at the tip of the fork.
