@@ -765,6 +765,17 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Controls the max number of streams for a TPU service."),
     )
     .arg(
+        Arg::with_name("tpu_swqos_mode")
+            .long("tpu-swqos-mode")
+            .takes_value(true)
+            .possible_values(&["sleep", "max-streams"])
+            .default_value("sleep")
+            .help(
+                "SwQoS mode: 'sleep' (legacy sleep-based throttling) or 'max-streams' (QUIC \
+                 MAX_STREAMS flow control)",
+            ),
+    )
+    .arg(
         Arg::with_name("num_quic_endpoints")
             .long("num-quic-endpoints")
             .takes_value(true)

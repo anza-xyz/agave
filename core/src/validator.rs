@@ -137,8 +137,10 @@ use {
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
     solana_streamer::{
-        nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
-        quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
+        nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosSleepConfig},
+        quic::{
+            QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosConfig, SwQosQuicStreamerConfig,
+        },
         streamer::StakedNodes,
     },
     solana_time_utils::timestamp,
@@ -588,10 +590,10 @@ impl ValidatorTpuConfig {
                 max_connections_per_ipaddr_per_min: 32,
                 ..Default::default()
             },
-            qos_config: SwQosConfig {
+            qos_config: SwQosConfig::Sleep(SwQosSleepConfig {
                 max_unstaked_connections: 0,
                 ..Default::default()
-            },
+            }),
         };
 
         // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
