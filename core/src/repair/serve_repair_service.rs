@@ -1,21 +1,53 @@
 use {
     crate::repair::{quic_endpoint::RemoteRequest, serve_repair::ServeRepair},
     bytes::Bytes,
-    crossbeam_channel::{Receiver, Sender, unbounded},
+    crossbeam_channel::{Receiver, Sender, bounded},
     solana_net_utils::SocketAddrSpace,
     solana_perf::{packet::PacketBatch, recycler::Recycler},
-    solana_streamer::streamer::{self, StreamerReceiveStats},
+    solana_streamer::{
+        evicting_sender::EvictingSender,
+        streamer::{self, StreamerReceiveStats},
+    },
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{Arc, atomic::AtomicBool},
         thread::{self, Builder, JoinHandle},
-        time::Duration,
+        time::{Duration, Instant},
     },
     tokio::sync::mpsc::Sender as AsyncSender,
 };
 
 pub struct ServeRepairService {
     thread_hdls: Vec<JoinHandle<()>>,
+}
+
+pub(crate) const REQUEST_CHANNEL_SIZE: usize = 4096;
+
+#[derive(Default)]
+struct ServeRepairStats {
+    dropped_batches: i64,
+    dropped_packets: i64,
+}
+
+impl ServeRepairStats {
+    const CADENCE: Duration = Duration::from_secs(5);
+    fn report(&mut self) {
+        let dropped_batches = std::mem::replace(&mut self.dropped_batches, 0);
+        let dropped_packets = std::mem::replace(&mut self.dropped_packets, 0);
+        datapoint_info!(
+            "adapt-repair-request-packets",
+            ("dropped_packets", dropped_packets, i64),
+            ("dropped_batches", dropped_batches, i64),
+        );
+    }
+
+    fn periodic_report(&mut self, last_report: &mut Instant) {
+        let now = Instant::now();
+        if now.duration_since(*last_report) > ServeRepairStats::CADENCE {
+            *last_report = now;
+            self.report();
+        }
+    }
 }
 
 impl ServeRepairService {
@@ -29,7 +61,7 @@ impl ServeRepairService {
         stats_reporter_sender: Sender<Box<dyn FnOnce() + Send>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let (request_sender, request_receiver) = unbounded();
+        let (request_sender, request_receiver) = EvictingSender::new_bounded(REQUEST_CHANNEL_SIZE);
         let serve_repair_socket = Arc::new(serve_repair_socket);
         let t_receiver = streamer::receiver(
             "solRcvrServeRep".to_string(),
@@ -46,7 +78,13 @@ impl ServeRepairService {
             .name(String::from("solServRAdapt"))
             .spawn(|| adapt_repair_requests_packets(request_receiver, remote_request_sender))
             .unwrap();
-        let (response_sender, response_receiver) = unbounded();
+        // NOTE: we use a larger sending channel here compared to the receiving one.
+        //
+        // That's because by the time we're done with the work to compute the repair packets,
+        // discarding the packet because of a full channel seems like a waste. For that reason the
+        // push to this channel is blocking and having more space here gives the sending thread an
+        // much greater chance to get to pulling from this channel before the channel fills up.
+        let (response_sender, response_receiver) = bounded(3 * REQUEST_CHANNEL_SIZE);
         let t_responder = streamer::responder(
             "Repair",
             serve_repair_socket,
@@ -75,8 +113,11 @@ pub(crate) fn adapt_repair_requests_packets(
     packets_receiver: Receiver<PacketBatch>,
     remote_request_sender: Sender<RemoteRequest>,
 ) {
+    let mut stats = ServeRepairStats::default();
+    let mut last_report = Instant::now();
     for packets in packets_receiver {
-        for packet in &packets {
+        let total_packets = packets.len();
+        for (i, packet) in packets.iter().enumerate() {
             let Some(bytes) = packet.data(..).map(Vec::from) else {
                 continue;
             };
@@ -85,9 +126,17 @@ pub(crate) fn adapt_repair_requests_packets(
                 remote_address: packet.meta().socket_addr(),
                 bytes: Bytes::from(bytes),
             };
-            if remote_request_sender.send(request).is_err() {
-                return; // The receiver end of the channel is disconnected.
+            match remote_request_sender.try_send(request) {
+                Ok(_) => {}
+                Err(crossbeam_channel::TrySendError::Full(_)) => {
+                    stats.dropped_batches += 1;
+                    stats.dropped_packets += total_packets.saturating_sub(i) as i64;
+                    break;
+                }
+                Err(crossbeam_channel::TrySendError::Disconnected(_)) => return,
             }
         }
+        stats.periodic_report(&mut last_report);
     }
+    stats.report();
 }

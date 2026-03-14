@@ -584,25 +584,32 @@ async fn read_datagram_task<T>(
 where
     T: From<(Pubkey, SocketAddr, Bytes)>,
 {
-    // Assert that send won't block.
-    debug_assert_eq!(sender.capacity(), None);
     loop {
-        match connection.read_datagram().await {
-            Ok(bytes) => {
-                let value = T::from((remote_pubkey, remote_address, bytes));
-                if let Err(err) = sender.send(value) {
-                    close_quic_endpoint(&endpoint);
-                    return Err(Error::from(err));
-                }
-            }
+        let bytes = match connection.read_datagram().await {
+            Ok(bytes) => bytes,
             Err(err) => {
                 if let Some(err) = connection.close_reason() {
                     return Err(Error::from(err));
                 }
                 debug!("connection.read_datagram: {remote_pubkey}, {remote_address}, {err:?}");
                 record_error(&Error::from(err), &stats);
+                continue;
             }
         };
+
+        let value = T::from((remote_pubkey, remote_address, bytes));
+        match sender.try_send(value) {
+            Ok(()) => {}
+            Err(crossbeam_channel::TrySendError::Full(_)) => {
+                debug!(
+                    "connection.read_datagram: {remote_pubkey}, {remote_address}, channel is full"
+                );
+            }
+            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
+                close_quic_endpoint(&endpoint);
+                return Err(Error::ChannelSendError);
+            }
+        }
     }
 }
 
@@ -825,12 +832,6 @@ impl RepairQuicAsyncSenders {
             repair_request_quic_sender: tokio::sync::mpsc::channel(1).0,
             ancestor_hashes_request_quic_sender: tokio::sync::mpsc::channel(1).0,
         }
-    }
-}
-
-impl<T> From<crossbeam_channel::SendError<T>> for Error {
-    fn from(_: crossbeam_channel::SendError<T>) -> Self {
-        Error::ChannelSendError
     }
 }
 
