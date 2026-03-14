@@ -10,13 +10,13 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcBlockConfig,
     solana_signature::Signature,
-    solana_transaction::Transaction,
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionResult as Result,
     solana_transaction_status::UiConfirmedBlock,
 };
 
 impl TpsClient for RpcClient {
-    fn send_transaction(&self, transaction: Transaction) -> TpsClientResult<Signature> {
+    fn send_transaction(&self, transaction: VersionedTransaction) -> TpsClientResult<Signature> {
         RpcClient::send_transaction_with_config(
             self,
             &transaction,
@@ -28,7 +28,7 @@ impl TpsClient for RpcClient {
         .map_err(|err| err.into())
     }
 
-    fn send_batch(&self, transactions: Vec<Transaction>) -> TpsClientResult<()> {
+    fn send_batch(&self, transactions: Vec<VersionedTransaction>) -> TpsClientResult<()> {
         for transaction in transactions {
             TpsClient::send_transaction(self, transaction)?;
         }

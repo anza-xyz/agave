@@ -245,7 +245,10 @@ where
 
     fn send<C: TpsClient + ?Sized>(&self, client: &Arc<C>) {
         let mut send_txs = Measure::start("send_and_clone_txs");
-        let batch: Vec<_> = self.iter().map(|(_keypair, tx)| tx.clone()).collect();
+        let batch: Vec<_> = self
+            .iter()
+            .map(|(_keypair, tx)| tx.clone().into())
+            .collect();
         let result = client.send_batch(batch);
         send_txs.stop();
         if result.is_err() {

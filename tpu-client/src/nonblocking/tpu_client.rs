@@ -23,7 +23,7 @@ use {
         response::{RpcContactInfo, SlotUpdate},
     },
     solana_signer::SignerError,
-    solana_transaction::Transaction,
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_error::{TransportError, TransportResult},
     std::{
         collections::{HashMap, HashSet},
@@ -410,7 +410,10 @@ where
     /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout
     /// size
     /// Returns the last error if all sends fail
-    pub async fn try_send_transaction(&self, transaction: &Transaction) -> TransportResult<()> {
+    pub async fn try_send_transaction(
+        &self,
+        transaction: &VersionedTransaction,
+    ) -> TransportResult<()> {
         let wire_transaction = serialize(transaction).expect("serialization should succeed");
         self.try_send_wire_transaction(wire_transaction).await
     }

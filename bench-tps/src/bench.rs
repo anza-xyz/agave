@@ -27,7 +27,7 @@ use {
     solana_system_interface::instruction as system_instruction,
     solana_time_utils::timestamp,
     solana_tps_client::*,
-    solana_transaction::Transaction,
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     spl_instruction_padding_interface::instruction::wrap_instruction,
     std::{
         collections::{HashSet, VecDeque},
@@ -93,7 +93,7 @@ fn get_transaction_loaded_accounts_data_size(enable_padding: bool) -> u32 {
 
 #[derive(Debug, PartialEq, Default, Eq, Clone)]
 pub(crate) struct TimestampedTransaction {
-    transaction: Transaction,
+    transaction: VersionedTransaction,
     timestamp: Option<u64>,
     compute_unit_price: Option<u64>,
 }
@@ -647,7 +647,7 @@ fn transfer_with_compute_unit_price_and_padding(
     instruction_padding_config: &Option<InstructionPaddingConfig>,
     compute_unit_price: Option<u64>,
     skip_tx_account_data_size: bool,
-) -> Transaction {
+) -> VersionedTransaction {
     let from_pubkey = from_keypair.pubkey();
     let transfer_instruction = system_instruction::transfer(&from_pubkey, to, lamports);
     let instruction = if let Some(instruction_padding_config) = instruction_padding_config {
@@ -684,7 +684,7 @@ fn transfer_with_compute_unit_price_and_padding(
         ])
     }
     let message = Message::new(&instructions, Some(&from_pubkey));
-    Transaction::new(&[from_keypair], message, recent_blockhash)
+    Transaction::new(&[from_keypair], message, recent_blockhash).into()
 }
 
 fn get_nonce_accounts<T: 'static + TpsClient + Send + Sync + ?Sized>(
@@ -756,7 +756,7 @@ fn nonced_transfer_with_padding(
     nonce_hash: Hash,
     skip_tx_account_data_size: bool,
     instruction_padding_config: &Option<InstructionPaddingConfig>,
-) -> Transaction {
+) -> VersionedTransaction {
     let from_pubkey = from_keypair.pubkey();
     let transfer_instruction = system_instruction::transfer(&from_pubkey, to, lamports);
     let instruction = if let Some(instruction_padding_config) = instruction_padding_config {
@@ -785,7 +785,7 @@ fn nonced_transfer_with_padding(
         nonce_account,
         &nonce_authority.pubkey(),
     );
-    Transaction::new(&[from_keypair, nonce_authority], message, nonce_hash)
+    Transaction::new(&[from_keypair, nonce_authority], message, nonce_hash).into()
 }
 
 fn generate_nonced_system_txs<T: 'static + TpsClient + Send + Sync + ?Sized>(
