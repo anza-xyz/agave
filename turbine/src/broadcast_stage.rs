@@ -14,10 +14,14 @@ use {
     crossbeam_channel::{Receiver, RecvError, RecvTimeoutError, Sender, unbounded},
     itertools::Itertools,
     solana_clock::Slot,
+    solana_entry::block_component::{
+        BlockHeaderV1, BlockMarkerV1, VersionedBlockHeader, VersionedBlockMarker,
+    },
     solana_gossip::{
         cluster_info::{ClusterInfo, ClusterInfoError},
         contact_info::Protocol,
     },
+    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, shred::Shred},
     solana_measure::measure::Measure,
@@ -146,7 +150,7 @@ impl BroadcastStageType {
                 exit_sender,
                 blockstore,
                 bank_forks,
-                FailEntryVerificationBroadcastRun::new(shred_version),
+                FailEntryVerificationBroadcastRun::new(shred_version, migration_status),
                 xdp_sender,
             ),
 
@@ -158,7 +162,7 @@ impl BroadcastStageType {
                 exit_sender,
                 blockstore,
                 bank_forks,
-                BroadcastFakeShredsRun::new(0, shred_version),
+                BroadcastFakeShredsRun::new(0, shred_version, migration_status),
                 xdp_sender,
             ),
 
@@ -180,6 +184,18 @@ impl BroadcastStageType {
             ),
         }
     }
+}
+
+pub fn produce_block_header(parent_slot: Slot, parent_block_id: Hash) -> VersionedBlockMarker {
+    let header = BlockHeaderV1 {
+        parent_slot,
+        parent_block_id,
+    };
+
+    let header = VersionedBlockHeader::V1(header);
+    let header = BlockMarkerV1::new_block_header(header);
+
+    VersionedBlockMarker::new(header)
 }
 
 trait BroadcastRun {

@@ -103,7 +103,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         let bank = receive_results.bank.clone();
         let last_tick_height = receive_results.last_tick_height;
 
-        if bank.slot() != self.current_slot {
+        let send_header = if bank.slot() != self.current_slot {
             self.chained_merkle_root = broadcast_utils::get_chained_merkle_root_from_parent(
                 bank.slot(),
                 bank.parent_slot(),
@@ -115,7 +115,11 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             self.current_slot = bank.slot();
             self.prev_entry_hash = None;
             self.num_slots_broadcasted += 1;
-        }
+
+            true
+        } else {
+            false
+        };
 
         if receive_results.entries.is_empty() {
             return Ok(());
@@ -192,6 +196,48 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         )
         .expect("Expected to create a new shredder");
 
+        // Generate header shreds for new slot
+        let header_data_shreds = if send_header
+            && self
+                .migration_status
+                .should_allow_block_markers(bank.slot())
+        {
+            let header = produce_block_header(bank.parent_slot(), self.chained_merkle_root);
+            let component = solana_entry::block_component::BlockComponent::new_block_marker(header);
+            let header_shreds: Vec<_> = shredder
+                .make_merkle_shreds_from_component(
+                    keypair,
+                    &component,
+                    false,
+                    self.chained_merkle_root,
+                    self.next_shred_index,
+                    self.next_code_index,
+                    &self.reed_solomon_cache,
+                    &mut stats,
+                )
+                .collect();
+            let header_data: Vec<_> = header_shreds
+                .iter()
+                .filter(|s| s.is_data())
+                .cloned()
+                .collect();
+            if let Some(shred) = header_data.iter().max_by_key(|shred| shred.index()) {
+                self.chained_merkle_root = shred.merkle_root().unwrap();
+            }
+            self.next_shred_index += header_data.len() as u32;
+            if let Some(index) = header_shreds
+                .iter()
+                .filter(|s| !s.is_data())
+                .map(Shred::index)
+                .max()
+            {
+                self.next_code_index = index + 1;
+            }
+            header_data
+        } else {
+            vec![]
+        };
+
         // Avoid generating an empty FEC set
         let (data_shreds, coding_shreds) = if !receive_results.entries.is_empty() {
             shredder.entries_to_merkle_shreds_for_tests(
@@ -263,6 +309,8 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 }
                 (original_last_data_shred, partition_last_data_shred)
             });
+
+        let data_shreds: Vec<_> = header_data_shreds.into_iter().chain(data_shreds).collect();
 
         if !data_shreds.is_empty() {
             let data_shreds = Arc::new(data_shreds);
