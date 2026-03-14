@@ -10,8 +10,11 @@ use {
 /// structures expected by the program
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "AgKoR2cpjUSVCW7Cpihob5nDiPcFt1PXmoPKWJg3zuSB")
+    derive(AbiExample, AbiEnumVisitor, StableAbi),
+    frozen_abi(
+        api_digest = "AgKoR2cpjUSVCW7Cpihob5nDiPcFt1PXmoPKWJg3zuSB",
+        abi_digest = "9r9qhxnqApLXM4GWi5ZSnAbKSb4TxG8RepUTfLQEBj5h"
+    )
 )]
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead,
@@ -46,6 +49,21 @@ pub enum VoteType {
     SkipFallback,
     /// Genesis vote.
     Genesis,
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<Vote>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> Vote {
+        match rng.random_range(0..5) {
+            0 => Vote::Notarize(rng.random()),
+            1 => Vote::Finalize(rng.random()),
+            2 => Vote::Skip(rng.random()),
+            3 => Vote::NotarizeFallback(rng.random()),
+            _ => Vote::SkipFallback(rng.random()),
+        }
+    }
 }
 
 impl Vote {
@@ -188,8 +206,11 @@ impl From<GenesisVote> for Vote {
 /// A notarization vote
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "5AdwChAjsj5QUXLdpDnGGK2L2nA8y8EajVXi6jsmTv1m")
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "5AdwChAjsj5QUXLdpDnGGK2L2nA8y8EajVXi6jsmTv1m",
+        abi_digest = "AL14y9AbENos7pYdc6ji6RmcgKUcwQCb1YUfaCUveRtL"
+    )
 )]
 #[derive(
     Clone,
@@ -211,11 +232,26 @@ pub struct NotarizationVote {
     pub block_id: Hash,
 }
 
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<NotarizationVote>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> NotarizationVote {
+        NotarizationVote {
+            slot: rng.random(),
+            block_id: Hash::new_from_array(rng.random()),
+        }
+    }
+}
+
 /// A finalization vote
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "2XQ5N6YLJjF28w7cMFFUQ9SDgKuf9JpJNtAiXSPA8vR2")
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "2XQ5N6YLJjF28w7cMFFUQ9SDgKuf9JpJNtAiXSPA8vR2",
+        abi_digest = "HXz8236KK4xi9WaHQxPpGyrsp3AjdBaCWMQiwVhcKv83"
+    )
 )]
 #[derive(
     Clone,
@@ -235,13 +271,25 @@ pub struct FinalizationVote {
     pub slot: Slot,
 }
 
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<FinalizationVote>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> FinalizationVote {
+        FinalizationVote { slot: rng.random() }
+    }
+}
+
 /// A skip vote
 /// Represents a range of slots to skip
 /// inclusive on both ends
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "G8Nrx3sMYdnLpHsCNark3BGA58BmW2sqNnqjkYhQHtN")
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "G8Nrx3sMYdnLpHsCNark3BGA58BmW2sqNnqjkYhQHtN",
+        abi_digest = "HXz8236KK4xi9WaHQxPpGyrsp3AjdBaCWMQiwVhcKv83"
+    )
 )]
 #[derive(
     Clone,
@@ -261,11 +309,23 @@ pub struct SkipVote {
     pub slot: Slot,
 }
 
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<SkipVote>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> SkipVote {
+        SkipVote { slot: rng.random() }
+    }
+}
+
 /// A notarization fallback vote
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "7j5ZPwwyz1FaG3fpyQv5PVnQXicdSmqSk8NvqzkG1Eqz")
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "7j5ZPwwyz1FaG3fpyQv5PVnQXicdSmqSk8NvqzkG1Eqz",
+        abi_digest = "AL14y9AbENos7pYdc6ji6RmcgKUcwQCb1YUfaCUveRtL"
+    )
 )]
 #[derive(
     Clone,
@@ -287,11 +347,29 @@ pub struct NotarizationFallbackVote {
     pub block_id: Hash,
 }
 
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<NotarizationFallbackVote>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(
+        &self,
+        rng: &mut R,
+    ) -> NotarizationFallbackVote {
+        NotarizationFallbackVote {
+            slot: rng.random(),
+            block_id: Hash::new_from_array(rng.random()),
+        }
+    }
+}
+
 /// A skip fallback vote
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "WsUNum8V62gjRU1yAnPuBMAQui4YvMwD1RwrzHeYkeF")
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "WsUNum8V62gjRU1yAnPuBMAQui4YvMwD1RwrzHeYkeF",
+        abi_digest = "HXz8236KK4xi9WaHQxPpGyrsp3AjdBaCWMQiwVhcKv83"
+    )
 )]
 #[derive(
     Clone,
@@ -311,11 +389,23 @@ pub struct SkipFallbackVote {
     pub slot: Slot,
 }
 
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<SkipFallbackVote>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> SkipFallbackVote {
+        SkipFallbackVote { slot: rng.random() }
+    }
+}
+
 /// A genesis vote. Only used during the migration from TowerBFT
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "2JAiHmnnKHCzhkyCY3Bej6rAaVkMHsXgRcz1TPCNqAJ9")
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "2JAiHmnnKHCzhkyCY3Bej6rAaVkMHsXgRcz1TPCNqAJ9",
+        abi_digest = "AL14y9AbENos7pYdc6ji6RmcgKUcwQCb1YUfaCUveRtL"
+    )
 )]
 #[derive(
     Clone,
@@ -335,4 +425,16 @@ pub struct GenesisVote {
     pub slot: Slot,
     /// The block id this vote is for.
     pub block_id: Hash,
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<GenesisVote>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> GenesisVote {
+        GenesisVote {
+            slot: rng.random(),
+            block_id: Hash::new_from_array(rng.random()),
+        }
+    }
 }
