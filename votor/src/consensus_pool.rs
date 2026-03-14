@@ -149,7 +149,7 @@ impl ConsensusPool {
             highest_finalized_slot: None,
             highest_finalized_with_notarize: None,
             parent_ready_tracker,
-            stats: ConsensusPoolStats::new(),
+            stats: ConsensusPoolStats::default(),
             slot_stake_counters_map: BTreeMap::new(),
             migration_status: None,
         }
@@ -246,7 +246,7 @@ impl ConsensusPool {
             });
             let new_cert = Arc::new(cert_builder.build()?);
             self.insert_certificate(cert_type, new_cert.clone(), events);
-            self.stats.incr_cert_type(&new_cert.cert_type, true);
+            self.stats.incr_generated_cert(&new_cert.cert_type);
             new_certificates_to_send.push(new_cert);
         }
         Ok(new_certificates_to_send)
@@ -485,8 +485,7 @@ impl ConsensusPool {
         }
         let cert = Arc::new(cert);
         self.insert_certificate(cert_type, cert.clone(), events);
-
-        self.stats.incr_cert_type(&cert_type, false);
+        self.stats.incr_ingested_cert(&cert_type);
 
         Ok(vec![cert])
     }
