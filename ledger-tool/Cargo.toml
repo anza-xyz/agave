@@ -21,6 +21,7 @@ frozen-abi = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-instant = { workspace = true }
 agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }

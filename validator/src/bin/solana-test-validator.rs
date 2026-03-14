@@ -55,6 +55,7 @@ enum Output {
 }
 
 fn main() {
+    agave_instant::Instant::memoize();
     // Debugging panics is easier with a backtrace
     if env::var_os("RUST_BACKTRACE").is_none() {
         // Safety: env update is made before any spawned threads might access the environment

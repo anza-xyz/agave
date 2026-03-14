@@ -18,6 +18,7 @@ use {
 
 #[tokio::main]
 async fn main() {
+    agave_instant::Instant::memoize();
     let default_keypair = solana_cli_config::Config::default().keypair_path;
 
     agave_logger::setup_with_default_filter();

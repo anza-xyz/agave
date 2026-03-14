@@ -17,6 +17,7 @@ dummy-for-ci-check = []
 frozen-abi = []
 
 [dependencies]
+agave-instant = { workspace = true }
 ahash = { workspace = true }
 clap = { workspace = true }
 rayon = { workspace = true }

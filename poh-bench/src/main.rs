@@ -10,6 +10,7 @@ use {
 };
 
 fn main() {
+    agave_instant::Instant::memoize();
     agave_logger::setup();
 
     let matches = Command::new(crate_name!())

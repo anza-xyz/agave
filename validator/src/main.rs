@@ -15,6 +15,7 @@ use {
 static GLOBAL: Jemalloc = Jemalloc;
 
 pub fn main() {
+    agave_instant::Instant::memoize();
     let default_args = DefaultArgs::new();
     let solana_version = solana_version::version!();
     let cli_app = app(solana_version, &default_args);

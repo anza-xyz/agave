@@ -128,6 +128,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-instant"
+version = "4.1.0-alpha.0"
+
+[[package]]
 name = "agave-io-uring"
 version = "4.1.0-alpha.0"
 dependencies = [
@@ -143,6 +147,7 @@ name = "agave-ledger-tool"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-instant",
  "agave-logger",
  "agave-reserved-account-keys",
  "agave-snapshots",
@@ -321,6 +326,7 @@ dependencies = [
 name = "agave-store-tool"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-instant",
  "ahash 0.8.12",
  "clap",
  "rayon",
@@ -6055,6 +6061,7 @@ name = "solana-bench-tps"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-instant",
  "agave-logger",
  "chrono",
  "clap",
@@ -6967,6 +6974,7 @@ name = "solana-genesis"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-instant",
  "agave-logger",
  "agave-snapshots",
  "base64 0.22.1",
@@ -7526,6 +7534,9 @@ dependencies = [
 [[package]]
 name = "solana-measure"
 version = "4.1.0-alpha.0"
+dependencies = [
+ "agave-instant",
+]
 
 [[package]]
 name = "solana-merkle-tree"
@@ -8830,6 +8841,9 @@ dependencies = [
 [[package]]
 name = "solana-svm-measure"
 version = "4.1.0-alpha.0"
+dependencies = [
+ "agave-instant",
+]
 
 [[package]]
 name = "solana-svm-timings"

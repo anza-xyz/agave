@@ -16,6 +16,7 @@ use {
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
+    agave_instant::Instant::memoize();
     let command_args = parse_args(env::args_os())?;
     let config = if Path::new(&command_args.config_file).exists() {
         Config::load(&command_args.config_file)?

@@ -1128,6 +1128,7 @@ fn run_accounts_bench(
 }
 
 fn main() {
+    agave_instant::Instant::memoize();
     agave_logger::setup_with_default("solana=info");
     let matches = App::new(crate_name!())
         .about(crate_description!())

@@ -16,6 +16,7 @@ remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
 remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]
+agave-instant = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 clap = { version = "2.33.0", default-features = false, features = ["suggestions"] }
 console = { workspace = true }

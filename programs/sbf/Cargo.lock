@@ -128,6 +128,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-instant"
+version = "4.1.0-alpha.0"
+
+[[package]]
 name = "agave-io-uring"
 version = "4.1.0-alpha.0"
 dependencies = [
@@ -300,6 +304,7 @@ dependencies = [
 name = "agave-validator"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-instant",
  "agave-logger",
  "agave-snapshots",
  "agave-votor",
@@ -7353,6 +7358,9 @@ dependencies = [
 [[package]]
 name = "solana-measure"
 version = "4.1.0-alpha.0"
+dependencies = [
+ "agave-instant",
+]
 
 [[package]]
 name = "solana-merkle-tree"
@@ -9441,6 +9449,9 @@ dependencies = [
 [[package]]
 name = "solana-svm-measure"
 version = "4.1.0-alpha.0"
+dependencies = [
+ "agave-instant",
+]
 
 [[package]]
 name = "solana-svm-test-harness-fixture"

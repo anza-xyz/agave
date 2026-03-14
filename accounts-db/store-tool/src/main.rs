@@ -21,6 +21,7 @@ const CMD_INSPECT: &str = "inspect";
 const CMD_SEARCH: &str = "search";
 
 fn main() {
+    agave_instant::Instant::memoize();
     let matches = App::new(crate_name!())
         .about(crate_description!())
         .version(solana_version::version!())

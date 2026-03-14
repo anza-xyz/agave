@@ -504,6 +504,7 @@ fn write_bls_pubkey_file(
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
+    agave_instant::Instant::memoize();
     let default_num_threads = num_cpus::get().to_string();
     let matches = app(&default_num_threads, solana_version::version!())
         .try_get_matches()

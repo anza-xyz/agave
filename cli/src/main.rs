@@ -228,6 +228,7 @@ pub fn parse_args<'a>(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn error::Error>> {
+    agave_instant::Instant::memoize();
     agave_logger::setup_with_default("off");
     let matches = get_clap_app(
         crate_name!(),

@@ -15,6 +15,7 @@
 /// ```
 /// // Measure functions
 /// # use solana_measure::{measure_time, measure_us, meas_dur};
+/// # agave_instant::Instant::memoize();
 /// # fn foo() {}
 /// # fn bar(x: i32) {}
 /// # fn add(x: i32, y: i32) -> i32 {x + y}
@@ -29,6 +30,7 @@
 /// ```
 /// // Measure methods
 /// # use solana_measure::{measure_time, measure_us, meas_dur};
+/// # agave_instant::Instant::memoize();
 /// # struct Foo {
 /// #     f: i32,
 /// # }
@@ -67,6 +69,7 @@
 /// ```
 /// // The `name` parameter is optional
 /// # use solana_measure::{measure_time, measure_us};
+/// # agave_instant::Instant::memoize();
 /// # fn meow() {};
 /// let (result, measure) = measure_time!(meow());
 /// let (result, measure_us) = measure_us!(meow());
@@ -87,8 +90,9 @@ macro_rules! measure_time {
 #[macro_export]
 macro_rules! measure_us {
     ($expr:expr) => {{
-        let (result, duration) = $crate::meas_dur!($expr);
-        (result, duration.as_micros() as u64)
+        let instant = $crate::agave_instant::Instant::now();
+        let result = $expr;
+        (result, instant.elapsed_us())
     }};
 }
 
@@ -182,6 +186,8 @@ mod tests {
 
     #[test]
     fn test_measure_us_macro() {
+        crate::agave_instant::Instant::memoize();
+
         // Ensure that the measurement side actually works
         {
             let (_result, measure) = measure_us!(sleep(Duration::from_millis(1)));

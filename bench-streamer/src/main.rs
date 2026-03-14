@@ -77,6 +77,7 @@ fn sink(exit: Arc<AtomicBool>, rvs: Arc<AtomicUsize>, r: PacketBatchReceiver) ->
 }
 
 fn main() -> Result<()> {
+    agave_instant::Instant::memoize();
     let matches = Command::new(crate_name!())
         .about(crate_description!())
         .version(solana_version::version!())
