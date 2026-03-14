@@ -128,12 +128,16 @@ impl SigVerifier {
 
     fn run(mut self, exit: Arc<AtomicBool>) {
         while !exit.load(Ordering::Relaxed) {
+            if self.migration_status.is_pre_feature_activation() {
+                thread::sleep(Duration::from_secs(1));
+                continue;
+            }
             const SOFT_RECEIVE_CAP: usize = 5000;
             let Ok(batches) = recv_batches(&self.channels.packet_receiver, SOFT_RECEIVE_CAP) else {
                 error!("packet_receiver disconnected:  Exiting.");
-                return;
+                break;
             };
-            if batches.is_empty() || self.migration_status.is_pre_feature_activation() {
+            if batches.is_empty() {
                 continue;
             }
 
@@ -141,12 +145,13 @@ impl SigVerifier {
             self.stats
                 .verify_and_send_batch_us
                 .add_sample(verify_time_us);
-            self.stats.maybe_report();
             if let Err(e) = verify_res {
                 error!("verify_and_send_batch() failed with {e}. Exiting.");
                 break;
             }
+            self.stats.maybe_report();
         }
+        self.stats.do_report();
     }
 
     fn verify_and_send_batches(&mut self, batches: Vec<PacketBatch>) -> Result<(), SigVerifyError> {
