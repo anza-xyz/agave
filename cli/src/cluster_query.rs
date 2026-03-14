@@ -1380,7 +1380,13 @@ pub async fn process_supply(
     print_accounts: bool,
 ) -> ProcessResult {
     let supply_response = rpc_client.supply().await?;
+    let timestamp = rpc_client
+        .get_block_time(supply_response.context.slot)
+        .await
+        .ok();
+
     let mut supply: CliSupply = supply_response.value.into();
+    supply.timestamp = timestamp;
     supply.print_accounts = print_accounts;
     Ok(config.output_format.formatted_string(&supply))
 }
