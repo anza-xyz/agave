@@ -32,7 +32,6 @@ frozen-abi = [
     "solana-perf/frozen-abi",
     "solana-program-runtime/frozen-abi",
     "solana-runtime/frozen-abi",
-    "solana-short-vec/frozen-abi",
     "solana-signature/frozen-abi",
     "solana-svm/frozen-abi",
     "solana-vote/frozen-abi",
@@ -74,12 +73,10 @@ num_cpus = { workspace = true }
 num_enum = { workspace = true }
 prio-graph = { workspace = true }
 qualifier_attr = { workspace = true }
-quinn = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
 rolling-file = { workspace = true }
-rustls = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 signal-hook = { workspace = true }
@@ -140,7 +137,6 @@ solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-send-transaction-service = { workspace = true }
 solana-sha256-hasher = { workspace = true }
-solana-short-vec = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
