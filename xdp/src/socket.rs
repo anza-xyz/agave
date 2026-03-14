@@ -22,7 +22,52 @@ use {
         ptr,
         sync::atomic::Ordering,
     },
+    thiserror::Error,
 };
+
+#[derive(Debug, Error)]
+pub enum XdpError {
+    #[error("{op} failed")]
+    Syscall {
+        op: &'static str,
+        #[source]
+        source: io::Error,
+    },
+    #[error("setsockopt(SOL_XDP, ring={ring}, size={size}) failed")]
+    RingSize {
+        ring: u32,
+        size: u64,
+        #[source]
+        source: io::Error,
+    },
+    #[error("mmap {ring_name} ring failed: {source}")]
+    MmapRing {
+        ring_name: &'static str,
+        source: io::Error,
+    },
+    #[error("RX fill ring write failed: {source}")]
+    RxFillIo {
+        #[source]
+        source: io::Error,
+    },
+    #[error(
+        "bind(AF_XDP, ifindex={ifindex}, queue={queue_id}, flags=0x{flags:x}) failed: {source}"
+    )]
+    Bind {
+        ifindex: u32,
+        queue_id: u32,
+        flags: u16,
+        #[source]
+        source: io::Error,
+    },
+    #[error("zero copy requires a queue with ring size metadata")]
+    MissingRingSizeMetadata,
+    #[error(
+        "insufficient UMEM frames for RX fill ring prefill: required={required}, \
+         available={available}"
+    )]
+    InsufficientUmemFrames { required: usize, available: usize },
+}
 
 pub struct Socket<U: Umem> {
     fd: OwnedFd,
@@ -40,11 +85,14 @@ impl<U: Umem> Socket<U> {
         rx_ring_size: usize,
         tx_completion_ring_size: usize,
         tx_ring_size: usize,
-    ) -> Result<(Self, Rx<U::Frame>, Tx<U::Frame>), io::Error> {
+    ) -> Result<(Self, Rx<U::Frame>, Tx<U::Frame>), XdpError> {
         unsafe {
             let fd = socket(AF_XDP, SOCK_RAW, 0);
             if fd < 0 {
-                return Err(io::Error::last_os_error());
+                return Err(XdpError::Syscall {
+                    op: "socket(AF_XDP, SOCK_RAW)",
+                    source: io::Error::last_os_error(),
+                });
             }
             let fd = OwnedFd::from_raw_fd(fd);
 
@@ -65,7 +113,10 @@ impl<U: Umem> Socket<U> {
                 mem::size_of::<xdp_umem_reg>() as libc::socklen_t,
             ) < 0
             {
-                return Err(io::Error::last_os_error());
+                return Err(XdpError::Syscall {
+                    op: "setsockopt(XDP_UMEM_REG)",
+                    source: io::Error::last_os_error(),
+                });
             }
 
             for (ring, size) in [
@@ -87,7 +138,11 @@ impl<U: Umem> Socket<U> {
                     mem::size_of::<u32>() as socklen_t,
                 ) < 0
                 {
-                    return Err(io::Error::last_os_error());
+                    return Err(XdpError::RingSize {
+                        ring: ring as u32,
+                        size: size as u64,
+                        source: io::Error::last_os_error(),
+                    });
                 }
             }
 
@@ -101,7 +156,10 @@ impl<U: Umem> Socket<U> {
                 &mut optlen,
             ) < 0
             {
-                return Err(io::Error::last_os_error());
+                return Err(XdpError::Syscall {
+                    op: "getsockopt(XDP_MMAP_OFFSETS)",
+                    source: io::Error::last_os_error(),
+                });
             }
 
             let tx_completion_ring = TxCompletionRing::new(
@@ -110,7 +168,11 @@ impl<U: Umem> Socket<U> {
                     tx_completion_ring_size.saturating_mul(mem::size_of::<u64>()),
                     &offsets.cr,
                     XDP_UMEM_PGOFF_COMPLETION_RING,
-                )?,
+                )
+                .map_err(|source| XdpError::MmapRing {
+                    ring_name: "completion",
+                    source,
+                })?,
                 tx_completion_ring_size as u32,
             );
 
@@ -120,7 +182,11 @@ impl<U: Umem> Socket<U> {
                     rx_fill_ring_size.saturating_mul(mem::size_of::<u64>()),
                     &offsets.fr,
                     XDP_UMEM_PGOFF_FILL_RING,
-                )?,
+                )
+                .map_err(|source| XdpError::MmapRing {
+                    ring_name: "fill",
+                    source,
+                })?,
                 rx_fill_ring_size as u32,
                 fd.as_raw_fd(),
             );
@@ -130,9 +196,14 @@ impl<U: Umem> Socket<U> {
                 // pre-populated before calling bind()
                 for _ in 0..rx_fill_ring_size {
                     let Some(frame) = umem.reserve() else {
-                        return Err(io::Error::other("Failed to reserve frame for RX fill ring"));
+                        return Err(XdpError::InsufficientUmemFrames {
+                            required: rx_fill_ring_size,
+                            available: umem.available(),
+                        });
                     };
-                    rx_fill_ring.write(frame)?;
+                    rx_fill_ring
+                        .write(frame)
+                        .map_err(|source| XdpError::RxFillIo { source })?;
                 }
                 rx_fill_ring.commit();
             }
@@ -143,7 +214,11 @@ impl<U: Umem> Socket<U> {
                     tx_ring_size.saturating_mul(mem::size_of::<XdpDesc>()),
                     &offsets.tx,
                     XDP_PGOFF_TX_RING as u64,
-                )?,
+                )
+                .map_err(|source| XdpError::MmapRing {
+                    ring_name: "tx",
+                    source,
+                })?,
                 tx_ring_size as u32,
                 fd.as_raw_fd(),
             ));
@@ -155,7 +230,11 @@ impl<U: Umem> Socket<U> {
                         rx_ring_size.saturating_mul(mem::size_of::<XdpDesc>()),
                         &offsets.rx,
                         XDP_PGOFF_RX_RING as u64,
-                    )?,
+                    )
+                    .map_err(|source| XdpError::MmapRing {
+                        ring_name: "rx",
+                        source,
+                    })?,
                     rx_ring_size as u32,
                     fd.as_raw_fd(),
                 ))
@@ -178,7 +257,12 @@ impl<U: Umem> Socket<U> {
                 mem::size_of::<sockaddr_xdp>() as socklen_t,
             ) < 0
             {
-                return Err(io::Error::last_os_error());
+                return Err(XdpError::Bind {
+                    ifindex: sxdp.sxdp_ifindex,
+                    queue_id: sxdp.sxdp_queue_id,
+                    flags: sxdp.sxdp_flags,
+                    source: io::Error::last_os_error(),
+                });
             }
 
             let tx = Tx {
@@ -207,12 +291,12 @@ impl<U: Umem> Socket<U> {
         zero_copy: bool,
         completion_size: usize,
         ring_size: usize,
-    ) -> Result<(Self, Tx<U::Frame>), io::Error> {
+    ) -> Result<(Self, Tx<U::Frame>), XdpError> {
         let (fill_size, rx_size) = if zero_copy {
             // See Socket::new() as to why this is needed
             let rx = queue
                 .ring_sizes()
-                .ok_or_else(|| io::Error::other("zero copy requires a set ring size"))?
+                .ok_or(XdpError::MissingRingSizeMetadata)?
                 .rx;
             (rx, rx)
         } else {
@@ -237,7 +321,7 @@ impl<U: Umem> Socket<U> {
         zero_copy: bool,
         fill_size: usize,
         ring_size: usize,
-    ) -> Result<(Self, Rx<U::Frame>), io::Error> {
+    ) -> Result<(Self, Rx<U::Frame>), XdpError> {
         let (socket, rx, _) = Self::new(queue, umem, zero_copy, fill_size, ring_size, 0, 0)?;
         Ok((socket, rx))
     }
