@@ -813,10 +813,11 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
     for slot in 1..=LAST_SLOT {
         // Make a new bank and process some transactions
         let parent_bank = bank_forks.read().unwrap().get(slot - 1).unwrap();
+        let bank = Bank::new_from_parent(parent_bank, &Pubkey::default(), slot);
         let bank = bank_forks
             .write()
             .unwrap()
-            .insert(Bank::new_from_parent(parent_bank, &Pubkey::default(), slot))
+            .insert(bank)
             .clone_without_scheduler();
 
         let key = solana_pubkey::new_rand();

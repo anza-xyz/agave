@@ -278,11 +278,8 @@ mod test {
 
         // Add a new bank 7 that descends from 6
         let bank6 = vote_simulator.bank_forks.read().unwrap().get(6).unwrap();
-        vote_simulator
-            .bank_forks
-            .write()
-            .unwrap()
-            .insert(Bank::new_from_parent(bank6, &Pubkey::default(), 7));
+        let bank7 = Bank::new_from_parent(bank6, &Pubkey::default(), 7);
+        vote_simulator.bank_forks.write().unwrap().insert(bank7);
         let bank7 = vote_simulator.bank_forks.read().unwrap().get(7).unwrap();
         assert!(!bank7.ancestors.contains_key(&3));
 

@@ -4524,11 +4524,11 @@ pub mod tests {
         )
         .unwrap();
         let bank0_last_blockhash = bank0.last_blockhash();
-        let bank1 = bank_forks.write().unwrap().insert(Bank::new_from_parent(
-            bank0.clone_without_scheduler(),
-            &Pubkey::default(),
-            1,
-        ));
+        let bank1 = {
+            let bank =
+                Bank::new_from_parent(bank0.clone_without_scheduler(), &Pubkey::default(), 1);
+            bank_forks.write().unwrap().insert(bank)
+        };
         confirm_full_slot(
             &blockstore,
             &bank1,
@@ -4589,7 +4589,8 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1_000_000_000);
-        let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (mut bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
         const NUM_TRANSFERS_PER_ENTRY: usize = 8;
         const NUM_TRANSFERS: usize = NUM_TRANSFERS_PER_ENTRY * 32;
@@ -4774,15 +4775,14 @@ pub mod tests {
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0.freeze();
 
-        let bank1 = bank_forks
-            .write()
-            .unwrap()
-            .insert(Bank::new_from_parent(
-                bank0.clone(),
-                &solana_pubkey::new_rand(),
-                1,
-            ))
-            .clone_without_scheduler();
+        let bank1 = {
+            let bank = Bank::new_from_parent(bank0.clone(), &solana_pubkey::new_rand(), 1);
+            bank_forks
+                .write()
+                .unwrap()
+                .insert(bank)
+                .clone_without_scheduler()
+        };
 
         // The new blockhash is going to be the hash of the last tick in the block
         let bank_1_blockhash = bank1.last_blockhash();
@@ -5793,7 +5793,8 @@ pub mod tests {
 
         // Create a genesis bank (slot 0) with all features active.
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
-        let parent_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (parent_bank, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 
         // Insert parent shreds at slot 0 so get_block_merkle_root returns the
         // parent's block ID.

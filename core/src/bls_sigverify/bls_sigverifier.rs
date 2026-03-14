@@ -1243,7 +1243,8 @@ mod tests {
             stakes_vec,
         );
         let bank0 = Bank::new_for_tests(&genesis.genesis_config);
-        let bank5 = Bank::new_from_parent(Arc::new(bank0), &Pubkey::default(), 5);
+        let (bank0, _temp_bank_forks) = bank0.wrap_with_bank_forks_for_tests();
+        let bank5 = Bank::new_from_parent(bank0, &Pubkey::default(), 5);
         let bank_forks = BankForks::new_rw_arc(bank5);
 
         bank_forks.write().unwrap().set_root(5, None, None);

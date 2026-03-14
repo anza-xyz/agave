@@ -82,16 +82,27 @@ mod tests {
     fn test_serialize_bank_snapshot(storage_access: StorageAccess) {
         let (mut genesis_config, _) = create_genesis_config(500);
         genesis_config.epoch_schedule = EpochSchedule::custom(400, 400, false);
-        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let deposit_amount = bank0.get_minimum_balance_for_rent_exemption(0);
-        let bank1 = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0.clone(),
+            &Pubkey::default(),
+            1,
+        );
 
         // Create an account on a non-root fork
         let key1 = Pubkey::new_unique();
         bank_test_utils::deposit(&bank1, &key1, deposit_amount).unwrap();
 
         let bank2_slot = 2;
-        let bank2 = Bank::new_from_parent(bank0, &Pubkey::default(), bank2_slot);
+        let bank2 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0,
+            &Pubkey::default(),
+            bank2_slot,
+        );
 
         // Test new account
         let key2 = Pubkey::new_unique();
@@ -169,7 +180,7 @@ mod tests {
             expected_accounts_lt_hash,
         );
         assert_eq!(dbank.get_bank_hash_stats(), bank2.get_bank_hash_stats());
-        assert_eq!(dbank, bank2);
+        assert_eq!(&dbank, bank2.as_ref());
     }
 
     fn add_root_and_flush_write_cache(bank: &Bank) {
@@ -183,7 +194,8 @@ mod tests {
         agave_logger::setup();
         let (genesis_config, _) = create_genesis_config(500);
 
-        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank0, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         bank0.squash();
         let mut bank = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
         bank.freeze();
@@ -262,7 +274,8 @@ mod tests {
         let (mut genesis_config, _) = create_genesis_config(500);
         activate_all_features(&mut genesis_config);
 
-        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank0, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
         while !bank.is_complete() {
             bank.fill_bank_with_ticks_for_tests();

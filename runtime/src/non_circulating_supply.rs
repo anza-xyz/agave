@@ -226,10 +226,13 @@ mod tests {
         std::{collections::BTreeMap, sync::Arc},
     };
 
-    fn new_from_parent(parent: Arc<Bank>) -> Bank {
+    fn new_from_parent(
+        parent: Arc<Bank>,
+        bank_forks: &std::sync::Arc<std::sync::RwLock<crate::bank_forks::BankForks>>,
+    ) -> Arc<Bank> {
         let slot = parent.slot() + 1;
         let leader_id = Pubkey::default();
-        Bank::new_from_parent(parent, &leader_id, slot)
+        Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), parent, &leader_id, slot)
     }
 
     #[test]
@@ -277,7 +280,9 @@ mod tests {
             cluster_type: ClusterType::MainnetBeta,
             ..GenesisConfig::default()
         };
-        let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let mut bank = bank0;
         assert_eq!(
             bank.capitalization(),
             (num_genesis_accounts + num_non_circulating_accounts + num_stake_accounts) * balance
@@ -294,7 +299,7 @@ mod tests {
             num_non_circulating_accounts as usize + num_stake_accounts as usize
         );
 
-        bank = Arc::new(new_from_parent(bank));
+        bank = new_from_parent(bank, &bank_forks);
         let new_balance = 11;
         for key in non_circulating_accounts {
             bank.store_account(
@@ -314,7 +319,7 @@ mod tests {
 
         // Advance bank an epoch, which should unlock stakes
         for _ in 0..slots_per_epoch {
-            bank = Arc::new(new_from_parent(bank));
+            bank = new_from_parent(bank, &bank_forks);
         }
         assert_eq!(bank.epoch(), 1);
         let non_circulating_supply = calculate_non_circulating_supply(&bank).unwrap();
