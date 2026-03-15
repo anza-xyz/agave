@@ -41,11 +41,7 @@ fn bench_status_cache_serialize_max(bencher: &mut Bencher) {
     // look like.
     let mut status_cache = BankStatusCache::default();
     let max_cache_entries = status_cache.max_cache_entries() as u64;
-    fill_status_cache(
-        &mut status_cache,
-        max_cache_entries,
-        100_000,
-    );
+    fill_status_cache(&mut status_cache, max_cache_entries, 100_000);
 
     assert!(status_cache.roots().contains(&0));
     bencher.iter(|| {
