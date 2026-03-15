@@ -838,7 +838,19 @@ impl TypedColumn for columns::SlotMeta {
     type Type = blockstore_meta::SlotMeta;
 
     fn deserialize(data: &[u8]) -> Result<Self::Type> {
-        deserialize_fixint_reject_trailing(data)
+        // Try to deserialize as current V2 format (SlotMeta). Fall back to
+        // V3 format (SlotMetaV3, with parent_block_id and
+        // replay_fec_set_index) and convert to V2.
+        let config = bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .reject_trailing_bytes();
+        match config.deserialize::<blockstore_meta::SlotMeta>(data) {
+            Ok(meta) => Ok(meta),
+            Err(_) => {
+                let v3: blockstore_meta::SlotMetaV3 = config.deserialize(data)?;
+                Ok(v3.into())
+            }
+        }
     }
 }
 
@@ -992,4 +1004,65 @@ impl ColumnName for columns::AlternateMerkleRootMeta {
 }
 impl TypedColumn for columns::AlternateMerkleRootMeta {
     type Type = blockstore_meta::MerkleRootMeta;
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::blockstore_meta::{ConnectedFlags, SlotMetaV3},
+        solana_hash::Hash,
+    };
+
+    #[test]
+    fn test_slot_meta_column_deserialize_v2() {
+        // V2 data (current SlotMeta format) is the primary deserialization path.
+        let meta = blockstore_meta::SlotMeta {
+            slot: 42,
+            consumed: 10,
+            received: 15,
+            first_shred_timestamp: 1234567890,
+            last_index: Some(14),
+            parent_slot: Some(41),
+            next_slots: vec![43, 44],
+            connected_flags: ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED,
+            completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
+        };
+        let v2_bytes = bincode::serialize(&meta).unwrap();
+
+        let deserialized = <columns::SlotMeta as TypedColumn>::deserialize(&v2_bytes).unwrap();
+        assert_eq!(meta, deserialized);
+    }
+
+    #[test]
+    fn test_slot_meta_column_deserialize_v3_fallback() {
+        let config = bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .reject_trailing_bytes();
+
+        // V3 data (with parent_block_id and replay_fec_set_index) can be
+        // read as a fallback and converted to V2.
+        let parent_block_id = Hash::new_unique();
+        let meta_v3 = SlotMetaV3 {
+            slot: 42,
+            consumed: 10,
+            received: 15,
+            first_shred_timestamp: 1234567890,
+            last_index: Some(14),
+            parent_slot: Some(41),
+            next_slots: vec![43, 44],
+            connected_flags: ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED,
+            completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
+            parent_block_id,
+            replay_fec_set_index: 7,
+        };
+        let v3_bytes = config.serialize(&meta_v3).unwrap();
+
+        let expected = blockstore_meta::SlotMeta::from(meta_v3.clone());
+
+        // V3 bytes have trailing data beyond V2, so the V2 attempt fails
+        // and we fall back to V3 deserialization.
+        let deserialized = <columns::SlotMeta as TypedColumn>::deserialize(&v3_bytes).unwrap();
+        assert_eq!(expected, deserialized);
+    }
 }

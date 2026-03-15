@@ -132,6 +132,49 @@ pub struct SlotMetaBase<T> {
 
 pub type SlotMeta = SlotMetaBase<CompletedDataIndexes>;
 
+/// SlotMetaV3 extends SlotMeta with two additional fields: `parent_block_id`
+/// and `replay_fec_set_index`. The SlotMeta type will continue to be used
+/// (written) for now, but a SlotMetaV3 can be read from the Blockstore and
+/// converted into a SlotMeta. The logic to read and convert SlotMetaV3 to
+/// SlotMeta enables this software to read a Blockstore modified by a future
+/// version where the SlotMetaV3 format is persisted.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+pub(crate) struct SlotMetaV3 {
+    pub slot: Slot,
+    pub consumed: u64,
+    pub received: u64,
+    pub first_shred_timestamp: u64,
+    #[serde(with = "serde_compat")]
+    pub last_index: Option<u64>,
+    #[serde(with = "serde_compat")]
+    pub parent_slot: Option<Slot>,
+    pub next_slots: Vec<Slot>,
+    pub connected_flags: ConnectedFlags,
+    pub completed_data_indexes: CompletedDataIndexes,
+    /// The block id of the parent block.
+    /// Populated from the block header / update parent marker.
+    pub parent_block_id: Hash,
+    /// The FEC set index from which replay should start for this block.
+    /// Populated from the block header / update parent marker.
+    pub replay_fec_set_index: u32,
+}
+
+impl From<SlotMetaV3> for SlotMeta {
+    fn from(v3: SlotMetaV3) -> Self {
+        SlotMeta {
+            slot: v3.slot,
+            consumed: v3.consumed,
+            received: v3.received,
+            first_shred_timestamp: v3.first_shred_timestamp,
+            last_index: v3.last_index,
+            parent_slot: v3.parent_slot,
+            next_slots: v3.next_slots,
+            connected_flags: v3.connected_flags,
+            completed_data_indexes: v3.completed_data_indexes,
+        }
+    }
+}
+
 // Serde implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
 mod serde_compat {
@@ -984,6 +1027,53 @@ mod test {
             bincode::deserialize::<OldErasureMeta>(&bincode::serialize(&new_erasure_meta).unwrap())
                 .unwrap(),
             old_erasure_meta
+        );
+    }
+
+    #[test]
+    fn test_slot_meta_v3_to_v2_conversion() {
+        use bincode::Options;
+
+        let config = bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .reject_trailing_bytes();
+
+        // V3 bytes cannot be deserialized directly as SlotMeta (V2) because
+        // of trailing bytes (the extra fields).
+        let meta_v3 = SlotMetaV3 {
+            slot: 42,
+            consumed: 10,
+            received: 15,
+            first_shred_timestamp: 1234567890,
+            last_index: Some(14),
+            parent_slot: Some(41),
+            next_slots: vec![43, 44],
+            connected_flags: ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED,
+            completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
+            parent_block_id: Hash::new_unique(),
+            replay_fec_set_index: 7,
+        };
+        let v3_bytes = config.serialize(&meta_v3).unwrap();
+
+        assert!(config.deserialize::<SlotMeta>(&v3_bytes).is_err());
+
+        // But V3 can be deserialized as SlotMetaV3 and converted to SlotMeta.
+        let v3_deser: SlotMetaV3 = config.deserialize(&v3_bytes).unwrap();
+        let converted: SlotMeta = v3_deser.into();
+        assert_eq!(converted.slot, 42);
+        assert_eq!(converted.consumed, 10);
+        assert_eq!(converted.received, 15);
+        assert_eq!(converted.first_shred_timestamp, 1234567890);
+        assert_eq!(converted.last_index, Some(14));
+        assert_eq!(converted.parent_slot, Some(41));
+        assert_eq!(converted.next_slots, vec![43, 44]);
+        assert_eq!(
+            converted.connected_flags,
+            ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED
+        );
+        assert_eq!(
+            converted.completed_data_indexes,
+            [0u32, 5, 10].into_iter().collect()
         );
     }
 }
