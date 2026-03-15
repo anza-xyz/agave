@@ -1,24 +1,33 @@
 use {
-    crate::FileSize,
+    crate::{
+        FileSize, IoSize,
+        file_io::FileCreator,
+        io_uring::{
+            file_creator::{DEFAULT_WRITE_SIZE, IoUringFileCreator, IoUringFileCreatorBuilder},
+            memory::IoBufferChunk,
+        },
+    },
     std::{
         fs,
-        io::{self, BufWriter},
-        path::Path,
+        io::{self, Result},
+        path::PathBuf,
+        sync::Arc,
     },
 };
-
-/// Default buffer size for writing large files to disks. Since current implementation does not do
-/// background writing, this size is set above minimum reasonable SSD write sizes to also reduce
-/// number of syscalls.
-const DEFAULT_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 
 /// Return a buffered writer for creating a new file at `path`
 ///
 /// The returned writer is using a buffer size tuned for writing large files to disks.
-pub fn large_file_buf_writer(path: impl AsRef<Path>) -> io::Result<impl io::Write> {
-    let file = fs::File::create(path)?;
+pub fn large_file_buf_writer(path: PathBuf) -> io::Result<impl io::Write> {
+    let mut io_uring_file_creator = IoUringFileCreatorBuilder::new()
+        .build((DEFAULT_WRITE_SIZE as usize).strict_mul(4), |_| None)?;
+    let parent_dir_handle = Arc::new(fs::File::open(path.parent().ok_or(io::Error::new(
+        io::ErrorKind::NotADirectory,
+        "large file buf writer expected the file path to have a parent directory",
+    ))?)?);
+    let file_key = io_uring_file_creator.open(path, 0o644, parent_dir_handle)?;
 
-    Ok(BufWriter::with_capacity(DEFAULT_BUFFER_SIZE, file))
+    Ok(IoUringFileWriter::new(io_uring_file_creator, file_key))
 }
 
 /// A writer that enforces a hard byte-count limit on the wrapped writer.
@@ -68,6 +77,91 @@ impl<W: io::Write> io::Write for SizeLimitedWriter<W> {
     }
     fn flush(&mut self) -> io::Result<()> {
         self.inner.flush()
+    }
+}
+
+pub struct IoUringFileWriter<'a> {
+    inner: IoUringFileCreator<'a>,
+    // Safety: the IoBufferChunk is safe to use as long as the inner IoUringFileCreator is still alive
+    current_buffer: Option<IoBufferChunk>,
+    current_buffer_offset: IoSize,
+    file_offset: u64,
+    file_key: usize,
+}
+
+impl<'a> IoUringFileWriter<'a> {
+    pub fn new(file_creator: IoUringFileCreator<'a>, file_key: usize) -> Self {
+        Self {
+            inner: file_creator,
+            current_buffer: None,
+            current_buffer_offset: 0,
+            file_key,
+            file_offset: 0,
+        }
+    }
+
+    fn write_current_buffer(&mut self, is_final_write: bool) -> Result<()> {
+        // Replace `self.current_buffer` with None. The next write will have to wait for a free buffer.
+        if let Some(buf) = self.current_buffer.take() {
+            self.inner.schedule_write(
+                self.file_key,
+                self.file_offset,
+                is_final_write,
+                buf,
+                self.current_buffer_offset,
+            )?;
+            self.file_offset = self
+                .file_offset
+                .strict_add(self.current_buffer_offset as u64);
+            self.current_buffer_offset = 0;
+        }
+
+        Ok(())
+    }
+}
+
+impl io::Write for IoUringFileWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        // buffer was filled and queued to write, fetch a new buffer
+        if self.current_buffer.is_none() {
+            self.current_buffer_offset = 0;
+            self.current_buffer = Some(self.inner.wait_free_buf()?);
+        }
+
+        // unwrap the buffer. we just ensured that it is not `None`
+        let current_buffer = self.current_buffer.as_ref().unwrap();
+        let mut dst = unsafe {
+            std::slice::from_raw_parts_mut(
+                current_buffer.as_mut_ptr(),
+                current_buffer.len() as usize,
+            )
+        };
+        dst = &mut dst[self.current_buffer_offset as usize..];
+
+        // copy as many bytes as we can into the buffer
+        let bytes_copied =
+            (current_buffer.len().strict_sub(self.current_buffer_offset)).min(buf.len() as u32);
+        dst.copy_from_slice(&buf[..bytes_copied as usize]);
+        self.current_buffer_offset = self
+            .current_buffer_offset
+            .strict_add(bytes_copied as IoSize);
+
+        // check if the buffer is full. if it is, schedule a write
+        if self.current_buffer_offset == current_buffer.len() {
+            self.write_current_buffer(false)?;
+        }
+
+        Ok(bytes_copied as usize)
+    }
+
+    /// Flush is only expected to be called once.
+    fn flush(&mut self) -> Result<()> {
+        // flush the current buffer if necessary
+        if self.current_buffer_offset != 0 {
+            self.write_current_buffer(true)?;
+        }
+        // wait for all the fs ops to drain and then return
+        self.inner.drain()
     }
 }
 

@@ -88,7 +88,7 @@ pub fn archive_snapshot(
     ));
 
     {
-        let archive_writer = large_file_buf_writer(&staging_archive_path)
+        let archive_writer = large_file_buf_writer(staging_archive_path.clone())
             .map_err(|err| E::CreateArchiveFile(err, staging_archive_path.clone()))?;
 
         let do_archive_files = |encoder: &mut dyn Write| -> std::result::Result<(), E> {

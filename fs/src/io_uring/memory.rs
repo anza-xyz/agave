@@ -173,7 +173,7 @@ impl DerefMut for PageAlignedMemory {
 ///
 /// Stored `ptr` and `size` are used as an unsafe (no lifetime tracking) equivalent of `&mut [u8]`.
 #[derive(Debug)]
-pub(super) struct IoBufferChunk {
+pub(crate) struct IoBufferChunk {
     ptr: *mut u8,
     size: IoSize,
     /// IO buffer index identifying part of the underlying buffer if it was registered in `io_uring`.

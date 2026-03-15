@@ -240,7 +240,12 @@ impl IoUringFileCreator<'_> {
     /// Schedule opening file at `path` with `mode` permissions.
     ///
     /// Returns key that can be used for scheduling writes for it.
-    fn open(&mut self, path: PathBuf, mode: u32, dir_handle: Arc<File>) -> io::Result<usize> {
+    pub(crate) fn open(
+        &mut self,
+        path: PathBuf,
+        mode: u32,
+        dir_handle: Arc<File>,
+    ) -> io::Result<usize> {
         let file = PendingFile::from_path(path);
         let path_cstring = Pin::new(file.path_cstring());
 
@@ -297,7 +302,7 @@ impl IoUringFileCreator<'_> {
     /// buffer size.
     ///
     /// Write operation can be immediately added to ring or put into file state for future execution.
-    fn schedule_write(
+    pub(crate) fn schedule_write(
         &mut self,
         file_key: usize,
         file_offset: FileSize,
@@ -366,7 +371,7 @@ impl IoUringFileCreator<'_> {
         Ok(())
     }
 
-    fn wait_free_buf(&mut self) -> io::Result<IoBufferChunk> {
+    pub(crate) fn wait_free_buf(&mut self) -> io::Result<IoBufferChunk> {
         loop {
             self.ring.process_completions()?;
             let state = self.ring.context_mut();
