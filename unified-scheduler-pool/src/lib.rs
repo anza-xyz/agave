@@ -4275,9 +4275,7 @@ mod tests {
             bank.slot().checked_add(1).unwrap(),
         ));
         // Revert the block cost limit
-        bank.write_cost_tracker()
-            .unwrap()
-            .set_limits(u64::MAX, u64::MAX, u64::MAX);
+        bank.write_cost_tracker().unwrap().set_limits_max();
 
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();

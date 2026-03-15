@@ -152,6 +152,10 @@ impl CostTracker {
         self.vote_cost_limit = vote_cost_limit;
     }
 
+    pub fn set_limits_max(&mut self) {
+        self.set_limits(u64::MAX, u64::MAX, u64::MAX);
+    }
+
     pub fn in_flight_transaction_count(&self) -> usize {
         self.in_flight_transaction_count.0
     }
