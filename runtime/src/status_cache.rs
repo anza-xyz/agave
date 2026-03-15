@@ -18,7 +18,7 @@ use {
 // The maximum number of entries to store in the cache. This is the same as the number of recent
 // blockhashes because we automatically reject txs that use older blockhashes so we don't need to
 // track those explicitly.
-pub const MAX_CACHE_ENTRIES: usize = MAX_RECENT_BLOCKHASHES;
+const MAX_CACHE_ENTRIES: usize = MAX_RECENT_BLOCKHASHES;
 
 // Only store 20 bytes of the tx keys processed to save some memory.
 const CACHED_KEY_SIZE: usize = 20;
