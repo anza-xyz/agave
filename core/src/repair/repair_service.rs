@@ -23,7 +23,7 @@ use {
     lru::LruCache,
     rand::prelude::IndexedRandom as _,
     solana_client::connection_cache::Protocol,
-    solana_clock::{DEFAULT_TICKS_PER_SECOND, MS_PER_TICK, Slot},
+    solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
@@ -56,12 +56,12 @@ use {
 #[cfg(test)]
 use {
     crate::repair::duplicate_repair_status::DuplicateSlotRepairStatus,
-    solana_clock::DEFAULT_MS_PER_SLOT, solana_keypair::Keypair,
+    solana_clock::{DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SECOND},
+    solana_keypair::Keypair,
 };
 
 // Time to defer repair requests to allow for turbine propagation
 const DEFER_REPAIR_THRESHOLD: Duration = Duration::from_millis(250);
-const DEFER_REPAIR_THRESHOLD_TICKS: u64 = DEFER_REPAIR_THRESHOLD.as_millis() as u64 / MS_PER_TICK;
 
 // This is the amount of time we will wait for a repair request to be fulfilled
 // before making another request. Value is based on reasonable upper bound of
@@ -73,6 +73,10 @@ const REPAIR_REQUEST_TIMEOUT_MS: u64 = 150;
 // target node is not provided. This number was chosen to provide reasonable
 // chance of sampling duplicate in the event of cluster partition.
 const NUM_PEERS_TO_SAMPLE_FOR_REPAIRS: usize = 10;
+
+fn defer_repair_threshold_ticks(ticks_per_second: u64) -> u64 {
+    DEFER_REPAIR_THRESHOLD.as_millis() as u64 * ticks_per_second / 1_000
+}
 
 pub type AncestorDuplicateSlotsSender = CrossbeamSender<AncestorDuplicateSlotToRepair>;
 pub type AncestorDuplicateSlotsReceiver = CrossbeamReceiver<AncestorDuplicateSlotToRepair>;
@@ -554,6 +558,7 @@ impl RepairService {
     fn identify_repairs(
         blockstore: &Blockstore,
         root_bank: Arc<Bank>,
+        ticks_per_second: u64,
         _repair_info: &RepairInfo,
         repair_weight: &mut RepairWeight,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
@@ -575,6 +580,7 @@ impl RepairService {
             MAX_REPAIR_LENGTH,
             MAX_UNKNOWN_LAST_INDEX_REPAIRS,
             MAX_CLOSEST_COMPLETION_REPAIRS,
+            ticks_per_second,
             repair_metrics,
             outstanding_repairs,
         )
@@ -694,6 +700,10 @@ impl RepairService {
             outstanding_repairs,
         } = repair_tracker;
         let root_bank = sharable_banks.root();
+        // The tick rate can change, which changes the tick -> wall clock math
+        // for how long we're willing to wait on turbine shreds. Re-check every
+        // iteration.
+        let ticks_per_second = sharable_banks.root().ticks_per_second().max(1);
 
         Self::update_weighting_heuristic(
             blockstore,
@@ -708,6 +718,7 @@ impl RepairService {
         let repairs = Self::identify_repairs(
             blockstore,
             root_bank.clone(),
+            ticks_per_second,
             repair_info,
             repair_weight,
             outstanding_repairs,
@@ -788,9 +799,11 @@ impl RepairService {
         blockstore: &Blockstore,
         slot: Slot,
         slot_meta: &SlotMeta,
+        ticks_per_second: u64,
         max_repairs: usize,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
+        let defer_repair_threshold_ticks = defer_repair_threshold_ticks(ticks_per_second);
         if max_repairs == 0 || slot_meta.is_full() {
             vec![]
         } else if slot_meta.consumed == slot_meta.received {
@@ -803,11 +816,11 @@ impl RepairService {
                 .map(u64::from)
             {
                 // System time is not monotonic
-                let ticks_since_first_insert = DEFAULT_TICKS_PER_SECOND
-                    * timestamp().saturating_sub(slot_meta.first_shred_timestamp)
+                let ticks_since_first_insert = ticks_per_second
+                    .saturating_mul(timestamp().saturating_sub(slot_meta.first_shred_timestamp))
                     / 1_000;
                 if ticks_since_first_insert
-                    < reference_tick.saturating_add(DEFER_REPAIR_THRESHOLD_TICKS)
+                    < reference_tick.saturating_add(defer_repair_threshold_ticks)
                 {
                     return vec![];
                 }
@@ -825,7 +838,7 @@ impl RepairService {
                 .find_missing_data_indexes(
                     slot,
                     slot_meta.first_shred_timestamp,
-                    DEFER_REPAIR_THRESHOLD_TICKS,
+                    defer_repair_threshold_ticks,
                     slot_meta.consumed,
                     slot_meta.received,
                     max_repairs,
@@ -847,6 +860,7 @@ impl RepairService {
         repairs: &mut Vec<ShredRepairType>,
         max_repairs: usize,
         slot: Slot,
+        ticks_per_second: u64,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) {
         let mut pending_slots = vec![slot];
@@ -857,6 +871,7 @@ impl RepairService {
                     blockstore,
                     slot,
                     &slot_meta,
+                    ticks_per_second,
                     max_repairs - repairs.len(),
                     outstanding_repairs,
                 );
@@ -1041,6 +1056,7 @@ impl RepairService {
                 blockstore,
                 slot,
                 &meta,
+                DEFAULT_TICKS_PER_SECOND,
                 max_repairs - repairs.len(),
                 &mut HashMap::default(),
             );
@@ -1064,6 +1080,7 @@ impl RepairService {
                     blockstore,
                     slot,
                     &slot_meta,
+                    DEFAULT_TICKS_PER_SECOND,
                     MAX_REPAIR_PER_DUPLICATE,
                     &mut HashMap::default(),
                 ))
@@ -1301,6 +1318,7 @@ mod test {
                 MAX_REPAIR_LENGTH,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
+                DEFAULT_TICKS_PER_SECOND,
                 &mut RepairMetrics::default(),
                 &mut HashMap::default(),
             ),
@@ -1333,6 +1351,7 @@ mod test {
                 MAX_REPAIR_LENGTH,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
+                DEFAULT_TICKS_PER_SECOND,
                 &mut RepairMetrics::default(),
                 &mut HashMap::default(),
             ),
@@ -1390,6 +1409,7 @@ mod test {
                 MAX_REPAIR_LENGTH,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
+                DEFAULT_TICKS_PER_SECOND,
                 &mut RepairMetrics::default(),
                 &mut HashMap::default(),
             ),
@@ -1405,6 +1425,7 @@ mod test {
                 expected.len() - 2,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
+                DEFAULT_TICKS_PER_SECOND,
                 &mut RepairMetrics::default(),
                 &mut HashMap::default(),
             )[..],
@@ -1447,6 +1468,7 @@ mod test {
                 MAX_REPAIR_LENGTH,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
+                DEFAULT_TICKS_PER_SECOND,
                 &mut RepairMetrics::default(),
                 &mut HashMap::default(),
             ),

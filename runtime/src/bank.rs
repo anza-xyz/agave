@@ -5162,6 +5162,14 @@ impl Bank {
         self.ticks_per_slot
     }
 
+    /// Return the target number of ticks per second for this bank.
+    pub fn ticks_per_second(&self) -> u64 {
+        let ticks_per_slot = u128::from(self.ticks_per_slot.max(1));
+        let ns_per_tick = self.ns_per_slot.saturating_div(ticks_per_slot).max(1);
+        u64::try_from(1_000_000_000u128.saturating_div(ns_per_tick))
+            .expect("ticks per second must fit in u64")
+    }
+
     /// Return the number of slots per year
     pub fn slots_per_year(&self) -> f64 {
         self.slots_per_year
