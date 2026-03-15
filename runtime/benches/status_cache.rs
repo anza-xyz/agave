@@ -6,7 +6,7 @@ use {
     rand::{Rng, SeedableRng, rngs::SmallRng},
     solana_accounts_db::ancestors::Ancestors,
     solana_hash::{HASH_BYTES, Hash},
-    solana_runtime::{bank::BankStatusCache, status_cache::*},
+    solana_runtime::bank::BankStatusCache,
     solana_sha256_hasher::hash,
     solana_signature::{SIGNATURE_BYTES, Signature},
     test::Bencher,
@@ -39,9 +39,13 @@ fn bench_status_cache_serialize(bencher: &mut Bencher) {
 fn bench_status_cache_serialize_max(bencher: &mut Bencher) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
-    let max_cache_entries = MAX_CACHE_ENTRIES as u64;
     let mut status_cache = BankStatusCache::default();
-    fill_status_cache(&mut status_cache, max_cache_entries, 100_000);
+    let max_cache_entries = status_cache.max_cache_entries() as u64;
+    fill_status_cache(
+        &mut status_cache,
+        max_cache_entries,
+        100_000,
+    );
 
     assert!(status_cache.roots().contains(&0));
     bencher.iter(|| {
@@ -54,7 +58,7 @@ fn bench_status_cache_root_slot_deltas(bencher: &mut Bencher) {
     let mut status_cache = BankStatusCache::default();
 
     // fill the status cache
-    let slots: Vec<_> = (42..).take(MAX_CACHE_ENTRIES).collect();
+    let slots: Vec<_> = (42..).take(status_cache.max_cache_entries()).collect();
     for slot in &slots {
         for _ in 0..5 {
             status_cache.insert(&Hash::new_unique(), Hash::new_unique(), *slot, Ok(()));
@@ -88,8 +92,8 @@ fn fill_status_cache_slot(
 fn bench_status_cache_check_and_insert(bencher: &mut Bencher) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
-    let max_cache_entries = MAX_CACHE_ENTRIES as u64;
     let mut status_cache = BankStatusCache::default();
+    let max_cache_entries = status_cache.max_cache_entries() as u64;
     fill_status_cache(&mut status_cache, max_cache_entries - 1, 100_000);
 
     // Manually fill the last slot so we can save off the blockhash to use for
@@ -127,8 +131,8 @@ fn bench_status_cache_check_and_insert(bencher: &mut Bencher) {
 fn bench_status_cache_add_roots(bencher: &mut Bencher) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
-    let max_cache_entries = MAX_CACHE_ENTRIES as u64;
     let mut status_cache = BankStatusCache::default();
+    let max_cache_entries = status_cache.max_cache_entries() as u64;
     fill_status_cache(&mut status_cache, max_cache_entries, 100_000);
     let start_slot = max_cache_entries + 1;
     bencher.iter(|| {

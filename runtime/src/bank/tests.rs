@@ -21,7 +21,6 @@ use {
         stake_history::StakeHistory,
         stake_utils,
         stakes::InvalidCacheEntryReason,
-        status_cache::MAX_CACHE_ENTRIES,
     },
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccount,
@@ -3453,7 +3452,8 @@ fn test_status_cache_ancestors() {
     let (parent, _bank_forks) = create_simple_test_arc_bank(500);
     let bank1 = Arc::new(new_from_parent(parent));
     let mut bank = bank1;
-    for _ in 0..MAX_CACHE_ENTRIES * 2 {
+    let max_cache_entries = bank.status_cache.read().unwrap().max_cache_entries();
+    for _ in 0..max_cache_entries * 2 {
         bank = Arc::new(new_from_parent(bank));
         bank.squash();
     }
@@ -3461,7 +3461,7 @@ fn test_status_cache_ancestors() {
     let bank = new_from_parent(bank);
     assert_eq!(
         bank.status_cache_ancestors(),
-        (bank.slot() - MAX_CACHE_ENTRIES as u64..=bank.slot()).collect::<Vec<_>>()
+        (bank.slot() - max_cache_entries as u64..=bank.slot()).collect::<Vec<_>>()
     );
 }
 
