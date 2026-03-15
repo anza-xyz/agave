@@ -180,7 +180,11 @@ impl<T: Serialize + Clone> StatusCache<T> {
     }
 
     pub fn set_max_cache_entries(&mut self, max_cache_entries: usize) {
-        self.max_cache_entries = max_cache_entries.max(1);
+        debug_assert!(
+            max_cache_entries > 0,
+            "max_cache_entries must be greater than zero"
+        );
+        self.max_cache_entries = max_cache_entries;
         self.purge_roots();
     }
 
@@ -425,7 +429,7 @@ mod tests {
         let ancestors = Ancestors::from(vec![0]);
         status_cache.insert(&blockhash, sig, 0, ());
         status_cache.insert(&blockhash, sig, 1, ());
-        for i in 0..(status_cache.max_cache_entries() + 1) {
+        for i in 0..=status_cache.max_cache_entries() {
             status_cache.add_root(i as u64);
         }
         assert!(
@@ -442,7 +446,7 @@ mod tests {
         let blockhash = hash(Hash::default().as_ref());
         let ancestors = Ancestors::default();
         status_cache.insert(&blockhash, sig, 0, ());
-        for i in 0..(status_cache.max_cache_entries() + 1) {
+        for i in 0..=status_cache.max_cache_entries() {
             status_cache.add_root(i as u64);
         }
         assert_eq!(status_cache.get_status(sig, &blockhash, &ancestors), None);
@@ -514,7 +518,7 @@ mod tests {
         status_cache.insert(&blockhash, sig, 0, ());
         status_cache.insert(&blockhash, sig, 1, ());
         status_cache.insert(&blockhash2, sig, 1, ());
-        for i in 0..(status_cache.max_cache_entries() + 1) {
+        for i in 0..=status_cache.max_cache_entries() {
             status_cache.add_root(i as u64);
         }
         assert_eq!(status_cache.slot_deltas.len(), 1);
