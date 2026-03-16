@@ -5481,11 +5481,8 @@ pub(crate) mod tests {
             DefaultSchedulerPool::new_for_verification(None, None, None, None, None),
         );
 
-        let bank = bank_forks.write().unwrap().insert(Bank::new_from_parent(
-            bank,
-            SlotLeader::default(),
-            1,
-        ));
+        let child_bank = Bank::new_from_parent(bank, SlotLeader::default(), 1);
+        let bank = bank_forks.write().unwrap().insert(child_bank);
 
         let slot = bank.slot();
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -5878,10 +5875,11 @@ pub(crate) mod tests {
                 )
                 .unwrap();
 
+            let child_bank = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
             let bank1 = bank_forks
                 .write()
                 .unwrap()
-                .insert(Bank::new_from_parent(bank0, SlotLeader::default(), 1))
+                .insert(child_bank)
                 .clone_without_scheduler();
             let slot = bank1.slot();
 
@@ -6751,10 +6749,11 @@ pub(crate) mod tests {
 
         // If the root is now set to `parent_slot`, this filters out `previous_leader_slot` from the progress map,
         // which implies confirmation
-        let bank0 = Bank::new_for_tests(&genesis_config::create_genesis_config(10000).0);
+        let genesis_config = genesis_config::create_genesis_config(10000).0;
+        let (bank0, bank_forks_arc) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let parent_slot_bank =
-            Bank::new_from_parent(Arc::new(bank0), SlotLeader::default(), parent_slot);
-        let bank_forks_arc = BankForks::new_rw_arc(parent_slot_bank);
+            Bank::new_from_parent(Arc::clone(&bank0), SlotLeader::default(), parent_slot);
+        bank_forks_arc.write().unwrap().insert(parent_slot_bank);
         let parent_bank = bank_forks_arc.read().unwrap().get(parent_slot).unwrap();
         let bank5 = Bank::new_from_parent(parent_bank, SlotLeader::default(), 5);
         bank_forks_arc.write().unwrap().insert(bank5);
@@ -9807,11 +9806,9 @@ pub(crate) mod tests {
         blockstore.store_duplicate_slot(4, vec![], vec![]).unwrap();
         blockstore.store_duplicate_slot(5, vec![], vec![]).unwrap();
 
-        let bank1 = bank_forks.write().unwrap().insert(Bank::new_from_parent(
-            bank0.clone_without_scheduler(),
-            SlotLeader::default(),
-            1,
-        ));
+        let bank1_child =
+            Bank::new_from_parent(bank0.clone_without_scheduler(), SlotLeader::default(), 1);
+        let bank1 = bank_forks.write().unwrap().insert(bank1_child);
         confirm_full_slot(
             &blockstore,
             &bank1,

@@ -829,19 +829,23 @@ mod tests {
                 .insert(*GENESIS_CERTIFICATE_ACCOUNT, cert_account);
         }
 
-        let mut root_bank = if root_slot == 0 {
-            Bank::new_for_tests(&genesis_config)
-        } else {
-            let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
-            bank0.freeze();
-            Bank::new_from_parent(bank0, SlotLeader::default(), root_slot)
-        };
-
         let mut feature_set = FeatureSet::default();
         if let Some(ff_activation_slot) = ff_activation_slot {
             feature_set.activate(&agave_feature_set::alpenglow::id(), ff_activation_slot);
         }
-        root_bank.feature_set = Arc::new(feature_set);
+        let feature_set = Arc::new(feature_set);
+
+        let mut root_bank = if root_slot == 0 {
+            Bank::new_for_tests(&genesis_config)
+        } else {
+            let mut bank0 = Bank::new_for_tests(&genesis_config);
+            bank0.feature_set = feature_set.clone();
+            let bank_forks = BankForks::new_rw_arc(bank0);
+            let bank0 = bank_forks.read().unwrap()[0].clone();
+            bank0.freeze();
+            Bank::new_from_parent(bank0, SlotLeader::default(), root_slot)
+        };
+        root_bank.feature_set = feature_set;
 
         root_bank.squash();
 
@@ -1091,11 +1095,8 @@ mod tests {
     fn extend_bank_forks(bank_forks: Arc<RwLock<BankForks>>, parent_child_pairs: &[(Slot, Slot)]) {
         for (parent, child) in parent_child_pairs.iter() {
             let parent: Arc<Bank> = bank_forks.read().unwrap().banks[parent].clone();
-            bank_forks.write().unwrap().insert(Bank::new_from_parent(
-                parent,
-                SlotLeader::default(),
-                *child,
-            ));
+            let child_bank = Bank::new_from_parent(parent, SlotLeader::default(), *child);
+            bank_forks.write().unwrap().insert(child_bank);
         }
     }
 

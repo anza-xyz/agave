@@ -301,9 +301,10 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks_arc = BankForks::new_rw_arc(bank);
         {
+            let bank0 = bank_forks_arc.read().unwrap().get(0).unwrap();
+            let bank9 = Bank::new_from_parent(bank0, SlotLeader::default(), 9);
             let mut bank_forks = bank_forks_arc.write().unwrap();
-            let bank0 = bank_forks.get(0).unwrap();
-            bank_forks.insert(Bank::new_from_parent(bank0, SlotLeader::default(), 9));
+            bank_forks.insert(bank9);
             bank_forks.set_root(9, None, None);
         }
         assert!(blockstore.set_roots([0, 9].iter()).is_ok());
@@ -393,9 +394,10 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks_arc = BankForks::new_rw_arc(bank);
         {
+            let bank0 = bank_forks_arc.read().unwrap().get(0).unwrap();
+            let bank9 = Bank::new_from_parent(bank0, SlotLeader::default(), 9);
             let mut bank_forks = bank_forks_arc.write().unwrap();
-            let bank0 = bank_forks.get(0).unwrap();
-            bank_forks.insert(Bank::new_from_parent(bank0, SlotLeader::default(), 9));
+            bank_forks.insert(bank9);
             bank_forks.set_root(9, None, None);
         }
         blockstore.set_roots([0, 9].iter()).unwrap();

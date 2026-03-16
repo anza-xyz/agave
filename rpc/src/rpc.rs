@@ -5017,15 +5017,12 @@ pub mod tests {
 
         fn advance_bank_to_confirmed_slot(&self, slot: Slot) -> Arc<Bank> {
             let parent_bank = self.working_bank();
+            let child_bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), slot);
             let bank = self
                 .bank_forks
                 .write()
                 .unwrap()
-                .insert(Bank::new_from_parent(
-                    parent_bank,
-                    SlotLeader::default(),
-                    slot,
-                ))
+                .insert(child_bank)
                 .clone_without_scheduler();
 
             let new_block_commitment = BlockCommitmentCache::new(

@@ -197,7 +197,7 @@ fn test_race_register_tick_freeze() {
 
     let (mut genesis_config, _) = create_genesis_config(50);
     genesis_config.ticks_per_slot = 1;
-    let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+    let (bank0, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     bank0.register_tick_for_test(&hash(solana_pubkey::new_rand().as_ref()));
     let hash = hash(solana_pubkey::new_rand().as_ref());
     let leader = SlotLeader::new_unique();
@@ -12569,7 +12569,8 @@ fn test_calculate_and_set_block_id_for_dcou() {
 
     // scenario 2: block id unset
     {
-        let bank1 = Arc::new(create_simple_test_bank(123));
+        let (genesis_config, _) = create_genesis_config(123);
+        let (bank1, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let block_id1 = Hash::new_unique();
         // oldest ancestor must have block_id set
         bank1.set_block_id(Some(block_id1));
@@ -12587,12 +12588,13 @@ fn test_calculate_and_set_block_id_for_dcou() {
 
     // scenario 3: block id unset, multiple parents
     {
-        let mut bank = Arc::new(create_simple_test_bank(123));
+        let (genesis_config, _) = create_genesis_config(123);
+        let (mut bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         // oldest ancestor must have block id set
         bank.set_block_id(Some(Hash::new_unique()));
         for _ in 0..7 {
             bank.fill_bank_with_ticks_for_tests();
-            bank = new_from_parent(bank).into();
+            bank = Arc::new(new_from_parent(bank));
         }
 
         Bank::calculate_and_set_block_id_for_dcou(&bank);
