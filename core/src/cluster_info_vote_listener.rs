@@ -1023,7 +1023,10 @@ mod tests {
     #[test]
     fn test_update_new_root() {
         let SetupComponents {
-            vote_tracker, bank, ..
+            vote_tracker,
+            bank,
+            bank_forks: _bank_forks,
+            ..
         } = setup();
 
         // Check outdated slots are purged with new root
@@ -1104,13 +1107,10 @@ mod tests {
                 vec![stake_per_validator; validator_voting_keypairs.len()],
             );
 
-        let bank0 = Bank::new_for_tests(&genesis_config);
+        let (bank0, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         // Votes for slots less than the provided root bank's slot should not be processed
-        let bank3 = Arc::new(Bank::new_from_parent(
-            Arc::new(bank0),
-            SlotLeader::default(),
-            3,
-        ));
+        let bank3 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 3));
         let vote_slots = vec![1, 2];
         send_vote_txs(
             vote_slots,
@@ -1213,11 +1213,13 @@ mod tests {
 
     fn run_test_process_votes(hash: Option<Hash>) {
         // Create some voters at genesis
+        // Must match `setup()`'s `vec![100; validator_voting_keypairs.len()]` stake per validator.
         let stake_per_validator = 100;
         let SetupComponents {
             vote_tracker,
             validator_voting_keypairs,
             subscriptions,
+            bank: bank0,
             ..
         } = setup();
         let (votes_txs_sender, votes_txs_receiver) = unbounded();
@@ -1225,14 +1227,6 @@ mod tests {
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
         let (verified_voter_slots_sender, verified_voter_slots_receiver) = unbounded();
         let mut latest_vote_slot_per_validator = HashMap::new();
-
-        let GenesisConfigInfo { genesis_config, .. } =
-            genesis_utils::create_genesis_config_with_vote_accounts(
-                10_000,
-                &validator_voting_keypairs,
-                vec![stake_per_validator; validator_voting_keypairs.len()],
-            );
-        let bank0 = Bank::new_for_tests(&genesis_config);
 
         let gossip_vote_slots = vec![1, 2];
         let replay_vote_slots = vec![3, 4];
@@ -1367,22 +1361,14 @@ mod tests {
     #[test]
     fn test_process_votes2() {
         // Create some voters at genesis
+        let stake_per_validator = 100;
         let SetupComponents {
             vote_tracker,
             validator_voting_keypairs,
             subscriptions,
+            bank: bank0,
             ..
         } = setup();
-
-        // Create bank with the voters
-        let stake_per_validator = 100;
-        let GenesisConfigInfo { genesis_config, .. } =
-            genesis_utils::create_genesis_config_with_vote_accounts(
-                10_000,
-                &validator_voting_keypairs,
-                vec![stake_per_validator; validator_voting_keypairs.len()],
-            );
-        let bank0 = Bank::new_for_tests(&genesis_config);
 
         // Send some votes to process
         let (votes_txs_sender, votes_txs_receiver) = unbounded();
@@ -1801,8 +1787,7 @@ mod tests {
             );
         let bank = Bank::new_for_tests(&genesis_config);
         let exit = Arc::new(AtomicBool::new(false));
-        let bank_forks = BankForks::new_rw_arc(bank);
-        let bank = bank_forks.read().unwrap().get(0).unwrap();
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let vote_tracker = VoteTracker::default();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
@@ -1911,6 +1896,7 @@ mod tests {
     struct SetupComponents {
         vote_tracker: Arc<VoteTracker>,
         bank: Arc<Bank>,
+        bank_forks: Arc<RwLock<BankForks>>,
         validator_voting_keypairs: Vec<ValidatorVoteKeypairs>,
         subscriptions: Arc<RpcSubscriptions>,
     }
@@ -1927,8 +1913,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let vote_tracker = VoteTracker::default();
         let exit = Arc::new(AtomicBool::new(false));
-        let bank_forks = BankForks::new_rw_arc(bank);
-        let bank = bank_forks.read().unwrap().get(0).unwrap();
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
@@ -1943,6 +1928,7 @@ mod tests {
         SetupComponents {
             vote_tracker: Arc::new(vote_tracker),
             bank,
+            bank_forks,
             validator_voting_keypairs,
             subscriptions,
         }
@@ -2070,8 +2056,7 @@ mod tests {
             );
         let bank = Bank::new_for_tests(&genesis_config);
         let exit = Arc::new(AtomicBool::new(false));
-        let bank_forks = BankForks::new_rw_arc(bank);
-        let bank = bank_forks.read().unwrap().get(0).unwrap();
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let vote_tracker = VoteTracker::default();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);

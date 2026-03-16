@@ -180,15 +180,19 @@ mod tests {
     fn create_banks(num_banks: u64) -> Vec<Arc<Bank>> {
         let mut banks = vec![];
         let (genesis_config, _) = create_genesis_config(1_000_000);
-        let mut parent_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let mut parent_bank = bank0;
         banks.push(parent_bank.clone());
 
         for _ in 1..=num_banks {
-            let new_bank = Arc::new(Bank::new_from_parent(
+            let slot = parent_bank.slot() + 1;
+            let new_bank = Bank::new_from_parent_with_bank_forks(
+                bank_forks.as_ref(),
                 parent_bank.clone(),
                 SlotLeader::default(),
-                parent_bank.slot() + 1,
-            ));
+                slot,
+            );
             parent_bank = new_bank;
             banks.push(parent_bank.clone());
         }

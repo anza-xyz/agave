@@ -155,7 +155,7 @@ mod tests {
         solana_hash::Hash,
         solana_leader_schedule::SlotLeader,
         solana_signer_store::encode_base2,
-        std::{collections::HashMap, sync::Arc},
+        std::collections::HashMap,
     };
 
     fn new_vote(vote: Vote, rank: usize, keypair: &BlsKeypair) -> VoteMessage {
@@ -209,7 +209,8 @@ mod tests {
             &validator_keypairs,
             vec![100; validator_keypairs.len()],
         );
-        let bank = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
+        let (bank, _bank_forks) =
+            Bank::new_for_tests(&genesis.genesis_config).wrap_with_bank_forks_for_tests();
         let bank = Bank::new_from_parent(bank, SlotLeader::default(), bank_slot);
 
         let rank_map = bank

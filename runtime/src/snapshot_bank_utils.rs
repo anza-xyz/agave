@@ -869,11 +869,18 @@ mod tests {
         bank_snapshots_dir: impl AsRef<Path>,
         num_total: usize,
         should_flush_and_hard_link_storages: bool,
-    ) -> Bank {
-        let mut bank = Arc::new(Bank::new_for_tests(genesis_config));
+    ) -> Arc<Bank> {
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(genesis_config).wrap_with_bank_forks_for_tests();
+        let mut bank = bank0;
         for _i in 0..num_total {
             let slot = bank.slot() + 1;
-            bank = Arc::new(Bank::new_from_parent(bank, SlotLeader::new_unique(), slot));
+            bank = Bank::new_from_parent_with_bank_forks(
+                bank_forks.as_ref(),
+                bank,
+                SlotLeader::new_unique(),
+                slot,
+            );
             bank.fill_bank_with_ticks_for_tests();
             bank.set_block_id(Some(Hash::default()));
 
@@ -886,7 +893,7 @@ mod tests {
             .unwrap();
         }
 
-        Arc::into_inner(bank).unwrap()
+        bank
     }
 
     /// Creates a bank snapshot from a bank, regardless of state. The Bank will be frozen during

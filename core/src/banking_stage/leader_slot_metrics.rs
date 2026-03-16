@@ -802,7 +802,8 @@ mod tests {
 
     fn setup_test_slot_boundary_banks() -> TestSlotBoundaryComponents {
         let genesis = create_genesis_config(10);
-        let first_bank = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
+        let (first_bank, _bank_forks) =
+            Bank::new_for_tests(&genesis.genesis_config).wrap_with_bank_forks_for_tests();
 
         // Create a child descended from the first bank
         let next_bank = Arc::new(Bank::new_from_parent(

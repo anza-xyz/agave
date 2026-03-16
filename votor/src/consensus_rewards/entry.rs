@@ -173,8 +173,14 @@ mod tests {
         )
         .genesis_config;
         genesis_config.epoch_schedule = EpochSchedule::without_warmup();
-        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let bank = Bank::new_from_parent(bank, SlotLeader::default(), slot);
+        let (bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::default(),
+            slot,
+        );
         let rank_map = bank.get_rank_map(slot).unwrap().clone();
         let signing_keys = (0..max_validators)
             .map(|index| {

@@ -40,10 +40,9 @@ fn bench_accounts_create(bencher: &mut Bencher) {
 #[bench]
 fn bench_accounts_squash(bencher: &mut Bencher) {
     let (genesis_config, _) = create_genesis_config(100_000);
-    let mut prev_bank = Arc::new(Bank::new_with_paths_for_benches(
-        &genesis_config,
-        vec![PathBuf::from("bench_a1")],
-    ));
+    let prev_bank =
+        Bank::new_with_paths_for_benches(&genesis_config, vec![PathBuf::from("bench_a1")]);
+    let (mut prev_bank, _bank_forks) = prev_bank.wrap_with_bank_forks_for_tests();
     let mut pubkeys: Vec<Pubkey> = vec![];
     deposit_many(&prev_bank, &mut pubkeys, 250_000).unwrap();
     prev_bank.freeze();

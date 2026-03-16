@@ -96,7 +96,8 @@ mod tests {
     #[test]
     fn test_get_epoch_duration() {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
-        let mut bank = Bank::new_for_tests(&genesis_config);
+        let (mut bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let epoch = 0;
         let num_slots = 32;
         assert_eq!(bank.epoch(), epoch);
@@ -106,7 +107,12 @@ mod tests {
             Duration::from_millis(num_slots * 400)
         );
         for slot in 1..32 {
-            bank = Bank::new_from_parent(Arc::new(bank), SlotLeader::new_unique(), slot);
+            bank = Bank::new_from_parent_with_bank_forks(
+                bank_forks.as_ref(),
+                bank,
+                SlotLeader::new_unique(),
+                slot,
+            );
             assert_eq!(bank.epoch(), epoch);
             assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
             assert_eq!(
@@ -117,7 +123,12 @@ mod tests {
         let epoch = 1;
         let num_slots = 64;
         for slot in 32..32 + num_slots {
-            bank = Bank::new_from_parent(Arc::new(bank), SlotLeader::new_unique(), slot);
+            bank = Bank::new_from_parent_with_bank_forks(
+                bank_forks.as_ref(),
+                bank,
+                SlotLeader::new_unique(),
+                slot,
+            );
             assert_eq!(bank.epoch(), epoch);
             assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
             assert_eq!(
@@ -128,7 +139,12 @@ mod tests {
         let epoch = 2;
         let num_slots = 128;
         for slot in 96..96 + num_slots {
-            bank = Bank::new_from_parent(Arc::new(bank), SlotLeader::new_unique(), slot);
+            bank = Bank::new_from_parent_with_bank_forks(
+                bank_forks.as_ref(),
+                bank,
+                SlotLeader::new_unique(),
+                slot,
+            );
             assert_eq!(bank.epoch(), epoch);
             assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
             assert_eq!(

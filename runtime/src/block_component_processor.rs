@@ -389,32 +389,38 @@ mod tests {
         super::*,
         crate::{
             bank::{Bank, SlotLeader},
+            bank_forks::BankForks,
             genesis_utils::{activate_all_features_alpenglow, create_genesis_config},
         },
         solana_entry::block_component::{
             BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedUpdateParent,
         },
         solana_hash::Hash,
-        std::sync::Arc,
+        std::sync::{Arc, RwLock},
     };
 
-    fn create_test_bank() -> Arc<Bank> {
+    fn create_test_bank() -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
         let genesis_config_info = create_genesis_config(10_000);
-        Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config))
+        Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config)
     }
 
-    fn create_test_bank_alpenglow() -> Arc<Bank> {
+    fn create_test_bank_alpenglow() -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
         let mut genesis_config_info = create_genesis_config(10_000);
         activate_all_features_alpenglow(&mut genesis_config_info.genesis_config);
-        Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config))
+        Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config)
     }
 
-    fn create_child_bank(parent: &Arc<Bank>, slot: u64) -> Arc<Bank> {
-        Arc::new(Bank::new_from_parent(
+    fn create_child_bank(
+        bank_forks: &Arc<RwLock<BankForks>>,
+        parent: &Arc<Bank>,
+        slot: u64,
+    ) -> Arc<Bank> {
+        Bank::new_from_parent_with_bank_forks(
+            bank_forks,
             parent.clone(),
             SlotLeader::new_unique(),
             slot,
-        ))
+        )
     }
 
     // TODO(ksn): re-enable once broadcast stage produces block headers
@@ -476,8 +482,8 @@ mod tests {
             ..Default::default()
         };
 
-        let parent = create_test_bank();
-        let bank = create_child_bank(&parent, 1);
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
 
         // Calculate valid timestamp based on parent's time
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
@@ -514,8 +520,8 @@ mod tests {
             ..Default::default()
         };
 
-        let parent = create_test_bank();
-        let bank = create_child_bank(&parent, 1);
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
 
         // Calculate valid timestamp based on parent's time
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
@@ -562,8 +568,8 @@ mod tests {
             parent_block_id: Hash::default(),
         });
 
-        let parent = create_test_bank();
-        let bank = create_child_bank(&parent, 1);
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
 
         processor
             .on_marker(bank, parent, marker, None, &migration_status)
@@ -579,8 +585,8 @@ mod tests {
             ..Default::default()
         };
 
-        let parent = create_test_bank();
-        let bank = create_child_bank(&parent, 1);
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
 
         // Calculate valid timestamp based on parent's time
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
@@ -609,8 +615,8 @@ mod tests {
     fn test_complete_workflow_success() {
         let migration_status = MigrationStatus::post_migration_status();
         let mut processor = BlockComponentProcessor::default();
-        let parent = create_test_bank();
-        let bank = create_child_bank(&parent, 1);
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
 
         // Calculate valid timestamp based on parent's time
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
@@ -652,8 +658,8 @@ mod tests {
     fn test_block_marker_detected_pre_migration() {
         let migration_status = MigrationStatus::default();
         let mut processor = BlockComponentProcessor::default();
-        let parent = create_test_bank();
-        let bank = create_child_bank(&parent, 1);
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
 
         // Try to process a block header marker pre-migration - should fail
         let marker = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
@@ -671,8 +677,8 @@ mod tests {
     #[test]
     fn test_footer_and_update_parent_rejected_pre_migration() {
         let migration_status = MigrationStatus::default();
-        let parent = create_test_bank();
-        let bank = create_child_bank(&parent, 1);
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
 
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
         let footer_marker = VersionedBlockMarker::new_block_footer(BlockFooterV1 {
@@ -726,8 +732,8 @@ mod tests {
     fn test_complete_workflow_post_migration() {
         let migration_status = MigrationStatus::post_migration_status();
         let mut processor = BlockComponentProcessor::default();
-        let parent = create_test_bank();
-        let bank = create_child_bank(&parent, 1);
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
 
         // Process header marker
         let header_marker = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
@@ -776,8 +782,8 @@ mod tests {
     #[test]
     fn test_footer_without_header_errors() {
         let mut processor = BlockComponentProcessor::default();
-        let parent = create_test_bank();
-        let bank = create_child_bank(&parent, 1);
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
 
         let footer = VersionedBlockFooter::V1(BlockFooterV1 {
             bank_hash: Hash::new_unique(),
@@ -800,8 +806,8 @@ mod tests {
     fn test_marker_with_footer_at_slot_full() {
         let migration_status = MigrationStatus::post_migration_status();
         let mut processor = BlockComponentProcessor::default();
-        let parent = create_test_bank();
-        let bank = create_child_bank(&parent, 1);
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
 
         // Process header first
         processor.has_header = true;
@@ -853,7 +859,8 @@ mod tests {
 
         // Create genesis bank
         let genesis_config_info = create_genesis_config(10_000);
-        let genesis_bank = Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config));
+        let (genesis_bank, bank_forks) =
+            Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config);
 
         // Get epoch schedule to find first slot of next epoch
         let epoch_schedule = genesis_bank.epoch_schedule();
@@ -862,11 +869,11 @@ mod tests {
         // Create parent bank at last slot of epoch 0
         let mut parent = genesis_bank.clone();
         for slot in 1..first_slot_in_epoch_1 {
-            parent = create_child_bank(&parent, slot);
+            parent = create_child_bank(&bank_forks, &parent, slot);
         }
 
         // Create bank at first slot of epoch 1
-        let bank = create_child_bank(&parent, first_slot_in_epoch_1);
+        let bank = create_child_bank(&bank_forks, &parent, first_slot_in_epoch_1);
 
         // Verify we're in epoch 1
         assert_eq!(bank.epoch(), 1);
@@ -916,13 +923,13 @@ mod tests {
             ..Default::default()
         };
 
-        let parent = create_test_bank_alpenglow();
+        let (parent, bank_forks) = create_test_bank_alpenglow();
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
 
         // Set up clock on parent so validation doesn't skip bounds checking
         parent.update_clock_from_footer(parent_time_nanos);
 
-        let bank = create_child_bank(&parent, slot_gap);
+        let bank = create_child_bank(&bank_forks, &parent, slot_gap);
 
         let (lower_bound, upper_bound) =
             BlockComponentProcessor::nanosecond_time_bounds(0, parent_time_nanos, slot_gap);
@@ -1111,8 +1118,8 @@ mod tests {
     fn test_workflow_with_update_parent() {
         let migration_status = MigrationStatus::post_migration_status();
         let mut processor = BlockComponentProcessor::default();
-        let parent = create_test_bank();
-        let bank = create_child_bank(&parent, 1);
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
 
         processor
             .on_update_parent(&VersionedUpdateParent::V1(UpdateParentV1 {

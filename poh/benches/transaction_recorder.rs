@@ -46,7 +46,8 @@ fn bench_record_transactions(c: &mut Criterion) {
         hashes_per_tick: Some(solana_clock::DEFAULT_HASHES_PER_TICK),
     };
     let exit = Arc::new(AtomicBool::new(false));
-    let mut bank = Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config));
+    let bank = Bank::new_for_tests(&genesis_config_info.genesis_config);
+    let (mut bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Arc::new(
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
