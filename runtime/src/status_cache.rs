@@ -7,7 +7,10 @@ use {
     solana_accounts_db::ancestors::Ancestors,
     solana_clock::{MAX_RECENT_BLOCKHASHES, Slot},
     solana_hash::Hash,
-    std::collections::{HashSet, hash_map::Entry},
+    std::{
+        collections::{HashSet, hash_map::Entry},
+        num::{NonZero, NonZeroUsize},
+    },
 };
 #[cfg(not(feature = "shuttle-test"))]
 use {
@@ -52,7 +55,7 @@ pub struct StatusCache<T: Serialize + Clone> {
     // check if a tx_key was seen on a fork and for rpc to retrieve the tx_result
     cache: KeyStatusMap<T>,
     roots: HashSet<Slot>,
-    max_cache_entries: usize,
+    max_cache_entries: NonZeroUsize,
     // slot_deltas[slot][blockhash] => [(tx_key, tx_result), ...] used to serialize for snapshots
     // and to rebuild cache[blockhash][tx_key] from a snapshot
     slot_deltas: SlotDeltaMap<T>,
@@ -64,7 +67,7 @@ impl<T: Serialize + Clone> Default for StatusCache<T> {
             cache: HashMap::default(),
             // 0 is always a root
             roots: HashSet::from([0]),
-            max_cache_entries: MAX_CACHE_ENTRIES,
+            max_cache_entries: NonZero::new(MAX_CACHE_ENTRIES).unwrap(),
             slot_deltas: HashMap::default(),
         }
     }
@@ -176,14 +179,10 @@ impl<T: Serialize + Clone> StatusCache<T> {
     }
 
     pub fn max_cache_entries(&self) -> usize {
-        self.max_cache_entries
+        self.max_cache_entries.into()
     }
 
-    pub fn set_max_cache_entries(&mut self, max_cache_entries: usize) {
-        debug_assert!(
-            max_cache_entries > 0,
-            "max_cache_entries must be greater than zero"
-        );
+    pub fn set_max_cache_entries(&mut self, max_cache_entries: NonZeroUsize) {
         self.max_cache_entries = max_cache_entries;
         self.purge_roots();
     }
@@ -226,7 +225,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
     }
 
     pub fn purge_roots(&mut self) {
-        if self.roots.len() > self.max_cache_entries {
+        if self.roots.len() > self.max_cache_entries() {
             if let Some(min) = self.roots.iter().min().cloned() {
                 self.roots.remove(&min);
                 self.cache.retain(|_, (fork, _, _)| *fork > min);
