@@ -194,11 +194,11 @@ impl PohService {
     // Adjusts the target nanoseconds per PoH tick to enable hitting slot time
     // targets by compensating for time spent outside of PoH, such as network
     // propagation.
-    pub fn target_ns_per_tick(ticks_per_slot: u64, target_tick_duration_ns: u64) -> u64 {
+    pub fn target_tick_ns_adjusted(ticks_per_slot: u64, target_tick_ns: u64) -> u64 {
         let adjustment_per_tick = TARGET_SLOT_ADJUSTMENT_NS
             .checked_div(ticks_per_slot)
             .unwrap_or(0);
-        target_tick_duration_ns.saturating_sub(adjustment_per_tick)
+        target_tick_ns.saturating_sub(adjustment_per_tick)
     }
 
     fn low_power_tick_producer(
@@ -217,9 +217,8 @@ impl PohService {
         if should_shutdown_for_test_producers {
             record_receiver.shutdown();
         }
-        let mut target_tick_duration = Duration::from_nanos(
-            Self::effective_target_tick_duration_ns(&poh_recorder, poh_config),
-        );
+        let mut target_tick_duration =
+            Duration::from_nanos(Self::target_tick_ns_reconciled(&poh_recorder, poh_config));
         while !poh_exit.load(Ordering::Relaxed) && !shutdown_poh.load(Ordering::Relaxed) {
             let service_message =
                 Self::check_for_service_message(&poh_service_receiver, record_receiver);
@@ -268,9 +267,10 @@ impl PohService {
 
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, record_receiver);
-                target_tick_duration = Duration::from_nanos(
-                    Self::effective_target_tick_duration_ns(&poh_recorder, poh_config),
-                );
+                target_tick_duration = Duration::from_nanos(Self::target_tick_ns_reconciled(
+                    &poh_recorder,
+                    poh_config,
+                ));
                 should_shutdown_for_test_producers =
                     Self::should_shutdown_for_test_producers(&poh_recorder);
                 if should_shutdown_for_test_producers {
@@ -335,9 +335,8 @@ impl PohService {
         if should_shutdown_for_test_producers {
             record_receiver.shutdown();
         }
-        let mut target_tick_duration = Duration::from_nanos(
-            Self::effective_target_tick_duration_ns(&poh_recorder, poh_config),
-        );
+        let mut target_tick_duration =
+            Duration::from_nanos(Self::target_tick_ns_reconciled(&poh_recorder, poh_config));
 
         while elapsed_ticks < num_ticks {
             let service_message =
@@ -393,9 +392,10 @@ impl PohService {
             }
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, record_receiver);
-                target_tick_duration = Duration::from_nanos(
-                    Self::effective_target_tick_duration_ns(&poh_recorder, poh_config),
-                );
+                target_tick_duration = Duration::from_nanos(Self::target_tick_ns_reconciled(
+                    &poh_recorder,
+                    poh_config,
+                ));
                 should_shutdown_for_test_producers =
                     Self::should_shutdown_for_test_producers(&poh_recorder);
                 if should_shutdown_for_test_producers {
@@ -548,9 +548,9 @@ impl PohService {
         let mut timing = PohTiming::new();
         let mut next_record = None;
         let mut should_exit = poh_exit.load(Ordering::Relaxed);
-        let mut target_ns_per_tick = Self::target_ns_per_tick(
+        let mut target_ns_per_tick = Self::target_tick_ns_adjusted(
             ticks_per_slot,
-            Self::effective_target_tick_duration_ns(&poh_recorder, poh_config),
+            Self::target_tick_ns_reconciled(&poh_recorder, poh_config),
         );
 
         loop {
@@ -605,9 +605,9 @@ impl PohService {
             if let Some(service_message) = service_message {
                 if !should_exit {
                     Self::handle_service_message(&poh_recorder, service_message, record_receiver);
-                    target_ns_per_tick = Self::target_ns_per_tick(
+                    target_ns_per_tick = Self::target_tick_ns_adjusted(
                         ticks_per_slot,
-                        Self::effective_target_tick_duration_ns(&poh_recorder, poh_config),
+                        Self::target_tick_ns_reconciled(&poh_recorder, poh_config),
                     );
                 }
             }
@@ -635,14 +635,14 @@ impl PohService {
 
     // Reconcile the banks values versus the optional (test only) poh_config
     // overrides.
-    fn effective_target_tick_duration_ns(
+    fn target_tick_ns_reconciled(
         poh_recorder: &RwLock<PohRecorder>,
         poh_config: &PohConfig,
     ) -> u64 {
         poh_recorder
             .read()
             .unwrap()
-            .target_tick_duration_ns()
+            .target_tick_ns()
             // Tests can set the bank timing absurdly high. Preserve the config
             // override so the short-lived producers still make progress.
             .min(poh_config.target_tick_duration.as_nanos() as u64)
