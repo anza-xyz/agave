@@ -674,12 +674,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .program_runtime_environment_for_deployment
     }
 
-    pub fn is_stake_raise_minimum_delegation_to_1_sol_active(&self) -> bool {
-        self.environment_config
-            .feature_set
-            .stake_raise_minimum_delegation_to_1_sol
-    }
-
     pub fn is_deprecate_legacy_vote_ixs_active(&self) -> bool {
         self.environment_config
             .feature_set

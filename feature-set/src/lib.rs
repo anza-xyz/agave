@@ -1311,6 +1311,14 @@ pub mod direct_account_pointers_in_program_input {
     solana_pubkey::declare_id!("ptrXWLkSDMZZmZN8GAT6W5yW4EvYByfw6cRRHbXwQNS");
 }
 
+pub mod core_bpf_stake_program_v5 {
+    solana_pubkey::declare_id!("STk5Xj8hdAx3sTzmtJ3QysKkq6X2A3yj73JtxttiRyk");
+
+    pub mod buffer {
+        solana_pubkey::declare_id!("4EBQBjw1kqF1dqUBb6fc5Ji4tCEQgNf9ESGGX3smwXwh");
+    }
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2346,6 +2354,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             direct_account_pointers_in_program_input::id(),
             "SIMD-0449: Direct Account Pointers in Program Input",
+        ),
+        (
+            core_bpf_stake_program_v5::id(),
+            "SIMD-0490: Upgrade BPF Stake Program to v5.0.0",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

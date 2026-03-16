@@ -5677,6 +5677,7 @@ impl Bank {
                 error!("Failed to upgrade Core BPF Stake program: {e}");
             }
         }
+
         if new_feature_activations.contains(&feature_set::replace_spl_token_with_p_token::id()) {
             if let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
                 &feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID,
@@ -5689,6 +5690,16 @@ impl Bank {
                     "Failed to replace SPL Token with p-token buffer '{}': {e}",
                     feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
                 );
+            }
+        }
+
+        if new_feature_activations.contains(&feature_set::core_bpf_stake_program_v5::id()) {
+            if let Err(e) = self.upgrade_core_bpf_program(
+                &solana_sdk_ids::stake::id(),
+                &feature_set::core_bpf_stake_program_v5::buffer::id(),
+                "upgrade_stake_program_to_v5",
+            ) {
+                error!("Failed to upgrade Core BPF Stake program: {e}");
             }
         }
     }

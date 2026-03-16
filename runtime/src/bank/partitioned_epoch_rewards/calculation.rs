@@ -383,7 +383,7 @@ impl Bank {
         {
             let min_stake_delegation = stake_utils::get_minimum_delegation(
                 self.feature_set
-                    .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
+                    .is_active(&agave_feature_set::core_bpf_stake_program_v5::id()),
             )
             .max(LAMPORTS_PER_SOL);
             Some(min_stake_delegation)
