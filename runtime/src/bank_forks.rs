@@ -1091,11 +1091,8 @@ mod tests {
     fn extend_bank_forks(bank_forks: Arc<RwLock<BankForks>>, parent_child_pairs: &[(Slot, Slot)]) {
         for (parent, child) in parent_child_pairs.iter() {
             let parent: Arc<Bank> = bank_forks.read().unwrap().banks[parent].clone();
-            bank_forks.write().unwrap().insert(Bank::new_from_parent(
-                parent,
-                SlotLeader::default(),
-                *child,
-            ));
+            let child_bank = Bank::new_from_parent(parent, SlotLeader::default(), *child);
+            bank_forks.write().unwrap().insert(child_bank);
         }
     }
 

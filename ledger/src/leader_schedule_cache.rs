@@ -539,14 +539,11 @@ mod tests {
             target_slot += 1;
         }
 
+        let child_bank = Bank::new_from_parent(bank.clone(), SlotLeader::default(), target_slot);
         let bank = bank_forks
             .write()
             .unwrap()
-            .insert(Bank::new_from_parent(
-                bank.clone(),
-                SlotLeader::default(),
-                target_slot,
-            ))
+            .insert(child_bank)
             .clone_without_scheduler();
         let mut expected_slot = 0;
         let epoch = bank.get_leader_schedule_epoch(target_slot);

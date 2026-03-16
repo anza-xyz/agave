@@ -4522,11 +4522,9 @@ pub mod tests {
         )
         .unwrap();
         let bank0_last_blockhash = bank0.last_blockhash();
-        let bank1 = bank_forks.write().unwrap().insert(Bank::new_from_parent(
-            bank0.clone_without_scheduler(),
-            SlotLeader::default(),
-            1,
-        ));
+        let bank1_child =
+            Bank::new_from_parent(bank0.clone_without_scheduler(), SlotLeader::default(), 1);
+        let bank1 = bank_forks.write().unwrap().insert(bank1_child);
         confirm_full_slot(
             &blockstore,
             &bank1,
@@ -4773,14 +4771,11 @@ pub mod tests {
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0.freeze();
 
+        let bank1_child = Bank::new_from_parent(bank0.clone(), SlotLeader::new_unique(), 1);
         let bank1 = bank_forks
             .write()
             .unwrap()
-            .insert(Bank::new_from_parent(
-                bank0.clone(),
-                SlotLeader::new_unique(),
-                1,
-            ))
+            .insert(bank1_child)
             .clone_without_scheduler();
 
         // The new blockhash is going to be the hash of the last tick in the block
