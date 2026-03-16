@@ -1117,6 +1117,7 @@ mod tests {
         super::*,
         crossbeam_channel::bounded,
         solana_clock::DEFAULT_TICKS_PER_SLOT,
+        solana_entry::entry::{self, EntrySlice},
         solana_leader_schedule::SlotLeader,
         solana_ledger::{
             blockstore::Blockstore,
@@ -1230,6 +1231,55 @@ mod tests {
         assert!(poh_recorder.working_bank.is_some());
         poh_recorder.clear_bank(true);
         assert!(poh_recorder.working_bank.is_none());
+    }
+
+    #[test]
+    fn test_poh_recorder_tick_verifies() {
+        // Setup
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path())
+            .expect("Expected to be able to open database ledger");
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+        let prev_hash = bank0.last_blockhash();
+        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+            0,
+            prev_hash,
+            bank0.clone(),
+            Some((4, 4)),
+            bank0.ticks_per_slot(),
+            Arc::new(blockstore),
+            &Arc::new(LeaderScheduleCache::new_from_bank(&bank0)),
+            &PohConfig::default(),
+            Arc::new(AtomicBool::default()),
+        );
+        poh_recorder.set_bank_for_test(bank0.clone());
+
+        // Tick through bank0.
+        let num_new_ticks = poh_recorder.tick_height() + bank0.ticks_per_slot();
+        for _ in 0..num_new_ticks {
+            poh_recorder.tick();
+        }
+
+        // Collect the tick entries produced.
+        let mut entries = vec![];
+        while let Ok((_bank, (entry, _tick_height))) = entry_receiver.try_recv() {
+            assert!(entry.is_tick());
+            entries.push(entry);
+        }
+
+        // Confirm correct number of entries received.
+        assert_eq!(entries.len(), num_new_ticks as usize);
+
+        // Confirm the entries verify properly.
+        assert!(
+            entries
+                .verify(&prev_hash, &entry::thread_pool_for_tests())
+                .status()
+        );
+
+        // Confirm entry hash and blockhash are in sync.
+        assert_eq!(entries[entries.len() - 1].hash, bank0.last_blockhash());
     }
 
     #[test]
