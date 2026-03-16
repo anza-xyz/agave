@@ -912,7 +912,8 @@ mod tests {
     fn test_verify_certificate_base2_valid() {
         let mut ctx = TestContext::new();
 
-        let num_signers = 7; // > 2/3 of 10 validators
+        // 2/3 of validators sign the cert.
+        let num_signers = (ctx.validator_keypairs.len() * 2).div_ceil(3);
         let cert_type = CertificateType::Notarize(10, Hash::new_unique());
         let cert = create_signed_certificate_message(
             &ctx.validator_keypairs,
@@ -936,7 +937,8 @@ mod tests {
     fn test_verify_certificate_base2_just_enough_stake() {
         let mut ctx = TestContext::new();
 
-        let num_signers = 6; // = 60% of 10 validators
+        // 60% of validators sign the cert.
+        let num_signers = (ctx.validator_keypairs.len() * 6).div_ceil(10);
         let cert_type = CertificateType::Notarize(10, Hash::new_unique());
         let cert = create_signed_certificate_message(
             &ctx.validator_keypairs,
@@ -960,7 +962,9 @@ mod tests {
     fn test_verify_certificate_base2_not_enough_stake() {
         let mut ctx = TestContext::new();
 
-        let num_signers = 5; // < 60% of 10 validators
+        // < 60% of validators sign the cert
+        assert!(ctx.validator_keypairs.len() >= 2);
+        let num_signers = (ctx.validator_keypairs.len() * 6) / 10 - 1;
         let cert_type = CertificateType::Notarize(10, Hash::new_unique());
         let cert = create_signed_certificate_message(
             &ctx.validator_keypairs,
@@ -1113,7 +1117,8 @@ mod tests {
     fn test_verify_certificate_invalid_signature() {
         let mut ctx = TestContext::new();
 
-        let num_signers = 7;
+        // 70% of validators sign.
+        let num_signers = (ctx.validator_keypairs.len() * 7).div_ceil(10);
         let slot = 10;
         let block_hash = Hash::new_unique();
         let cert_type = CertificateType::Notarize(slot, block_hash);
@@ -1163,12 +1168,13 @@ mod tests {
             packets.push(message_to_packet(&consensus_message, Pubkey::new_unique()));
         }
 
-        let num_cert_signers = 7;
+        // 70% of validators sign.
+        let num_signers = (ctx.validator_keypairs.len() * 7).div_ceil(10);
         let cert_type = CertificateType::Notarize(10, Hash::new_unique());
         let cert_original_vote = Vote::new_notarization_vote(10, cert_type.to_block().unwrap().1);
         let cert_payload = bincode::serialize(&cert_original_vote).unwrap();
 
-        let cert_vote_messages: Vec<VoteMessage> = (0..num_cert_signers)
+        let cert_vote_messages: Vec<VoteMessage> = (0..num_signers)
             .map(|i| {
                 let signature = ctx.validator_keypairs[i].bls_keypair.sign(&cert_payload);
                 VoteMessage {
@@ -1314,7 +1320,8 @@ mod tests {
     fn test_verified_certs_are_skipped() {
         let mut ctx = TestContext::new();
 
-        let num_signers = 8;
+        // 80% of validators sign.
+        let num_signers = (ctx.validator_keypairs.len() * 8).div_ceil(10);
         let slot = 10;
         let block_hash = Hash::new_unique();
         let cert_type = CertificateType::Notarize(slot, block_hash);
