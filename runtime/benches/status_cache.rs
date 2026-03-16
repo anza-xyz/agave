@@ -40,8 +40,8 @@ fn bench_status_cache_serialize_max(bencher: &mut Bencher) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
     let mut status_cache = BankStatusCache::default();
-    let max_cache_entries = status_cache.max_cache_entries() as u64;
-    fill_status_cache(&mut status_cache, max_cache_entries, 100_000);
+    let max_root_entries = status_cache.max_root_entries() as u64;
+    fill_status_cache(&mut status_cache, max_root_entries, 100_000);
 
     assert!(status_cache.roots().contains(&0));
     bencher.iter(|| {
@@ -54,7 +54,7 @@ fn bench_status_cache_root_slot_deltas(bencher: &mut Bencher) {
     let mut status_cache = BankStatusCache::default();
 
     // fill the status cache
-    let slots: Vec<_> = (42..).take(status_cache.max_cache_entries()).collect();
+    let slots: Vec<_> = (42..).take(status_cache.max_root_entries()).collect();
     for slot in &slots {
         for _ in 0..5 {
             status_cache.insert(&Hash::new_unique(), Hash::new_unique(), *slot, Ok(()));
@@ -65,8 +65,8 @@ fn bench_status_cache_root_slot_deltas(bencher: &mut Bencher) {
     bencher.iter(|| test::black_box(status_cache.root_slot_deltas()));
 }
 
-fn fill_status_cache(status_cache: &mut BankStatusCache, max_cache_entries: u64, num_txs: usize) {
-    for slot in 0..max_cache_entries {
+fn fill_status_cache(status_cache: &mut BankStatusCache, max_root_entries: u64, num_txs: usize) {
+    for slot in 0..max_root_entries {
         let blockhash = Hash::new_unique();
         fill_status_cache_slot(status_cache, &blockhash, slot, num_txs);
     }
@@ -89,15 +89,15 @@ fn bench_status_cache_check_and_insert(bencher: &mut Bencher) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
     let mut status_cache = BankStatusCache::default();
-    let max_cache_entries = status_cache.max_cache_entries() as u64;
-    fill_status_cache(&mut status_cache, max_cache_entries - 1, 100_000);
+    let max_root_entries = status_cache.max_root_entries() as u64;
+    fill_status_cache(&mut status_cache, max_root_entries - 1, 100_000);
 
     // Manually fill the last slot so we can save off the blockhash to use for
     // querying and inserting into.
     let blockhash = Hash::new_unique();
-    fill_status_cache_slot(&mut status_cache, &blockhash, max_cache_entries, 100_000);
+    fill_status_cache_slot(&mut status_cache, &blockhash, max_root_entries, 100_000);
 
-    let slot = max_cache_entries + 1;
+    let slot = max_root_entries + 1;
     let ancestors = Ancestors::from((slot - 32..slot).collect::<Vec<u64>>());
 
     // Pre-generate unique tx_hashes so we don't spend benchmark time generating
@@ -128,11 +128,11 @@ fn bench_status_cache_add_roots(bencher: &mut Bencher) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
     let mut status_cache = BankStatusCache::default();
-    let max_cache_entries = status_cache.max_cache_entries() as u64;
-    fill_status_cache(&mut status_cache, max_cache_entries, 100_000);
-    let start_slot = max_cache_entries + 1;
+    let max_root_entries = status_cache.max_root_entries() as u64;
+    fill_status_cache(&mut status_cache, max_root_entries, 100_000);
+    let start_slot = max_root_entries + 1;
     bencher.iter(|| {
-        for root in start_slot..start_slot + max_cache_entries {
+        for root in start_slot..start_slot + max_root_entries {
             status_cache.add_root(root);
         }
     });

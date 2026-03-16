@@ -273,7 +273,7 @@ fn get_default_max_status_cache_entries() -> u64 {
         .status_cache
         .read()
         .unwrap()
-        .max_cache_entries() as u64
+        .max_root_entries() as u64
 }
 
 #[test]
@@ -337,7 +337,7 @@ fn test_slots_to_snapshot() {
 
 #[test]
 fn test_bank_forks_status_cache_snapshot() {
-    // create banks up to slot (MAX_CACHE_ENTRIES * 2) + 1 while transferring 1 lamport into 2 different accounts each time
+    // create banks up to slot (`max_root_entries` * 2) + 1 while transferring 1 lamport into 2 different accounts each time
     // this is done to ensure the AccountStorageEntries keep getting cleaned up as the root moves
     // ahead. Also tests the status_cache purge and status cache snapshotting.
     // Makes sure that the last bank is restored correctly

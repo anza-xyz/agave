@@ -508,13 +508,13 @@ fn verify_slot_deltas(
     slot_deltas: &[BankSlotDelta],
     bank: &Bank,
 ) -> std::result::Result<(), VerifySlotDeltasError> {
-    let max_cache_entries = bank.status_cache.read().unwrap().max_cache_entries();
-    let info = verify_slot_deltas_structural(slot_deltas, bank.slot(), max_cache_entries)?;
+    let max_root_entries = bank.status_cache.read().unwrap().max_root_entries();
+    let info = verify_slot_deltas_structural(slot_deltas, bank.slot(), max_root_entries)?;
     verify_slot_deltas_with_history(
         &info.slots,
         &bank.get_slot_history(),
         bank.slot(),
-        max_cache_entries,
+        max_root_entries,
     )
 }
 
@@ -523,14 +523,14 @@ fn verify_slot_deltas(
 fn verify_slot_deltas_structural(
     slot_deltas: &[BankSlotDelta],
     bank_slot: Slot,
-    max_cache_entries: usize,
+    max_root_entries: usize,
 ) -> std::result::Result<VerifySlotDeltasStructuralInfo, VerifySlotDeltasError> {
     // there should not be more entries than that status cache's max
     let num_entries = slot_deltas.len();
-    if num_entries > max_cache_entries {
+    if num_entries > max_root_entries {
         return Err(VerifySlotDeltasError::TooManyEntries(
             num_entries,
-            max_cache_entries,
+            max_root_entries,
         ));
     }
 
@@ -576,7 +576,7 @@ fn verify_slot_deltas_with_history(
     slots_from_slot_deltas: &HashSet<Slot>,
     slot_history: &SlotHistory,
     bank_slot: Slot,
-    max_cache_entries: usize,
+    max_root_entries: usize,
 ) -> std::result::Result<(), VerifySlotDeltasError> {
     // ensure the slot history is valid (as much as possible), since we're using it to verify the
     // slot deltas
@@ -590,7 +590,7 @@ fn verify_slot_deltas_with_history(
         return Err(VerifySlotDeltasError::SlotNotFoundInHistory(*slot));
     }
 
-    // all slots in the history should be in the slot deltas (up to MAX_CACHE_ENTRIES)
+    // all slots in the history should be in the slot deltas (up to max_root_entries)
     // this ensures nothing was removed from the status cache
     //
     // go through the slot history and make sure there's an entry for each slot
@@ -600,7 +600,7 @@ fn verify_slot_deltas_with_history(
     let slot_missing_from_deltas = (slot_history.oldest()..=slot_history.newest())
         .rev()
         .filter(|slot| slot_history.check(*slot) == Check::Found)
-        .take(max_cache_entries)
+        .take(max_root_entries)
         .find(|slot| !slots_from_slot_deltas.contains(slot));
     if let Some(slot) = slot_missing_from_deltas {
         return Err(VerifySlotDeltasError::SlotNotFoundInDeltas(slot));
@@ -2365,26 +2365,26 @@ mod tests {
 
     #[test]
     fn test_verify_slot_deltas_structural_bad_too_many_entries() {
-        let max_cache_entries = StatusCache::<()>::default().max_cache_entries();
-        let bank_slot = max_cache_entries as Slot + 1;
+        let max_root_entries = StatusCache::<()>::default().max_root_entries();
+        let bank_slot = max_root_entries as Slot + 1;
         let slot_deltas: Vec<_> = (0..bank_slot)
             .map(|slot| (slot, true, Status::default()))
             .collect();
 
         let result =
-            verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot, max_cache_entries);
+            verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot, max_root_entries);
         assert_eq!(
             result,
             Err(VerifySlotDeltasError::TooManyEntries(
-                max_cache_entries + 1,
-                max_cache_entries
+                max_root_entries + 1,
+                max_root_entries
             )),
         );
     }
 
     #[test]
     fn test_verify_slot_deltas_structural_good() {
-        let max_cache_entries = StatusCache::<()>::default().max_cache_entries();
+        let max_root_entries = StatusCache::<()>::default().max_root_entries();
         // NOTE: slot deltas do not need to be sorted
         let slot_deltas = vec![
             (222, true, Status::default()),
@@ -2394,7 +2394,7 @@ mod tests {
 
         let bank_slot = 333;
         let result =
-            verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot, max_cache_entries);
+            verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot, max_root_entries);
         assert_eq!(
             result,
             Ok(VerifySlotDeltasStructuralInfo {
@@ -2405,7 +2405,7 @@ mod tests {
 
     #[test]
     fn test_verify_slot_deltas_structural_bad_slot_not_root() {
-        let max_cache_entries = StatusCache::<()>::default().max_cache_entries();
+        let max_root_entries = StatusCache::<()>::default().max_root_entries();
         let slot_deltas = vec![
             (111, true, Status::default()),
             (222, false, Status::default()), // <-- slot is not a root
@@ -2414,13 +2414,13 @@ mod tests {
 
         let bank_slot = 333;
         let result =
-            verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot, max_cache_entries);
+            verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot, max_root_entries);
         assert_eq!(result, Err(VerifySlotDeltasError::SlotIsNotRoot(222)));
     }
 
     #[test]
     fn test_verify_slot_deltas_structural_bad_slot_greater_than_bank() {
-        let max_cache_entries = StatusCache::<()>::default().max_cache_entries();
+        let max_root_entries = StatusCache::<()>::default().max_root_entries();
         let slot_deltas = vec![
             (222, true, Status::default()),
             (111, true, Status::default()),
@@ -2429,7 +2429,7 @@ mod tests {
 
         let bank_slot = 444;
         let result =
-            verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot, max_cache_entries);
+            verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot, max_root_entries);
         assert_eq!(
             result,
             Err(VerifySlotDeltasError::SlotGreaterThanMaxRoot(
@@ -2440,7 +2440,7 @@ mod tests {
 
     #[test]
     fn test_verify_slot_deltas_structural_bad_slot_has_multiple_entries() {
-        let max_cache_entries = StatusCache::<()>::default().max_cache_entries();
+        let max_root_entries = StatusCache::<()>::default().max_root_entries();
         let slot_deltas = vec![
             (111, true, Status::default()),
             (222, true, Status::default()),
@@ -2449,7 +2449,7 @@ mod tests {
 
         let bank_slot = 222;
         let result =
-            verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot, max_cache_entries);
+            verify_slot_deltas_structural(slot_deltas.as_slice(), bank_slot, max_root_entries);
         assert_eq!(
             result,
             Err(VerifySlotDeltasError::SlotHasMultipleEntries(111)),
@@ -2458,7 +2458,7 @@ mod tests {
 
     #[test]
     fn test_verify_slot_deltas_with_history_good() {
-        let max_cache_entries = StatusCache::<()>::default().max_cache_entries();
+        let max_root_entries = StatusCache::<()>::default().max_root_entries();
         let mut slots_from_slot_deltas = HashSet::default();
         let mut slot_history = SlotHistory::default();
         // note: slot history expects slots to be added in numeric order
@@ -2472,14 +2472,14 @@ mod tests {
             &slots_from_slot_deltas,
             &slot_history,
             bank_slot,
-            max_cache_entries,
+            max_root_entries,
         );
         assert_eq!(result, Ok(()));
     }
 
     #[test]
     fn test_verify_slot_deltas_with_history_bad_slot_not_in_history() {
-        let max_cache_entries = StatusCache::<()>::default().max_cache_entries();
+        let max_root_entries = StatusCache::<()>::default().max_root_entries();
         let slots_from_slot_deltas = HashSet::from([
             0, // slot history has slot 0 added by default
             444, 222,
@@ -2492,7 +2492,7 @@ mod tests {
             &slots_from_slot_deltas,
             &slot_history,
             bank_slot,
-            max_cache_entries,
+            max_root_entries,
         );
 
         assert_eq!(
@@ -2503,7 +2503,7 @@ mod tests {
 
     #[test]
     fn test_verify_slot_deltas_with_history_bad_slot_not_in_deltas() {
-        let max_cache_entries = StatusCache::<()>::default().max_cache_entries();
+        let max_root_entries = StatusCache::<()>::default().max_root_entries();
         let slots_from_slot_deltas = HashSet::from([
             0, // slot history has slot 0 added by default
             444, 222,
@@ -2519,7 +2519,7 @@ mod tests {
             &slots_from_slot_deltas,
             &slot_history,
             bank_slot,
-            max_cache_entries,
+            max_root_entries,
         );
 
         assert_eq!(
