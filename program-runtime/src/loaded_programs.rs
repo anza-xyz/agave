@@ -25,6 +25,7 @@ use {
 #[cfg(feature = "metrics")]
 use {solana_svm_measure::measure::Measure, solana_svm_timings::ExecuteDetailsTimings};
 
+#[repr(transparent)]
 #[derive(Clone, Debug)]
 pub struct ProgramRuntimeEnvironment(Arc<BuiltinProgram<InvokeContext<'static, 'static>>>);
 impl std::hash::Hash for ProgramRuntimeEnvironment {
