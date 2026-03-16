@@ -4248,7 +4248,7 @@ mod tests {
             bank.slot().checked_add(1).unwrap(),
         ));
         // Immediately trigger WouldExceedMaxBlockCostLimit by setting all cost limits to 0
-        bank.write_cost_tracker().unwrap().set_limits(0, 0, 0);
+        bank.write_cost_tracker().unwrap().set_limits(0, 0, 0, 0);
 
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();

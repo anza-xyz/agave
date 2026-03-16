@@ -4419,7 +4419,13 @@ impl Bank {
             let mut cost_tracker = self.write_cost_tracker().unwrap();
             let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
             let vote_cost_limit = cost_tracker.get_vote_limit();
-            cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
+            let account_data_size_limit = cost_tracker.get_account_data_size_limit();
+            cost_tracker.set_limits(
+                account_cost_limit,
+                block_cost_limit,
+                vote_cost_limit,
+                account_data_size_limit,
+            );
         }
 
         self.apply_simd_0339_invoke_cost_changes();
@@ -5646,7 +5652,13 @@ impl Bank {
             let mut cost_tracker = self.write_cost_tracker().unwrap();
             let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
             let vote_cost_limit = cost_tracker.get_vote_limit();
-            cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
+            let account_data_size_limit = cost_tracker.get_account_data_size_limit();
+            cost_tracker.set_limits(
+                account_cost_limit,
+                block_cost_limit,
+                vote_cost_limit,
+                account_data_size_limit,
+            );
         }
 
         if new_feature_activations.contains(&feature_set::vote_state_v4::id()) {

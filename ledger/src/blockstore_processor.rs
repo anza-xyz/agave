@@ -5743,7 +5743,7 @@ pub mod tests {
         let block_limit = tx_cost.sum();
         bank.write_cost_tracker()
             .unwrap()
-            .set_limits(u64::MAX, block_limit, u64::MAX);
+            .set_limits(u64::MAX, block_limit, u64::MAX, u64::MAX);
 
         let tx_costs = vec![None, Some(tx_cost), None];
         // The transaction will fit when added the first time
