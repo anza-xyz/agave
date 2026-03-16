@@ -452,6 +452,69 @@ mod tests {
     }
 
     #[test]
+    fn test_max_root_entries() {
+        const INITIAL_MAX_ROOT_ENTRIES: usize = 4;
+        const GROWN_MAX_ROOT_ENTRIES: usize = 6;
+        const SHRUNK_MAX_ROOT_ENTRIES: usize = 3;
+
+        let mut status_cache = BankStatusCache::default();
+        let ancestors = Ancestors::default();
+        let oldest_sig = Signature::from([1_u8; 64]);
+        let oldest_blockhash = Hash::new_unique();
+        let newest_sig = Signature::from([2_u8; 64]);
+        let newest_blockhash = Hash::new_unique();
+
+        status_cache.set_max_root_entries(NonZeroUsize::new(INITIAL_MAX_ROOT_ENTRIES).unwrap());
+
+        status_cache.insert(&oldest_blockhash, oldest_sig, 0, ());
+        status_cache.insert(&newest_blockhash, newest_sig, 3, ());
+        for root in 1..INITIAL_MAX_ROOT_ENTRIES as Slot {
+            status_cache.add_root(root);
+        }
+
+        assert_eq!(status_cache.roots(), &HashSet::from([0_u64, 1, 2, 3]));
+        assert_eq!(
+            status_cache.get_status(oldest_sig, &oldest_blockhash, &ancestors),
+            Some((0, ()))
+        );
+        assert_eq!(
+            status_cache.get_status(newest_sig, &newest_blockhash, &ancestors),
+            Some((3, ()))
+        );
+
+        status_cache.set_max_root_entries(NonZeroUsize::new(GROWN_MAX_ROOT_ENTRIES).unwrap());
+        for root in INITIAL_MAX_ROOT_ENTRIES as Slot..GROWN_MAX_ROOT_ENTRIES as Slot {
+            status_cache.add_root(root);
+        }
+
+        assert_eq!(status_cache.roots(), &HashSet::from([0_u64, 1, 2, 3, 4, 5]));
+        assert_eq!(
+            status_cache.get_status(oldest_sig, &oldest_blockhash, &ancestors),
+            Some((0, ()))
+        );
+        assert_eq!(
+            status_cache.get_status(newest_sig, &newest_blockhash, &ancestors),
+            Some((3, ()))
+        );
+
+        status_cache.set_max_root_entries(NonZeroUsize::new(SHRUNK_MAX_ROOT_ENTRIES).unwrap());
+
+        assert_eq!(status_cache.roots(), &HashSet::from([3_u64, 4, 5]));
+        assert_eq!(
+            status_cache.get_status(oldest_sig, &oldest_blockhash, &ancestors),
+            None
+        );
+        assert_eq!(
+            status_cache.get_status(newest_sig, &newest_blockhash, &ancestors),
+            Some((3, ()))
+        );
+        assert!(!status_cache.cache.contains_key(&oldest_blockhash));
+        assert!(status_cache.cache.contains_key(&newest_blockhash));
+        assert!(!status_cache.slot_deltas.contains_key(&0));
+        assert!(status_cache.slot_deltas.contains_key(&3));
+    }
+
+    #[test]
     fn test_clear_signatures_sigs_are_gone() {
         let sig = Signature::default();
         let mut status_cache = BankStatusCache::default();
