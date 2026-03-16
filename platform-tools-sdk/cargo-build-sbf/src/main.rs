@@ -32,6 +32,7 @@ pub struct Config<'a> {
     target_directory: Option<Utf8PathBuf>,
     sbf_out_dir: Option<PathBuf>,
     platform_tools_version: Option<&'a str>,
+    platform_tools_path: Option<PathBuf>,
     dump: bool,
     features: Vec<String>,
     force_tools_install: bool,
@@ -60,6 +61,7 @@ impl Default for Config<'_> {
             target_directory: None,
             sbf_out_dir: None,
             platform_tools_version: None,
+            platform_tools_path: None,
             dump: false,
             features: vec![],
             force_tools_install: false,
@@ -320,8 +322,10 @@ fn build_solana(config: Config, manifest_path: Option<PathBuf>) {
             let program_name = generate_program_name(root_package);
             let validated_toolchain_version =
                 prepare_environment(&config, Some(root_package), &metadata);
-            let platform_tools_dir =
-                make_platform_tools_path_for_version(&validated_toolchain_version);
+            let platform_tools_dir = make_platform_tools_path_for_version(
+                &validated_toolchain_version,
+                config.platform_tools_path.as_deref(),
+            );
             invoke_cargo(&config, &platform_tools_dir, validated_toolchain_version);
             post_process(
                 &config,
@@ -334,7 +338,10 @@ fn build_solana(config: Config, manifest_path: Option<PathBuf>) {
     }
 
     let validated_toolchain_version = prepare_environment(&config, None, &metadata);
-    let platform_tools_dir = make_platform_tools_path_for_version(&validated_toolchain_version);
+    let platform_tools_dir = make_platform_tools_path_for_version(
+        &validated_toolchain_version,
+        config.platform_tools_path.as_deref(),
+    );
     invoke_cargo(&config, &platform_tools_dir, validated_toolchain_version);
 
     let all_sbf_packages = metadata
@@ -509,6 +516,17 @@ fn main() {
                 ),
         )
         .arg(
+            Arg::new("platform_tools_path")
+                .long("platform-tools-path")
+                .env("PLATFORM_TOOLS_PATH")
+                .value_name("PATH")
+                .takes_value(true)
+                .help(
+                    "Use pre-installed platform-tools from this path instead of downloading. \
+                     Useful for NixOS and other immutable filesystem environments.",
+                ),
+        )
+        .arg(
             Arg::new("verbose")
                 .short('v')
                 .long("verbose")
@@ -619,6 +637,7 @@ fn main() {
             }
         }),
         platform_tools_version: matches.value_of("tools_version"),
+        platform_tools_path: matches.value_of_t("platform_tools_path").ok(),
         dump: matches.is_present("dump"),
         features: matches.values_of_t("features").ok().unwrap_or_default(),
         force_tools_install: matches.is_present("force_tools_install"),
