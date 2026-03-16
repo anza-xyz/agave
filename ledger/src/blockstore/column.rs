@@ -274,23 +274,6 @@ fn deserialize_fixint_reject_trailing<T: DeserializeOwned>(data: &[u8]) -> Resul
     Ok(config.deserialize(data)?)
 }
 
-type SlotAndHashKey = [u8; std::mem::size_of::<Slot>() + HASH_BYTES];
-
-#[inline]
-fn slot_and_hash_key((slot, block_id): &(Slot, Hash)) -> SlotAndHashKey {
-    let mut key = [0u8; std::mem::size_of::<Slot>() + HASH_BYTES];
-    key[..8].copy_from_slice(&slot.to_be_bytes());
-    key[8..].copy_from_slice(&block_id.to_bytes());
-    key
-}
-
-fn slot_and_hash_index(key: &[u8]) -> (Slot, Hash) {
-    let slot = Slot::from_be_bytes(<[u8; 8]>::try_from(&key[..8]).unwrap());
-    let block_id =
-        Hash::new_from_array(<[u8; HASH_BYTES]>::try_from(&key[8..8 + HASH_BYTES]).unwrap());
-    (slot, block_id)
-}
-
 pub trait Column {
     // The logical key for how data will be accessed in this column
     type Index;
@@ -775,24 +758,24 @@ impl TypedColumn for columns::Index {
 }
 
 impl Column for columns::AlternateIndex {
-    type Index = (Slot, /* block_id */ Hash);
-    type Key = SlotAndHashKey;
+    type Index = <columns::AlternateSlotMeta as Column>::Index;
+    type Key = <columns::AlternateSlotMeta as Column>::Key;
 
     #[inline]
     fn key(index: &Self::Index) -> Self::Key {
-        slot_and_hash_key(index)
+        <columns::AlternateSlotMeta as Column>::key(index)
     }
 
     fn index(key: &[u8]) -> Self::Index {
-        slot_and_hash_index(key)
+        <columns::AlternateSlotMeta as Column>::index(key)
     }
 
     fn slot(index: Self::Index) -> Slot {
-        index.0
+        <columns::AlternateSlotMeta as Column>::slot(index)
     }
 
     fn as_index(slot: Slot) -> Self::Index {
-        (slot, Hash::default())
+        <columns::AlternateSlotMeta as Column>::as_index(slot)
     }
 }
 impl ColumnName for columns::AlternateIndex {
@@ -860,15 +843,21 @@ impl TypedColumn for columns::SlotMeta {
 
 impl Column for columns::AlternateSlotMeta {
     type Index = (Slot, /* block_id */ Hash);
-    type Key = SlotAndHashKey;
+    type Key = [u8; std::mem::size_of::<Slot>() + HASH_BYTES];
 
     #[inline]
-    fn key(index: &Self::Index) -> Self::Key {
-        slot_and_hash_key(index)
+    fn key((slot, block_id): &Self::Index) -> Self::Key {
+        convert_column_index_to_key_bytes!(Key,
+            ..8 => &slot.to_be_bytes(),
+            8.. => &block_id.to_bytes(),
+        )
     }
 
     fn index(key: &[u8]) -> Self::Index {
-        slot_and_hash_index(key)
+        convert_column_key_bytes_to_index!(key,
+            0..8  => Slot::from_be_bytes,
+            8..40 => Hash::new_from_array,
+        )
     }
 
     fn slot(index: Self::Index) -> Slot {
