@@ -7,9 +7,9 @@ use {
     crate::{
         post_processing::post_process,
         toolchain::{
-            corrupted_toolchain, generate_toolchain_name, get_base_rust_version,
-            install_and_link_tools, install_tools, make_platform_tools_path_for_version,
-            rust_target_triple, validate_platform_tools_version, DEFAULT_PLATFORM_TOOLS_VERSION,
+            corrupted_toolchain, generate_toolchain_name, install_and_link_tools, install_tools,
+            make_platform_tools_path_for_version, rust_target_triple, validate_platform_tools_version,
+            DEFAULT_PLATFORM_TOOLS_VERSION,
         },
         utils::spawn,
     },
@@ -213,7 +213,10 @@ fn invoke_cargo(config: &Config, platform_tools_dir: &Path, validated_toolchain_
 
     let mut toolchain_name: String;
     if !config.no_rustup_override {
-        toolchain_name = generate_toolchain_name(validated_toolchain_version.as_str());
+        toolchain_name = generate_toolchain_name(
+            validated_toolchain_version.as_str(),
+            config.platform_tools_path.as_deref(),
+        );
         toolchain_name = format!("+{toolchain_name}");
         cargo_build_args.push(toolchain_name.as_str());
     };
@@ -383,12 +386,10 @@ fn main() {
 
     // The following line is scanned by CI configuration script to
     // separate cargo caches according to the version of platform-tools.
-    let rust_base_version = get_base_rust_version(DEFAULT_PLATFORM_TOOLS_VERSION);
     let version = format!(
-        "{}\nplatform-tools {}\n{}",
+        "{}\nplatform-tools {}",
         crate_version!(),
         DEFAULT_PLATFORM_TOOLS_VERSION,
-        rust_base_version,
     );
     let matches = clap::Command::new(crate_name!())
         .about(crate_description!())

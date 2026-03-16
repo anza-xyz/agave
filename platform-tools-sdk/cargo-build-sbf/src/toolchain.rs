@@ -146,10 +146,11 @@ pub(crate) fn make_platform_tools_path_for_version(
         .join("platform-tools")
 }
 
-pub(crate) fn get_base_rust_version(platform_tools_version: &str) -> String {
-    // This function is used for display purposes before arg parsing,
-    // so we use the default path (None) rather than a custom path.
-    let target_path = make_platform_tools_path_for_version(platform_tools_version, None);
+pub(crate) fn get_base_rust_version(
+    platform_tools_version: &str,
+    platform_tools_path: Option<&Path>,
+) -> String {
+    let target_path = make_platform_tools_path_for_version(platform_tools_version, platform_tools_path);
     let rustc = target_path.join("rust").join("bin").join("rustc");
     if !rustc.exists() {
         return String::from("");
@@ -361,12 +362,16 @@ pub(crate) fn corrupted_toolchain(platform_tools_dir: &Path) -> bool {
         || !cargo.try_exists().unwrap_or(false)
 }
 
-pub(crate) fn generate_toolchain_name(requested_toolchain_version: &str) -> String {
+pub(crate) fn generate_toolchain_name(
+    requested_toolchain_version: &str,
+    platform_tools_path: Option<&Path>,
+) -> String {
     if requested_toolchain_version == DEFAULT_PLATFORM_TOOLS_VERSION {
         return format!("{DEFAULT_RUST_VERSION}-sbpf-solana-{DEFAULT_PLATFORM_TOOLS_VERSION}");
     }
 
-    let rustc_version_string = get_base_rust_version(requested_toolchain_version);
+    let rustc_version_string =
+        get_base_rust_version(requested_toolchain_version, platform_tools_path);
     // The version string has the format 'rustc 1.84.1'
     let mut it = rustc_version_string.split_whitespace();
     // Jump 'rustc'
@@ -395,7 +400,10 @@ fn link_solana_toolchain(
     if config.verbose {
         debug!("{rustup_output}");
     }
-    let requested_toolchain_name = generate_toolchain_name(requested_toolchain_version);
+    let requested_toolchain_name = generate_toolchain_name(
+        requested_toolchain_version,
+        config.platform_tools_path.as_deref(),
+    );
     let mut do_link = true;
     for line in rustup_output.lines() {
         let substrings: Vec<&str> = line.split(' ').collect();
