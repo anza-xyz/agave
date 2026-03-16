@@ -1,6 +1,6 @@
 use {
     crate::{
-        bytes::{advance_offset_for_array, check_remaining, unchecked_read_slice_data},
+        bytes::{advance_offset_for_array, unchecked_read_slice_data},
         result::{Result, TransactionViewError},
     },
     solana_program_runtime::execution_budget::MIN_HEAP_FRAME_BYTES,
@@ -86,12 +86,7 @@ impl TransactionConfigFrame {
             u16::try_from(mask_offset).map_err(|_| TransactionViewError::SanitizeError)?;
         let values_offset =
             u16::try_from(*offset).map_err(|_| TransactionViewError::SanitizeError)?;
-        // Validate that the config-values region is in bounds.
-        check_remaining(
-            bytes,
-            values_offset as usize,
-            (num_values as usize).wrapping_mul(Self::CONFIG_VALUE_SIZE),
-        )?;
+
         // advance offset
         advance_offset_for_array::<u32>(bytes, offset, num_values as u16)?;
 
