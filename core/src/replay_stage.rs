@@ -143,6 +143,7 @@ pub enum HeaviestForkFailures {
     ),
 }
 
+#[allow(dead_code)]
 enum ForkReplayMode {
     Serial,
     Parallel(ThreadPool),
@@ -270,7 +271,6 @@ pub struct ReplayStageConfig {
     // Stops voting until this slot has been reached. Should be used to avoid
     // duplicate voting which can lead to slashing.
     pub wait_to_vote_slot: Option<Slot>,
-    pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
     pub blockstore: Arc<Blockstore>,
     pub bank_forks: Arc<RwLock<BankForks>>,
@@ -581,7 +581,6 @@ impl ReplayStage {
             wait_for_vote_to_start_leader,
             tower_storage,
             wait_to_vote_slot,
-            replay_forks_threads,
             replay_transactions_threads,
             blockstore,
             bank_forks,
@@ -714,17 +713,7 @@ impl ReplayStage {
                 r_bank_forks.working_bank()
             };
             let mut last_threshold_failure_slot = 0;
-            // Thread pool to (maybe) replay multiple threads in parallel
-            let replay_mode = if replay_forks_threads.get() == 1 {
-                ForkReplayMode::Serial
-            } else {
-                let pool = rayon::ThreadPoolBuilder::new()
-                    .num_threads(replay_forks_threads.get())
-                    .thread_name(|i| format!("solReplayFork{i:02}"))
-                    .build()
-                    .expect("new rayon threadpool");
-                ForkReplayMode::Parallel(pool)
-            };
+            let replay_mode = ForkReplayMode::Serial;
             // Thread pool to replay multiple transactions within one block in parallel
             let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(replay_transactions_threads.get())

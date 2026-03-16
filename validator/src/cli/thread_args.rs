@@ -17,7 +17,6 @@ pub struct DefaultThreadArgs {
     pub block_production_num_workers: String,
     pub ip_echo_server_threads: String,
     pub rayon_global_threads: String,
-    pub replay_forks_threads: String,
     pub replay_transactions_threads: String,
     pub tpu_sigverify_threads: String,
     pub tpu_transaction_forward_receive_threads: String,
@@ -41,7 +40,6 @@ impl Default for DefaultThreadArgs {
             block_production_num_workers: BankingStage::default_num_workers().to_string(),
             ip_echo_server_threads: IpEchoServerThreadsArg::bounded_default().to_string(),
             rayon_global_threads: RayonGlobalThreadsArg::bounded_default().to_string(),
-            replay_forks_threads: ReplayForksThreadsArg::bounded_default().to_string(),
             replay_transactions_threads: ReplayTransactionsThreadsArg::bounded_default()
                 .to_string(),
             tpu_sigverify_threads: TpuSigverifyThreadsArg::bounded_default().to_string(),
@@ -68,7 +66,6 @@ pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
         new_thread_arg::<BlockProductionNumWorkersArg>(&defaults.block_production_num_workers),
         new_thread_arg::<IpEchoServerThreadsArg>(&defaults.ip_echo_server_threads),
         new_thread_arg::<RayonGlobalThreadsArg>(&defaults.rayon_global_threads),
-        new_thread_arg::<ReplayForksThreadsArg>(&defaults.replay_forks_threads),
         new_thread_arg::<ReplayTransactionsThreadsArg>(&defaults.replay_transactions_threads),
         new_thread_arg::<TpuSigverifyThreadsArg>(&defaults.tpu_sigverify_threads),
         new_thread_arg::<TpuTransactionForwardReceiveThreadArgs>(
@@ -103,7 +100,6 @@ pub struct NumThreadConfig {
     pub block_production_num_workers: NonZeroUsize,
     pub ip_echo_server_threads: NonZeroUsize,
     pub rayon_global_threads: NonZeroUsize,
-    pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
     pub tpu_sigverify_threads: NonZeroUsize,
     pub tpu_transaction_forward_receive_threads: NonZeroUsize,
@@ -143,7 +139,6 @@ pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
             NonZeroUsize
         ),
         rayon_global_threads: value_t_or_exit!(matches, RayonGlobalThreadsArg::NAME, NonZeroUsize),
-        replay_forks_threads: value_t_or_exit!(matches, ReplayForksThreadsArg::NAME, NonZeroUsize),
         replay_transactions_threads: value_t_or_exit!(
             matches,
             ReplayTransactionsThreadsArg::NAME,
@@ -292,23 +287,6 @@ impl ThreadArg for RayonGlobalThreadsArg {
 
     fn default() -> usize {
         num_cpus::get()
-    }
-}
-
-struct ReplayForksThreadsArg;
-impl ThreadArg for ReplayForksThreadsArg {
-    const NAME: &'static str = "replay_forks_threads";
-    const LONG_NAME: &'static str = "replay-forks-threads";
-    const HELP: &'static str = "Number of threads to use for replay of blocks on different forks";
-
-    fn default() -> usize {
-        // Default to single threaded fork execution
-        1
-    }
-    fn max() -> usize {
-        // Choose a value that is small enough to limit the overhead of having a large thread pool
-        // while also being large enough to allow replay of all active forks in most scenarios
-        4
     }
 }
 

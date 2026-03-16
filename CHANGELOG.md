@@ -19,6 +19,7 @@ Release channels have their own copy of this changelog:
 #### Changes
 ### Validator
 #### Breaking
+* Removed the `--replay-forks-threads` CLI argument. Fork replay now always runs in serial mode.
 #### Deprecations
 * Using `minimal` for `--accounts-index-limit` is now deprecated.
 #### Changes
