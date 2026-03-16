@@ -25,6 +25,7 @@ mod tests {
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
         },
         solana_epoch_schedule::EpochSchedule,
+        solana_hash::Hash,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         solana_stake_interface::state::Stake,
@@ -108,6 +109,7 @@ mod tests {
 
         let accounts_db = &bank2.rc.accounts.accounts_db;
 
+        bank2.set_block_id(Some(Hash::default()));
         bank2.squash();
         bank2.force_flush_accounts_cache();
 
@@ -120,6 +122,7 @@ mod tests {
             let mut bank_fields = bank2.get_fields_to_serialize();
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
             let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
+            let block_id = Some(bank_fields.block_id);
             serde_snapshot::serialize_bank_snapshot_into(
                 &mut writer,
                 bank_fields,
@@ -131,6 +134,7 @@ mod tests {
                     unused_epoch_accounts_hash: None,
                     versioned_epoch_stakes,
                     accounts_lt_hash,
+                    block_id,
                 },
             )
             .unwrap();
@@ -193,6 +197,7 @@ mod tests {
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         bank0.squash();
         let mut bank = Bank::new_from_parent(bank0.clone(), *bank0.leader(), 1);
+        bank.set_block_id(Some(Hash::default()));
         bank.freeze();
         add_root_and_flush_write_cache(&bank0);
 
@@ -277,6 +282,7 @@ mod tests {
         while !bank.is_complete() {
             bank.fill_bank_with_ticks_for_tests();
         }
+        bank.set_block_id(Some(Hash::default()));
 
         // Set extra field
         bank.fee_rate_governor.lamports_per_signature = 7000;
@@ -356,7 +362,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "7NL9Sugo2js3PtueK7izqSwX5dGWKDMDVnjo6MirVPWE")
+            frozen_abi(digest = "ELfWa1ABrJu9sQABjieyqnWioDaHNykbmYqsQr7yYYBb")
         )]
         #[derive(serde::Serialize)]
         pub struct BankAbiTestWrapper {
@@ -369,6 +375,7 @@ mod tests {
             S: serde::Serializer,
         {
             let bank = Bank::default_for_tests();
+            bank.set_block_id(Some(Hash::default()));
             let snapshot_storages = AccountsDb::example().get_storages(0..1).0;
             // ensure there is at least one snapshot storage example for ABI digesting
             assert!(!snapshot_storages.is_empty());
@@ -394,6 +401,7 @@ mod tests {
                     unused_epoch_accounts_hash: Some(Hash::new_unique()),
                     versioned_epoch_stakes,
                     accounts_lt_hash: Some(AccountsLtHash(LtHash::identity()).into()),
+                    block_id: Some(Hash::new_unique()),
                 },
             )
         }

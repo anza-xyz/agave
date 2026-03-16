@@ -12469,6 +12469,7 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
 
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.rent_collector.rent = wrong_rent.clone();
+    bank.set_block_id(Some(Hash::default()));
 
     // Serialize bank to snapshot
     let snapshot_storages = bank.get_snapshot_storages(None);
@@ -12507,4 +12508,71 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
     // Verify the bank's rent matches the sysvar, NOT the corrupted fields
     assert_eq!(new_bank.rent_collector.rent, expected_rent);
     assert_ne!(new_bank.rent_collector.rent, wrong_rent);
+}
+
+#[test]
+fn test_calculate_and_set_block_id_for_dcou() {
+    // scenario 1: block id already set
+    {
+        let bank = create_simple_test_bank(123);
+        let block_id = Hash::new_unique();
+        bank.set_block_id(Some(block_id));
+        Bank::calculate_and_set_block_id_for_dcou(&bank);
+        assert_eq!(bank.block_id(), Some(block_id));
+    }
+
+    // scenario 2: block id unset
+    {
+        let bank1 = Arc::new(create_simple_test_bank(123));
+        let block_id1 = Hash::new_unique();
+        // oldest ancestor must have block_id set
+        bank1.set_block_id(Some(block_id1));
+        bank1.fill_bank_with_ticks_for_tests();
+
+        let bank2 = new_from_parent(bank1);
+        Bank::calculate_and_set_block_id_for_dcou(&bank2);
+
+        // ensure expected block_id is correct
+        assert_eq!(
+            bank2.block_id(),
+            Some(hashv(&[block_id1.as_ref(), bank2.hash().as_ref()])),
+        );
+    }
+
+    // scenario 3: block id unset, multiple parents
+    {
+        let mut bank = Arc::new(create_simple_test_bank(123));
+        // oldest ancestor must have block id set
+        bank.set_block_id(Some(Hash::new_unique()));
+        for _ in 0..7 {
+            bank.fill_bank_with_ticks_for_tests();
+            bank = new_from_parent(bank).into();
+        }
+
+        Bank::calculate_and_set_block_id_for_dcou(&bank);
+
+        // we don't calculate the expected parent block id
+        // out-of-band, since scenario 2 covers that
+        assert_eq!(
+            bank.block_id(),
+            Some(hashv(&[
+                bank.parent_block_id().unwrap().as_ref(),
+                bank.hash().as_ref(),
+            ])),
+        );
+    }
+
+    // scenario 4: no parent
+    {
+        let bank = create_simple_test_bank(123);
+        assert!(bank.parent().is_none());
+        assert!(bank.block_id().is_none());
+
+        // must freeze() to ensure bank hash is calculated
+        bank.freeze();
+        let expected_block_id = bank.hash();
+
+        Bank::calculate_and_set_block_id_for_dcou(&bank);
+        assert_eq!(bank.block_id(), Some(expected_block_id));
+    }
 }

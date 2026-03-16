@@ -14,6 +14,7 @@ use {
     solana_core::snapshot_packager_service::SnapshotPackagerService,
     solana_genesis_config::GenesisConfig,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
+    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_net_utils::SocketAddrSpace,
     solana_runtime::{
@@ -193,6 +194,9 @@ where
         if slot % set_root_interval == 0 || slot == last_slot {
             if !bank.is_complete() {
                 bank.fill_bank_with_ticks_for_tests();
+            }
+            if bank.block_id().is_none() {
+                bank.set_block_id(Some(Hash::default()));
             }
             bank_forks.read().unwrap().prune_program_cache(bank.slot());
             // set_root should send a snapshot request
@@ -439,6 +443,7 @@ fn test_bank_forks_incremental_snapshot() {
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
             bank.fill_bank_with_ticks_for_tests();
+            bank.set_block_id(Some(Hash::default()));
 
             bank_scheduler
         };
@@ -503,6 +508,8 @@ fn make_full_snapshot_archive(
         "Making full snapshot archive from bank at slot: {}",
         bank.slot(),
     );
+    // The bank must have a block id set to take a snapshot.
+    Bank::calculate_and_set_block_id_for_dcou(bank);
     snapshot_bank_utils::bank_to_full_snapshot_archive(
         &snapshot_config.bank_snapshots_dir,
         bank,
@@ -524,6 +531,8 @@ fn make_incremental_snapshot_archive(
         bank.slot(),
         incremental_snapshot_base_slot,
     );
+    // The bank must have a block id set to take a snapshot.
+    Bank::calculate_and_set_block_id_for_dcou(bank);
     snapshot_bank_utils::bank_to_incremental_snapshot_archive(
         &snapshot_config.bank_snapshots_dir,
         bank,
@@ -680,6 +689,7 @@ fn test_snapshots_with_background_services() {
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
             bank.fill_bank_with_ticks_for_tests();
+            bank.set_block_id(Some(Hash::default()));
         }
 
         // Call `BankForks::set_root()` to cause snapshots to be taken
@@ -839,6 +849,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
         assert_eq!(bank.process_transaction(&tx), Ok(()));
 
         bank.fill_bank_with_ticks_for_tests();
+        bank.set_block_id(Some(Hash::default()));
 
         // Inject a fastboot snapshot at a specific slot
         if slot % FASTBOOT_SNAPSHOT_INTERVAL_SLOTS == 0 {

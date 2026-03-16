@@ -883,6 +883,7 @@ mod tests {
             bank.squash();
             bank.force_flush_accounts_cache();
         }
+        bank.set_block_id(Some(Hash::default()));
 
         // verification happens at startup, so mimic the behavior by loading from a snapshot
         let snapshot_config = SnapshotConfig::default();
@@ -991,6 +992,7 @@ mod tests {
             bank.squash();
             bank.force_flush_accounts_cache();
         }
+        bank.set_block_id(Some(Hash::default()));
 
         let snapshot_config = SnapshotConfig::default();
         let bank_snapshots_dir = TempDir::new().unwrap();

@@ -2529,6 +2529,9 @@ fn main() {
                         bank.slot(),
                     );
 
+                    // The bank must have a block id set to take a snapshot.
+                    Bank::calculate_and_set_block_id_for_dcou(&bank);
+
                     if is_incremental {
                         if starting_snapshot_hashes.is_none() {
                             eprintln!(

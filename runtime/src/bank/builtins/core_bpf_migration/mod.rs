@@ -2150,6 +2150,7 @@ pub(crate) mod tests {
         test_context.run_program_checks(&bank, upgrade_slot);
 
         bank.fill_bank_with_ticks_for_tests();
+        bank.set_block_id(Some(Hash::default()));
         // Force flush the bank to create the account storage entry
         bank.squash();
         bank.force_flush_accounts_cache();

@@ -488,6 +488,7 @@ pub struct BankFieldsToDeserialize {
     pub(crate) accounts_data_len: u64,
     pub(crate) accounts_lt_hash: AccountsLtHash,
     pub(crate) bank_hash_stats: BankHashStats,
+    pub(crate) block_id: Option<Hash>, // Option wrapper can be removed in version after v4.1
 }
 
 /// Bank's common fields shared by all supported snapshot versions for serialization.
@@ -526,6 +527,7 @@ pub struct BankFieldsToSerialize {
     pub accounts_data_len: u64,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     pub accounts_lt_hash: AccountsLtHash,
+    pub block_id: Hash,
 }
 
 // Can't derive PartialEq because RwLock doesn't implement PartialEq
@@ -677,6 +679,7 @@ impl BankFieldsToSerialize {
             accounts_data_len: u64::default(),
             versioned_epoch_stakes: HashMap::default(),
             accounts_lt_hash: AccountsLtHash(LtHash([0x7E57; LtHash::NUM_ELEMENTS])),
+            block_id: Hash::default(),
         }
     }
 }
@@ -2020,7 +2023,7 @@ impl Bank {
             accounts_lt_hash: Mutex::new(fields.accounts_lt_hash),
             cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
-            block_id: RwLock::new(None),
+            block_id: RwLock::new(fields.block_id),
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
             expected_bank_hash: RwLock::new(None),
@@ -2128,6 +2131,7 @@ impl Bank {
             accounts_data_len: self.load_accounts_data_size(),
             versioned_epoch_stakes: self.epoch_stakes.clone(),
             accounts_lt_hash: self.accounts_lt_hash.lock().unwrap().clone(),
+            block_id: self.block_id().expect("block id must be set"),
         }
     }
 
@@ -6161,6 +6165,45 @@ impl Bank {
         } else {
             self.stakes_cache.stakes().clone()
         }
+    }
+
+    /// Calculates and sets block id for `bank`.
+    ///
+    /// This fn operates recursively. Since calculating the block id requires
+    /// the bank's parent's block id, if the bank's parent's block id is unset,
+    /// it will be calculated and set first.
+    ///
+    /// Note this fn will also freeze `bank`.
+    ///
+    /// Only to be called from dev contexts.
+    /// Couldn't make the fn actually DCOU, since it is called by
+    /// Validator::new() when warping a slot.
+    pub fn calculate_and_set_block_id_for_dcou(bank: &Bank) {
+        if bank.block_id().is_some() {
+            // done!
+            return;
+        }
+
+        let Some(parent) = bank.parent() else {
+            // If bank doesn't have a parent, then use bank hash for block id,
+            // as parent's block id is not available for the calculation below.
+            // Must freeze() to ensure bank hash has been calculated.
+            bank.freeze();
+            bank.set_block_id(Some(bank.hash()));
+            return;
+        };
+
+        let parent_block_id = parent.block_id().unwrap_or_else(|| {
+            // if the parent's block id isn't set, we recurse so it gets set
+            Self::calculate_and_set_block_id_for_dcou(&parent);
+            parent.block_id().unwrap()
+        });
+
+        // must freeze() to ensure bank hash has been calculated
+        bank.freeze();
+        let block_id =
+            solana_sha256_hasher::hashv(&[parent_block_id.as_ref(), bank.hash().as_ref()]);
+        bank.set_block_id(Some(block_id));
     }
 }
 
