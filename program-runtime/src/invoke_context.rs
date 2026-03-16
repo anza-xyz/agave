@@ -6,7 +6,6 @@ use {
     solana_instruction::AccountMeta,
     solana_message::{LegacyMessage, Message, SanitizedMessage},
     solana_sdk_ids::sysvar,
-    solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     std::collections::{HashMap, HashSet},
 };
@@ -39,6 +38,7 @@ use {
     solana_svm_measure::measure::Measure,
     solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{
         IndexOfAccount, MAX_ACCOUNTS_PER_TRANSACTION, instruction::InstructionContext,
         instruction_accounts::InstructionAccount, transaction::TransactionContext,
@@ -585,7 +585,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             MemoryMapping::new(Vec::new(), &mock_config, SBPFVersion::V0).unwrap();
         let mut vm = EbpfVm::new(
             Arc::clone(
-                &*self
+                &**self
                     .environment_config
                     .program_runtime_environment_for_execution,
             ),
