@@ -39,7 +39,6 @@ frozen-abi = [
 [dependencies]
 agave-fs = { workspace = true }
 ahash = { workspace = true }
-bincode = { workspace = true }
 blake3 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
@@ -80,7 +79,6 @@ solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true, optional = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
-solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true, optional = true }
 solana-slot-hashes = { workspace = true }
 solana-stake-interface = { workspace = true, optional = true }
@@ -93,7 +91,6 @@ solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true, optional = true }
 spl-generic-token = { workspace = true }
-static_assertions = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 
@@ -101,19 +98,18 @@ thiserror = { workspace = true }
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
+bincode = { workspace = true }
 criterion = { workspace = true }
-libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
 rand_chacha = { workspace = true }
 serde_bytes = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-compute-budget = { path = "../compute-budget", features = ["agave-unstable-api"] }
 solana-instruction = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-sha256-hasher = { workspace = true }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-slot-history = { workspace = true }
-solana-svm = { path = "../svm", features = ["agave-unstable-api"] }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }

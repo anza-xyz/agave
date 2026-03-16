@@ -5901,7 +5901,6 @@ version = "4.1.0-alpha.0"
 dependencies = [
  "agave-fs",
  "ahash 0.8.12",
- "bincode",
  "blake3",
  "bv",
  "dashmap",
@@ -5933,7 +5932,6 @@ dependencies = [
  "solana-rayon-threadlimit",
  "solana-rent 4.1.0",
  "solana-reward-info",
- "solana-sha256-hasher",
  "solana-signer",
  "solana-slot-hashes",
  "solana-stake-interface",
@@ -5946,7 +5944,6 @@ dependencies = [
  "solana-transaction-error",
  "solana-vote-program",
  "spl-generic-token",
- "static_assertions",
  "tempfile",
  "thiserror 2.0.18",
 ]
