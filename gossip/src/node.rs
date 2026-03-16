@@ -300,7 +300,7 @@ impl Node {
             bind_ip_addr,
             port_range,
             retransmit_broadcast_udp_config,
-            4,
+            2,
         )
         .expect("broadcast multi_bind");
         // Multihoming TX for broadcast
@@ -308,7 +308,7 @@ impl Node {
             &mut Self::bind_to_extra_ip(
                 &bind_ip_addrs,
                 broadcast_port,
-                4,
+                2,
                 retransmit_broadcast_udp_config,
             )
             .expect("Secondary bind broadcast"),
