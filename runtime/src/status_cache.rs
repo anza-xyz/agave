@@ -225,7 +225,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
     }
 
     pub fn purge_roots(&mut self) {
-        if self.roots.len() > self.max_root_entries() {
+        while self.roots.len() > self.max_root_entries() {
             if let Some(min) = self.roots.iter().min().cloned() {
                 self.roots.remove(&min);
                 self.cache.retain(|_, (fork, _, _)| *fork > min);
