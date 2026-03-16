@@ -570,9 +570,7 @@ pub fn parse_args(matches: &ArgMatches) -> Result<Config, &'static str> {
         .value_of("transaction_data_file")
         .map(|s| s.to_string());
 
-    if matches.is_present("use_txv1") {
-        args.use_txv1 = true;
-    }
+    args.use_txv1 = matches.is_present("use_txv1");
 
     Ok(args)
 }
