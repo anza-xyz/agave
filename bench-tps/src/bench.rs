@@ -18,7 +18,10 @@ use {
     solana_hash::Hash,
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
-    solana_message::Message,
+    solana_message::{
+        Message, VersionedMessage,
+        v1::{Message as V1Message, TransactionConfig},
+    },
     solana_metrics::{self, datapoint_info},
     solana_native_token::Sol,
     solana_pubkey::Pubkey,
@@ -150,6 +153,7 @@ struct TransactionChunkGenerator<'a, 'b, T: ?Sized> {
     compute_unit_price: Option<ComputeUnitPrice>,
     instruction_padding_config: Option<InstructionPaddingConfig>,
     skip_tx_account_data_size: bool,
+    use_txv1: bool,
 }
 
 impl<'a, 'b, T> TransactionChunkGenerator<'a, 'b, T>
@@ -165,6 +169,7 @@ where
         instruction_padding_config: Option<InstructionPaddingConfig>,
         num_conflict_groups: Option<usize>,
         skip_tx_account_data_size: bool,
+        use_txv1: bool,
     ) -> Self {
         let account_chunks = if let Some(num_conflict_groups) = num_conflict_groups {
             KeypairChunks::new_with_conflict_groups(gen_keypairs, chunk_size, num_conflict_groups)
@@ -183,6 +188,7 @@ where
             compute_unit_price,
             instruction_padding_config,
             skip_tx_account_data_size,
+            use_txv1,
         }
     }
 
@@ -221,6 +227,7 @@ where
                 &self.instruction_padding_config,
                 &self.compute_unit_price,
                 self.skip_tx_account_data_size,
+                self.use_txv1,
             )
         };
 
@@ -419,6 +426,7 @@ where
         num_conflict_groups,
         block_data_file,
         transaction_data_file,
+        use_txv1,
         ..
     } = config;
 
@@ -432,6 +440,7 @@ where
         instruction_padding_config,
         num_conflict_groups,
         skip_tx_account_data_size,
+        use_txv1,
     );
 
     let first_tx_count = loop {
@@ -573,6 +582,7 @@ fn generate_system_txs(
     instruction_padding_config: &Option<InstructionPaddingConfig>,
     compute_unit_price: &Option<ComputeUnitPrice>,
     skip_tx_account_data_size: bool,
+    use_txv1: bool,
 ) -> Vec<TimestampedTransaction> {
     let pairs: Vec<_> = if !reclaim {
         source.iter().zip(dest.iter()).collect()
@@ -613,6 +623,7 @@ fn generate_system_txs(
                         instruction_padding_config,
                         compute_unit_price,
                         skip_tx_account_data_size,
+                        use_txv1,
                     ),
                     timestamp: Some(timestamp()),
                     compute_unit_price,
@@ -631,6 +642,7 @@ fn generate_system_txs(
                     instruction_padding_config,
                     None,
                     skip_tx_account_data_size,
+                    use_txv1,
                 ),
                 timestamp: Some(timestamp()),
                 compute_unit_price: None,
@@ -640,6 +652,39 @@ fn generate_system_txs(
 }
 
 fn transfer_with_compute_unit_price_and_padding(
+    from_keypair: &Keypair,
+    to: &Pubkey,
+    lamports: u64,
+    recent_blockhash: Hash,
+    instruction_padding_config: &Option<InstructionPaddingConfig>,
+    compute_unit_price: Option<u64>,
+    skip_tx_account_data_size: bool,
+    use_txv1: bool,
+) -> VersionedTransaction {
+    if use_txv1 {
+        transfer_with_compute_unit_price_and_padding_v1(
+            from_keypair,
+            to,
+            lamports,
+            recent_blockhash,
+            instruction_padding_config,
+            compute_unit_price,
+            skip_tx_account_data_size,
+        )
+    } else {
+        transfer_with_compute_unit_price_and_padding_legacy(
+            from_keypair,
+            to,
+            lamports,
+            recent_blockhash,
+            instruction_padding_config,
+            compute_unit_price,
+            skip_tx_account_data_size,
+        )
+    }
+}
+
+fn transfer_with_compute_unit_price_and_padding_legacy(
     from_keypair: &Keypair,
     to: &Pubkey,
     lamports: u64,
@@ -685,6 +730,50 @@ fn transfer_with_compute_unit_price_and_padding(
     }
     let message = Message::new(&instructions, Some(&from_pubkey));
     Transaction::new(&[from_keypair], message, recent_blockhash).into()
+}
+
+fn transfer_with_compute_unit_price_and_padding_v1(
+    from_keypair: &Keypair,
+    to: &Pubkey,
+    lamports: u64,
+    recent_blockhash: Hash,
+    instruction_padding_config: &Option<InstructionPaddingConfig>,
+    compute_unit_price: Option<u64>,
+    skip_tx_account_data_size: bool,
+) -> VersionedTransaction {
+    let from_pubkey = from_keypair.pubkey();
+    let transfer_instruction = system_instruction::transfer(&from_pubkey, to, lamports);
+    let instruction = if let Some(instruction_padding_config) = instruction_padding_config {
+        wrap_instruction(
+            instruction_padding_config.program_id,
+            transfer_instruction,
+            vec![],
+            instruction_padding_config.data_size,
+        )
+        .expect("Could not create padded instruction")
+    } else {
+        transfer_instruction
+    };
+    let instructions = vec![instruction];
+    let mut config = TransactionConfig::empty();
+    if !skip_tx_account_data_size {
+        config.loaded_accounts_data_size_limit = Some(get_transaction_loaded_accounts_data_size(
+            instruction_padding_config.is_some(),
+        ));
+    }
+    if instruction_padding_config.is_some() {
+        config.compute_unit_limit = Some(PADDED_TRANSFER_COMPUTE_UNIT);
+    }
+
+    if let Some(compute_unit_price) = compute_unit_price {
+        config.compute_unit_limit = Some(TRANSFER_TRANSACTION_COMPUTE_UNIT);
+        config.priority_fee = Some(compute_unit_price);
+    }
+    let message =
+        V1Message::try_compile_with_config(&from_pubkey, &instructions, recent_blockhash, config)
+            .unwrap();
+    let versioned_message = VersionedMessage::V1(message);
+    VersionedTransaction::try_new(versioned_message, &[from_keypair]).unwrap()
 }
 
 fn get_nonce_accounts<T: 'static + TpsClient + Send + Sync + ?Sized>(
