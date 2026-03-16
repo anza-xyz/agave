@@ -61,11 +61,13 @@ pub fn deploy_program(
 ) -> Result<(), InstructionError> {
     #[cfg(feature = "metrics")]
     let mut register_syscalls_time = Measure::start("register_syscalls_time");
-    let deployment_program_runtime_environment =
-        morph_into_deployment_environment(program_runtime_environment.clone()).map_err(|e| {
-            ic_logger_msg!(log_collector, "Failed to register syscalls: {}", e);
-            InstructionError::ProgramEnvironmentSetupFailure
-        })?;
+    let deployment_program_runtime_environment = morph_into_deployment_environment(
+        ProgramRuntimeEnvironment::clone(&program_runtime_environment),
+    )
+    .map_err(|e| {
+        ic_logger_msg!(log_collector, "Failed to register syscalls: {}", e);
+        InstructionError::ProgramEnvironmentSetupFailure
+    })?;
     #[cfg(feature = "metrics")]
     {
         register_syscalls_time.stop();

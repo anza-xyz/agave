@@ -108,7 +108,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
 
         ProgramAccountLoadResult::ProgramOfLoaderV1(program_account) => ProgramCacheEntry::new(
             program_account.owner(),
-            program_runtime_environment.clone(),
+            ProgramRuntimeEnvironment::clone(program_runtime_environment),
             0,
             DELAY_VISIBILITY_SLOT_OFFSET,
             program_account.data(),
@@ -120,7 +120,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
 
         ProgramAccountLoadResult::ProgramOfLoaderV2(program_account) => ProgramCacheEntry::new(
             program_account.owner(),
-            program_runtime_environment.clone(),
+            ProgramRuntimeEnvironment::clone(program_runtime_environment),
             0,
             DELAY_VISIBILITY_SLOT_OFFSET,
             program_account.data(),
@@ -141,7 +141,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
             .and_then(|programdata| {
                 ProgramCacheEntry::new(
                     program_account.owner(),
-                    program_runtime_environment.clone(),
+                    ProgramRuntimeEnvironment::clone(program_runtime_environment),
                     deployment_slot,
                     deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
                     programdata,
@@ -164,7 +164,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
                 .and_then(|elf_bytes| {
                     ProgramCacheEntry::new(
                         &loader_v4::id(),
-                        program_runtime_environment.clone(),
+                        ProgramRuntimeEnvironment::clone(program_runtime_environment),
                         deployment_slot,
                         deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
                         elf_bytes,
@@ -178,7 +178,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
         }
     }
     .unwrap_or_else(|(deployment_slot, owner)| {
-        let env = program_runtime_environment.clone();
+        let env = ProgramRuntimeEnvironment::clone(program_runtime_environment);
         ProgramCacheEntry::new_tombstone(
             deployment_slot,
             owner,
@@ -467,7 +467,7 @@ mod tests {
 
         let result = ProgramCacheEntry::new(
             &loader,
-            environment.clone(),
+            ProgramRuntimeEnvironment::clone(&environment),
             slot,
             slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             &buffer,
@@ -573,7 +573,7 @@ mod tests {
         let program_runtime_environment = get_mock_program_runtime_environment();
         let expected = ProgramCacheEntry::new(
             account_data.owner(),
-            program_runtime_environment.clone(),
+            ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             0,
             DELAY_VISIBILITY_SLOT_OFFSET,
             account_data.data(),
@@ -665,7 +665,7 @@ mod tests {
         let program_runtime_environment = get_mock_program_runtime_environment();
         let expected = ProgramCacheEntry::new(
             account_data.owner(),
-            program_runtime_environment.clone(),
+            ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             0,
             DELAY_VISIBILITY_SLOT_OFFSET,
             account_data.data(),
@@ -748,7 +748,7 @@ mod tests {
         let program_runtime_environment = get_mock_program_runtime_environment();
         let expected = ProgramCacheEntry::new(
             account_data.owner(),
-            program_runtime_environment.clone(),
+            ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             0,
             DELAY_VISIBILITY_SLOT_OFFSET,
             account_data.data(),
@@ -767,7 +767,8 @@ mod tests {
         account_data.set_owner(bpf_loader::id());
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let upcoming_environment = get_mock_program_runtime_environment();
-        let current_environment = batch_processor.program_runtime_environment.clone();
+        let current_environment =
+            ProgramRuntimeEnvironment::clone(&batch_processor.program_runtime_environment);
         {
             let mut epoch_boundary_preparation =
                 batch_processor.epoch_boundary_preparation.write().unwrap();

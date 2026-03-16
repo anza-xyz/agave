@@ -17,7 +17,7 @@ use {
         invoke_context::InvokeContext,
         loaded_programs::{
             DELAY_VISIBILITY_SLOT_OFFSET, LoadProgramMetrics, ProgramCacheEntry,
-            ProgramCacheEntryType,
+            ProgramCacheEntryType, ProgramRuntimeEnvironment,
         },
         serialization::serialize_parameters,
         with_mock_invoke_context,
@@ -285,7 +285,7 @@ fn load_program<'a>(
     let mut verified_executable = if is_elf {
         let result = ProgramCacheEntry::new(
             &loader_key,
-            program_runtime_environment.clone(),
+            ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             slot,
             slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             &contents,

@@ -306,7 +306,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             sysvar_cache: RwLock::<SysvarCache>::default(),
             epoch_boundary_preparation: self.epoch_boundary_preparation.clone(),
             global_program_cache: self.global_program_cache.clone(),
-            program_runtime_environment: self.program_runtime_environment.clone(),
+            program_runtime_environment: ProgramRuntimeEnvironment::clone(
+                &self.program_runtime_environment,
+            ),
             builtin_program_ids: RwLock::new(self.builtin_program_ids.read().unwrap().clone()),
             execution_cost: self.execution_cost,
         }
@@ -344,7 +346,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .read()
             .unwrap()
             .get_upcoming_environment_for_epoch(epoch)
-            .unwrap_or_else(|| self.program_runtime_environment.clone())
+            .unwrap_or_else(|| ProgramRuntimeEnvironment::clone(&self.program_runtime_environment))
     }
 
     pub fn sysvar_cache(&self) -> RwLockReadGuard<'_, SysvarCache> {

@@ -1144,9 +1144,13 @@ mod test_utils {
     use solana_program_runtime::loaded_programs::LoadProgramMetrics;
     #[cfg(feature = "svm-internal")]
     use {
-        super::*, agave_syscalls::create_program_runtime_environment,
-        solana_account::ReadableAccount, solana_loader_v4_interface::state::LoaderV4State,
-        solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
+        super::*,
+        agave_syscalls::create_program_runtime_environment,
+        solana_account::ReadableAccount,
+        solana_loader_v4_interface::state::LoaderV4State,
+        solana_program_runtime::loaded_programs::{
+            DELAY_VISIBILITY_SLOT_OFFSET, ProgramRuntimeEnvironment,
+        },
         solana_sdk_ids::loader_v4,
     };
 
@@ -1195,7 +1199,7 @@ mod test_utils {
                 let effective_slot = DELAY_VISIBILITY_SLOT_OFFSET;
                 let loaded_program = ProgramCacheEntry::new(
                     owner,
-                    program_runtime_environment.clone(),
+                    ProgramRuntimeEnvironment::clone(&program_runtime_environment),
                     0,
                     effective_slot,
                     programdata,

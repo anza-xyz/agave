@@ -17,7 +17,7 @@ use {
     solana_program_runtime::{
         deploy::deploy_program,
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::{LoadProgramMetrics, ProgramCacheForTxBatch},
+        loaded_programs::{LoadProgramMetrics, ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -190,7 +190,7 @@ impl Bank {
                 dummy_invoke_context.get_log_collector(),
                 &mut load_program_metrics,
                 dummy_invoke_context.program_cache_for_tx_batch,
-                program_runtime_environment.clone(),
+                ProgramRuntimeEnvironment::clone(&program_runtime_environment),
                 program_id,
                 &bpf_loader_upgradeable::id(),
                 // The size of the program cache entry is the size of the program account
