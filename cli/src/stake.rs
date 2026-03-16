@@ -2446,7 +2446,7 @@ pub fn build_stake_state(
     match stake_state {
         StakeStateV2::Stake(
             Meta {
-                rent_exempt_reserve: _, // deprecated: this value is meaningless
+                rent_exempt_reserve,
                 authorized,
                 lockup,
             },
@@ -2494,6 +2494,7 @@ pub fn build_stake_state(
                 lockup,
                 use_lamports_unit,
                 current_epoch,
+                rent_exempt_reserve: Some(*rent_exempt_reserve),
                 active_stake: u64_some_if_not_zero(effective),
                 activating_stake: u64_some_if_not_zero(activating),
                 deactivating_stake: u64_some_if_not_zero(deactivating),
@@ -2511,7 +2512,7 @@ pub fn build_stake_state(
             ..CliStakeState::default()
         },
         StakeStateV2::Initialized(Meta {
-            rent_exempt_reserve: _, // deprecated: this value is meaningless
+            rent_exempt_reserve,
             authorized,
             lockup,
         }) => {
@@ -2527,6 +2528,7 @@ pub fn build_stake_state(
                 authorized: Some(authorized.into()),
                 lockup,
                 use_lamports_unit,
+                rent_exempt_reserve: Some(*rent_exempt_reserve),
                 ..CliStakeState::default()
             }
         }
