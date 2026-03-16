@@ -39,6 +39,13 @@ impl PartialEq for ProgramRuntimeEnvironment {
     }
 }
 impl Eq for ProgramRuntimeEnvironment {}
+impl std::ops::Deref for ProgramRuntimeEnvironment {
+    type Target = Arc<BuiltinProgram<InvokeContext<'static, 'static>>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 impl ProgramRuntimeEnvironment {
     pub fn from(inner: BuiltinProgram<InvokeContext<'static, 'static>>) -> Self {
         Self(Arc::new(inner))
@@ -49,10 +56,6 @@ impl ProgramRuntimeEnvironment {
     ) -> &'a Self {
         // Safety: This wrapper type is transparent and shares the same representation as the underlying type
         unsafe { std::mem::transmute(inner) }
-    }
-
-    pub fn inner(&self) -> &Arc<BuiltinProgram<InvokeContext<'static, 'static>>> {
-        &self.0
     }
 }
 #[cfg(feature = "dev-context-only-utils")]
@@ -409,7 +412,7 @@ impl ProgramCacheEntry {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         #[cfg(feature = "metrics")]
         let load_elf_time = Measure::start("load_elf_time");
-        let executable = Executable::load(elf_bytes, program_runtime_environment.inner().clone())?;
+        let executable = Executable::load(elf_bytes, Arc::clone(&*program_runtime_environment))?;
 
         #[cfg(feature = "metrics")]
         {
@@ -1438,7 +1441,7 @@ mod tests {
             .unwrap()
             .read_to_end(&mut elf)
             .unwrap();
-        let executable = Executable::load(&elf, env.inner().clone()).unwrap();
+        let executable = Executable::load(&elf, Arc::clone(&*env)).unwrap();
         ProgramCacheEntryType::Loaded(executable)
     }
 

@@ -584,10 +584,11 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         let empty_memory_mapping =
             MemoryMapping::new(Vec::new(), &mock_config, SBPFVersion::V0).unwrap();
         let mut vm = EbpfVm::new(
-            self.environment_config
-                .program_runtime_environment_for_execution
-                .inner()
-                .clone(),
+            Arc::clone(
+                &*self
+                    .environment_config
+                    .program_runtime_environment_for_execution,
+            ),
             SBPFVersion::V0,
             // Removes lifetime tracking
             unsafe { std::mem::transmute::<&mut InvokeContext, &mut InvokeContext>(self) },

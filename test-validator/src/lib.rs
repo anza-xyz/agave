@@ -970,7 +970,7 @@ impl TestValidator {
             let data = solana_program_test::read_file(&upgradeable_program.program_path);
             let executable = Executable::<InvokeContext>::from_elf(
                 &data,
-                program_runtime_environment.inner().clone(),
+                Arc::clone(&*program_runtime_environment),
             )
             .map_err(|err| format!("ELF error: {err}"))?;
             executable

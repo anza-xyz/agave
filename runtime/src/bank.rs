@@ -1600,9 +1600,8 @@ impl Bank {
                 .transaction_processor
                 .program_runtime_environment
                 .clone();
-            // Here we actually want to compare the content of the environments, thus use `inner`
-            let changed_program_runtime_environment =
-                upcoming_environment.inner() != new_environment.inner();
+            // Here we actually want to compare the content of the environments, thus the deref.
+            let changed_program_runtime_environment = *upcoming_environment != *new_environment;
             if changed_program_runtime_environment {
                 upcoming_environment = new_environment;
                 epoch_boundary_preparation.programs_to_recompile = program_cache

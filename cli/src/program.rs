@@ -3220,7 +3220,7 @@ fn verify_elf(
     .unwrap();
     let executable = Executable::<InvokeContext>::from_elf(
         program_data,
-        program_runtime_environment.inner().clone(),
+        Arc::clone(&*program_runtime_environment),
     )
     .map_err(|err| format!("ELF error: {err}"))?;
 
