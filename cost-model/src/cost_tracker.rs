@@ -73,7 +73,8 @@ pub struct CostTracker {
     account_cost_limit: u64,
     block_cost_limit: u64,
     vote_cost_limit: u64,
-    account_data_size_limit: u64,
+    // Maximum new account allocation data per block in bytes.
+    allocated_data_size_limit: u64,
     cost_by_writable_accounts: HashMap<Pubkey, u64, ahash::RandomState>,
     block_cost: SharedBlockCost,
     vote_cost: u64,
@@ -98,7 +99,7 @@ impl Default for CostTracker {
             account_cost_limit: MAX_WRITABLE_ACCOUNT_UNITS,
             block_cost_limit: MAX_BLOCK_UNITS,
             vote_cost_limit: MAX_VOTE_UNITS,
-            account_data_size_limit: MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA,
+            allocated_data_size_limit: MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA,
             cost_by_writable_accounts: HashMap::with_capacity_and_hasher(
                 WRITABLE_ACCOUNTS_PER_BLOCK,
                 ahash::RandomState::new(),
@@ -123,7 +124,7 @@ impl CostTracker {
             self.account_cost_limit,
             self.block_cost_limit,
             self.vote_cost_limit,
-            self.account_data_size_limit,
+            self.allocated_data_size_limit,
         );
         new
     }
@@ -144,8 +145,8 @@ impl CostTracker {
     }
 
     /// Get the overall allocated account data size limit.
-    pub fn get_account_data_size_limit(&self) -> u64 {
-        self.account_data_size_limit
+    pub fn get_allocated_data_size_limit(&self) -> u64 {
+        self.allocated_data_size_limit
     }
 
     /// allows to adjust limits initiated during construction
@@ -154,12 +155,12 @@ impl CostTracker {
         account_cost_limit: u64,
         block_cost_limit: u64,
         vote_cost_limit: u64,
-        account_data_size_limit: u64,
+        allocated_data_size_limit: u64,
     ) {
         self.account_cost_limit = account_cost_limit;
         self.block_cost_limit = block_cost_limit;
         self.vote_cost_limit = vote_cost_limit;
-        self.account_data_size_limit = account_data_size_limit;
+        self.allocated_data_size_limit = allocated_data_size_limit;
     }
 
     pub fn set_limits_max(&mut self) {
@@ -346,7 +347,7 @@ impl CostTracker {
         let allocated_accounts_data_size =
             self.allocated_accounts_data_size + Saturating(tx_cost.allocated_accounts_data_size());
 
-        if allocated_accounts_data_size.0 > self.account_data_size_limit {
+        if allocated_accounts_data_size.0 > self.allocated_data_size_limit {
             return Err(CostTrackerError::WouldExceedAccountDataBlockLimit);
         }
 
@@ -806,7 +807,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cost_tracker_respects_custom_account_data_size_limit() {
+    fn test_cost_tracker_respects_custom_allocated_data_size_limit() {
         // Setup transaction that allocates 2 bytes.
         let mint_keypair = test_setup();
         let tx = build_simple_transaction(&mint_keypair);
@@ -822,7 +823,7 @@ mod tests {
         assert_eq!(testee.would_fit(&tx_cost), Ok(()),);
 
         // Transaction does not fit with 1B limit.
-        testee.account_data_size_limit = 1;
+        testee.allocated_data_size_limit = 1;
         assert_eq!(
             testee.would_fit(&tx_cost),
             Err(CostTrackerError::WouldExceedAccountDataBlockLimit),

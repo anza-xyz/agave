@@ -4419,12 +4419,12 @@ impl Bank {
             let mut cost_tracker = self.write_cost_tracker().unwrap();
             let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
             let vote_cost_limit = cost_tracker.get_vote_limit();
-            let account_data_size_limit = cost_tracker.get_account_data_size_limit();
+            let allocated_data_size_limit = cost_tracker.get_allocated_data_size_limit();
             cost_tracker.set_limits(
                 account_cost_limit,
                 block_cost_limit,
                 vote_cost_limit,
-                account_data_size_limit,
+                allocated_data_size_limit,
             );
         }
 
@@ -5652,12 +5652,12 @@ impl Bank {
             let mut cost_tracker = self.write_cost_tracker().unwrap();
             let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
             let vote_cost_limit = cost_tracker.get_vote_limit();
-            let account_data_size_limit = cost_tracker.get_account_data_size_limit();
+            let allocated_data_size_limit = cost_tracker.get_allocated_data_size_limit();
             cost_tracker.set_limits(
                 account_cost_limit,
                 block_cost_limit,
                 vote_cost_limit,
-                account_data_size_limit,
+                allocated_data_size_limit,
             );
         }
 
