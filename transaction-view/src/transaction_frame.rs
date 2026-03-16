@@ -29,7 +29,7 @@ pub(crate) struct TransactionFrame {
     instructions: InstructionsFrame,
     /// Address table lookup framing data.
     address_table_lookup: AddressTableLookupFrame,
-    /// Tranasaction config framing data
+    /// Transaction config framing data
     transaction_config_frame: TransactionConfigFrame,
 }
 

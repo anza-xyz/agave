@@ -18,7 +18,9 @@ pub(crate) fn sanitize(
     sanitize_account_access(view)?;
     sanitize_instructions(view, enable_instruction_accounts_limit)?;
     sanitize_address_table_lookups(view)?;
-    sanitize_transaction_config(view)
+    sanitize_transaction_config(view)?;
+
+    Ok(())
 }
 
 fn sanitize_signatures(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {

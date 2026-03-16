@@ -164,14 +164,12 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
     #[inline]
     pub fn transaction_config(&self) -> Option<TransactionConfigView<'_>> {
         let transaction_config_frame = self.frame.transaction_config_frame();
-        if transaction_config_frame.is_present() {
-            Some(TransactionConfigView {
+        transaction_config_frame
+            .is_present()
+            .then_some(TransactionConfigView {
                 transaction_config_frame,
                 bytes: self.data(),
             })
-        } else {
-            None
-        }
     }
 
     /// Return the full serialized transaction data.
