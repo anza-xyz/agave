@@ -84,6 +84,10 @@ impl Drop for SlotCache {
 }
 
 impl SlotCache {
+    pub fn len(&self) -> usize {
+        self.accounts_count.load(Ordering::Relaxed) as usize
+    }
+
     pub fn report_slot_store_metrics(&self) {
         datapoint_info!(
             "slot_repeated_writes",
@@ -529,6 +533,36 @@ mod tests {
         cache.slot_cache(inserted_slot).unwrap().mark_slot_frozen();
         // If the cache is told the size limit is 0, it should return the one frozen slot
         assert_eq!(cache.cached_frozen_slots(), vec![inserted_slot]);
+    }
+
+    #[test]
+    fn test_slot_cache_len_tracks_unique_accounts() {
+        let cache = AccountsCache::default();
+        let slot = 0;
+        let pubkey = Pubkey::new_unique();
+        let other_pubkey = Pubkey::new_unique();
+
+        cache.store(
+            slot,
+            &pubkey,
+            AccountSharedData::new(1, 0, &Pubkey::default()),
+        );
+        let slot_cache = cache.slot_cache(slot).unwrap();
+        assert_eq!(slot_cache.len(), 1);
+
+        cache.store(
+            slot,
+            &pubkey,
+            AccountSharedData::new(2, 0, &Pubkey::default()),
+        );
+        assert_eq!(slot_cache.len(), 1);
+
+        cache.store(
+            slot,
+            &other_pubkey,
+            AccountSharedData::new(3, 0, &Pubkey::default()),
+        );
+        assert_eq!(slot_cache.len(), 2);
     }
 
     #[test]
