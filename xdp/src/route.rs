@@ -669,8 +669,8 @@ mod tests {
     fn test_multiple_gre_interfaces() {
         let remote1 = Ipv4Addr::new(10, 0, 0, 1);
         let remote2 = Ipv4Addr::new(10, 0, 0, 2);
-        let gre_dest1 = Ipv4Addr::new(192, 0, 2, 10);
-        let gre_dest2 = Ipv4Addr::new(198, 51, 100, 10);
+        let gre_dest1 = Ipv4Addr::new(192, 168, 0, 1);
+        let gre_dest2 = Ipv4Addr::new(192, 168, 0, 2);
         let if_index_underlay = 1;
         let if_index_gre1 = 100;
         let if_index_gre2 = 200;
@@ -707,7 +707,7 @@ mod tests {
             InterfaceInfo {
                 if_index: if_index_gre1 as u32,
                 gre_tunnel: Some(GreTunnelInfo {
-                    local: IpAddr::V4(Ipv4Addr::new(10, 1, 0, 1)),
+                    local: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)),
                     remote: IpAddr::V4(remote1),
                     ttl: 0,
                     tos: 0,
@@ -717,7 +717,7 @@ mod tests {
             InterfaceInfo {
                 if_index: if_index_gre2 as u32,
                 gre_tunnel: Some(GreTunnelInfo {
-                    local: IpAddr::V4(Ipv4Addr::new(10, 2, 0, 1)),
+                    local: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4)),
                     remote: IpAddr::V4(remote2),
                     ttl: 0,
                     tos: 0,
@@ -759,6 +759,94 @@ mod tests {
         assert_eq!(
             cached2.gre.as_ref().map(|gre| gre.if_index),
             uncached2.gre.as_ref().map(|gre| gre.if_index)
+        );
+    }
+
+    #[test]
+    fn test_default_route_via_gre() {
+        let remote = Ipv4Addr::new(10, 0, 0, 1);
+        let dest = Ipv4Addr::new(203, 0, 113, 9);
+        let if_index_underlay = 1;
+        let if_index_gre = 100;
+        let mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]);
+
+        let neighbors = vec![NeighborEntry {
+            destination: Some(IpAddr::V4(remote)),
+            lladdr: Some(mac),
+            ifindex: if_index_underlay,
+            state: NUD_REACHABLE,
+        }];
+
+        let routes = vec![
+            route_entry(Some(IpAddr::V4(remote)), if_index_underlay),
+            RouteEntry {
+                destination: None,
+                gateway: None,
+                pref_src: None,
+                out_if_index: Some(if_index_gre),
+                in_if_index: None,
+                priority: None,
+                table: None,
+                protocol: 0,
+                scope: 0,
+                type_: 0,
+                family: AF_INET as u8,
+                dst_len: 0,
+                flags: 0,
+            },
+        ];
+
+        let interfaces = vec![
+            InterfaceInfo {
+                if_index: if_index_underlay as u32,
+                gre_tunnel: None,
+            },
+            InterfaceInfo {
+                if_index: if_index_gre as u32,
+                gre_tunnel: Some(GreTunnelInfo {
+                    local: IpAddr::V4(Ipv4Addr::new(10, 1, 0, 1)),
+                    remote: IpAddr::V4(remote),
+                    ttl: 0,
+                    tos: 0,
+                    pmtudisc: 0,
+                }),
+            },
+        ];
+
+        let mut router = router_from_tables(neighbors, routes, interfaces);
+
+        let uncached_default = router.default().unwrap();
+        assert_eq!(uncached_default.if_index, if_index_gre as u32);
+        assert_eq!(uncached_default.mac_addr, Some(mac));
+        assert_eq!(
+            uncached_default.gre.as_ref().map(|gre| gre.if_index),
+            Some(if_index_gre as u32)
+        );
+
+        let uncached_route = router.route(IpAddr::V4(dest)).unwrap();
+        assert_eq!(uncached_route.if_index, if_index_gre as u32);
+        assert_eq!(uncached_route.mac_addr, Some(mac));
+        assert_eq!(
+            uncached_route.gre.as_ref().map(|gre| gre.if_index),
+            Some(if_index_gre as u32)
+        );
+
+        router.build_caches().unwrap();
+
+        let cached_default = router.default().unwrap();
+        assert_eq!(cached_default.if_index, uncached_default.if_index);
+        assert_eq!(cached_default.mac_addr, uncached_default.mac_addr);
+        assert_eq!(
+            cached_default.gre.as_ref().map(|gre| gre.if_index),
+            uncached_default.gre.as_ref().map(|gre| gre.if_index)
+        );
+
+        let cached_route = router.route(IpAddr::V4(dest)).unwrap();
+        assert_eq!(cached_route.if_index, uncached_route.if_index);
+        assert_eq!(cached_route.mac_addr, uncached_route.mac_addr);
+        assert_eq!(
+            cached_route.gre.as_ref().map(|gre| gre.if_index),
+            uncached_route.gre.as_ref().map(|gre| gre.if_index)
         );
     }
 }
