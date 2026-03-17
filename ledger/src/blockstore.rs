@@ -2573,7 +2573,7 @@ impl Blockstore {
         let Some(index) = self.get_index_from_location(slot, location)? else {
             return Ok(Vec::new());
         };
-        let num_shreds = index.data().range(start_index..).count();
+        let num_shreds = index.data().count_range(start_index..);
         let mut shreds = Vec::with_capacity(num_shreds);
 
         let shred_bytes_iter: Box<dyn Iterator<Item = Box<[u8]>>> = match location {
@@ -2624,17 +2624,19 @@ impl Blockstore {
         index: u64,
         location: BlockLocation,
         shred: &[u8],
-    ) -> Result<()> {
+    ) {
         match location {
             BlockLocation::Original => {
                 self.data_shred_cf
-                    .put_bytes_in_batch(write_batch, (slot, index), shred)
+                    .put_bytes_in_batch(write_batch, (slot, index), shred);
             }
-            BlockLocation::Alternate { block_id } => self.alt_data_shred_cf.put_bytes_in_batch(
-                write_batch,
-                (slot, index, block_id),
-                shred,
-            ),
+            BlockLocation::Alternate { block_id } => {
+                self.alt_data_shred_cf.put_bytes_in_batch(
+                    write_batch,
+                    (slot, index, block_id),
+                    shred,
+                );
+            }
         }
     }
 

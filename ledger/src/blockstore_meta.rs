@@ -344,6 +344,15 @@ impl ShredIndex {
         }
     }
 
+    pub(crate) fn count_range<R>(&self, bounds: R) -> usize
+    where
+        R: RangeBounds<u64>,
+    {
+        let start = bounds.start_bound().map(|&b| b as usize);
+        let end = bounds.end_bound().map(|&b| b as usize);
+        self.index.range((start, end)).count_ones()
+    }
+
     pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = u64> + '_
     where
         R: RangeBounds<u64>,

@@ -302,13 +302,13 @@ impl Blockstore {
         if purge_alt_columns {
             // Purge all alternate columns
             self.alt_meta_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+                .delete_range_in_batch(write_batch, from_slot, to_slot);
             self.alt_index_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+                .delete_range_in_batch(write_batch, from_slot, to_slot);
             self.alt_data_shred_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+                .delete_range_in_batch(write_batch, from_slot, to_slot);
             self.alt_merkle_root_meta_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+                .delete_range_in_batch(write_batch, from_slot, to_slot);
         }
 
         match purge_type {
