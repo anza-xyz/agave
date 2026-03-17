@@ -4,6 +4,7 @@ use {
         netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes,
     },
     libc::{AF_INET, AF_INET6},
+    log::warn,
     std::{
         io,
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -216,9 +217,8 @@ pub struct Router {
     interface_table: InterfaceTable,
     // cache for the default route next hop so we can avoid arp table lookups on the common case
     cached_default_route: Option<NextHop>,
-    // cache for gre route info to avoid repeated lookups in the common case
-    // where there is only one gre interface
-    cached_gre_info: Option<GreRouteInfo>,
+    // cache for gre route info keyed by interface index. This stays tiny in practice.
+    cached_gre_info: Vec<GreRouteInfo>,
 }
 
 impl Router {
@@ -228,68 +228,38 @@ impl Router {
             route_table: RouteTable::new()?,
             interface_table: InterfaceTable::new()?,
             cached_default_route: None,
-            cached_gre_info: None,
+            cached_gre_info: Vec::new(),
         })
     }
 
-    fn default_route(&self) -> Result<NextHop, RouteError> {
-        let default_route = self
-            .route_table
+    fn cached_gre_route_info(&self, if_index: u32) -> Option<&GreRouteInfo> {
+        self.cached_gre_info
             .iter()
-            .find(|r| r.destination.is_none())
-            .ok_or(RouteError::NoRouteFound(IpAddr::V4(Ipv4Addr::UNSPECIFIED)))?;
+            .find(|gre| gre.if_index == if_index)
+    }
 
-        let if_index = default_route
-            .out_if_index
-            .ok_or(RouteError::MissingOutputInterface)? as u32;
+    fn gre_route_info(&self, if_index: u32) -> Option<GreRouteInfo> {
+        if let Some(gre) = self.cached_gre_route_info(if_index) {
+            return Some(gre.clone());
+        }
 
-        let next_hop_ip = match default_route.gateway {
-            Some(gateway) => gateway,
-            None => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        };
-
-        let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
-        let preferred_src_ip = match default_route.pref_src {
-            Some(IpAddr::V4(v4)) => Some(v4),
-            _ => None,
-        };
-
-        let gre = self
+        let interface = self
             .interface_table
             .iter()
-            .find(|i| i.if_index == if_index)
-            .and_then(|interface| self.interface_gre_route_info(interface));
-
-        Ok(NextHop {
-            ip_addr: next_hop_ip,
-            mac_addr,
-            if_index,
-            preferred_src_ip,
-            gre,
-        })
+            .find(|interface| interface.if_index == if_index)?;
+        self.interface_gre_route_info(interface)
     }
 
-    pub fn default(&self) -> Result<NextHop, RouteError> {
-        if let Some(default_route) = &self.cached_default_route {
-            Ok(default_route.clone())
-        } else {
-            self.default_route()
-        }
-    }
-
-    pub fn route(&self, dest_ip: IpAddr) -> Result<NextHop, RouteError> {
-        let route = lookup_route(self.route_table.iter(), dest_ip)
-            .ok_or(RouteError::NoRouteFound(dest_ip))?;
-
+    fn resolve_next_hop(
+        &self,
+        route_ip: IpAddr,
+        route: &RouteEntry,
+    ) -> Result<NextHop, RouteError> {
         let if_index = route
             .out_if_index
             .ok_or(RouteError::MissingOutputInterface)? as u32;
 
-        let next_hop_ip = match route.gateway {
-            Some(gateway) => gateway,
-            None => dest_ip,
-        };
-
+        let next_hop_ip = route.gateway.unwrap_or(route_ip);
         let preferred_src_ip = match route.pref_src {
             Some(IpAddr::V4(v4)) => Some(v4),
             _ => None,
@@ -307,47 +277,66 @@ impl Router {
             }
         }
 
-        if let Some(gre) = &self.cached_gre_info {
-            if gre.if_index == if_index {
-                return Ok(NextHop {
-                    if_index,
-                    ip_addr: next_hop_ip,
-                    mac_addr: Some(gre.mac_addr),
-                    preferred_src_ip,
-                    gre: Some(gre.clone()),
-                });
-            }
+        if let Some(gre) = self.gre_route_info(if_index) {
+            return Ok(NextHop {
+                if_index,
+                ip_addr: next_hop_ip,
+                mac_addr: Some(gre.mac_addr),
+                preferred_src_ip,
+                gre: Some(gre),
+            });
         }
 
         let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
-
-        let next_hop = NextHop {
+        Ok(NextHop {
             ip_addr: next_hop_ip,
             mac_addr,
             if_index,
             preferred_src_ip,
             gre: None,
-        };
-        Ok(next_hop)
+        })
+    }
+
+    fn default_route(&self) -> Result<NextHop, RouteError> {
+        let default_route = self
+            .route_table
+            .iter()
+            .find(|r| r.destination.is_none())
+            .ok_or(RouteError::NoRouteFound(IpAddr::V4(Ipv4Addr::UNSPECIFIED)))?;
+        self.resolve_next_hop(IpAddr::V4(Ipv4Addr::UNSPECIFIED), default_route)
+    }
+
+    pub fn default(&self) -> Result<NextHop, RouteError> {
+        if let Some(default_route) = &self.cached_default_route {
+            Ok(default_route.clone())
+        } else {
+            self.default_route()
+        }
+    }
+
+    pub fn route(&self, dest_ip: IpAddr) -> Result<NextHop, RouteError> {
+        let route = lookup_route(self.route_table.iter(), dest_ip)
+            .ok_or(RouteError::NoRouteFound(dest_ip))?;
+        self.resolve_next_hop(dest_ip, route)
     }
 
     // called to rebuild cached values after route/neigh/interface updates right
     // before a new Router instance is published
     pub fn build_caches(&mut self) -> Result<(), io::Error> {
         self.cached_default_route = None;
-        self.cached_gre_info = None;
+        self.cached_gre_info.clear();
 
         let mut has_gre_interface = false;
         for interface in self.interface_table.iter() {
             if interface.gre_tunnel.is_some() {
                 has_gre_interface = true;
-                if self.cached_gre_info.is_none() {
-                    self.cached_gre_info = self.interface_gre_route_info(interface);
+                if let Some(gre) = self.interface_gre_route_info(interface) {
+                    self.cached_gre_info.push(gre);
                 }
             }
         }
-        if self.cached_gre_info.is_none() && has_gre_interface {
-            log::warn!("GRE cache: GRE interface(s) present but none with valid remote resolved");
+        if self.cached_gre_info.is_empty() && has_gre_interface {
+            warn!("GRE cache: GRE interface(s) present but none with valid remote resolved");
         }
         self.cached_default_route = match self.default_route() {
             Ok(hop) => Some(hop),
@@ -367,11 +356,26 @@ impl Router {
         {
             return None;
         }
-        // ARP for the GRE remote is on the egress interface. Caches must be cleared
-        // at the start of build_caches() for route() to be safe.
-        debug_assert!(self.cached_gre_info.is_none());
-        let next_hop = self.route(remote).ok()?;
-        let mac_addr = next_hop.mac_addr?;
+
+        let underlay_route = lookup_route(self.route_table.iter(), remote)?;
+        let underlay_if_index = underlay_route.out_if_index? as u32;
+        let underlay_interface = self
+            .interface_table
+            .iter()
+            .find(|candidate| candidate.if_index == underlay_if_index)?;
+        if underlay_interface.is_gre() {
+            warn!(
+                "GRE interface {} has remote {} that routes via another GRE interface {}. \
+                 gre-over-gre is not supported.",
+                interface.if_index, remote, underlay_interface.if_index
+            );
+            return None;
+        }
+        let underlay_next_hop_ip = underlay_route.gateway.unwrap_or(remote);
+        let mac_addr = self
+            .arp_table
+            .lookup(underlay_next_hop_ip, underlay_if_index)
+            .copied()?;
 
         Some(GreRouteInfo {
             if_index: interface.if_index,
