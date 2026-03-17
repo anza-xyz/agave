@@ -135,17 +135,7 @@ pub(crate) fn process_instruction_inner<'a>(
             ic_logger_msg!(log_collector, "Program is not deployed");
             Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>)
         }
-        ProgramCacheEntryType::Loaded(executable) => {
-            let mut timer = Measure::start("execute");
-            let result = execute(executable, invoke_context);
-            timer.stop();
-            if executable.get_compiled_program().is_some() {
-                executor.stats.jit_executed(timer.as_us());
-            } else {
-                executor.stats.interpreter_executed(timer.as_us());
-            }
-            result
-        }
+        ProgramCacheEntryType::Loaded(executable) => execute(executable, invoke_context, &executor),
         _ => Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>),
     }
     .map(|_| 0)
@@ -1242,9 +1232,10 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_instruction::{AccountMeta, error::InstructionError},
         solana_program_runtime::{
-            invoke_context::mock_process_instruction, loaded_programs::ProgramRuntimeEnvironment,
-            loaded_programs::ProgramStatistics,
-            vm::calculate_heap_cost, with_mock_invoke_context,
+            invoke_context::mock_process_instruction,
+            loaded_programs::{ProgramRuntimeEnvironment, ProgramStatistics},
+            vm::calculate_heap_cost,
+            with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,

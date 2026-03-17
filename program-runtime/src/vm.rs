@@ -6,6 +6,7 @@ use {
     crate::{
         execution_budget::MAX_INSTRUCTION_STACK_DEPTH,
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
+        loaded_programs::ProgramCacheEntry,
         mem_pool::VmMemoryPool,
         serialization, stable_log,
     },
@@ -22,7 +23,7 @@ use {
     solana_svm_log_collector::ic_logger_msg,
     solana_svm_measure::measure::Measure,
     solana_transaction_context::{IndexOfAccount, transaction::TransactionContext},
-    std::{cell::RefCell, mem},
+    std::{cell::RefCell, mem, time::Duration},
 };
 
 thread_local! {
@@ -155,6 +156,7 @@ macro_rules! create_vm {
 pub fn execute<'a, 'b: 'a>(
     executable: &'a Executable<InvokeContext<'static, 'static>>,
     invoke_context: &'a mut InvokeContext<'b, 'b>,
+    cache_entry: &ProgramCacheEntry,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // We dropped the lifetime tracking in the Executor by setting it to 'static,
     // thus we need to reintroduce the correct lifetime of InvokeContext here again.
@@ -251,9 +253,11 @@ pub fn execute<'a, 'b: 'a>(
             vm.debug_port = debug_port;
             vm.debug_metadata = Some(debug_metadata);
         }
-        vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
-        vm.registers[1] = ebpf::MM_INPUT_START;
 
+        let execute_time = Measure::start("execute");
+        let prev_nested_exec_time = vm.context_object_pointer.total_nested_exec_time;
+
+        vm.registers[1] = ebpf::MM_INPUT_START;
         // SIMD-0321: Provide offset to instruction data in VM register 2.
         if provide_instruction_data_offset_in_vm_r2 {
             vm.registers[2] = instruction_data_offset as u64;
@@ -268,9 +272,23 @@ pub fn execute<'a, 'b: 'a>(
         });
         drop(vm);
         invoke_context.insert_register_trace(register_trace);
-        if let Some(execute_time) = invoke_context.execute_time.as_mut() {
-            execute_time.stop();
-            invoke_context.timings.execute_us += execute_time.as_us();
+
+        // This section is a little convoluted due to the nested and sibling (CPI) invocations.
+        let total_execute_ns = execute_time.end_as_ns();
+        let nested_execution_time_delta = invoke_context
+            .total_nested_exec_time
+            .saturating_sub(prev_nested_exec_time);
+        let this_call_ns =
+            total_execute_ns.saturating_sub(nested_execution_time_delta.as_nanos() as u64);
+        invoke_context.total_nested_exec_time = invoke_context
+            .total_nested_exec_time
+            .saturating_add(Duration::from_nanos(this_call_ns));
+        let this_call_us = this_call_ns / 1000;
+        invoke_context.timings.execute_us += this_call_us;
+        match execution_mode {
+            ExecutionMode::Interpreted => cache_entry.stats.interpreter_executed(this_call_us),
+            ExecutionMode::Jit => cache_entry.stats.jit_executed(this_call_us),
+            ExecutionMode::PreferJit => { /* not actually executed? */ }
         }
 
         ic_logger_msg!(
