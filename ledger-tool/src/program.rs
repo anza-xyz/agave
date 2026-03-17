@@ -161,6 +161,7 @@ and the following fields are required
                 )
                 .arg(&load_genesis_config_arg)
                 .args(&snapshot_config_args)
+                .args(&accounts_db_args())
                 .arg(
                     Arg::with_name("mode")
                         .help(
@@ -542,42 +543,28 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     let (instruction_count, result) = vm.execute_program(&verified_executable, &mut execution_mode);
     let duration = Instant::now() - start_time;
     if let Some(trace_option) = matches.value_of("trace") {
-        vm.context_object_pointer.iterate_vm_traces(
-            &|instruction_context: InstructionContext, executable, register_trace| {
-                let mut analysis = LazyAnalysis::new(executable);
-                if trace_option == "stdout" {
-                    writeln!(
-                        &mut std::io::stdout(),
-                        "TX Instruction {} Program {:?}",
-                        instruction_context.get_index_in_trace(),
-                        instruction_context.get_program_key(),
-                    )
-                    .unwrap();
-                    analysis
-                        .analyze()
-                        .disassemble_register_trace(&mut std::io::stdout(), register_trace)
-                        .unwrap();
-                } else {
-                    let filename = format!(
-                        "{}.{}",
-                        trace_option,
-                        instruction_context.get_index_in_trace()
-                    );
-                    let mut fd = File::create(filename).unwrap();
-                    writeln!(
-                        &fd,
-                        "TX Instruction {} Program {:?}",
-                        instruction_context.get_index_in_trace(),
-                        instruction_context.get_program_key(),
-                    )
-                    .unwrap();
-                    analysis
-                        .analyze()
-                        .disassemble_register_trace(&mut fd, register_trace)
-                        .unwrap();
-                }
-            },
-        );
+        let register_trace = vm.register_trace.as_slice();
+        let mut analysis = LazyAnalysis::new(&verified_executable);
+        if trace_option == "stdout" {
+            writeln!(
+                &mut std::io::stdout(),
+                "TX Instruction 0 Program {:?}",
+                program_id,
+            )
+            .unwrap();
+            analysis
+                .analyze()
+                .disassemble_register_trace(&mut std::io::stdout(), register_trace)
+                .unwrap();
+        } else {
+            let filename = format!("{}.0", trace_option);
+            let mut fd = File::create(filename).unwrap();
+            writeln!(&fd, "TX Instruction 0 Program {:?}", program_id,).unwrap();
+            analysis
+                .analyze()
+                .disassemble_register_trace(&mut fd, register_trace)
+                .unwrap();
+        }
     }
     drop(vm);
 
