@@ -17,7 +17,6 @@ required-features = ["fuzz"]
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = []
 dummy-for-ci-check = ["fuzz"]
 fuzz = [
     "dep:clap",
