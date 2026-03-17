@@ -359,7 +359,8 @@ impl AccountsCache {
         if let Some(ancestors_min_slot) = ancestors.min_slot() {
             // Iterate every slot in the range in descending order
             // Grab a read lock on flushing roots once before the loop to avoid locking/unlocking
-            // on every iteration
+            // on every iteration. This lock ensures that the load call in the loop correctly
+            // identifies slots with status AncestorBeingFlushed.
             let r_roots_being_flushed = self.roots_being_flushed.read().unwrap();
             for slot in (ancestors_min_slot..=index_max_slot).rev() {
                 if ancestors.contains_key(&slot) {
