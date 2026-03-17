@@ -2986,7 +2986,7 @@ mod tests {
         let max_vote_slot = lowest_vote_slot + MAX_LOCKOUT_HISTORY as Slot;
         let mut first_vote = None;
         let mut prev_votes = vec![];
-        for slot in 1..max_vote_slot {
+        for slot in lowest_vote_slot..max_vote_slot {
             prev_votes.push(slot);
             let unrefresh_vote = Vote::new(vec![slot], Hash::new_unique());
             let vote_ix = vote_instruction::vote(
@@ -3002,8 +3002,16 @@ mod tests {
                 first_vote = Some(vote_tx.clone());
             }
             cluster_info.push_vote(&prev_votes, vote_tx);
+            // Sleep to avoid votes with same timestamp causing the insert to
+            // fail when wallclocks collide (find_vote_index_to_evict breaks
+            // ties by ms timestamp during eviction).
+            // Since we only store MAX_VOTES, when conflict occurs we may end up evicting
+            // the newer votes if all timestamps are the same.
+            std::thread::sleep(Duration::from_millis(2));
         }
 
+        // We should now have the MAX_VOTES most recent votes in CRDS, for slots
+        // [max_vote_slot - MAX_VOTES, max_vote_slot)
         let initial_votes = cluster_info.get_votes(&mut Cursor::default());
         assert_eq!(initial_votes.len(), MAX_VOTES as usize);
 
@@ -3022,7 +3030,10 @@ mod tests {
         cluster_info.refresh_vote(refresh_tx.clone(), refresh_slot);
         let current_votes = cluster_info.get_votes(&mut Cursor::default());
         assert_eq!(initial_votes, current_votes);
-        assert!(!current_votes.contains(&refresh_tx));
+        assert!(
+            !current_votes.contains(&refresh_tx),
+            "Refresh on outdated vote should fail"
+        );
 
         // Trying to refresh a vote should evict the first slot less than the refreshed vote slot
         let refresh_slot = max_vote_slot + 1;
@@ -3041,7 +3052,7 @@ mod tests {
         // This should evict the latest vote since it's for a slot less than refresh_slot
         let votes = cluster_info.get_votes(&mut Cursor::default());
         assert_eq!(votes.len(), MAX_VOTES as usize);
-        assert!(votes.contains(&refresh_tx));
+        assert!(votes.contains(&refresh_tx), "Refresh vote not found");
         assert!(!votes.contains(&first_vote.unwrap()));
     }
 
