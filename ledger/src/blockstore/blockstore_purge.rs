@@ -243,37 +243,37 @@ impl Blockstore {
         purge_type: PurgeType,
     ) -> Result<()> {
         self.meta_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.bank_hash_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.roots_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.data_shred_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.code_shred_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.dead_slots_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.duplicate_slots_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.erasure_meta_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.orphans_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.index_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.rewards_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.blocktime_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.perf_samples_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.block_height_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.optimistic_slots_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.merkle_root_meta_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+            .delete_range_in_batch(write_batch, from_slot, to_slot);
 
         match purge_type {
             PurgeType::Exact => self.purge_special_columns_exact(write_batch, from_slot, to_slot),
@@ -380,16 +380,16 @@ impl Blockstore {
             for (i, transaction) in transactions.enumerate() {
                 if let Some(&signature) = transaction.signatures.first() {
                     self.transaction_status_cf
-                        .delete_in_batch(batch, (signature, slot))?;
+                        .delete_in_batch(batch, (signature, slot));
                     self.transaction_memos_cf
-                        .delete_in_batch(batch, (signature, slot))?;
+                        .delete_in_batch(batch, (signature, slot));
                     if !primary_indexes.is_empty() {
                         self.transaction_memos_cf
-                            .delete_deprecated_in_batch(batch, signature)?;
+                            .delete_deprecated_in_batch(batch, signature);
                     }
                     for primary_index in &primary_indexes {
                         self.transaction_status_cf
-                            .delete_deprecated_in_batch(batch, (*primary_index, signature, slot))?;
+                            .delete_deprecated_in_batch(batch, (*primary_index, signature, slot));
                     }
 
                     let meta = self.read_transaction_status((signature, slot))?;
@@ -402,15 +402,13 @@ impl Blockstore {
                     let transaction_index =
                         u32::try_from(i).map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
                     for pubkey in account_keys.iter() {
-                        self.address_signatures_cf.delete_in_batch(
-                            batch,
-                            (*pubkey, slot, transaction_index, signature),
-                        )?;
+                        self.address_signatures_cf
+                            .delete_in_batch(batch, (*pubkey, slot, transaction_index, signature));
                         for primary_index in &primary_indexes {
                             self.address_signatures_cf.delete_deprecated_in_batch(
                                 batch,
                                 (*primary_index, *pubkey, slot, signature),
-                            )?;
+                            );
                         }
                     }
                 }

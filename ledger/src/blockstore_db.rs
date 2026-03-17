@@ -558,19 +558,16 @@ impl AsRef<[u8]> for BlockstoreByteReference<'_> {
 }
 
 impl WriteBatch {
-    fn put_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, key: K, value: &[u8]) -> Result<()> {
+    fn put_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, key: K, value: &[u8]) {
         self.write_batch.put_cf(cf, key, value);
-        Ok(())
     }
 
-    fn delete_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, key: K) -> Result<()> {
+    fn delete_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, key: K) {
         self.write_batch.delete_cf(cf, key);
-        Ok(())
     }
 
-    fn delete_range_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, from: K, to: K) -> Result<()> {
+    fn delete_range_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, from: K, to: K) {
         self.write_batch.delete_range_cf(cf, from, to);
-        Ok(())
     }
 }
 
@@ -709,14 +706,9 @@ where
         result
     }
 
-    pub fn put_bytes_in_batch(
-        &self,
-        batch: &mut WriteBatch,
-        index: C::Index,
-        value: &[u8],
-    ) -> Result<()> {
+    pub fn put_bytes_in_batch(&self, batch: &mut WriteBatch, index: C::Index, value: &[u8]) {
         let key = <C as Column>::key(&index);
-        batch.put_cf(self.handle(), key, value)
+        batch.put_cf(self.handle(), key, value);
     }
 
     /// Retrieves the specified RocksDB integer property of the current
@@ -748,15 +740,15 @@ where
         result
     }
 
-    pub fn delete_in_batch(&self, batch: &mut WriteBatch, index: C::Index) -> Result<()> {
+    pub fn delete_in_batch(&self, batch: &mut WriteBatch, index: C::Index) {
         let key = <C as Column>::key(&index);
-        batch.delete_cf(self.handle(), key)
+        batch.delete_cf(self.handle(), key);
     }
 
     /// Adds a \[`from`, `to`\] range that deletes all entries between the `from` slot
     /// and `to` slot inclusively.  If `from` slot and `to` slot are the same, then all
     /// entries in that slot will be removed.
-    pub fn delete_range_in_batch(&self, batch: &mut WriteBatch, from: Slot, to: Slot) -> Result<()>
+    pub fn delete_range_in_batch(&self, batch: &mut WriteBatch, from: Slot, to: Slot)
     where
         C: Column + ColumnName,
     {
@@ -767,7 +759,7 @@ where
         // adjusting the `to` slot range by 1.
         let from_key = <C as Column>::key(&C::as_index(from));
         let to_key = <C as Column>::key(&C::as_index(to.saturating_add(1)));
-        batch.delete_range_cf(self.handle(), from_key, to_key)
+        batch.delete_range_cf(self.handle(), from_key, to_key);
     }
 
     /// Delete files whose slot range is within \[`from`, `to`\].
@@ -872,7 +864,8 @@ where
     ) -> Result<()> {
         let key = <C as Column>::key(&index);
         let serialized_value = C::serialize(value)?;
-        batch.put_cf(self.handle(), key, &serialized_value)
+        batch.put_cf(self.handle(), key, &serialized_value);
+        Ok(())
     }
 }
 
@@ -1019,9 +1012,9 @@ where
         &self,
         batch: &mut WriteBatch,
         index: C::DeprecatedIndex,
-    ) -> Result<()> {
+    ) {
         let key = C::deprecated_key(index);
-        batch.delete_cf(self.handle(), &key)
+        batch.delete_cf(self.handle(), &key);
     }
 }
 

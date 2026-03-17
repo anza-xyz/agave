@@ -1779,8 +1779,9 @@ impl Blockstore {
             &shred,
             write_batch,
             shred_source,
-        )?;
+        );
         newly_completed_data_sets.extend(completed_data_sets);
+
         merkle_root_metas
             .entry(erasure_set)
             .or_insert(WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
@@ -1817,7 +1818,7 @@ impl Blockstore {
         // Commit step: commit all changes to the mutable structures at once, or none at all.
         // We don't want only a subset of these changes going through.
         self.code_shred_cf
-            .put_bytes_in_batch(write_batch, (slot, shred_index), shred.payload())?;
+            .put_bytes_in_batch(write_batch, (slot, shred_index), shred.payload());
         index_meta.coding_mut().insert(shred_index);
 
         Ok(())
@@ -2264,7 +2265,7 @@ impl Blockstore {
         shred: &Shred,
         write_batch: &mut WriteBatch,
         shred_source: ShredSource,
-    ) -> Result<impl Iterator<Item = CompletedDataSetInfo> + 'a + use<'a>> {
+    ) -> impl Iterator<Item = CompletedDataSetInfo> + 'a + use<'a> {
         let slot = shred.slot();
         let index = u64::from(shred.index());
 
@@ -2299,7 +2300,7 @@ impl Blockstore {
         // Commit step: commit all changes to the mutable structures at once, or none at all.
         // We don't want only a subset of these changes going through.
         self.data_shred_cf
-            .put_bytes_in_batch(write_batch, (slot, index), shred.payload())?;
+            .put_bytes_in_batch(write_batch, (slot, index), shred.payload());
         data_index.insert(index);
         let newly_completed_data_sets = update_slot_meta(
             last_in_slot,
@@ -2321,7 +2322,7 @@ impl Blockstore {
 
         trace!("inserted shred into slot {slot:?} and index {index:?}");
 
-        Ok(newly_completed_data_sets)
+        newly_completed_data_sets
     }
 
     pub fn get_data_shred(&self, slot: Slot, index: u64) -> Result<Option<Vec<u8>>> {
@@ -4540,7 +4541,7 @@ impl Blockstore {
 
             // At this point this slot has received a parent, so it's no longer an orphan
             if was_orphan_slot {
-                self.orphans_cf.delete_in_batch(write_batch, slot)?;
+                self.orphans_cf.delete_in_batch(write_batch, slot);
             }
         }
 
@@ -11514,8 +11515,7 @@ pub mod tests {
         let mut write_batch = blockstore.get_write_batch().unwrap();
         blockstore
             .merkle_root_meta_cf
-            .delete_range_in_batch(&mut write_batch, slot, slot)
-            .unwrap();
+            .delete_range_in_batch(&mut write_batch, slot, slot);
         blockstore.write_batch(write_batch).unwrap();
         assert!(
             blockstore
@@ -11588,8 +11588,7 @@ pub mod tests {
         let mut write_batch = blockstore.get_write_batch().unwrap();
         blockstore
             .merkle_root_meta_cf
-            .delete_range_in_batch(&mut write_batch, slot, slot)
-            .unwrap();
+            .delete_range_in_batch(&mut write_batch, slot, slot);
         blockstore.write_batch(write_batch).unwrap();
         assert!(
             blockstore
