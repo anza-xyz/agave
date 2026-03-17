@@ -38,9 +38,10 @@ use {
         account_storage_entry::AccountStorageEntry,
         accounts_cache::{AccountsCache, CachedAccount, SlotCache, SlotStatus},
         accounts_db::stats::{
-            AccountsStats, CleanAccountsStats, FlushStats, LoadStats, ObsoleteAccountsStats,
-            PurgeStats, ShrinkAncientStats, ShrinkStats, ShrinkStatsSub, StoreAccountsFrozenStats,
-            StoreAccountsTiming, StoreAccountsUnfrozenStats, WriteAccountsToCacheStats,
+            AccountsStats, CleanAccountsStats, FlushStats, LoadAccountsStats,
+            ObsoleteAccountsStats, PurgeStats, ShrinkAncientStats, ShrinkStats, ShrinkStatsSub,
+            StoreAccountsFrozenStats, StoreAccountsTiming, StoreAccountsUnfrozenStats,
+            WriteAccountsToCacheStats,
         },
         accounts_file::{AccountsFile, AccountsFileProvider, StorageAccess},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
@@ -913,8 +914,8 @@ pub struct AccountsDb {
 
     pub stats: AccountsStats,
 
-    /// Stats for loading accounts during replay
-    load_stats: LoadStats,
+    /// Stats for loading accounts during transaction processing
+    load_account_stats: LoadAccountsStats,
 
     /// Stats from storing accounts unfrozen
     store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats,
@@ -1128,11 +1129,11 @@ impl AccountsDb {
             shrink_candidate_slots: Mutex::new(ShrinkCandidates::default()),
             write_version: AtomicU64::new(0),
             external_purge_slots_stats: PurgeStats::default(),
-            load_stats: LoadStats::default(),
             clean_accounts_stats: CleanAccountsStats::default(),
             shrink_stats: ShrinkStats::default(),
             shrink_ancient_stats: ShrinkAncientStats::default(),
             stats: AccountsStats::default(),
+            load_account_stats: LoadAccountsStats::default(),
             store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats::default(),
             store_accounts_frozen_stats: StoreAccountsFrozenStats::default(),
             #[cfg(test)]
@@ -3926,8 +3927,8 @@ impl AccountsDb {
                 slot_status,
                 SlotStatus::Ancestor | SlotStatus::UnflushedRoot
             ) {
-                self.load_stats
-                    .loaded_from_write_cache
+                self.load_account_stats
+                    .num_loaded_from_write_cache
                     .fetch_add(1, Ordering::Relaxed);
                 return Some((cached_account.account.clone(), *cached_slot));
             }
@@ -3941,8 +3942,8 @@ impl AccountsDb {
         if !in_write_cache {
             let result = self.read_only_accounts_cache.load(*pubkey, slot);
             if let Some(account) = result {
-                self.load_stats
-                    .loaded_from_read_cache
+                self.load_account_stats
+                    .num_loaded_from_read_cache
                     .fetch_add(1, Ordering::Relaxed);
                 return Some((account, slot));
             }
@@ -3962,17 +3963,17 @@ impl AccountsDb {
             // While the account wasn't loaded directly from the write cache, the write cache
             // provided the correct slot, so count this as a load from the write cache
             if cache_result.is_some_and(|(_, cached_slot, _)| cached_slot == slot) {
-                self.load_stats
-                    .loaded_from_write_cache
+                self.load_account_stats
+                    .num_loaded_from_write_cache
                     .fetch_add(1, Ordering::Relaxed);
             } else {
-                self.load_stats
-                    .loaded_from_index_cache
+                self.load_account_stats
+                    .num_loaded_from_index_cache
                     .fetch_add(1, Ordering::Relaxed);
             }
         } else {
-            self.load_stats
-                .loaded_from_index_storage
+            self.load_account_stats
+                .num_loaded_from_index_storage
                 .fetch_add(1, Ordering::Relaxed);
         }
         let account = account_accessor.check_and_get_loaded_account_shared_data();
@@ -5796,7 +5797,7 @@ impl AccountsDb {
                 ),
             );
 
-            self.load_stats.report();
+            self.load_account_stats.report();
         }
     }
 

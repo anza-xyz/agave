@@ -950,35 +950,36 @@ pub struct WriteAccountsToCacheStats {
 }
 
 #[derive(Debug, Default)]
-pub struct LoadStats {
-    pub loaded_from_write_cache: AtomicU64,
-    pub loaded_from_read_cache: AtomicU64,
-    pub loaded_from_index_cache: AtomicU64,
-    pub loaded_from_index_storage: AtomicU64,
+pub struct LoadAccountsStats {
+    pub num_loaded_from_write_cache: AtomicU64,
+    pub num_loaded_from_read_cache: AtomicU64,
+    pub num_loaded_from_index_cache: AtomicU64,
+    pub num_loaded_from_index_storage: AtomicU64,
 }
 
-impl LoadStats {
+impl LoadAccountsStats {
     pub fn report(&self) {
         datapoint_info!(
-            "accounts_db_load",
+            "accounts_db_load_accounts",
             (
-                "loaded_from_write_cache",
-                self.loaded_from_write_cache.swap(0, Ordering::Relaxed),
+                "num_loaded_from_write_cache",
+                self.num_loaded_from_write_cache.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
-                "loaded_from_read_cache",
-                self.loaded_from_read_cache.swap(0, Ordering::Relaxed),
+                "num_loaded_from_read_cache",
+                self.num_loaded_from_read_cache.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
-                "loaded_from_index_cache",
-                self.loaded_from_index_cache.swap(0, Ordering::Relaxed),
+                "num_loaded_from_index_cache",
+                self.num_loaded_from_index_cache.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
-                "loaded_from_index_storage",
-                self.loaded_from_index_storage.swap(0, Ordering::Relaxed),
+                "num_loaded_from_index_storage",
+                self.num_loaded_from_index_storage
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
         );

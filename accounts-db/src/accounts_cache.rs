@@ -39,7 +39,7 @@ impl MaxFlushedRoot {
 /// Indicates whether a slot is an ancestor, an unflushed root, or a root being flushed
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotStatus {
-    /// Slot is in the ancestors list and not a root being flushed root. Slot is guaranteed to be
+    /// Slot is in the ancestors list and not a root being flushed. Slot is guaranteed to be
     /// the newest version of the account on this fork so the cached copy can be used without
     /// checking storage
     Ancestor,
@@ -357,40 +357,44 @@ impl AccountsCache {
         let index_max_slot = self.index.max_slot_for_pubkey(pubkey)?;
 
         if let Some(ancestors_min_slot) = ancestors.min_slot() {
-            // Iterate every slot in the range in descending order. Check ancestors first as it
-            // requires no RwLocks
+            // Iterate every slot in the range in descending order
+            // Grab a read lock on flushing roots once before the loop to avoid locking/unlocking
+            // on every iteration
+            let r_roots_being_flushed = self.roots_being_flushed.read().unwrap();
             for slot in (ancestors_min_slot..=index_max_slot).rev() {
                 if ancestors.contains_key(&slot) {
                     if let Some(account) = self.load(slot, pubkey) {
                         // Need to check flush status of the slot even for ancestors, because
                         // there could be newer version of the account that has already been
                         // flushed
-                        if self.roots_being_flushed.read().unwrap().contains(&slot) {
-                            return Some((account, slot, SlotStatus::AncestorBeingFlushed));
+                        let slot_status = if r_roots_being_flushed.contains(&slot) {
+                            SlotStatus::AncestorBeingFlushed
                         } else {
-                            return Some((account, slot, SlotStatus::Ancestor));
+                            SlotStatus::Ancestor
                         };
+                        return Some((account, slot, slot_status));
                     }
                 }
             }
+            drop(r_roots_being_flushed);
         }
 
         // If the slot is not found in the ancestors fall back to searching roots
-        let unflushed_roots = self.maybe_unflushed_roots.read().unwrap();
-        for &slot in unflushed_roots.range(..=index_max_slot).rev() {
+        let r_maybe_unflushed_roots = self.r_maybe_unflushed_roots.read().unwrap();
+        for &slot in r_maybe_unflushed_roots.range(..=index_max_slot).rev() {
             if let Some(account) = self.load(slot, pubkey) {
                 return Some((account, slot, SlotStatus::UnflushedRoot));
             }
         }
-        drop(unflushed_roots);
+        drop(r_maybe_unflushed_roots);
 
-        let flushing_roots = self.roots_being_flushed.read().unwrap();
-        for &slot in flushing_roots.range(..=index_max_slot).rev() {
+        let r_roots_being_flushed = self.r_roots_being_flushed.read().unwrap();
+        for &slot in r_roots_being_flushed.range(..=index_max_slot).rev() {
             if let Some(account) = self.load(slot, pubkey) {
                 return Some((account, slot, SlotStatus::RootBeingFlushed));
             }
         }
-        drop(flushing_roots);
+        drop(r_roots_being_flushed);
 
         // Found nothing, the version of the account in the cache must be on a different fork
         None
@@ -415,10 +419,10 @@ impl AccountsCache {
     /// a previous `begin_flush_roots`)
     pub fn begin_flush_roots(&self, max_root: Option<Slot>) -> BTreeSet<Slot> {
         let mut w_maybe_unflushed_roots = self.maybe_unflushed_roots.write().unwrap();
-        let mut w_being_flushed = self.roots_being_flushed.write().unwrap();
+        let mut w_roots_being_flushed = self.roots_being_flushed.write().unwrap();
 
         assert!(
-            w_being_flushed.is_empty(),
+            w_roots_being_flushed.is_empty(),
             "begin_flush_roots called while roots are already being flushed; end_flush_roots must \
              be called first"
         );
@@ -430,7 +434,7 @@ impl AccountsCache {
             std::mem::take(&mut *w_maybe_unflushed_roots)
         };
 
-        *w_being_flushed = roots_to_flush.clone();
+        *w_roots_being_flushed = roots_to_flush.clone();
         roots_to_flush
     }
 
