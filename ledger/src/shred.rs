@@ -69,8 +69,8 @@ use {
     thiserror::Error,
     wincode::{
         SchemaRead, SchemaWrite, TypeMeta,
-        containers::Pod,
         io::{Reader, Writer},
+        pod_wrapper,
     },
 };
 pub use {
@@ -148,6 +148,10 @@ bitflags! {
         const DATA_COMPLETE_SHRED       = 0b0100_0000;
         const LAST_SHRED_IN_SLOT        = 0b1100_0000;
     }
+}
+
+pod_wrapper! {
+    unsafe struct PodShredFlags(ShredFlags);
 }
 
 impl ShredFlags {
@@ -266,7 +270,7 @@ struct ShredCommonHeader {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct DataShredHeader {
     parent_offset: u16,
-    #[wincode(with = "Pod<_>")]
+    #[wincode(with = "PodShredFlags")]
     flags: ShredFlags,
     size: u16, // common shred header + data shred header + data
 }
@@ -1813,33 +1817,33 @@ mod tests {
     fn test_shred_flags_serde() {
         use wincode::{Deserialize as _, Serialize as _};
 
-        let flags = Pod::<ShredFlags>::deserialize(&[0b0001_0101]).unwrap();
+        let flags = PodShredFlags::deserialize(&[0b0001_0101]).unwrap();
         assert_eq!(flags, ShredFlags::from_bits(0b0001_0101).unwrap());
         assert!(!flags.contains(ShredFlags::DATA_COMPLETE_SHRED));
         assert!(!flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
         assert_eq!((flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits(), 21u8);
-        assert_eq!(Pod::<ShredFlags>::serialize(&flags).unwrap(), [0b0001_0101]);
+        assert_eq!(PodShredFlags::serialize(&flags).unwrap(), [0b0001_0101]);
 
-        let flags = Pod::<ShredFlags>::deserialize(&[0b0111_0001]).unwrap();
+        let flags = PodShredFlags::deserialize(&[0b0111_0001]).unwrap();
         assert_eq!(flags, ShredFlags::from_bits(0b0111_0001).unwrap());
         assert!(flags.contains(ShredFlags::DATA_COMPLETE_SHRED));
         assert!(!flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
         assert_eq!((flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits(), 49u8);
-        assert_eq!(Pod::<ShredFlags>::serialize(&flags).unwrap(), [0b0111_0001]);
+        assert_eq!(PodShredFlags::serialize(&flags).unwrap(), [0b0111_0001]);
 
-        let flags = Pod::<ShredFlags>::deserialize(&[0b1110_0101]).unwrap();
+        let flags = PodShredFlags::deserialize(&[0b1110_0101]).unwrap();
         assert_eq!(flags, ShredFlags::from_bits(0b1110_0101).unwrap());
         assert!(flags.contains(ShredFlags::DATA_COMPLETE_SHRED));
         assert!(flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
         assert_eq!((flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits(), 37u8);
-        assert_eq!(Pod::<ShredFlags>::serialize(&flags).unwrap(), [0b1110_0101]);
+        assert_eq!(PodShredFlags::serialize(&flags).unwrap(), [0b1110_0101]);
 
-        let flags = Pod::<ShredFlags>::deserialize(&[0b1011_1101]).unwrap();
+        let flags = PodShredFlags::deserialize(&[0b1011_1101]).unwrap();
         assert_eq!(flags, ShredFlags::from_bits(0b1011_1101).unwrap());
         assert!(!flags.contains(ShredFlags::DATA_COMPLETE_SHRED));
         assert!(!flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
         assert_eq!((flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits(), 61u8);
-        assert_eq!(Pod::<ShredFlags>::serialize(&flags).unwrap(), [0b1011_1101]);
+        assert_eq!(PodShredFlags::serialize(&flags).unwrap(), [0b1011_1101]);
     }
 
     // Verifies that LAST_SHRED_IN_SLOT also implies DATA_COMPLETE_SHRED.
@@ -1861,7 +1865,7 @@ mod tests {
         assert!(flags.contains(ShredFlags::DATA_COMPLETE_SHRED));
         assert!(flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
 
-        let mut flags = Pod::<ShredFlags>::deserialize(&[0b1011_1111]).unwrap();
+        let mut flags = PodShredFlags::deserialize(&[0b1011_1111]).unwrap();
         assert!(!flags.contains(ShredFlags::DATA_COMPLETE_SHRED));
         assert!(!flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
         flags.insert(ShredFlags::LAST_SHRED_IN_SLOT);
