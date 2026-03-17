@@ -380,7 +380,7 @@ impl AccountsCache {
         }
 
         // If the slot is not found in the ancestors fall back to searching roots
-        let r_maybe_unflushed_roots = self.r_maybe_unflushed_roots.read().unwrap();
+        let r_maybe_unflushed_roots = self.maybe_unflushed_roots.read().unwrap();
         for &slot in r_maybe_unflushed_roots.range(..=index_max_slot).rev() {
             if let Some(account) = self.load(slot, pubkey) {
                 return Some((account, slot, SlotStatus::UnflushedRoot));
@@ -388,7 +388,7 @@ impl AccountsCache {
         }
         drop(r_maybe_unflushed_roots);
 
-        let r_roots_being_flushed = self.r_roots_being_flushed.read().unwrap();
+        let r_roots_being_flushed = self.roots_being_flushed.read().unwrap();
         for &slot in r_roots_being_flushed.range(..=index_max_slot).rev() {
             if let Some(account) = self.load(slot, pubkey) {
                 return Some((account, slot, SlotStatus::RootBeingFlushed));
