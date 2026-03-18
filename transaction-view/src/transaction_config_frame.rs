@@ -42,7 +42,7 @@ pub(crate) struct TransactionConfigFrame {
 #[allow(dead_code)]
 impl TransactionConfigFrame {
     pub(crate) const MASK_SIZE: usize = core::mem::size_of::<u32>();
-    pub(crate) const CONFIG_VALUE_SIZE: usize = 4;
+    pub(crate) const CONFIG_VALUE_SIZE: usize = core::mem::size_of::<u32>();
 
     /// Sentinel for legacy / v0 transactions.
     #[inline(always)]
@@ -59,11 +59,6 @@ impl TransactionConfigFrame {
     #[inline(always)]
     pub(crate) const fn is_present(&self) -> bool {
         self.mask_offset != 0
-    }
-
-    #[inline(always)]
-    pub(crate) const fn is_not_applicable(&self) -> bool {
-        !self.is_present()
     }
 
     /// Config Mask has been successfully parsed before advancing to `ConfigValues`
@@ -134,7 +129,7 @@ impl TransactionConfigFrame {
     ///   bit 4 -> 2
     #[inline(always)]
     pub(crate) fn word_index_for_bit(&self, bit: u8) -> Option<u8> {
-        if self.is_not_applicable() || !Self::has_bit(self.mask, bit) {
+        if !self.is_present() || !Self::has_bit(self.mask, bit) {
             return None;
         }
 
@@ -251,7 +246,6 @@ mod tests {
     fn test_not_applicable_defaults() {
         let frame = TransactionConfigFrame::not_applicable();
 
-        assert!(frame.is_not_applicable());
         assert!(!frame.is_present());
         assert_eq!(TransactionConfigFrame::sanitize_mask(frame.mask), Ok(()));
     }
