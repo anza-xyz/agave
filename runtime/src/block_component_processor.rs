@@ -388,7 +388,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::Bank,
+            bank::{Bank, SlotLeader},
             genesis_utils::{activate_all_features_alpenglow, create_genesis_config},
         },
         solana_entry::block_component::{
@@ -412,7 +412,7 @@ mod tests {
     fn create_child_bank(parent: &Arc<Bank>, slot: u64) -> Arc<Bank> {
         Arc::new(Bank::new_from_parent(
             parent.clone(),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             slot,
         ))
     }

@@ -5461,11 +5461,11 @@ pub(crate) mod tests {
             DefaultSchedulerPool::new_for_verification(None, None, None, None, None),
         );
 
-        let bank =
-            bank_forks
-                .write()
-                .unwrap()
-                .insert(Bank::new_from_parent(bank, &Pubkey::default(), 1));
+        let bank = bank_forks.write().unwrap().insert(Bank::new_from_parent(
+            bank,
+            SlotLeader::default(),
+            1,
+        ));
 
         let slot = bank.slot();
         let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()

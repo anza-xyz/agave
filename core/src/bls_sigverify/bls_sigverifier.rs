@@ -341,7 +341,7 @@ mod tests {
         solana_perf::packet::{Packet, RecycledPacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::Bank,
+            bank::{Bank, SlotLeader},
             bank_forks::BankForks,
             genesis_utils::{
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
@@ -1250,7 +1250,7 @@ mod tests {
             stakes_vec,
         );
         let bank0 = Bank::new_for_tests(&genesis.genesis_config);
-        let bank5 = Bank::new_from_parent(Arc::new(bank0), &Pubkey::default(), 5);
+        let bank5 = Bank::new_from_parent(Arc::new(bank0), SlotLeader::default(), 5);
         let bank_forks = BankForks::new_rw_arc(bank5);
 
         bank_forks.write().unwrap().set_root(5, None, None);

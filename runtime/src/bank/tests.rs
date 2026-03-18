@@ -200,10 +200,10 @@ fn test_race_register_tick_freeze() {
     let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
     bank0.register_tick_for_test(&hash(solana_pubkey::new_rand().as_ref()));
     let hash = hash(solana_pubkey::new_rand().as_ref());
-    let leader_id = Pubkey::new_unique();
+    let leader = SlotLeader::new_unique();
 
     for _ in 0..1000 {
-        let bank = Arc::new(Bank::new_from_parent(bank0.clone(), &leader_id, 1));
+        let bank = Arc::new(Bank::new_from_parent(bank0.clone(), leader, 1));
 
         // Check for race between marking bank complete and last blockhash being
         // set.
@@ -11251,7 +11251,11 @@ fn test_last_restart_slot() {
     assert_eq!(get_last_restart_slot(&bank0), Some(0));
 
     // Not dirty in children where the last restart slot has not changed
-    let bank1 = Arc::new(Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1));
+    let bank1 = Arc::new(Bank::new_from_parent(
+        bank0.clone(),
+        SlotLeader::default(),
+        1,
+    ));
     assert!(!last_restart_slot_dirty(&bank1));
     assert_eq!(get_last_restart_slot(&bank1), Some(0));
     let bank2 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 2));
@@ -12494,6 +12498,7 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
         &genesis_config,
         Arc::new(RuntimeConfig::default()),
         fields,
+        Some(bank.leader),
         None,
         bank.load_accounts_data_size(),
         epoch_stakes,
