@@ -92,9 +92,7 @@ fn parse_response(
                 "Not enough data in the response from {ip_echo_server_addr}!"
             ))?;
     let payload = match response_header {
-        [0, 0, 0, 0] => {
-            bincode::deserialize(&response[HEADER_LENGTH..IP_ECHO_SERVER_RESPONSE_LENGTH])?
-        }
+        [0, 0, 0, 0] => bincode::deserialize(body)?,
         [b'H', b'T', b'T', b'P'] => {
             let http_response = std::str::from_utf8(body);
             match http_response {
