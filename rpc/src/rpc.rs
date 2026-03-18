@@ -2376,7 +2376,7 @@ impl JsonRpcRequestProcessor {
         let bank = self.get_bank_with_config(config)?;
         let stake_minimum_delegation = stake_utils::get_minimum_delegation(
             bank.feature_set
-                .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
+                .is_active(&agave_feature_set::upgrade_bpf_stake_program_to_v5::id()),
         );
         Ok(new_response(&bank, stake_minimum_delegation))
     }
@@ -9242,7 +9242,7 @@ pub mod tests {
         let bank = rpc.working_bank();
         let expected_stake_minimum_delegation = stake_utils::get_minimum_delegation(
             bank.feature_set
-                .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
+                .is_active(&agave_feature_set::upgrade_bpf_stake_program_to_v5::id()),
         );
 
         let request = create_test_request("getStakeMinimumDelegation", None);

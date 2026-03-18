@@ -142,8 +142,6 @@ impl FeatureSet {
                 .is_active(&remove_bpf_loader_incorrect_program_id::id()),
             move_stake_and_move_lamports_ixs: self
                 .is_active(&move_stake_and_move_lamports_ixs::id()),
-            stake_raise_minimum_delegation_to_1_sol: self
-                .is_active(&stake_raise_minimum_delegation_to_1_sol::id()),
             deprecate_legacy_vote_ixs: self.is_active(&deprecate_legacy_vote_ixs::id()),
             simplify_alt_bn128_syscall_error_codes: self
                 .is_active(&simplify_alt_bn128_syscall_error_codes::id()),
@@ -1321,6 +1319,14 @@ pub mod direct_account_pointers_in_program_input {
     solana_pubkey::declare_id!("ptrXWLkSDMZZmZN8GAT6W5yW4EvYByfw6cRRHbXwQNS");
 }
 
+pub mod upgrade_bpf_stake_program_to_v5 {
+    solana_pubkey::declare_id!("STk5Xj8hdAx3sTzmtJ3QysKkq6X2A3yj73JtxttiRyk");
+
+    pub mod buffer {
+        solana_pubkey::declare_id!("4EBQBjw1kqF1dqUBb6fc5Ji4tCEQgNf9ESGGX3smwXwh");
+    }
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2356,6 +2362,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             direct_account_pointers_in_program_input::id(),
             "SIMD-0449: Direct Account Pointers in Program Input",
+        ),
+        (
+            upgrade_bpf_stake_program_to_v5::id(),
+            "SIMD-0490: Upgrade BPF Stake Program to v5.0.0",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
