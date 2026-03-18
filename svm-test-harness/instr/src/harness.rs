@@ -95,6 +95,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
             EnvironmentConfig::new(
                 blockhash,
                 blockhash_lamports_per_signature,
+                false,
                 callback,
                 &feature_set,
                 &program_runtime_environment,

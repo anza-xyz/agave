@@ -161,6 +161,7 @@ impl SvmTestEnvironment<'_> {
         let processing_environment = TransactionProcessingEnvironment {
             blockhash: LAST_BLOCKHASH,
             blockhash_lamports_per_signature: LAMPORTS_PER_SIGNATURE,
+            alpenglow_migration_succeeded: false,
             epoch_total_stake: 0,
             feature_set: test_entry.feature_set,
             program_runtime_environment_for_execution: batch_processor

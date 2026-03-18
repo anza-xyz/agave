@@ -222,6 +222,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environment,
@@ -278,6 +279,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environment,
@@ -326,6 +328,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environment,
@@ -462,6 +465,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environment,
@@ -503,6 +507,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environment,
@@ -543,6 +548,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environment,
@@ -704,6 +710,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environment,

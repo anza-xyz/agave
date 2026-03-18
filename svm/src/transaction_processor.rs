@@ -148,6 +148,8 @@ pub struct TransactionProcessingEnvironment {
     /// change transaction fees. For this reason, it is recommended to use the
     /// `fee_per_signature` field to adjust transaction fees.
     pub blockhash_lamports_per_signature: u64,
+    /// Whether the alpenglow migration has completed for this bank context.
+    pub alpenglow_migration_succeeded: bool,
     /// The total stake for the current epoch.
     pub epoch_total_stake: u64,
     /// Runtime feature set to use for the transaction batch.
@@ -166,6 +168,7 @@ pub fn get_mock_transaction_processing_environment() -> TransactionProcessingEnv
     TransactionProcessingEnvironment {
         blockhash: Hash::default(),
         blockhash_lamports_per_signature: 0,
+        alpenglow_migration_succeeded: false,
         epoch_total_stake: 0,
         feature_set: SVMFeatureSet::default(),
         program_runtime_environment_for_execution: get_mock_program_runtime_environment(),
@@ -972,6 +975,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             EnvironmentConfig::new(
                 environment.blockhash,
                 environment.blockhash_lamports_per_signature,
+                environment.alpenglow_migration_succeeded,
                 callback,
                 &environment.feature_set,
                 &environment.program_runtime_environment_for_execution,
