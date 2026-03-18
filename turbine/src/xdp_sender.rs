@@ -1,8 +1,8 @@
 //! This module defines [`XdpSender`] which is a convenience wrapper around
-//! [`agave_xdp::xdp_retransmitter::XdpSender`] for the case when source address is fixed for all
+//! [`agave_xdp::transmitter::XdpSender`] for the case when source address is fixed for all
 //! items like it is in turbine.
 use {
-    agave_xdp::xdp_retransmitter as tx, bytes::Bytes, crossbeam_channel::TrySendError,
+    agave_xdp::transmitter as tx, bytes::Bytes, crossbeam_channel::TrySendError,
     std::net::SocketAddrV4,
 };
 

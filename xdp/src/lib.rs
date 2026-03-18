@@ -28,7 +28,7 @@ pub mod tx_loop;
 #[cfg(target_os = "linux")]
 pub mod umem;
 
-pub mod xdp_retransmitter;
+pub mod transmitter;
 
 #[cfg(target_os = "linux")]
 pub use program::load_xdp_program;
@@ -84,7 +84,7 @@ pub fn get_cpu() -> Result<usize, io::Error> {
 /// If the interface is part of a bonded interface, returns the master's IPv4 address.
 #[cfg(target_os = "linux")]
 pub fn interface_ipv4(interface: &str) -> Result<Ipv4Addr, io::Error> {
-    if let Some(ip) = crate::xdp_retransmitter::master_ip_if_bonded(interface) {
+    if let Some(ip) = crate::transmitter::master_ip_if_bonded(interface) {
         Ok(ip)
     } else {
         crate::device::NetworkDevice::new(interface)?.ipv4_addr()
