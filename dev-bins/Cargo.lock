@@ -6571,14 +6571,8 @@ version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "ahash 0.8.12",
- "log",
- "solana-bpf-loader-program",
- "solana-compute-budget-program",
- "solana-loader-v4-program",
  "solana-pubkey 4.1.0",
  "solana-sdk-ids",
- "solana-system-program",
- "solana-vote-program",
 ]
 
 [[package]]
