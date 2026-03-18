@@ -338,6 +338,30 @@ mod tests {
     }
 
     #[test]
+    fn test_unknown_bits_rejected() {
+        // Single unknown bit (bit 5)
+        assert_eq!(
+            TransactionConfigFrame::sanitize_mask(0b10_0000),
+            Err(TransactionViewError::SanitizeError)
+        );
+        // Multiple unknown bits
+        assert_eq!(
+            TransactionConfigFrame::sanitize_mask(0b1111_1111),
+            Err(TransactionViewError::SanitizeError)
+        );
+        // High bits set
+        assert_eq!(
+            TransactionConfigFrame::sanitize_mask(1 << 31),
+            Err(TransactionViewError::SanitizeError)
+        );
+        // Unknown bits mixed with valid bits
+        assert_eq!(
+            TransactionConfigFrame::sanitize_mask(0b1_1111 | (1 << 16)),
+            Err(TransactionViewError::SanitizeError)
+        );
+    }
+
+    #[test]
     fn test_priority_fee_only() {
         let mask = 0b00011u32;
         let fee = 123_456_789u64;
