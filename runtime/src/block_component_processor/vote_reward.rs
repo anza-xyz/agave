@@ -21,7 +21,7 @@ static VOTE_REWARD_ACCOUNT_ADDR: LazyLock<Pubkey> = LazyLock::new(|| {
 
 /// The state stored in the off curve account used to store metadata for calculating and paying
 /// voting rewards.
-#[derive(Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
+#[derive(Debug, Default, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub(crate) struct VoteRewardAccountState {
     /// The rewards (in lamports) that would be paid to a validator whose stake is equal to the
     /// capitalization and it voted in every slot in the epoch.  This is also the epoch inflation.
@@ -30,24 +30,18 @@ pub(crate) struct VoteRewardAccountState {
 
 impl VoteRewardAccountState {
     /// Returns the deserialized [`Self`] from the accounts in the [`Bank`].
+    ///
+    /// If the function determines that the account has not been legitimately created yet, it will
+    /// set a dummy `Self` in the bank and return the default state.  This state can be used for the
+    /// epoch in which Alpenglow is activated.
     fn new_from_bank(bank: &Bank) -> Self {
-        match bank.get_account(&VOTE_REWARD_ACCOUNT_ADDR) {
-            None => {
-                // this can happen in the first epoch when the account has not been created yet.
-                // we create a dummy state to handle this case with the assumption that this code
-                // will become active in an epoch before the epoch in which Alpenglow is activated.
-                let state = Self {
-                    epoch_validator_rewards_lamports: 0,
-                };
+        bank.get_account(&VOTE_REWARD_ACCOUNT_ADDR)
+            .and_then(|a| wincode::deserialize::<Self>(a.data()).ok())
+            .unwrap_or_else(|| {
+                let state = Self::default();
                 state.set_state(bank);
                 state
-            }
-            Some(acct) => {
-                // unwrap should be safe as the data being deserialized was serialized by us in
-                // [`Self::set_state`].
-                wincode::deserialize(acct.data()).unwrap()
-            }
-        }
+            })
     }
 
     /// Serializes and updates [`Self`] into the accounts in the [`Bank`].
@@ -181,7 +175,15 @@ fn calculate_voting_reward(
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_genesis_config::GenesisConfig, solana_native_token::LAMPORTS_PER_SOL};
+    use {
+        super::*,
+        crate::{
+            bank_forks::BankForks,
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
+        },
+        solana_genesis_config::GenesisConfig,
+        solana_native_token::LAMPORTS_PER_SOL,
+    };
 
     #[test]
     fn calculate_voting_reward_does_not_panic() {
@@ -237,5 +239,29 @@ mod tests {
             prev_epoch,
         );
         assert_eq!(epoch_validator_rewards_lamports, validator_rewards_lamports);
+    }
+
+    #[test]
+    fn handles_prefunded_account() {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let root_bank = bank_forks.read().unwrap().root_bank();
+
+        let prefund_lamports = 100;
+        root_bank
+            .transfer(prefund_lamports, &mint_keypair, &VOTE_REWARD_ACCOUNT_ADDR)
+            .unwrap();
+
+        assert!(root_bank.get_account(&VOTE_REWARD_ACCOUNT_ADDR).is_some());
+        assert_eq!(
+            root_bank.get_balance(&VOTE_REWARD_ACCOUNT_ADDR),
+            prefund_lamports,
+        );
+        let state = VoteRewardAccountState::new_from_bank(&root_bank);
+        assert_eq!(state, VoteRewardAccountState::default());
     }
 }
