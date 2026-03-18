@@ -148,7 +148,11 @@ mod tests {
             let a: u128 = rng.random_range(1..=u64::MAX as u128);
             let b: u128 = rng.random_range(1..=u64::MAX as u128);
             let d: u128 = rng.random_range(1..=u64::MAX as u128);
-            assert_eq!(muldiv(a, b, d), a * b / d);
+            assert_eq!(
+                muldiv(a, b, d),
+                a * b / d,
+                "muldiv({a}, {b}, {d}) result is wrong"
+            );
         }
 
         // Force the overflow path. d >= b keeps the quotient in range.
