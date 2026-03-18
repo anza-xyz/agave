@@ -183,10 +183,15 @@ impl ReplaySlotFromBlockstore {
     }
 }
 
-struct PreparedActiveBankReplay {
+struct BankReplayTracker {
     bank: BankWithScheduler,
     replay_stats: Arc<RwLock<ReplaySlotStats>>,
     replay_progress: Arc<RwLock<ConfirmationProgress>>,
+}
+
+struct BankReplayResultTracker {
+    replay_result: ReplaySlotFromBlockstore,
+    bank_replay_tracker: Option<BankReplayTracker>,
 }
 
 struct LastVoteRefreshTime {
@@ -3111,7 +3116,7 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
         replay_result: &mut ReplaySlotFromBlockstore,
-    ) -> Option<PreparedActiveBankReplay> {
+    ) -> Option<BankReplayTracker> {
         let bank_slot = replay_result.bank_slot;
         if progress.get(&bank_slot).map(|p| p.is_dead).unwrap_or(false) {
             // If the fork was marked as dead, don't replay it
@@ -3146,11 +3151,37 @@ impl ReplayStage {
             )
         });
 
-        Some(PreparedActiveBankReplay {
+        Some(BankReplayTracker {
             bank,
             replay_stats: bank_progress.replay_stats.clone(),
             replay_progress: bank_progress.replay_progress.clone(),
         })
+    }
+
+    fn prepare_active_banks_for_replay(
+        bank_forks: &RwLock<BankForks>,
+        my_pubkey: &Pubkey,
+        vote_account: &Pubkey,
+        progress: &mut ProgressMap,
+        active_bank_slots: &[Slot],
+    ) -> Vec<BankReplayResultTracker> {
+        active_bank_slots
+            .iter()
+            .map(|bank_slot| {
+                let mut replay_result = ReplaySlotFromBlockstore::new(*bank_slot);
+                let bank_replay_tracker = Self::prepare_active_bank_for_replay(
+                    bank_forks,
+                    progress,
+                    my_pubkey,
+                    vote_account,
+                    &mut replay_result,
+                );
+                BankReplayResultTracker {
+                    replay_result,
+                    bank_replay_tracker,
+                }
+            })
+            .collect()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3162,16 +3193,16 @@ impl ReplayStage {
         entry_notification_sender: Option<&EntryNotifierSender>,
         replay_vote_sender: &ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        prepared_active_bank_replay: PreparedActiveBankReplay,
+        bank_replay_tracker: BankReplayTracker,
         replay_result: &mut ReplaySlotFromBlockstore,
         prioritization_fee_cache: Option<&PrioritizationFeeCache>,
         migration_status: &MigrationStatus,
     ) -> Option<u64> {
-        let PreparedActiveBankReplay {
+        let BankReplayTracker {
             bank,
             replay_stats,
             replay_progress,
-        } = prepared_active_bank_replay;
+        } = bank_replay_tracker;
 
         // Check if the child block's chained merkle root chains to the parent's block id.
         // It's important that we do this here (after we have a bank) rather than failing
@@ -3220,7 +3251,7 @@ impl ReplayStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn replay_active_bank<PrepareActiveBankReplay, HandleReplayBlockstoreTime>(
+    fn replay_active_bank(
         blockstore: &Blockstore,
         replay_tx_thread_pool: &ThreadPool,
         my_pubkey: &Pubkey,
@@ -3228,24 +3259,19 @@ impl ReplayStage {
         entry_notification_sender: Option<&EntryNotifierSender>,
         replay_vote_sender: &ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        bank_slot: Slot,
+        bank_replay_result_tracker: BankReplayResultTracker,
         prioritization_fee_cache: Option<&PrioritizationFeeCache>,
         migration_status: &MigrationStatus,
-        prepare_active_bank_replay: PrepareActiveBankReplay,
-        handle_replay_blockstore_time: HandleReplayBlockstoreTime,
-    ) -> ReplaySlotFromBlockstore
-    where
-        PrepareActiveBankReplay:
-            FnOnce(&mut ReplaySlotFromBlockstore) -> Option<PreparedActiveBankReplay>,
-        HandleReplayBlockstoreTime: FnOnce(u64),
-    {
-        let mut replay_result = ReplaySlotFromBlockstore::new(bank_slot);
-        let Some(prepared_active_bank_replay) = prepare_active_bank_replay(&mut replay_result)
-        else {
-            return replay_result;
+    ) -> (ReplaySlotFromBlockstore, Option<u64>) {
+        let BankReplayResultTracker {
+            mut replay_result,
+            bank_replay_tracker,
+        } = bank_replay_result_tracker;
+        let Some(bank_replay_tracker) = bank_replay_tracker else {
+            return (replay_result, None);
         };
 
-        if let Some(replay_blockstore_us) = Self::replay_prepared_active_bank(
+        let replay_blockstore_us = Self::replay_prepared_active_bank(
             blockstore,
             replay_tx_thread_pool,
             my_pubkey,
@@ -3253,84 +3279,13 @@ impl ReplayStage {
             entry_notification_sender,
             replay_vote_sender,
             log_messages_bytes_limit,
-            prepared_active_bank_replay,
+            bank_replay_tracker,
             &mut replay_result,
             prioritization_fee_cache,
             migration_status,
-        ) {
-            handle_replay_blockstore_time(replay_blockstore_us);
-        }
+        );
 
-        replay_result
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn replay_active_banks_concurrently(
-        blockstore: &Blockstore,
-        bank_forks: &RwLock<BankForks>,
-        fork_thread_pool: &ThreadPool,
-        replay_tx_thread_pool: &ThreadPool,
-        my_pubkey: &Pubkey,
-        vote_account: &Pubkey,
-        progress: &mut ProgressMap,
-        transaction_status_sender: Option<&TransactionStatusSender>,
-        entry_notification_sender: Option<&EntryNotifierSender>,
-        replay_vote_sender: &ReplayVoteSender,
-        replay_timing: &mut ReplayLoopTiming,
-        log_messages_bytes_limit: Option<usize>,
-        active_bank_slots: &[Slot],
-        prioritization_fee_cache: Option<&PrioritizationFeeCache>,
-        migration_status: &MigrationStatus,
-    ) -> Vec<ReplaySlotFromBlockstore> {
-        // Make mutable shared structures thread safe.
-        let progress = RwLock::new(progress);
-        let longest_replay_time_us = AtomicU64::new(0);
-
-        // Allow for concurrent replaying of slots from different forks.
-        let replay_result_vec: Vec<ReplaySlotFromBlockstore> = fork_thread_pool.install(|| {
-            active_bank_slots
-                .into_par_iter()
-                .map(|bank_slot| {
-                    let bank_slot = *bank_slot;
-                    trace!(
-                        "Replay active bank: slot {}, thread_idx {}",
-                        bank_slot,
-                        fork_thread_pool.current_thread_index().unwrap_or_default()
-                    );
-                    Self::replay_active_bank(
-                        blockstore,
-                        replay_tx_thread_pool,
-                        my_pubkey,
-                        transaction_status_sender,
-                        entry_notification_sender,
-                        replay_vote_sender,
-                        log_messages_bytes_limit,
-                        bank_slot,
-                        prioritization_fee_cache,
-                        migration_status,
-                        |replay_result| {
-                            let mut progress_lock = progress.write().unwrap();
-                            Self::prepare_active_bank_for_replay(
-                                bank_forks,
-                                &mut progress_lock,
-                                my_pubkey,
-                                vote_account,
-                                replay_result,
-                            )
-                        },
-                        |replay_blockstore_us| {
-                            longest_replay_time_us
-                                .fetch_max(replay_blockstore_us, Ordering::Relaxed);
-                        },
-                    )
-                })
-                .collect()
-        });
-        // Accumulating time across all slots could inflate this number and make it seem like an
-        // overly large amount of time is being spent on blockstore compared to other activities.
-        replay_timing.replay_blockstore_us += longest_replay_time_us.load(Ordering::Relaxed);
-
-        replay_result_vec
+        (replay_result, replay_blockstore_us)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3727,32 +3682,66 @@ impl ReplayStage {
             return vec![];
         }
 
+        let bank_replay_result_trackers = Self::prepare_active_banks_for_replay(
+            bank_forks,
+            my_pubkey,
+            vote_account,
+            progress,
+            &active_bank_slots,
+        );
+
         let replay_result_vec = match replay_mode {
             // Skip the overhead of the threadpool if there is only one bank to play
             ForkReplayMode::Parallel(fork_thread_pool) if num_active_banks > 1 => {
-                Self::replay_active_banks_concurrently(
-                    blockstore,
-                    bank_forks,
-                    fork_thread_pool,
-                    replay_tx_thread_pool,
-                    my_pubkey,
-                    vote_account,
-                    progress,
-                    transaction_status_sender,
-                    entry_notification_sender,
-                    replay_vote_sender,
-                    replay_timing,
-                    log_messages_bytes_limit,
-                    &active_bank_slots,
-                    prioritization_fee_cache,
-                    migration_status,
-                )
+                let longest_replay_time_us = AtomicU64::new(0);
+
+                // Allow for concurrent replaying of slots from different forks.
+                let replay_result_vec: Vec<ReplaySlotFromBlockstore> =
+                    fork_thread_pool.install(|| {
+                        bank_replay_result_trackers
+                            .into_par_iter()
+                            .map(|bank_replay_result_tracker| {
+                                trace!(
+                                    "Replay active bank: slot {}, thread_idx {}",
+                                    bank_replay_result_tracker.replay_result.bank_slot,
+                                    fork_thread_pool.current_thread_index().unwrap_or_default()
+                                );
+                                let (replay_result, replay_blockstore_us) =
+                                    Self::replay_active_bank(
+                                        blockstore,
+                                        replay_tx_thread_pool,
+                                        my_pubkey,
+                                        transaction_status_sender,
+                                        entry_notification_sender,
+                                        replay_vote_sender,
+                                        log_messages_bytes_limit,
+                                        bank_replay_result_tracker,
+                                        prioritization_fee_cache,
+                                        migration_status,
+                                    );
+                                if let Some(replay_blockstore_us) = replay_blockstore_us {
+                                    longest_replay_time_us
+                                        .fetch_max(replay_blockstore_us, Ordering::Relaxed);
+                                }
+                                replay_result
+                            })
+                            .collect()
+                    });
+                // Accumulating time across all slots could inflate this number and make it seem like an
+                // overly large amount of time is being spent on blockstore compared to other activities.
+                replay_timing.replay_blockstore_us +=
+                    longest_replay_time_us.load(Ordering::Relaxed);
+
+                replay_result_vec
             }
-            ForkReplayMode::Serial | ForkReplayMode::Parallel(_) => active_bank_slots
-                .iter()
-                .map(|bank_slot| {
-                    trace!("Replay active bank: slot {bank_slot}");
-                    Self::replay_active_bank(
+            ForkReplayMode::Serial | ForkReplayMode::Parallel(_) => bank_replay_result_trackers
+                .into_iter()
+                .map(|bank_replay_result_tracker| {
+                    trace!(
+                        "Replay active bank: slot {}",
+                        bank_replay_result_tracker.replay_result.bank_slot
+                    );
+                    let (replay_result, replay_blockstore_us) = Self::replay_active_bank(
                         blockstore,
                         replay_tx_thread_pool,
                         my_pubkey,
@@ -3760,22 +3749,14 @@ impl ReplayStage {
                         entry_notification_sender,
                         replay_vote_sender,
                         log_messages_bytes_limit,
-                        *bank_slot,
+                        bank_replay_result_tracker,
                         prioritization_fee_cache,
                         migration_status,
-                        |replay_result| {
-                            Self::prepare_active_bank_for_replay(
-                                bank_forks,
-                                progress,
-                                my_pubkey,
-                                vote_account,
-                                replay_result,
-                            )
-                        },
-                        |replay_blockstore_us| {
-                            replay_timing.replay_blockstore_us += replay_blockstore_us
-                        },
-                    )
+                    );
+                    if let Some(replay_blockstore_us) = replay_blockstore_us {
+                        replay_timing.replay_blockstore_us += replay_blockstore_us;
+                    }
+                    replay_result
                 })
                 .collect(),
         };
