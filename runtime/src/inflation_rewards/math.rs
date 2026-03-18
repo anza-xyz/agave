@@ -1,5 +1,6 @@
 //! Fixed-point helpers for integer inflation.
-pub(super) const SCALE: u128 = 1_000_000_000_000_000_000;
+pub(super) const SCALE_SHIFT: u32 = 60;
+pub(super) const SCALE: u128 = 1u128 << SCALE_SHIFT;
 
 // a * b / d, handling u128 overflow via the identity:
 //
@@ -36,7 +37,11 @@ pub(super) fn fixed_pow(base_scaled: u128, exp: u128) -> u128 {
     result
 }
 
-/// ln(x) via the atanh trick.
+// ln(x) = 2 * atanh((x-1)/(x+1)), where atanh(z) = z + z^3/3 + z^5/5 + ...
+//
+// x is in [0.5, 1.0], so z = (x-1)/(x+1) is in [-1/3, 0].
+// Each term is bounded by |z|^(2k+1) / (2k+1) <= (1/3)^(2k+1).
+// At k=19: (1/3)^39 < 2^{-60}, so the term underflows SCALE. 25 is conservative.
 pub(super) fn fixed_ln(x_scaled: u128) -> i128 {
     debug_assert!((SCALE / 2..=SCALE).contains(&x_scaled));
 
@@ -59,8 +64,14 @@ pub(super) fn fixed_ln(x_scaled: u128) -> i128 {
     2 * sum
 }
 
-/// exp(x) via Taylor series.
+// exp(x) = 1 + x + x^2/2! + x^3/3! + ..., computed as term_k = term_{k-1} * x / k.
+//
+// Only called from compute_decay with arg = remainder * ln(decay_base) / NANOS_PER_YEAR,
+// where remainder < 1 year and decay_base = 0.85, so in practice |x| < |ln(0.85)| ~ 0.163.
+// The k-th term is bounded by 0.163^k / k!. At k=12 this is < 2^{-60}, so it
+// underflows SCALE. 35 is conservative.
 pub(super) fn fixed_exp(x_scaled: i128) -> u128 {
+    debug_assert!(x_scaled.unsigned_abs() < SCALE * 2);
     let s = SCALE as i128;
     let mut sum = s;
     let mut term = s;

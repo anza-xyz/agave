@@ -1,6 +1,6 @@
 //! Fixed-point integer replacement for the f64 inflation reward pipeline.
 use {
-    super::math::{fixed_exp, fixed_ln, fixed_pow, muldiv, SCALE},
+    super::math::{SCALE, SCALE_SHIFT, fixed_exp, fixed_ln, fixed_pow, muldiv},
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_inflation::Inflation,
 };
@@ -20,13 +20,34 @@ pub(crate) struct IntegerInflation {
 
 impl From<&Inflation> for IntegerInflation {
     fn from(infl: &Inflation) -> Self {
-        let to_scaled = |v: f64| (v * SCALE as f64).round() as u128;
         Self {
-            initial_scaled: to_scaled(infl.initial),
-            terminal_scaled: to_scaled(infl.terminal),
-            decay_base_scaled: to_scaled(1.0 - infl.taper),
-            foundation_scaled: to_scaled(infl.foundation),
+            initial_scaled: f64_to_scaled(infl.initial),
+            terminal_scaled: f64_to_scaled(infl.terminal),
+            decay_base_scaled: f64_to_scaled(1.0 - infl.taper),
+            foundation_scaled: f64_to_scaled(infl.foundation),
             foundation_term_nanos: (infl.foundation_term * NANOS_PER_YEAR as f64).round() as u128,
+        }
+    }
+}
+
+fn f64_to_scaled(v: f64) -> u128 {
+    debug_assert!(v >= 0.0 && v.is_finite());
+    if v == 0.0 {
+        return 0;
+    }
+    let bits = v.to_bits();
+    let mantissa = (bits & 0x000F_FFFF_FFFF_FFFF) | 0x0010_0000_0000_0000; // 53-bit with implicit leading 1
+    let biased_exp = ((bits >> 52) & 0x7FF) as i32;
+    // v = mantissa * 2^(biased_exp - 1023 - 52)
+    // v * SCALE = mantissa * 2^(biased_exp - 1023 - 52 + SCALE_SHIFT)
+    let shift = biased_exp - 1023 - 52 + SCALE_SHIFT as i32;
+
+    match shift >= 0 {
+        true => (mantissa as u128) << (shift as u32),
+        false => {
+            // Round to nearest.
+            let right = (-shift) as u32;
+            ((mantissa as u128) + (1u128 << (right - 1))) >> right
         }
     }
 }
@@ -123,6 +144,24 @@ mod tests {
 
     fn abs_diff(a: u128, b: u128) -> u128 {
         a.max(b).saturating_sub(a.min(b))
+    }
+
+    #[test]
+    fn test_f64_to_scaled() {
+        assert_eq!(f64_to_scaled(0.0), 0);
+        assert_eq!(f64_to_scaled(1.0), SCALE);
+
+        // powers of two should be exact
+        assert_eq!(f64_to_scaled(0.5), SCALE / 2);
+        assert_eq!(f64_to_scaled(0.25), SCALE / 4);
+        assert_eq!(f64_to_scaled(0.125), SCALE / 8);
+
+        // check against naive f64 multiply (works because 2^60 is exact in f64)
+        // and round-trip back to f64
+        for v in [0.08, 0.015, 0.85, 0.05, 7.0] {
+            assert_eq!(f64_to_scaled(v), (v * SCALE as f64).round() as u128);
+            assert_eq!(f64_to_scaled(v) as f64 / SCALE as f64, v);
+        }
     }
 
     #[test]

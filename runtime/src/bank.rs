@@ -2597,8 +2597,10 @@ impl Bank {
             .feature_set
             .is_active(&feature_set::integer_inflation_rewards::id())
         {
-            let inflation = self.inflation.read().unwrap();
-            let integer_inflation = IntegerInflation::from(&*inflation);
+            let integer_inflation = {
+                let inflation = self.inflation.read().unwrap();
+                IntegerInflation::from(&*inflation)
+            };
             let num_slots = self.get_inflation_num_slots();
             let slots_in_epoch = self.epoch_schedule().get_slots_in_epoch(epoch);
 
