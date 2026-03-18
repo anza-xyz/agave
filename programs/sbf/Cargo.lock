@@ -8559,18 +8559,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-sbf-rust-get-minimum-delegation"
-version = "4.1.0-alpha.0"
-dependencies = [
- "solana-account-info",
- "solana-msg",
- "solana-program-entrypoint",
- "solana-program-error",
- "solana-pubkey 4.1.0",
- "solana-stake-interface",
-]
-
-[[package]]
 name = "solana-sbf-rust-inner_instruction_alignment_check"
 version = "4.1.0-alpha.0"
 dependencies = [

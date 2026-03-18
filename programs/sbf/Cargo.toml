@@ -33,7 +33,6 @@ members = [
     "rust/dup_accounts",
     "rust/error_handling",
     "rust/external_spend",
-    "rust/get_minimum_delegation",
     "rust/inner_instruction_alignment_check",
     "rust/instruction_introspection",
     "rust/invoke",
