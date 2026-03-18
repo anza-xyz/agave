@@ -192,13 +192,13 @@ impl CachedAccount {
     }
 }
 
-/// Maps each pubkey to (max_slot, count) where max_slot is the highest slot at which the pubkey
-/// has been written into the cache, and count is the number of SlotCache entries that currently
-/// hold the pubkey. max_slot may be stale after a removal; callers must handle a
+/// Maps each pubkey to (max_slot, ref_count) where max_slot is the highest slot at which the
+/// pubkey has been written into the cache, and ref_count is the number of SlotCache entries that
+/// currently hold the pubkey. max_slot may be stale after a removal; callers must handle a
 /// look-up miss on max_slot by falling back to scanning all slots in the cache (see load_latest)
 #[derive(Debug, Default)]
-pub struct AccountsCacheIndex {
-    entries: DashMap<Pubkey, (Slot, u64), PubkeyHasherBuilder>,
+struct AccountsCacheIndex {
+    entries: DashMap<Pubkey, (Slot, u32), PubkeyHasherBuilder>,
     // The number of unique pubkeys in the index, for reporting purposes. This is to avoid having to
     // lock each shard of the entries dashmap to count unique keys on demand
     num_unique_pubkeys: AtomicU64,
@@ -209,9 +209,9 @@ impl AccountsCacheIndex {
     fn insert(&self, pubkey: &Pubkey, slot: Slot) {
         self.entries
             .entry(*pubkey)
-            .and_modify(|(stored_slot, count)| {
+            .and_modify(|(stored_slot, ref_count)| {
                 *stored_slot = slot.max(*stored_slot);
-                *count += 1;
+                *ref_count += 1;
             })
             .or_insert_with(|| {
                 self.num_unique_pubkeys.fetch_add(1, Ordering::Relaxed);
@@ -224,16 +224,15 @@ impl AccountsCacheIndex {
     /// is the highest slot
     fn remove(&self, pubkeys: impl IntoIterator<Item = Pubkey>) {
         for pubkey in pubkeys {
-            if let Entry::Occupied(mut occupied_entry) = self.entries.entry(pubkey) {
-                let (_, count) = occupied_entry.get_mut();
-                *count -= 1;
-                if *count == 0 {
-                    occupied_entry.remove_entry();
-                    self.num_unique_pubkeys.fetch_sub(1, Ordering::Relaxed);
-                }
-            } else {
+            let Entry::Occupied(mut occupied_entry) = self.entries.entry(pubkey) else {
                 // If this has happened the index is corrupted
                 panic!("pubkey {pubkey} not found in cache index during remove");
+            };
+            let (_, ref_count) = occupied_entry.get_mut();
+            *ref_count -= 1;
+            if *ref_count == 0 {
+                occupied_entry.remove_entry();
+                self.num_unique_pubkeys.fetch_sub(1, Ordering::Relaxed);
             }
         }
     }
@@ -728,7 +727,7 @@ mod tests {
         assert_eq!(taken, BTreeSet::from([1, 3, 5]));
 
         // Remaining unflushed roots should only contain 7
-        assert!(!cache.maybe_unflushed_roots.read().unwrap().contains(&3));
+        assert_eq!(cache.maybe_unflushed_roots.read().unwrap().len(), 1);
         assert!(cache.maybe_unflushed_roots.read().unwrap().contains(&7));
 
         // Taken roots should now be in roots_being_flushed
