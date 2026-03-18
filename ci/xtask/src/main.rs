@@ -26,6 +26,8 @@ enum Commands {
     UpdateCrate(xtask_shared::commands::update_crate::CommandArgs),
     #[command(about = "Publish crates")]
     Publish(xtask_shared::commands::publish::CommandArgs),
+    #[command(about = "Generate Buildkite pipeline")]
+    GeneratePipeline(commands::generate_pipeline::CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -72,6 +74,9 @@ async fn try_main(xtask: Xtask) -> Result<()> {
         }
         Commands::Publish(args) => {
             xtask_shared::commands::publish::run(args)?;
+        }
+        Commands::GeneratePipeline(args) => {
+            commands::generate_pipeline::run(args).await?;
         }
     }
 

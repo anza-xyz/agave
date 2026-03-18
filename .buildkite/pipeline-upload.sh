@@ -29,7 +29,7 @@ steps:
 EOF
 
 else
-  _ ci/buildkite-pipeline.sh pipeline.yml
+  _ cargo xtask generate-pipeline
   echo +++ pipeline
   cat pipeline.yml
 
