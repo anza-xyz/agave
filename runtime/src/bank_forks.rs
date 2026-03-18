@@ -754,11 +754,20 @@ mod tests {
                 GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
         },
+        agave_feature_set::FeatureSet,
+        agave_votor_messages::{
+            consensus_message::{Certificate, CertificateType},
+            migration::{GENESIS_CERTIFICATE_ACCOUNT, MIGRATION_SLOT_OFFSET},
+        },
         assert_matches::assert_matches,
+        solana_account::Account,
+        solana_bls_signatures::Signature as BLSSignature,
         solana_clock::UnixTimestamp,
         solana_epoch_schedule::EpochSchedule,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
+        solana_rent::Rent,
+        solana_sdk_ids::system_program,
         solana_signer::Signer,
         solana_vote_program::vote_state::BlockTimestamp,
     };
@@ -797,6 +806,140 @@ mod tests {
         bank_forks.insert(child_bank);
         assert_eq!(bank_forks[1u64].tick_height(), 1);
         assert_eq!(bank_forks.working_bank().tick_height(), 1);
+    }
+
+    fn make_root_bank_for_migration_status_test(
+        root_slot: Slot,
+        ff_activation_slot: Option<Slot>,
+        genesis_cert: Option<Certificate>,
+    ) -> Bank {
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(10_000);
+        genesis_config.epoch_schedule = EpochSchedule::new(32);
+
+        if let Some(genesis_cert) = genesis_cert.as_ref() {
+            let cert_data = wincode::serialize(genesis_cert).unwrap();
+            let lamports = Rent::default().minimum_balance(cert_data.len());
+            let mut cert_account = Account::new(lamports, cert_data.len(), &system_program::ID);
+            cert_account.data = cert_data;
+            genesis_config
+                .accounts
+                .insert(*GENESIS_CERTIFICATE_ACCOUNT, cert_account);
+        }
+
+        let mut root_bank = if root_slot == 0 {
+            Bank::new_for_tests(&genesis_config)
+        } else {
+            let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+            bank0.freeze();
+            Bank::new_from_parent(bank0, SlotLeader::default(), root_slot)
+        };
+
+        let mut feature_set = FeatureSet::default();
+        if let Some(ff_activation_slot) = ff_activation_slot {
+            feature_set.activate(&agave_feature_set::alpenglow::id(), ff_activation_slot);
+        }
+        root_bank.feature_set = Arc::new(feature_set);
+
+        root_bank.squash();
+
+        root_bank
+    }
+
+    #[test]
+    fn test_initialize_migration_status() {
+        let ff_activation_slot = 5;
+        let genesis_cert = Certificate {
+            cert_type: CertificateType::Finalize(1),
+            signature: BLSSignature::default(),
+            bitmap: vec![],
+        };
+
+        let root_bank = make_root_bank_for_migration_status_test(0, None, None);
+        let migration_status = BankForks::initialize_migration_status(&root_bank);
+        assert!(migration_status.is_pre_feature_activation());
+
+        let root_bank = make_root_bank_for_migration_status_test(0, Some(ff_activation_slot), None);
+        let migration_status = BankForks::initialize_migration_status(&root_bank);
+        assert!(migration_status.is_in_migration());
+        assert_eq!(
+            migration_status.migration_slot(),
+            Some(ff_activation_slot + MIGRATION_SLOT_OFFSET)
+        );
+
+        let root_bank = make_root_bank_for_migration_status_test(
+            10,
+            Some(ff_activation_slot),
+            Some(genesis_cert.clone()),
+        );
+        assert_eq!(
+            root_bank.get_alpenglow_genesis_certificate(),
+            Some(genesis_cert.clone())
+        );
+        let migration_status = BankForks::initialize_migration_status(&root_bank);
+        assert!(migration_status.is_alpenglow_enabled());
+        assert!(!migration_status.is_full_alpenglow_epoch());
+
+        let root_bank = make_root_bank_for_migration_status_test(
+            64,
+            Some(ff_activation_slot),
+            Some(genesis_cert),
+        );
+        assert!(root_bank.get_alpenglow_genesis_certificate().is_some());
+        let migration_status = BankForks::initialize_migration_status(&root_bank);
+        assert!(migration_status.is_alpenglow_enabled());
+        assert!(migration_status.is_full_alpenglow_epoch());
+    }
+
+    /// The offchain address at which the genesis certificate will be stored is known in advance
+    /// Make sure that if someone prefunds this address, there is no change to behavior
+    #[test]
+    fn test_initialize_migration_status_genesis_acct_prefunded() {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let root_bank = bank_forks.read().unwrap().root_bank();
+
+        let prefund_lamports = 100;
+        root_bank
+            .transfer(
+                prefund_lamports,
+                &mint_keypair,
+                &GENESIS_CERTIFICATE_ACCOUNT,
+            )
+            .unwrap();
+
+        assert!(
+            root_bank
+                .get_account(&GENESIS_CERTIFICATE_ACCOUNT)
+                .is_some()
+        );
+        assert_eq!(
+            root_bank.get_balance(&GENESIS_CERTIFICATE_ACCOUNT),
+            prefund_lamports,
+        );
+
+        let migration_status = BankForks::initialize_migration_status(&root_bank);
+        assert!(migration_status.is_pre_feature_activation());
+        assert!(!migration_status.is_in_migration());
+        assert_eq!(migration_status.migration_slot(), None);
+
+        // Migration can still succeed
+        let mut bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 10);
+        let genesis_cert = Certificate {
+            cert_type: CertificateType::Finalize(1),
+            signature: BLSSignature::default(),
+            bitmap: vec![],
+        };
+        bank.activate_feature(&agave_feature_set::alpenglow::id());
+        bank.set_alpenglow_genesis_certificate(&genesis_cert);
+
+        let migration_status = BankForks::initialize_migration_status(&bank);
+        assert!(migration_status.is_alpenglow_enabled());
     }
 
     #[test]
