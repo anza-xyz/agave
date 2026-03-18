@@ -716,30 +716,27 @@ mod tests {
             }
         }
 
-        fn add_certificate(&mut self, vote: Vote) {
+        fn add_message(
+            &mut self,
+            message: ConsensusMessage,
+        ) -> (Option<Slot>, Vec<Arc<Certificate>>) {
             let root_bank = self.bank_forks.read().unwrap().root_bank();
-            for rank in 0..6 {
-                self.pool
-                    .add_message(
-                        root_bank.epoch_schedule(),
-                        root_bank.epoch_stakes_map(),
-                        root_bank.slot(),
-                        &Pubkey::new_unique(),
-                        dummy_vote_message(&self.validators, &vote, rank),
-                        &mut vec![],
-                    )
-                    .unwrap();
-            }
             self.pool
                 .add_message(
                     root_bank.epoch_schedule(),
                     root_bank.epoch_stakes_map(),
                     root_bank.slot(),
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&self.validators, &vote, 6),
+                    message,
                     &mut vec![],
                 )
-                .unwrap();
+                .unwrap()
+        }
+
+        fn add_certificate(&mut self, vote: Vote) {
+            for rank in 0..=6 {
+                self.add_message(dummy_vote_message(&self.validators, &vote, rank));
+            }
             match vote {
                 Vote::Notarize(vote) => assert_eq!(self.pool.highest_notarized_slot(), vote.slot),
                 Vote::NotarizeFallback(vote) => {
@@ -1056,56 +1053,19 @@ mod tests {
             Vote::SkipFallback(_) => |pool: &ConsensusPool| pool.highest_skip_slot(),
             Vote::Genesis(_genesis_vote) => |_pool: &ConsensusPool| 0,
         };
-        let bank = ctx.bank_forks.read().unwrap().root_bank();
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                dummy_vote_message(&ctx.validators, &vote, my_validator_ix),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, my_validator_ix));
         let slot = vote.slot();
         assert!(highest_slot_fn(&ctx.pool) < slot);
         // Same key voting again shouldn't make a certificate
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                dummy_vote_message(&ctx.validators, &vote, my_validator_ix),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, my_validator_ix));
         assert!(highest_slot_fn(&ctx.pool) < slot);
         for rank in 0..4 {
-            ctx.pool
-                .add_message(
-                    bank.epoch_schedule(),
-                    bank.epoch_stakes_map(),
-                    bank.slot(),
-                    &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
-                    &mut vec![],
-                )
-                .unwrap();
+            ctx.add_message(dummy_vote_message(&ctx.validators, &vote, rank));
         }
         assert!(highest_slot_fn(&ctx.pool) < slot);
         let new_validator_ix = 6;
-        let (new_finalized_slot, certs_to_send) = ctx
-            .pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                dummy_vote_message(&ctx.validators, &vote, new_validator_ix),
-                &mut vec![],
-            )
-            .unwrap();
+        let (new_finalized_slot, certs_to_send) =
+            ctx.add_message(dummy_vote_message(&ctx.validators, &vote, new_validator_ix));
         if vote.is_finalize() {
             assert_eq!(new_finalized_slot, Some(slot));
         } else {
@@ -1120,17 +1080,8 @@ mod tests {
         assert_eq!(highest_slot_fn(&ctx.pool), slot);
         // Now add the same certificate again, this should silently exit.
         for cert in certs_to_send {
-            let (new_finalized_slot, certs_to_send) = ctx
-                .pool
-                .add_message(
-                    bank.epoch_schedule(),
-                    bank.epoch_stakes_map(),
-                    bank.slot(),
-                    &Pubkey::new_unique(),
-                    ConsensusMessage::Certificate((*cert).clone()),
-                    &mut vec![],
-                )
-                .unwrap();
+            let (new_finalized_slot, certs_to_send) =
+                ctx.add_message(ConsensusMessage::Certificate((*cert).clone()));
             assert!(new_finalized_slot.is_none());
             assert_eq!(certs_to_send, []);
         }
@@ -1158,21 +1109,9 @@ mod tests {
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
-        let bank = ctx.bank_forks.read().unwrap().root_bank();
         let message = ConsensusMessage::Certificate(cert.clone());
         // Add the certificate to the pool
-        let (new_finalized_slot, certs_to_send) = ctx
-            .pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                message.clone(),
-                &mut vec![],
-            )
-            .unwrap();
-        // Because this is the first certificate of this type, it should be sent out.
+        let (new_finalized_slot, certs_to_send) = ctx.add_message(message.clone()); // Because this is the first certificate of this type, it should be sent out.
         if matches!(cert_type, CertificateType::Finalize(_))
             || matches!(cert_type, CertificateType::FinalizeFast(_, _))
         {
@@ -1184,33 +1123,14 @@ mod tests {
         assert_eq!(*certs_to_send[0], cert);
 
         // Adding the cert again will not trigger another send
-        let (new_finalized_slot, certs_to_send) = ctx
-            .pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                message,
-                &mut vec![],
-            )
-            .unwrap();
+        let (new_finalized_slot, certs_to_send) = ctx.add_message(message);
         assert!(new_finalized_slot.is_none());
         assert_eq!(certs_to_send, []);
 
         // Now add the vote from everyone else, this will not trigger a certificate send
         for rank in 0..ctx.validators.len() {
-            let (_, certs_to_send) = ctx
-                .pool
-                .add_message(
-                    bank.epoch_schedule(),
-                    bank.epoch_stakes_map(),
-                    bank.slot(),
-                    &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
-                    &mut vec![],
-                )
-                .unwrap();
+            let (_, certs_to_send) =
+                ctx.add_message(dummy_vote_message(&ctx.validators, &vote, rank));
             assert!(
                 !certs_to_send
                     .iter()
@@ -1257,21 +1177,11 @@ mod tests {
         ctx.add_certificate(Vote::new_skip_vote(15));
         assert_eq!(ctx.pool.highest_skip_slot(), 15);
 
-        let bank = ctx.bank_forks.read().unwrap().root_bank();
         for i in 0..ctx.validators.len() {
             let slot = (i as u64).saturating_add(16);
             let vote = Vote::new_skip_vote(slot);
             // These should not extend the skip range
-            ctx.pool
-                .add_message(
-                    bank.epoch_schedule(),
-                    bank.epoch_stakes_map(),
-                    bank.slot(),
-                    &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, i),
-                    &mut vec![],
-                )
-                .unwrap();
+            ctx.add_message(dummy_vote_message(&ctx.validators, &vote, i));
         }
 
         assert_single_certificate_range(&ctx.pool, 15, 15);
@@ -1381,50 +1291,22 @@ mod tests {
                 rank,
             );
         }
-        let bank = ctx.bank_forks.read().unwrap().root_bank();
         // 10% vote for skip 2
         let vote = Vote::new_skip_vote(2);
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                dummy_vote_message(&ctx.validators, &vote, 6),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 6));
         assert_eq!(ctx.pool.highest_skip_slot(), 2);
 
         assert_single_certificate_range(&ctx.pool, 2, 2);
         // 10% vote for skip 4
         let vote = Vote::new_skip_vote(4);
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                dummy_vote_message(&ctx.validators, &vote, 7),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 7));
         assert_eq!(ctx.pool.highest_skip_slot(), 4);
 
         assert_single_certificate_range(&ctx.pool, 2, 2);
         assert_single_certificate_range(&ctx.pool, 4, 4);
         // 10% vote for skip 3
         let vote = Vote::new_skip_vote(3);
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                dummy_vote_message(&ctx.validators, &vote, 8),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 8));
         assert_eq!(ctx.pool.highest_skip_slot(), 4);
         assert_single_certificate_range(&ctx.pool, 2, 4);
         assert!(ctx.pool.skip_certified(3));
@@ -1456,19 +1338,9 @@ mod tests {
                 rank,
             );
         }
-        let bank = ctx.bank_forks.read().unwrap().root_bank();
         // Range expansion on a singleton vote should be ok
         let vote = Vote::new_skip_vote(1);
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                dummy_vote_message(&ctx.validators, &vote, 6),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 6));
         assert_eq!(ctx.pool.highest_skip_slot(), 1);
         add_skip_vote_range(
             &mut ctx.pool,
@@ -1497,16 +1369,7 @@ mod tests {
 
         // AlreadyExists, silently fail
         let vote = Vote::new_skip_vote(20);
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                dummy_vote_message(&ctx.validators, &vote, 6),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 6));
     }
 
     #[test]
@@ -1628,16 +1491,7 @@ mod tests {
         // Add 20% notarize, but no vote from myself, should fail
         for rank in 1..3 {
             let vote = Vote::new_notarization_vote(3, block_id);
-            ctx.pool
-                .add_message(
-                    bank.epoch_schedule(),
-                    bank.epoch_stakes_map(),
-                    bank.slot(),
-                    &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
-                    &mut new_events,
-                )
-                .unwrap();
+            ctx.add_message(dummy_vote_message(&ctx.validators, &vote, rank));
         }
         assert!(new_events.is_empty());
 
@@ -1937,32 +1791,13 @@ mod tests {
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
-        let bank = ctx.bank_forks.read().unwrap().root_bank();
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                ConsensusMessage::Certificate(cert_3),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(ConsensusMessage::Certificate(cert_3));
         let cert_4 = Certificate {
             cert_type: CertificateType::Finalize(4),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                ConsensusMessage::Certificate(cert_4),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(ConsensusMessage::Certificate(cert_4));
         // Should return both certificates
         let certs = ctx.pool.get_certs_for_standstill();
         assert_eq!(certs.len(), 2);
@@ -1977,16 +1812,7 @@ mod tests {
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                ConsensusMessage::Certificate(cert_5),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(ConsensusMessage::Certificate(cert_5));
 
         // Add Finalize cert on 5
         let cert_5_finalize = Certificate {
@@ -1994,16 +1820,7 @@ mod tests {
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                ConsensusMessage::Certificate(cert_5_finalize),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(ConsensusMessage::Certificate(cert_5_finalize));
 
         // Add FinalizeFast cert on 5
         let cert_5 = Certificate {
@@ -2011,16 +1828,7 @@ mod tests {
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                ConsensusMessage::Certificate(cert_5),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(ConsensusMessage::Certificate(cert_5));
         // Should return only FinalizeFast cert on 5
         let certs = ctx.pool.get_certs_for_standstill();
         assert_eq!(certs.len(), 1);
@@ -2035,16 +1843,7 @@ mod tests {
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                ConsensusMessage::Certificate(cert_6),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(ConsensusMessage::Certificate(cert_6));
         // Should return certs on 5 and 6
         let certs = ctx.pool.get_certs_for_standstill();
         assert_eq!(certs.len(), 2);
@@ -2059,32 +1858,14 @@ mod tests {
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                ConsensusMessage::Certificate(cert_6_finalize),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(ConsensusMessage::Certificate(cert_6_finalize));
         // Add a NotarizeFallback cert on 6
         let cert_6_notarize_fallback = Certificate {
             cert_type: CertificateType::NotarizeFallback(6, Hash::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                ConsensusMessage::Certificate(cert_6_notarize_fallback),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(ConsensusMessage::Certificate(cert_6_notarize_fallback));
         // This should not be returned because 6 is the current highest finalized slot
         // only Notarize/Finalze/FinalizeFast should be returned
         let certs = ctx.pool.get_certs_for_standstill();
@@ -2100,16 +1881,7 @@ mod tests {
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                ConsensusMessage::Certificate(cert_7),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(ConsensusMessage::Certificate(cert_7));
         // Should return certs on 6 and 7
         let certs = ctx.pool.get_certs_for_standstill();
         assert_eq!(certs.len(), 3);
@@ -2128,31 +1900,13 @@ mod tests {
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                ConsensusMessage::Certificate(cert_8_finalize),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(ConsensusMessage::Certificate(cert_8_finalize));
         let cert_8_notarize = Certificate {
             cert_type: CertificateType::Notarize(8, Hash::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
-        ctx.pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                ConsensusMessage::Certificate(cert_8_notarize),
-                &mut vec![],
-            )
-            .unwrap();
+        ctx.add_message(ConsensusMessage::Certificate(cert_8_notarize));
 
         // Should only return certs on 8 now
         let certs = ctx.pool.get_certs_for_standstill();
@@ -2237,16 +1991,7 @@ mod tests {
                 signature: BLSSignature::default(),
                 bitmap: Vec::new(),
             };
-            ctx.pool
-                .add_message(
-                    bank.epoch_schedule(),
-                    bank.epoch_stakes_map(),
-                    bank.slot(),
-                    &Pubkey::new_unique(),
-                    ConsensusMessage::Certificate(cert),
-                    &mut events,
-                )
-                .unwrap();
+            ctx.add_message(ConsensusMessage::Certificate(cert));
         }
         let cert = Certificate {
             cert_type: CertificateType::FinalizeFast(11, hash),
@@ -2264,6 +2009,7 @@ mod tests {
             )
             .unwrap();
         // events should now contain ParentReady for slot 12
+
         error!("Events: {events:?}");
         assert!(
             events
