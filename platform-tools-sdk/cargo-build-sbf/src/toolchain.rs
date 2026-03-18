@@ -261,7 +261,7 @@ pub(crate) fn install_if_missing(
     // If platform_tools_path is set, the user has pre-installed platform-tools
     // (e.g., via Nix). Skip any download/installation operations.
     if config.platform_tools_path.is_some() {
-        debug!("Using pre-installed platform-tools from --platform-tools-path");
+        debug!("Using pre-installed platform-tools at '{}'", config.platform_tools_path.as_ref().unwrap().display());
         return Ok(());
     }
 

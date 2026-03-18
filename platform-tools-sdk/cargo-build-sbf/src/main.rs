@@ -386,10 +386,12 @@ fn main() {
 
     // The following line is scanned by CI configuration script to
     // separate cargo caches according to the version of platform-tools.
+    let rust_base_version = get_base_rust_version(DEFAULT_PLATFORM_TOOLS_VERSION);
     let version = format!(
-        "{}\nplatform-tools {}",
+        "{}\nplatform-tools {}\n{}",
         crate_version!(),
         DEFAULT_PLATFORM_TOOLS_VERSION,
+        rust_base_version,
     );
     let matches = clap::Command::new(crate_name!())
         .about(crate_description!())
