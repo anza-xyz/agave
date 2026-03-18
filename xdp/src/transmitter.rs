@@ -35,7 +35,7 @@ pub struct XdpConfig {
     pub interface: Option<String>,
     pub cpus: Vec<usize>,
     pub zero_copy: bool,
-    // The capacity of the channel that sits between retransmit stage and each XDP thread that
+    // The capacity of the channel that sits between transmit stage and each XDP thread that
     // enqueues packets to the NIC.
     pub rtx_channel_cap: usize,
 }
@@ -163,15 +163,15 @@ impl XdpSender {
     }
 }
 
-pub struct XdpRetransmitter {
+pub struct Transmitter {
     threads: Vec<thread::JoinHandle<()>>,
 }
 
 #[cfg(not(target_os = "linux"))]
-pub struct XdpRetransmitBuilder {}
+pub struct TransmitterBuilder {}
 
 #[cfg(target_os = "linux")]
-pub struct XdpRetransmitBuilder {
+pub struct TransmitterBuilder {
     tx_loops: Vec<TxLoop<OwnedUmem<PageAlignedMemory>>>,
     rtx_channel_cap: usize,
     maybe_ebpf: Option<Ebpf>,
@@ -179,7 +179,7 @@ pub struct XdpRetransmitBuilder {
     route_monitor_handle: thread::JoinHandle<()>,
 }
 
-impl XdpRetransmitBuilder {
+impl TransmitterBuilder {
     #[cfg(not(target_os = "linux"))]
     pub fn new(_config: XdpConfig, _exit: Arc<AtomicBool>) -> Result<Self, Box<dyn Error>> {
         Err("XDP is only supported on Linux".into())
@@ -300,15 +300,15 @@ impl XdpRetransmitBuilder {
     }
 
     #[cfg(not(target_os = "linux"))]
-    pub fn build(self) -> (XdpRetransmitter, XdpSender) {
+    pub fn build(self) -> (Transmitter, XdpSender) {
         (
-            XdpRetransmitter { threads: vec![] },
+            Transmitter { threads: vec![] },
             XdpSender { senders: vec![] },
         )
     }
 
     #[cfg(target_os = "linux")]
-    pub fn build(self) -> (XdpRetransmitter, XdpSender) {
+    pub fn build(self) -> (Transmitter, XdpSender) {
         const DROP_CHANNEL_CAP: usize = 1_000_000;
 
         let Self {
@@ -324,7 +324,7 @@ impl XdpRetransmitBuilder {
 
         threads.push(
             Builder::new()
-                .name("solRetransmDrop".to_owned())
+                .name("solTransmDrop".to_owned())
                 .spawn(move || {
                     loop {
                         // drop shreds in a dedicated thread so that we never lock/madvise() from
@@ -352,7 +352,7 @@ impl XdpRetransmitBuilder {
             let atomic_router = Arc::clone(&atomic_router);
             threads.push(
                 Builder::new()
-                    .name(format!("solRetransmIO{i:02}"))
+                    .name(format!("solTransmIO{i:02}"))
                     .spawn(move || {
                         tx_loop.run(receiver, drop_sender, move |ip| {
                             let r = atomic_router.load();
@@ -364,11 +364,11 @@ impl XdpRetransmitBuilder {
             senders.push(sender);
         }
 
-        (XdpRetransmitter { threads }, XdpSender { senders })
+        (Transmitter { threads }, XdpSender { senders })
     }
 }
 
-impl XdpRetransmitter {
+impl Transmitter {
     pub fn join(self) -> thread::Result<()> {
         for handle in self.threads {
             handle.join()?;

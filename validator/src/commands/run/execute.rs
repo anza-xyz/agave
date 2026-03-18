@@ -265,7 +265,7 @@ pub fn execute(
     #[cfg(target_os = "linux")]
     let xdp_builder_with_src_addr = {
         use {
-            agave_xdp::transmitter::XdpRetransmitBuilder,
+            agave_xdp::transmitter::TransmitterBuilder,
             caps::{
                 CapSet,
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
@@ -361,8 +361,8 @@ pub fn execute(
                 _ => panic!("IPv6 not supported"),
             };
             (
-                XdpRetransmitBuilder::new(xdp_config, exit.clone())
-                    .expect("failed to create xdp retransmitter"),
+                TransmitterBuilder::new(xdp_config, exit.clone())
+                    .expect("failed to create xdp transmitter"),
                 SocketAddrV4::new(src_ip, src_port),
             )
         });
