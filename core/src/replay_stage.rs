@@ -223,13 +223,9 @@ struct ProcessActiveBanksContext {
 
 #[cfg(test)]
 impl ProcessActiveBanksContext {
-    fn new_for_tests(
-        bank_forks: Arc<RwLock<BankForks>>,
-        blockstore: Arc<Blockstore>,
-        replay_vote_sender: ReplayVoteSender,
-    ) -> Self {
+    fn new_for_tests(bank_forks: Arc<RwLock<BankForks>>, blockstore: Arc<Blockstore>) -> Self {
         use crossbeam_channel::unbounded;
-
+        let (replay_vote_sender, _) = unbounded();
         let (cluster_slots_update_sender, _) = unbounded();
         let (cost_update_sender, _) = unbounded();
         let (ancestor_hashes_replay_update_sender, _) = unbounded();
@@ -5489,12 +5485,8 @@ pub(crate) mod tests {
                 .insert(Bank::new_from_parent(bank, &Pubkey::default(), 1));
 
         let slot = bank.slot();
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
-            bank_forks.clone(),
-            blockstore.clone(),
-            replay_vote_sender,
-        );
+        let process_active_banks_context =
+            ProcessActiveBanksContext::new_for_tests(bank_forks.clone(), blockstore.clone());
         let finish_verify = match failure {
             CompleteBankFailure::ReplayError => None,
             CompleteBankFailure::VerifyError => {
@@ -5629,13 +5621,8 @@ pub(crate) mod tests {
             blockstore.insert_shreds(shreds, None, false).unwrap();
             let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
             let exit = Arc::new(AtomicBool::new(false));
-
-            let (context_replay_vote_sender, _context_replay_vote_receiver) = unbounded();
-            let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
-                bank_forks.clone(),
-                blockstore.clone(),
-                context_replay_vote_sender,
-            );
+            let process_active_banks_context =
+                ProcessActiveBanksContext::new_for_tests(bank_forks.clone(), blockstore.clone());
             let res = ReplayStage::replay_blockstore_into_bank(
                 &process_active_banks_context,
                 &bank1,
