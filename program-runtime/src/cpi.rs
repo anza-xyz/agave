@@ -561,7 +561,7 @@ pub fn translate_instruction_rust(
     check_aligned: bool,
 ) -> Result<Instruction, Error> {
     let ix = translate_type::<StableInstruction>(memory_mapping, addr, check_aligned)?;
-    let account_metas = translate_slice::<AccountMeta>(
+    let account_metas = translate_slice::<mem::MaybeUninit<AccountMeta>>(
         memory_mapping,
         ix.accounts.as_vaddr(),
         ix.accounts.len(),
@@ -592,16 +592,21 @@ pub fn translate_instruction_rust(
     consume_compute_meter(invoke_context, total_cu_translation_cost)?;
 
     let mut accounts = Vec::with_capacity(account_metas.len());
-    #[expect(clippy::needless_range_loop)]
-    for account_index in 0..account_metas.len() {
-        #[expect(clippy::indexing_slicing)]
-        let account_meta = &account_metas[account_index];
-        if unsafe {
-            std::ptr::read_volatile(&account_meta.is_signer as *const _ as *const u8) > 1
-                || std::ptr::read_volatile(&account_meta.is_writable as *const _ as *const u8) > 1
-        } {
-            return Err(Box::new(InstructionError::InvalidArgument));
-        }
+    for account_meta in account_metas {
+        // Before using `account_meta` directly, verify that `is_signer` and `is_writable`
+        // contain valid boolean values to prevent UB.
+        let account_meta = unsafe {
+            let ptr = account_meta.as_ptr();
+            if (&raw const (*ptr).is_signer).cast::<u8>().read_volatile() > 1
+                || (&raw const (*ptr).is_writable).cast::<u8>().read_volatile() > 1
+            {
+                return Err(Box::new(InstructionError::InvalidArgument));
+            }
+            // SAFETY: VM memory is initialized, and we have validated that the boolean fields
+            // contain valid data.
+            account_meta.assume_init_ref()
+        };
+
         accounts.push(account_meta.clone());
     }
 
@@ -692,7 +697,7 @@ pub fn translate_instruction_c(
     let ix_c = translate_type::<SolInstruction>(memory_mapping, addr, check_aligned)?;
 
     let program_id = translate_type::<Pubkey>(memory_mapping, ix_c.program_id_addr, check_aligned)?;
-    let account_metas = translate_slice::<SolAccountMeta>(
+    let account_metas = translate_slice::<mem::MaybeUninit<SolAccountMeta>>(
         memory_mapping,
         ix_c.accounts_addr,
         ix_c.accounts_len,
@@ -719,16 +724,20 @@ pub fn translate_instruction_c(
     consume_compute_meter(invoke_context, total_cu_translation_cost)?;
 
     let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
-    #[expect(clippy::needless_range_loop)]
-    for account_index in 0..ix_c.accounts_len as usize {
-        #[expect(clippy::indexing_slicing)]
-        let account_meta = &account_metas[account_index];
-        if unsafe {
-            std::ptr::read_volatile(&account_meta.is_signer as *const _ as *const u8) > 1
-                || std::ptr::read_volatile(&account_meta.is_writable as *const _ as *const u8) > 1
-        } {
-            return Err(Box::new(InstructionError::InvalidArgument));
-        }
+    for account_meta in account_metas {
+        // Before using `account_meta` directly, verify that `is_signer` and `is_writable`
+        // contain valid boolean values to prevent UB.
+        let account_meta = unsafe {
+            let ptr = account_meta.as_ptr();
+            if (&raw const (*ptr).is_signer).cast::<u8>().read_volatile() > 1
+                || (&raw const (*ptr).is_writable).cast::<u8>().read_volatile() > 1
+            {
+                return Err(Box::new(InstructionError::InvalidArgument));
+            }
+            // SAFETY: VM memory is initialized, and we have validated that the boolean fields
+            // contain valid data.
+            account_meta.assume_init_ref()
+        };
         let pubkey =
             translate_type::<Pubkey>(memory_mapping, account_meta.pubkey_addr, check_aligned)?;
         accounts.push(AccountMeta {
