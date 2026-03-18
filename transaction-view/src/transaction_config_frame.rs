@@ -18,11 +18,8 @@ use {
 ///   ConfigValues [[u8; 4]]   // len = popcount(mask)
 ///
 /// Notes:
-/// - `offset == 0` is reserved to mean "not applicable" (legacy/v0).
-/// - Parsed tx-v1 config frames should always have `offset != 0`.
-/// - `try_new()` parses only the 4-byte mask at the current offset.
-/// - `with_values_offset()` is called later, once the parser has advanced
-///   past the addresses section and knows where `ConfigValues` begins.
+/// - `mask_offset == 0` is reserved to mean "not applicable" (legacy/v0).
+/// - Parsed tx-v1 config frames should always have `mask_offset != 0`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct TransactionConfigFrame {
     /// Offset of the 4-byte TransactionConfigMask.
@@ -308,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn test_with_values_offset_checks_remaining() {
+    fn test_try_new_invalid_config_values() {
         // bits 0,1,2 => 3 words => 12 bytes needed
         let mask = 0b00111u32;
 
