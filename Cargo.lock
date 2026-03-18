@@ -7869,6 +7869,7 @@ dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-bls-cert-verify",
  "agave-feature-set",
+ "agave-fs",
  "agave-logger",
  "agave-math-utils",
  "agave-reserved-account-keys",
@@ -9024,6 +9025,7 @@ name = "solana-local-cluster"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-fs",
  "agave-logger",
  "agave-snapshots",
  "agave-votor",

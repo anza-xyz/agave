@@ -11,6 +11,7 @@ mod tests {
             snapshot_utils::{StorageAndNextAccountsFileId, create_tmp_accounts_dir_for_tests},
             stakes::{SerdeStakesToStakeFormat, Stakes},
         },
+        agave_fs::io_setup::IoSetupState,
         agave_snapshots::snapshot_config::SnapshotConfig,
         solana_accounts_db::{
             ObsoleteAccounts,
@@ -275,6 +276,11 @@ mod tests {
         let bank_snapshots_dir = TempDir::new().unwrap();
         let full_snapshot_archives_dir = TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = TempDir::new().unwrap();
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
 
         // Serialize
         let snapshot_archive_info = snapshot_bank_utils::bank_to_full_snapshot_archive(
@@ -284,6 +290,7 @@ mod tests {
             full_snapshot_archives_dir.path(),
             incremental_snapshot_archives_dir.path(),
             SnapshotConfig::default().archive_format,
+            &io_setup,
         )
         .unwrap();
 

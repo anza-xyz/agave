@@ -33,6 +33,7 @@ use {
         tpu::{Tpu, TpuSockets},
         tvu::{AlpenglowInitializationState, Tvu, TvuConfig, TvuSockets},
     },
+    agave_fs::io_setup::IoSetupState,
     agave_snapshots::{
         SnapshotInterval, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
         snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes,
@@ -998,6 +999,10 @@ impl Validator {
             .get(SnapshotPackagerService::NAME)
             .cloned();
         let enable_gossip_push = true;
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()?
+            .with_buffers_registered(config.accounts_db_config.use_registered_io_uring_buffers)
+            .with_direct_io(config.accounts_db_config.snapshots_use_direct_io);
         let snapshot_packager_service = SnapshotPackagerService::new(
             pending_snapshot_packages.clone(),
             starting_snapshot_hashes,
@@ -1007,6 +1012,7 @@ impl Validator {
             snapshot_controller.clone(),
             enable_gossip_push,
             config.snapshot_packager_niceness_adj,
+            io_setup,
         );
         let snapshot_request_handler = SnapshotRequestHandler {
             snapshot_controller: snapshot_controller.clone(),
@@ -2488,6 +2494,12 @@ fn maybe_warp_slot(
         bank_forks.set_root(warp_slot, Some(snapshot_controller), Some(warp_slot));
         leader_schedule_cache.set_root(&bank_forks.root_bank());
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .map_err(|e| format!("Could not enable sqpoll: {e}"))?
+            .with_buffers_registered(config.accounts_db_config.use_registered_io_uring_buffers)
+            .with_direct_io(config.accounts_db_config.snapshots_use_direct_io);
+
         let full_snapshot_archive_info = match snapshot_bank_utils::bank_to_full_snapshot_archive(
             ledger_path,
             &bank_forks.root_bank(),
@@ -2495,6 +2507,7 @@ fn maybe_warp_slot(
             &config.snapshot_config.full_snapshot_archives_dir,
             &config.snapshot_config.incremental_snapshot_archives_dir,
             config.snapshot_config.archive_format,
+            &io_setup,
         ) {
             Ok(archive_info) => archive_info,
             Err(e) => return Err(format!("Unable to create snapshot: {e}")),

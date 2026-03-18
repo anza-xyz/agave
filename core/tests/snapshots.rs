@@ -2,6 +2,7 @@
 
 use {
     crate::snapshot_utils::create_tmp_accounts_dir_for_tests,
+    agave_fs::io_setup::IoSetupState,
     agave_snapshots::{
         SnapshotInterval, SnapshotKind, paths as snapshot_paths,
         snapshot_archive_info::FullSnapshotArchiveInfo, snapshot_config::SnapshotConfig,
@@ -157,8 +158,12 @@ fn restore_from_snapshot(
 // also marks each bank as root and generates snapshots
 // finally tries to restore from the last bank's snapshot and compares the restored bank to the
 // `last_slot` bank
-fn run_bank_forks_snapshot_n<F>(last_slot: Slot, f: F, set_root_interval: u64)
-where
+fn run_bank_forks_snapshot_n<F>(
+    last_slot: Slot,
+    f: F,
+    set_root_interval: u64,
+    io_setup: &IoSetupState,
+) where
     F: Fn(&Bank, &Keypair),
 {
     agave_logger::setup();
@@ -218,6 +223,7 @@ where
         &snapshot_config.full_snapshot_archives_dir,
         &snapshot_config.incremental_snapshot_archives_dir,
         snapshot_config.archive_format,
+        io_setup,
     )
     .unwrap();
 
@@ -236,6 +242,11 @@ where
 
 #[test]
 fn test_bank_forks_snapshot() {
+    let io_setup = IoSetupState::default()
+        .with_shared_sqpoll()
+        .unwrap()
+        .with_buffers_registered(true)
+        .with_direct_io(true);
     // create banks up to slot 4 and create 1 new account in each bank. test that bank 4 snapshots
     // and restores correctly
     run_bank_forks_snapshot_n(
@@ -250,6 +261,7 @@ fn test_bank_forks_snapshot() {
             assert_eq!(bank.process_transaction(&tx), Ok(()));
         },
         1,
+        &io_setup,
     );
 }
 
@@ -326,6 +338,11 @@ fn test_slots_to_snapshot() {
 
 #[test]
 fn test_bank_forks_status_cache_snapshot() {
+    let io_setup = IoSetupState::default()
+        .with_shared_sqpoll()
+        .unwrap()
+        .with_buffers_registered(true)
+        .with_direct_io(true);
     // create banks up to slot (MAX_CACHE_ENTRIES * 2) + 1 while transferring 1 lamport into 2 different accounts each time
     // this is done to ensure the AccountStorageEntries keep getting cleaned up as the root moves
     // ahead. Also tests the status_cache purge and status cache snapshotting.
@@ -353,6 +370,7 @@ fn test_bank_forks_status_cache_snapshot() {
                 goto_end_of_slot(bank);
             },
             *set_root_interval,
+            &io_setup,
         );
     }
 }
@@ -394,6 +412,12 @@ fn test_bank_forks_incremental_snapshot() {
             .path()
             .display()
     );
+
+    let io_setup = IoSetupState::default()
+        .with_shared_sqpoll()
+        .unwrap()
+        .with_buffers_registered(true)
+        .with_direct_io(true);
 
     let bank_forks = snapshot_test_config.bank_forks.clone();
     let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;
@@ -449,7 +473,8 @@ fn test_bank_forks_incremental_snapshot() {
         // Since AccountsBackgroundService isn't running, manually make a full snapshot archive
         // at the right interval
         if snapshot_utils::should_take_full_snapshot(slot, FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS) {
-            make_full_snapshot_archive(&bank, snapshot_controller.snapshot_config()).unwrap();
+            make_full_snapshot_archive(&bank, snapshot_controller.snapshot_config(), &io_setup)
+                .unwrap();
             latest_full_snapshot_slot = Some(slot);
         }
         // Similarly, make an incremental snapshot archive at the right interval, but only if
@@ -467,6 +492,7 @@ fn test_bank_forks_incremental_snapshot() {
                 &bank,
                 latest_full_snapshot_slot.unwrap(),
                 snapshot_controller.snapshot_config(),
+                &io_setup,
             )
             .unwrap();
 
@@ -488,6 +514,7 @@ fn test_bank_forks_incremental_snapshot() {
 fn make_full_snapshot_archive(
     bank: &Bank,
     snapshot_config: &SnapshotConfig,
+    io_setup: &IoSetupState,
 ) -> agave_snapshots::Result<()> {
     info!(
         "Making full snapshot archive from bank at slot: {}",
@@ -500,6 +527,7 @@ fn make_full_snapshot_archive(
         &snapshot_config.full_snapshot_archives_dir,
         &snapshot_config.incremental_snapshot_archives_dir,
         snapshot_config.archive_format,
+        io_setup,
     )?;
     Ok(())
 }
@@ -508,6 +536,7 @@ fn make_incremental_snapshot_archive(
     bank: &Bank,
     incremental_snapshot_base_slot: Slot,
     snapshot_config: &SnapshotConfig,
+    io_setup: &IoSetupState,
 ) -> agave_snapshots::Result<()> {
     info!(
         "Making incremental snapshot archive from bank at slot: {}, and base slot: {}",
@@ -522,6 +551,7 @@ fn make_incremental_snapshot_archive(
         &snapshot_config.full_snapshot_archives_dir,
         &snapshot_config.incremental_snapshot_archives_dir,
         snapshot_config.archive_format,
+        io_setup,
     )?;
     Ok(())
 }
@@ -631,6 +661,11 @@ fn test_snapshots_with_background_services() {
         snapshot_request_handler,
         pruned_banks_request_handler,
     };
+    let io_setup = IoSetupState::default()
+        .with_shared_sqpoll()
+        .unwrap()
+        .with_buffers_registered(true)
+        .with_direct_io(true);
 
     let exit = Arc::new(AtomicBool::new(false));
     let snapshot_packager_service = SnapshotPackagerService::new(
@@ -642,6 +677,7 @@ fn test_snapshots_with_background_services() {
         snapshot_controller.clone(),
         false,
         0,
+        io_setup,
     );
 
     let accounts_background_service =
@@ -797,6 +833,12 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
     // Enable or disable backpressure based on the test case parameter
     let exit_backpressure = exit_backpressure.then(|| Arc::new(AtomicBool::new(false)));
 
+    let io_setup = IoSetupState::default()
+        .with_shared_sqpoll()
+        .unwrap()
+        .with_buffers_registered(true)
+        .with_direct_io(true);
+
     let exit = Arc::new(AtomicBool::new(false));
     let snapshot_packager_service = SnapshotPackagerService::new(
         pending_snapshot_packages.clone(),
@@ -807,6 +849,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
         snapshot_controller.clone(),
         false,
         0,
+        io_setup,
     );
 
     let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;

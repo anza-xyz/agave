@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_fs::io_setup::IoSetupState,
     agave_snapshots::{
         SnapshotArchiveKind, SnapshotInterval, paths as snapshot_paths,
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
@@ -2240,6 +2241,7 @@ fn create_snapshot_to_hard_fork(
     blockstore: &Blockstore,
     snapshot_slot: Slot,
     hard_forks: Vec<Slot>,
+    io_setup: &IoSetupState,
 ) {
     let process_options = ProcessOptions {
         halt_at_slot: Some(snapshot_slot),
@@ -2287,6 +2289,7 @@ fn create_snapshot_to_hard_fork(
         ledger_path,
         ledger_path,
         snapshot_config.archive_format,
+        io_setup,
     )
     .unwrap();
     info!(
@@ -2379,7 +2382,17 @@ fn test_hard_fork_with_gap_in_roots() {
     let genesis_slot = 0;
     {
         let blockstore_a = Blockstore::open(&val_a_ledger_path).unwrap();
-        create_snapshot_to_hard_fork(&blockstore_a, hard_fork_slot, vec![hard_fork_slot]);
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_buffers_registered(true)
+            .with_direct_io(true);
+        create_snapshot_to_hard_fork(
+            &blockstore_a,
+            hard_fork_slot,
+            vec![hard_fork_slot],
+            &io_setup,
+        );
 
         // Intentionally make agave-validator unbootable by replaying blocks from the genesis to
         // ensure the hard-forked snapshot is used always.  Otherwise, we couldn't create a gap

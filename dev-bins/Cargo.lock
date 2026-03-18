@@ -143,6 +143,7 @@ name = "agave-ledger-tool"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-fs",
  "agave-logger",
  "agave-reserved-account-keys",
  "agave-snapshots",
@@ -6539,6 +6540,7 @@ dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-bls-cert-verify",
  "agave-feature-set",
+ "agave-fs",
  "agave-logger",
  "agave-math-utils",
  "agave-scheduler-bindings",
@@ -7461,6 +7463,7 @@ name = "solana-local-cluster"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-fs",
  "agave-logger",
  "agave-snapshots",
  "agave-votor",

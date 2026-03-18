@@ -509,6 +509,7 @@ pub(crate) mod tests {
             snapshot_utils::create_tmp_accounts_dir_for_tests,
         },
         agave_feature_set::FeatureSet,
+        agave_fs::io_setup::IoSetupState,
         agave_snapshots::snapshot_config::SnapshotConfig,
         assert_matches::assert_matches,
         solana_account::{
@@ -2148,6 +2149,12 @@ pub(crate) mod tests {
         let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         let full_snapshot_archive_info = bank_to_full_snapshot_archive(
             bank_snapshots_dir.path(),
             &bank,
@@ -2155,6 +2162,7 @@ pub(crate) mod tests {
             snapshot_archives_dir.path(),
             snapshot_archives_dir.path(),
             snapshot_archive_format,
+            &io_setup,
         )
         .unwrap();
 

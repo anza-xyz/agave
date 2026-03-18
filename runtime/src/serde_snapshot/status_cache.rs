@@ -6,6 +6,7 @@ use shuttle::sync::Mutex;
 use std::sync::Mutex;
 use {
     crate::{bank::BankSlotDelta, snapshot_utils, status_cache::KeySlice},
+    agave_fs::io_setup::IoSetupState,
     bincode::{self, Options as _},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
@@ -29,8 +30,9 @@ type SerdeStatus<T> = ahash::HashMap<Hash, (usize, Vec<(KeySlice, T)>)>;
 pub fn serialize_status_cache(
     slot_deltas: &[BankSlotDelta],
     status_cache_path: &Path,
+    io_setup: &IoSetupState,
 ) -> agave_snapshots::Result<u64> {
-    snapshot_utils::serialize_snapshot_data_file(status_cache_path, |stream| {
+    snapshot_utils::serialize_snapshot_data_file(status_cache_path, io_setup, |stream| {
         let snapshot_slot_deltas = slot_deltas
             .iter()
             .map(|slot_delta| {

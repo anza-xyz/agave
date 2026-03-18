@@ -1,5 +1,6 @@
 mod snapshot_gossip_manager;
 use {
+    agave_fs::io_setup::IoSetupState,
     agave_snapshots::{
         SnapshotKind, paths as snapshot_paths, snapshot_config::SnapshotConfig,
         snapshot_hash::StartingSnapshotHashes,
@@ -45,6 +46,7 @@ impl SnapshotPackagerService {
         snapshot_controller: Arc<SnapshotController>,
         enable_gossip_push: bool,
         niceness_adj: i8,
+        io_setup: IoSetupState,
     ) -> Self {
         let t_snapshot_packager = Builder::new()
             .name("solSnapshotPkgr".to_string())
@@ -66,6 +68,7 @@ impl SnapshotPackagerService {
                             let (_, dur) = meas_dur!(Self::teardown(
                                 teardown_state,
                                 snapshot_controller.snapshot_config(),
+                                &io_setup,
                             ));
                             info!("Teardown completed in {dur:?}.");
                         }
@@ -125,6 +128,7 @@ impl SnapshotPackagerService {
                         &snapshot_config.bank_snapshots_dir,
                         snapshot_config.snapshot_version,
                         snapshot_package.bank_snapshot_package,
+                        &io_setup,
                         snapshot_package.snapshot_storages.as_slice(),
                         exit_backpressure.is_none(),
                     );
@@ -151,6 +155,7 @@ impl SnapshotPackagerService {
                             &bank_snapshot_info.snapshot_dir,
                             snapshot_package.snapshot_storages,
                             snapshot_config,
+                            &io_setup,
                         ) {
                             error!(
                                 "Stopping {}! Fatal error while archiving snapshot package: {err}",
@@ -223,7 +228,7 @@ impl SnapshotPackagerService {
     }
 
     /// Performs final operations before gracefully shutting down
-    fn teardown(state: TeardownState, snapshot_config: &SnapshotConfig) {
+    fn teardown(state: TeardownState, snapshot_config: &SnapshotConfig, io_setup: &IoSetupState) {
         let TeardownState {
             snapshot_slot,
             snapshot_storages,
@@ -237,6 +242,7 @@ impl SnapshotPackagerService {
                 &snapshot_config.bank_snapshots_dir,
                 snapshot_config.snapshot_version,
                 bank_snapshot_package,
+                io_setup,
                 snapshot_storages.as_slice(),
                 false,
             );
@@ -295,6 +301,7 @@ impl SnapshotPackagerService {
         let start = Instant::now();
         let result = snapshot_utils::write_obsolete_accounts_to_snapshot(
             &bank_snapshot_dir,
+            io_setup,
             &snapshot_storages,
             snapshot_slot,
         );

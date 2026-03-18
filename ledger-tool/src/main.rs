@@ -13,6 +13,7 @@ use {
         program::*,
     },
     agave_feature_set::{self as feature_set, FeatureSet},
+    agave_fs::io_setup::IoSetupState,
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::{
         ArchiveFormat, DEFAULT_ARCHIVE_COMPRESSION, SUPPORTED_ARCHIVE_COMPRESSION, SnapshotVersion,
@@ -1525,6 +1526,18 @@ fn main() {
                             "correct misassigned owner and data on testnet ed25519 precompile \
                              account deployment",
                         ),
+                )
+                .arg(
+                    Arg::with_name("direct_io")
+                        .long("direct_io")
+                        .takes_value(false)
+                        .help("Enable direct io when creating the snapshot."),
+                )
+                .arg(
+                    Arg::with_name("registered_io_uring_buffers")
+                        .long("registered_io_uring_buffers")
+                        .takes_value(false)
+                        .help("Use registered buffers when creating the snapshot."),
                 ),
         )
         .subcommand(
@@ -2146,6 +2159,15 @@ fn main() {
                         ""
                     };
 
+                    let direct_io = arg_matches.is_present("direct_io");
+                    let registered_io_uring_buffers =
+                        arg_matches.is_present("registered_io_uring_buffers");
+                    let io_setup = IoSetupState::default()
+                        .with_shared_sqpoll()
+                        .unwrap()
+                        .with_direct_io(direct_io)
+                        .with_buffers_registered(registered_io_uring_buffers);
+
                     info!(
                         "Creating {}snapshot of slot {} in {}",
                         snapshot_type_str,
@@ -2557,6 +2579,7 @@ fn main() {
                                 output_directory.clone(),
                                 output_directory,
                                 snapshot_archive_format,
+                                &io_setup,
                             )
                             .unwrap_or_else(|err| {
                                 eprintln!("Unable to create incremental snapshot: {err}");
@@ -2580,6 +2603,7 @@ fn main() {
                                 output_directory.clone(),
                                 output_directory,
                                 snapshot_archive_format,
+                                &io_setup,
                             )
                             .unwrap_or_else(|err| {
                                 eprintln!("Unable to create snapshot: {err}");

@@ -25,7 +25,7 @@ use {
         },
         status_cache,
     },
-    agave_fs::dirs,
+    agave_fs::{dirs, io_setup::IoSetupState},
     agave_snapshots::{
         ArchiveFormat, SnapshotArchiveKind, SnapshotKind, SnapshotVersion,
         error::{
@@ -676,6 +676,7 @@ pub fn bank_to_full_snapshot_archive(
     full_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_archives_dir: impl AsRef<Path>,
     archive_format: ArchiveFormat,
+    io_setup: &IoSetupState,
 ) -> agave_snapshots::Result<FullSnapshotArchiveInfo> {
     let snapshot_version = snapshot_version.unwrap_or_default();
     let bank_snapshots_dir = tempfile::tempdir_in(&bank_snapshots_dir)?;
@@ -716,6 +717,7 @@ pub fn bank_to_full_snapshot_archive(
         &snapshot_config.bank_snapshots_dir,
         snapshot_config.snapshot_version,
         snapshot_package.bank_snapshot_package,
+        io_setup,
         snapshot_storages.as_slice(),
         false, // we do not intend to fastboot, so skip flushing and hard linking the storages
     )?;
@@ -727,6 +729,7 @@ pub fn bank_to_full_snapshot_archive(
         bank_snapshot_info.snapshot_dir,
         snapshot_storages,
         &snapshot_config,
+        io_setup,
     )?;
 
     Ok(FullSnapshotArchiveInfo::new(snapshot_archive_info))
@@ -747,6 +750,7 @@ pub fn bank_to_incremental_snapshot_archive(
     full_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_archives_dir: impl AsRef<Path>,
     archive_format: ArchiveFormat,
+    io_setup: &IoSetupState,
 ) -> agave_snapshots::Result<IncrementalSnapshotArchiveInfo> {
     let snapshot_version = snapshot_version.unwrap_or_default();
 
@@ -791,6 +795,7 @@ pub fn bank_to_incremental_snapshot_archive(
         &snapshot_config.bank_snapshots_dir,
         snapshot_config.snapshot_version,
         snapshot_package.bank_snapshot_package,
+        io_setup,
         snapshot_storages.as_slice(),
         false, // we do not intend to fastboot, so skip flushing and hard linking the storages
     )?;
@@ -802,6 +807,7 @@ pub fn bank_to_incremental_snapshot_archive(
         bank_snapshot_info.snapshot_dir,
         snapshot_storages,
         &snapshot_config,
+        io_setup,
     )?;
 
     Ok(IncrementalSnapshotArchiveInfo::new(
@@ -850,6 +856,7 @@ mod tests {
         bank_snapshots_dir: impl AsRef<Path>,
         num_total: usize,
         should_flush_and_hard_link_storages: bool,
+        io_setup: &IoSetupState,
     ) -> Bank {
         let mut bank = Arc::new(Bank::new_for_tests(genesis_config));
         for _i in 0..num_total {
@@ -862,6 +869,7 @@ mod tests {
                 &bank,
                 SnapshotVersion::default(),
                 should_flush_and_hard_link_storages,
+                io_setup,
             )
             .unwrap();
         }
@@ -880,6 +888,7 @@ mod tests {
         bank: &Bank,
         snapshot_version: SnapshotVersion,
         should_flush_and_hard_link_storages: bool,
+        io_setup: &IoSetupState,
     ) -> agave_snapshots::Result<()> {
         assert!(bank.is_complete());
 
@@ -900,6 +909,7 @@ mod tests {
             bank_snapshots_dir.as_ref(),
             snapshot_version,
             bank_snapshot_package,
+            io_setup,
             snapshot_storages.as_slice(),
             should_flush_and_hard_link_storages,
         )?;
@@ -922,6 +932,12 @@ mod tests {
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         let snapshot_archive_info = bank_to_full_snapshot_archive(
             &bank_snapshots_dir,
             &original_bank,
@@ -929,6 +945,7 @@ mod tests {
             full_snapshot_archives_dir.path(),
             incremental_snapshot_archives_dir.path(),
             snapshot_archive_format,
+            &io_setup,
         )
         .unwrap();
 
@@ -997,6 +1014,12 @@ mod tests {
         let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         let full_snapshot_archive_info = bank_to_full_snapshot_archive(
             bank_snapshots_dir.path(),
             &bank1,
@@ -1004,6 +1027,7 @@ mod tests {
             snapshot_archives_dir.path(),
             snapshot_archives_dir.path(),
             snapshot_archive_format,
+            &io_setup,
         )
         .unwrap();
 
@@ -1096,6 +1120,12 @@ mod tests {
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         let full_snapshot_archive_info = bank_to_full_snapshot_archive(
             bank_snapshots_dir.path(),
             &bank4,
@@ -1103,6 +1133,7 @@ mod tests {
             full_snapshot_archives_dir.path(),
             incremental_snapshot_archives_dir.path(),
             snapshot_archive_format,
+            &io_setup,
         )
         .unwrap();
 
@@ -1177,6 +1208,12 @@ mod tests {
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         let full_snapshot_slot = slot;
         let full_snapshot_archive_info = bank_to_full_snapshot_archive(
             bank_snapshots_dir.path(),
@@ -1185,6 +1222,7 @@ mod tests {
             full_snapshot_archives_dir.path(),
             incremental_snapshot_archives_dir.path(),
             snapshot_archive_format,
+            &io_setup,
         )
         .unwrap();
 
@@ -1212,6 +1250,12 @@ mod tests {
             .unwrap();
         bank4.fill_bank_with_ticks_for_tests();
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         let incremental_snapshot_archive_info = bank_to_incremental_snapshot_archive(
             bank_snapshots_dir.path(),
             &bank4,
@@ -1220,6 +1264,7 @@ mod tests {
             full_snapshot_archives_dir.path(),
             incremental_snapshot_archives_dir.path(),
             snapshot_archive_format,
+            &io_setup,
         )
         .unwrap();
 
@@ -1284,6 +1329,12 @@ mod tests {
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         let full_snapshot_slot = slot;
         bank_to_full_snapshot_archive(
             &bank_snapshots_dir,
@@ -1292,6 +1343,7 @@ mod tests {
             &full_snapshot_archives_dir,
             &incremental_snapshot_archives_dir,
             snapshot_archive_format,
+            &io_setup,
         )
         .unwrap();
 
@@ -1319,6 +1371,12 @@ mod tests {
             .unwrap();
         bank4.fill_bank_with_ticks_for_tests();
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         bank_to_incremental_snapshot_archive(
             &bank_snapshots_dir,
             &bank4,
@@ -1327,6 +1385,7 @@ mod tests {
             &full_snapshot_archives_dir,
             &incremental_snapshot_archives_dir,
             snapshot_archive_format,
+            &io_setup,
         )
         .unwrap();
 
@@ -1365,6 +1424,12 @@ mod tests {
         let bad_capitalization = good_capitalization + 1;
         bank.set_capitalization_for_tests(bad_capitalization);
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         let snapshot_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archive_info = bank_to_full_snapshot_archive(
             &snapshot_dir,
@@ -1373,6 +1438,7 @@ mod tests {
             &snapshot_dir,
             &snapshot_dir,
             SnapshotConfig::default().archive_format,
+            &io_setup,
         )
         .unwrap();
 
@@ -1441,6 +1507,12 @@ mod tests {
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         let (mut genesis_config, mint_keypair) =
             create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         // test expects 0 transaction fee
@@ -1475,6 +1547,7 @@ mod tests {
             full_snapshot_archives_dir.path(),
             incremental_snapshot_archives_dir.path(),
             snapshot_archive_format,
+            &io_setup,
         )
         .unwrap();
 
@@ -1513,6 +1586,7 @@ mod tests {
             full_snapshot_archives_dir.path(),
             incremental_snapshot_archives_dir.path(),
             snapshot_archive_format,
+            &io_setup,
         )
         .unwrap();
         let deserialized_bank = bank_from_snapshot_archives(
@@ -1569,6 +1643,7 @@ mod tests {
             full_snapshot_archives_dir.path(),
             incremental_snapshot_archives_dir.path(),
             snapshot_archive_format,
+            &io_setup,
         )
         .unwrap();
 
@@ -1619,6 +1694,12 @@ mod tests {
         let all_snapshots_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         let full_snapshot_slot = slot;
         bank_to_full_snapshot_archive(
             &all_snapshots_dir,
@@ -1627,6 +1708,7 @@ mod tests {
             &all_snapshots_dir,
             &all_snapshots_dir,
             snapshot_archive_format,
+            &io_setup,
         )
         .unwrap();
 
@@ -1646,6 +1728,7 @@ mod tests {
             &all_snapshots_dir,
             &all_snapshots_dir,
             snapshot_archive_format,
+            &io_setup,
         )
         .unwrap();
 
@@ -1668,11 +1751,17 @@ mod tests {
         bank.fill_bank_with_ticks_for_tests();
 
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
         create_bank_snapshot_from_bank(
             &bank_snapshots_dir,
             &bank,
             SnapshotVersion::default(),
             true,
+            &io_setup,
         )
         .unwrap();
 
@@ -1704,7 +1793,18 @@ mod tests {
     fn test_fastboot_versioning() {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let _bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 3, true);
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+        let _bank = create_snapshot_dirs_for_tests(
+            &genesis_config,
+            &bank_snapshots_dir,
+            3,
+            true,
+            &io_setup,
+        );
 
         let snapshot_config = SnapshotConfig {
             bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
@@ -1758,11 +1858,17 @@ mod tests {
     fn test_get_highest_bank_snapshot(should_flush_and_hard_link_storages: bool) {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
         let _bank = create_snapshot_dirs_for_tests(
             &genesis_config,
             &bank_snapshots_dir,
             4,
             should_flush_and_hard_link_storages,
+            &io_setup,
         );
 
         let snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
@@ -1797,7 +1903,18 @@ mod tests {
     fn test_clean_orphaned_account_snapshot_dirs() {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let _bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 2, true);
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+        let _bank = create_snapshot_dirs_for_tests(
+            &genesis_config,
+            &bank_snapshots_dir,
+            2,
+            true,
+            &io_setup,
+        );
 
         let snapshot_dir_slot_2 = bank_snapshots_dir.path().join("2");
         let accounts_link_dir_slot_2 =
@@ -1844,7 +1961,18 @@ mod tests {
     fn test_clean_orphaned_account_snapshot_dirs_no_hard_link() {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let _bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 2, false);
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+        let _bank = create_snapshot_dirs_for_tests(
+            &genesis_config,
+            &bank_snapshots_dir,
+            2,
+            false,
+            &io_setup,
+        );
 
         // Ensure the bank snapshot dir does exist.
         let bank_snapshot_dir = get_bank_snapshot_dir(&bank_snapshots_dir, 2);
@@ -1865,11 +1993,17 @@ mod tests {
     fn test_purge_incomplete_bank_snapshots(should_flush_and_hard_link_storages: bool) {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
         let _bank = create_snapshot_dirs_for_tests(
             &genesis_config,
             &bank_snapshots_dir,
             2,
             should_flush_and_hard_link_storages,
+            &io_setup,
         );
 
         // remove the "version" files so the snapshots will be purged
@@ -1911,6 +2045,12 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
+
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
 
         let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
 
@@ -1994,6 +2134,7 @@ mod tests {
             full_snapshot_archives_dir.path(),
             full_snapshot_archives_dir.path(),
             snapshot_archive_format,
+            &io_setup,
         )
         .unwrap();
 
@@ -2050,6 +2191,12 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let (mut genesis_config, mint) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         // Disable fees so fees don't need to be calculated
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
 
@@ -2089,6 +2236,7 @@ mod tests {
             &bank2,
             SnapshotVersion::default(),
             true,
+            &io_setup,
         )
         .unwrap();
 
@@ -2124,7 +2272,20 @@ mod tests {
     fn test_fastboot_missing_obsolete_accounts() {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 3, true);
+
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
+        let bank = create_snapshot_dirs_for_tests(
+            &genesis_config,
+            &bank_snapshots_dir,
+            3,
+            true,
+            &io_setup,
+        );
 
         let account_paths = &bank.rc.accounts.accounts_db.paths;
         let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
@@ -2158,6 +2319,12 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         bank.fill_bank_with_ticks_for_tests();
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         // Take a bank snapshot, passing `true` for `should_flush_and_hard_link_storages`.
         // This ensures that `serialize_snapshot` performs all necessary steps to create
         // a snapshot that supports fastbooting.
@@ -2166,6 +2333,7 @@ mod tests {
             &bank,
             SnapshotVersion::default(),
             true,
+            &io_setup,
         )
         .unwrap();
 
@@ -2213,6 +2381,12 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         bank.fill_bank_with_ticks_for_tests();
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         // freeze the bank before mucking with capitalization, since
         // freezing also changes capitalization (fees, incinerator, etc).
         bank.freeze();
@@ -2226,6 +2400,7 @@ mod tests {
             &bank,
             SnapshotVersion::default(),
             true,
+            &io_setup,
         )
         .unwrap();
 
@@ -2261,11 +2436,18 @@ mod tests {
     fn test_purge_all_bank_snapshots(should_flush_and_hard_link_storages: bool) {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         let _bank = create_snapshot_dirs_for_tests(
             &genesis_config,
             &bank_snapshots_dir,
             10,
             should_flush_and_hard_link_storages,
+            &io_setup,
         );
         // Keep bank in this scope so that its account_paths tmp dirs are not released, and purge_all_bank_snapshots
         // can clear the account hardlinks correctly.
@@ -2280,11 +2462,19 @@ mod tests {
     fn test_purge_old_bank_snapshots(should_flush_and_hard_link_storages: bool) {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         let _bank = create_snapshot_dirs_for_tests(
             &genesis_config,
             &bank_snapshots_dir,
             10,
             should_flush_and_hard_link_storages,
+            &io_setup,
         );
         // Keep bank in this scope so that its account_paths tmp dirs are not released, and purge_old_bank_snapshots
         // can clear the account hardlinks correctly.
@@ -2308,12 +2498,19 @@ mod tests {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         // The bank must stay in scope to ensure the temp dirs that it holds are not dropped
         let _bank = create_snapshot_dirs_for_tests(
             &genesis_config,
             &bank_snapshots_dir,
             9,
             should_flush_and_hard_link_storages,
+            &io_setup,
         );
         let bank_snapshots_before = get_bank_snapshots(&bank_snapshots_dir);
 
@@ -2341,12 +2538,19 @@ mod tests {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         // The bank must stay in scope to ensure the temp dirs that it holds are not dropped
         let _bank = create_snapshot_dirs_for_tests(
             &genesis_config,
             &bank_snapshots_dir,
             9,
             should_flush_and_hard_link_storages,
+            &io_setup,
         );
 
         purge_old_bank_snapshots_at_startup(&bank_snapshots_dir);
@@ -2593,6 +2797,12 @@ mod tests {
             .maximum_full_snapshot_archives_to_retain
             .get();
 
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
+
         // Take some snapshots. Do not flush or hard link storages so that get highest loadable
         // can be tested when the snapshot has not been marked loadable
         let _bank = create_snapshot_dirs_for_tests(
@@ -2600,6 +2810,7 @@ mod tests {
             &snapshot_config.bank_snapshots_dir,
             num_snapshots_to_create,
             false,
+            &io_setup,
         );
 
         let highest_bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();

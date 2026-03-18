@@ -363,6 +363,7 @@ mod tests {
             snapshot_minimizer::SnapshotMinimizer,
             snapshot_utils,
         },
+        agave_fs::io_setup::IoSetupState,
         agave_snapshots::snapshot_config::SnapshotConfig,
         dashmap::DashSet,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -631,6 +632,11 @@ mod tests {
         let snapshot_config = SnapshotConfig::default();
         let bank_snapshots_dir = TempDir::new().unwrap();
         let snapshot_archives_dir = TempDir::new().unwrap();
+        let io_setup = IoSetupState::default()
+            .with_shared_sqpoll()
+            .unwrap()
+            .with_direct_io(true)
+            .with_buffers_registered(true);
         let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
             &bank_snapshots_dir,
             &bank,
@@ -638,6 +644,7 @@ mod tests {
             &snapshot_archives_dir,
             &snapshot_archives_dir,
             snapshot_config.archive_format,
+            &io_setup,
         )
         .unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
