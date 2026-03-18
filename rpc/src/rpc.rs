@@ -1148,9 +1148,6 @@ impl JsonRpcRequestProcessor {
         };
 
         let bank = self.bank(config.commitment);
-        let commission_rate_in_basis_points = bank
-            .feature_set
-            .is_active(&agave_feature_set::commission_rate_in_basis_points::id());
         let vote_accounts = bank.vote_accounts();
         let epoch_vote_accounts = bank
             .epoch_vote_accounts(bank.get_epoch_and_slot_index(bank.slot()).0)
@@ -1186,18 +1183,7 @@ impl JsonRpcRequestProcessor {
                     vote_pubkey: vote_pubkey.to_string(),
                     node_pubkey: vote_state_view.node_pubkey().to_string(),
                     activated_stake: *activated_stake,
-                    commission: if commission_rate_in_basis_points {
-                        // Derive percent from native bps, clamping to u8::MAX.
-                        let bps = vote_state_view.inflation_rewards_commission();
-                        bps.div_ceil(100).min(u8::MAX as u16) as u8
-                    } else {
-                        vote_state_view.commission()
-                    },
-                    inflation_rewards_commission_bps: if commission_rate_in_basis_points {
-                        vote_state_view.inflation_rewards_commission()
-                    } else {
-                        vote_state_view.commission() as u16 * 100
-                    },
+                    commission: vote_state_view.commission(),
                     root_slot: vote_state_view.root_slot().unwrap_or(0),
                     epoch_credits,
                     epoch_vote_account: epoch_vote_accounts.contains_key(vote_pubkey),
