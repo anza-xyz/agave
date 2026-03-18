@@ -42,54 +42,34 @@ pub struct NextHop {
     pub gre: Option<GreRouteInfo>,
 }
 
-fn lookup_route<'a, I>(routes: I, dest: IpAddr) -> Option<&'a RouteEntry>
+fn lookup_route<'a, I>(mut routes: I, dest: IpAddr) -> Option<&'a RouteEntry>
 where
     I: Iterator<Item = &'a RouteEntry>,
 {
-    let mut best_match = None;
-
     let family = match dest {
         IpAddr::V4(_) => AF_INET as u8,
         IpAddr::V6(_) => AF_INET6 as u8,
     };
 
-    for route in routes.filter(|r| r.family == family) {
+    routes.find(|route| {
+        if route.family != family {
+            return false;
+        }
+
         match (dest, route.destination) {
             // this is the default route
-            (_, None) => {
-                if best_match.is_none() {
-                    best_match = Some((route, 0));
-                }
-            }
-
+            (_, None) => true,
             (IpAddr::V4(dest_addr), Some(IpAddr::V4(route_addr))) => {
-                let prefix_len = route.dst_len;
-                if !is_ipv4_match(dest_addr, route_addr, prefix_len) {
-                    continue;
-                }
-
-                if best_match.is_none() || prefix_len > best_match.unwrap().1 {
-                    best_match = Some((route, prefix_len));
-                }
+                is_ipv4_match(dest_addr, route_addr, route.dst_len)
             }
-
             (IpAddr::V6(dest_addr), Some(IpAddr::V6(route_addr))) => {
-                let prefix_len = route.dst_len;
-                if !is_ipv6_match(dest_addr, route_addr, prefix_len) {
-                    continue;
-                }
-
-                if best_match.is_none() || prefix_len > best_match.unwrap().1 {
-                    best_match = Some((route, prefix_len));
-                }
+                is_ipv6_match(dest_addr, route_addr, route.dst_len)
             }
 
             // mixed address families - can't match
-            _ => continue,
+            _ => false,
         }
-    }
-
-    best_match.map(|(route, _)| route)
+    })
 }
 
 fn is_ipv4_match(addr: Ipv4Addr, network: Ipv4Addr, prefix_len: u8) -> bool {
@@ -134,8 +114,12 @@ struct RouteTable {
 
 impl RouteTable {
     pub fn new() -> Result<Self, io::Error> {
-        let routes = netlink_get_routes(AF_INET as u8)?;
-        Ok(Self { routes })
+        Ok(Self::from_entries(netlink_get_routes(AF_INET as u8)?))
+    }
+
+    fn from_entries(mut routes: Vec<RouteEntry>) -> Self {
+        routes.sort_by(|left, right| right.dst_len.cmp(&left.dst_len));
+        Self { routes }
     }
 
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &RouteEntry> {
@@ -150,14 +134,17 @@ impl RouteTable {
             }
             false
         } else {
-            self.routes.push(new_route);
+            let insert_at = self
+                .routes
+                .partition_point(|route| route.dst_len >= new_route.dst_len);
+            self.routes.insert(insert_at, new_route);
             true
         }
     }
 
     pub fn remove(&mut self, new_route: RouteEntry) -> bool {
         if let Some(i) = self.routes.iter().position(|old| old.same_key(&new_route)) {
-            self.routes.swap_remove(i);
+            self.routes.remove(i);
             return true;
         }
         false
@@ -464,6 +451,28 @@ mod tests {
         std::net::{IpAddr, Ipv4Addr},
     };
 
+    fn route_entry_with_prefix(
+        destination: Option<IpAddr>,
+        out_if_index: i32,
+        dst_len: u8,
+    ) -> RouteEntry {
+        RouteEntry {
+            destination,
+            gateway: None,
+            pref_src: None,
+            out_if_index: Some(out_if_index),
+            in_if_index: None,
+            priority: None,
+            table: None,
+            protocol: 0,
+            scope: 0,
+            type_: 0,
+            family: AF_INET as u8,
+            dst_len,
+            flags: 0,
+        }
+    }
+
     #[test]
     fn test_ipv4_match() {
         assert!(is_ipv4_match(
@@ -516,6 +525,134 @@ mod tests {
             Ipv6Addr::new(0x2001, 0xdb8, 0x1234, 0x5600, 0, 0, 0, 0),
             52
         ));
+    }
+
+    #[test]
+    fn test_lookup_route_prefers_longest_prefix() {
+        let route_table = RouteTable::from_entries(vec![
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0))), 1, 8),
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 10, 0, 0))), 2, 16),
+        ]);
+
+        let route =
+            lookup_route(route_table.iter(), IpAddr::V4(Ipv4Addr::new(10, 10, 1, 2))).unwrap();
+
+        assert_eq!(
+            route.destination,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 10, 0, 0)))
+        );
+        assert_eq!(route.dst_len, 16);
+    }
+
+    #[test]
+    fn test_route_table_sorts_longest_prefix_first() {
+        let route_table = RouteTable::from_entries(vec![
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0))), 1, 8),
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 10, 0, 0))), 2, 16),
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 10, 1, 0))), 3, 24),
+        ]);
+
+        let routes = route_table.iter().collect::<Vec<_>>();
+        assert_eq!(routes[0].dst_len, 24);
+        assert_eq!(routes[1].dst_len, 16);
+        assert_eq!(routes[2].dst_len, 8);
+    }
+
+    #[test]
+    fn test_route_table_preserves_equal_prefix_order() {
+        let route_table = RouteTable::from_entries(vec![
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0))), 1, 16),
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 1, 0, 0))), 2, 16),
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 2, 0, 0))), 3, 16),
+        ]);
+
+        let destinations = route_table
+            .iter()
+            .map(|route| route.destination)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            destinations,
+            vec![
+                Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0))),
+                Some(IpAddr::V4(Ipv4Addr::new(10, 1, 0, 0))),
+                Some(IpAddr::V4(Ipv4Addr::new(10, 2, 0, 0))),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_route_table_upsert_inserts_by_prefix_len() {
+        let mut route_table = RouteTable::from_entries(vec![
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0))), 1, 16),
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 1, 0, 0))), 2, 16),
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0))), 3, 8),
+        ]);
+
+        assert!(route_table.upsert(route_entry_with_prefix(
+            Some(IpAddr::V4(Ipv4Addr::new(10, 2, 0, 0))),
+            4,
+            24,
+        )));
+        assert!(route_table.upsert(route_entry_with_prefix(
+            Some(IpAddr::V4(Ipv4Addr::new(10, 3, 0, 0))),
+            5,
+            16,
+        )));
+
+        let routes = route_table.iter().collect::<Vec<_>>();
+        assert_eq!(
+            routes[0].destination,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 2, 0, 0)))
+        );
+        assert_eq!(
+            routes[1].destination,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0)))
+        );
+        assert_eq!(
+            routes[2].destination,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 1, 0, 0)))
+        );
+        assert_eq!(
+            routes[3].destination,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 3, 0, 0)))
+        );
+        assert_eq!(
+            routes[4].destination,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0)))
+        );
+    }
+
+    #[test]
+    fn test_route_table_remove_preserves_order() {
+        let mut route_table = RouteTable::from_entries(vec![
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 2, 0, 0))), 1, 24),
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0))), 2, 16),
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 1, 0, 0))), 3, 16),
+            route_entry_with_prefix(Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0))), 4, 8),
+        ]);
+
+        assert!(route_table.remove(route_entry_with_prefix(
+            Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0))),
+            99,
+            16,
+        )));
+
+        let routes = route_table.iter().collect::<Vec<_>>();
+        assert_eq!(
+            routes[0].destination,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 2, 0, 0)))
+        );
+        assert_eq!(
+            routes[1].destination,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 1, 0, 0)))
+        );
+        assert_eq!(routes[1].dst_len, 16);
+        assert_eq!(
+            routes[2].destination,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0)))
+        );
+        assert_eq!(routes[2].dst_len, 8);
     }
 
     #[test]
