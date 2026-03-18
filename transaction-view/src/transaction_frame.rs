@@ -485,7 +485,7 @@ mod tests {
         let tx = simple_transfer();
         let mut bytes = bincode::serialize(&tx).unwrap();
         // Set the number of signatures to u16::MAX except the MSB of
-        // first byte, which version bit.
+        // first byte, which is the version bit.
         bytes[0] = 0x7f;
         bytes[1] = 0xff;
         bytes[2] = 0xff;
