@@ -5693,10 +5693,10 @@ impl Bank {
             }
         }
 
-        if new_feature_activations.contains(&feature_set::core_bpf_stake_program_v5::id()) {
+        if new_feature_activations.contains(&feature_set::upgrade_bpf_stake_program_to_v5::id()) {
             if let Err(e) = self.upgrade_core_bpf_program(
                 &solana_sdk_ids::stake::id(),
-                &feature_set::core_bpf_stake_program_v5::buffer::id(),
+                &feature_set::upgrade_bpf_stake_program_to_v5::buffer::id(),
                 "upgrade_stake_program_to_v5",
             ) {
                 error!("Failed to upgrade Core BPF Stake program: {e}");

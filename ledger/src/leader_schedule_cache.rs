@@ -526,7 +526,7 @@ mod tests {
             bootstrap_validator_stake_lamports()
                 + stake_utils::get_minimum_delegation(
                     bank.feature_set
-                        .is_active(&agave_feature_set::core_bpf_stake_program_v5::id()),
+                        .is_active(&agave_feature_set::upgrade_bpf_stake_program_to_v5::id()),
                 ),
         );
         let node_pubkey = validator_identity.pubkey();

@@ -3211,7 +3211,7 @@ fn test_bank_cloned_stake_delegations() {
         let stake_rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
         let minimum_delegation = stake_utils::get_minimum_delegation(
             bank.feature_set
-                .is_active(&agave_feature_set::core_bpf_stake_program_v5::id()),
+                .is_active(&agave_feature_set::upgrade_bpf_stake_program_to_v5::id()),
         );
         (
             vote_rent_exempt_reserve,

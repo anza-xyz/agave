@@ -132,8 +132,6 @@ impl FeatureSet {
                 .is_active(&remove_bpf_loader_incorrect_program_id::id()),
             move_stake_and_move_lamports_ixs: self
                 .is_active(&move_stake_and_move_lamports_ixs::id()),
-            stake_raise_minimum_delegation_to_1_sol: self
-                .is_active(&stake_raise_minimum_delegation_to_1_sol::id()),
             deprecate_legacy_vote_ixs: self.is_active(&deprecate_legacy_vote_ixs::id()),
             simplify_alt_bn128_syscall_error_codes: self
                 .is_active(&simplify_alt_bn128_syscall_error_codes::id()),
@@ -1311,7 +1309,7 @@ pub mod direct_account_pointers_in_program_input {
     solana_pubkey::declare_id!("ptrXWLkSDMZZmZN8GAT6W5yW4EvYByfw6cRRHbXwQNS");
 }
 
-pub mod core_bpf_stake_program_v5 {
+pub mod upgrade_bpf_stake_program_to_v5 {
     solana_pubkey::declare_id!("STk5Xj8hdAx3sTzmtJ3QysKkq6X2A3yj73JtxttiRyk");
 
     pub mod buffer {
@@ -2356,7 +2354,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0449: Direct Account Pointers in Program Input",
         ),
         (
-            core_bpf_stake_program_v5::id(),
+            upgrade_bpf_stake_program_to_v5::id(),
             "SIMD-0490: Upgrade BPF Stake Program to v5.0.0",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
