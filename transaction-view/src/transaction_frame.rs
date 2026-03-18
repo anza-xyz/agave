@@ -80,8 +80,9 @@ impl TransactionFrame {
         let first_byte = *bytes.first().ok_or(TransactionViewError::ParseError)?;
 
         // In wire format:
-        // - legacy/v0 transactions start with signatures (compact-u16 count),
-        //   whose first byte always has MSB = 0 in practice.
+        // - Legacy/v0 transactions start with signatures (compact-u16 count).
+        //   Packet size limits keep the signature count well below 128, so the
+        //   first byte never has MSB set.
         // - v1 transactions start with a version byte with MSB = 1.
         Ok((first_byte & solana_message::MESSAGE_VERSION_PREFIX) == 0)
     }
