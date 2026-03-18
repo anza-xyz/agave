@@ -199,7 +199,8 @@ mod tests {
         let cap = 500_000_000_000_000_000u64; // ~500M SOL
         let dur = DEFAULT_SLOTS_PER_EPOCH as f64 / SLOTS_PER_YEAR;
 
-        for epoch in 0..1_000 {
+        // 100k epochs is ~210 years. Fingers crossed that this test still matters then.
+        for epoch in 0..100_000 {
             let ns = epoch * DEFAULT_SLOTS_PER_EPOCH;
             let actual = ii.calculate_validator_rewards_lamports(ns, DEFAULT_SLOTS_PER_EPOCH, cap);
             let year = ns as f64 / SLOTS_PER_YEAR;
