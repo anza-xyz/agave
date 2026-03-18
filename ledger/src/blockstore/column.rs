@@ -758,6 +758,7 @@ impl TypedColumn for columns::Index {
 }
 
 impl Column for columns::AlternateIndex {
+    // AlternateIndex and AlternateSlotMeta share the same key type so reuse code here
     type Index = <columns::AlternateSlotMeta as Column>::Index;
     type Key = <columns::AlternateSlotMeta as Column>::Key;
 
