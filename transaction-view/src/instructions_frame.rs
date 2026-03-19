@@ -186,8 +186,8 @@ impl InstructionsFrame {
             let program_id_index = read_byte(bytes, offset)?;
             let num_instruction_accounts = read_byte(bytes, offset)?;
             // Offset and length checks have been done in the initial parsing.
-            let data_len_lo = read_byte(bytes, offset).unwrap();
-            let data_len_hi = read_byte(bytes, offset).unwrap();
+            let data_len_lo = read_byte(bytes, offset)?;
+            let data_len_hi = read_byte(bytes, offset)?;
             let num_instruction_data_bytes = u16::from_le_bytes([data_len_lo, data_len_hi]);
 
             headers.push(V1InstructionHeader {
