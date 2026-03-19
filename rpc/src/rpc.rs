@@ -1183,11 +1183,11 @@ impl JsonRpcRequestProcessor {
                     } else {
                         vote_state_view.commission()
                     },
-                    inflation_rewards_commission_bps: if commission_rate_in_basis_points {
+                    inflation_rewards_commission_bps: Some(if commission_rate_in_basis_points {
                         vote_state_view.inflation_rewards_commission()
                     } else {
                         vote_state_view.commission() as u16 * 100
-                    },
+                    }),
                     root_slot: vote_state_view.root_slot().unwrap_or(0),
                     epoch_credits,
                     epoch_vote_account: epoch_vote_accounts.contains_key(vote_pubkey),
