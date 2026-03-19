@@ -1126,7 +1126,9 @@ pub mod alpenglow {
     // Used to activate alpenglow in local-cluster tests without exposing the actual feature's private key
     #[cfg(feature = "dev-context-only-utils")]
     pub static TEST_KEYPAIR: LazyLock<Keypair> = LazyLock::new(|| {
-        let keypair = Keypair::from_base58_string("2Vzd6oTWU4RtM5UmsSyBH3tAhPSi1sKqMeMC8bF1jzHHLBMRhEWtrfmBV4EmwQbGSwkunk5Wy67kXNAL1ZL1xQhR");
+        let keypair = Keypair::from_base58_string(
+            "2Vzd6oTWU4RtM5UmsSyBH3tAhPSi1sKqMeMC8bF1jzHHLBMRhEWtrfmBV4EmwQbGSwkunk5Wy67kXNAL1ZL1xQhR",
+        );
         assert_eq!(keypair.pubkey(), super::alpenglow::id());
         keypair
     });
@@ -1319,7 +1321,7 @@ pub mod upgrade_bpf_stake_program_to_v5 {
 }
 
 pub mod integer_inflation_rewards {
-    solana_pubkey::declare_id!("iiiiizJfxinmojuyTqKwoHp61ti6RGTkreBhU7SuNGb");
+    solana_pubkey::declare_id!("intsdD7D3LrPd9GAYgSvaUNJZc5ywoRKQfUeQrGCwtU");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2359,13 +2361,12 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0449: Direct Account Pointers in Program Input",
         ),
         (
-<<<<<<< HEAD
             upgrade_bpf_stake_program_to_v5::id(),
             "SIMD-0490: Upgrade BPF Stake Program to v5.0.0",
-=======
+        ),
+        (
             integer_inflation_rewards::id(),
             "use integer math for inflation reward calculations",
->>>>>>> 515270e76e (feat: integer math for inflation calculations)
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
