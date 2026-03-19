@@ -1,0 +1,46 @@
+[package]
+name = "solana-packet"
+description = "The definition of a Solana network packet."
+documentation = "https://docs.rs/solana-packet"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+agave-unstable-api = []
+bincode = ["dep:bincode", "serde"]
+dev-context-only-utils = ["bincode"]
+serde = [
+    "bitflags/serde",
+    "dep:cfg_eval",
+    "dep:serde",
+    "dep:serde_with",
+    "solana-pubkey/serde",
+]
+frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
+
+[dependencies]
+bincode = { workspace = true, optional = true }
+bitflags = { workspace = true }
+cfg_eval = { workspace = true, optional = true }
+serde = { workspace = true, optional = true, features = ["derive"] }
+serde_with = { workspace = true, optional = true, features = ["macros"] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-pubkey = { workspace = true }
+
+[dev-dependencies]
+solana-packet = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-pubkey = { workspace = true, features = ["std"] }
+static_assertions = { workspace = true }
+
+[lints]
+workspace = true
