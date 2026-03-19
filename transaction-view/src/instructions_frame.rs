@@ -2,7 +2,7 @@ use {
     crate::{
         bytes::{
             advance_offset_for_array, check_remaining, optimized_read_compressed_u16, read_byte,
-            read_slice_data, unchecked_read_byte, unchecked_read_slice_data,
+            unchecked_read_byte, unchecked_read_slice_data,
         },
         result::Result,
     },
@@ -185,13 +185,10 @@ impl InstructionsFrame {
             let header_offset = *offset as u16;
             let program_id_index = read_byte(bytes, offset)?;
             let num_instruction_accounts = read_byte(bytes, offset)?;
-            // SAFETY:
-            // - Offset and length checks have been done in the initial parsing.
-            let num_instruction_data_bytes = u16::from_le_bytes(
-                unsafe { read_slice_data::<u8>(bytes, offset, 2) }?
-                    .try_into()
-                    .map_err(|_| crate::result::TransactionViewError::ParseError)?,
-            );
+            // Offset and length checks have been done in the initial parsing.
+            let data_len_lo = read_byte(bytes, offset).unwrap();
+            let data_len_hi = read_byte(bytes, offset).unwrap();
+            let num_instruction_data_bytes = u16::from_le_bytes([data_len_lo, data_len_hi]);
 
             headers.push(V1InstructionHeader {
                 offset: header_offset,
