@@ -31,7 +31,7 @@ impl From<&Inflation> for IntegerInflation {
 }
 
 fn f64_to_scaled(v: f64) -> ScaledU60 {
-    debug_assert!(v >= 0.0 && v.is_finite());
+    assert!(v >= 0.0 && v.is_finite(), "f64_to_scaled: {v} is negative, NaN, or infinite");
     if v == 0.0 {
         return 0;
     }
@@ -43,10 +43,19 @@ fn f64_to_scaled(v: f64) -> ScaledU60 {
     let shift = biased_exp - 1023 - 52 + SCALE_SHIFT as i32;
 
     match shift >= 0 {
-        true => (mantissa as u128) << (shift as u32),
+        true => {
+            let shift = shift as u32;
+            if shift > 128 - 53 {
+                return u128::MAX;
+            }
+            (mantissa as u128) << shift
+        }
         false => {
-            // Round to nearest.
             let right = (-shift) as u32;
+            if right >= 128 {
+                return 0;
+            }
+            // Round to nearest.
             ((mantissa as u128) + (1u128 << (right - 1))) >> right
         }
     }
@@ -162,6 +171,18 @@ mod tests {
             assert_eq!(f64_to_scaled(v), (v * SCALE as f64).round() as u128);
             assert_eq!(f64_to_scaled(v) as f64 / SCALE as f64, v);
         }
+    }
+
+    #[test]
+    fn test_f64_to_scaled_saturates() {
+        assert_eq!(f64_to_scaled(4.0e21), u128::MAX);
+        assert_eq!(f64_to_scaled(1.0e-30), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "f64_to_scaled")]
+    fn test_f64_to_scaled_rejects_negative() {
+        f64_to_scaled(-1.0);
     }
 
     #[test]
