@@ -1,8 +1,8 @@
 use {
     crate::bank::Bank,
-    solana_clock::{Epoch, NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
+    solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
-    solana_leader_schedule::LeaderSchedule,
+    solana_leader_schedule::{LeaderSchedule, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccountsHashMap,
     std::collections::HashMap,
@@ -28,7 +28,7 @@ pub fn leader_schedule_from_vote_accounts(
     Some(LeaderSchedule::new(
         epoch_vote_accounts,
         epoch,
-        epoch_schedule.get_slots_in_epoch(epoch),
+        epoch_schedule.get_slots_in_epoch(epoch) as usize,
         NUM_CONSECUTIVE_LEADER_SLOTS,
     ))
 }
@@ -68,27 +68,29 @@ pub fn num_ticks_left_in_slot(bank: &Bank, tick_height: u64) -> u64 {
 }
 
 pub fn first_of_consecutive_leader_slots(slot: Slot) -> Slot {
-    (slot / NUM_CONSECUTIVE_LEADER_SLOTS) * NUM_CONSECUTIVE_LEADER_SLOTS
+    let num_consecutive_leader_slots = NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64;
+    (slot / num_consecutive_leader_slots) * num_consecutive_leader_slots
 }
 
 /// Returns the last slot in the leader window that contains `slot`
 #[inline]
 pub fn last_of_consecutive_leader_slots(slot: Slot) -> Slot {
-    first_of_consecutive_leader_slots(slot) + NUM_CONSECUTIVE_LEADER_SLOTS - 1
+    first_of_consecutive_leader_slots(slot) + NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64 - 1
 }
 
 /// Returns the index within the leader slot range that contains `slot`
 #[inline]
 pub fn leader_slot_index(slot: Slot) -> usize {
-    (slot % NUM_CONSECUTIVE_LEADER_SLOTS) as usize
+    slot as usize % NUM_CONSECUTIVE_LEADER_SLOTS
 }
 
 /// Returns the number of slots left after `slot` in the leader window
 /// that contains `slot`
 #[inline]
-pub fn remaining_slots_in_window(slot: Slot) -> u64 {
+pub fn remaining_slots_in_window(slot: Slot) -> usize {
     NUM_CONSECUTIVE_LEADER_SLOTS
-        .checked_sub(leader_slot_index(slot) as u64)
+        .get()
+        .checked_sub(leader_slot_index(slot))
         .unwrap()
 }
 
@@ -130,7 +132,7 @@ mod tests {
     fn test_leader_span_math() {
         // All of the test cases assume a 4 slot leader span and need to be
         // adjusted if it changes.
-        assert_eq!(NUM_CONSECUTIVE_LEADER_SLOTS, 4);
+        assert_eq!(NUM_CONSECUTIVE_LEADER_SLOTS.get(), 4);
 
         assert_eq!(first_of_consecutive_leader_slots(0), 0);
         assert_eq!(first_of_consecutive_leader_slots(1), 0);

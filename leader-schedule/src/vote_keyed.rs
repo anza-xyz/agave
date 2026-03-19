@@ -4,7 +4,7 @@ use {
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccountsHashMap,
-    std::{collections::HashMap, iter, ops::Index},
+    std::{collections::HashMap, iter, num::NonZeroUsize, ops::Index},
 };
 
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
@@ -19,8 +19,8 @@ impl LeaderSchedule {
     pub fn new(
         vote_accounts_map: &VoteAccountsHashMap,
         epoch: Epoch,
-        len: u64,
-        repeat: u64,
+        len: usize,
+        repeat: NonZeroUsize,
     ) -> Self {
         let slot_leader_stakes: Vec<_> = vote_accounts_map
             .iter()
@@ -146,14 +146,20 @@ mod tests {
     fn test_leader_schedule_basic() {
         let num_keys = 10;
         let vote_accounts_map: HashMap<_, _> = (0..num_keys)
-            .map(|i| (solana_pubkey::new_rand(), (i, VoteAccount::new_random())))
+            .map(|i| {
+                (
+                    solana_pubkey::new_rand(),
+                    (i as u64, VoteAccount::new_random()),
+                )
+            })
             .collect();
 
         let epoch: Epoch = rand::random();
         let len = num_keys * 10;
-        let leader_schedule = LeaderSchedule::new(&vote_accounts_map, epoch, len, 1);
-        let leader_schedule2 = LeaderSchedule::new(&vote_accounts_map, epoch, len, 1);
-        assert_eq!(leader_schedule.num_slots() as u64, len);
+        let repeat = NonZeroUsize::new(1).unwrap();
+        let leader_schedule = LeaderSchedule::new(&vote_accounts_map, epoch, len, repeat);
+        let leader_schedule2 = LeaderSchedule::new(&vote_accounts_map, epoch, len, repeat);
+        assert_eq!(leader_schedule.num_slots(), len);
         // Check that the same schedule is reproducibly generated
         assert_eq!(leader_schedule, leader_schedule2);
     }
@@ -162,17 +168,22 @@ mod tests {
     fn test_repeated_leader_schedule() {
         let num_keys = 10;
         let vote_accounts_map: HashMap<_, _> = (0..num_keys)
-            .map(|i| (solana_pubkey::new_rand(), (i, VoteAccount::new_random())))
+            .map(|i| {
+                (
+                    solana_pubkey::new_rand(),
+                    (i as u64, VoteAccount::new_random()),
+                )
+            })
             .collect();
 
         let epoch = rand::random::<Epoch>();
-        let repeat = 8;
-        let len = num_keys * repeat;
+        let repeat = NonZeroUsize::new(8).unwrap();
+        let len = num_keys * repeat.get();
         let leader_schedule = LeaderSchedule::new(&vote_accounts_map, epoch, len, repeat);
-        assert_eq!(leader_schedule.num_slots() as u64, len);
+        assert_eq!(leader_schedule.num_slots(), len);
         let mut leader_node = SlotLeader::default();
         for (i, node) in leader_schedule.get_slot_leaders().iter().enumerate() {
-            if i % repeat as usize == 0 {
+            if i % repeat.get() == 0 {
                 leader_node = *node;
             } else {
                 assert_eq!(leader_node, *node);
@@ -202,14 +213,24 @@ mod tests {
         let epoch = 0;
         let len = 8;
         // What the schedule looks like without any repeats
-        let leaders1 = LeaderSchedule::new(&vote_accounts_map, epoch, len, 1)
-            .get_slot_leaders()
-            .to_vec();
+        let leaders1 = LeaderSchedule::new(
+            &vote_accounts_map,
+            epoch,
+            len,
+            NonZeroUsize::new(1).unwrap(),
+        )
+        .get_slot_leaders()
+        .to_vec();
 
         // What the schedule looks like with repeats
-        let leaders2 = LeaderSchedule::new(&vote_accounts_map, epoch, len, 2)
-            .get_slot_leaders()
-            .to_vec();
+        let leaders2 = LeaderSchedule::new(
+            &vote_accounts_map,
+            epoch,
+            len,
+            NonZeroUsize::new(2).unwrap(),
+        )
+        .get_slot_leaders()
+        .to_vec();
         assert_eq!(leaders1.len(), leaders2.len());
 
         let leaders1_expected = vec![
