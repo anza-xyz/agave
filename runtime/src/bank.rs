@@ -2967,7 +2967,11 @@ impl Bank {
     ///   this account will be empty.
     /// - If `get_alpenglow_genesis_certificate` is called after the marker is processed, we return the certificate
     pub fn get_alpenglow_genesis_certificate(&self) -> Option<Certificate> {
-        self.get_account(&GENESIS_CERTIFICATE_ACCOUNT).map(|acct| {
+        let acct = self.get_account(&GENESIS_CERTIFICATE_ACCOUNT)?;
+        (!acct.data().is_empty()).then(|| {
+            // The address is known in advance, so the account could already exist if it was prefunded.
+            // However this account cannot be written to except by us in `set_alpenglow_genesis_certificate`,
+            // so this deserialize is safe if the account is non-empty
             wincode::deserialize(acct.data())
                 .expect("Programmer error deserializing genesis certificate")
         })
