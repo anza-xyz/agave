@@ -88,8 +88,6 @@ where
         precompile_signature_details.num_ed25519_instruction_signatures,
         precompile_signature_details.num_secp256r1_instruction_signatures,
     );
-    let compute_budget_instruction_details =
-        ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?;
     let transaction_config_source =
         if let Some(transaction_config_view) = transaction.transaction_config() {
             // NOTE: only txv1 has `transaction_config_view`, which must have been validated for
@@ -102,7 +100,9 @@ where
                 requested_heap_size: transaction_config_view.requested_heap_size(),
             })
         } else {
-            TransactionConfigSource::LegacyAndV0(compute_budget_instruction_details)
+            TransactionConfigSource::LegacyAndV0(ComputeBudgetInstructionDetails::try_from(
+                transaction.program_instructions_iter(),
+            )?)
         };
 
     Ok(TransactionMeta {
