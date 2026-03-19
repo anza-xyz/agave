@@ -6,7 +6,7 @@ use {
         route::Router,
         route_monitor::RouteMonitor,
         set_cpu_affinity,
-        tx_loop::TransmitItem,
+        tx_loop::TxPacket,
         tx_loop::{TxLoop, TxLoopBuilder, TxLoopConfigBuilder},
         umem::{OwnedUmem, PageAlignedMemory},
     },
@@ -35,7 +35,7 @@ pub struct XdpConfig {
     pub interface: Option<String>,
     pub cpus: Vec<usize>,
     pub zero_copy: bool,
-    // The capacity of the channel that sits between transmit stage and each XDP thread that
+    // The capacity of the channel that sits between retransmit stage and each XDP thread that
     // enqueues packets to the NIC.
     pub rtx_channel_cap: usize,
 }
@@ -67,20 +67,20 @@ impl XdpConfig {
     }
 }
 
-/// [`XdpTransmitItem`] encapsulates the information needed to transmit a packet via XDP. Besides
+/// [`BytesTxPacket`] encapsulates the information needed to transmit a packet via XDP. Besides
 /// the payload and destination addresses, it includes the source address of the packet.
 #[cfg(target_os = "linux")]
-pub struct XdpTransmitItem {
+pub struct BytesTxPacket {
     src_addr: SocketAddrV4,
     dst_addrs: XdpAddrs,
     payload: Bytes,
 }
 
 #[cfg(not(target_os = "linux"))]
-pub struct XdpTransmitItem;
+pub struct BytesTxPacket;
 
 #[cfg(target_os = "linux")]
-impl XdpTransmitItem {
+impl BytesTxPacket {
     pub fn new(src_addr: SocketAddrV4, dst_addrs: impl Into<XdpAddrs>, payload: Bytes) -> Self {
         Self {
             src_addr,
@@ -91,14 +91,14 @@ impl XdpTransmitItem {
 }
 
 #[cfg(not(target_os = "linux"))]
-impl XdpTransmitItem {
+impl BytesTxPacket {
     pub fn new(_src_addr: SocketAddrV4, _dst_addrs: impl Into<XdpAddrs>, _payload: Bytes) -> Self {
         Self
     }
 }
 
 #[cfg(target_os = "linux")]
-impl TransmitItem for XdpTransmitItem {
+impl TxPacket for BytesTxPacket {
     type Addrs = XdpAddrs;
     type Payload = Bytes;
 
@@ -117,7 +117,7 @@ impl TransmitItem for XdpTransmitItem {
 
 #[derive(Clone)]
 pub struct XdpSender {
-    senders: Vec<Sender<XdpTransmitItem>>,
+    senders: Vec<Sender<BytesTxPacket>>,
 }
 
 pub enum XdpAddrs {
@@ -154,12 +154,12 @@ impl XdpSender {
     pub fn try_send(
         &self,
         sender_index: usize,
-        item: XdpTransmitItem,
-    ) -> Result<(), TrySendError<XdpTransmitItem>> {
+        packet: BytesTxPacket,
+    ) -> Result<(), TrySendError<BytesTxPacket>> {
         let idx = sender_index
             .checked_rem(self.senders.len())
             .expect("XdpSender::senders should not be empty");
-        self.senders[idx].try_send(item)
+        self.senders[idx].try_send(packet)
     }
 }
 

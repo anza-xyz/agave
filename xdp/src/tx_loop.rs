@@ -181,9 +181,9 @@ pub struct TxLoop<U: Umem> {
     completion: TxCompletionRing,
 }
 
-/// [`TransmitItem`] represents an item to transmit a packet via XDP to a list of addresses with the
-/// provided `payload` and source address.
-pub trait TransmitItem {
+/// [`TxPacket`] represents a packet to transmit via XDP to a list of addresses with the provided
+/// `payload` and source address.
+pub trait TxPacket {
     type Addrs: AsRef<[SocketAddr]>;
     type Payload: AsRef<[u8]>;
 
@@ -198,7 +198,7 @@ pub trait TransmitItem {
 }
 
 impl<U: Umem> TxLoop<U> {
-    pub fn run<T: TransmitItem, R: Fn(&IpAddr) -> Option<NextHop>>(
+    pub fn run<T: TxPacket, R: Fn(&IpAddr) -> Option<NextHop>>(
         self,
         receiver: Receiver<T>,
         drop_sender: Sender<T>,
@@ -228,7 +228,7 @@ impl<U: Umem> TxLoop<U> {
         let umem = socket.umem();
         let umem_tx_capacity = umem.available();
 
-        // Local buffer where we store packets before sending themi.
+        // Local buffer where we store packets before sending them.
         let mut batched_items = Vec::with_capacity(BATCH_SIZE);
 
         // How many packets we've batched. This is _not_ batched_items.len(), but item * peers. For

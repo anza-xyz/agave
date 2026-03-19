@@ -25,10 +25,10 @@ impl XdpSender {
         sender_index: usize,
         addr: impl Into<tx::XdpAddrs>,
         payload: Bytes,
-    ) -> Result<(), TrySendError<tx::XdpTransmitItem>> {
+    ) -> Result<(), TrySendError<tx::BytesTxPacket>> {
         self.sender.try_send(
             sender_index,
-            tx::XdpTransmitItem::new(self.src_addr, addr, payload),
+            tx::BytesTxPacket::new(self.src_addr, addr, payload),
         )
     }
 }
