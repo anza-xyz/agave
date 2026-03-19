@@ -1,6 +1,12 @@
 //! Fixed-point helpers for integer inflation.
+
+/// A u128 whose value represents a real number multiplied by 2^60.
+pub(super) type ScaledU60 = u128;
+/// Signed variant, used for logarithm results and exp inputs.
+pub(super) type ScaledI60 = i128;
+
 pub(super) const SCALE_SHIFT: u32 = 60;
-pub(super) const SCALE: u128 = 1u128 << SCALE_SHIFT;
+pub(super) const SCALE: ScaledU60 = 1u128 << SCALE_SHIFT;
 
 // a * b / d, handling u128 overflow via the identity:
 //
@@ -18,7 +24,7 @@ pub(super) fn muldiv(a: u128, b: u128, d: u128) -> u128 {
 }
 
 /// base ** exp via repeated squaring.
-pub(super) fn fixed_pow(base_scaled: u128, exp: u128) -> u128 {
+pub(super) fn fixed_pow(base_scaled: ScaledU60, exp: u128) -> ScaledU60 {
     if exp == 0 {
         return SCALE;
     }
@@ -42,7 +48,7 @@ pub(super) fn fixed_pow(base_scaled: u128, exp: u128) -> u128 {
 // x is in [0.5, 1.0], so z = (x-1)/(x+1) is in [-1/3, 0].
 // Each term is bounded by |z|^(2k+1) / (2k+1) <= (1/3)^(2k+1).
 // At k=19: (1/3)^39 < 2^{-60}, so the term underflows SCALE. 25 is conservative.
-pub(super) fn fixed_ln(x_scaled: u128) -> i128 {
+pub(super) fn fixed_ln(x_scaled: ScaledU60) -> ScaledI60 {
     debug_assert!((SCALE / 2..=SCALE).contains(&x_scaled));
 
     let x = x_scaled as i128;
@@ -70,7 +76,7 @@ pub(super) fn fixed_ln(x_scaled: u128) -> i128 {
 // where remainder < 1 year and decay_base = 0.85, so in practice |x| < |ln(0.85)| ~ 0.163.
 // The k-th term is bounded by 0.163^k / k!. At k=12 this is < 2^{-60}, so it
 // underflows SCALE. 35 is conservative.
-pub(super) fn fixed_exp(x_scaled: i128) -> u128 {
+pub(super) fn fixed_exp(x_scaled: ScaledI60) -> ScaledU60 {
     debug_assert!(x_scaled.unsigned_abs() < SCALE * 2);
     let s = SCALE as i128;
     let mut sum = s;

@@ -1,6 +1,6 @@
 //! Fixed-point integer replacement for the f64 inflation reward pipeline.
 use {
-    super::math::{SCALE, SCALE_SHIFT, fixed_exp, fixed_ln, fixed_pow, muldiv},
+    super::math::{SCALE, SCALE_SHIFT, ScaledU60, fixed_exp, fixed_ln, fixed_pow, muldiv},
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_inflation::Inflation,
 };
@@ -11,10 +11,10 @@ pub const NS_PER_SLOT: u128 = DEFAULT_MS_PER_SLOT as u128 * 1_000_000;
 
 #[derive(Debug, Clone)]
 pub(crate) struct IntegerInflation {
-    initial_scaled: u128,
-    terminal_scaled: u128,
-    decay_base_scaled: u128,
-    foundation_scaled: u128,
+    initial_scaled: ScaledU60,
+    terminal_scaled: ScaledU60,
+    decay_base_scaled: ScaledU60,
+    foundation_scaled: ScaledU60,
     foundation_term_nanos: u128,
 }
 
@@ -30,7 +30,7 @@ impl From<&Inflation> for IntegerInflation {
     }
 }
 
-fn f64_to_scaled(v: f64) -> u128 {
+fn f64_to_scaled(v: f64) -> ScaledU60 {
     debug_assert!(v >= 0.0 && v.is_finite());
     if v == 0.0 {
         return 0;
@@ -54,24 +54,24 @@ fn f64_to_scaled(v: f64) -> u128 {
 
 impl IntegerInflation {
     /// max(terminal, initial * (1 - taper) ^ year), scaled.
-    pub(crate) fn total_inflation_scaled(&self, num_slots: u64) -> u128 {
+    pub(crate) fn total_inflation_scaled(&self, num_slots: u64) -> ScaledU60 {
         let year_nanos = num_slots as u128 * NS_PER_SLOT;
         let tapered = self.initial_scaled * self.compute_decay(year_nanos) / SCALE;
         tapered.max(self.terminal_scaled)
     }
 
-    pub(crate) fn validator_inflation_scaled(&self, num_slots: u64) -> u128 {
+    pub(crate) fn validator_inflation_scaled(&self, num_slots: u64) -> ScaledU60 {
         let total = self.total_inflation_scaled(num_slots);
         total - self.foundation_from_total(num_slots, total)
     }
 
     #[cfg(test)]
-    pub(crate) fn foundation_inflation_scaled(&self, num_slots: u64) -> u128 {
+    pub(crate) fn foundation_inflation_scaled(&self, num_slots: u64) -> ScaledU60 {
         let total = self.total_inflation_scaled(num_slots);
         self.foundation_from_total(num_slots, total)
     }
 
-    fn foundation_from_total(&self, num_slots: u64, total_scaled: u128) -> u128 {
+    fn foundation_from_total(&self, num_slots: u64, total_scaled: ScaledU60) -> ScaledU60 {
         let year_nanos = num_slots as u128 * NS_PER_SLOT;
         if year_nanos < self.foundation_term_nanos {
             total_scaled * self.foundation_scaled / SCALE
@@ -100,7 +100,7 @@ impl IntegerInflation {
     }
 
     // (1 - taper)^year as a SCALE-d value, decomposed into integer + fractional year.
-    fn compute_decay(&self, year_nanos: u128) -> u128 {
+    fn compute_decay(&self, year_nanos: u128) -> ScaledU60 {
         if year_nanos == 0 || self.decay_base_scaled == SCALE {
             return SCALE; // no elapsed time, or taper == 0
         }
