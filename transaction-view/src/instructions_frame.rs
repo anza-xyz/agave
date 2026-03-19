@@ -862,6 +862,26 @@ mod tests {
     }
 
     #[test]
+    #[cfg(miri)]
+    fn miri_ub_v1_payload_len_wraps() {
+        // header: pid=1, accounts=1, data_len=65535
+        let bytes = vec![1, 1, 0xff, 0xff];
+        let mut offset = 0;
+        let frame = InstructionsFrame::try_new_for_v1(&bytes, &mut offset, 1).unwrap();
+
+        let mut iter = InstructionsIterator {
+            bytes: &bytes,
+            offset,
+            num_instructions: frame.num_instructions,
+            index: 0,
+            frames: &frame.frames,
+        };
+
+        // Should trip an out-of-bounds read under Miri.
+        let _ = iter.next();
+    }
+
+    #[test]
     fn test_try_new_legacy_zero_instructions() {
         let bytes = short_u16_1(0);
         let mut offset = 0;
