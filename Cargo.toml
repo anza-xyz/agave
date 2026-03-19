@@ -9,7 +9,6 @@ members = [
     "banks-client",
     "banks-interface",
     "banks-server",
-    "bench-streamer",
     "bloom",
     "bls-cert-verify",
     "bls12-381",
