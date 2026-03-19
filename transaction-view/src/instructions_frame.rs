@@ -4,7 +4,7 @@ use {
             advance_offset_for_array, check_remaining, optimized_read_compressed_u16, read_byte,
             unchecked_read_byte, unchecked_read_slice_data,
         },
-        result::Result,
+        result::{Result, TransactionViewError},
     },
     core::fmt::{Debug, Formatter},
     solana_svm_transaction::instruction::SVMInstruction,
@@ -210,7 +210,9 @@ impl InstructionsFrame {
         let mut frames = Vec::with_capacity(headers.len());
 
         for header in headers {
-            let payload_len = u16::from(header.num_accounts).wrapping_add(header.data_len);
+            let payload_len = u16::from(header.num_accounts)
+                .checked_add(header.data_len)
+                .ok_or(TransactionViewError::ParseError)?;
 
             frames.push(InstructionFrame {
                 offset: header.offset,
@@ -862,23 +864,16 @@ mod tests {
     }
 
     #[test]
-    #[cfg(miri)]
-    fn miri_ub_v1_payload_len_wraps() {
+    fn data_len_max_header_fails_parse() {
         // header: pid=1, accounts=1, data_len=65535
         let bytes = vec![1, 1, 0xff, 0xff];
         let mut offset = 0;
-        let frame = InstructionsFrame::try_new_for_v1(&bytes, &mut offset, 1).unwrap();
-
-        let mut iter = InstructionsIterator {
-            bytes: &bytes,
-            offset,
-            num_instructions: frame.num_instructions,
-            index: 0,
-            frames: &frame.frames,
-        };
-
-        // Should trip an out-of-bounds read under Miri.
-        let _ = iter.next();
+        assert_eq!(
+            InstructionsFrame::try_new_for_v1(&bytes, &mut offset, 1)
+                .err()
+                .unwrap(),
+            TransactionViewError::ParseError
+        );
     }
 
     #[test]
