@@ -1317,7 +1317,6 @@ pub mod upgrade_bpf_stake_program_to_v5 {
     pub mod buffer {
         solana_pubkey::declare_id!("4EBQBjw1kqF1dqUBb6fc5Ji4tCEQgNf9ESGGX3smwXwh");
     }
-
 }
 
 pub mod integer_inflation_rewards {
