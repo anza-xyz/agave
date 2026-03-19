@@ -182,6 +182,11 @@ pub fn execute(
                 xdp_zero_copy,
             )
         });
+    if bind_addresses.len() > 1 && retransmit_xdp.is_some() {
+        Err(String::from(
+            "--xdp-cpu-cores cannot be used in a multihoming context",
+        ))?;
+    }
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())

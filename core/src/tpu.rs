@@ -24,6 +24,7 @@ use {
         validator::{BlockProductionMethod, GeneratorConfig},
     },
     agave_votor::event::VotorEventSender,
+    agave_xdp::transmitter::XdpSender,
     crossbeam_channel::{Receiver, bounded, unbounded},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -55,12 +56,12 @@ use {
         streamer::StakedNodes,
     },
     solana_turbine::{
-        XdpSender,
+        XdpSender as TurbineXdpSender,
         broadcast_stage::{BroadcastStage, BroadcastStageType},
     },
     std::{
         collections::{HashMap, HashSet},
-        net::UdpSocket,
+        net::{Ipv4Addr, UdpSocket},
         num::NonZeroUsize,
         path::PathBuf,
         sync::{Arc, RwLock, atomic::AtomicBool},
@@ -116,7 +117,8 @@ impl Tpu {
         entry_notification_sender: Option<EntryNotifierSender>,
         blockstore: Arc<Blockstore>,
         broadcast_type: &BroadcastStageType,
-        turbine_xdp_sender: Option<XdpSender>,
+        turbine_xdp_sender: Option<TurbineXdpSender>,
+        quic_xdp_sender: Option<(XdpSender, Ipv4Addr)>,
         exit: Arc<AtomicBool>,
         shred_version: u16,
         vote_tracker: Arc<VoteTracker>,
@@ -212,11 +214,13 @@ impl Tpu {
         )
         .unwrap();
 
+        // We check on validator startup that XDP is not mixed with multihoming, so by construction
+        // at this moment all the transactions_quic_sockets and transactions_forwards_quic_sockets
+        // have the same bind IP:PORT.
+
         // Streamer for TPU
-        let transactions_quic_sockets: Vec<QuicSocket> = transactions_quic_sockets
-            .into_iter()
-            .map(Into::into)
-            .collect();
+        let transactions_quic_sockets =
+            into_quic_sockets(transactions_quic_sockets, quic_xdp_sender.clone());
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_quic_t,
@@ -235,11 +239,8 @@ impl Tpu {
         .unwrap();
 
         // Streamer for TPU forward
-        let transactions_forwards_quic_sockets: Vec<QuicSocket> =
-            transactions_forwards_quic_sockets
-                .into_iter()
-                .map(Into::into)
-                .collect();
+        let transactions_forwards_quic_sockets =
+            into_quic_sockets(transactions_forwards_quic_sockets, quic_xdp_sender);
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_forwards_quic_t,
@@ -401,4 +402,18 @@ impl Tpu {
         }
         Ok(())
     }
+}
+
+fn into_quic_sockets(
+    sockets: impl IntoIterator<Item = UdpSocket>,
+    quic_xdp_sender: Option<(XdpSender, Ipv4Addr)>,
+) -> impl Iterator<Item = QuicSocket> {
+    sockets
+        .into_iter()
+        .map(move |socket| match &quic_xdp_sender {
+            Some((xdp_sender, fallback_src_ip)) => {
+                QuicSocket::with_xdp(socket, *fallback_src_ip, xdp_sender.clone())
+            }
+            None => QuicSocket::from(socket),
+        })
 }

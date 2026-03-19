@@ -5,14 +5,16 @@ use {
             qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
         },
         quic::{QuicServerError, QuicStreamerConfig, StreamerStats, configure_server},
-        quic_socket::QuicSocket,
+        quic_socket::{QuicSocket, QuicXdpSocketParts, QuicXdpTxSocket},
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
     crossbeam_channel::{Sender, TrySendError},
     futures::{Future, StreamExt as _, stream::FuturesUnordered},
     indexmap::map::{Entry, IndexMap},
-    quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime},
+    quinn::{
+        Accept, AsyncUdpSocket, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime,
+    },
     rand::{Rng, rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
@@ -156,14 +158,30 @@ where
     let endpoints = sockets
         .into_iter()
         .map(|sock| match sock {
-            QuicSocket::Kernel(udp_sock) => Endpoint::new(
+            QuicSocket::Kernel(socket) => Endpoint::new(
                 EndpointConfig::default(),
                 Some(config.clone()),
-                udp_sock,
+                socket,
                 Arc::new(TokioRuntime),
             )
             .map_err(QuicServerError::EndpointFailed),
-            QuicSocket::Xdp(_xdp_cfg) => unimplemented!(),
+            QuicSocket::Xdp(QuicXdpSocketParts {
+                socket,
+                fallback_src_ip,
+                xdp_sender,
+            }) => {
+                let socket = Arc::new(
+                    QuicXdpTxSocket::new(socket, fallback_src_ip, xdp_sender)
+                        .map_err(QuicServerError::EndpointFailed)?,
+                ) as Arc<dyn AsyncUdpSocket>;
+                Endpoint::new_with_abstract_socket(
+                    EndpointConfig::default(),
+                    Some(config.clone()),
+                    socket,
+                    Arc::new(TokioRuntime),
+                )
+                .map_err(QuicServerError::EndpointFailed)
+            }
         })
         .collect::<Result<Vec<_>, _>>()?;
 

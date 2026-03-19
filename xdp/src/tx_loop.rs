@@ -3,6 +3,7 @@
 use {
     crate::{
         device::{DeviceQueue, NetworkDevice, QueueId, RingSizes, TxCompletionRing},
+        ecn_codepoint::EcnCodepoint,
         gre::{
             construct_gre_packet, gre_packet_size,
             packet::{GRE_HEADER_BASE_SIZE, INNER_PACKET_HEADER_SIZE},
@@ -201,6 +202,9 @@ pub trait TxPacket {
 
     /// Source address used when sending the packet.
     fn src_addr(&self) -> SocketAddrV4;
+
+    /// Explicit congestion notification bits to set on the packet.
+    fn ecn(&self) -> Option<EcnCodepoint>;
 }
 
 impl<U: Umem> TxLoop<U> {
@@ -279,6 +283,7 @@ impl<U: Umem> TxLoop<U> {
                 let src_addr = item.src_addr();
                 let src_ip = src_addr.ip();
                 let src_port = src_addr.port();
+                let ecn = item.ecn();
                 for addr in item.dst_addrs().as_ref() {
                     if ring.available() == 0 || umem.available() == 0 {
                         commit_pending(&mut ring, &mut written_uncommitted);
@@ -368,6 +373,7 @@ impl<U: Umem> TxLoop<U> {
                             src_port,
                             addr.port(),
                             payload,
+                            ecn,
                             &gre.tunnel_info,
                         ) {
                             log::warn!("dropping packet: {err}");
@@ -425,6 +431,7 @@ impl<U: Umem> TxLoop<U> {
                             &mut packet[ETH_HEADER_SIZE..],
                             src_ip,
                             &dst_ip,
+                            ecn,
                             (UDP_HEADER_SIZE + len) as u16,
                         );
 

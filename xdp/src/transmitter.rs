@@ -1,3 +1,14 @@
+use {
+    crate::ecn_codepoint::EcnCodepoint,
+    bytes::Bytes,
+    crossbeam_channel::{Sender, TrySendError},
+    std::{
+        error::Error,
+        net::{SocketAddr, SocketAddrV4},
+        sync::{Arc, atomic::AtomicBool},
+        thread,
+    },
+};
 #[cfg(target_os = "linux")]
 use {
     crate::{
@@ -6,8 +17,7 @@ use {
         route::{RouteTable, Router, RoutingTables},
         route_monitor::RouteMonitor,
         set_cpu_affinity,
-        tx_loop::TxPacket,
-        tx_loop::{TxLoop, TxLoopBuilder, TxLoopConfigBuilder},
+        tx_loop::{TxLoop, TxLoopBuilder, TxLoopConfigBuilder, TxPacket},
         umem::{OwnedUmem, PageAlignedMemory},
     },
     arc_swap::ArcSwap,
@@ -18,16 +28,6 @@ use {
         net::{IpAddr, Ipv4Addr},
         thread::Builder,
         time::Duration,
-    },
-};
-use {
-    bytes::Bytes,
-    crossbeam_channel::{Sender, TrySendError},
-    std::{
-        error::Error,
-        net::{SocketAddr, SocketAddrV4},
-        sync::{Arc, atomic::AtomicBool},
-        thread,
     },
 };
 
@@ -77,6 +77,7 @@ impl XdpConfig {
 pub struct BytesTxPacket {
     src_addr: SocketAddrV4,
     dst_addrs: XdpAddrs,
+    ecn: Option<EcnCodepoint>,
     payload: Bytes,
 }
 
@@ -85,10 +86,16 @@ pub struct BytesTxPacket;
 
 #[cfg(target_os = "linux")]
 impl BytesTxPacket {
-    pub fn new(src_addr: SocketAddrV4, dst_addrs: impl Into<XdpAddrs>, payload: Bytes) -> Self {
+    pub fn new(
+        src_addr: SocketAddrV4,
+        dst_addrs: impl Into<XdpAddrs>,
+        ecn: Option<EcnCodepoint>,
+        payload: Bytes,
+    ) -> Self {
         Self {
             src_addr,
             dst_addrs: dst_addrs.into(),
+            ecn,
             payload,
         }
     }
@@ -96,7 +103,12 @@ impl BytesTxPacket {
 
 #[cfg(not(target_os = "linux"))]
 impl BytesTxPacket {
-    pub fn new(_src_addr: SocketAddrV4, _dst_addrs: impl Into<XdpAddrs>, _payload: Bytes) -> Self {
+    pub fn new(
+        _src_addr: SocketAddrV4,
+        _dst_addrs: impl Into<XdpAddrs>,
+        _ecn: Option<EcnCodepoint>,
+        _payload: Bytes,
+    ) -> Self {
         Self
     }
 }
@@ -116,6 +128,10 @@ impl TxPacket for BytesTxPacket {
 
     fn src_addr(&self) -> SocketAddrV4 {
         self.src_addr
+    }
+
+    fn ecn(&self) -> Option<EcnCodepoint> {
+        self.ecn
     }
 }
 
@@ -164,6 +180,14 @@ impl XdpSender {
             .checked_rem(self.senders.len())
             .expect("XdpSender::senders should not be empty");
         self.senders[idx].try_send(packet)
+    }
+
+    pub fn len(&self) -> usize {
+        self.senders.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.senders.is_empty()
     }
 }
 
