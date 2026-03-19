@@ -33,7 +33,7 @@ pub(crate) struct InstructionFrame {
     num_accounts: u16, // NOTE: v1 spec-ed it as u8
     data_len: u16,
 
-    /// how to interpret frame between different transaction version
+    /// Version specific frame interpretation data.
     repr: InstructionFrameRepr,
 }
 
