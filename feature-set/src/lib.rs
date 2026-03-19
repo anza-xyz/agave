@@ -1126,9 +1126,7 @@ pub mod alpenglow {
     // Used to activate alpenglow in local-cluster tests without exposing the actual feature's private key
     #[cfg(feature = "dev-context-only-utils")]
     pub static TEST_KEYPAIR: LazyLock<Keypair> = LazyLock::new(|| {
-        let keypair = Keypair::from_base58_string(
-            "2Vzd6oTWU4RtM5UmsSyBH3tAhPSi1sKqMeMC8bF1jzHHLBMRhEWtrfmBV4EmwQbGSwkunk5Wy67kXNAL1ZL1xQhR",
-        );
+        let keypair = Keypair::from_base58_string("2Vzd6oTWU4RtM5UmsSyBH3tAhPSi1sKqMeMC8bF1jzHHLBMRhEWtrfmBV4EmwQbGSwkunk5Wy67kXNAL1ZL1xQhR");
         assert_eq!(keypair.pubkey(), super::alpenglow::id());
         keypair
     });
