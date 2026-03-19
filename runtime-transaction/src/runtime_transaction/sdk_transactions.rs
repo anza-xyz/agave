@@ -381,6 +381,159 @@ mod tests {
         }
     }
 
+    /// Helper to create a V1 `SanitizedVersionedTransaction` with the given config
+    /// and a single no-op instruction.
+    fn v1_sanitized_versioned_transaction(
+        config: solana_message::v1::TransactionConfig,
+    ) -> SanitizedVersionedTransaction {
+        let payer = Pubkey::new_unique();
+        let program_id = Pubkey::new_unique();
+        let message = solana_message::v1::Message::new(
+            MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 1,
+            },
+            config,
+            Hash::new_unique(),
+            vec![payer, program_id],
+            vec![CompiledInstruction::new_from_raw_parts(1, vec![], vec![0])],
+        );
+        let tx = VersionedTransaction {
+            signatures: vec![Signature::default(); 1],
+            message: VersionedMessage::V1(message),
+        };
+
+        SanitizedVersionedTransaction::try_from(tx).unwrap()
+    }
+
+    #[test]
+    fn test_v1_transaction_config_extraction() {
+        use {
+            crate::transaction_config_source::TransactionConfigSource,
+            solana_message::v1::TransactionConfig,
+        };
+
+        // Construct our test tx.
+        let config = TransactionConfig::empty()
+            .with_priority_fee(42)
+            .with_compute_unit_limit(300_000)
+            .with_loaded_accounts_data_size_limit(2048)
+            .with_heap_size(65536);
+        let tx = v1_sanitized_versioned_transaction(config);
+        let tx = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
+            tx,
+            MessageHash::Compute,
+            None,
+        )
+        .unwrap();
+
+        // Assert - Config matches expectations.
+        match tx.transaction_config_source() {
+            TransactionConfigSource::V1(values) => {
+                assert_eq!(values.priority_fee_lamports, 42);
+                assert_eq!(values.compute_unit_limit, 300_000);
+                assert_eq!(values.loaded_accounts_data_size_limit, 2048);
+                assert_eq!(values.requested_heap_size, 65536);
+            }
+            _ => unreachable!(),
+        }
+
+        // Assert - Compute budget limits matches expectations.
+        let feature_set = FeatureSet::all_enabled();
+        let limits = tx
+            .transaction_config_source()
+            .sanitize_and_convert_to_compute_budget_limits(&feature_set)
+            .unwrap();
+        assert_eq!(limits.compute_unit_limit, 300_000);
+        assert_eq!(limits.compute_unit_price, 42);
+        assert_eq!(limits.loaded_accounts_bytes.get(), 2048);
+        assert_eq!(limits.updated_heap_bytes, 65536);
+    }
+
+    #[test]
+    fn test_v1_default_config_values() {
+        use {
+            crate::transaction_config_source::TransactionConfigSource,
+            solana_message::v1::TransactionConfig,
+        };
+
+        let tx = v1_sanitized_versioned_transaction(TransactionConfig::empty());
+        let tx = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
+            tx,
+            MessageHash::Compute,
+            None,
+        )
+        .unwrap();
+
+        // Assert - Config matches expectations.
+        match tx.transaction_config_source() {
+            TransactionConfigSource::V1(values) => {
+                assert_eq!(values.priority_fee_lamports, 0);
+                assert_eq!(values.compute_unit_limit, 0);
+                assert_eq!(values.loaded_accounts_data_size_limit, 0);
+                assert_eq!(
+                    values.requested_heap_size,
+                    solana_program_entrypoint::HEAP_LENGTH as u32
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_v1_ignores_compute_budget_instructions() {
+        use {
+            crate::transaction_config_source::TransactionConfigSource,
+            solana_message::v1::TransactionConfig,
+        };
+
+        // Build a V1 message with config AND a ComputeBudget instruction that
+        // specifies different values. The header config should win.
+        let payer = Pubkey::new_unique();
+        let cb_ix = ComputeBudgetInstruction::set_compute_unit_limit(999_999);
+        let config = TransactionConfig::empty()
+            .with_priority_fee(100)
+            .with_compute_unit_limit(500_000)
+            .with_loaded_accounts_data_size_limit(4096)
+            .with_heap_size(32768);
+        let message = solana_message::v1::Message::new(
+            MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 1,
+            },
+            config,
+            Hash::new_unique(),
+            vec![payer, cb_ix.program_id],
+            vec![CompiledInstruction::new_from_raw_parts(
+                1,
+                cb_ix.data,
+                vec![0],
+            )],
+        );
+        let tx = VersionedTransaction {
+            signatures: vec![Signature::default(); 1],
+            message: VersionedMessage::V1(message),
+        };
+        let tx = SanitizedVersionedTransaction::try_from(tx).unwrap();
+        let tx = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
+            tx,
+            MessageHash::Compute,
+            None,
+        )
+        .unwrap();
+
+        // Assert - Compute budget instruction ignored, limit is 500,000 not 999,999.
+        match tx.transaction_config_source() {
+            TransactionConfigSource::V1(values) => {
+                assert_eq!(values.compute_unit_limit, 500_000);
+                assert_eq!(values.priority_fee_lamports, 100);
+            }
+            _ => unreachable!(),
+        }
+    }
+
     #[test]
     fn test_simd_406_instruction_accounts_limit() {
         let account_keys = vec![Pubkey::new_unique(); 3];
