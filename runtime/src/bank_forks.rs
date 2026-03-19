@@ -765,13 +765,9 @@ mod tests {
         solana_clock::UnixTimestamp,
         solana_epoch_schedule::EpochSchedule,
         solana_keypair::Keypair,
-<<<<<<< HEAD
         solana_pubkey::Pubkey,
-=======
-        solana_leader_schedule::SlotLeader,
         solana_rent::Rent,
         solana_sdk_ids::system_program,
->>>>>>> aa2b33ecc (ag migration: ignore empty genesis certificate account (#11384))
         solana_signer::Signer,
         solana_vote_program::vote_state::BlockTimestamp,
     };
@@ -837,7 +833,7 @@ mod tests {
         } else {
             let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
             bank0.freeze();
-            Bank::new_from_parent(bank0, SlotLeader::default(), root_slot)
+            Bank::new_from_parent(bank0, &Pubkey::default(), root_slot)
         };
 
         let mut feature_set = FeatureSet::default();
@@ -933,7 +929,7 @@ mod tests {
         assert_eq!(migration_status.migration_slot(), None);
 
         // Migration can still succeed
-        let mut bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 10);
+        let mut bank = Bank::new_from_parent(root_bank, &Pubkey::default(), 10);
         let genesis_cert = Certificate {
             cert_type: CertificateType::Finalize(1),
             signature: BLSSignature::default(),
