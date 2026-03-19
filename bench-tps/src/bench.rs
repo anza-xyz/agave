@@ -18,8 +18,9 @@ use {
     solana_hash::Hash,
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
-    solana_message::{
-        Message, VersionedMessage,
+    solana_message::Message,
+    solana_message_v4::{
+        VersionedMessage as VersionedMessageV4,
         v1::{Message as V1Message, TransactionConfig},
     },
     solana_metrics::{self, datapoint_info},
@@ -772,8 +773,16 @@ fn transfer_with_compute_unit_price_and_padding_v1(
     let message =
         V1Message::try_compile_with_config(&from_pubkey, &instructions, recent_blockhash, config)
             .unwrap();
-    let versioned_message = VersionedMessage::V1(message);
-    VersionedTransaction::try_new(versioned_message, &[from_keypair]).unwrap()
+    let versioned_message = VersionedMessageV4::V1(message);
+    // Build with v4 types then convert to v3 via serialization round-trip.
+    // wincode produces bincode-compatible bytes.
+    let v4_tx = solana_transaction_v4::versioned::VersionedTransaction::try_new(
+        versioned_message,
+        &[from_keypair],
+    )
+    .unwrap();
+    let bytes = wincode::serialize(&v4_tx).unwrap();
+    bincode::deserialize(&bytes).unwrap()
 }
 
 fn get_nonce_accounts<T: 'static + TpsClient + Send + Sync + ?Sized>(
