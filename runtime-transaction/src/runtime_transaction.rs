@@ -10,7 +10,10 @@
 //!    ALT, RuntimeTransaction<SanitizedMessage> transits into Dynamically Loaded state,
 //!    with its dynamic metadata loaded.
 use {
-    crate::transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
+    crate::{
+        transaction_config_source::TransactionConfigSource,
+        transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
+    },
     core::ops::Deref,
     solana_compute_budget_instruction::compute_budget_instruction_details::*,
     solana_hash::Hash,
@@ -53,11 +56,11 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
     fn signature_details(&self) -> &TransactionSignatureDetails {
         &self.meta.signature_details
     }
-    fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails {
-        &self.meta.compute_budget_instruction_details
-    }
     fn instruction_data_len(&self) -> u16 {
         self.meta.instruction_data_len
+    }
+    fn transaction_config_source(&self) -> &TransactionConfigSource {
+        &self.meta.transaction_config_source
     }
 }
 

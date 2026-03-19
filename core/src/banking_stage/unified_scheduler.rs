@@ -131,7 +131,7 @@ pub(crate) fn ensure_banking_stage_setup(
 
                     // Determine priority.
                     let compute_budget_limits = tx
-                        .compute_budget_instruction_details()
+                        .transaction_config_source()
                         .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)
                         .ok()?;
                     let (priority, _cost) =

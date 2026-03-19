@@ -594,7 +594,7 @@ fn calculate_priority(
     bank: &Bank,
 ) -> Option<u64> {
     let compute_budget_limits = transaction
-        .compute_budget_instruction_details()
+        .transaction_config_source()
         .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)
         .ok()?;
     let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);

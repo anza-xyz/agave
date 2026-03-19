@@ -107,7 +107,7 @@ impl Bank {
                 Ok(()) => {
                     let compute_budget_and_limits = tx
                         .borrow()
-                        .compute_budget_instruction_details()
+                        .transaction_config_source()
                         .sanitize_and_convert_to_compute_budget_limits(feature_set)
                         .map(|limit| {
                             let fee_budget = FeeBudgetLimits::from(limit);

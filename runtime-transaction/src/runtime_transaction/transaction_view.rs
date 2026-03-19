@@ -2,6 +2,7 @@ use {
     super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
     crate::{
         instruction_meta::InstructionMeta,
+        transaction_config_source::{TransactionConfigSource, TransactionConfigValues},
         transaction_meta::{StaticMeta, TransactionMeta},
         transaction_with_meta::TransactionWithMeta,
     },
@@ -89,13 +90,27 @@ where
     );
     let compute_budget_instruction_details =
         ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?;
+    let transaction_config_source =
+        if let Some(transaction_config_view) = transaction.transaction_config() {
+            // NOTE: only txv1 has `transaction_config_view`, which must have been validated for
+            // SanitizedTransactionView.
+            TransactionConfigSource::V1(TransactionConfigValues {
+                priority_fee_lamports: transaction_config_view.priority_fee_lamports(),
+                compute_unit_limit: transaction_config_view.compute_unit_limit(),
+                loaded_accounts_data_size_limit: transaction_config_view
+                    .loaded_accounts_data_size_limit(),
+                requested_heap_size: transaction_config_view.requested_heap_size(),
+            })
+        } else {
+            TransactionConfigSource::LegacyAndV0(compute_budget_instruction_details)
+        };
 
     Ok(TransactionMeta {
         message_hash,
         is_simple_vote_transaction: is_simple_vote_tx,
         signature_details,
-        compute_budget_instruction_details,
         instruction_data_len,
+        transaction_config_source,
     })
 }
 

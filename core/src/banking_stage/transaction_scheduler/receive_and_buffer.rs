@@ -416,7 +416,7 @@ impl TransactionViewReceiveAndBuffer {
         )?;
 
         let Ok(compute_budget_limits) = view
-            .compute_budget_instruction_details()
+            .transaction_config_source()
             .sanitize_and_convert_to_compute_budget_limits(&working_bank.feature_set)
         else {
             return Err(PacketHandlingError::ComputeBudget);
