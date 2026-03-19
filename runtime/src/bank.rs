@@ -43,7 +43,7 @@ use {
             },
         },
         bank_forks::BankForks,
-        block_component_processor::BlockComponentProcessor,
+        block_component_processor::{BlockComponentProcessor, vote_reward::VoteRewardAccountState},
         epoch_stakes::{
             BLSPubkeyToRankMap, DeserializableVersionedEpochStakes, NodeVoteAccounts,
             VersionedEpochStakes,
@@ -1436,6 +1436,7 @@ impl Bank {
                 new.process_new_epoch(
                     parent.epoch(),
                     parent.slot(),
+                    parent.capitalization(),
                     parent.block_height(),
                     reward_calc_tracer,
                 );
@@ -1727,6 +1728,7 @@ impl Bank {
         &mut self,
         parent_epoch: Epoch,
         parent_slot: Slot,
+        parent_capitalization: u64,
         parent_height: u64,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
     ) {
@@ -1767,13 +1769,27 @@ impl Bank {
 
         // Distribute rewards commission to vote accounts and cache stake rewards
         // for partitioned distribution in the upcoming slots.
-        self.begin_partitioned_rewards(
+        let epoch_validator_rewards = self.begin_partitioned_rewards(
             parent_epoch,
             parent_slot,
             parent_height,
             &rewards_calculation,
             &rewards_metrics,
         );
+
+        // the vote reward account state should be created at the epoch boundary in which we
+        // activate alpenglow as it will need info from the previous epoch.
+        if self
+            .feature_set
+            .is_active(&agave_feature_set::alpenglow::id())
+        {
+            VoteRewardAccountState::new_epoch_update_account(
+                self,
+                parent_epoch,
+                parent_capitalization,
+                epoch_validator_rewards,
+            );
+        }
 
         report_new_epoch_metrics(
             epoch,
