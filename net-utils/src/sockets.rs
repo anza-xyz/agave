@@ -487,11 +487,7 @@ mod tests {
 
         let server_ip_echo_addr = server_udp_socket.local_addr().unwrap();
         assert_eq!(
-            get_public_ip_addr_with_binding(
-                &server_ip_echo_addr,
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED)
-            )
-            .unwrap(),
+            get_public_ip_addr_with_binding(&server_ip_echo_addr, ip_addr).unwrap(),
             parse_host("127.0.0.1").unwrap(),
         );
         assert_eq!(get_cluster_shred_version(&server_ip_echo_addr).unwrap(), 42);
@@ -518,11 +514,7 @@ mod tests {
 
         let ip_echo_server_addr = server_udp_socket.local_addr().unwrap();
         assert_eq!(
-            get_public_ip_addr_with_binding(
-                &ip_echo_server_addr,
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED)
-            )
-            .unwrap(),
+            get_public_ip_addr_with_binding(&ip_echo_server_addr, ip_addr).unwrap(),
             parse_host("127.0.0.1").unwrap(),
         );
         assert_eq!(
@@ -622,11 +614,7 @@ mod tests {
         );
 
         assert_eq!(
-            get_public_ip_addr_with_binding(
-                &ip_echo_server_addr,
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED)
-            )
-            .unwrap(),
+            get_public_ip_addr_with_binding(&ip_echo_server_addr, ip_addr).unwrap(),
             parse_host("127.0.0.1").unwrap(),
         );
 
