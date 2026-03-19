@@ -1615,7 +1615,7 @@ impl Bank {
                     .collect();
                 epoch_boundary_preparation
                     .programs_to_recompile
-                    .sort_by_cached_key(|(_id, program)| program.decayed_usage_counter(self.slot));
+                    .sort_by_cached_key(|(_id, program)| program.retention_score());
             } else {
                 epoch_boundary_preparation.programs_to_recompile.clear();
             }
