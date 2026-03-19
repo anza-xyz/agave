@@ -40,7 +40,10 @@ pub(crate) struct InstructionFrame {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InstructionFrameRepr {
     /// Legacy and v0:
+    ///
+    /// ```notrust
     /// [program_id_index][short_vec accounts][accounts...][short_vec data][data...]
+    /// ```
     LegacyAndV0 {
         num_accounts_len: u8, // either 1 or 2
         data_len_len: u8,     // either 1 or 2
@@ -51,7 +54,10 @@ pub(crate) enum InstructionFrameRepr {
     #[allow(dead_code)]
     V1 {
         /// Start of this instruction's payload:
+        ///
+        /// ```notrust
         /// [account_indexes...][instruction_data...]
+        /// ```
         payload_offset: u16,
     },
 }
