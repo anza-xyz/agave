@@ -14,6 +14,7 @@ use {
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         loaded_programs::{
             ProgramCacheEntryType, ProgramCacheForTxBatch, ProgramRuntimeEnvironment,
+            ProgramRuntimeEnvironments,
         },
         stable_log,
         sysvar_cache::SysvarCache,
@@ -149,8 +150,7 @@ pub struct EnvironmentConfig<'a> {
     pub blockhash_lamports_per_signature: u64,
     epoch_stake_callback: &'a dyn InvokeContextCallback,
     feature_set: &'a SVMFeatureSet,
-    pub program_runtime_environment_for_execution: &'a ProgramRuntimeEnvironment,
-    pub program_runtime_environment_for_deployment: &'a ProgramRuntimeEnvironment,
+    program_runtime_environments: &'a ProgramRuntimeEnvironments,
     sysvar_cache: &'a SysvarCache,
 }
 impl<'a> EnvironmentConfig<'a> {
@@ -159,8 +159,7 @@ impl<'a> EnvironmentConfig<'a> {
         blockhash_lamports_per_signature: u64,
         epoch_stake_callback: &'a dyn InvokeContextCallback,
         feature_set: &'a SVMFeatureSet,
-        program_runtime_environment_for_execution: &'a ProgramRuntimeEnvironment,
-        program_runtime_environment_for_deployment: &'a ProgramRuntimeEnvironment,
+        program_runtime_environments: &'a ProgramRuntimeEnvironments,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
         Self {
@@ -168,8 +167,7 @@ impl<'a> EnvironmentConfig<'a> {
             blockhash_lamports_per_signature,
             epoch_stake_callback,
             feature_set,
-            program_runtime_environment_for_execution,
-            program_runtime_environment_for_deployment,
+            program_runtime_environments,
             sysvar_cache,
         }
     }
@@ -587,7 +585,8 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             Arc::clone(
                 &**self
                     .environment_config
-                    .program_runtime_environment_for_execution,
+                    .program_runtime_environments
+                    .get_env_for_execution(),
             ),
             SBPFVersion::V0,
             // Removes lifetime tracking
@@ -671,7 +670,8 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
 
     pub fn get_program_runtime_environment_for_deployment(&self) -> &ProgramRuntimeEnvironment {
         self.environment_config
-            .program_runtime_environment_for_deployment
+            .program_runtime_environments
+            .get_env_for_deployment()
     }
 
     pub fn is_deprecate_legacy_vote_ixs_active(&self) -> bool {
@@ -803,7 +803,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
-                loaded_programs::{ProgramCacheForTxBatch, get_mock_program_runtime_environment},
+                loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
                 sysvar_cache::SysvarCache,
             },
         };
@@ -829,14 +829,13 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             compute_budget.max_instruction_trace_length,
             $top_level_instructions,
         );
-        let program_runtime_environment = get_mock_program_runtime_environment();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockInvokeContextCallback {},
             $feature_set,
-            &program_runtime_environment,
-            &program_runtime_environment,
+            &program_runtime_environments,
             &sysvar_cache,
         );
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();

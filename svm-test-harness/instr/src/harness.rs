@@ -7,7 +7,9 @@ use {
     solana_instruction_error::InstructionError,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext, mock_compile_message},
-        loaded_programs::ProgramCacheForTxBatch,
+        loaded_programs::{
+            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
+        },
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -89,6 +91,10 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
             .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
             .unwrap_or_default();
 
+        let program_runtime_environments = ProgramRuntimeEnvironments::new(
+            ProgramRuntimeEnvironment::clone(&program_runtime_environment),
+            program_runtime_environment,
+        );
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             program_cache,
@@ -97,8 +103,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
                 blockhash_lamports_per_signature,
                 callback,
                 &feature_set,
-                &program_runtime_environment,
-                &program_runtime_environment,
+                &program_runtime_environments,
                 sysvar_cache,
             ),
             Some(log_collector.clone()),

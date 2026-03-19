@@ -58,6 +58,55 @@ impl ProgramRuntimeEnvironment {
         unsafe { std::mem::transmute(inner) }
     }
 }
+
+/// Paired execution and deployment environments.
+///
+/// Registered functions within each program runtime environment (syscalls)
+/// depend on per-epoch feature gate statuses. In most cases, the list of
+/// registered functions in the two environments will be the same. However,
+/// it's possible that the effective epoch of deployment could be in the
+/// *next epoch*.
+pub struct ProgramRuntimeEnvironments {
+    /// Environment compiled for the current epoch in which programs are
+    /// executing.
+    execution: ProgramRuntimeEnvironment,
+    /// Environment compiled for the epoch of the next slot at which a program
+    /// deployed in the current slot will execute.
+    deployment: ProgramRuntimeEnvironment,
+}
+
+impl ProgramRuntimeEnvironments {
+    /// Create a new ProgramRuntimeEnvironments from an `execution` and
+    /// `deployment` environment.
+    pub fn new(
+        execution: ProgramRuntimeEnvironment,
+        deployment: ProgramRuntimeEnvironment,
+    ) -> Self {
+        Self {
+            execution,
+            deployment,
+        }
+    }
+
+    /// Get the program runtime environment for execution.
+    pub fn get_env_for_execution(&self) -> &ProgramRuntimeEnvironment {
+        &self.execution
+    }
+
+    /// Get the program runtime environment for deployment.
+    pub fn get_env_for_deployment(&self) -> &ProgramRuntimeEnvironment {
+        &self.deployment
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn mock() -> Self {
+        Self {
+            execution: get_mock_program_runtime_environment(),
+            deployment: get_mock_program_runtime_environment(),
+        }
+    }
+}
+
 #[cfg(feature = "dev-context-only-utils")]
 pub fn get_mock_program_runtime_environment() -> ProgramRuntimeEnvironment {
     static MOCK_ENVIRONMENT: std::sync::OnceLock<ProgramRuntimeEnvironment> =

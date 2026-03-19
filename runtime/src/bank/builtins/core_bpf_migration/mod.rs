@@ -17,7 +17,10 @@ use {
     solana_program_runtime::{
         deploy::deploy_program,
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::{LoadProgramMetrics, ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
+        loaded_programs::{
+            LoadProgramMetrics, ProgramCacheForTxBatch, ProgramRuntimeEnvironment,
+            ProgramRuntimeEnvironments,
+        },
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -168,6 +171,10 @@ impl Bank {
             struct MockCallback {}
             impl InvokeContextCallback for MockCallback {}
             let feature_set = self.feature_set.runtime_features();
+            let program_runtime_environments = ProgramRuntimeEnvironments::new(
+                ProgramRuntimeEnvironment::clone(&program_runtime_environment),
+                ProgramRuntimeEnvironment::clone(&program_runtime_environment),
+            );
             let mut dummy_invoke_context = InvokeContext::new(
                 &mut dummy_transaction_context,
                 &mut program_cache_for_tx_batch,
@@ -176,8 +183,7 @@ impl Bank {
                     0,
                     &MockCallback {},
                     &feature_set,
-                    &program_runtime_environment,
-                    &program_runtime_environment,
+                    &program_runtime_environments,
                     &sysvar_cache,
                 ),
                 None,

@@ -128,7 +128,9 @@ use {
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
-        loaded_programs::{ProgramCacheEntry, ProgramRuntimeEnvironment},
+        loaded_programs::{
+            ProgramCacheEntry, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
+        },
     },
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_rent::Rent,
@@ -3604,13 +3606,13 @@ impl Bank {
             blockhash_lamports_per_signature,
             epoch_total_stake: self.get_current_epoch_total_stake(),
             feature_set: self.feature_set.runtime_features(),
-            program_runtime_environment_for_execution: self
-                .transaction_processor
-                .program_runtime_environment
-                .clone(),
-            program_runtime_environment_for_deployment: self
-                .transaction_processor
-                .program_runtime_environment_for_epoch(effective_epoch_of_deployments),
+            program_runtime_environments: ProgramRuntimeEnvironments::new(
+                self.transaction_processor
+                    .program_runtime_environment
+                    .clone(),
+                self.transaction_processor
+                    .program_runtime_environment_for_epoch(effective_epoch_of_deployments),
+            ),
             rent: self.rent_collector.rent.clone(),
         };
 

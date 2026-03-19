@@ -40,6 +40,7 @@ use {
         loaded_programs::{
             EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheEntry,
             ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+            ProgramRuntimeEnvironments,
         },
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
@@ -64,7 +65,6 @@ use {
 #[cfg(feature = "dev-context-only-utils")]
 use {
     qualifier_attr::{field_qualifiers, qualifiers},
-    solana_program_runtime::loaded_programs::get_mock_program_runtime_environment,
     std::sync::Weak,
 };
 
@@ -152,11 +152,8 @@ pub struct TransactionProcessingEnvironment {
     pub epoch_total_stake: u64,
     /// Runtime feature set to use for the transaction batch.
     pub feature_set: SVMFeatureSet,
-    /// The current ProgramRuntimeEnvironment derived from the SVMFeatureSet.
-    pub program_runtime_environment_for_execution: ProgramRuntimeEnvironment,
-    /// Depending on the next slot this is either the current or the upcoming
-    /// ProgramRuntimeEnvironment.
-    pub program_runtime_environment_for_deployment: ProgramRuntimeEnvironment,
+    /// Program runtime environments for execution and deployment.
+    pub program_runtime_environments: ProgramRuntimeEnvironments,
     /// Rent calculator to use for the transaction batch.
     pub rent: Rent,
 }
@@ -168,8 +165,7 @@ pub fn get_mock_transaction_processing_environment() -> TransactionProcessingEnv
         blockhash_lamports_per_signature: 0,
         epoch_total_stake: 0,
         feature_set: SVMFeatureSet::default(),
-        program_runtime_environment_for_execution: get_mock_program_runtime_environment(),
-        program_runtime_environment_for_deployment: get_mock_program_runtime_environment(),
+        program_runtime_environments: ProgramRuntimeEnvironments::mock(),
         rent: Rent::default(),
     }
 }
@@ -409,7 +405,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             self.replenish_program_cache(
                 &account_loader,
                 &builtins,
-                &environment.program_runtime_environment_for_execution,
+                environment
+                    .program_runtime_environments
+                    .get_env_for_execution(),
                 &mut program_cache_for_tx_batch,
                 &mut execute_timings,
                 config.check_program_deployment_slot,
@@ -499,7 +497,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         self.replenish_program_cache(
                             &account_loader,
                             &program_accounts_set,
-                            &environment.program_runtime_environment_for_execution,
+                            environment
+                                .program_runtime_environments
+                                .get_env_for_execution(),
                             &mut program_cache_for_tx_batch,
                             &mut execute_timings,
                             config.check_program_deployment_slot,
@@ -974,8 +974,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 environment.blockhash_lamports_per_signature,
                 callback,
                 &environment.feature_set,
-                &environment.program_runtime_environment_for_execution,
-                &environment.program_runtime_environment_for_deployment,
+                &environment.program_runtime_environments,
                 sysvar_cache,
             ),
             log_collector.clone(),
