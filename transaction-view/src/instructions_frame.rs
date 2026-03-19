@@ -155,6 +155,7 @@ impl InstructionsFrame {
 
         // advance instruction headers
         let headers = Self::parse_v1_instruction_headers(bytes, offset, num_instructions)?;
+
         // then advance instruction payloads
         let frames = Self::build_v1_instruction_frames(bytes, &headers, offset)?;
 
@@ -171,12 +172,21 @@ impl InstructionsFrame {
         offset: &mut usize,
         num_instructions: u8,
     ) -> Result<Vec<V1InstructionHeader>> {
+        // check have enough bytes for headers
+        check_remaining(
+            bytes,
+            *offset,
+            4usize.wrapping_mul(usize::from(num_instructions)),
+        )?;
+
         let mut headers = Vec::with_capacity(num_instructions as usize);
 
         for _ in 0..(num_instructions as usize) {
             let header_offset = *offset as u16;
             let program_id_index = read_byte(bytes, offset)?;
             let num_instruction_accounts = read_byte(bytes, offset)?;
+            // SAFETY:
+            // - Offset and length checks have been done in the initial parsing.
             let num_instruction_data_bytes = u16::from_le_bytes(
                 unsafe { read_slice_data::<u8>(bytes, offset, 2) }?
                     .try_into()
@@ -249,19 +259,23 @@ impl<'a> Iterator for InstructionsIterator<'a> {
             self.index = self.index.wrapping_add(1);
 
             match repr {
+                // SAFETY: `InstructionFrame` metadata was validated during initial parsing,
+                // so the encoded lengths and data ranges for this instruction are in-bounds.
                 InstructionFrameRepr::LegacyAndV0 {
                     num_accounts_len,
                     data_len_len,
-                } => Some(self.for_legacy_and_v0(
-                    program_id_index,
-                    num_accounts,
-                    num_accounts_len,
-                    data_len,
-                    data_len_len,
-                )),
-                InstructionFrameRepr::V1 { payload_offset } => {
-                    Some(self.for_v1(program_id_index, num_accounts, data_len, payload_offset))
-                }
+                } => Some(unsafe {
+                    self.for_legacy_and_v0(
+                        program_id_index,
+                        num_accounts,
+                        num_accounts_len,
+                        data_len,
+                        data_len_len,
+                    )
+                }),
+                InstructionFrameRepr::V1 { payload_offset } => Some(unsafe {
+                    self.for_v1(program_id_index, num_accounts, data_len, payload_offset)
+                }),
             }
         } else {
             None
@@ -270,7 +284,22 @@ impl<'a> Iterator for InstructionsIterator<'a> {
 }
 
 impl<'a> InstructionsIterator<'a> {
-    fn for_legacy_and_v0(
+    /// Builds the next legacy/v0 instruction using pre-validated frame metadata.
+    ///
+    /// # Safety
+    /// The caller must ensure that:
+    /// - `self.offset` points to the beginning of a serialized legacy/v0 instruction
+    ///   in `self.bytes`.
+    /// - `num_accounts_len` and `data_len_len` are the exact encoded lengths of the
+    ///   compact-u16 account-count and data-length fields for that instruction.
+    /// - `num_accounts` and `data_len` exactly match the serialized instruction at
+    ///   `self.offset`.
+    /// - The byte ranges implied by those values are fully in bounds of `self.bytes`.
+    ///
+    /// These invariants are expected to have been established by the initial
+    /// instruction frame parsing. Violating them may cause out-of-bounds unchecked
+    /// reads and undefined behavior.
+    unsafe fn for_legacy_and_v0(
         &mut self,
         program_id_index: u8,
         num_accounts: u16,
@@ -318,7 +347,28 @@ impl<'a> InstructionsIterator<'a> {
         }
     }
 
-    fn for_v1(
+    /// Builds the next v1 instruction using pre-validated frame metadata.
+    ///
+    /// # Safety
+    /// The caller must ensure that:
+    ///
+    /// - `payload_offset` points to the beginning of this instruction’s payload
+    ///   (i.e. the first account index byte) within `self.bytes`.
+    /// - `num_accounts` and `data_len` exactly match the instruction header that
+    ///   was previously parsed for this instruction.
+    /// - The byte range
+    ///   `payload_offset .. payload_offset + num_accounts + data_len`
+    ///   lies entirely within `self.bytes`.
+    /// - `self.bytes` has not been mutated since the initial parsing that produced
+    ///   the instruction frames.
+    ///
+    /// These invariants are expected to have been established during the initial
+    /// tx-v1 instruction parsing phase, where header and payload bounds were
+    /// validated together.
+    ///
+    /// Violating any of these conditions may result in out-of-bounds unchecked
+    /// reads and thus undefined behavior.
+    unsafe fn for_v1(
         &mut self,
         program_id_index: u8,
         num_accounts: u16,
@@ -326,9 +376,21 @@ impl<'a> InstructionsIterator<'a> {
         payload_offset: u16,
     ) -> <InstructionsIterator<'a> as Iterator>::Item {
         self.offset = payload_offset as usize;
+        // SAFETY:
+        // - The offset is checked to be valid in the byte slice.
+        // - The alignment of u8 is 1.
+        // - The slice length is checked to be valid.
+        // - `u8` cannot be improperly initialized.
+        // - Offset and length checks have been done in the initial parsing.
         let accounts =
             unsafe { unchecked_read_slice_data::<u8>(self.bytes, &mut self.offset, num_accounts) };
 
+        // SAFETY:
+        // - The offset is checked to be valid in the byte slice.
+        // - The alignment of u8 is 1.
+        // - The slice length is checked to be valid.
+        // - `u8` cannot be improperly initialized.
+        // - Offset and length checks have been done in the initial parsing.
         let data =
             unsafe { unchecked_read_slice_data::<u8>(self.bytes, &mut self.offset, data_len) };
 
