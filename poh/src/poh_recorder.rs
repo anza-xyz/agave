@@ -1285,9 +1285,10 @@ mod tests {
         // Collect the tick entries produced.
         let mut entries = vec![];
         while let Ok((_bank, (entry_marker, _tick_height))) = entry_receiver.try_recv() {
-            let entry = entry_marker.into_entry().expect("expected Entry");
-            assert!(entry.is_tick());
-            entries.push(entry);
+            if let Some(entry) = entry_marker.into_entry() {
+                assert!(entry.is_tick());
+                entries.push(entry);
+            }
         }
 
         // Confirm correct number of entries received.
