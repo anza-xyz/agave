@@ -191,10 +191,8 @@ impl RepairStats {
                 ("orphan-count", self.orphan.count, i64),
                 ("shred-slot-max", nonzero_num(self.shred.max), Option<i64>),
                 ("shred-slot-min", nonzero_num(self.shred.min), Option<i64>),
-                ("repair-highest-slot", self.highest_shred.max, i64), // deprecated
                 ("highest-shred-slot-max", nonzero_num(self.highest_shred.max), Option<i64>),
                 ("highest-shred-slot-min", nonzero_num(self.highest_shred.min), Option<i64>),
-                ("repair-orphan", self.orphan.max, i64), // deprecated
                 ("orphan-slot-max", nonzero_num(self.orphan.max), Option<i64>),
                 ("orphan-slot-min", nonzero_num(self.orphan.min), Option<i64>),
             );
