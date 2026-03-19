@@ -1189,7 +1189,7 @@ pub mod static_instruction_limit {
 }
 
 pub mod discard_unexpected_data_complete_shreds {
-    solana_pubkey::declare_id!("8MhfKhoZEoiySpVe248bDkisyEcBA7JQLyUS94xoTSqN");
+    solana_pubkey::declare_id!("shredXP8xLjJWp1AWh3gAFsFn4GSH1vohhCMDHw5koU");
 }
 
 pub mod vote_state_v4 {
