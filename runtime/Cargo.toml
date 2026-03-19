@@ -133,7 +133,7 @@ solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
 solana-nonce = { workspace = true }
-solana-nonce-account = { workspace = true }
+solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh-config = { workspace = true }

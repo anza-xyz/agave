@@ -27,7 +27,7 @@ solana-bincode = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
 solana-nonce = { workspace = true, features = ["serde"] }
-solana-nonce-account = { workspace = true }
+solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, features = ["sha2"] }
@@ -42,7 +42,6 @@ assert_matches = { workspace = true }
 criterion = { workspace = true }
 solana-compute-budget = { path = "../../compute-budget", features = ["agave-unstable-api"] }
 solana-hash = { workspace = true }
-solana-nonce-account = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-rent = { workspace = true }
 solana-sha256-hasher = { workspace = true }

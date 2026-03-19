@@ -26,7 +26,7 @@ solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true, optional = true }
-solana-nonce-account = { workspace = true }
+solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signature = { workspace = true }
