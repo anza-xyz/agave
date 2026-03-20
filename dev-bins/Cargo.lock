@@ -9702,6 +9702,7 @@ dependencies = [
  "serde",
  "solana-account 4.1.0",
  "solana-bincode",
+ "solana-bls-signatures",
  "solana-clock",
  "solana-hash 4.2.0",
  "solana-instruction",
