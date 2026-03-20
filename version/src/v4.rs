@@ -1,5 +1,5 @@
 use {
-    crate::{compute_commit, ClientId},
+    crate::{self as v3, compute_commit, ClientId},
     rand::{thread_rng, Rng},
     serde::{de::Error as _, ser::Error as _, Deserialize, Deserializer, Serialize, Serializer},
     solana_sanitize::Sanitize,
@@ -249,6 +249,25 @@ impl Version {
     }
 }
 
+impl From<v3::Version> for Version {
+    fn from(other: v3::Version) -> Self {
+        let client = other.client();
+        let v3::Version {
+            major,
+            minor,
+            patch,
+            commit,
+            feature_set,
+            ..
+        } = other;
+        let (minor, patch, prerelease) =
+            PackedMinor(minor)
+                .try_unpack(patch)
+                .unwrap_or((minor, patch, Prerelease::Stable));
+        Version::new_from_parts(major, minor, patch, commit, feature_set, client, prerelease)
+    }
+}
+
 impl Default for Version {
     fn default() -> Self {
         Self::this_build()
@@ -303,7 +322,7 @@ impl Serialize for Version {
 
         let (packed_minor, patch) = PackedMinor::try_pack(minor, patch, prerelease)
             .map_err(|err| S::Error::custom(format!("{err:?}")))?;
-        let client = u16::try_from(client.clone()).map_err(S::Error::custom)?;
+        let client = u16::try_from(*client).map_err(S::Error::custom)?;
 
         let serialized_version = SerializedVersion {
             major,
@@ -351,7 +370,7 @@ impl<'de> Deserialize<'de> for Version {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate as v3};
+    use super::*;
 
     #[test]
     fn test_prerelease_patch_is_valid() {
@@ -647,6 +666,104 @@ mod tests {
         assert_eq!(
             bincode::serialized_size(&v3_version).unwrap(),
             bincode::serialized_size(&v4_version).unwrap(),
+        );
+    }
+
+    #[test]
+    fn test_v4_from_v3() {
+        let major = 3;
+        let minor = 2;
+        let patch = 1;
+        let alpha = 1;
+        let beta = 2;
+        let rc = 3;
+        let commit = 0;
+        let feature_set = 0;
+        let client = ClientId::Agave;
+
+        let v3_version = v3::Version {
+            major,
+            minor: minor | Prerelease::ENCODE_TAG_ALPHA << PackedMinor::PRERELEASE_BITS_OFFSET,
+            patch: alpha,
+            commit,
+            feature_set,
+            client: u16::try_from(client).expect("agave client id"),
+        };
+        assert_eq!(
+            Version::from(v3_version),
+            Version::new_from_parts(
+                major,
+                minor,
+                0,
+                commit,
+                feature_set,
+                client,
+                Prerelease::Alpha(alpha),
+            ),
+        );
+
+        let v3_version = v3::Version {
+            major,
+            minor: minor | Prerelease::ENCODE_TAG_BETA << PackedMinor::PRERELEASE_BITS_OFFSET,
+            patch: beta,
+            commit,
+            feature_set,
+            client: u16::try_from(client).expect("agave client id"),
+        };
+        assert_eq!(
+            Version::from(v3_version),
+            Version::new_from_parts(
+                major,
+                minor,
+                0,
+                commit,
+                feature_set,
+                client,
+                Prerelease::Beta(beta),
+            ),
+        );
+
+        let v3_version = v3::Version {
+            major,
+            minor: minor
+                | Prerelease::ENCODE_TAG_RELEASE_CANDIDATE << PackedMinor::PRERELEASE_BITS_OFFSET,
+            patch: rc,
+            commit,
+            feature_set,
+            client: u16::try_from(client).expect("agave client id"),
+        };
+        assert_eq!(
+            Version::from(v3_version),
+            Version::new_from_parts(
+                major,
+                minor,
+                0,
+                commit,
+                feature_set,
+                client,
+                Prerelease::ReleaseCandidate(rc),
+            ),
+        );
+
+        let v3_version = v3::Version {
+            major,
+            minor,
+            patch,
+            commit,
+            feature_set,
+            client: u16::try_from(client).expect("agave client id"),
+        };
+        assert_eq!(
+            Version::from(v3_version),
+            Version::new_from_parts(
+                major,
+                minor,
+                patch,
+                commit,
+                feature_set,
+                client,
+                Prerelease::Stable,
+            ),
         );
     }
 

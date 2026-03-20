@@ -24,7 +24,7 @@ extern crate solana_frozen_abi_macro;
 mod legacy;
 pub mod v4;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClientId {
     SolanaLabs,
     JitoLabs,
