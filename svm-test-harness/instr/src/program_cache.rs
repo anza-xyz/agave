@@ -1,6 +1,6 @@
 use {
+    crate::builtins::SVM_BUILTINS,
     solana_account::{Account, AccountSharedData},
-    solana_builtins::BUILTINS,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction_error::InstructionError,
     solana_program_runtime::loaded_programs::{
@@ -14,12 +14,12 @@ use {
     std::{collections::HashSet, sync::Arc},
 };
 
-/// Create a new `ProgramCacheForTxBatch` instance with all builtins from `solana-builtins`.
+/// Create a new `ProgramCacheForTxBatch` instance populated with builtins.
 pub fn new_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
     let mut cache = ProgramCacheForTxBatch::default();
     cache.set_slot_for_tests(slot);
 
-    for builtin in BUILTINS {
+    for builtin in SVM_BUILTINS {
         cache.replenish(
             builtin.program_id,
             Arc::new(ProgramCacheEntry::new_builtin(
