@@ -39,6 +39,7 @@ itertools = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 parking_lot = { workspace = true }
+qualifier_attr = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 solana-accounts-db = { workspace = true }

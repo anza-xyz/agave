@@ -51,6 +51,7 @@ use {
         consensus_rewards::ConsensusRewardsService,
         event::{LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         event_handler::{EventHandler, EventHandlerContext},
+        generated_cert_types::GeneratedCertTypes,
         root_utils::RootContext,
         timer_manager::TimerManager,
         vote_history::VoteHistory,
@@ -95,6 +96,7 @@ pub struct VotorConfig {
     pub wait_for_vote_to_start_leader: bool,
     pub vote_history: VoteHistory,
     pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
+    pub generated_cert_types: Arc<GeneratedCertTypes>,
 
     // Shared state
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
@@ -175,6 +177,7 @@ impl Votor {
             reward_votes_receiver,
             build_reward_certs_receiver,
             reward_certs_sender,
+            generated_cert_types,
         } = config;
 
         let migration_status = bank_forks.read().unwrap().migration_status();
@@ -237,6 +240,7 @@ impl Votor {
         let consensus_pool_context = ConsensusPoolContext {
             exit: exit.clone(),
             migration_status,
+            generated_cert_types,
             cluster_info: cluster_info.clone(),
             my_vote_pubkey: vote_account,
             blockstore,

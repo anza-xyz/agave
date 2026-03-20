@@ -13,6 +13,7 @@ use {
             vote_pool::{DuplicateBlockVotePool, SimpleVotePool, VotePool},
         },
         event::VotorEvent,
+        generated_cert_types::GeneratedCertTypes,
     },
     agave_votor_messages::{
         consensus_message::{Block, Certificate, CertificateType, ConsensusMessage, VoteMessage},
@@ -108,6 +109,9 @@ pub(crate) struct ConsensusPool {
     vote_pools: BTreeMap<PoolId, VotePool>,
     /// Completed certificates
     completed_certificates: BTreeMap<CertificateType, Arc<Certificate>>,
+    /// Set of certs that the pool has generated itself.  Used to inform the bls sigverifier so it
+    /// can drop certs that the pool does not need.
+    generated_cert_types: Arc<GeneratedCertTypes>,
     /// Tracks slots which have reached the parent ready condition:
     /// - They have a potential parent block with a NotarizeFallback certificate
     /// - All slots from the parent have a Skip certificate
@@ -123,20 +127,27 @@ pub(crate) struct ConsensusPool {
     slot_stake_counters_map: BTreeMap<Slot, SlotStakeCounters>,
     /// Stores details about the genesis vote during the migration
     migration_status: Option<Arc<MigrationStatus>>,
+    /// The slot at which the state was last pruned.
+    last_pruned_slot: Slot,
 }
 
 impl ConsensusPool {
     pub(crate) fn new_from_root_bank_pre_migration(
         my_pubkey: Pubkey,
         bank: &Bank,
+        generated_cert_types: Arc<GeneratedCertTypes>,
         migration_status: Arc<MigrationStatus>,
     ) -> Self {
-        let mut pool = Self::new_from_root_bank(my_pubkey, bank);
+        let mut pool = Self::new_from_root_bank(my_pubkey, bank, generated_cert_types);
         pool.migration_status = Some(migration_status);
         pool
     }
 
-    pub fn new_from_root_bank(my_pubkey: Pubkey, bank: &Bank) -> Self {
+    pub fn new_from_root_bank(
+        my_pubkey: Pubkey,
+        bank: &Bank,
+        generated_cert_types: Arc<GeneratedCertTypes>,
+    ) -> Self {
         // To account for genesis and snapshots we allow default block id until
         // block id can be serialized  as part of the snapshot
         let root_block = (bank.slot(), bank.block_id().unwrap_or_default());
@@ -152,6 +163,8 @@ impl ConsensusPool {
             stats: ConsensusPoolStats::default(),
             slot_stake_counters_map: BTreeMap::new(),
             migration_status: None,
+            generated_cert_types,
+            last_pruned_slot: 0,
         }
     }
 
@@ -246,6 +259,7 @@ impl ConsensusPool {
             });
             let new_cert = Arc::new(cert_builder.build()?);
             self.insert_certificate(cert_type, new_cert.clone(), events);
+            self.generated_cert_types.insert_cert(cert_type);
             self.stats.incr_generated_cert(&new_cert.cert_type);
             new_certificates_to_send.push(new_cert);
         }
@@ -609,21 +623,18 @@ impl ConsensusPool {
         true
     }
 
-    /// Cleanup any old slots from the certificate pool
-    pub(crate) fn prune_old_state(&mut self, root_slot: Slot) {
-        // `completed_certificates`` now only contains entries >= `slot`
+    /// Prunes state relevant for slots older than `root_slot`.
+    pub(crate) fn maybe_prune(&mut self, root_slot: Slot) {
+        if self.last_pruned_slot >= root_slot {
+            return;
+        }
         self.completed_certificates
-            .retain(|cert_type, _| match cert_type {
-                CertificateType::Finalize(s)
-                | CertificateType::FinalizeFast(s, _)
-                | CertificateType::Notarize(s, _)
-                | CertificateType::NotarizeFallback(s, _)
-                | CertificateType::Genesis(s, _)
-                | CertificateType::Skip(s) => s >= &root_slot,
-            });
+            .retain(|c, _| c.slot() >= root_slot);
+        self.generated_cert_types.prune(root_slot);
         self.vote_pools = self.vote_pools.split_off(&(root_slot, VoteType::Finalize));
         self.slot_stake_counters_map = self.slot_stake_counters_map.split_off(&root_slot);
         self.parent_ready_tracker.set_root(root_slot);
+        self.last_pruned_slot = root_slot;
     }
 
     /// Updates the pubkey used for logging purposes only.
@@ -698,6 +709,7 @@ mod tests {
         validators: Vec<ValidatorVoteKeypairs>,
         bank_forks: Arc<RwLock<BankForks>>,
         pool: ConsensusPool,
+        generated_cert_types: Arc<GeneratedCertTypes>,
     }
 
     impl TestContext {
@@ -708,10 +720,16 @@ mod tests {
                 .collect::<Vec<_>>();
             let bank_forks = create_bank_forks(&validator_keypairs);
             let root_bank = bank_forks.read().unwrap().root_bank();
+            let generated_cert_types = Arc::new(GeneratedCertTypes::default());
             Self {
                 validators: validator_keypairs,
-                pool: ConsensusPool::new_from_root_bank(Pubkey::new_unique(), &root_bank),
+                pool: ConsensusPool::new_from_root_bank(
+                    Pubkey::new_unique(),
+                    &root_bank,
+                    generated_cert_types.clone(),
+                ),
                 bank_forks,
+                generated_cert_types,
             }
         }
 
@@ -1732,12 +1750,12 @@ mod tests {
         assert!(ctx.pool.is_finalized(2));
 
         let new_bank = Arc::new(create_bank(2, root_bank, SlotLeader::new_unique()));
-        ctx.pool.prune_old_state(new_bank.slot());
+        ctx.pool.maybe_prune(new_bank.slot());
         // Check that cert for 1 is gone, but cert for 2 is still there
         assert!(!ctx.pool.skip_certified(1));
         assert!(ctx.pool.is_finalized(2));
         let new_bank = Arc::new(create_bank(3, new_bank, SlotLeader::new_unique()));
-        ctx.pool.prune_old_state(new_bank.slot());
+        ctx.pool.maybe_prune(new_bank.slot());
         // Now both certs should be gone
         assert!(!ctx.pool.skip_certified(1));
         assert!(!ctx.pool.is_finalized(2));
@@ -2055,5 +2073,30 @@ mod tests {
         ctx.pool.update_pubkey(new_pubkey);
         assert_eq!(ctx.pool.my_pubkey(), new_pubkey);
         assert_eq!(ctx.pool.parent_ready_tracker.my_pubkey(), new_pubkey);
+    }
+
+    #[test]
+    fn received_certs_do_not_set_generated_certs() {
+        let mut ctx = TestContext::new();
+        let slot = ctx.bank_forks.read().unwrap().root_bank().slot() + 1;
+        let hash = Hash::default();
+        let cert_type = CertificateType::NotarizeFallback(slot, hash);
+        let cert = Certificate {
+            cert_type,
+            signature: BLSSignature::default(),
+            bitmap: Vec::new(),
+        };
+        ctx.add_message(ConsensusMessage::Certificate(cert));
+        assert!(!ctx.generated_cert_types.has_cert(&cert_type));
+    }
+
+    #[test]
+    fn created_certs_do_set_generated_certs() {
+        let mut ctx = TestContext::new();
+        let slot = ctx.bank_forks.read().unwrap().root_bank().slot() + 1;
+        let vote = Vote::new_skip_vote(slot);
+        ctx.add_certificate(vote);
+        let cert_type = CertificateType::Skip(slot);
+        assert!(ctx.generated_cert_types.has_cert(&cert_type));
     }
 }

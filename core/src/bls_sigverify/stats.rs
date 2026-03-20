@@ -34,6 +34,8 @@ pub(super) struct SigVerifierStats {
     pub(super) num_old_certs_received: u64,
     /// Number of already verified certs received.
     pub(super) num_verified_certs_received: u64,
+    /// Number of certs received that the node has already generated.
+    pub(super) num_generated_certs_received: u64,
     /// Last time the stats were reported.
     pub(super) last_report: Instant,
 }
@@ -52,6 +54,7 @@ impl Default for SigVerifierStats {
             num_old_votes_received: 0,
             num_old_certs_received: 0,
             num_verified_certs_received: 0,
+            num_generated_certs_received: 0,
             verify_and_send_batch_us: WelfordStats::default(),
             last_report: Instant::now(),
         }
@@ -82,6 +85,7 @@ impl SigVerifierStats {
             num_old_votes_received,
             num_old_certs_received,
             num_verified_certs_received,
+            num_generated_certs_received,
             discard_vote_invalid_rank,
             discard_vote_no_epoch_stakes,
             verify_and_send_batch_us,
@@ -108,6 +112,11 @@ impl SigVerifierStats {
             (
                 "num_verified_certs_received",
                 *num_verified_certs_received,
+                i64
+            ),
+            (
+                "num_generated_certs_received",
+                *num_generated_certs_received,
                 i64
             ),
             (

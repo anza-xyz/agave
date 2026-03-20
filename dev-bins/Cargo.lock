@@ -403,6 +403,7 @@ dependencies = [
  "log",
  "lru",
  "parking_lot 0.12.5",
+ "qualifier_attr",
  "serde",
  "serde_bytes",
  "solana-accounts-db",

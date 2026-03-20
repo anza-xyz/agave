@@ -11,6 +11,7 @@ use {
     agave_votor::{
         consensus_metrics::ConsensusMetricsEventSender,
         consensus_rewards::{self},
+        generated_cert_types::GeneratedCertTypes,
     },
     agave_votor_messages::{
         consensus_message::{CertificateType, ConsensusMessage, VoteMessage},
@@ -56,6 +57,7 @@ pub(crate) struct SigVerifierContext {
     pub(crate) cluster_info: Arc<ClusterInfo>,
     pub(crate) leader_schedule: Arc<LeaderScheduleCache>,
     pub(crate) num_threads: usize,
+    pub(crate) generated_cert_types: Arc<GeneratedCertTypes>,
 }
 
 pub(crate) struct SigVerifierChannels {
@@ -95,6 +97,7 @@ struct SigVerifier {
     leader_schedule: Arc<LeaderScheduleCache>,
     /// thread pool to use for all parallel tasks
     thread_pool: ThreadPool,
+    generated_cert_types: Arc<GeneratedCertTypes>,
 }
 
 impl SigVerifier {
@@ -106,6 +109,7 @@ impl SigVerifier {
             cluster_info,
             leader_schedule,
             num_threads,
+            generated_cert_types,
         } = context;
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(num_threads)
@@ -123,6 +127,7 @@ impl SigVerifier {
             cluster_info,
             leader_schedule,
             thread_pool,
+            generated_cert_types,
         }
     }
 
@@ -155,7 +160,7 @@ impl SigVerifier {
         self.maybe_prune_caches(root_bank.slot());
 
         let ((certs_to_verify, votes_to_verify), extract_msgs_us) =
-            measure_us!(self.extract_and_filter_msgs(batches, &root_bank,));
+            measure_us!(self.extract_and_filter_msgs(batches, &root_bank));
         self.stats
             .extract_filter_msgs_us
             .add_sample(extract_msgs_us);
@@ -241,6 +246,10 @@ impl SigVerifier {
                     }
                     if self.verified_certs.contains(&cert.cert_type) {
                         self.stats.num_verified_certs_received += 1;
+                        continue;
+                    }
+                    if self.generated_cert_types.has_cert(&cert.cert_type) {
+                        self.stats.num_generated_certs_received += 1;
                         continue;
                     }
                     certs.push(CertPayload {
@@ -366,6 +375,7 @@ mod tests {
         _reward_receiver: Receiver<AddVoteMessage>,
         pool_receiver: Receiver<Vec<ConsensusMessage>>,
         _metrics_receiver: ConsensusMetricsEventReceiver,
+        generated_cert_types: Arc<GeneratedCertTypes>,
     }
 
     impl TestContext {
@@ -408,6 +418,7 @@ mod tests {
             let (packet_sender, packet_receiver) = crossbeam_channel::unbounded();
             let (channel_to_metrics, metrics_receiver) = crossbeam_channel::unbounded();
 
+            let generated_cert_types = Arc::new(GeneratedCertTypes::default());
             let banlist = new_test_banlist();
             let verifier = SigVerifier::new(
                 SigVerifierContext {
@@ -417,6 +428,7 @@ mod tests {
                     cluster_info,
                     leader_schedule,
                     num_threads: 4,
+                    generated_cert_types: generated_cert_types.clone(),
                 },
                 SigVerifierChannels {
                     packet_receiver,
@@ -435,6 +447,7 @@ mod tests {
                 _reward_receiver: reward_receiver,
                 pool_receiver,
                 _metrics_receiver: metrics_receiver,
+                generated_cert_types,
             }
         }
     }
@@ -1273,6 +1286,7 @@ mod tests {
                 cluster_info,
                 leader_schedule,
                 num_threads: 4,
+                generated_cert_types: Arc::new(GeneratedCertTypes::default()),
             },
             SigVerifierChannels {
                 packet_receiver,
@@ -1488,6 +1502,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn generated_certs_are_filtered() {
+        let mut ctx = TestContext::new();
+        let slot = 1235;
+        let cert_type = CertificateType::Skip(slot);
+        ctx.generated_cert_types.insert_cert(cert_type);
+        let cert = create_signed_certificate_message(
+            &ctx.validator_keypairs,
+            cert_type,
+            &(0..ctx.validator_keypairs.len()).collect::<Vec<usize>>(),
+        );
+        let consensus_message = ConsensusMessage::Certificate(cert);
+        let packet_batches = messages_to_batches(&[consensus_message]);
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
+        assert_eq!(ctx.verifier.stats.num_generated_certs_received, 1);
     }
 
     fn messages_to_batches(messages: &[ConsensusMessage]) -> Vec<PacketBatch> {
