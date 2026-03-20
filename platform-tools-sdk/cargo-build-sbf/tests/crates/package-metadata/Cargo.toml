@@ -14,7 +14,7 @@ tools-version = "v1.54"
 program-id = "MyProgram1111111111111111111111111111111111"
 
 [dependencies]
-solana-account-info = "=3.1.0"
+solana-account-info = "=3.1.1"
 solana-package-metadata = "=2.2.1"
 solana-program-entrypoint = "=3.1.1"
 solana-program-error = "=3.0.0"
