@@ -1668,15 +1668,6 @@ dependencies = [
 
 [[package]]
 name = "cast"
-version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c24dab4283a142afa2fdca129b80ad2c6284e073930f964c3a1293c225ee39a"
-dependencies = [
- "rustc_version 0.4.1",
-]
-
-[[package]]
-name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
@@ -2064,7 +2055,7 @@ checksum = "950046b2aa2492f9a536f5f4f9a3de7b9e2476e575e05bd6c333371add4d98f3"
 dependencies = [
  "alloca",
  "anes",
- "cast 0.3.0",
+ "cast",
  "ciborium",
  "clap 4.5.31",
  "criterion-plot",
@@ -2087,21 +2078,8 @@ version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8d80a2f4f5b554395e47b5d8305bc3d27813bacb73493eb1001e8f76dae29ea"
 dependencies = [
- "cast 0.3.0",
+ "cast",
  "itertools 0.13.0",
-]
-
-[[package]]
-name = "criterion-stats"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "387df94cb74ada1b33e10ce034bb0d9360cc73edb5063e7d7d4120a40ee1c9d2"
-dependencies = [
- "cast 0.2.7",
- "num-traits",
- "num_cpus",
- "rand 0.4.6",
- "thread-scoped",
 ]
 
 [[package]]
@@ -3046,12 +3024,6 @@ name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
-
-[[package]]
-name = "fuchsia-cprng"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a06f77d526c1a601b7c4cdd98f54b5eaabffc14d5f2f0296febdc7f357c6d3ba"
 
 [[package]]
 name = "funty"
@@ -5625,19 +5597,6 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rand"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "552840b97013b1a26992c11eac34bdd778e464601a4c2054b5f0bff7c6761293"
-dependencies = [
- "fuchsia-cprng",
- "libc",
- "rand_core 0.3.1",
- "rdrand",
- "winapi",
-]
-
-[[package]]
-name = "rand"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a6b1679d49b24bbfe0c803429aa1874472f50d9b363131f0e89fc356b544d03"
@@ -5699,21 +5658,6 @@ dependencies = [
  "ppv-lite86",
  "rand_core 0.9.3",
 ]
-
-[[package]]
-name = "rand_core"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a6fdeb83b075e8266dcc8762c22776f6877a63111121f5f8c7411e5be7eed4b"
-dependencies = [
- "rand_core 0.4.2",
-]
-
-[[package]]
-name = "rand_core"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c33a3c44ca05fa6f1807d8e6743f3824e8509beca625669633be0acbdf509dc"
 
 [[package]]
 name = "rand_core"
@@ -5819,15 +5763,6 @@ dependencies = [
 [[package]]
 name = "rbpf-cli"
 version = "4.1.0-alpha.0"
-
-[[package]]
-name = "rdrand"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "678054eb77286b51581ba43620cc911abf02758c91f93f479767aed0f90458b2"
-dependencies = [
- "rand_core 0.3.1",
-]
 
 [[package]]
 name = "redox_syscall"
@@ -7428,9 +7363,6 @@ dependencies = [
  "clap 2.33.3",
  "console 0.16.3",
  "const_format",
- "criterion-stats",
- "crossbeam-channel",
- "ctrlc",
  "hex",
  "humantime",
  "log",
@@ -7453,7 +7385,6 @@ dependencies = [
  "solana-commitment-config",
  "solana-compute-budget-interface",
  "solana-config-interface",
- "solana-connection-cache",
  "solana-epoch-schedule",
  "solana-faucet",
  "solana-feature-gate-interface",
@@ -7476,7 +7407,6 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey 4.1.0",
  "solana-pubsub-client",
- "solana-quic-client",
  "solana-remote-wallet",
  "solana-rent 4.1.0",
  "solana-rpc",
@@ -12081,12 +12011,6 @@ dependencies = [
  "quote",
  "syn 2.0.117",
 ]
-
-[[package]]
-name = "thread-scoped"
-version = "1.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcbb6aa301e5d3b0b5ef639c9a9c7e2f1c944f177b460c04dc24c69b1fa2bd99"
 
 [[package]]
 name = "thread_local"
