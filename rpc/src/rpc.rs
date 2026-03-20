@@ -3649,7 +3649,8 @@ pub mod rpc_full {
                         let (version, feature_set) = if let Some(version) =
                             cluster_info.get_node_version(contact_info.pubkey())
                         {
-                            (Some(version.to_string()), Some(version.feature_set))
+                            let version = solana_version::v4::Version::from(version);
+                            (Some(version.to_string()), Some(version.feature_set()))
                         } else {
                             (None, None)
                         };
