@@ -344,6 +344,7 @@ mod tests {
         let hash = Hash::new_unique();
         let compute_unit_limit = 250_000;
         let compute_unit_price = 1_000;
+        let priority_fee_lamports = compute_unit_limit * compute_unit_price / 1_000_000;
         let loaded_accounts_bytes = 1_024;
         let mut test_transaction = TestTransaction::new();
 
@@ -351,7 +352,7 @@ mod tests {
             RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
                 test_transaction
                     .add_compute_unit_limit(compute_unit_limit)
-                    .add_compute_unit_price(compute_unit_price)
+                    .add_compute_unit_price(compute_unit_price.into())
                     .add_loaded_accounts_bytes(loaded_accounts_bytes)
                     .to_sanitized_versioned_transaction(),
                 MessageHash::Precomputed(hash),
@@ -368,15 +369,21 @@ mod tests {
         assert_eq!(0, signature_details.num_ed25519_instruction_signatures());
 
         for feature_set in [FeatureSet::default(), FeatureSet::all_enabled()] {
-            let compute_budget_limits = runtime_transaction_static
+            let fee_budget_limits = runtime_transaction_static
                 .transaction_config_source()
-                .sanitize_and_convert_to_compute_budget_limits(&feature_set)
+                .sanitize_and_convert_to_fee_budget_limits(&feature_set)
                 .unwrap();
-            assert_eq!(compute_unit_limit, compute_budget_limits.compute_unit_limit);
-            assert_eq!(compute_unit_price, compute_budget_limits.compute_unit_price);
+            assert_eq!(
+                compute_unit_limit as u64,
+                fee_budget_limits.compute_unit_limit
+            );
+            assert_eq!(
+                priority_fee_lamports as u64,
+                fee_budget_limits.prioritization_fee
+            );
             assert_eq!(
                 loaded_accounts_bytes,
-                compute_budget_limits.loaded_accounts_bytes.get()
+                fee_budget_limits.loaded_accounts_data_size_limit.get()
             );
         }
     }
@@ -441,14 +448,14 @@ mod tests {
 
         // Assert - Compute budget limits matches expectations.
         let feature_set = FeatureSet::all_enabled();
-        let limits = tx
+        let (limits, updated_heap_bytes) = tx
             .transaction_config_source()
-            .sanitize_and_convert_to_compute_budget_limits(&feature_set)
+            .sanitize_and_convert_to_fee_budget_limits_and_requested_heap_size(&feature_set)
             .unwrap();
         assert_eq!(limits.compute_unit_limit, 300_000);
-        assert_eq!(limits.compute_unit_price, 42);
-        assert_eq!(limits.loaded_accounts_bytes.get(), 2048);
-        assert_eq!(limits.updated_heap_bytes, 65536);
+        assert_eq!(limits.prioritization_fee, 42 * 300_000 / 1_000_000);
+        assert_eq!(limits.loaded_accounts_data_size_limit.get(), 2048);
+        assert_eq!(updated_heap_bytes, 65536);
     }
 
     #[test]

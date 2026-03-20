@@ -4,10 +4,11 @@ use {
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_clock::{MAX_TRANSACTION_FORWARDING_DELAY, Slot},
     solana_fee::{FeeFeatures, calculate_fee_details},
-    solana_fee_structure::FeeBudgetLimits,
     solana_nonce::state::{Data as NonceData, DurableNonce},
     solana_nonce_account as nonce_account,
-    solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
+    solana_program_runtime::execution_budget::{
+        SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
+    },
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::{
@@ -108,9 +109,10 @@ impl Bank {
                     let compute_budget_and_limits = tx
                         .borrow()
                         .transaction_config_source()
-                        .sanitize_and_convert_to_compute_budget_limits(feature_set)
-                        .map(|limit| {
-                            let fee_budget = FeeBudgetLimits::from(limit);
+                        .sanitize_and_convert_to_fee_budget_limits_and_requested_heap_size(
+                            feature_set,
+                        )
+                        .map(|(fee_budget, requested_heap_size)| {
                             let fee_details = calculate_fee_details(
                                 tx.borrow(),
                                 self.fee_structure.lamports_per_signature,
@@ -126,11 +128,18 @@ impl Bank {
                                     fee_details,
                                 )
                             } else {
-                                limit.get_compute_budget_and_limits(
-                                    fee_budget.loaded_accounts_data_size_limit,
+                                SVMTransactionExecutionAndFeeBudgetLimits {
+                                    budget: SVMTransactionExecutionBudget {
+                                        compute_unit_limit: fee_budget.compute_unit_limit,
+                                        heap_size: requested_heap_size,
+                                        ..SVMTransactionExecutionBudget::new_with_defaults(
+                                            raise_cpi_limit,
+                                        )
+                                    },
+                                    loaded_accounts_data_size_limit: fee_budget
+                                        .loaded_accounts_data_size_limit,
                                     fee_details,
-                                    raise_cpi_limit,
-                                )
+                                }
                             }
                         })
                         .inspect_err(|_err| {

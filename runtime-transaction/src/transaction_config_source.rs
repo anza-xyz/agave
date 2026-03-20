@@ -1,10 +1,11 @@
 use {
     agave_feature_set::FeatureSet,
     solana_compute_budget::compute_budget_limits::{
-        ComputeBudgetLimits, MAX_COMPUTE_UNIT_LIMIT, MAX_HEAP_FRAME_BYTES,
+        DEFAULT_HEAP_COST, MAX_COMPUTE_UNIT_LIMIT, MAX_HEAP_FRAME_BYTES,
         MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, MIN_HEAP_FRAME_BYTES,
     },
     solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
+    solana_fee_structure::FeeBudgetLimits,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::num::NonZeroU32,
 };
@@ -26,7 +27,7 @@ pub enum TransactionConfigSource {
 }
 
 impl TransactionConfigValues {
-    fn sanitize_and_convert_to_compute_budget_limits(&self) -> Result<ComputeBudgetLimits> {
+    fn sanitize_and_convert_to_fee_budget_limits(&self) -> Result<FeeBudgetLimits> {
         if self.compute_unit_limit > MAX_COMPUTE_UNIT_LIMIT {
             return Err(TransactionError::SanitizeFailure);
         }
@@ -41,27 +42,49 @@ impl TransactionConfigValues {
             return Err(TransactionError::SanitizeFailure);
         }
 
-        Ok(ComputeBudgetLimits {
-            updated_heap_bytes: self.requested_heap_size,
-            compute_unit_limit: self.compute_unit_limit,
-            compute_unit_price: self.priority_fee_lamports,
-            loaded_accounts_bytes: NonZeroU32::new(self.loaded_accounts_data_size_limit)
+        Ok(FeeBudgetLimits {
+            loaded_accounts_data_size_limit: NonZeroU32::new(self.loaded_accounts_data_size_limit)
                 .ok_or(TransactionError::InvalidLoadedAccountsDataSizeLimit)?,
+            heap_cost: DEFAULT_HEAP_COST,
+            compute_unit_limit: u64::from(self.compute_unit_limit),
+            prioritization_fee: self.priority_fee_lamports,
         })
     }
 }
 
 impl TransactionConfigSource {
-    pub fn sanitize_and_convert_to_compute_budget_limits(
+    pub fn sanitize_and_convert_to_fee_budget_limits(
         &self,
         feature_set: &FeatureSet,
-    ) -> Result<ComputeBudgetLimits> {
+    ) -> Result<FeeBudgetLimits> {
         match self {
             TransactionConfigSource::LegacyAndV0(details) => {
-                details.sanitize_and_convert_to_compute_budget_limits(feature_set)
+                let compute_budget_limits =
+                    details.sanitize_and_convert_to_compute_budget_limits(feature_set)?;
+                Ok(compute_budget_limits.into())
             }
             TransactionConfigSource::V1(config) => {
-                config.sanitize_and_convert_to_compute_budget_limits()
+                config.sanitize_and_convert_to_fee_budget_limits()
+            }
+        }
+    }
+
+    pub fn sanitize_and_convert_to_fee_budget_limits_and_requested_heap_size(
+        &self,
+        feature_set: &FeatureSet,
+    ) -> Result<(FeeBudgetLimits, u32)> {
+        match self {
+            TransactionConfigSource::LegacyAndV0(details) => {
+                let compute_budget_limits =
+                    details.sanitize_and_convert_to_compute_budget_limits(feature_set)?;
+                Ok((
+                    compute_budget_limits.into(),
+                    compute_budget_limits.updated_heap_bytes,
+                ))
+            }
+            TransactionConfigSource::V1(config) => {
+                let fee_budget_limits = config.sanitize_and_convert_to_fee_budget_limits()?;
+                Ok((fee_budget_limits, config.requested_heap_size))
             }
         }
     }
@@ -90,15 +113,12 @@ mod tests {
     fn test_v1_sanitize_and_convert_success() {
         let config = valid_v1_config();
 
-        let limits = config
-            .sanitize_and_convert_to_compute_budget_limits()
-            .unwrap();
+        let limits = config.sanitize_and_convert_to_fee_budget_limits().unwrap();
 
-        assert_eq!(limits.updated_heap_bytes, config.requested_heap_size);
-        assert_eq!(limits.compute_unit_limit, config.compute_unit_limit);
-        assert_eq!(limits.compute_unit_price, config.priority_fee_lamports);
+        assert_eq!(limits.compute_unit_limit, config.compute_unit_limit as u64);
+        assert_eq!(limits.prioritization_fee, config.priority_fee_lamports);
         assert_eq!(
-            limits.loaded_accounts_bytes,
+            limits.loaded_accounts_data_size_limit,
             NonZeroU32::new(config.loaded_accounts_data_size_limit).unwrap()
         );
     }
@@ -108,10 +128,10 @@ mod tests {
         let mut config = valid_v1_config();
         config.compute_unit_limit = MAX_COMPUTE_UNIT_LIMIT.saturating_add(1);
 
-        assert_eq!(
-            config.sanitize_and_convert_to_compute_budget_limits(),
+        assert!(matches!(
+            config.sanitize_and_convert_to_fee_budget_limits(),
             Err(TransactionError::SanitizeFailure)
-        );
+        ));
     }
 
     #[test]
@@ -120,10 +140,10 @@ mod tests {
         config.loaded_accounts_data_size_limit =
             u32::from(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES).saturating_add(1);
 
-        assert_eq!(
-            config.sanitize_and_convert_to_compute_budget_limits(),
+        assert!(matches!(
+            config.sanitize_and_convert_to_fee_budget_limits(),
             Err(TransactionError::SanitizeFailure)
-        );
+        ));
     }
 
     #[test]
@@ -131,10 +151,10 @@ mod tests {
         let mut config = valid_v1_config();
         config.requested_heap_size = MIN_HEAP_FRAME_BYTES.saturating_sub(1024);
 
-        assert_eq!(
-            config.sanitize_and_convert_to_compute_budget_limits(),
+        assert!(matches!(
+            config.sanitize_and_convert_to_fee_budget_limits(),
             Err(TransactionError::SanitizeFailure)
-        );
+        ));
     }
 
     #[test]
@@ -142,10 +162,10 @@ mod tests {
         let mut config = valid_v1_config();
         config.requested_heap_size = MAX_HEAP_FRAME_BYTES.saturating_add(1024);
 
-        assert_eq!(
-            config.sanitize_and_convert_to_compute_budget_limits(),
+        assert!(matches!(
+            config.sanitize_and_convert_to_fee_budget_limits(),
             Err(TransactionError::SanitizeFailure)
-        );
+        ));
     }
 
     #[test]
@@ -153,10 +173,10 @@ mod tests {
         let mut config = valid_v1_config();
         config.requested_heap_size = MIN_HEAP_FRAME_BYTES + 1;
 
-        assert_eq!(
-            config.sanitize_and_convert_to_compute_budget_limits(),
+        assert!(matches!(
+            config.sanitize_and_convert_to_fee_budget_limits(),
             Err(TransactionError::SanitizeFailure)
-        );
+        ));
     }
 
     #[test]
@@ -164,10 +184,10 @@ mod tests {
         let mut config = valid_v1_config();
         config.loaded_accounts_data_size_limit = 0;
 
-        assert_eq!(
-            config.sanitize_and_convert_to_compute_budget_limits(),
+        assert!(matches!(
+            config.sanitize_and_convert_to_fee_budget_limits(),
             Err(TransactionError::InvalidLoadedAccountsDataSizeLimit)
-        );
+        ));
     }
 
     #[test]
@@ -175,14 +195,17 @@ mod tests {
         let feature_set = FeatureSet::all_enabled();
         let source = TransactionConfigSource::V1(valid_v1_config());
 
-        let limits = source
-            .sanitize_and_convert_to_compute_budget_limits(&feature_set)
+        let (limits, updated_heap_bytes) = source
+            .sanitize_and_convert_to_fee_budget_limits_and_requested_heap_size(&feature_set)
             .unwrap();
 
-        assert_eq!(limits.updated_heap_bytes, MIN_HEAP_FRAME_BYTES);
-        assert_eq!(limits.compute_unit_limit, MAX_COMPUTE_UNIT_LIMIT);
-        assert_eq!(limits.compute_unit_price, 123);
-        assert_eq!(limits.loaded_accounts_bytes, NonZeroU32::new(1).unwrap());
+        assert_eq!(updated_heap_bytes, MIN_HEAP_FRAME_BYTES);
+        assert_eq!(limits.compute_unit_limit, MAX_COMPUTE_UNIT_LIMIT as u64);
+        assert_eq!(limits.prioritization_fee, 123);
+        assert_eq!(
+            limits.loaded_accounts_data_size_limit,
+            NonZeroU32::new(1).unwrap()
+        );
     }
 
     #[test]
@@ -193,9 +216,10 @@ mod tests {
 
         let source = TransactionConfigSource::V1(config);
 
-        assert_eq!(
-            source.sanitize_and_convert_to_compute_budget_limits(&feature_set),
-            Err(TransactionError::SanitizeFailure)
+        assert!(
+            source
+                .sanitize_and_convert_to_fee_budget_limits(&feature_set)
+                .is_err()
         );
     }
 
@@ -223,17 +247,24 @@ mod tests {
         )
         .unwrap();
 
-        let expected = details
+        let expected: FeeBudgetLimits = details
             .sanitize_and_convert_to_compute_budget_limits(&feature_set)
-            .unwrap();
+            .unwrap()
+            .into();
 
         let source = TransactionConfigSource::LegacyAndV0(details);
 
         let actual = source
-            .sanitize_and_convert_to_compute_budget_limits(&feature_set)
+            .sanitize_and_convert_to_fee_budget_limits(&feature_set)
             .unwrap();
 
-        assert_eq!(actual, expected);
+        assert_eq!(
+            actual.loaded_accounts_data_size_limit,
+            expected.loaded_accounts_data_size_limit
+        );
+        assert_eq!(actual.heap_cost, expected.heap_cost);
+        assert_eq!(actual.compute_unit_limit, expected.compute_unit_limit);
+        assert_eq!(actual.prioritization_fee, expected.prioritization_fee);
     }
 
     #[test]
@@ -255,14 +286,10 @@ mod tests {
             SVMStaticMessage::program_instructions_iter(&tx),
         )
         .unwrap();
-
-        let expected = details.sanitize_and_convert_to_compute_budget_limits(&feature_set);
-
         let source = TransactionConfigSource::LegacyAndV0(details);
 
-        let actual = source.sanitize_and_convert_to_compute_budget_limits(&feature_set);
+        let actual = source.sanitize_and_convert_to_fee_budget_limits(&feature_set);
 
-        assert_eq!(actual, expected);
         assert!(actual.is_err());
     }
 }

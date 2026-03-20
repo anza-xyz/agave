@@ -8253,6 +8253,7 @@ dependencies = [
  "agave-transaction-view",
  "solana-compute-budget",
  "solana-compute-budget-instruction",
+ "solana-fee-structure",
  "solana-hash 4.2.0",
  "solana-message",
  "solana-program-entrypoint",

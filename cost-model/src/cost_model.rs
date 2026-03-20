@@ -182,12 +182,12 @@ impl CostModel {
         // by `bank`, therefore it should be considered as no execution cost by cost model.
         let (programs_execution_costs, loaded_accounts_data_size_cost) = match transaction
             .transaction_config_source()
-            .sanitize_and_convert_to_compute_budget_limits(feature_set)
+            .sanitize_and_convert_to_fee_budget_limits(feature_set)
         {
-            Ok(compute_budget_limits) => (
-                u64::from(compute_budget_limits.compute_unit_limit),
+            Ok(fee_budget_limits) => (
+                fee_budget_limits.compute_unit_limit,
                 Self::calculate_loaded_accounts_data_size_cost(
-                    compute_budget_limits.loaded_accounts_bytes.get(),
+                    fee_budget_limits.loaded_accounts_data_size_limit.into(),
                     feature_set,
                 ),
             ),

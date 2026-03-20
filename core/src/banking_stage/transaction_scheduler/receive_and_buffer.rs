@@ -415,15 +415,14 @@ impl TransactionViewReceiveAndBuffer {
             enable_instruction_accounts_limit,
         )?;
 
-        let Ok(compute_budget_limits) = view
+        let Ok(fee_budget_limits) = view
             .transaction_config_source()
-            .sanitize_and_convert_to_compute_budget_limits(&working_bank.feature_set)
+            .sanitize_and_convert_to_fee_budget_limits(&working_bank.feature_set)
         else {
             return Err(PacketHandlingError::ComputeBudget);
         };
 
         let max_age = calculate_max_age(root_bank.epoch(), deactivation_slot, root_bank.slot());
-        let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
         let (priority, cost) = calculate_priority_and_cost(&view, &fee_budget_limits, working_bank);
 
         Ok(TransactionState::new(view, max_age, priority, cost))

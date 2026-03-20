@@ -10048,6 +10048,7 @@ dependencies = [
  "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-compute-budget-interface",
+ "solana-fee-structure",
  "solana-hash 4.2.0",
  "solana-instruction",
  "solana-keypair",
