@@ -250,8 +250,7 @@ mod tests {
             .enumerate()
             .map(|(i, slot_leader)| (slot_leader, i.pow(stake_pow) as u64))
             .collect();
-        let schedule =
-            stake_weighted_slot_leaders(stakes, epoch, len, NonZeroUsize::new(1).unwrap());
+        let schedule = stake_weighted_slot_leaders(stakes, epoch, len, NZ_1);
         assert_eq!(hash_slot_leader_vote_addresses(&schedule), expected_hash);
     }
 
@@ -271,7 +270,7 @@ mod tests {
             vec![(SlotLeader::new_unique(), 0), (SlotLeader::new_unique(), 0)],
             0,
             5,
-            NonZeroUsize::new(1).unwrap(),
+            NZ_1,
         );
     }
 }
