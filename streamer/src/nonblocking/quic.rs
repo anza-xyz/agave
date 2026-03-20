@@ -68,7 +68,7 @@ const CONNECTION_CLOSE_REASON_INVALID_STREAM: &[u8] = b"invalid_stream";
 /// Total new connection counts per second. Heuristically taken from
 /// the default staked and unstaked connection limits. Might be adjusted
 /// later.
-const TOTAL_CONNECTIONS_PER_SECOND: f64 = 2500.0;
+const TOTAL_CONNECTIONS_PER_SECOND: u64 = 2500;
 
 /// Max burst of connections above sustained rate to pass through
 const MAX_CONNECTION_BURST: u64 = 1000;
@@ -260,6 +260,7 @@ where
         MAX_CONNECTION_BURST,
         MAX_CONNECTION_BURST,
         TOTAL_CONNECTIONS_PER_SECOND,
+        Duration::from_secs(1),
     ));
 
     const WAIT_FOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(1);

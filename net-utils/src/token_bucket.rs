@@ -6,7 +6,14 @@ use {
     cfg_if::cfg_if,
     dashmap::{DashMap, mapref::entry::Entry},
     solana_svm_type_overrides::sync::atomic::{AtomicU64, AtomicUsize, Ordering},
-    std::{borrow::Borrow, cmp::Reverse, hash::Hash, time::Instant},
+    std::{
+        borrow::Borrow,
+        cmp::Reverse,
+        hash::Hash,
+        num::{NonZeroU64, NonZeroU128},
+        time::Duration,
+        time::Instant,
+    },
 };
 
 /// Enforces a rate limit on the volume of requests per unit time.
@@ -15,7 +22,10 @@ use {
 /// be constantly polled to refill. Uses atomics internally so should be
 /// relatively cheap to access from many threads
 pub struct TokenBucket {
-    new_tokens_per_us: f64,
+    /// Numerator of the refill rate: tokens generated per `refill_period_us`.
+    tokens_per_period: NonZeroU64,
+    /// Denominator of the refill rate in microseconds.
+    refill_period_us: NonZeroU64,
     max_tokens: u64,
     /// bucket creation
     base_time: Instant,
@@ -32,20 +42,36 @@ static TIME_US: AtomicU64 = AtomicU64::new(0); //used to override Instant::now()
 // If changing this impl, make sure to run benches and ensure they do not panic.
 // much of the testing is impossible outside of real multithreading in release mode.
 impl TokenBucket {
-    /// Allocate a new TokenBucket
-    pub fn new(initial_tokens: u64, max_tokens: u64, new_tokens_per_second: f64) -> Self {
+    /// Allocate a new TokenBucket.
+    ///
+    /// The refill rate is expressed as `tokens_per_period` tokens every
+    /// `refill_period`. For example, 100 tokens per second:
+    ///   `TokenBucket::new(100, 100, 100, Duration::from_secs(1))`
+    /// Or 3 tokens per minute:
+    ///   `TokenBucket::new(3, 3, 3, Duration::from_secs(60))`
+    pub fn new(
+        initial_tokens: u64,
+        max_tokens: u64,
+        tokens_per_period: u64,
+        refill_period: Duration,
+    ) -> Self {
+        let refill_period_us = refill_period.as_micros();
         assert!(
-            new_tokens_per_second > 0.0,
-            "Token bucket can not have zero influx rate"
+            refill_period_us <= u64::MAX as u128,
+            "Token bucket refill period is too large"
         );
+        let tokens_per_period =
+            NonZeroU64::new(tokens_per_period).expect("Token bucket can not have zero influx rate");
+        let refill_period_us = NonZeroU64::new(refill_period_us as u64)
+            .expect("Token bucket refill period must be > 0");
         assert!(
             initial_tokens <= max_tokens,
             "Can not have more initial tokens than max tokens"
         );
         let base_time = Instant::now();
         TokenBucket {
-            // recompute into us to avoid FP division on every update
-            new_tokens_per_us: new_tokens_per_second / 1e6,
+            tokens_per_period,
+            refill_period_us,
             max_tokens,
             tokens: AtomicU64::new(initial_tokens),
             last_update: AtomicU64::new(0),
@@ -111,7 +137,11 @@ impl TokenBucket {
         }
 
         match num_tokens.checked_sub(self.current_tokens()) {
-            Some(missing) => Some((missing as f64 / self.new_tokens_per_us) as u64),
+            Some(missing) => {
+                let numerator =
+                    (missing as u128).saturating_mul(self.refill_period_us.get() as u128);
+                Some((numerator / NonZeroU128::from(self.tokens_per_period)) as u64)
+            }
             None => Some(0),
         }
     }
@@ -160,17 +190,19 @@ impl TokenBucket {
                 let elapsed =
                     elapsed.saturating_add(self.credit_time_us.swap(0, Ordering::Relaxed));
 
-                let new_tokens_f64 = elapsed as f64 * self.new_tokens_per_us;
-
-                // amount of full tokens to be minted
-                let new_tokens = new_tokens_f64.floor() as u64;
+                // Integer math via u128:
+                //   new_tokens = elapsed_us * tokens_per_period / refill_period_us
+                let period = NonZeroU128::from(self.refill_period_us);
+                let rate = NonZeroU128::from(self.tokens_per_period);
+                let numerator =
+                    (elapsed as u128).saturating_mul(self.tokens_per_period.get() as u128);
+                let new_tokens = (numerator / period) as u64;
 
                 let time_to_return = if new_tokens >= 1 {
                     // Credit tokens, saturating at max_tokens
                     self.add_tokens(new_tokens);
-                    // Fractional remainder of elapsed time (not enough to mint a whole token)
-                    // that will be credited to other minters
-                    (new_tokens_f64.fract() / self.new_tokens_per_us) as u64
+                    // Exact integer remainder: microseconds not yet worth a whole token
+                    (numerator % period / rate) as u64
                 } else {
                     // No whole tokens minted → return whole interval
                     elapsed
@@ -192,7 +224,8 @@ impl Clone for TokenBucket {
     /// invalid state, using this in a contended environment is not recommended.
     fn clone(&self) -> Self {
         Self {
-            new_tokens_per_us: self.new_tokens_per_us,
+            tokens_per_period: self.tokens_per_period,
+            refill_period_us: self.refill_period_us,
             max_tokens: self.max_tokens,
             base_time: self.base_time,
             tokens: AtomicU64::new(self.tokens.load(Ordering::Relaxed)),
@@ -383,9 +416,11 @@ pub mod test {
         },
     };
 
+    const SEC: Duration = Duration::from_secs(1);
+
     #[test]
     fn test_token_bucket_basics() {
-        let tb = TokenBucket::new(100, 100, 1000.0);
+        let tb = TokenBucket::new(100, 100, 1000, SEC);
         assert_eq!(tb.current_tokens(), 100);
         tb.consume_tokens(50).expect("Bucket is initially full");
         tb.consume_tokens(50)
@@ -409,7 +444,7 @@ pub mod test {
 
     #[test]
     fn test_token_bucket_us_to_have_tokens() {
-        let tb = TokenBucket::new(1000, 1000, 1000.0);
+        let tb = TokenBucket::new(1000, 1000, 1000, SEC);
         assert_eq!(tb.current_tokens(), 1000);
         tb.consume_tokens(1000).expect("Bucket is initially full");
         assert!(
@@ -427,7 +462,7 @@ pub mod test {
 
     #[test]
     fn test_keyed_rate_limiter() {
-        let prototype_bucket = TokenBucket::new(100, 100, 1000.0);
+        let prototype_bucket = TokenBucket::new(100, 100, 1000, SEC);
         let rl = KeyedRateLimiter::new(8, prototype_bucket, 2);
         let ip1 = IpAddr::V4(Ipv4Addr::from_bits(1234));
         let ip2 = IpAddr::V4(Ipv4Addr::from_bits(4321));
@@ -486,7 +521,7 @@ pub mod test {
     #[test]
     #[should_panic(expected = "must be >= shard_amount")]
     fn test_keyed_rate_limiter_capacity_less_than_shards_panics() {
-        let tb = TokenBucket::new(1, 1, 1.0);
+        let tb = TokenBucket::new(1, 1, 1, SEC);
         // target_capacity (1) < shard_amount (2) should panic
         let _ = KeyedRateLimiter::<u64>::new(1, tb, 2);
     }
@@ -500,7 +535,12 @@ pub mod test {
                 TIME_US.store(0, Ordering::SeqCst);
                 let test_duration_us = 2500;
                 let run: &AtomicBool = Box::leak(Box::new(AtomicBool::new(true)));
-                let tb: &TokenBucket = Box::leak(Box::new(TokenBucket::new(10, 20, 5000.0)));
+                let tb: &TokenBucket = Box::leak(Box::new(TokenBucket::new(
+                    10,
+                    20,
+                    5000,
+                    Duration::from_secs(1),
+                )));
 
                 // time advancement thread
                 let time_advancer = thread::spawn(move || {

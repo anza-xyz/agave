@@ -202,7 +202,8 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         let data_budget = TokenBucket::new(
             MAX_BYTES_PER_SECOND,
             MAX_BYTES_PER_SECOND,
-            MAX_BYTES_PER_SECOND as f64,
+            MAX_BYTES_PER_SECOND,
+            Duration::from_secs(1),
         );
         Self {
             receiver,
