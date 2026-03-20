@@ -7,7 +7,7 @@ use trees::{Tree, TreeWalk};
 use {
     crate::{
         ancestor_iterator::AncestorIterator,
-        blockstore::column::{Column, ColumnIndexDeprecation, TypedColumn, columns as cf},
+        blockstore::column::{Column, TypedColumn, columns as cf},
         blockstore_db::{IteratorDirection, IteratorMode, LedgerColumn, Rocks, WriteBatch},
         blockstore_meta::*,
         blockstore_options::{
@@ -276,11 +276,9 @@ pub struct Blockstore {
     rewards_cf: LedgerColumn<cf::Rewards>,
     transaction_status_cf: LedgerColumn<cf::TransactionStatus>,
     transaction_memos_cf: LedgerColumn<cf::TransactionMemos>,
-    transaction_status_index_cf: LedgerColumn<cf::TransactionStatusIndex>,
     address_signatures_cf: LedgerColumn<cf::AddressSignatures>,
     perf_samples_cf: LedgerColumn<cf::PerfSamples>,
 
-    highest_primary_index_slot: RwLock<Option<Slot>>,
     max_root: AtomicU64,
     insert_shreds_lock: Mutex<()>,
     new_shreds_signals: Mutex<Vec<Sender<bool>>>,
@@ -427,7 +425,6 @@ impl Blockstore {
         let rewards_cf = db.column();
         let transaction_status_cf = db.column();
         let transaction_memos_cf = db.column();
-        let transaction_status_index_cf = db.column();
         let address_signatures_cf = db.column();
         let perf_samples_cf = db.column();
 
@@ -463,13 +460,11 @@ impl Blockstore {
             roots_cf,
             transaction_memos_cf,
             transaction_status_cf,
-            transaction_status_index_cf,
             alt_meta_cf,
             alt_index_cf,
             alt_data_shred_cf,
             alt_merkle_root_meta_cf,
 
-            highest_primary_index_slot: RwLock::<Option<Slot>>::default(),
             new_shreds_signals: Mutex::default(),
             completed_slots_senders: Mutex::default(),
             insert_shreds_lock: Mutex::<()>::default(),
@@ -478,7 +473,6 @@ impl Blockstore {
             slots_stats: SlotsStats::default(),
         };
         blockstore.cleanup_old_entries()?;
-        blockstore.update_highest_primary_index_slot()?;
 
         Ok(blockstore)
     }
@@ -995,7 +989,6 @@ impl Blockstore {
         self.rewards_cf.submit_rocksdb_cf_metrics();
         self.transaction_status_cf.submit_rocksdb_cf_metrics();
         self.transaction_memos_cf.submit_rocksdb_cf_metrics();
-        self.transaction_status_index_cf.submit_rocksdb_cf_metrics();
         self.address_signatures_cf.submit_rocksdb_cf_metrics();
         self.perf_samples_cf.submit_rocksdb_cf_metrics();
     }
@@ -3141,16 +3134,6 @@ impl Blockstore {
             return Ok(());
         }
 
-        // Initialize TransactionStatusIndexMeta if they are not present already
-        if self.transaction_status_index_cf.get(0)?.is_none() {
-            self.transaction_status_index_cf
-                .put(0, &TransactionStatusIndexMeta::default())?;
-        }
-        if self.transaction_status_index_cf.get(1)?.is_none() {
-            self.transaction_status_index_cf
-                .put(1, &TransactionStatusIndexMeta::default())?;
-        }
-
         // If present, delete dummy entries inserted by old software
         // https://github.com/solana-labs/solana/blob/bc2b372/ledger/src/blockstore.rs#L2130-L2137
         let transaction_status_dummy_key = cf::TransactionStatus::as_index(2);
@@ -3175,80 +3158,14 @@ impl Blockstore {
         Ok(())
     }
 
-    fn get_highest_primary_index_slot(&self) -> Option<Slot> {
-        *self.highest_primary_index_slot.read().unwrap()
-    }
-
-    fn set_highest_primary_index_slot(&self, slot: Option<Slot>) {
-        *self.highest_primary_index_slot.write().unwrap() = slot;
-    }
-
-    fn update_highest_primary_index_slot(&self) -> Result<()> {
-        let iterator = self.transaction_status_index_cf.iter(IteratorMode::Start)?;
-        let mut highest_primary_index_slot = None;
-        for (_, data) in iterator {
-            let meta = cf::TransactionStatusIndex::deserialize(&data).unwrap();
-            if highest_primary_index_slot.is_none()
-                || highest_primary_index_slot.is_some_and(|slot| slot < meta.max_slot)
-            {
-                highest_primary_index_slot = Some(meta.max_slot);
-            }
-        }
-        if highest_primary_index_slot.is_some_and(|slot| slot != 0) {
-            self.set_highest_primary_index_slot(highest_primary_index_slot);
-        } else {
-            self.db.set_clean_slot_0(true);
-        }
-        Ok(())
-    }
-
-    fn maybe_cleanup_highest_primary_index_slot(&self, oldest_slot: Slot) -> Result<()> {
-        let mut w_highest_primary_index_slot = self.highest_primary_index_slot.write().unwrap();
-        if let Some(highest_primary_index_slot) = *w_highest_primary_index_slot {
-            if oldest_slot > highest_primary_index_slot {
-                *w_highest_primary_index_slot = None;
-                self.db.set_clean_slot_0(true);
-            }
-        }
-        Ok(())
-    }
-
-    fn read_deprecated_transaction_status(
-        &self,
-        index: (Signature, Slot),
-    ) -> Result<Option<TransactionStatusMeta>> {
-        let (signature, slot) = index;
-        let result = self
-            .transaction_status_cf
-            .get_raw_protobuf_or_bincode::<StoredTransactionStatusMeta>(
-                &cf::TransactionStatus::deprecated_key((0, signature, slot)),
-            )?;
-        if result.is_none() {
-            Ok(self
-                .transaction_status_cf
-                .get_raw_protobuf_or_bincode::<StoredTransactionStatusMeta>(
-                    &cf::TransactionStatus::deprecated_key((1, signature, slot)),
-                )?
-                .and_then(|meta| meta.try_into().ok()))
-        } else {
-            Ok(result.and_then(|meta| meta.try_into().ok()))
-        }
-    }
-
     pub fn read_transaction_status(
         &self,
         index: (Signature, Slot),
     ) -> Result<Option<TransactionStatusMeta>> {
-        let result = self.transaction_status_cf.get_protobuf(index)?;
-        if result.is_none()
-            && self
-                .get_highest_primary_index_slot()
-                .is_some_and(|highest_slot| highest_slot >= index.1)
-        {
-            self.read_deprecated_transaction_status(index)
-        } else {
-            Ok(result.and_then(|meta| meta.try_into().ok()))
-        }
+        Ok(self
+            .transaction_status_cf
+            .get_protobuf(index)?
+            .and_then(|meta| meta.try_into().ok()))
     }
 
     #[inline]
@@ -3330,17 +3247,7 @@ impl Blockstore {
         signature: Signature,
         slot: Slot,
     ) -> Result<Option<String>> {
-        let memos = self.transaction_memos_cf.get((signature, slot))?;
-        if memos.is_none()
-            && self
-                .get_highest_primary_index_slot()
-                .is_some_and(|highest_slot| highest_slot >= slot)
-        {
-            self.transaction_memos_cf
-                .get_raw(cf::TransactionMemos::deprecated_key(signature))
-        } else {
-            Ok(memos)
-        }
+        self.transaction_memos_cf.get((signature, slot))
     }
 
     pub fn write_transaction_memos(
@@ -3410,12 +3317,10 @@ impl Blockstore {
         let (lock, _) = self.ensure_lowest_cleanup_slot();
         let first_available_block = self.get_first_available_block()?;
 
-        let iterator =
-            self.transaction_status_cf
-                .iter_current_index_filtered(IteratorMode::From(
-                    (signature, first_available_block),
-                    IteratorDirection::Forward,
-                ))?;
+        let iterator = self.transaction_status_cf.iter(IteratorMode::From(
+            (signature, first_available_block),
+            IteratorDirection::Forward,
+        ))?;
 
         for ((sig, slot), _data) in iterator {
             counter += 1;
@@ -3433,40 +3338,7 @@ impl Blockstore {
             return Ok((status, counter));
         }
 
-        if self.get_highest_primary_index_slot().is_none() {
-            return Ok((None, counter));
-        }
-        for transaction_status_cf_primary_index in 0..=1 {
-            let index_iterator =
-                self.transaction_status_cf
-                    .iter_deprecated_index_filtered(IteratorMode::From(
-                        (
-                            transaction_status_cf_primary_index,
-                            signature,
-                            first_available_block,
-                        ),
-                        IteratorDirection::Forward,
-                    ))?;
-            for ((i, sig, slot), _data) in index_iterator {
-                counter += 1;
-                if i != transaction_status_cf_primary_index || sig != signature {
-                    break;
-                }
-                if !self.is_root(slot) && !confirmed_unrooted_slots.contains(&slot) {
-                    continue;
-                }
-                let status = self
-                    .transaction_status_cf
-                    .get_raw_protobuf_or_bincode::<StoredTransactionStatusMeta>(
-                        &cf::TransactionStatus::deprecated_key((i, signature, slot)),
-                    )?
-                    .and_then(|status| status.try_into().ok())
-                    .map(|status| (slot, status));
-                return Ok((status, counter));
-            }
-        }
         drop(lock);
-
         Ok((None, counter))
     }
 
@@ -3588,17 +3460,15 @@ impl Blockstore {
         if slot < lowest_available_slot {
             return Ok(signatures);
         }
-        let index_iterator =
-            self.address_signatures_cf
-                .iter_current_index_filtered(IteratorMode::From(
-                    (
-                        pubkey,
-                        slot.max(lowest_available_slot),
-                        0,
-                        Signature::default(),
-                    ),
-                    IteratorDirection::Forward,
-                ))?;
+        let index_iterator = self.address_signatures_cf.iter(IteratorMode::From(
+            (
+                pubkey,
+                slot.max(lowest_available_slot),
+                0,
+                Signature::default(),
+            ),
+            IteratorDirection::Forward,
+        ))?;
         for ((address, transaction_slot, transaction_index, signature), _) in index_iterator {
             if transaction_slot > slot || address != pubkey {
                 break;
@@ -3724,17 +3594,15 @@ impl Blockstore {
         get_initial_slot_timer.stop();
 
         let mut address_signatures_iter_timer = Measure::start("iter_timer");
-        let mut iterator =
-            self.address_signatures_cf
-                .iter_current_index_filtered(IteratorMode::From(
-                    // Regardless of whether a `before` signature is provided, the latest relevant
-                    // `slot` is queried directly with the `find_address_signatures_for_slot()`
-                    // call above. Thus, this iterator starts at the lowest entry of `address,
-                    // slot` and iterates backwards to continue reporting the next earliest
-                    // signatures.
-                    (address, slot, 0, Signature::default()),
-                    IteratorDirection::Reverse,
-                ))?;
+        let mut iterator = self.address_signatures_cf.iter(IteratorMode::From(
+            // Regardless of whether a `before` signature is provided, the latest relevant
+            // `slot` is queried directly with the `find_address_signatures_for_slot()`
+            // call above. Thus, this iterator starts at the lowest entry of `address,
+            // slot` and iterates backwards to continue reporting the next earliest
+            // signatures.
+            (address, slot, 0, Signature::default()),
+            IteratorDirection::Reverse,
+        ))?;
 
         // Iterate until limit is reached
         while address_signatures.len() < limit {
@@ -8674,79 +8542,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_read_transaction_status_with_old_data() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        let signature = Signature::from([1; 64]);
-
-        let index0_slot = 2;
-        blockstore
-            .write_deprecated_transaction_status(
-                0,
-                index0_slot,
-                signature,
-                vec![&Pubkey::new_unique()],
-                vec![&Pubkey::new_unique()],
-                TransactionStatusMeta {
-                    fee: index0_slot * 1_000,
-                    ..TransactionStatusMeta::default()
-                },
-            )
-            .unwrap();
-
-        let index1_slot = 1;
-        blockstore
-            .write_deprecated_transaction_status(
-                1,
-                index1_slot,
-                signature,
-                vec![&Pubkey::new_unique()],
-                vec![&Pubkey::new_unique()],
-                TransactionStatusMeta {
-                    fee: index1_slot * 1_000,
-                    ..TransactionStatusMeta::default()
-                },
-            )
-            .unwrap();
-
-        let slot = 3;
-        blockstore
-            .write_transaction_status(
-                slot,
-                signature,
-                vec![
-                    (&Pubkey::new_unique(), true),
-                    (&Pubkey::new_unique(), false),
-                ]
-                .into_iter(),
-                TransactionStatusMeta {
-                    fee: slot * 1_000,
-                    ..TransactionStatusMeta::default()
-                },
-                0,
-            )
-            .unwrap();
-
-        let meta = blockstore
-            .read_transaction_status((signature, slot))
-            .unwrap()
-            .unwrap();
-        assert_eq!(meta.fee, slot * 1000);
-
-        let meta = blockstore
-            .read_transaction_status((signature, index0_slot))
-            .unwrap()
-            .unwrap();
-        assert_eq!(meta.fee, index0_slot * 1000);
-
-        let meta = blockstore
-            .read_transaction_status((signature, index1_slot))
-            .unwrap()
-            .unwrap();
-        assert_eq!(meta.fee, index1_slot * 1000);
-    }
-
-    #[test]
     fn test_get_transaction_status() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
@@ -8981,27 +8776,26 @@ pub mod tests {
         blockstore.set_roots([0, 2, 4].iter()).unwrap();
 
         // Initialize statuses:
-        //   signature1 in skipped slot and root (2), both index 1
-        //   signature2 in skipped slot and root (4), both index 0
-        //   signature3 in root
-        //   signature4 in non-root,
+        //   signature1 in skipped slot (1) and root (2)
+        //   signature2 in skipped slot (3) and root (4)
+        //   signature3 in root (4)
+        //   signature4 in non-root (5)
         //   signature5 extra entries
         transaction_status_cf
-            .put_deprecated_protobuf((1, signature1, 1), &status)
+            .put_protobuf((signature1, 1), &status)
             .unwrap();
 
         transaction_status_cf
-            .put_deprecated_protobuf((1, signature1, 2), &status)
+            .put_protobuf((signature1, 2), &status)
             .unwrap();
 
         transaction_status_cf
-            .put_deprecated_protobuf((0, signature2, 3), &status)
+            .put_protobuf((signature2, 3), &status)
             .unwrap();
 
         transaction_status_cf
-            .put_deprecated_protobuf((0, signature2, 4), &status)
+            .put_protobuf((signature2, 4), &status)
             .unwrap();
-        blockstore.set_highest_primary_index_slot(Some(4));
 
         transaction_status_cf
             .put_protobuf((signature3, 4), &status)
@@ -9015,39 +8809,43 @@ pub mod tests {
             .put_protobuf((signature5, 5), &status)
             .unwrap();
 
-        // Signature exists, root found in index 1
-        if let (Some((slot, _status)), counter) = blockstore
+        // Signature exists
+        let (status, counter) = blockstore
             .get_transaction_status_with_counter(signature1, &[].into())
-            .unwrap()
-        {
-            assert_eq!(slot, 2);
-            assert_eq!(counter, 4);
-        }
-
-        // Signature exists, root found in index 0
-        if let (Some((slot, _status)), counter) = blockstore
-            .get_transaction_status_with_counter(signature2, &[].into())
-            .unwrap()
-        {
-            assert_eq!(slot, 4);
-            assert_eq!(counter, 3);
-        }
+            .unwrap();
+        let (slot, _status) = status.unwrap();
+        assert_eq!(slot, 2);
+        assert_eq!(counter, 2);
 
         // Signature exists
-        if let (Some((slot, _status)), counter) = blockstore
+        let (status, counter) = blockstore
+            .get_transaction_status_with_counter(signature2, &[].into())
+            .unwrap();
+        let (slot, _status) = status.unwrap();
+        assert_eq!(slot, 4);
+        assert_eq!(counter, 2);
+
+        // Signature exists
+        let (status, counter) = blockstore
             .get_transaction_status_with_counter(signature3, &[].into())
-            .unwrap()
-        {
-            assert_eq!(slot, 4);
-            assert_eq!(counter, 1);
-        }
+            .unwrap();
+        let (slot, _status) = status.unwrap();
+        assert_eq!(slot, 4);
+        assert_eq!(counter, 1);
+
+        // Signature does not exist (in a rooted block)
+        let (status, counter) = blockstore
+            .get_transaction_status_with_counter(signature5, &[].into())
+            .unwrap();
+        assert_eq!(status, None);
+        assert_eq!(counter, 1);
 
         // Signature does not exist
         let (status, counter) = blockstore
             .get_transaction_status_with_counter(signature6, &[].into())
             .unwrap();
         assert_eq!(status, None);
-        assert_eq!(counter, 1);
+        assert_eq!(counter, 0);
     }
 
     fn do_test_lowest_cleanup_slot_and_special_cfs(simulate_blockstore_cleanup_service: bool) {
@@ -9440,41 +9238,6 @@ pub mod tests {
                 .unwrap(),
             None
         );
-    }
-
-    impl Blockstore {
-        pub(crate) fn write_deprecated_transaction_status(
-            &self,
-            primary_index: u64,
-            slot: Slot,
-            signature: Signature,
-            writable_keys: Vec<&Pubkey>,
-            readonly_keys: Vec<&Pubkey>,
-            status: TransactionStatusMeta,
-        ) -> Result<()> {
-            let status = status.into();
-            self.transaction_status_cf
-                .put_deprecated_protobuf((primary_index, signature, slot), &status)?;
-            for address in writable_keys {
-                self.address_signatures_cf.put_deprecated(
-                    (primary_index, *address, slot, signature),
-                    &AddressSignatureMeta { writeable: true },
-                )?;
-            }
-            for address in readonly_keys {
-                self.address_signatures_cf.put_deprecated(
-                    (primary_index, *address, slot, signature),
-                    &AddressSignatureMeta { writeable: false },
-                )?;
-            }
-            let mut w_highest_primary_index_slot = self.highest_primary_index_slot.write().unwrap();
-            if w_highest_primary_index_slot.is_none()
-                || w_highest_primary_index_slot.is_some_and(|highest_slot| highest_slot < slot)
-            {
-                *w_highest_primary_index_slot = Some(slot);
-            }
-            Ok(())
-        }
     }
 
     #[test]

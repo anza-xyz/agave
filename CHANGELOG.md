@@ -29,6 +29,10 @@ Release channels have their own copy of this changelog:
 * `--public-tpu-address` and `--public-tpu-forwards-address` CLI arguments and `setPublicTpuForwardsAddress`, `setPublicTpuAddress` RPC methods now specify QUIC ports, not UDP.
 * Blockstore `PerfSamples` column legacy format removed.
   * The `PerfSamples` column format was updated in agave v1.15 to write `PerfSampleV2`. The old format, `PerfSampleV1`, will no longer be supported for fallback reads as of v4.0.
+* Blockstore transaction metadata column legacy format support removed.
+  * The `TransactionStatus`, `TransactionMemos`, and `AddressSignatures` columns
+  were updated in v1.18 to write a new key format. The old key format will no
+  no longer be supported for fallback reads as of v4.0
 #### Changes
 * Added `--enable-scheduler-bindings` which binds an IPC server at `<ledger-path>/scheduler_bindings.ipc` for external schedulers to connect to.
 * Added `clientId` field to each node in `getClusterNodes` response
