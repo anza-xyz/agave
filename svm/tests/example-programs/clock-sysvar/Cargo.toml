@@ -1,6 +1,6 @@
 [package]
 name = "clock-sysvar-program"
-version = "4.0.0-beta.3"
+version = "4.0.0-beta.4"
 edition = "2021"
 
 [dependencies]
