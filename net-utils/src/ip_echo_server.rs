@@ -15,7 +15,7 @@ use {
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream},
         runtime::{self, Runtime},
-        time::{Instant, timeout_at},
+        time::{timeout_at, Instant},
     },
 };
 
