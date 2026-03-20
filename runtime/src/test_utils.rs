@@ -9,7 +9,7 @@ use {
     solana_vote::vote_account::{VoteAccount, VoteAccounts},
     solana_vote_interface::{
         authorized_voters::AuthorizedVoters,
-        state::{VoteInit, VoteStateV4, VoteStateVersions},
+        state::{VoteStateV4, VoteStateVersions},
     },
     std::{collections::HashMap, iter::repeat_with},
 };
@@ -22,33 +22,28 @@ pub fn new_rand_vote_account<R: Rng>(
     node_pubkey: Option<Pubkey>,
     set_bls_pubkey: bool,
 ) -> AccountSharedData {
-    let vote_init = VoteInit {
-        node_pubkey: node_pubkey.unwrap_or_else(Pubkey::new_unique),
-        authorized_voter: Pubkey::new_unique(),
-        authorized_withdrawer: Pubkey::new_unique(),
-        commission: rng.random(),
-    };
-    let bls_pubkey_compressed = if set_bls_pubkey {
+    let owner = solana_sdk_ids::vote::id();
+    let mut account = AccountSharedData::new(rng.random(), VoteStateV4::size_of(), &owner);
+
+    let bls_pubkey_compressed = set_bls_pubkey.then(|| {
         let bls_pubkey: BLSPubkeyCompressed = BLSKeypair::new().public.into();
         let bls_pubkey_buffer = bincode::serialize(&bls_pubkey).unwrap();
-        Some(bls_pubkey_buffer.try_into().unwrap())
-    } else {
-        None
-    };
+        bls_pubkey_buffer.try_into().unwrap()
+    });
     let vote_state = VoteStateV4 {
-        node_pubkey: vote_init.node_pubkey,
-        authorized_voters: AuthorizedVoters::new(0, vote_init.authorized_voter),
-        authorized_withdrawer: vote_init.authorized_withdrawer,
+        node_pubkey: node_pubkey.unwrap_or(Pubkey::new_unique()),
+        authorized_voters: AuthorizedVoters::new(0, Pubkey::new_unique()),
+        authorized_withdrawer: Pubkey::new_unique(),
         bls_pubkey_compressed,
         ..VoteStateV4::default()
     };
 
-    AccountSharedData::new_data(
-        rng.random(), // lamports
-        &VoteStateVersions::new_v4(vote_state),
-        &solana_sdk_ids::vote::id(), // owner
+    VoteStateV4::serialize(
+        &VoteStateVersions::V4(Box::new(vote_state)),
+        account.data_as_mut_slice(),
     )
-    .unwrap()
+    .unwrap();
+    account
 }
 
 #[cfg(feature = "dev-context-only-utils")]
