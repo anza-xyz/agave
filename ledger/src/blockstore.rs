@@ -247,31 +247,38 @@ pub struct BlockstoreSignals {
 pub struct Blockstore {
     ledger_path: PathBuf,
     db: Arc<Rocks>,
-    // Column families
-    address_signatures_cf: LedgerColumn<cf::AddressSignatures>,
-    bank_hash_cf: LedgerColumn<cf::BankHash>,
-    block_height_cf: LedgerColumn<cf::BlockHeight>,
-    blocktime_cf: LedgerColumn<cf::Blocktime>,
-    code_shred_cf: LedgerColumn<cf::ShredCode>,
+
+    // Shred insertion column families
     data_shred_cf: LedgerColumn<cf::ShredData>,
-    dead_slots_cf: LedgerColumn<cf::DeadSlots>,
-    duplicate_slots_cf: LedgerColumn<cf::DuplicateSlots>,
-    erasure_meta_cf: LedgerColumn<cf::ErasureMeta>,
-    index_cf: LedgerColumn<cf::Index>,
-    merkle_root_meta_cf: LedgerColumn<cf::MerkleRootMeta>,
+    code_shred_cf: LedgerColumn<cf::ShredCode>,
     meta_cf: LedgerColumn<cf::SlotMeta>,
-    optimistic_slots_cf: LedgerColumn<cf::OptimisticSlots>,
-    orphans_cf: LedgerColumn<cf::Orphans>,
-    perf_samples_cf: LedgerColumn<cf::PerfSamples>,
-    rewards_cf: LedgerColumn<cf::Rewards>,
-    roots_cf: LedgerColumn<cf::Root>,
-    transaction_memos_cf: LedgerColumn<cf::TransactionMemos>,
-    transaction_status_cf: LedgerColumn<cf::TransactionStatus>,
-    transaction_status_index_cf: LedgerColumn<cf::TransactionStatusIndex>,
+    index_cf: LedgerColumn<cf::Index>,
+    erasure_meta_cf: LedgerColumn<cf::ErasureMeta>,
+    merkle_root_meta_cf: LedgerColumn<cf::MerkleRootMeta>,
+    duplicate_slots_cf: LedgerColumn<cf::DuplicateSlots>,
+
+    // Shred insertion column families for handling Alpenglow alternate blocks
+    alt_data_shred_cf: LedgerColumn<cf::AlternateShredData>,
     alt_meta_cf: LedgerColumn<cf::AlternateSlotMeta>,
     alt_index_cf: LedgerColumn<cf::AlternateIndex>,
-    alt_data_shred_cf: LedgerColumn<cf::AlternateShredData>,
     alt_merkle_root_meta_cf: LedgerColumn<cf::AlternateMerkleRootMeta>,
+
+    // Block status column families
+    bank_hash_cf: LedgerColumn<cf::BankHash>,
+    optimistic_slots_cf: LedgerColumn<cf::OptimisticSlots>,
+    roots_cf: LedgerColumn<cf::Root>,
+    dead_slots_cf: LedgerColumn<cf::DeadSlots>,
+    orphans_cf: LedgerColumn<cf::Orphans>,
+
+    // Block and transaction metadata column families (for RPC)
+    block_height_cf: LedgerColumn<cf::BlockHeight>,
+    blocktime_cf: LedgerColumn<cf::Blocktime>,
+    rewards_cf: LedgerColumn<cf::Rewards>,
+    transaction_status_cf: LedgerColumn<cf::TransactionStatus>,
+    transaction_memos_cf: LedgerColumn<cf::TransactionMemos>,
+    transaction_status_index_cf: LedgerColumn<cf::TransactionStatusIndex>,
+    address_signatures_cf: LedgerColumn<cf::AddressSignatures>,
+    perf_samples_cf: LedgerColumn<cf::PerfSamples>,
 
     highest_primary_index_slot: RwLock<Option<Slot>>,
     max_root: AtomicU64,
@@ -396,30 +403,33 @@ impl Blockstore {
         info!("Opening blockstore at {blockstore_path:?}");
         let db = Arc::new(Rocks::open(blockstore_path, options)?);
 
-        let address_signatures_cf = db.column();
-        let bank_hash_cf = db.column();
-        let block_height_cf = db.column();
-        let blocktime_cf = db.column();
-        let code_shred_cf = db.column();
         let data_shred_cf = db.column();
-        let dead_slots_cf = db.column();
-        let duplicate_slots_cf = db.column();
-        let erasure_meta_cf = db.column();
-        let index_cf = db.column();
-        let merkle_root_meta_cf = db.column();
+        let code_shred_cf = db.column();
         let meta_cf = db.column();
-        let optimistic_slots_cf = db.column();
-        let orphans_cf = db.column();
-        let perf_samples_cf = db.column();
-        let rewards_cf = db.column();
-        let roots_cf = db.column();
-        let transaction_memos_cf = db.column();
-        let transaction_status_cf = db.column();
-        let transaction_status_index_cf = db.column();
+        let index_cf = db.column();
+        let erasure_meta_cf = db.column();
+        let merkle_root_meta_cf = db.column();
+        let duplicate_slots_cf = db.column();
+
+        let alt_data_shred_cf = db.column();
         let alt_meta_cf = db.column();
         let alt_index_cf = db.column();
-        let alt_data_shred_cf = db.column();
         let alt_merkle_root_meta_cf = db.column();
+
+        let bank_hash_cf = db.column();
+        let optimistic_slots_cf = db.column();
+        let roots_cf = db.column();
+        let dead_slots_cf = db.column();
+        let orphans_cf = db.column();
+
+        let block_height_cf = db.column();
+        let blocktime_cf = db.column();
+        let rewards_cf = db.column();
+        let transaction_status_cf = db.column();
+        let transaction_memos_cf = db.column();
+        let transaction_status_index_cf = db.column();
+        let address_signatures_cf = db.column();
+        let perf_samples_cf = db.column();
 
         // Get max root or 0 if it doesn't exist
         let max_root = roots_cf
@@ -961,30 +971,33 @@ impl Blockstore {
     ///
     /// [`BlockstoreRocksDbColumnFamilyMetrics`]: crate::blockstore_metrics::BlockstoreRocksDbColumnFamilyMetrics
     pub fn submit_rocksdb_cf_metrics_for_all_cfs(&self) {
-        self.meta_cf.submit_rocksdb_cf_metrics();
-        self.dead_slots_cf.submit_rocksdb_cf_metrics();
-        self.duplicate_slots_cf.submit_rocksdb_cf_metrics();
-        self.roots_cf.submit_rocksdb_cf_metrics();
-        self.erasure_meta_cf.submit_rocksdb_cf_metrics();
-        self.orphans_cf.submit_rocksdb_cf_metrics();
-        self.index_cf.submit_rocksdb_cf_metrics();
         self.data_shred_cf.submit_rocksdb_cf_metrics();
         self.code_shred_cf.submit_rocksdb_cf_metrics();
-        self.transaction_status_cf.submit_rocksdb_cf_metrics();
-        self.address_signatures_cf.submit_rocksdb_cf_metrics();
-        self.transaction_memos_cf.submit_rocksdb_cf_metrics();
-        self.transaction_status_index_cf.submit_rocksdb_cf_metrics();
-        self.rewards_cf.submit_rocksdb_cf_metrics();
-        self.blocktime_cf.submit_rocksdb_cf_metrics();
-        self.perf_samples_cf.submit_rocksdb_cf_metrics();
-        self.block_height_cf.submit_rocksdb_cf_metrics();
-        self.bank_hash_cf.submit_rocksdb_cf_metrics();
-        self.optimistic_slots_cf.submit_rocksdb_cf_metrics();
+        self.meta_cf.submit_rocksdb_cf_metrics();
+        self.index_cf.submit_rocksdb_cf_metrics();
+        self.erasure_meta_cf.submit_rocksdb_cf_metrics();
         self.merkle_root_meta_cf.submit_rocksdb_cf_metrics();
+        self.duplicate_slots_cf.submit_rocksdb_cf_metrics();
+
+        self.alt_data_shred_cf.submit_rocksdb_cf_metrics();
         self.alt_meta_cf.submit_rocksdb_cf_metrics();
         self.alt_index_cf.submit_rocksdb_cf_metrics();
-        self.alt_data_shred_cf.submit_rocksdb_cf_metrics();
         self.alt_merkle_root_meta_cf.submit_rocksdb_cf_metrics();
+
+        self.bank_hash_cf.submit_rocksdb_cf_metrics();
+        self.optimistic_slots_cf.submit_rocksdb_cf_metrics();
+        self.roots_cf.submit_rocksdb_cf_metrics();
+        self.dead_slots_cf.submit_rocksdb_cf_metrics();
+        self.orphans_cf.submit_rocksdb_cf_metrics();
+
+        self.block_height_cf.submit_rocksdb_cf_metrics();
+        self.blocktime_cf.submit_rocksdb_cf_metrics();
+        self.rewards_cf.submit_rocksdb_cf_metrics();
+        self.transaction_status_cf.submit_rocksdb_cf_metrics();
+        self.transaction_memos_cf.submit_rocksdb_cf_metrics();
+        self.transaction_status_index_cf.submit_rocksdb_cf_metrics();
+        self.address_signatures_cf.submit_rocksdb_cf_metrics();
+        self.perf_samples_cf.submit_rocksdb_cf_metrics();
     }
 
     /// Attempts to insert shreds into blockstore and updates relevant metrics
