@@ -28,7 +28,10 @@ pub fn leader_schedule_from_vote_accounts(
     Some(LeaderSchedule::new(
         epoch_vote_accounts,
         epoch,
-        epoch_schedule.get_slots_in_epoch(epoch) as usize,
+        epoch_schedule
+            .get_slots_in_epoch(epoch)
+            .try_into()
+            .expect("number of slots in epoch must fit in usize"),
         NUM_CONSECUTIVE_LEADER_SLOTS,
     ))
 }
