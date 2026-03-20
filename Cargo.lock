@@ -81,20 +81,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agave-bls12-381"
-version = "4.1.0-alpha.0"
-dependencies = [
- "blst",
- "blstrs",
- "bytemuck",
- "bytemuck_derive",
- "criterion",
- "group",
- "hex-literal",
- "pairing",
-]
-
-[[package]]
 name = "agave-feature-set"
 version = "4.1.0-alpha.0"
 dependencies = [
@@ -323,7 +309,6 @@ dependencies = [
 name = "agave-syscalls"
 version = "4.1.0-alpha.0"
 dependencies = [
- "agave-bls12-381",
  "assert_matches",
  "bincode",
  "libsecp256k1",
@@ -332,6 +317,7 @@ dependencies = [
  "solana-account-info",
  "solana-big-mod-exp",
  "solana-blake3-hasher",
+ "solana-bls12-381-syscall",
  "solana-bn254",
  "solana-clock",
  "solana-cpi",
@@ -7147,6 +7133,20 @@ dependencies = [
  "solana-signer",
  "subtle",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "solana-bls12-381-syscall"
+version = "4.1.0-alpha.0"
+dependencies = [
+ "blst",
+ "blstrs",
+ "bytemuck",
+ "bytemuck_derive",
+ "criterion",
+ "group",
+ "hex-literal",
+ "pairing",
 ]
 
 [[package]]
