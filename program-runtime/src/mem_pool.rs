@@ -103,6 +103,7 @@ impl VmMemoryPool {
     pub fn new() -> Self {
         Self {
             stack: Pool::new(array::from_fn(|_| {
+                #[allow(clippy::arithmetic_side_effects)]
                 AlignedMemory::zero_filled(get_stack_frame_size() * MAX_CALL_DEPTH)
             })),
             heap: Pool::new(array::from_fn(|_| {
@@ -120,6 +121,7 @@ impl VmMemoryPool {
         self.heap.len()
     }
 
+    #[allow(clippy::arithmetic_side_effects)]
     pub fn get_stack(&mut self, size: usize) -> AlignedMemory<{ HOST_ALIGN }> {
         debug_assert!(size == get_stack_frame_size() * MAX_CALL_DEPTH);
         self.stack
