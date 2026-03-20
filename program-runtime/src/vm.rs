@@ -176,9 +176,6 @@ pub fn execute<'a, 'b: 'a>(
         .get_feature_set()
         .virtual_address_space_adjustments;
     let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
-    let provide_instruction_data_offset_in_vm_r2 = invoke_context
-        .get_feature_set()
-        .provide_instruction_data_offset_in_vm_r2;
     let direct_account_pointers_in_program_input = invoke_context
         .get_feature_set()
         .direct_account_pointers_in_program_input;
@@ -258,10 +255,7 @@ pub fn execute<'a, 'b: 'a>(
         let prev_nested_exec_time = vm.context_object_pointer.total_nested_exec_time;
 
         vm.registers[1] = ebpf::MM_INPUT_START;
-        // SIMD-0321: Provide offset to instruction data in VM register 2.
-        if provide_instruction_data_offset_in_vm_r2 {
-            vm.registers[2] = instruction_data_offset as u64;
-        }
+        vm.registers[2] = instruction_data_offset as u64;
         let (compute_units_consumed, result) = vm.execute_program(executable, &mut execution_mode);
         let register_trace = std::mem::take(&mut vm.register_trace);
         MEMORY_POOL.with_borrow_mut(|memory_pool| {

@@ -475,10 +475,6 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     ));
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
-    let provide_instruction_data_offset_in_vm_r2 = invoke_context
-        .get_feature_set()
-        .provide_instruction_data_offset_in_vm_r2;
-
     // Adding `DELAY_VISIBILITY_SLOT_OFFSET` to slots to accommodate for delay visibility of the program
     let mut program_cache_for_tx_batch =
         ProgramCacheForTxBatch::new(bank.slot() + DELAY_VISIBILITY_SLOT_OFFSET);
@@ -535,11 +531,8 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         ExecutionMode::Interpreted
     };
     vm.registers[1] = MM_INPUT_START;
+    vm.registers[2] = instruction_data_offset as u64;
 
-    // SIMD-0321: Provide offset to instruction data in VM register 2.
-    if provide_instruction_data_offset_in_vm_r2 {
-        vm.registers[2] = instruction_data_offset as u64;
-    }
     let (instruction_count, result) = vm.execute_program(&verified_executable, &mut execution_mode);
     let duration = Instant::now() - start_time;
     if let Some(trace_option) = matches.value_of("trace") {
