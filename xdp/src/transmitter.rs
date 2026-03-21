@@ -14,7 +14,11 @@ use {
     aya::Ebpf,
     crossbeam_channel::TryRecvError,
     log::info,
-    std::{net::Ipv4Addr, thread::Builder, time::Duration},
+    std::{
+        net::{IpAddr, Ipv4Addr},
+        thread::Builder,
+        time::Duration,
+    },
 };
 use {
     bytes::Bytes,
@@ -357,7 +361,10 @@ impl TransmitterBuilder {
                     .spawn(move || {
                         tx_loop.run(receiver, drop_sender, move |ip| {
                             let r = atomic_router.load();
-                            r.route(*ip).ok()
+                            match ip {
+                                IpAddr::V4(ip) => r.route_v4(*ip).ok(),
+                                IpAddr::V6(_) => None,
+                            }
                         })
                     })
                     .unwrap(),
