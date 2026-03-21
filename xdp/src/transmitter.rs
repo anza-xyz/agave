@@ -3,7 +3,7 @@ use {
     crate::{
         device::{NetworkDevice, QueueId},
         load_xdp_program,
-        route::Router,
+        route::{Router, RoutingTables},
         route_monitor::RouteMonitor,
         set_cpu_affinity,
         tx_loop::TxPacket,
@@ -265,18 +265,19 @@ impl TransmitterBuilder {
             .map(|tx_loop_builder| tx_loop_builder.build())
             .collect::<Vec<_>>();
 
-        let router_result = Router::new();
+        let tables_result = RoutingTables::from_netlink();
 
         caps::drop(None, CapSet::Effective, CAP_NET_RAW).expect("drop CAP_NET_RAW capability");
         caps::drop(None, CapSet::Effective, CAP_NET_ADMIN).expect("drop CAP_NET_ADMIN capability");
 
-        let mut router = router_result?;
-        router.build_caches()?;
+        let tables = tables_result?;
+        let router = Router::from_tables(tables.clone())?;
 
         // Use ArcSwap for lock-free updates of the routing table
         let atomic_router = Arc::new(ArcSwap::from_pointee(router));
         let route_monitor_handle = RouteMonitor::start(
             Arc::clone(&atomic_router),
+            tables,
             exit.clone(),
             ROUTE_MONITOR_UPDATE_INTERVAL,
             || {
