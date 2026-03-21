@@ -1,11 +1,15 @@
 use {
-    crate::netlink::{
-        GreTunnelInfo, InterfaceInfo, MacAddress, NeighborEntry, RouteEntry,
-        netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes,
+    crate::{
+        lpm::Ipv4Lpm,
+        netlink::{
+            GreTunnelInfo, InterfaceInfo, MacAddress, NeighborEntry, RouteEntry,
+            netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes,
+        },
     },
     libc::AF_INET,
     log::warn,
     std::{
+        cmp::Ordering,
         io,
         net::{IpAddr, Ipv4Addr},
     },
@@ -49,12 +53,17 @@ pub struct Route<T> {
     pub gateway: Option<T>,
     pub preferred_src: Option<T>,
     pub out_if_index: Option<u32>,
+    pub priority: Option<u32>,
+    pub type_: u8,
     pub dst_len: u8,
 }
 
 impl<T: PartialEq> Route<T> {
-    fn same_prefix(&self, other: &Self) -> bool {
-        self.destination == other.destination && self.dst_len == other.dst_len
+    fn same_key(&self, other: &Self) -> bool {
+        self.destination == other.destination
+            && self.dst_len == other.dst_len
+            && self.priority == other.priority
+            && self.type_ == other.type_
     }
 }
 
@@ -92,51 +101,11 @@ impl TryFrom<RouteEntry> for Route<Ipv4Addr> {
             gateway,
             preferred_src,
             out_if_index,
+            priority: entry.priority,
+            type_: entry.type_,
             dst_len: entry.dst_len.min(32),
         })
     }
-}
-
-fn lookup_route<'a, I>(routes: I, dest: Ipv4Addr) -> Option<&'a Route<Ipv4Addr>>
-where
-    I: Iterator<Item = &'a Route<Ipv4Addr>>,
-{
-    let mut best_match = None;
-
-    for route in routes {
-        match route.destination {
-            // this is the default route
-            None => {
-                if best_match.is_none() {
-                    best_match = Some((route, 0));
-                }
-            }
-            Some(route_addr) => {
-                let prefix_len = route.dst_len;
-                if !is_ipv4_match(dest, route_addr, prefix_len) {
-                    continue;
-                }
-
-                if best_match.is_none() || prefix_len > best_match.unwrap().1 {
-                    best_match = Some((route, prefix_len));
-                }
-            }
-        }
-    }
-
-    best_match.map(|(route, _)| route)
-}
-
-fn is_ipv4_match(addr: Ipv4Addr, network: Ipv4Addr, prefix_len: u8) -> bool {
-    if prefix_len == 0 {
-        return true;
-    }
-
-    let mask = 0xFFFFFFFF << 32u32.saturating_sub(prefix_len as u32);
-    let addr_bits = u32::from(addr) & mask;
-    let network_bits = u32::from(network) & mask;
-
-    addr_bits == network_bits
 }
 
 #[derive(Clone, Debug)]
@@ -249,7 +218,8 @@ pub struct Routes {
 }
 
 impl Routes {
-    pub fn new(routes: Vec<Route<Ipv4Addr>>) -> Self {
+    pub fn new(mut routes: Vec<Route<Ipv4Addr>>) -> Self {
+        routes.sort_by(Self::compare_routes);
         Self { routes }
     }
 
@@ -262,8 +232,23 @@ impl Routes {
         ))
     }
 
+    fn compare_routes(left: &Route<Ipv4Addr>, right: &Route<Ipv4Addr>) -> Ordering {
+        right
+            .dst_len
+            .cmp(&left.dst_len)
+            .then_with(|| left.priority.unwrap_or(0).cmp(&right.priority.unwrap_or(0)))
+    }
+
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &Route<Ipv4Addr>> {
         self.routes.iter()
+    }
+
+    fn get(&self, route_idx: usize) -> Option<&Route<Ipv4Addr>> {
+        self.routes.get(route_idx)
+    }
+
+    fn as_slice(&self) -> &[Route<Ipv4Addr>] {
+        &self.routes
     }
 
     fn upsert(&mut self, new_route: RouteEntry) -> bool {
@@ -271,18 +256,21 @@ impl Routes {
             return false;
         };
 
-        if let Some(existing) = self
-            .routes
-            .iter_mut()
-            .find(|old| old.same_prefix(&new_route))
-        {
+        if let Some(existing) = self.routes.iter_mut().find(|old| old.same_key(&new_route)) {
             if existing != &new_route {
                 *existing = new_route;
                 return true;
             }
             false
         } else {
-            self.routes.push(new_route);
+            let route = new_route;
+            let insert_at = self.routes.partition_point(|existing| {
+                matches!(
+                    Self::compare_routes(existing, &route),
+                    Ordering::Less | Ordering::Equal
+                )
+            });
+            self.routes.insert(insert_at, route);
             true
         }
     }
@@ -292,15 +280,12 @@ impl Routes {
             return false;
         };
 
-        if let Some(i) = self
-            .routes
-            .iter()
-            .position(|old| old.same_prefix(&new_route))
-        {
-            self.routes.swap_remove(i);
-            return true;
+        if let Some(i) = self.routes.iter().position(|old| old.same_key(&new_route)) {
+            self.routes.remove(i);
+            true
+        } else {
+            false
         }
-        false
     }
 }
 
@@ -357,6 +342,7 @@ impl RoutingTables {
 pub struct Router {
     neighbors: Neighbors,
     routes: Routes,
+    ipv4_lpm: Ipv4Lpm,
     interfaces: Interfaces,
     // cache for the default route next hop so we can avoid arp table lookups on the common case
     cached_default_route: Option<NextHop>,
@@ -370,9 +356,11 @@ impl Router {
     }
 
     pub fn from_tables(tables: RoutingTables) -> Result<Self, io::Error> {
+        let ipv4_lpm = Ipv4Lpm::build(tables.routes.as_slice());
         let mut router = Self {
             neighbors: tables.neighbors,
             routes: tables.routes,
+            ipv4_lpm,
             interfaces: tables.interfaces,
             cached_default_route: None,
             cached_gre_info: Vec::new(),
@@ -463,9 +451,9 @@ impl Router {
 
     fn default_route(&self) -> Result<NextHop, RouteError> {
         let default_route = self
-            .routes
-            .iter()
-            .find(|r| r.destination.is_none())
+            .ipv4_lpm
+            .default_route()
+            .and_then(|route_idx| self.routes.get(route_idx as usize))
             .ok_or(RouteError::NoRouteFound(IpAddr::V4(Ipv4Addr::UNSPECIFIED)))?;
         self.resolve_next_hop(Ipv4Addr::UNSPECIFIED, default_route)
     }
@@ -478,8 +466,15 @@ impl Router {
         }
     }
 
+    fn lookup_route_v4(&self, dest_ip: Ipv4Addr) -> Option<&Route<Ipv4Addr>> {
+        self.ipv4_lpm
+            .lookup(dest_ip)
+            .and_then(|route_idx| self.routes.get(route_idx as usize))
+    }
+
     pub fn route_v4(&self, dest_ip: Ipv4Addr) -> Result<NextHop, RouteError> {
-        let route = lookup_route(self.routes.iter(), dest_ip)
+        let route = self
+            .lookup_route_v4(dest_ip)
             .ok_or(RouteError::NoRouteFound(dest_ip.into()))?;
         self.resolve_next_hop(dest_ip, route)
     }
@@ -499,7 +494,7 @@ impl Router {
             return None;
         }
 
-        let underlay_route = lookup_route(self.routes.iter(), remote)?;
+        let underlay_route = self.lookup_route_v4(remote)?;
         let underlay_if_index = underlay_route.out_if_index?;
         let underlay_interface = self
             .interfaces
@@ -542,7 +537,32 @@ mod tests {
             gateway: None,
             preferred_src: None,
             out_if_index: Some(out_if_index),
+            priority: None,
+            type_: 0,
             dst_len: 32,
+        }
+    }
+
+    fn test_route_entry(
+        destination: Option<Ipv4Addr>,
+        gateway: Option<Ipv4Addr>,
+        out_if_index: u32,
+        dst_len: u8,
+    ) -> RouteEntry {
+        RouteEntry {
+            destination: destination.map(IpAddr::V4),
+            gateway: gateway.map(IpAddr::V4),
+            pref_src: None,
+            out_if_index: Some(out_if_index as i32),
+            in_if_index: None,
+            priority: None,
+            table: None,
+            protocol: 0,
+            scope: 0,
+            type_: 0,
+            family: AF_INET as u8,
+            dst_len,
+            flags: 0,
         }
     }
 
@@ -568,28 +588,6 @@ mod tests {
     }
 
     #[test]
-    fn test_ipv4_match() {
-        assert!(is_ipv4_match(
-            Ipv4Addr::new(192, 168, 1, 10),
-            Ipv4Addr::new(192, 168, 1, 0),
-            24
-        ));
-
-        assert!(!is_ipv4_match(
-            Ipv4Addr::new(192, 168, 2, 10),
-            Ipv4Addr::new(192, 168, 1, 0),
-            24
-        ));
-
-        // Match with default route
-        assert!(is_ipv4_match(
-            Ipv4Addr::new(1, 2, 3, 4),
-            Ipv4Addr::new(0, 0, 0, 0),
-            0
-        ));
-    }
-
-    #[test]
     fn test_router() {
         let mut tables = empty_tables();
         let before_routes_len = tables.routes.iter().len();
@@ -607,7 +605,7 @@ mod tests {
         let test_dst = Ipv4Addr::new(10, 255, 255, 123);
         let route = RouteEntry {
             destination: Some(IpAddr::V4(test_dst)),
-            gateway: Some(IpAddr::V4(Ipv4Addr::new(10, 255, 255, 1))),
+            gateway: Some(IpAddr::V4(gateway)),
             pref_src: None,
             out_if_index: Some(1),
             in_if_index: None,
@@ -816,6 +814,8 @@ mod tests {
                 gateway: None,
                 preferred_src: None,
                 out_if_index: Some(if_index_gre as u32),
+                priority: None,
+                type_: 0,
                 dst_len: 0,
             },
         ];
@@ -869,22 +869,15 @@ mod tests {
             state: NUD_REACHABLE,
         }));
 
-        assert!(tables.upsert_route(test_route_entry(
-            None,
-            Some(default_gateway),
-            1,
-            0,
-            RouteTable::Main.as_u32(),
-        )));
-
+        assert!(tables.upsert_route(test_route_entry(None, Some(default_gateway), 1, 0,)));
         assert!(tables.upsert_route(RouteEntry {
             destination: Some(IpAddr::V4(blocked_dst)),
             gateway: None,
             pref_src: None,
-            out_if_index: None,
+            out_if_index: None, // missing output interface should block this route
             in_if_index: None,
             priority: None,
-            table: Some(RouteTable::Main.as_u32()),
+            table: None,
             protocol: 0,
             scope: 0,
             type_: 0,
