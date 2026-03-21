@@ -6648,6 +6648,7 @@ impl AccountsDb {
     }
 
     /// Is `pubkey` in the db?
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn contains(&self, pubkey: &Pubkey) -> bool {
         self.accounts_cache.contains_pubkey(pubkey) || self.accounts_index.contains(pubkey)
     }
