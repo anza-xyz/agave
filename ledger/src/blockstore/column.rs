@@ -1030,8 +1030,7 @@ mod tests {
 
     #[test]
     fn test_slot_meta_column_deserialize_v3_fallback() {
-        let config = bincode::DefaultOptions::new()
-            .with_fixint_encoding();
+        let config = bincode::DefaultOptions::new().with_fixint_encoding();
 
         let meta_v3 = SlotMetaV3 {
             slot: 42,
