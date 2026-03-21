@@ -31,7 +31,10 @@ impl From<&Inflation> for IntegerInflation {
 }
 
 fn f64_to_scaled(v: f64) -> ScaledU60 {
-    assert!(v >= 0.0 && v.is_finite(), "f64_to_scaled: {v} is negative, NaN, or infinite");
+    assert!(
+        v >= 0.0 && v.is_finite(),
+        "f64_to_scaled: {v} is negative, NaN, or infinite"
+    );
     if v == 0.0 {
         return 0;
     }
