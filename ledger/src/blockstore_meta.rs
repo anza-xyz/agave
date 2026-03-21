@@ -1031,15 +1031,15 @@ mod test {
     }
 
     #[test]
-    fn test_slot_meta_v3_to_v2_conversion() {
+    fn test_slot_meta_v3_to_slot_meta_conversion() {
         use bincode::Options;
 
         let config = bincode::DefaultOptions::new()
             .with_fixint_encoding()
             .reject_trailing_bytes();
 
-        // V3 bytes cannot be deserialized directly as SlotMeta (V2) because
-        // of trailing bytes (the extra fields).
+        // V3 bytes cannot be deserialized directly as SlotMeta with
+        // reject_trailing_bytes because of the extra fields.
         let meta_v3 = SlotMetaV3 {
             slot: 42,
             consumed: 10,

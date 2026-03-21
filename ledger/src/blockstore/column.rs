@@ -838,19 +838,13 @@ impl TypedColumn for columns::SlotMeta {
     type Type = blockstore_meta::SlotMeta;
 
     fn deserialize(data: &[u8]) -> Result<Self::Type> {
-        // Try to deserialize as current V2 format (SlotMeta). Fall back to
-        // V3 format (SlotMetaV3, with parent_block_id and
-        // replay_fec_set_index) and convert to V2.
+        // Deserialize as SlotMeta. If the data was serialized as
+        // SlotMetaV3 (with parent_block_id and replay_fec_set_index),
+        // the trailing bytes are simply ignored.
         let config = bincode::DefaultOptions::new()
             .with_fixint_encoding()
-            .reject_trailing_bytes();
-        match config.deserialize::<blockstore_meta::SlotMeta>(data) {
-            Ok(meta) => Ok(meta),
-            Err(_) => {
-                let v3: blockstore_meta::SlotMetaV3 = config.deserialize(data)?;
-                Ok(v3.into())
-            }
-        }
+            .allow_trailing_bytes();
+        Ok(config.deserialize::<blockstore_meta::SlotMeta>(data)?)
     }
 }
 
@@ -1037,12 +1031,8 @@ mod tests {
     #[test]
     fn test_slot_meta_column_deserialize_v3_fallback() {
         let config = bincode::DefaultOptions::new()
-            .with_fixint_encoding()
-            .reject_trailing_bytes();
+            .with_fixint_encoding();
 
-        // V3 data (with parent_block_id and replay_fec_set_index) can be
-        // read as a fallback and converted to V2.
-        let parent_block_id = Hash::new_unique();
         let meta_v3 = SlotMetaV3 {
             slot: 42,
             consumed: 10,
@@ -1053,15 +1043,13 @@ mod tests {
             next_slots: vec![43, 44],
             connected_flags: ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED,
             completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
-            parent_block_id,
+            parent_block_id: Hash::new_unique(),
             replay_fec_set_index: 7,
         };
         let v3_bytes = config.serialize(&meta_v3).unwrap();
 
-        let expected = blockstore_meta::SlotMeta::from(meta_v3.clone());
+        let expected = blockstore_meta::SlotMeta::from(meta_v3);
 
-        // V3 bytes have trailing data beyond V2, so the V2 attempt fails
-        // and we fall back to V3 deserialization.
         let deserialized = <columns::SlotMeta as TypedColumn>::deserialize(&v3_bytes).unwrap();
         assert_eq!(expected, deserialized);
     }
