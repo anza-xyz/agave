@@ -344,6 +344,7 @@ mod tests {
         bitvec::prelude::{BitVec, Lsb0},
         crossbeam_channel::{Receiver, TryRecvError},
         solana_bls_signatures::{Signature, Signature as BLSSignature},
+        solana_epoch_schedule::EpochSchedule,
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -396,13 +397,14 @@ mod tests {
             let stakes_vec = (0..validator_keypairs.len())
                 .map(|i| 1_000 - i as u64)
                 .collect::<Vec<_>>();
-            let genesis = create_genesis_config_with_alpenglow_vote_accounts(
+            let mut genesis = create_genesis_config_with_alpenglow_vote_accounts(
                 1_000_000_000,
                 &validator_keypairs,
                 stakes_vec,
             );
-            let bank0 = Bank::new_for_tests(&genesis.genesis_config);
-            let bank_forks = BankForks::new_rw_arc(bank0);
+            genesis.genesis_config.epoch_schedule = EpochSchedule::without_warmup();
+            let bank = Bank::new_for_tests(&genesis.genesis_config);
+            let bank_forks = BankForks::new_rw_arc(bank);
             let sharable_banks = bank_forks.read().unwrap().sharable_banks();
             let keypair = Keypair::new();
             let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
@@ -1522,6 +1524,30 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(ctx.verifier.stats.num_generated_certs_received, 1);
+    }
+
+    #[test]
+    fn msgs_too_far_in_future_are_dropped() {
+        let mut ctx = TestContext::new();
+        let slot = ctx.verifier.sharable_banks.root().slot() + NUM_SLOTS_FOR_VERIFY + 1;
+        let cert_type = CertificateType::Skip(slot);
+        let cert = create_signed_certificate_message(
+            &ctx.validator_keypairs,
+            cert_type,
+            &(0..ctx.validator_keypairs.len()).collect::<Vec<usize>>(),
+        );
+        let cert = ConsensusMessage::Certificate(cert);
+        let vote = ConsensusMessage::Vote(create_signed_vote_message(
+            &ctx.validator_keypairs,
+            Vote::new_skip_vote(slot),
+            0,
+        ));
+        let packet_batches = messages_to_batches(&[cert, vote]);
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
+        assert_eq!(ctx.verifier.stats.cert_stats.too_far_in_future, 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.too_far_in_future, 1);
     }
 
     fn messages_to_batches(messages: &[ConsensusMessage]) -> Vec<PacketBatch> {
