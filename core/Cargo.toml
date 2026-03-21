@@ -24,16 +24,13 @@ frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-accounts-db/frozen-abi",
-    "solana-bloom/frozen-abi",
     "solana-cost-model/frozen-abi",
     "solana-frozen-abi/frozen-abi",
     "solana-gossip/frozen-abi",
     "solana-ledger/frozen-abi",
     "solana-packet/frozen-abi",
     "solana-perf/frozen-abi",
-    "solana-program-runtime/frozen-abi",
     "solana-runtime/frozen-abi",
-    "solana-short-vec/frozen-abi",
     "solana-signature/frozen-abi",
     "solana-svm/frozen-abi",
     "solana-vote/frozen-abi",
@@ -89,12 +86,10 @@ solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bincode = { workspace = true }
-solana-bloom = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
-solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-cost-model = { workspace = true }
@@ -119,7 +114,6 @@ solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-leader-schedule = { workspace = true }
 solana-ledger = { workspace = true }
-solana-loader-v3-interface = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
@@ -132,7 +126,6 @@ solana-poh = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
-solana-rent = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
@@ -140,7 +133,6 @@ solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-send-transaction-service = { workspace = true }
 solana-sha256-hasher = { workspace = true }
-solana-short-vec = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
@@ -178,9 +170,6 @@ tokio-util = { workspace = true }
 trees = { workspace = true }
 wincode = { workspace = true }
 
-[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
-jemallocator = { workspace = true }
-
 [target."cfg(unix)".dependencies]
 rts-alloc = { workspace = true }
 shaq = { workspace = true }
@@ -192,12 +181,11 @@ agave-scheduler-bindings = { path = "../scheduler-bindings", features = ["agave-
 bencher = { workspace = true }
 bitvec = { workspace = true }
 criterion = { workspace = true }
-fs_extra = { workspace = true }
-serde_json = { workspace = true }
 serial_test = { workspace = true }
 solana-account = { workspace = true, features = ["dev-context-only-utils"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api"] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
+solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { path = "../programs/compute-budget", features = ["agave-unstable-api"] }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
@@ -205,11 +193,12 @@ solana-core = { path = ".", features = ["agave-unstable-api", "dev-context-only-
 solana-cost-model = { path = "../cost-model", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-loader-v3-interface = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-poh = { path = "../poh", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"] }
-solana-program-runtime = { path = "../program-runtime", features = ["agave-unstable-api", "metrics"] }
+solana-rent = { workspace = true }
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signer-store = { workspace = true }
 solana-system-program = { path = "../programs/system", features = ["agave-unstable-api"] }
@@ -218,6 +207,9 @@ solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context
 spl-memo-interface = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
+
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
+jemallocator = { workspace = true }
 
 [[bench]]
 name = "banking_stage"
