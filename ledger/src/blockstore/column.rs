@@ -836,16 +836,6 @@ impl ColumnName for columns::SlotMeta {
 }
 impl TypedColumn for columns::SlotMeta {
     type Type = blockstore_meta::SlotMeta;
-
-    fn deserialize(data: &[u8]) -> Result<Self::Type> {
-        // Deserialize as SlotMeta. If the data was serialized as
-        // SlotMetaV3 (with parent_block_id and replay_fec_set_index),
-        // the trailing bytes are simply ignored.
-        let config = bincode::DefaultOptions::new()
-            .with_fixint_encoding()
-            .allow_trailing_bytes();
-        Ok(config.deserialize::<blockstore_meta::SlotMeta>(data)?)
-    }
 }
 
 impl Column for columns::AlternateSlotMeta {
@@ -880,10 +870,6 @@ impl ColumnName for columns::AlternateSlotMeta {
 }
 impl TypedColumn for columns::AlternateSlotMeta {
     type Type = <columns::SlotMeta as TypedColumn>::Type;
-
-    fn deserialize(data: &[u8]) -> Result<Self::Type> {
-        <columns::SlotMeta as TypedColumn>::deserialize(data)
-    }
 }
 
 impl Column for columns::ErasureMeta {
@@ -1030,8 +1016,6 @@ mod tests {
 
     #[test]
     fn test_slot_meta_column_deserialize_v3_fallback() {
-        let config = bincode::DefaultOptions::new().with_fixint_encoding();
-
         let meta_v3 = SlotMetaV3 {
             slot: 42,
             consumed: 10,
@@ -1045,7 +1029,7 @@ mod tests {
             parent_block_id: Hash::new_unique(),
             replay_fec_set_index: 7,
         };
-        let v3_bytes = config.serialize(&meta_v3).unwrap();
+        let v3_bytes = bincode::serialize(&meta_v3).unwrap();
 
         let expected = blockstore_meta::SlotMeta::from(meta_v3);
 
