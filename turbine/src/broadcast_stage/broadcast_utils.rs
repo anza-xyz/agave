@@ -124,13 +124,14 @@ pub(super) fn recv_slot_entries(
             entries.clear();
             bank = try_bank.clone();
         }
-        last_tick_height = tick_height;
-
         // If we hit a block marker, save it for next time and stop draining
         if next_marker.as_marker().is_some() {
             *carryover_entry = Some((try_bank, (next_marker, tick_height)));
             break;
         }
+
+        // Only update after confirming the entry is included in this batch.
+        last_tick_height = tick_height;
 
         // Add the entry to our batch
         entries.push(next_marker.into_entry().expect("must be Entry"));
@@ -177,7 +178,6 @@ pub(super) fn recv_slot_entries(
             bank = try_bank.clone();
             coalesce_start = Instant::now();
         }
-        last_tick_height = tick_height;
 
         // If we hit a block marker, save it for next time and stop coalescing
         if entry_marker.as_marker().is_some() {
@@ -395,6 +395,44 @@ mod tests {
         assert_eq!(bank_slot, bank2.slot());
         assert_eq!(last_tick_height, expected_last_height);
         assert_eq!(res_entries, vec![last_entry]);
+    }
+
+    #[test]
+    fn test_marker_carryover_does_not_advance_last_tick_height() {
+        let (genesis_config, bank0, tx) = setup_test();
+        let bank1 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 1));
+        let (s, r) = unbounded();
+        let max_tick = bank1.max_tick_height();
+
+        let mut last_hash = genesis_config.hash();
+        for tick in 1..=2 {
+            let entry = Entry::new(&last_hash, 1, vec![tx.clone()]);
+            last_hash = entry.hash;
+            s.send((bank1.clone(), (EntryMarker::Entry(entry), tick)))
+                .unwrap();
+        }
+
+        let marker = solana_entry::block_component::VersionedBlockMarker::new_block_header(
+            solana_entry::block_component::BlockHeaderV1 {
+                parent_slot: 0,
+                parent_block_id: Hash::default(),
+            },
+        );
+        s.send((bank1.clone(), (EntryMarker::Marker(marker), max_tick)))
+            .unwrap();
+
+        let mut carryover = None;
+        let result =
+            recv_slot_entries(&r, &mut carryover, &mut ProcessShredsStats::default()).unwrap();
+
+        assert!(matches!(result.component, BlockComponent::EntryBatch(ref e) if e.len() == 2));
+        assert_eq!(result.last_tick_height, 2);
+        assert!(carryover.is_some());
+
+        let result =
+            recv_slot_entries(&r, &mut carryover, &mut ProcessShredsStats::default()).unwrap();
+        assert!(matches!(result.component, BlockComponent::BlockMarker(_)));
+        assert_eq!(result.last_tick_height, max_tick);
     }
 
     #[test]
