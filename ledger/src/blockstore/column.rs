@@ -995,8 +995,7 @@ mod tests {
     };
 
     #[test]
-    fn test_slot_meta_column_deserialize_v2() {
-        // V2 data (current SlotMeta format) is the primary deserialization path.
+    fn test_slot_meta_column_roundtrip() {
         let meta = blockstore_meta::SlotMeta {
             slot: 42,
             consumed: 10,
@@ -1008,14 +1007,16 @@ mod tests {
             connected_flags: ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED,
             completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
         };
-        let v2_bytes = bincode::serialize(&meta).unwrap();
 
-        let deserialized = <columns::SlotMeta as TypedColumn>::deserialize(&v2_bytes).unwrap();
+        let bytes = <columns::SlotMeta as TypedColumn>::serialize(&meta).unwrap();
+        let deserialized = <columns::SlotMeta as TypedColumn>::deserialize(&bytes).unwrap();
         assert_eq!(meta, deserialized);
     }
 
     #[test]
-    fn test_slot_meta_column_deserialize_v3_fallback() {
+    fn test_slot_meta_column_deserialize_v2_from_v3_bytes() {
+        use bincode::Options;
+
         let meta_v3 = SlotMetaV3 {
             slot: 42,
             consumed: 10,
@@ -1032,6 +1033,15 @@ mod tests {
         let v3_bytes = bincode::serialize(&meta_v3).unwrap();
 
         let expected = blockstore_meta::SlotMeta::from(meta_v3);
+
+        let config = bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .reject_trailing_bytes();
+        assert!(
+            config
+                .deserialize::<blockstore_meta::SlotMeta>(&v3_bytes)
+                .is_err()
+        );
 
         let deserialized = <columns::SlotMeta as TypedColumn>::deserialize(&v3_bytes).unwrap();
         assert_eq!(expected, deserialized);
