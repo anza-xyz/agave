@@ -35,14 +35,14 @@ pub struct XdpConfig {
     pub interface: Option<String>,
     pub cpus: Vec<usize>,
     pub zero_copy: bool,
-    // The capacity of the channel that sits between retransmit stage and each XDP thread that
-    // enqueues packets to the NIC.
-    pub rtx_channel_cap: usize,
+    // The capacity of the channel that sits between senders and each XDP thread that enqueues
+    // packets to the NIC.
+    pub tx_channel_cap: usize,
 }
 
 impl XdpConfig {
     // A nice round number
-    const DEFAULT_RTX_CHANNEL_CAP: usize = 1_000_000;
+    const DEFAULT_TX_CHANNEL_CAP: usize = 1_000_000;
 }
 
 impl Default for XdpConfig {
@@ -51,7 +51,7 @@ impl Default for XdpConfig {
             interface: None,
             cpus: vec![],
             zero_copy: false,
-            rtx_channel_cap: Self::DEFAULT_RTX_CHANNEL_CAP,
+            tx_channel_cap: Self::DEFAULT_TX_CHANNEL_CAP,
         }
     }
 }
@@ -62,7 +62,7 @@ impl XdpConfig {
             interface: interface.map(|s| s.into()),
             cpus,
             zero_copy,
-            rtx_channel_cap: XdpConfig::DEFAULT_RTX_CHANNEL_CAP,
+            tx_channel_cap: XdpConfig::DEFAULT_TX_CHANNEL_CAP,
         }
     }
 }
@@ -173,7 +173,7 @@ pub struct TransmitterBuilder {}
 #[cfg(target_os = "linux")]
 pub struct TransmitterBuilder {
     tx_loops: Vec<TxLoop<OwnedUmem<PageAlignedMemory>>>,
-    rtx_channel_cap: usize,
+    tx_channel_cap: usize,
     maybe_ebpf: Option<Ebpf>,
     atomic_router: Arc<ArcSwap<Router>>,
     route_monitor_handle: thread::JoinHandle<()>,
@@ -198,7 +198,7 @@ impl TransmitterBuilder {
             interface: maybe_interface,
             cpus,
             zero_copy,
-            rtx_channel_cap,
+            tx_channel_cap,
         } = config;
 
         let dev = Arc::new(if let Some(interface) = maybe_interface {
@@ -292,7 +292,7 @@ impl TransmitterBuilder {
 
         Ok(Self {
             tx_loops,
-            rtx_channel_cap,
+            tx_channel_cap,
             maybe_ebpf,
             atomic_router,
             route_monitor_handle,
@@ -313,7 +313,7 @@ impl TransmitterBuilder {
 
         let Self {
             tx_loops,
-            rtx_channel_cap,
+            tx_channel_cap,
             maybe_ebpf,
             atomic_router,
             route_monitor_handle,
@@ -347,7 +347,7 @@ impl TransmitterBuilder {
 
         let mut senders = vec![];
         for (i, tx_loop) in tx_loops.into_iter().enumerate() {
-            let (sender, receiver) = crossbeam_channel::bounded(rtx_channel_cap);
+            let (sender, receiver) = crossbeam_channel::bounded(tx_channel_cap);
             let drop_sender = drop_sender.clone();
             let atomic_router = Arc::clone(&atomic_router);
             threads.push(
