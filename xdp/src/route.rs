@@ -6,7 +6,7 @@ use {
             netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes,
         },
     },
-    libc::AF_INET,
+    libc::{AF_INET, RT_TABLE_DEFAULT, RT_TABLE_LOCAL, RT_TABLE_MAIN},
     log::warn,
     std::{
         cmp::Ordering,
@@ -45,6 +45,36 @@ pub struct NextHop {
     pub if_index: u32,
     pub preferred_src_ip: Option<Ipv4Addr>,
     pub gre: Option<GreRouteInfo>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteTable {
+    Default,
+    Local,
+    Main,
+    Other(u32),
+}
+
+impl From<RouteTable> for u32 {
+    fn from(table: RouteTable) -> Self {
+        match table {
+            RouteTable::Default => u32::from(RT_TABLE_DEFAULT),
+            RouteTable::Local => u32::from(RT_TABLE_LOCAL),
+            RouteTable::Main => u32::from(RT_TABLE_MAIN),
+            RouteTable::Other(table) => table,
+        }
+    }
+}
+
+impl From<u32> for RouteTable {
+    fn from(table: u32) -> Self {
+        match table {
+            table if table == u32::from(RT_TABLE_DEFAULT) => Self::Default,
+            table if table == u32::from(RT_TABLE_LOCAL) => Self::Local,
+            table if table == u32::from(RT_TABLE_MAIN) => Self::Main,
+            table => Self::Other(table),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,22 +244,22 @@ impl Neighbors {
 
 #[derive(Clone)]
 pub struct Routes {
+    pub(crate) table: RouteTable,
     routes: Vec<Route<Ipv4Addr>>,
 }
 
 impl Routes {
-    pub fn new(mut routes: Vec<Route<Ipv4Addr>>) -> Self {
+    pub fn new(table: RouteTable, mut routes: Vec<Route<Ipv4Addr>>) -> Self {
         routes.sort_by(Self::compare_routes);
-        Self { routes }
+        Self { table, routes }
     }
 
-    pub fn from_netlink() -> Result<Self, io::Error> {
-        Ok(Self::new(
-            netlink_get_routes(AF_INET as u8)?
-                .into_iter()
-                .filter_map(|entry| Route::try_from(entry).ok())
-                .collect(),
-        ))
+    pub fn from_netlink(table: RouteTable) -> Result<Self, io::Error> {
+        let routes = netlink_get_routes(AF_INET as u8, u32::from(table))?
+            .into_iter()
+            .filter_map(|entry| Route::try_from(entry).ok())
+            .collect();
+        Ok(Self::new(table, routes))
     }
 
     fn compare_routes(left: &Route<Ipv4Addr>, right: &Route<Ipv4Addr>) -> Ordering {
@@ -252,6 +282,13 @@ impl Routes {
     }
 
     fn upsert(&mut self, new_route: RouteEntry) -> bool {
+        if !new_route
+            .table
+            .is_some_and(|table| self.table == RouteTable::from(table))
+        {
+            return false;
+        }
+
         let Ok(new_route) = Route::try_from(new_route) else {
             return false;
         };
@@ -276,6 +313,13 @@ impl Routes {
     }
 
     fn remove(&mut self, new_route: RouteEntry) -> bool {
+        if !new_route
+            .table
+            .is_some_and(|table| self.table == RouteTable::from(table))
+        {
+            return false;
+        }
+
         let Ok(new_route) = Route::try_from(new_route) else {
             return false;
         };
@@ -291,7 +335,7 @@ impl Routes {
 
 #[derive(Clone)]
 pub struct RoutingTables {
-    routes: Routes,
+    pub(crate) routes: Routes,
     neighbors: Neighbors,
     interfaces: Interfaces,
 }
@@ -305,9 +349,9 @@ impl RoutingTables {
         }
     }
 
-    pub fn from_netlink() -> Result<Self, io::Error> {
+    pub fn from_netlink(table: RouteTable) -> Result<Self, io::Error> {
         Ok(Self::new(
-            Routes::from_netlink()?,
+            Routes::from_netlink(table)?,
             Neighbors::from_netlink()?,
             Interfaces::from_netlink()?,
         ))
@@ -352,7 +396,7 @@ pub struct Router {
 
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
-        Self::from_tables(RoutingTables::from_netlink()?)
+        Self::from_tables(RoutingTables::from_netlink(RouteTable::Main)?)
     }
 
     pub fn from_tables(tables: RoutingTables) -> Result<Self, io::Error> {
@@ -548,6 +592,18 @@ mod tests {
         gateway: Option<Ipv4Addr>,
         out_if_index: u32,
         dst_len: u8,
+        table: u32,
+    ) -> RouteEntry {
+        test_route_entry_with_priority(destination, gateway, out_if_index, dst_len, table, None)
+    }
+
+    fn test_route_entry_with_priority(
+        destination: Option<Ipv4Addr>,
+        gateway: Option<Ipv4Addr>,
+        out_if_index: u32,
+        dst_len: u8,
+        table: u32,
+        priority: Option<u32>,
     ) -> RouteEntry {
         RouteEntry {
             destination: destination.map(IpAddr::V4),
@@ -555,8 +611,8 @@ mod tests {
             pref_src: None,
             out_if_index: Some(out_if_index as i32),
             in_if_index: None,
-            priority: None,
-            table: None,
+            priority,
+            table: Some(table),
             protocol: 0,
             scope: 0,
             type_: 0,
@@ -572,7 +628,7 @@ mod tests {
         interfaces: Vec<InterfaceInfo>,
     ) -> Router {
         let tables = RoutingTables::new(
-            Routes::new(routes),
+            Routes::new(RouteTable::Main, routes),
             Neighbors::new(neighbors),
             Interfaces::new(interfaces),
         );
@@ -581,10 +637,43 @@ mod tests {
 
     fn empty_tables() -> RoutingTables {
         RoutingTables::new(
-            Routes::new(Vec::new()),
+            Routes::new(RouteTable::Main, Vec::new()),
             Neighbors::new(Vec::new()),
             Interfaces::new(Vec::new()),
         )
+    }
+
+    fn dual_default_tables(primary_gateway: Ipv4Addr, backup_gateway: Ipv4Addr) -> RoutingTables {
+        let mut tables = empty_tables();
+        assert!(tables.upsert_neighbor(NeighborEntry {
+            destination: Some(IpAddr::V4(primary_gateway)),
+            lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
+            ifindex: 1,
+            state: NUD_REACHABLE,
+        }));
+        assert!(tables.upsert_neighbor(NeighborEntry {
+            destination: Some(IpAddr::V4(backup_gateway)),
+            lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x02])),
+            ifindex: 2,
+            state: NUD_REACHABLE,
+        }));
+        assert!(tables.upsert_route(test_route_entry_with_priority(
+            None,
+            Some(backup_gateway),
+            2,
+            0,
+            u32::from(RouteTable::Main),
+            Some(200),
+        )));
+        assert!(tables.upsert_route(test_route_entry_with_priority(
+            None,
+            Some(primary_gateway),
+            1,
+            0,
+            u32::from(RouteTable::Main),
+            Some(100),
+        )));
+        tables
     }
 
     #[test]
@@ -610,7 +699,7 @@ mod tests {
             out_if_index: Some(1),
             in_if_index: None,
             priority: None,
-            table: None,
+            table: Some(u32::from(RouteTable::Main)),
             protocol: 0,
             scope: 0,
             type_: 0,
@@ -711,6 +800,77 @@ mod tests {
                 .all(|i| i.if_index != test_if_index)
         );
         assert_eq!(tables.interfaces.iter().len(), before_interface_len);
+    }
+
+    #[test]
+    fn test_routes_ignore_other_table_updates() {
+        let test_dst = Ipv4Addr::new(10, 0, 0, 1);
+        let main_gateway = Ipv4Addr::new(10, 0, 0, 2);
+        let other_gateway = Ipv4Addr::new(10, 0, 0, 3);
+        let main_table = u32::from(RouteTable::Main);
+
+        let mut tables = empty_tables();
+        assert!(tables.upsert_neighbor(NeighborEntry {
+            destination: Some(IpAddr::V4(main_gateway)),
+            lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
+            ifindex: 1,
+            state: NUD_REACHABLE,
+        }));
+        assert!(tables.upsert_route(test_route_entry(
+            Some(test_dst),
+            Some(main_gateway),
+            1,
+            32,
+            main_table,
+        )));
+
+        assert!(!tables.upsert_route(test_route_entry(
+            Some(test_dst),
+            Some(other_gateway),
+            2,
+            32,
+            100,
+        )));
+
+        let router = Router::from_tables(tables).unwrap();
+        let next_hop = router.route_v4(test_dst).unwrap();
+        assert_eq!(next_hop.if_index, 1);
+        assert_eq!(next_hop.ip_addr, IpAddr::V4(main_gateway));
+    }
+
+    #[test]
+    fn test_routes_ignore_other_table_deletes() {
+        let test_dst = Ipv4Addr::new(10, 0, 0, 1);
+        let main_gateway = Ipv4Addr::new(10, 0, 0, 2);
+        let main_table = u32::from(RouteTable::Main);
+
+        let mut tables = empty_tables();
+        assert!(tables.upsert_neighbor(NeighborEntry {
+            destination: Some(IpAddr::V4(main_gateway)),
+            lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
+            ifindex: 1,
+            state: NUD_REACHABLE,
+        }));
+        assert!(tables.upsert_route(test_route_entry(
+            Some(test_dst),
+            Some(main_gateway),
+            1,
+            32,
+            main_table,
+        )));
+
+        assert!(!tables.remove_route(test_route_entry(
+            Some(test_dst),
+            Some(Ipv4Addr::new(10, 0, 0, 3)),
+            2,
+            32,
+            100,
+        )));
+
+        let router = Router::from_tables(tables).unwrap();
+        let next_hop = router.route_v4(test_dst).unwrap();
+        assert_eq!(next_hop.if_index, 1);
+        assert_eq!(next_hop.ip_addr, IpAddr::V4(main_gateway));
     }
 
     #[test]
@@ -869,7 +1029,14 @@ mod tests {
             state: NUD_REACHABLE,
         }));
 
-        assert!(tables.upsert_route(test_route_entry(None, Some(default_gateway), 1, 0,)));
+        assert!(tables.upsert_route(test_route_entry(
+            None,
+            Some(default_gateway),
+            1,
+            0,
+            u32::from(RouteTable::Main),
+        )));
+
         assert!(tables.upsert_route(RouteEntry {
             destination: Some(IpAddr::V4(blocked_dst)),
             gateway: None,
@@ -877,7 +1044,7 @@ mod tests {
             out_if_index: None, // missing output interface should block this route
             in_if_index: None,
             priority: None,
-            table: None,
+            table: Some(u32::from(RouteTable::Main)),
             protocol: 0,
             scope: 0,
             type_: 0,
@@ -891,5 +1058,49 @@ mod tests {
             router.route_v4(blocked_dst),
             Err(RouteError::MissingOutputInterface)
         ));
+    }
+
+    #[test]
+    fn test_same_prefix_diff_priority() {
+        let primary = Ipv4Addr::new(10, 0, 0, 1);
+        let backup = Ipv4Addr::new(10, 0, 0, 2);
+        let tables = dual_default_tables(primary, backup);
+
+        let router = Router::from_tables(tables.clone()).unwrap();
+        let next_hop = router.default().unwrap();
+        assert_eq!(next_hop.if_index, 1);
+        assert_eq!(next_hop.ip_addr, IpAddr::V4(primary));
+
+        {
+            let mut tables = tables.clone();
+            assert!(tables.remove_route(test_route_entry_with_priority(
+                None,
+                Some(backup),
+                2,
+                0,
+                u32::from(RouteTable::Main),
+                Some(200),
+            )));
+
+            let router = Router::from_tables(tables).unwrap();
+            let next_hop = router.default().unwrap();
+            assert_eq!(next_hop.if_index, 1);
+            assert_eq!(next_hop.ip_addr, IpAddr::V4(primary));
+        }
+
+        let mut tables = tables;
+        assert!(tables.remove_route(test_route_entry_with_priority(
+            None,
+            Some(primary),
+            1,
+            0,
+            u32::from(RouteTable::Main),
+            Some(100),
+        )));
+
+        let router = Router::from_tables(tables).unwrap();
+        let next_hop = router.default().unwrap();
+        assert_eq!(next_hop.if_index, 2);
+        assert_eq!(next_hop.ip_addr, IpAddr::V4(backup));
     }
 }

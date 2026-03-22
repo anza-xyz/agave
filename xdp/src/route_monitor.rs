@@ -165,7 +165,8 @@ impl RouteMonitorState {
     /// Resets the route monitor state by creating a new router and reinitializing
     /// the netlink socket. Used when errors occur to recover to a clean state
     fn reset(&mut self, atomic_router: &Arc<ArcSwap<Router>>) {
-        let tables = RoutingTables::from_netlink().expect("error creating RoutingTables");
+        let tables = RoutingTables::from_netlink(self.tables.routes.table)
+            .expect("error creating RoutingTables");
         let router = Router::from_tables(tables.clone()).expect("error creating Router");
         atomic_router.store(Arc::new(router));
         *self = Self::new(tables);

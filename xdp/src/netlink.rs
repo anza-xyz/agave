@@ -4,10 +4,10 @@ use {
     libc::{
         AF_INET, AF_INET6, AF_NETLINK, IFLA_INFO_DATA, IFLA_INFO_KIND, IFLA_LINKINFO, NDA_DST,
         NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE, NLA_ALIGNTO, NLA_TYPE_MASK, NLM_F_DUMP,
-        NLM_F_MULTI, NLM_F_REQUEST, NLMSG_DONE, NLMSG_ERROR, RT_TABLE_MAIN, RTA_DST, RTA_GATEWAY,
-        RTA_IIF, RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETLINK, RTM_GETNEIGH,
-        RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW, SOL_NETLINK,
-        SOL_SOCKET, nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket,
+        NLM_F_MULTI, NLM_F_REQUEST, NLMSG_DONE, NLMSG_ERROR, RTA_DST, RTA_GATEWAY, RTA_IIF,
+        RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETLINK, RTM_GETNEIGH, RTM_GETROUTE,
+        RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW, SOL_NETLINK, SOL_SOCKET,
+        nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket,
     },
     std::{
         collections::HashMap,
@@ -651,15 +651,16 @@ fn parse_ip_address(data: &[u8], family: u8) -> Option<IpAddr> {
     }
 }
 
-pub fn netlink_get_routes(family: u8) -> Result<Vec<RouteEntry>, io::Error> {
+pub fn netlink_get_routes(family: u8, table: u32) -> Result<Vec<RouteEntry>, io::Error> {
     let sock = NetlinkSocket::open()?;
 
     // Safety: RouteRequest is POD
     let mut req = unsafe { mem::zeroed::<RouteRequest>() };
 
     let nlmsg_len = mem::size_of::<nlmsghdr>() + mem::size_of::<rtmsg>();
+    let table_attr_len = align_to(NLA_HDR_LEN + mem::size_of::<u32>(), NLA_ALIGNTO as usize);
     req.header = nlmsghdr {
-        nlmsg_len: nlmsg_len as u32,
+        nlmsg_len: (nlmsg_len + table_attr_len) as u32,
         nlmsg_flags: (NLM_F_REQUEST | NLM_F_DUMP) as u16,
         nlmsg_type: RTM_GETROUTE,
         nlmsg_pid: 0,
@@ -667,9 +668,10 @@ pub fn netlink_get_routes(family: u8) -> Result<Vec<RouteEntry>, io::Error> {
     };
 
     req.rtm.rtm_family = family;
-    req.rtm.rtm_table = RT_TABLE_MAIN;
 
-    sock.send(&bytes_of(&req)[..req.header.nlmsg_len as usize])?;
+    let mut req_buf = bytes_of(&req)[..nlmsg_len].to_vec();
+    push_nlattr(&mut req_buf, RTA_TABLE, &table);
+    sock.send(&req_buf)?;
 
     let mut routes = Vec::new();
 
@@ -683,7 +685,12 @@ pub fn netlink_get_routes(family: u8) -> Result<Vec<RouteEntry>, io::Error> {
         }
 
         if let Some(route) = parse_rtm_newroute(&msg) {
-            routes.push(route);
+            // for compatibility reasons, it turns out the kernel ignores the rtm_table filter in
+            // the request unless NETLINK_GET_STRICT_CHK is set. Filter manually for now until we
+            // add support for strict checking and do enough testing.
+            if route.table == Some(table) {
+                routes.push(route);
+            }
         }
     }
 
@@ -705,7 +712,7 @@ pub fn parse_rtm_newroute(msg: &NetlinkMessage) -> Option<RouteEntry> {
         out_if_index: None,
         in_if_index: None,
         priority: None,
-        table: None,
+        table: Some(u32::from(rt_msg.rtm_table)),
         protocol: rt_msg.rtm_protocol,
         scope: rt_msg.rtm_scope,
         type_: rt_msg.rtm_type,
@@ -741,4 +748,16 @@ pub fn parse_rtm_newroute(msg: &NetlinkMessage) -> Option<RouteEntry> {
         route.pref_src = parse_ip_address(prefsrc_attr.data, rt_msg.rtm_family);
     }
     Some(route)
+}
+
+fn push_nlattr<T>(buf: &mut Vec<u8>, attr_type: u16, value: &T) {
+    let attr_len = NLA_HDR_LEN + mem::size_of::<T>();
+    let aligned_len = align_to(attr_len, NLA_ALIGNTO as usize);
+    let attr = nlattr {
+        nla_len: attr_len as u16,
+        nla_type: attr_type,
+    };
+    buf.extend_from_slice(bytes_of(&attr));
+    buf.extend_from_slice(bytes_of(value));
+    buf.resize(buf.len() + (aligned_len - attr_len), 0);
 }

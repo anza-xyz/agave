@@ -3,7 +3,7 @@ use {
     crate::{
         device::{NetworkDevice, QueueId},
         load_xdp_program,
-        route::{Router, RoutingTables},
+        route::{RouteTable, Router, RoutingTables},
         route_monitor::RouteMonitor,
         set_cpu_affinity,
         tx_loop::TxPacket,
@@ -269,7 +269,7 @@ impl TransmitterBuilder {
             .map(|tx_loop_builder| tx_loop_builder.build())
             .collect::<Vec<_>>();
 
-        let tables_result = RoutingTables::from_netlink();
+        let tables_result = RoutingTables::from_netlink(RouteTable::Main);
 
         caps::drop(None, CapSet::Effective, CAP_NET_RAW).expect("drop CAP_NET_RAW capability");
         caps::drop(None, CapSet::Effective, CAP_NET_ADMIN).expect("drop CAP_NET_ADMIN capability");
