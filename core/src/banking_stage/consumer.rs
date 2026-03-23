@@ -85,8 +85,6 @@ pub struct ExecuteAndCommitTransactionsOutput {
     pub commit_transactions_result: Result<Vec<CommitTransactionDetails>, PohRecorderError>,
     pub(crate) execute_and_commit_timings: LeaderExecuteAndCommitTimings,
     pub(crate) error_counters: TransactionErrorMetrics,
-    pub(crate) min_prioritization_fees: u64,
-    pub(crate) max_prioritization_fees: u64,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -266,20 +264,6 @@ impl Consumer {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
         let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
 
-        let min_max = batch
-            .sanitized_transactions()
-            .iter()
-            .filter_map(|transaction| {
-                transaction
-                    .compute_budget_instruction_details()
-                    .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)
-                    .ok()
-                    .map(|limits| limits.compute_unit_price)
-            })
-            .minmax();
-        let (min_prioritization_fees, max_prioritization_fees) =
-            min_max.into_option().unwrap_or_default();
-
         let mut error_counters = TransactionErrorMetrics::default();
         let mut retryable_transaction_indexes: Vec<_> = batch
             .lock_results()
@@ -440,8 +424,6 @@ impl Consumer {
                 commit_transactions_result: Err(recorder_err),
                 execute_and_commit_timings,
                 error_counters,
-                min_prioritization_fees,
-                max_prioritization_fees,
             };
         }
 
@@ -496,8 +478,6 @@ impl Consumer {
             commit_transactions_result: Ok(commit_transaction_statuses),
             execute_and_commit_timings,
             error_counters,
-            min_prioritization_fees,
-            max_prioritization_fees,
         }
     }
 

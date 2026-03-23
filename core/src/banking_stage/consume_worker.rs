@@ -1658,8 +1658,6 @@ impl ConsumeWorkerMetrics {
             retryable_transaction_indexes,
             execute_and_commit_timings,
             error_counters,
-            min_prioritization_fees,
-            max_prioritization_fees,
             ..
         }: &ExecuteAndCommitTransactionsOutput,
     ) {
@@ -1681,20 +1679,6 @@ impl ConsumeWorkerMetrics {
         self.count_metrics
             .retryable_transaction_count
             .fetch_add(retryable_transaction_indexes.len(), Ordering::Relaxed);
-        let min_prioritization_fees = self
-            .count_metrics
-            .min_prioritization_fees
-            .fetch_min(*min_prioritization_fees, Ordering::Relaxed);
-        let max_prioritization_fees = self
-            .count_metrics
-            .max_prioritization_fees
-            .fetch_max(*max_prioritization_fees, Ordering::Relaxed);
-        self.count_metrics
-            .min_prioritization_fees
-            .swap(min_prioritization_fees, Ordering::Relaxed);
-        self.count_metrics
-            .max_prioritization_fees
-            .swap(max_prioritization_fees, Ordering::Relaxed);
         self.update_on_execute_and_commit_timings(execute_and_commit_timings);
         self.update_on_error_counters(error_counters);
     }
