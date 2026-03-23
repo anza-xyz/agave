@@ -7101,6 +7101,7 @@ fn test_update_clock_timestamp() {
     );
 
     // Timestamp cannot go backward from ancestor Bank to child
+    let parent_timestamp = bank.clock().unix_timestamp;
     bank = new_from_parent(Arc::new(bank));
     update_vote_account_timestamp(
         BlockTimestamp {
@@ -7111,10 +7112,7 @@ fn test_update_clock_timestamp() {
         &voting_keypair.pubkey(),
     );
     bank.update_clock(None);
-    assert_eq!(
-        bank.clock().unix_timestamp,
-        bank.unix_timestamp_from_genesis()
-    );
+    assert_eq!(bank.clock().unix_timestamp, parent_timestamp);
 }
 
 fn poh_estimate_offset(bank: &Bank) -> Duration {
