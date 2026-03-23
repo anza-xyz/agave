@@ -56,20 +56,6 @@ pub struct Node {
 }
 
 impl Node {
-    /// Returns the UDP config for broadcast/retransmit egress sockets.
-    fn retransmit_and_broadcast_udp_config(socket_configs: &SocketConfigs) -> SocketConfig {
-        if cfg!(target_os = "linux") {
-            // Agave does not currently support multicast.
-            // This sets a socket option for these egress sockets only.
-            const MULTICAST_TTL: u32 = 64;
-            socket_configs
-                .primarily_write_udp
-                .multicast_ttl(MULTICAST_TTL)
-        } else {
-            socket_configs.primarily_write_udp
-        }
-    }
-
     /// Creates socket configurations for different socket usage patterns.
     ///
     /// In Agave, many sockets are primarily read heavy or write heavy.
@@ -160,8 +146,6 @@ impl Node {
         }
 
         let socket_configs = Self::create_socket_configs();
-        let retransmit_broadcast_udp_config =
-            Self::retransmit_and_broadcast_udp_config(&socket_configs);
 
         let (tvu_port, mut tvu_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,
@@ -267,7 +251,7 @@ impl Node {
         let (tvu_retransmit_port, mut retransmit_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,
             port_range,
-            retransmit_broadcast_udp_config,
+            socket_configs.primarily_write_udp,
             num_tvu_retransmit_sockets.get(),
         )
         .expect("tvu retransmit multi_bind");
@@ -277,7 +261,7 @@ impl Node {
                 &bind_ip_addrs,
                 tvu_retransmit_port,
                 num_tvu_retransmit_sockets.get(),
-                retransmit_broadcast_udp_config,
+                socket_configs.primarily_write_udp,
             )
             .expect("Secondary bind TVU retransmit"),
         );
@@ -299,7 +283,7 @@ impl Node {
         let (broadcast_port, mut broadcast) = multi_bind_in_range_with_config(
             bind_ip_addr,
             port_range,
-            retransmit_broadcast_udp_config,
+            socket_configs.primarily_write_udp,
             4,
         )
         .expect("broadcast multi_bind");
@@ -309,7 +293,7 @@ impl Node {
                 &bind_ip_addrs,
                 broadcast_port,
                 4,
-                retransmit_broadcast_udp_config,
+                socket_configs.primarily_write_udp,
             )
             .expect("Secondary bind broadcast"),
         );
