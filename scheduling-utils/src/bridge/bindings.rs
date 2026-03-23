@@ -113,14 +113,14 @@ where
     pub fn insert_transaction(
         &mut self,
         tx: &[u8],
-    ) -> Result<TransactionKey, TransactionViewError> {
+    ) -> Result<TransactionKey, TransactionInsertError> {
         // TODO: Move to rts_alloc::MAX_ALLOC_SIZE once exposed.
         assert!(tx.len() <= 4096);
 
         let ptr = self
             .allocator
             .allocate(tx.len().try_into().unwrap())
-            .unwrap();
+            .ok_or(TransactionInsertError::Allocate)?;
         // SAFETY:
         // - We own this pointer exclusively.
         // - The allocated region is at least `tx.len()` bytes.
@@ -152,7 +152,7 @@ where
                     self.allocator.free(ptr);
                 }
 
-                Err(err)
+                Err(TransactionInsertError::ParseSanitize(err))
             }
         }
     }
@@ -570,7 +570,7 @@ pub struct ScheduleBatch<T> {
     pub flags: u16,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum ScheduleError {
     #[error("Queue full")]
     Queue,
@@ -675,4 +675,12 @@ impl TransactionState {
 pub enum TxDecision {
     Keep,
     Drop,
+}
+
+#[derive(Debug, PartialEq, Eq, Error)]
+pub enum TransactionInsertError {
+    #[error("Failed to parse or sanitize; err={0:?}")]
+    ParseSanitize(TransactionViewError),
+    #[error("Failed to allocate")]
+    Allocate,
 }
