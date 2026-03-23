@@ -801,7 +801,6 @@ impl TypedColumn for columns::MerkleRootMeta {
     type Type = blockstore_meta::MerkleRootMeta;
 }
 
-
 #[cfg(test)]
 mod tests {
     use {
