@@ -26,7 +26,7 @@ use {
     log::*,
     serde::Serialize,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut},
-    solana_accounts_db::accounts_index::{ScanConfig, ScanOrder},
+    solana_accounts_db::accounts_index::ScanConfig,
     solana_clap_utils::{
         input_parsers::{cluster_type_of, pubkey_of, pubkeys_of},
         input_validators::{
@@ -2258,10 +2258,7 @@ fn main() {
 
                     if remove_stake_accounts {
                         for (address, mut account) in bank
-                            .get_program_accounts(
-                                &stake::program::id(),
-                                &ScanConfig::new(ScanOrder::Sorted),
-                            )
+                            .get_program_accounts(&stake::program::id(), &ScanConfig::default())
                             .unwrap()
                             .into_iter()
                         {
@@ -2285,10 +2282,7 @@ fn main() {
 
                     if !vote_accounts_to_destake.is_empty() {
                         for (address, mut account) in bank
-                            .get_program_accounts(
-                                &stake::program::id(),
-                                &ScanConfig::new(ScanOrder::Sorted),
-                            )
+                            .get_program_accounts(&stake::program::id(), &ScanConfig::default())
                             .unwrap()
                             .into_iter()
                         {
@@ -2370,7 +2364,7 @@ fn main() {
                         for (address, mut account) in bank
                             .get_program_accounts(
                                 &solana_vote_program::id(),
-                                &ScanConfig::new(ScanOrder::Sorted),
+                                &ScanConfig::default(),
                             )
                             .unwrap()
                             .into_iter()
