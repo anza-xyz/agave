@@ -308,7 +308,7 @@ EOF
 }
 
 pull_or_push_steps() {
-  command_step sanity "ci/test-sanity.sh" 5 default
+  command_step sanity "ci/docker-run-default-image.sh ci/test-sanity.sh" 5 default
   wait_step
 
   # Check for any .sh file changes
