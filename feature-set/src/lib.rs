@@ -841,7 +841,7 @@ pub mod remaining_compute_units_syscall_enabled {
 }
 
 pub mod enable_loader_v4 {
-    solana_pubkey::declare_id!("2aQJYqER2aKyb3cZw22v4SL2xMX7vwXBRWfvS4pTrtED");
+    solana_pubkey::declare_id!("LoaderV4Wi11BeDe1eted1111111111111111111111");
 }
 
 pub mod require_rent_exempt_split_destination {
