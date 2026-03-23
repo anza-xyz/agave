@@ -18,7 +18,6 @@ agave-feature-set = { workspace = true, features = ["agave-unstable-api"] }
 agave-scheduler-bindings = { workspace = true }
 agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
-wincode = { workspace = true, optional = true }
 rts-alloc = { workspace = true }
 shaq = { workspace = true }
 slotmap = { workspace = true }
@@ -26,6 +25,7 @@ solana-fee = { workspace = true, features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true }
 solana-transaction = { workspace = true, optional = true, features = ["serde"] }
 solana-transaction-error = { workspace = true }
+wincode = { workspace = true, optional = true }
 
 [target."cfg(unix)".dependencies]
 agave-transaction-view = { workspace = true }
