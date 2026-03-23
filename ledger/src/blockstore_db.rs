@@ -3,8 +3,8 @@ use {
     crate::{
         blockstore::{
             column::{
-                Column, ColumnIndexDeprecation, ColumnName, DEPRECATED_PROGRAM_COSTS_COLUMN_NAME,
-                ProtobufColumn, TypedColumn, columns,
+                Column, ColumnName, DEPRECATED_PROGRAM_COSTS_COLUMN_NAME,
+                DEPRECATED_TRANSACTION_STATUS_INDEX_NAME, ProtobufColumn, TypedColumn, columns,
             },
             error::{BlockstoreError, Result},
         },
@@ -38,7 +38,7 @@ use {
         path::{Path, PathBuf},
         sync::{
             Arc,
-            atomic::{AtomicBool, AtomicU64, Ordering},
+            atomic::{AtomicU64, Ordering},
         },
     },
 };
@@ -64,7 +64,6 @@ pub enum IteratorMode<Index> {
 #[derive(Default, Clone, Debug)]
 struct OldestSlot {
     slot: Arc<AtomicU64>,
-    clean_slot_0: Arc<AtomicBool>,
 }
 
 impl OldestSlot {
@@ -83,14 +82,6 @@ impl OldestSlot {
         // also eventual propagation (very Relaxed) load is Ok, because compaction by nature doesn't
         // require strictly synchronized semantics in this regard
         self.slot.load(Ordering::Relaxed)
-    }
-
-    pub(crate) fn set_clean_slot_0(&self, clean_slot_0: bool) {
-        self.clean_slot_0.store(clean_slot_0, Ordering::Relaxed);
-    }
-
-    pub(crate) fn get_clean_slot_0(&self) -> bool {
-        self.clean_slot_0.load(Ordering::Relaxed)
     }
 }
 
@@ -143,6 +134,13 @@ impl Rocks {
         if db.cf_handle(DEPRECATED_PROGRAM_COSTS_COLUMN_NAME).is_some() {
             db.drop_cf(DEPRECATED_PROGRAM_COSTS_COLUMN_NAME)?;
         }
+        // Delete the now unused transaction status index column if it is present
+        if db
+            .cf_handle(DEPRECATED_TRANSACTION_STATUS_INDEX_NAME)
+            .is_some()
+        {
+            db.drop_cf(DEPRECATED_TRANSACTION_STATUS_INDEX_NAME)?;
+        }
 
         let rocks = Rocks {
             db,
@@ -186,7 +184,6 @@ impl Rocks {
             new_cf_descriptor::<columns::TransactionStatus>(options, oldest_slot),
             new_cf_descriptor::<columns::AddressSignatures>(options, oldest_slot),
             new_cf_descriptor::<columns::TransactionMemos>(options, oldest_slot),
-            new_cf_descriptor::<columns::TransactionStatusIndex>(options, oldest_slot),
             new_cf_descriptor::<columns::Rewards>(options, oldest_slot),
             new_cf_descriptor::<columns::Blocktime>(options, oldest_slot),
             new_cf_descriptor::<columns::PerfSamples>(options, oldest_slot),
@@ -237,7 +234,7 @@ impl Rocks {
         cf_descriptors
     }
 
-    const fn columns() -> [&'static str; 20] {
+    const fn columns() -> [&'static str; 19] {
         [
             columns::ErasureMeta::NAME,
             columns::DeadSlots::NAME,
@@ -252,7 +249,6 @@ impl Rocks {
             columns::TransactionStatus::NAME,
             columns::AddressSignatures::NAME,
             columns::TransactionMemos::NAME,
-            columns::TransactionStatusIndex::NAME,
             columns::Rewards::NAME,
             columns::Blocktime::NAME,
             columns::PerfSamples::NAME,
@@ -454,10 +450,6 @@ impl Rocks {
 
     pub(crate) fn set_oldest_slot(&self, oldest_slot: Slot) {
         self.oldest_slot.set(oldest_slot);
-    }
-
-    pub(crate) fn set_clean_slot_0(&self, clean_slot_0: bool) {
-        self.oldest_slot.set_clean_slot_0(clean_slot_0);
     }
 }
 
@@ -967,72 +959,10 @@ where
     }
 }
 
-impl<C> LedgerColumn<C>
-where
-    C: ColumnIndexDeprecation + ColumnName,
-{
-    pub(crate) fn iter_current_index_filtered(
-        &self,
-        iterator_mode: IteratorMode<C::Index>,
-    ) -> Result<impl Iterator<Item = (C::Index, Box<[u8]>)> + '_> {
-        let start_key: <C as Column>::Key;
-        let iterator_mode = match iterator_mode {
-            IteratorMode::Start => RocksIteratorMode::Start,
-            IteratorMode::End => RocksIteratorMode::End,
-            IteratorMode::From(start, direction) => {
-                start_key = <C as Column>::key(&start);
-                RocksIteratorMode::From(start_key.as_ref(), direction)
-            }
-        };
-
-        let iter = self.backend.iterator_cf(self.handle(), iterator_mode);
-        Ok(iter.filter_map(|pair| {
-            let (key, value) = pair.unwrap();
-            C::try_current_index(&key).ok().map(|index| (index, value))
-        }))
-    }
-
-    pub(crate) fn iter_deprecated_index_filtered(
-        &self,
-        iterator_mode: IteratorMode<C::DeprecatedIndex>,
-    ) -> Result<impl Iterator<Item = (C::DeprecatedIndex, Box<[u8]>)> + '_> {
-        let start_key: <C as ColumnIndexDeprecation>::DeprecatedKey;
-        let iterator_mode = match iterator_mode {
-            IteratorMode::Start => RocksIteratorMode::Start,
-            IteratorMode::End => RocksIteratorMode::End,
-            IteratorMode::From(start_from, direction) => {
-                start_key = C::deprecated_key(start_from);
-                RocksIteratorMode::From(start_key.as_ref(), direction)
-            }
-        };
-
-        let iterator = self.backend.iterator_cf(self.handle(), iterator_mode);
-        Ok(iterator.filter_map(|pair| {
-            let (key, value) = pair.unwrap();
-            C::try_deprecated_index(&key)
-                .ok()
-                .map(|index| (index, value))
-        }))
-    }
-
-    pub(crate) fn delete_deprecated_in_batch(
-        &self,
-        batch: &mut WriteBatch,
-        index: C::DeprecatedIndex,
-    ) -> Result<()> {
-        let key = C::deprecated_key(index);
-        batch.delete_cf(self.handle(), &key)
-    }
-}
-
 /// A CompactionFilter implementation to remove keys older than a given slot.
 struct PurgedSlotFilter<C: Column + ColumnName> {
     /// The oldest slot to keep; any slot < oldest_slot will be removed
     oldest_slot: Slot,
-    /// Whether to preserve keys that return slot 0, even when oldest_slot > 0.
-    // This is used to delete old column data that wasn't keyed with a Slot, and so always returns
-    // `C::slot() == 0`
-    clean_slot_0: bool,
     name: CString,
     _phantom: PhantomData<C>,
 }
@@ -1042,7 +972,7 @@ impl<C: Column + ColumnName> CompactionFilter for PurgedSlotFilter<C> {
         use rocksdb::CompactionDecision::*;
 
         let slot_in_key = C::slot(C::index(key));
-        if slot_in_key >= self.oldest_slot || (slot_in_key == 0 && !self.clean_slot_0) {
+        if slot_in_key >= self.oldest_slot {
             Keep
         } else {
             Remove
@@ -1065,10 +995,8 @@ impl<C: Column + ColumnName> CompactionFilterFactory for PurgedSlotFilterFactory
 
     fn create(&mut self, _context: CompactionFilterContext) -> Self::Filter {
         let copied_oldest_slot = self.oldest_slot.get();
-        let copied_clean_slot_0 = self.oldest_slot.get_clean_slot_0();
         PurgedSlotFilter::<C> {
             oldest_slot: copied_oldest_slot,
-            clean_slot_0: copied_clean_slot_0,
             name: CString::new(format!(
                 "purged_slot_filter({}, {:?})",
                 C::NAME,
@@ -1256,7 +1184,6 @@ pub mod tests {
             is_manual_compaction: true,
         };
         let oldest_slot = OldestSlot::default();
-        oldest_slot.set_clean_slot_0(true);
 
         let mut factory = PurgedSlotFilterFactory::<ShredData> {
             oldest_slot: oldest_slot.clone(),
@@ -1418,32 +1345,5 @@ pub mod tests {
 
         // The deprecated column should have been dropped by Rocks::open()
         assert!(!is_program_costs_column_present(db_path));
-    }
-
-    impl<C> LedgerColumn<C>
-    where
-        C: ColumnIndexDeprecation + ProtobufColumn + ColumnName,
-    {
-        pub fn put_deprecated_protobuf(
-            &self,
-            index: C::DeprecatedIndex,
-            value: &C::Type,
-        ) -> Result<()> {
-            let mut buf = Vec::with_capacity(value.encoded_len());
-            value.encode(&mut buf)?;
-            self.backend
-                .put_cf(self.handle(), C::deprecated_key(index), &buf)
-        }
-    }
-
-    impl<C> LedgerColumn<C>
-    where
-        C: ColumnIndexDeprecation + TypedColumn + ColumnName,
-    {
-        pub fn put_deprecated(&self, index: C::DeprecatedIndex, value: &C::Type) -> Result<()> {
-            let serialized_value = C::serialize(value)?;
-            self.backend
-                .put_cf(self.handle(), C::deprecated_key(index), &serialized_value)
-        }
     }
 }

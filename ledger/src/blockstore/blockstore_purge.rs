@@ -1,8 +1,4 @@
-use {
-    super::*,
-    solana_message::AccountKeys,
-    std::{cmp::max, time::Instant},
-};
+use {super::*, solana_message::AccountKeys, std::time::Instant};
 
 #[derive(Default)]
 pub struct PurgeStats {
@@ -34,9 +30,9 @@ impl Blockstore {
     /// as it does not update the associated slot-meta entries that refer to
     /// the deleted entries.
     ///
-    /// For slot-id based column families, the purge is done by range deletion,
-    /// while the non-slot-id based column families, `cf::TransactionStatus`,
-    /// `AddressSignature`, and `cf::TransactionStatusIndex`, are cleaned-up
+    /// For slot-id based column families, the purge is done by range deletion.
+    /// The non-slot-id based column families, `cf::TransactionStatus`,
+    /// `cf::TransactionMemos`, and `cf::AddressSignatures`, are cleaned-up
     /// based on the `purge_type` setting.
     pub fn purge_slots(&self, from_slot: Slot, to_slot: Slot, purge_type: PurgeType) -> Result<()> {
         let mut purge_stats = PurgeStats::default();
@@ -75,10 +71,6 @@ impl Blockstore {
         // with Slot::default() for initial compaction filter behavior consistency
         let to_slot = to_slot.checked_add(1).unwrap();
         self.db.set_oldest_slot(to_slot);
-
-        if let Err(err) = self.maybe_cleanup_highest_primary_index_slot(to_slot) {
-            warn!("Could not clean up TransactionStatusIndex: {err:?}");
-        }
     }
 
     /// Ensures that the SlotMeta::next_slots vector for all slots contain no references in the
@@ -352,26 +344,7 @@ impl Blockstore {
             return Ok(());
         }
 
-        let mut index0 = self.transaction_status_index_cf.get(0)?.unwrap_or_default();
-        let mut index1 = self.transaction_status_index_cf.get(1)?.unwrap_or_default();
-        let highest_primary_index_slot = self.get_highest_primary_index_slot();
-        let slot_indexes = |slot: Slot| -> Vec<u64> {
-            let mut indexes = vec![];
-            if highest_primary_index_slot.is_none() {
-                return indexes;
-            }
-            if slot <= index0.max_slot && (index0.frozen || slot >= index1.max_slot) {
-                indexes.push(0);
-            }
-            if slot <= index1.max_slot && (index1.frozen || slot >= index0.max_slot) {
-                indexes.push(1);
-            }
-            indexes
-        };
-
         for slot in from_slot..=to_slot {
-            let primary_indexes = slot_indexes(slot);
-
             let (slot_entries, _, _) =
                 self.get_slot_entries_with_shred_info(slot, 0, true /* allow_dead_slots */)?;
             let transactions = slot_entries
@@ -383,14 +356,6 @@ impl Blockstore {
                         .delete_in_batch(batch, (signature, slot))?;
                     self.transaction_memos_cf
                         .delete_in_batch(batch, (signature, slot))?;
-                    if !primary_indexes.is_empty() {
-                        self.transaction_memos_cf
-                            .delete_deprecated_in_batch(batch, signature)?;
-                    }
-                    for primary_index in &primary_indexes {
-                        self.transaction_status_cf
-                            .delete_deprecated_in_batch(batch, (*primary_index, signature, slot))?;
-                    }
 
                     let meta = self.read_transaction_status((signature, slot))?;
                     let loaded_addresses = meta.map(|meta| meta.loaded_addresses);
@@ -406,32 +371,11 @@ impl Blockstore {
                             batch,
                             (*pubkey, slot, transaction_index, signature),
                         )?;
-                        for primary_index in &primary_indexes {
-                            self.address_signatures_cf.delete_deprecated_in_batch(
-                                batch,
-                                (*primary_index, *pubkey, slot, signature),
-                            )?;
-                        }
                     }
                 }
             }
         }
-        let mut update_highest_primary_index_slot = false;
-        if index0.max_slot >= from_slot && index0.max_slot <= to_slot {
-            index0.max_slot = from_slot.saturating_sub(1);
-            self.transaction_status_index_cf
-                .put_in_batch(batch, 0, &index0)?;
-            update_highest_primary_index_slot = true;
-        }
-        if index1.max_slot >= from_slot && index1.max_slot <= to_slot {
-            index1.max_slot = from_slot.saturating_sub(1);
-            self.transaction_status_index_cf
-                .put_in_batch(batch, 1, &index1)?;
-            update_highest_primary_index_slot = true
-        }
-        if update_highest_primary_index_slot {
-            self.set_highest_primary_index_slot(Some(max(index0.max_slot, index1.max_slot)))
-        }
+
         Ok(())
     }
 }
@@ -552,43 +496,6 @@ pub mod tests {
                     .into_iter(),
                     TransactionStatusMeta::default(),
                     0,
-                )
-                .unwrap();
-        }
-    }
-
-    fn populate_deprecated_transaction_statuses_for_test(
-        blockstore: &Blockstore,
-        primary_index: u64,
-        min_slot: u64,
-        max_slot: u64,
-    ) {
-        for x in min_slot..=max_slot {
-            let entries = make_slot_entries_with_transactions(1);
-            let shreds = entries_to_test_shreds(
-                &entries,
-                x,                   // slot
-                x.saturating_sub(1), // parent_slot
-                true,                // is_full_slot
-                0,                   // version
-            );
-            blockstore.insert_shreds(shreds, None, false).unwrap();
-            let signature = entries
-                .iter()
-                .filter(|entry| !entry.is_tick())
-                .cloned()
-                .flat_map(|entry| entry.transactions)
-                .map(|transaction| transaction.signatures[0])
-                .collect::<Vec<Signature>>()[0];
-            let random_bytes: Vec<u8> = (0..64).map(|_| rand::random::<u8>()).collect();
-            blockstore
-                .write_deprecated_transaction_status(
-                    primary_index,
-                    x,
-                    signature,
-                    vec![&Pubkey::try_from(&random_bytes[..32]).unwrap()],
-                    vec![&Pubkey::try_from(&random_bytes[32..]).unwrap()],
-                    TransactionStatusMeta::default(),
                 )
                 .unwrap();
         }
@@ -723,47 +630,16 @@ pub mod tests {
 
     #[test_case(purge_exact; "exact")]
     #[test_case(purge_compaction_filter; "compaction_filter")]
-    fn test_purge_special_columns_with_old_data(purge: impl Fn(&Blockstore, Slot)) {
+    fn test_purge_special_columns(purge: impl Fn(&Blockstore, Slot)) {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let max_slot = 19;
 
-        populate_deprecated_transaction_statuses_for_test(&blockstore, 0, 0, 4);
-        populate_deprecated_transaction_statuses_for_test(&blockstore, 1, 5, 9);
-        populate_transaction_statuses_for_test(&blockstore, 10, 14);
+        populate_transaction_statuses_for_test(&blockstore, 0, max_slot);
 
-        let mut index0 = blockstore
-            .transaction_status_index_cf
-            .get(0)
-            .unwrap()
-            .unwrap_or_default();
-        index0.frozen = true;
-        index0.max_slot = 4;
-        blockstore
-            .transaction_status_index_cf
-            .put(0, &index0)
-            .unwrap();
-        let mut index1 = blockstore
-            .transaction_status_index_cf
-            .get(1)
-            .unwrap()
-            .unwrap_or_default();
-        index1.frozen = false;
-        index1.max_slot = 9;
-        blockstore
-            .transaction_status_index_cf
-            .put(1, &index1)
-            .unwrap();
-
-        let num_statuses = blockstore
-            .transaction_status_cf
-            .iter(IteratorMode::Start)
-            .unwrap()
-            .count();
-        assert_eq!(num_statuses, 15);
-
-        // Delete some of primary-index 0
         let oldest_slot = 3;
         purge(&blockstore, oldest_slot);
+
         let status_entry_iterator = blockstore
             .transaction_status_cf
             .iter(IteratorMode::Start)
@@ -773,11 +649,13 @@ pub mod tests {
             assert!(slot >= oldest_slot);
             count += 1;
         }
-        assert_eq!(count, 12);
+        assert_eq!(count, max_slot - (oldest_slot - 1));
 
-        // Delete the rest of primary-index 0
-        let oldest_slot = 5;
+        clear_and_repopulate_transaction_statuses_for_test(&blockstore, max_slot);
+
+        let oldest_slot = 12;
         purge(&blockstore, oldest_slot);
+
         let status_entry_iterator = blockstore
             .transaction_status_cf
             .iter(IteratorMode::Start)
@@ -787,58 +665,7 @@ pub mod tests {
             assert!(slot >= oldest_slot);
             count += 1;
         }
-        assert_eq!(count, 10);
-
-        // Delete some of primary-index 1
-        let oldest_slot = 8;
-        purge(&blockstore, oldest_slot);
-        let status_entry_iterator = blockstore
-            .transaction_status_cf
-            .iter(IteratorMode::Start)
-            .unwrap();
-        let mut count = 0;
-        for ((_signature, slot), _value) in status_entry_iterator {
-            assert!(slot >= oldest_slot);
-            count += 1;
-        }
-        assert_eq!(count, 7);
-
-        // Delete the rest of primary-index 1
-        let oldest_slot = 10;
-        purge(&blockstore, oldest_slot);
-        let status_entry_iterator = blockstore
-            .transaction_status_cf
-            .iter(IteratorMode::Start)
-            .unwrap();
-        let mut count = 0;
-        for ((_signature, slot), _value) in status_entry_iterator {
-            assert!(slot >= oldest_slot);
-            count += 1;
-        }
-        assert_eq!(count, 5);
-
-        // Delete some of new-style entries
-        let oldest_slot = 13;
-        purge(&blockstore, oldest_slot);
-        let status_entry_iterator = blockstore
-            .transaction_status_cf
-            .iter(IteratorMode::Start)
-            .unwrap();
-        let mut count = 0;
-        for ((_signature, slot), _value) in status_entry_iterator {
-            assert!(slot >= oldest_slot);
-            count += 1;
-        }
-        assert_eq!(count, 2);
-
-        // Delete the rest of the new-style entries
-        let oldest_slot = 20;
-        purge(&blockstore, oldest_slot);
-        let mut status_entry_iterator = blockstore
-            .transaction_status_cf
-            .iter(IteratorMode::Start)
-            .unwrap();
-        assert!(status_entry_iterator.next().is_none());
+        assert_eq!(count, max_slot - (oldest_slot - 1));
     }
 
     #[test]
@@ -871,47 +698,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_purge_special_columns_compaction_filter() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        let max_slot = 19;
-
-        clear_and_repopulate_transaction_statuses_for_test(&blockstore, max_slot);
-
-        let oldest_slot = 3;
-        blockstore.db.set_oldest_slot(oldest_slot);
-        blockstore.transaction_status_cf.compact();
-
-        let status_entry_iterator = blockstore
-            .transaction_status_cf
-            .iter(IteratorMode::Start)
-            .unwrap();
-        let mut count = 0;
-        for ((_signature, slot), _value) in status_entry_iterator {
-            assert!(slot >= oldest_slot);
-            count += 1;
-        }
-        assert_eq!(count, max_slot - (oldest_slot - 1));
-
-        clear_and_repopulate_transaction_statuses_for_test(&blockstore, max_slot);
-
-        let oldest_slot = 12;
-        blockstore.db.set_oldest_slot(oldest_slot);
-        blockstore.transaction_status_cf.compact();
-
-        let status_entry_iterator = blockstore
-            .transaction_status_cf
-            .iter(IteratorMode::Start)
-            .unwrap();
-        let mut count = 0;
-        for ((_signature, slot), _value) in status_entry_iterator {
-            assert!(slot >= oldest_slot);
-            count += 1;
-        }
-        assert_eq!(count, max_slot - (oldest_slot - 1));
-    }
-
-    #[test]
     fn test_purge_transaction_memos_compaction_filter() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
@@ -925,19 +711,6 @@ pub mod tests {
             Signature::from(key)
         }
 
-        // Insert some deprecated TransactionMemos
-        blockstore
-            .transaction_memos_cf
-            .put_deprecated(random_signature(), &"this is a memo".to_string())
-            .unwrap();
-        blockstore
-            .transaction_memos_cf
-            .put_deprecated(random_signature(), &"another memo".to_string())
-            .unwrap();
-        // Set clean_slot_0 to false, since we have deprecated memos
-        blockstore.db.set_clean_slot_0(false);
-
-        // Insert some current TransactionMemos
         blockstore
             .transaction_memos_cf
             .put(
@@ -961,7 +734,7 @@ pub mod tests {
             .iter(IteratorMode::Start)
             .unwrap()
             .count();
-        assert_eq!(num_memos, 4);
+        assert_eq!(num_memos, 2);
 
         // Purge at oldest_slot without clean_slot_0 only purges the current memo at slot 4
         blockstore.db.set_oldest_slot(oldest_slot);
@@ -973,20 +746,6 @@ pub mod tests {
         let mut count = 0;
         for ((_signature, slot), _value) in memos_iterator {
             assert!(slot == 0 || slot >= oldest_slot);
-            count += 1;
-        }
-        assert_eq!(count, 3);
-
-        // Purge at oldest_slot with clean_slot_0 purges deprecated memos
-        blockstore.db.set_clean_slot_0(true);
-        blockstore.transaction_memos_cf.compact();
-        let memos_iterator = blockstore
-            .transaction_memos_cf
-            .iter(IteratorMode::Start)
-            .unwrap();
-        let mut count = 0;
-        for ((_signature, slot), _value) in memos_iterator {
-            assert!(slot >= oldest_slot);
             count += 1;
         }
         assert_eq!(count, 1);
