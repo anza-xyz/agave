@@ -272,7 +272,6 @@ dependencies = [
  "agave-scheduler-bindings",
  "agave-transaction-view",
  "ahash 0.8.12",
- "bincode",
  "libc",
  "nix",
  "rts-alloc",
@@ -285,6 +284,7 @@ dependencies = [
  "solana-transaction-error",
  "tempfile",
  "thiserror 2.0.18",
+ "wincode",
 ]
 
 [[package]]

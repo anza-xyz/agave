@@ -97,7 +97,7 @@ where
     }
 
     pub fn queue_tpu(&mut self, tx: &VersionedTransaction) {
-        let serialized = bincode::serialize(tx).unwrap();
+        let serialized = wincode::serialize(tx).unwrap();
         let allocator = &self.agave.tpu_to_pack.allocator;
 
         // Allocate in shared memory and copy the transaction bytes.

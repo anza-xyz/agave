@@ -11,14 +11,14 @@ edition = { workspace = true }
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = ["dep:bincode", "dep:solana-transaction"]
+dev-context-only-utils = ["dep:wincode", "dep:solana-transaction"]
 
 [dependencies]
 agave-feature-set = { workspace = true, features = ["agave-unstable-api"] }
 agave-scheduler-bindings = { workspace = true }
 agave-transaction-view = { workspace = true }
 ahash.workspace = true
-bincode = { workspace = true, optional = true }
+wincode = { workspace = true, optional = true }
 rts-alloc = { workspace = true }
 shaq = { workspace = true }
 slotmap = { workspace = true }
