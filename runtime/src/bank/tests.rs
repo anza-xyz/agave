@@ -7106,7 +7106,7 @@ fn test_update_clock_timestamp() {
     update_vote_account_timestamp(
         BlockTimestamp {
             slot: bank.slot(),
-            timestamp: bank.unix_timestamp_from_genesis() - 1,
+            timestamp: parent_timestamp - 1,
         },
         &bank,
         &voting_keypair.pubkey(),
