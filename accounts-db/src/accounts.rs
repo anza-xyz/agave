@@ -477,18 +477,12 @@ impl Accounts {
         ancestors: &Ancestors,
         bank_id: BankId,
         scan_func: F,
-        sort_results: bool,
     ) -> ScanResult<()>
     where
         F: FnMut(Option<(&Pubkey, AccountSharedData, Slot)>),
     {
-        let scan_order = if sort_results {
-            ScanOrder::Sorted
-        } else {
-            ScanOrder::Unsorted
-        };
         self.accounts_db
-            .scan_accounts(ancestors, bank_id, scan_func, &ScanConfig::new(scan_order))
+            .scan_accounts(ancestors, bank_id, scan_func, &ScanConfig::default())
     }
 
     /// This function will prevent multiple threads from modifying the same account state at the

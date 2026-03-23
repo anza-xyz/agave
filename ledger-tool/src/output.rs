@@ -905,7 +905,7 @@ impl AccountsScanner {
 
         match &self.config.mode {
             AccountsOutputMode::All => {
-                self.bank.scan_all_accounts(scan_func, false).unwrap();
+                self.bank.scan_all_accounts(scan_func).unwrap();
             }
             AccountsOutputMode::Individual(pubkeys) => pubkeys.iter().for_each(|pubkey| {
                 if let Some((account, _slot)) = self
