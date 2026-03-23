@@ -1,6 +1,6 @@
 use {
     crate::{
-        bytes::{advance_offset_for_array, unchecked_read_slice_data},
+        bytes::{advance_offset_for_array, unchecked_copy_value},
         result::{Result, TransactionViewError},
     },
     solana_program_runtime::execution_budget::MIN_HEAP_FRAME_BYTES,
@@ -158,14 +158,11 @@ impl<'a> TransactionConfigView<'a> {
     pub fn priority_fee_lamports(&self) -> u64 {
         // bit 0 and 1 have been sanitized to be in same state,
         // return default if bits not set
-        if let Some(mut lo_offset) = self.transaction_config_frame.word_offset(0) {
+        if let Some(offset) = self.transaction_config_frame.word_offset(0) {
             // SAFETY:
             // - The offsets are checked to be valid in the byte slice.
-            let value: [u8; 8] =
-                unsafe { unchecked_read_slice_data::<u8>(self.bytes, &mut lo_offset, 8) }
-                    .try_into()
-                    .unwrap();
-            u64::from_le_bytes(value)
+            // - u64 is valid for any bytes
+            u64::from_le(unsafe { unchecked_copy_value(self.bytes, offset) })
         } else {
             // return default
             0
@@ -174,14 +171,11 @@ impl<'a> TransactionConfigView<'a> {
 
     #[inline(always)]
     pub fn compute_unit_limit(&self) -> u32 {
-        if let Some(mut value_offset) = self.transaction_config_frame.word_offset(2) {
+        if let Some(offset) = self.transaction_config_frame.word_offset(2) {
             // SAFETY:
             // - The offsets are checked to be valid in the byte slice.
-            let value: [u8; 4] =
-                unsafe { unchecked_read_slice_data::<u8>(self.bytes, &mut value_offset, 4) }
-                    .try_into()
-                    .unwrap();
-            u32::from_le_bytes(value)
+            // - u32 is valid for any bytes
+            u32::from_le(unsafe { unchecked_copy_value(self.bytes, offset) })
         } else {
             // return default
             0
@@ -190,14 +184,11 @@ impl<'a> TransactionConfigView<'a> {
 
     #[inline(always)]
     pub fn loaded_accounts_data_size_limit(&self) -> u32 {
-        if let Some(mut value_offset) = self.transaction_config_frame.word_offset(3) {
+        if let Some(offset) = self.transaction_config_frame.word_offset(3) {
             // SAFETY:
             // - The offsets are checked to be valid in the byte slice.
-            let value: [u8; 4] =
-                unsafe { unchecked_read_slice_data::<u8>(self.bytes, &mut value_offset, 4) }
-                    .try_into()
-                    .unwrap();
-            u32::from_le_bytes(value)
+            // - u32 is valid for any bytes
+            u32::from_le(unsafe { unchecked_copy_value(self.bytes, offset) })
         } else {
             // return default
             0
@@ -206,14 +197,11 @@ impl<'a> TransactionConfigView<'a> {
 
     #[inline(always)]
     pub fn requested_heap_size(&self) -> u32 {
-        if let Some(mut value_offset) = self.transaction_config_frame.word_offset(4) {
+        if let Some(offset) = self.transaction_config_frame.word_offset(4) {
             // SAFETY:
             // - The offsets are checked to be valid in the byte slice.
-            let value: [u8; 4] =
-                unsafe { unchecked_read_slice_data::<u8>(self.bytes, &mut value_offset, 4) }
-                    .try_into()
-                    .unwrap();
-            u32::from_le_bytes(value)
+            // - u32 is valid for any bytes
+            u32::from_le(unsafe { unchecked_copy_value(self.bytes, offset) })
         } else {
             // return default
             MIN_HEAP_FRAME_BYTES
