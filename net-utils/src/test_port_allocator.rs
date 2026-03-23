@@ -1,9 +1,21 @@
 use {
     crate::sockets::UNIQUE_ALLOC_BASE_PORT,
+    nix::{
+        errno::Errno,
+        fcntl::{Flock, FlockArg, OFlag, open},
+        sys::{
+            mman::{MapFlags, ProtFlags, mmap, munmap, shm_open, shm_unlink},
+            signal::kill,
+            stat::{Mode, fstat},
+        },
+        unistd::{Pid, ftruncate, getpid},
+    },
     std::{
-        ffi::{CStr, CString},
-        io::Error,
+        ffi::{CStr, CString, c_void},
+        num::NonZeroUsize,
         ops::Range,
+        os::fd::AsFd,
+        ptr::NonNull,
         sync::{
             Mutex, OnceLock,
             atomic::{AtomicI64, Ordering},
@@ -27,8 +39,11 @@ pub fn unique_port_range_for_tests_internal(size: u16) -> Range<u16> {
                 alloc.cleanup();
             }
         }
+        unsafe extern "C" {
+            fn atexit(f: extern "C" fn()) -> std::ffi::c_int;
+        }
         unsafe {
-            if libc::atexit(at_exit) != 0 {
+            if atexit(at_exit) != 0 {
                 eprintln!(
                     "warning: failed to register atexit handler for TestPortAllocator; ports may \
                      not be cleaned up on process exit"
@@ -79,92 +94,79 @@ impl TestPortAllocator {
         // that gap while the flock handles cross-process serialization.
         let _creation_guard = CREATION_MUTEX.lock().unwrap();
 
-        let region = unsafe {
-            // Use a lock file to serialize TestPortAllocator creation.
-            let lock_path = lock_file_path(name);
+        let lock_path = lock_file_path(name);
+        let lock_fd = open(
+            lock_path.as_c_str(),
+            OFlag::O_CREAT | OFlag::O_RDWR,
+            Mode::S_IRUSR | Mode::S_IWUSR,
+        )
+        .expect("open lock file failed");
 
-            let lock_fd = libc::open(lock_path.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600u32);
-            if lock_fd < 0 {
-                panic!("open lock file failed: {}", Error::last_os_error());
-            }
+        // Grab lock before trying to load or create shared memory area.
+        let locked_fd = Flock::lock(lock_fd, FlockArg::LockExclusive)
+            .unwrap_or_else(|(_, e)| panic!("flock LOCK_EX failed: {e}"));
 
-            // Grab lock before trying to load or create shared memory area.
-            if libc::flock(lock_fd, libc::LOCK_EX) != 0 {
-                panic!("flock LOCK_EX failed: {}", Error::last_os_error());
-            }
-
-            let region = loop {
-                let fd = libc::shm_open(
-                    name.as_ptr(),
-                    libc::O_CREAT | libc::O_EXCL | libc::O_RDWR,
-                    0o600u32,
-                );
-
-                if fd >= 0 {
+        let region = loop {
+            match shm_open(
+                name,
+                OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_RDWR,
+                Mode::S_IRUSR | Mode::S_IWUSR,
+            ) {
+                Ok(fd) => {
                     // Creator path: size, map, initialize, mark ready.
-                    if libc::ftruncate(fd, SHM_SIZE as libc::off_t) != 0 {
-                        panic!("ftruncate failed: {}", Error::last_os_error());
+                    ftruncate(fd.as_fd(), SHM_SIZE as _).expect("ftruncate failed");
+                    let ptr = unsafe { mmap_shm(fd.as_fd()) };
+                    drop(fd);
+
+                    let region = ptr.as_ptr() as *mut SharedRegion;
+                    unsafe {
+                        for slot in (*region).ports.iter() {
+                            slot.store(-1, Ordering::Relaxed);
+                        }
+                        (*region).initialized.store(SHM_VERSION, Ordering::Release);
                     }
-                    let ptr = mmap_shm(fd);
-                    libc::close(fd);
-
-                    let region = ptr as *mut SharedRegion;
-
-                    for slot in (*region).ports.iter() {
-                        slot.store(-1, Ordering::Relaxed);
-                    }
-
-                    (*region).initialized.store(SHM_VERSION, Ordering::Release);
-
                     break region;
                 }
+                Err(Errno::EEXIST) => {
+                    // shm already exists; open and check the initialized flag.
+                    match shm_open(name, OFlag::O_RDWR, Mode::empty()) {
+                        Err(Errno::ENOENT) => continue, // raced with an unlink; retry
+                        Err(e) => panic!("shm_open O_RDWR failed: {e}"),
+                        Ok(fd) => {
+                            // Check size before mapping to avoid mapping a too-small region.
+                            // Use < rather than != because MacOS rounds shm sizes up to a
+                            // platform-specific boundary.
+                            let stat = fstat(fd.as_fd()).expect("fstat failed");
+                            if stat.st_size < SHM_SIZE as _ {
+                                // Too small: stale or incompatible segment; clean up and retry.
+                                drop(fd);
+                                let _ = shm_unlink(name);
+                                continue;
+                            }
 
-                let errno = Error::last_os_error().raw_os_error().unwrap();
-                if errno != libc::EEXIST {
-                    panic!("shm_open O_CREAT|O_EXCL failed: errno {errno}");
-                }
+                            let ptr = unsafe { mmap_shm(fd.as_fd()) };
+                            drop(fd);
 
-                // shm already exists; open and check the initialized flag.
-                let fd = libc::shm_open(name.as_ptr(), libc::O_RDWR, 0);
-                if fd < 0 {
-                    let errno = Error::last_os_error().raw_os_error().unwrap();
-                    if errno == libc::ENOENT {
-                        continue; // raced with an unlink; retry
+                            let region = ptr.as_ptr() as *mut SharedRegion;
+                            if unsafe { (*region).initialized.load(Ordering::Acquire) }
+                                == SHM_VERSION
+                            {
+                                break region;
+                            }
+
+                            // Wrong version or creator crashed mid-init; clean up and retry.
+                            unsafe {
+                                let _ = munmap(ptr, SHM_SIZE);
+                            }
+                            let _ = shm_unlink(name);
+                        }
                     }
-                    panic!("shm_open O_RDWR failed: errno {errno}");
                 }
-                // Check size before mapping to avoid mapping a too-small region.
-                // Use < rather than != because MacOS rounds shm sizes up to a
-                // platform-specific boundary.
-                let mut stat: libc::stat = std::mem::zeroed();
-                if libc::fstat(fd, &mut stat) != 0 {
-                    panic!("fstat failed: {}", Error::last_os_error());
-                }
-                if stat.st_size < SHM_SIZE as libc::off_t {
-                    // Too small: stale or incompatible segment; clean up and retry.
-                    libc::close(fd);
-                    libc::shm_unlink(name.as_ptr());
-                    continue;
-                }
-
-                let ptr = mmap_shm(fd);
-                libc::close(fd);
-
-                let region = ptr as *mut SharedRegion;
-                if (*region).initialized.load(Ordering::Acquire) == SHM_VERSION {
-                    break region;
-                }
-
-                // Wrong version or creator crashed mid-init; clean up and retry.
-                libc::munmap(ptr, SHM_SIZE);
-                libc::shm_unlink(name.as_ptr());
-            };
-
-            libc::flock(lock_fd, libc::LOCK_UN);
-            libc::close(lock_fd);
-
-            region
+                Err(e) => panic!("shm_open O_CREAT|O_EXCL failed: {e}"),
+            }
         };
+
+        drop(locked_fd); // unlocks and closes the lock file
 
         TestPortAllocator { region, tag }
     }
@@ -176,7 +178,7 @@ impl TestPortAllocator {
             "requested size {size} exceeds port count {PORT_COUNT}"
         );
         let size = size as usize;
-        let pid = unsafe { libc::getpid() };
+        let pid = getpid().as_raw();
         let marker = encode(self.tag, pid);
         let ports = unsafe { &(*self.region).ports };
 
@@ -204,9 +206,8 @@ impl TestPortAllocator {
                     } else {
                         // Extract PID from lower 32 bits and check liveness.
                         let owner_pid = (current & 0xFFFF_FFFF) as i32;
-                        let ret = unsafe { libc::kill(owner_pid, 0) };
                         let process_dead =
-                            ret == -1 && Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+                            kill(Pid::from_raw(owner_pid), None) == Err(Errno::ESRCH);
 
                         if process_dead {
                             // Tag+PID together guard against ABA: a new process
@@ -245,17 +246,15 @@ impl TestPortAllocator {
 
     #[cfg(test)]
     pub fn destroy(name: &CStr) {
-        unsafe {
-            libc::shm_unlink(name.as_ptr());
-            libc::unlink(lock_file_path(name).as_ptr());
-        }
+        let _ = shm_unlink(name);
+        let _ = nix::unistd::unlink(lock_file_path(name).as_c_str());
     }
 
     /// Free all ports allocated by this specific allocator instance (matched by
     /// tag + PID). Must be called on the same instance that performed the
     /// allocations, not a freshly constructed one.
     pub fn cleanup(&self) {
-        let pid = unsafe { libc::getpid() };
+        let pid = getpid().as_raw();
         let marker = encode(self.tag, pid);
         let ports = unsafe { &(*self.region).ports };
         for slot in ports.iter() {
@@ -267,7 +266,7 @@ impl TestPortAllocator {
 impl Drop for TestPortAllocator {
     fn drop(&mut self) {
         unsafe {
-            libc::munmap(self.region as *mut libc::c_void, SHM_SIZE);
+            let _ = munmap(NonNull::new_unchecked(self.region as *mut c_void), SHM_SIZE);
         }
     }
 }
@@ -295,20 +294,17 @@ fn lock_file_path(name: &CStr) -> CString {
     .unwrap()
 }
 
-unsafe fn mmap_shm(fd: i32) -> *mut libc::c_void {
+unsafe fn mmap_shm(fd: impl AsFd) -> NonNull<c_void> {
     unsafe {
-        let ptr = libc::mmap(
-            std::ptr::null_mut(),
-            SHM_SIZE,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_SHARED,
+        mmap(
+            None,
+            NonZeroUsize::new(SHM_SIZE).unwrap(),
+            ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
+            MapFlags::MAP_SHARED,
             fd,
             0,
-        );
-        if ptr == libc::MAP_FAILED {
-            panic!("mmap failed: {}", Error::last_os_error());
-        }
-        ptr
+        )
+        .expect("mmap failed")
     }
 }
 
