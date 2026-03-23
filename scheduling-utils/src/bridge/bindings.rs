@@ -277,6 +277,11 @@ where
         self.workers[worker].0.worker_to_pack.finalize();
     }
 
+    /// Builds & schedules the provided batch.
+    ///
+    /// # Panics
+    ///
+    /// - If the provided batch exceeds [`MAX_TRANSACTIONS_PER_MESSAGE`].
     pub fn schedule(
         &mut self,
         ScheduleBatch {
