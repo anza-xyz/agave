@@ -732,6 +732,32 @@ pub fn should_discard_shred<'a, P>(
 where
     P: Into<PacketRef<'a>>,
 {
+    should_discard_shred_with_custom_shred_limits(
+        packet,
+        root,
+        max_slot,
+        shred_version,
+        discard_unexpected_data_complete_shreds,
+        |_| MAX_DATA_SHREDS_PER_SLOT as u32,
+        |_| MAX_CODE_SHREDS_PER_SLOT as u32,
+        stats,
+    )
+}
+
+#[must_use]
+pub fn should_discard_shred_with_custom_shred_limits<'a, P>(
+    packet: P,
+    root: Slot,
+    max_slot: Slot,
+    shred_version: u16,
+    discard_unexpected_data_complete_shreds: impl Fn(Slot) -> bool,
+    max_data_shreds_per_slot: impl Fn(Slot) -> u32,
+    max_code_shreds_per_slot: impl Fn(Slot) -> u32,
+    stats: &mut ShredFetchStats,
+) -> bool
+where
+    P: Into<PacketRef<'a>>,
+{
     debug_assert!(root < max_slot);
     let Some(shred) = layout::get_shred(packet) else {
         stats.index_overrun += 1;
@@ -777,7 +803,7 @@ where
 
     match ShredType::from(shred_variant) {
         ShredType::Code => {
-            if index >= MAX_CODE_SHREDS_PER_SLOT as u32 {
+            if index >= max_code_shreds_per_slot(slot) {
                 stats.index_out_of_bounds += 1;
                 return true;
             }
@@ -797,7 +823,7 @@ where
             }
         }
         ShredType::Data => {
-            if index >= MAX_DATA_SHREDS_PER_SLOT as u32 {
+            if index >= max_data_shreds_per_slot(slot) {
                 stats.index_out_of_bounds += 1;
                 return true;
             }
@@ -1516,6 +1542,49 @@ mod tests {
         );
         assert!(should_discard);
         assert_eq!(stats.misaligned_last_data_index, 1);
+    }
+
+    #[test]
+    fn test_should_discard_shred_with_custom_shred_limits() {
+        agave_logger::setup();
+
+        // Create some shreds
+        let mut rng = rand::rng();
+        let slot = 42;
+        let shreds = make_merkle_shreds_for_tests(&mut rng, slot, 10_000, false).unwrap();
+
+        // Grab the first shred in packet form
+        let shred = Shred::from(shreds[0].clone());
+        let index = shred.common_header().index;
+        let shred_version = shred.common_header().version;
+        let mut packet = Packet::default();
+        shred.copy_to_packet(&mut packet);
+
+        // Verify index in bounds passes the discard check.
+        assert!(!should_discard_shred_with_custom_shred_limits(
+            &packet,
+            0,        // root
+            slot + 1, // max_slot
+            shred_version,
+            |_| false,
+            |_| index + 1,
+            |_| index + 1,
+            &mut ShredFetchStats::default(),
+        ));
+
+        // Verify index out of bounds is rejected.
+        let mut stats = ShredFetchStats::default();
+        assert!(should_discard_shred_with_custom_shred_limits(
+            &packet,
+            0,        // root
+            slot + 1, // max_slot
+            shred_version,
+            |_| false,
+            |_| index,
+            |_| index,
+            &mut stats,
+        ));
+        assert_eq!(stats.index_out_of_bounds, 1);
     }
 
     // Asserts that ShredType is backward compatible with u8.

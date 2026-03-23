@@ -308,7 +308,7 @@ EOF
 
   # crate publish test
   if [[ -z $CI_PULL_REQUEST ]]; then
-    command_step crate-publish-test "cargo xtask publish test" 30 default
+    command_step crate-publish-test "cargo xtask publish test" 45 default
   fi
 }
 

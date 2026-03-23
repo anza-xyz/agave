@@ -12,7 +12,7 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
     },
     agave_votor::vote_history_storage,
-    agave_xdp::{set_cpu_affinity, xdp_retransmitter::XdpConfig},
+    agave_xdp::{set_cpu_affinity, transmitter::XdpConfig},
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
@@ -265,7 +265,7 @@ pub fn execute(
     #[cfg(target_os = "linux")]
     let xdp_builder_with_src_addr = {
         use {
-            agave_xdp::xdp_retransmitter::XdpRetransmitBuilder,
+            agave_xdp::transmitter::TransmitterBuilder,
             caps::{
                 CapSet,
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
@@ -361,8 +361,8 @@ pub fn execute(
                 _ => panic!("IPv6 not supported"),
             };
             (
-                XdpRetransmitBuilder::new(xdp_config, exit.clone())
-                    .expect("failed to create xdp retransmitter"),
+                TransmitterBuilder::new(xdp_config, exit.clone())
+                    .expect("failed to create xdp transmitter"),
                 SocketAddrV4::new(src_ip, src_port),
             )
         });

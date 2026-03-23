@@ -33,7 +33,6 @@ use {
         collections::{HashSet, btree_map::BTreeMap},
         fmt::Debug,
         num::NonZeroUsize,
-        ops::{Bound, Range, RangeBounds},
         path::PathBuf,
         sync::{
             Arc, Mutex, RwLock,
@@ -224,8 +223,8 @@ pub enum ScanError {
     Aborted(String),
 }
 
-enum ScanTypes<R: RangeBounds<Pubkey>> {
-    Unindexed(Option<R>),
+enum ScanTypes {
+    Unindexed,
     Indexed(IndexKey),
 }
 
@@ -380,54 +379,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }
     }
 
-    /// return the bin index for a given pubkey
-    fn bin_from_pubkey(&self, pubkey: &Pubkey) -> usize {
-        self.bin_calculator.bin_from_pubkey(pubkey)
-    }
-
-    /// returns the start bin and the end bin (inclusive) to scan.
-    ///
-    /// Note that start_bin maybe larger than highest bin index. Therefore, the
-    /// caller should not assume that start_bin is a valid bin index. So don't
-    /// index into `account_maps` with start_bin. Use `start_bin..=end_bin` to
-    /// iterate over the bins.
-    fn bin_start_end_inclusive<R>(&self, range: &R) -> (usize, usize)
-    where
-        R: RangeBounds<Pubkey>,
-    {
-        let start_bin = match range.start_bound() {
-            Bound::Included(start) => self.bin_from_pubkey(start),
-            Bound::Excluded(start) => {
-                // check if start == self.account_maps[start_bin].highest_pubkey(), then
-                // we should return start_bin + 1
-                let start_bin = self.bin_from_pubkey(start);
-                if start == &self.account_maps[start_bin].highest_pubkey {
-                    start_bin + 1
-                } else {
-                    start_bin
-                }
-            }
-            Bound::Unbounded => 0,
-        };
-
-        let end_bin_inclusive = match range.end_bound() {
-            Bound::Included(end) => self.bin_from_pubkey(end),
-            Bound::Excluded(end) => {
-                // check if end == self.account_maps[end_bin].lowest_pubkey(), then
-                // we should return end_bin - 1
-                let end_bin = self.bin_from_pubkey(end);
-                if end == &self.account_maps[end_bin].lowest_pubkey {
-                    end_bin.saturating_sub(1)
-                } else {
-                    end_bin
-                }
-            }
-            Bound::Unbounded => self.account_maps.len().saturating_sub(1),
-        };
-
-        (start_bin, end_bin_inclusive)
-    }
-
     #[allow(clippy::type_complexity)]
     fn allocate_accounts_index(
         config: &AccountsIndexConfig,
@@ -448,15 +399,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         (account_maps, bin_calculator, storage)
     }
 
-    fn iter<'a, R>(
+    fn iter<'a>(
         &'a self,
-        range: Option<&'a R>,
         iter_order: AccountsIndexPubkeyIterOrder,
-    ) -> AccountsIndexPubkeyIterator<'a, T, U>
-    where
-        R: RangeBounds<Pubkey>,
-    {
-        AccountsIndexPubkeyIterator::new(self, range, iter_order)
+    ) -> AccountsIndexPubkeyIterator<'a, T, U> {
+        AccountsIndexPubkeyIterator::new(self, iter_order)
     }
 
     /// is the accounts index using disk as a backing store
@@ -468,18 +415,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         ongoing_scan_roots.keys().next().cloned()
     }
 
-    fn do_checked_scan_accounts<F, R>(
+    fn do_checked_scan_accounts<F>(
         &self,
         metric_name: &'static str,
         ancestors: &Ancestors,
         scan_bank_id: BankId,
         func: F,
-        scan_type: ScanTypes<R>,
+        scan_type: ScanTypes,
         config: &ScanConfig,
     ) -> Result<(), ScanError>
     where
         F: FnMut(&Pubkey, (&T, Slot)),
-        R: RangeBounds<Pubkey> + std::fmt::Debug,
     {
         {
             let locked_removed_bank_ids = self.removed_bank_ids.lock().unwrap();
@@ -636,9 +582,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         assert!() justification in AccountsDb::retry_to_get_account_accessor)
         */
         match scan_type {
-            ScanTypes::Unindexed(range) => {
+            ScanTypes::Unindexed => {
                 // Pass "" not to log metrics, so RPC doesn't get spammy
-                self.do_scan_accounts(metric_name, ancestors, func, range, Some(max_root), config);
+                self.do_scan_accounts(metric_name, ancestors, func, Some(max_root), config);
             }
             ScanTypes::Indexed(IndexKey::ProgramId(program_id)) => {
                 self.do_scan_secondary_index(
@@ -703,17 +649,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     // Scan accounts and return latest version of each account that is either:
     // 1) rooted or
     // 2) present in ancestors
-    fn do_scan_accounts<F, R>(
+    fn do_scan_accounts<F>(
         &self,
         metric_name: &'static str,
         ancestors: &Ancestors,
         mut func: F,
-        range: Option<R>,
         max_root: Option<Slot>,
         config: &ScanConfig,
     ) where
         F: FnMut(&Pubkey, (&T, Slot)),
-        R: RangeBounds<Pubkey> + std::fmt::Debug,
     {
         let returns_items = match config.scan_order {
             ScanOrder::Unsorted => AccountsIndexPubkeyIterOrder::Unsorted,
@@ -730,7 +674,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         let mut iterator_elapsed = 0;
         let mut iterator_timer = Measure::start("iterator_elapsed");
 
-        for pubkeys in self.iter(range.as_ref(), returns_items) {
+        for pubkeys in self.iter(returns_items) {
             iterator_timer.stop();
             iterator_elapsed += iterator_timer.as_us();
             for pubkey in pubkeys {
@@ -914,7 +858,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             ancestors,
             scan_bank_id,
             func,
-            ScanTypes::Unindexed(None::<Range<Pubkey>>),
+            ScanTypes::Unindexed,
             config,
         )
     }
@@ -937,7 +881,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             ancestors,
             scan_bank_id,
             func,
-            ScanTypes::<Range<Pubkey>>::Indexed(index_key),
+            ScanTypes::Indexed(index_key),
             config,
         )
     }
@@ -1813,10 +1757,6 @@ mod tests {
         solana_account::AccountSharedData,
         solana_pubkey::PUBKEY_BYTES,
         spl_generic_token::{spl_token_ids, token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
-        std::ops::{
-            Bound::{Excluded, Included, Unbounded},
-            RangeInclusive,
-        },
         test_case::test_matrix,
     };
 
@@ -4141,50 +4081,6 @@ mod tests {
             index.handle_dead_keys(&[key], &AccountSecondaryIndexes::default()),
             vec![key].into_iter().collect::<HashSet<_>>()
         );
-    }
-
-    #[test]
-    fn test_start_end_bin() {
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        assert_eq!(index.bins(), BINS_FOR_TESTING);
-
-        let range = (Unbounded::<Pubkey>, Unbounded);
-        let (start, end) = index.bin_start_end_inclusive(&range);
-        assert_eq!(start, 0); // no range, so 0
-        assert_eq!(end, BINS_FOR_TESTING - 1); // no range, so last bin
-
-        let key = Pubkey::from([0; 32]);
-        let range = RangeInclusive::new(key, key);
-        let (start, end) = index.bin_start_end_inclusive(&range);
-        assert_eq!(start, 0); // start at pubkey 0, so 0
-        assert_eq!(end, 0); // end at pubkey 0, so 0
-
-        let range = (Included(key), Excluded(key));
-        let (start, end) = index.bin_start_end_inclusive(&range);
-        assert_eq!(start, 0); // start at pubkey 0, so 0
-        assert_eq!(end, 0); // end at pubkey 0, so 0
-
-        let range = (Excluded(key), Excluded(key));
-        let (start, end) = index.bin_start_end_inclusive(&range);
-        assert_eq!(start, 0); // start at pubkey 0, so 0
-        assert_eq!(end, 0); // end at pubkey 0, so 0
-
-        let key = Pubkey::from([0xff; 32]);
-        let range = RangeInclusive::new(key, key);
-        let (start, end) = index.bin_start_end_inclusive(&range);
-        let bins = index.bins();
-        assert_eq!(start, bins - 1); // start at highest possible pubkey, so bins - 1
-        assert_eq!(end, bins - 1);
-
-        let range = (Included(key), Excluded(key));
-        let (start, end) = index.bin_start_end_inclusive(&range);
-        assert_eq!(start, bins - 1); // start at highest possible pubkey, so bins - 1
-        assert_eq!(end, bins - 1);
-
-        let range = (Excluded(key), Excluded(key));
-        let (start, end) = index.bin_start_end_inclusive(&range);
-        assert_eq!(start, bins); // Exclude the highest possible pubkey, so start should be "bins"
-        assert_eq!(end, bins - 1); // End should be the last bin index
     }
 
     #[test]

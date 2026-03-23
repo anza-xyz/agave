@@ -112,7 +112,9 @@ fn verify_certs(
         .filter_map(|(cert_payload, res)| match res {
             Ok(()) => {
                 let cert = cert_payload.cert;
-                verified_certs_set.insert(cert.cert_type);
+                if !verified_certs_set.insert(cert.cert_type) {
+                    stats.unnecessary_certs_verified += 1;
+                }
                 Some(ConsensusMessage::Certificate(cert))
             }
             Err(e) => {

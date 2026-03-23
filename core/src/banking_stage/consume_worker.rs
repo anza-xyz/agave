@@ -106,12 +106,12 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         &self,
         work: ConsumeWork<Tx>,
     ) -> Result<ProcessingStatus<Tx>, ConsumeWorkerError<Tx>> {
-        let Some(leader_state) = active_leader_state_with_timeout(&self.shared_leader_state) else {
+        let Some(leader_state) = active_leader_state(&self.shared_leader_state) else {
             return Ok(ProcessingStatus::CouldNotProcess(work));
         };
         let bank = leader_state
             .working_bank()
-            .expect("active_leader_state_with_timeout should only return an active bank");
+            .expect("active_leader_state should only return an active bank");
         self.metrics
             .count_metrics
             .num_messages_processed
@@ -287,8 +287,14 @@ pub(crate) mod external {
                     Some(message) => {
                         did_work = true;
                         self.sender.sync();
+
+                        // Process message, if bank is unavailable enable draining for the
+                        // remainder of the current batch (i.e. what our `receiver.sync()`
+                        // fetched).
                         should_drain_executes |=
                             self.process_message(message, should_drain_executes)?;
+
+                        // Publish our send & read offsets.
                         self.sender.commit();
                         receiver.finalize();
                     }
@@ -351,107 +357,89 @@ pub(crate) mod external {
                     .map(|()| true);
             }
 
-            // Loop here to avoid exposing internal error to external scheduler.
-            // In the vast majority of cases, this will iterate a single time;
-            // If we began execution when a slot was still in process, and could
-            // not record at the end because the slot has ended, we will retry
-            // on the next slot.
-            let mut last_attempted_slot = 0;
-            for _ in 0..2 {
-                let Some(leader_state) =
-                    active_leader_state_with_timeout(&self.shared_leader_state)
-                else {
-                    return self
-                        .return_not_included_with_reason(
-                            message,
-                            not_included_reasons::BANK_NOT_AVAILABLE,
-                            last_attempted_slot,
-                        )
-                        .map(|()| true);
-                };
-
-                let bank = leader_state
-                    .working_bank()
-                    .expect("active_leader_state_with_timeout should only return an active bank");
-                last_attempted_slot = bank.slot();
-                if bank.slot() > message.max_working_slot {
-                    return self
-                        .return_unprocessed_message(
-                            message,
-                            agave_scheduler_bindings::processed_codes::MAX_WORKING_SLOT_EXCEEDED,
-                        )
-                        .map(|()| false);
-                }
-
-                // SAFETY: Assumption that external scheduler does not pass messages with batch regions
-                //         not pointing to valid regions in the allocator.
-                let batch = unsafe {
-                    TransactionPtrBatch::from_sharable_transaction_batch_region(
-                        &message.batch,
-                        &self.allocator,
-                    )
-                };
-                let (translation_results, transactions, max_ages) =
-                    Self::translate_transaction_batch(&batch, bank);
-
-                // Enforce all or nothing on translation_results.
-                let execution_flags = ExecutionFlags {
-                    drop_on_failure: message.flags & execution_flags::DROP_ON_FAILURE != 0,
-                    all_or_nothing: message.flags & execution_flags::ALL_OR_NOTHING != 0,
-                };
-                if execution_flags.all_or_nothing && translation_results.len() != transactions.len()
-                {
-                    self.send_execution_response(
+            let Some(leader_state) = active_leader_state(&self.shared_leader_state) else {
+                return self
+                    .return_not_included_with_reason(
                         message,
-                        Self::all_or_nothing_translate_iterator(&translation_results, bank.slot()),
-                    )?;
+                        not_included_reasons::BANK_NOT_AVAILABLE,
+                        0,
+                    )
+                    .map(|()| true);
+            };
 
-                    return Ok(false);
-                }
+            let bank = leader_state
+                .working_bank()
+                .expect("active_leader_state should only return an active bank");
+            if bank.slot() > message.max_working_slot {
+                return self
+                    .return_unprocessed_message(
+                        message,
+                        agave_scheduler_bindings::processed_codes::MAX_WORKING_SLOT_EXCEEDED,
+                    )
+                    .map(|()| false);
+            }
 
-                let output = self.consumer.process_and_record_aged_transactions(
-                    bank,
-                    &transactions,
-                    &max_ages,
-                    execution_flags,
-                );
+            // SAFETY: Assumption that external scheduler does not pass messages with batch regions
+            //         not pointing to valid regions in the allocator.
+            let batch = unsafe {
+                TransactionPtrBatch::from_sharable_transaction_batch_region(
+                    &message.batch,
+                    &self.allocator,
+                )
+            };
+            let (translation_results, transactions, max_ages) =
+                Self::translate_transaction_batch(&batch, bank);
 
-                self.metrics.update_for_consume(&output);
-                self.metrics.has_data.store(true, Ordering::Relaxed);
-
-                let Ok(commit_results) = output
-                    .execute_and_commit_transactions_output
-                    .commit_transactions_result
-                else {
-                    // If already ON the last possible execution slot,
-                    // immediately give up instead of trying on next slot.
-                    if bank.slot() == message.max_working_slot {
-                        break;
-                    }
-                    continue; // recording failed, try again on next slot if possible.
-                };
-
+            // Enforce all or nothing on translation_results.
+            let execution_flags = ExecutionFlags {
+                drop_on_failure: message.flags & execution_flags::DROP_ON_FAILURE != 0,
+                all_or_nothing: message.flags & execution_flags::ALL_OR_NOTHING != 0,
+            };
+            if execution_flags.all_or_nothing && translation_results.len() != transactions.len() {
                 self.send_execution_response(
                     message,
-                    Self::consume_response_iterator(
-                        &translation_results,
-                        &transactions,
-                        &commit_results,
-                        bank,
-                    ),
+                    Self::all_or_nothing_translate_iterator(&translation_results, bank.slot()),
                 )?;
 
                 return Ok(false);
             }
 
-            // If not successfully recorded even after second attempt, then we
-            // just return immediately as if a bank is not available.
-            self.return_not_included_with_reason(
+            let output = self.consumer.process_and_record_aged_transactions(
+                bank,
+                &transactions,
+                &max_ages,
+                execution_flags,
+            );
+
+            self.metrics.update_for_consume(&output);
+            self.metrics.has_data.store(true, Ordering::Relaxed);
+
+            let Ok(commit_results) = output
+                .execute_and_commit_transactions_output
+                .commit_transactions_result
+            else {
+                // Recording failed (slot ended during processing).
+                // Return as bank not available so the scheduler can retry.
+                return self
+                    .return_not_included_with_reason(
+                        message,
+                        not_included_reasons::BANK_NOT_AVAILABLE,
+                        bank.slot(),
+                    )
+                    .map(|()| true);
+            };
+
+            self.send_execution_response(
                 message,
-                not_included_reasons::BANK_NOT_AVAILABLE,
-                last_attempted_slot,
-            )
-            .map(|()| false)
+                Self::consume_response_iterator(
+                    &translation_results,
+                    &transactions,
+                    &commit_results,
+                    bank,
+                ),
+            )?;
+
+            Ok(false)
         }
 
         fn check_batch(
@@ -1535,33 +1523,6 @@ fn try_drain_iter<T>(work: T, receiver: &Receiver<T>) -> impl Iterator<Item = T>
     std::iter::once(work).chain(receiver.try_iter())
 }
 
-/// Get active bank with timeout.
-fn active_leader_state_with_timeout(
-    shared_leader_state: &SharedLeaderState,
-) -> Option<arc_swap::Guard<Arc<LeaderState>>> {
-    // Do an initial bank load without sampling time. If we're in a hot loop
-    // of work this saves us from checking the time at all and we'd only end up
-    // checking between or after our leader slots.
-    if let Some(guard) = active_leader_state(shared_leader_state) {
-        return Some(guard);
-    }
-
-    // If the initial check above didn't find a bank, we will
-    // spin up to some timeout to wait for a bank to execute on.
-    // This is conservatively long because transitions between slots
-    // can occasionally be slow.
-    const TIMEOUT: Duration = Duration::from_millis(50);
-    let now = Instant::now();
-    while now.elapsed() < TIMEOUT {
-        if let Some(guard) = active_leader_state(shared_leader_state) {
-            return Some(guard);
-        }
-        core::hint::spin_loop();
-    }
-
-    None
-}
-
 /// Returns an active leader state if available, otherwise None.
 fn active_leader_state(
     shared_leader_state: &SharedLeaderState,
@@ -2299,6 +2260,58 @@ mod tests {
             vec![RetryableIndex::new(0, true)]
         );
 
+        drop(test_frame);
+        let _ = worker_thread.join().unwrap();
+    }
+
+    #[test]
+    fn test_worker_consume_no_bank_drains_queue() {
+        let (test_frame, worker) = setup_test_frame(true);
+        let TestFrame {
+            mint_keypair,
+            genesis_config,
+            bank,
+            consume_sender,
+            consumed_receiver,
+            ..
+        } = &test_frame;
+
+        // Queue up 5 batches.
+        let num_batches: usize = 5;
+        for i in 0..num_batches {
+            let transactions = sanitize_transactions(vec![system_transaction::transfer(
+                mint_keypair,
+                &Pubkey::new_unique(),
+                1,
+                genesis_config.hash(),
+            )]);
+            consume_sender
+                .send(ConsumeWork {
+                    batch_id: TransactionBatchId::new(i as u64),
+                    ids: vec![i],
+                    transactions,
+                    max_ages: vec![MaxAge {
+                        sanitized_epoch: bank.epoch(),
+                        alt_invalidation_slot: bank.slot(),
+                    }],
+                })
+                .unwrap();
+        }
+
+        // Start the worker with 5 pending batches.
+        let worker_thread = std::thread::spawn(move || worker.run());
+
+        // All batches should be returned as retryable (no bank available).
+        for i in 0..num_batches {
+            let consumed = consumed_receiver.recv().unwrap();
+            assert_eq!(consumed.work.batch_id, TransactionBatchId::new(i as u64));
+            assert_eq!(
+                consumed.retryable_indexes,
+                vec![RetryableIndex::new(0, true)]
+            );
+        }
+
+        // Cleanup.
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
     }

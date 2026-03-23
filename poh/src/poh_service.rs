@@ -149,18 +149,14 @@ impl PohService {
                     if let Some(cores) = core_affinity::get_core_ids() {
                         core_affinity::set_for_current(cores[pinned_cpu_core]);
                     }
-                    let target_ns_per_tick = Self::target_ns_per_tick(
-                        ticks_per_slot,
-                        poh_config.target_tick_duration.as_nanos() as u64,
-                    );
                     Self::tick_producer(
                         poh_recorder,
+                        &poh_config,
                         &poh_exit,
                         ticks_per_slot,
                         hashes_per_batch,
                         &mut record_receiver,
                         poh_service_receiver,
-                        target_ns_per_tick,
                         &migration_status.shutdown_poh,
                     )
                 }
@@ -195,13 +191,14 @@ impl PohService {
         Self { tick_producer }
     }
 
-    pub fn target_ns_per_tick(ticks_per_slot: u64, target_tick_duration_ns: u64) -> u64 {
-        // Account for some extra time outside of PoH generation to account
-        // for processing time outside PoH.
+    // Adjusts the target nanoseconds per PoH tick to enable hitting slot time
+    // targets by compensating for time spent outside of PoH, such as network
+    // propagation.
+    pub fn target_tick_ns_adjusted(ticks_per_slot: u64, target_tick_ns: u64) -> u64 {
         let adjustment_per_tick = TARGET_SLOT_ADJUSTMENT_NS
             .checked_div(ticks_per_slot)
             .unwrap_or(0);
-        target_tick_duration_ns.saturating_sub(adjustment_per_tick)
+        target_tick_ns.saturating_sub(adjustment_per_tick)
     }
 
     fn low_power_tick_producer(
@@ -220,13 +217,13 @@ impl PohService {
         if should_shutdown_for_test_producers {
             record_receiver.shutdown();
         }
+        let mut target_tick_duration =
+            Duration::from_nanos(Self::target_tick_ns_reconciled(&poh_recorder, poh_config));
         while !poh_exit.load(Ordering::Relaxed) && !shutdown_poh.load(Ordering::Relaxed) {
             let service_message =
                 Self::check_for_service_message(&poh_service_receiver, record_receiver);
             loop {
-                let remaining_tick_time = poh_config
-                    .target_tick_duration
-                    .saturating_sub(last_tick.elapsed());
+                let remaining_tick_time = target_tick_duration.saturating_sub(last_tick.elapsed());
                 Self::read_record_receiver_and_process(
                     &poh_recorder,
                     record_receiver,
@@ -270,6 +267,10 @@ impl PohService {
 
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                target_tick_duration = Duration::from_nanos(Self::target_tick_ns_reconciled(
+                    &poh_recorder,
+                    poh_config,
+                ));
                 should_shutdown_for_test_producers =
                     Self::should_shutdown_for_test_producers(&poh_recorder);
                 if should_shutdown_for_test_producers {
@@ -334,15 +335,15 @@ impl PohService {
         if should_shutdown_for_test_producers {
             record_receiver.shutdown();
         }
+        let mut target_tick_duration =
+            Duration::from_nanos(Self::target_tick_ns_reconciled(&poh_recorder, poh_config));
 
         while elapsed_ticks < num_ticks {
             let service_message =
                 Self::check_for_service_message(&poh_service_receiver, record_receiver);
 
             loop {
-                let remaining_tick_time = poh_config
-                    .target_tick_duration
-                    .saturating_sub(last_tick.elapsed());
+                let remaining_tick_time = target_tick_duration.saturating_sub(last_tick.elapsed());
                 Self::read_record_receiver_and_process(
                     &poh_recorder,
                     record_receiver,
@@ -391,6 +392,10 @@ impl PohService {
             }
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                target_tick_duration = Duration::from_nanos(Self::target_tick_ns_reconciled(
+                    &poh_recorder,
+                    poh_config,
+                ));
                 should_shutdown_for_test_producers =
                     Self::should_shutdown_for_test_producers(&poh_recorder);
                 if should_shutdown_for_test_producers {
@@ -531,18 +536,22 @@ impl PohService {
 
     fn tick_producer(
         poh_recorder: Arc<RwLock<PohRecorder>>,
+        poh_config: &PohConfig,
         poh_exit: &AtomicBool,
         ticks_per_slot: u64,
         hashes_per_batch: u64,
         record_receiver: &mut RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
-        target_ns_per_tick: u64,
         shutdown_poh: &AtomicBool,
     ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut timing = PohTiming::new();
         let mut next_record = None;
         let mut should_exit = poh_exit.load(Ordering::Relaxed);
+        let mut target_ns_per_tick = Self::target_tick_ns_adjusted(
+            ticks_per_slot,
+            Self::target_tick_ns_reconciled(&poh_recorder, poh_config),
+        );
 
         loop {
             // If we should exit, close the channel so no more records are accepted,
@@ -596,6 +605,10 @@ impl PohService {
             if let Some(service_message) = service_message {
                 if !should_exit {
                     Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                    target_ns_per_tick = Self::target_tick_ns_adjusted(
+                        ticks_per_slot,
+                        Self::target_tick_ns_reconciled(&poh_recorder, poh_config),
+                    );
                 }
             }
 
@@ -618,6 +631,21 @@ impl PohService {
             }
             Err(_) => None,
         }
+    }
+
+    // Reconcile the banks values versus the optional (test only) poh_config
+    // overrides.
+    fn target_tick_ns_reconciled(
+        poh_recorder: &RwLock<PohRecorder>,
+        poh_config: &PohConfig,
+    ) -> u64 {
+        poh_recorder
+            .read()
+            .unwrap()
+            .target_tick_ns()
+            // Tests can set the bank timing absurdly high. Preserve the config
+            // override so the short-lived producers still make progress.
+            .min(poh_config.target_tick_duration.as_nanos() as u64)
     }
 
     fn handle_service_message(

@@ -682,6 +682,19 @@ impl PohRecorder {
         self.ticks_per_slot
     }
 
+    // Derives the target tick duration in nanoseconds based on the Bank's
+    // `ns_per_slot` and `ticks_per_slot`
+    pub fn target_tick_ns(&self) -> u64 {
+        let ns_per_slot = self
+            .working_bank
+            .as_ref()
+            .map(|working_bank| working_bank.bank.ns_per_slot)
+            .unwrap_or(self.start_bank.ns_per_slot);
+        let ticks_per_slot = u128::from(self.ticks_per_slot.max(1));
+        let target_tick_ns = ns_per_slot.saturating_div(ticks_per_slot);
+        u64::try_from(target_tick_ns).unwrap_or(u64::MAX)
+    }
+
     pub fn start_slot(&self) -> Slot {
         self.start_bank.slot()
     }

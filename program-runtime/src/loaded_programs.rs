@@ -333,7 +333,7 @@ impl ProgramStatistics {
             .expect("unreachable: closure always returns a Some");
     }
 
-    /// JIT compilation happened. Record information about this event.
+    /// Record information about JIT compilation.
     pub fn jit_compiled(&self, duration_us: u64) {
         let ord = Ordering::Relaxed;
         self.compilations.fetch_add(1, ord);
@@ -341,7 +341,7 @@ impl ProgramStatistics {
         Self::observe_ema::<COMPILATION_EMA_WINDOW_SIZE>(&self.compilation_time_ema, duration_us);
     }
 
-    /// JIT compilation happened. Record information about this event.
+    /// Record information about JIT-compiled program having been executed.
     pub fn jit_executed(&self, duration_us: u64) {
         let ord = Ordering::Relaxed;
         self.jit_invocations.fetch_add(1, ord);
@@ -349,7 +349,7 @@ impl ProgramStatistics {
         Self::observe_ema::<EXECUTION_EMA_WINDOW_SIZE>(&self.jit_execution_time_ema, duration_us);
     }
 
-    /// JIT compilation happened. Record information about this event.
+    /// Record information about program executed with the interpreter.
     pub fn interpreter_executed(&self, duration_us: u64) {
         let ord = Ordering::Relaxed;
         self.interpreted_invocations.fetch_add(1, ord);
@@ -426,7 +426,6 @@ pub struct ProgramCacheEntry {
     pub effective_slot: Slot,
     /// How often this entry was used by a transaction
     pub stats: Arc<ProgramStatistics>,
-    /// Latest slot in which the entry was used
     pub latest_access_slot: AtomicU64,
 }
 
@@ -752,11 +751,45 @@ impl ProgramCacheEntry {
         let _ = self.latest_access_slot.fetch_max(slot, Ordering::Relaxed);
     }
 
-    pub fn decayed_usage_counter(&self, now: Slot) -> u64 {
+    /// Compute a retention score.
+    ///
+    /// Eviction uses an adapted GDSF scheme which incorporates frequency, recovery cost
+    /// (recompilation) and time-based decay.
+    ///
+    /// How hard should we try to retain this entry. Higher number -> retention more likely.
+    pub fn retention_score(&self) -> u64 {
         let last_access = self.latest_access_slot.load(Ordering::Relaxed);
-        // Shifting the u64 value for more than 63 will cause an overflow.
-        let decaying_for = std::cmp::min(63, now.saturating_sub(last_access));
-        self.stats.uses.load(Ordering::Relaxed) >> decaying_for
+        let recovery_cost = self.stats.compilation_time_ema.load(Ordering::Relaxed);
+        let frequency = self.stats.uses.load(Ordering::Relaxed);
+        // Traditionally GDSF uses the following logic:
+        //
+        // on_access:
+        //   entry.frequency += 1
+        //   entry.H := cache.L + (entry.cost * entry.frequency) / entry.size
+        //
+        // on_eviction:
+        //   victim = pick_victim_minimizing_H()
+        //   cache.L := victim.H
+        //
+        // It achieves decay by virtue of L increasing over time (and therefore the “value” of
+        // stored score of each entry decreasing over time.) Entry recovery and frequency, as well
+        // as size are otherwise also accounted for by them inflating the overall score by a bit.
+        //
+        // We adapt this algorithm slightly: we already have a kind of `L` – access slot. It does
+        // not include the weight of the evicted entry as the original algorithm does, that is
+        // *probably* fine (the author has not done any empirical experiments to verify it it
+        // actually matters.)
+        //
+        // Additionally we ignore the size component altogether as irrelevant and instead of
+        // applying entry weight linearly, we use a `log_2`. We can't use plain `weight*frequency`
+        // as the most heavily used entries would never ever get evicted after just some runtime,
+        // even if they're no longer used. With `log_2` weight and frequency can contribute to
+        // up-to 128 slots of "bonus" towards their retention compared to rarely used peers.
+        //
+        // Feel free to adjust the specific formulae used.
+        let weight = u128::from(recovery_cost).wrapping_mul(u128::from(frequency));
+        let weight_log = u128::BITS.wrapping_sub(weight.leading_zeros());
+        last_access.saturating_add(u64::from(weight_log))
     }
 
     pub fn account_owner(&self) -> Pubkey {
@@ -1489,7 +1522,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
 
     /// Evicts programs using 2's random selection, choosing the least used program out of the two entries.
     /// The eviction is performed enough number of times to reduce the cache usage to the given percentage.
-    pub fn evict_using_2s_random_selection(&mut self, shrink_to: PercentageInteger, now: Slot) {
+    pub fn evict_using_2s_random_selection(&mut self, shrink_to: PercentageInteger, _now: Slot) {
         let mut candidates = self.get_flattened_entries();
         self.stats
             .water_level
@@ -1499,7 +1532,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             .saturating_sub(shrink_to.apply_to(MAX_LOADED_ENTRY_COUNT));
         fn random_index_and_usage_counter(
             candidates: &[(Pubkey, Slot, Arc<ProgramCacheEntry>)],
-            now: Slot,
         ) -> (usize, u64) {
             let mut rng = rng();
             // gen_range is deprecated in favor of random_range in rand>=0.9, but we also get
@@ -1512,15 +1544,15 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 .get(index)
                 .expect("Failed to get cached entry")
                 .2
-                .decayed_usage_counter(now);
+                .retention_score();
             (index, usage_counter)
         }
 
         for _ in 0..num_to_unload {
-            let (index1, usage_counter1) = random_index_and_usage_counter(&candidates, now);
-            let (index2, usage_counter2) = random_index_and_usage_counter(&candidates, now);
+            let (index1, retention_score1) = random_index_and_usage_counter(&candidates);
+            let (index2, retention_score2) = random_index_and_usage_counter(&candidates);
 
-            let (id, last_modification_slot, entry) = if usage_counter1 < usage_counter2 {
+            let (id, last_modification_slot, entry) = if retention_score1 < retention_score2 {
                 candidates.swap_remove(index1)
             } else {
                 candidates.swap_remove(index2)
@@ -1788,35 +1820,90 @@ mod tests {
     }
 
     #[test]
-    fn test_usage_counter_decay() {
+    fn test_retention_score_decay_horizon() {
         let stats = ProgramStatistics {
-            uses: AtomicU64::new(32),
+            uses: AtomicU64::new(u64::MAX),
+            compilation_time_ema: AtomicU64::new(u64::MAX),
+            ..Default::default()
+        };
+        let program = new_test_entry_with_usage(0, 0, stats);
+        program.update_access_slot(1);
+        assert!(
+            dbg!(program.retention_score()) <= 129,
+            "retention score should remain within sensible boundaries even for very frequently \
+             used entries."
+        );
+    }
+
+    #[test]
+    fn test_retention_score_frequency_preference() {
+        let stats = ProgramStatistics {
+            uses: AtomicU64::new(16),
+            compilation_time_ema: AtomicU64::new(1),
             ..Default::default()
         };
         let program = new_test_entry_with_usage(10, 11, stats);
         program.update_access_slot(15);
-        assert_eq!(program.decayed_usage_counter(15), 32);
-        assert_eq!(program.decayed_usage_counter(16), 16);
-        assert_eq!(program.decayed_usage_counter(17), 8);
-        assert_eq!(program.decayed_usage_counter(18), 4);
-        assert_eq!(program.decayed_usage_counter(19), 2);
-        assert_eq!(program.decayed_usage_counter(20), 1);
-        assert_eq!(program.decayed_usage_counter(21), 0);
-        assert_eq!(program.decayed_usage_counter(15), 32);
-        assert_eq!(program.decayed_usage_counter(14), 32);
+        let less_used_retention_score = program.retention_score();
+        program.stats.uses.fetch_max(1024, Ordering::Relaxed);
+        let more_used_retention_score = program.retention_score();
+        assert!(
+            less_used_retention_score > 15,
+            "frequency should count for entry retention score"
+        );
+        assert!(
+            dbg!(more_used_retention_score) > dbg!(less_used_retention_score),
+            "retention score should prefer evicting less used entry over the more used one if \
+             possible"
+        );
+    }
 
-        program.update_access_slot(18);
-        assert_eq!(program.decayed_usage_counter(15), 32);
-        assert_eq!(program.decayed_usage_counter(16), 32);
-        assert_eq!(program.decayed_usage_counter(17), 32);
-        assert_eq!(program.decayed_usage_counter(18), 32);
-        assert_eq!(program.decayed_usage_counter(19), 16);
-        assert_eq!(program.decayed_usage_counter(20), 8);
-        assert_eq!(program.decayed_usage_counter(21), 4);
+    #[test]
+    fn test_retention_score_recovery_time_preference() {
+        let stats = ProgramStatistics {
+            uses: AtomicU64::new(1),
+            compilation_time_ema: AtomicU64::new(1000),
+            ..Default::default()
+        };
+        let program = new_test_entry_with_usage(10, 11, stats);
+        program.update_access_slot(15);
+        let cheaper_to_compile_score = program.retention_score();
+        program
+            .stats
+            .compilation_time_ema
+            .fetch_max(2000, Ordering::Relaxed);
+        let more_expensive_to_compile_score = program.retention_score();
+        assert!(
+            cheaper_to_compile_score > 15,
+            "compile time should count for entry retention score"
+        );
+        assert!(
+            dbg!(more_expensive_to_compile_score) > dbg!(cheaper_to_compile_score),
+            "retention score should prefer evicting cheaper-to-compile entries"
+        );
+    }
 
-        // Decay for 63 or more slots
-        assert_eq!(program.decayed_usage_counter(18 + 63), 0);
-        assert_eq!(program.decayed_usage_counter(100), 0);
+    #[test]
+    fn test_retention_weight_metric_does_not_outweight_smaller_metric() {
+        // Compilation time generally stays in the scale of 4 digits, while the uses counter can
+        // become many millions. Neither should overshadow other too much.
+        let stats = ProgramStatistics {
+            uses: AtomicU64::new(100_000_000),
+            compilation_time_ema: AtomicU64::new(1000),
+            ..Default::default()
+        };
+        let program = new_test_entry_with_usage(10, 11, stats);
+        program.update_access_slot(15);
+        let previous_score = program.retention_score();
+        program
+            .stats
+            .compilation_time_ema
+            .fetch_max(2000, Ordering::Relaxed);
+        let new_score = program.retention_score();
+        assert!(
+            dbg!(previous_score) != dbg!(new_score),
+            "retention weight components shouldn't overshadow the other due to scale differences"
+        );
     }
 
     fn program_deploy_test_helper(
