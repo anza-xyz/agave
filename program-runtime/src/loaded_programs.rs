@@ -333,7 +333,7 @@ impl ProgramStatistics {
             .expect("unreachable: closure always returns a Some");
     }
 
-    /// JIT compilation happened. Record information about this event.
+    /// Record information about JIT compilation.
     pub fn jit_compiled(&self, duration_us: u64) {
         let ord = Ordering::Relaxed;
         self.compilations.fetch_add(1, ord);
@@ -341,7 +341,7 @@ impl ProgramStatistics {
         Self::observe_ema::<COMPILATION_EMA_WINDOW_SIZE>(&self.compilation_time_ema, duration_us);
     }
 
-    /// JIT compilation happened. Record information about this event.
+    /// Record information about JIT-compiled program having been executed.
     pub fn jit_executed(&self, duration_us: u64) {
         let ord = Ordering::Relaxed;
         self.jit_invocations.fetch_add(1, ord);
@@ -349,7 +349,7 @@ impl ProgramStatistics {
         Self::observe_ema::<EXECUTION_EMA_WINDOW_SIZE>(&self.jit_execution_time_ema, duration_us);
     }
 
-    /// JIT compilation happened. Record information about this event.
+    /// Record information about program executed with the interpreter.
     pub fn interpreter_executed(&self, duration_us: u64) {
         let ord = Ordering::Relaxed;
         self.interpreted_invocations.fetch_add(1, ord);
@@ -783,7 +783,7 @@ impl ProgramCacheEntry {
         // Additionally we ignore the size component altogether as irrelevant and instead of
         // applying entry weight linearly, we use a `log_2`. We can't use plain `weight*frequency`
         // as the most heavily used entries would never ever get evicted after just some runtime,
-        // even if they're no longer used. With `log_2` weight and freuqency can contribute to
+        // even if they're no longer used. With `log_2` weight and frequency can contribute to
         // up-to 128 slots of "bonus" towards their retention compared to rarely used peers.
         //
         // Feel free to adjust the specific formulae used.
