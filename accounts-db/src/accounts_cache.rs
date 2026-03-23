@@ -85,7 +85,7 @@ impl Drop for SlotCache {
 
 impl SlotCache {
     pub fn len(&self) -> usize {
-        self.accounts_count.load(Ordering::Relaxed) as usize
+        self.accounts_count.load(Ordering::Acquire) as usize
     }
 
     pub fn report_slot_store_metrics(&self) {
@@ -147,7 +147,7 @@ impl SlotCache {
             self.total_size.fetch_add(data_len, Ordering::Relaxed);
             self.unique_account_writes_size
                 .fetch_add(data_len, Ordering::Relaxed);
-            self.accounts_count.fetch_add(1, Ordering::Relaxed);
+            self.accounts_count.fetch_add(1, Ordering::Release);
             self.total_accounts_count.fetch_add(1, Ordering::Relaxed);
             true
         };
