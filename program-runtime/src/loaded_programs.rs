@@ -1505,11 +1505,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
     }
 
-    /// Unloads programs with lowest retention scores.
+    /// Unloads programs which were used infrequently
     pub fn sort_and_unload(&mut self, shrink_to: PercentageInteger) {
         let mut sorted_candidates = self.get_flattened_entries();
         sorted_candidates.sort_by_cached_key(|(_id, _last_modification_slot, program)| {
-            program.retention_score()
+            program.stats.uses.load(Ordering::Relaxed)
         });
         let num_to_unload = sorted_candidates
             .len()
