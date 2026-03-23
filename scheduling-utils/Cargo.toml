@@ -23,7 +23,6 @@ rts-alloc = { workspace = true }
 shaq = { workspace = true }
 slotmap = { workspace = true }
 solana-fee = { workspace = true, features = ["agave-unstable-api"] }
-solana-packet = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-transaction = { workspace = true, optional = true, features = ["serde"] }
 solana-transaction-error = { workspace = true }

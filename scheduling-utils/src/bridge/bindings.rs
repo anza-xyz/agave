@@ -17,7 +17,6 @@ use {
     rts_alloc::Allocator,
     slotmap::SlotMap,
     solana_fee::FeeFeatures,
-    solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     std::ptr::NonNull,
 };
@@ -114,7 +113,8 @@ where
         &mut self,
         tx: &[u8],
     ) -> Result<TransactionKey, TransactionViewError> {
-        assert!(tx.len() <= PACKET_DATA_SIZE);
+        // TODO: Move to rts_alloc::MAX_ALLOC_SIZE once exposed.
+        assert!(tx.len() <= 4096);
 
         let ptr = self
             .allocator

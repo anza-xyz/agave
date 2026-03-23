@@ -278,7 +278,6 @@ dependencies = [
  "shaq",
  "slotmap",
  "solana-fee",
- "solana-packet 4.1.0",
  "solana-pubkey 4.1.0",
  "solana-transaction",
  "solana-transaction-error",
