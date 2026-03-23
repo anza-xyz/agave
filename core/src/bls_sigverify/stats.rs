@@ -180,6 +180,9 @@ pub(super) struct SigVerifyCertStats {
     pub(super) certs_to_sig_verify: u64,
     /// Number of certs [`verify_and_send_certificates`] successfully verified the signature of.
     pub(super) sig_verified_certs: u64,
+    /// Number of certs that were verified unnecessarily because another cert of the same
+    /// `CertificateType` was already verified.
+    pub(super) unnecessary_certs_verified: u64,
 
     /// Number of times stake verification failed on a cert.
     pub(super) stake_verification_failed: u64,
@@ -202,6 +205,7 @@ impl SigVerifyCertStats {
         let Self {
             certs_to_sig_verify,
             sig_verified_certs,
+            unnecessary_certs_verified,
             stake_verification_failed,
             signature_verification_failed,
             too_far_in_future,
@@ -211,6 +215,7 @@ impl SigVerifyCertStats {
         } = other;
         self.certs_to_sig_verify += certs_to_sig_verify;
         self.sig_verified_certs += sig_verified_certs;
+        self.unnecessary_certs_verified += unnecessary_certs_verified;
         self.stake_verification_failed += stake_verification_failed;
         self.signature_verification_failed += signature_verification_failed;
         self.too_far_in_future += too_far_in_future;
@@ -224,6 +229,7 @@ impl SigVerifyCertStats {
         let Self {
             certs_to_sig_verify,
             sig_verified_certs,
+            unnecessary_certs_verified,
             stake_verification_failed,
             signature_verification_failed,
             too_far_in_future,
@@ -235,6 +241,11 @@ impl SigVerifyCertStats {
             "bls_cert_sigverify_stats",
             ("certs_to_sig_verify", *certs_to_sig_verify, i64),
             ("sig_verified_certs", *sig_verified_certs, i64),
+            (
+                "unnecessary_certs_verified",
+                *unnecessary_certs_verified,
+                i64
+            ),
             ("stake_verification_failed", *stake_verification_failed, i64),
             (
                 "signature_verification_failed",
