@@ -19,6 +19,7 @@ use {
     solana_fee::FeeFeatures,
     solana_pubkey::Pubkey,
     std::ptr::NonNull,
+    thiserror::Error,
 };
 
 pub struct SchedulerBindingsBridge<M> {
@@ -284,7 +285,7 @@ where
             max_working_slot,
             flags,
         }: ScheduleBatch<&[KeyedTransactionMeta<M>]>,
-    ) {
+    ) -> Result<(), ScheduleError> {
         let queue = &mut self.workers[worker].0.pack_to_worker;
 
         queue.sync();
@@ -292,23 +293,25 @@ where
             .try_write(PackToWorkerMessage {
                 flags,
                 max_working_slot,
-                batch: Self::collect_batch(&self.allocator, &mut self.state, batch),
+                batch: Self::collect_batch(&self.allocator, &mut self.state, batch)?,
             })
-            .unwrap();
+            .map_err(|_| ScheduleError::Queue)?;
         queue.commit();
+
+        Ok(())
     }
 
     fn collect_batch(
         allocator: &Allocator,
         state: &mut SlotMap<TransactionKey, TransactionState>,
         batch: &[KeyedTransactionMeta<M>],
-    ) -> SharableTransactionBatchRegion {
+    ) -> Result<SharableTransactionBatchRegion, ScheduleError> {
         assert!(batch.len() <= MAX_TRANSACTIONS_PER_MESSAGE);
 
         // Allocate a batch that can hold all our transaction pointers.
         let transactions = allocator
             .allocate(Self::TRANSACTION_BATCH_SIZE as u32)
-            .unwrap();
+            .ok_or(ScheduleError::Allocation)?;
         let transactions_offset = unsafe { allocator.offset(transactions) };
 
         // Get our two pointers to the TX region & meta region.
@@ -349,10 +352,10 @@ where
             };
         }
 
-        SharableTransactionBatchRegion {
+        Ok(SharableTransactionBatchRegion {
             num_transactions: batch.len().try_into().unwrap(),
             transactions_offset,
-        }
+        })
     }
 
     fn handle_worker_response(
@@ -554,12 +557,20 @@ pub struct RuntimeState {
     pub burn_percent: u64,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScheduleBatch<T> {
     pub worker: usize,
     pub transactions: T,
     pub max_working_slot: u64,
     pub flags: u16,
+}
+
+#[derive(Debug, Error)]
+pub enum ScheduleError {
+    #[error("Queue full")]
+    Queue,
+    #[error("Allocation failed")]
+    Allocation,
 }
 
 pub trait Worker {
