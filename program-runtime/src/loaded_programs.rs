@@ -751,7 +751,7 @@ impl ProgramCacheEntry {
         let _ = self.latest_access_slot.fetch_max(slot, Ordering::Relaxed);
     }
 
-    /// Compute eviction score.
+    /// Compute a retention score.
     ///
     /// Eviction uses an adapted GDSF scheme which incorporates frequency, recovery cost
     /// (recompilation) and time-based decay.
@@ -1505,11 +1505,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
     }
 
-    /// Unloads programs which were used infrequently
+    /// Unloads programs with lowest retention scores.
     pub fn sort_and_unload(&mut self, shrink_to: PercentageInteger) {
         let mut sorted_candidates = self.get_flattened_entries();
         sorted_candidates.sort_by_cached_key(|(_id, _last_modification_slot, program)| {
-            program.stats.uses.load(Ordering::Relaxed)
+            program.retention_score()
         });
         let num_to_unload = sorted_candidates
             .len()
