@@ -37,6 +37,7 @@ pub mod stake_weighted_timestamp;
 pub mod stakes;
 pub mod static_ids;
 pub mod status_cache;
+pub mod test_utils;
 pub mod transaction_batch;
 pub mod validated_block_finalization;
 pub mod validated_reward_certificate;

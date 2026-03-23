@@ -17,7 +17,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
-    solana_clock::{MAX_PROCESSING_AGE, UnixTimestamp},
+    solana_clock::UnixTimestamp,
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
@@ -33,7 +33,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, SlotLeader},
         bank_client::BankClient,
         bank_forks::BankForks,
         genesis_utils::{
@@ -151,7 +151,6 @@ fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> Transact
     let mut commit_results = bank
         .load_execute_and_commit_transactions(
             &tx_batch,
-            MAX_PROCESSING_AGE,
             ExecutionRecordingConfig {
                 enable_cpi_recording: true,
                 enable_log_recording: true,
@@ -172,7 +171,7 @@ fn bank_with_feature_activated(
     feature_id: &Pubkey,
 ) -> Arc<Bank> {
     let slot = parent.slot().saturating_add(1);
-    let mut bank = Bank::new_from_parent(parent, &Pubkey::new_unique(), slot);
+    let mut bank = Bank::new_from_parent(parent, SlotLeader::new_unique(), slot);
     bank.activate_feature(feature_id);
     bank_forks
         .write()
@@ -188,7 +187,7 @@ fn bank_with_feature_deactivated(
     feature_id: &Pubkey,
 ) -> Arc<Bank> {
     let slot = parent.slot().saturating_add(1);
-    let mut bank = Bank::new_from_parent(parent, &Pubkey::new_unique(), slot);
+    let mut bank = Bank::new_from_parent(parent, SlotLeader::new_unique(), slot);
     bank.deactivate_feature(feature_id);
     bank_forks
         .write()
@@ -344,10 +343,7 @@ fn test_program_sbf_loader_deprecated() {
         let program_elf = harness::file::load_program_elf(program);
         let program_id = Pubkey::new_unique();
 
-        let feature_set = SVMFeatureSet {
-            disable_deploy_of_alloc_free_syscall: false,
-            ..SVMFeatureSet::all_enabled()
-        };
+        let feature_set = SVMFeatureSet::all_enabled();
 
         let compute_budget = ComputeBudget::new_with_defaults(false);
 
@@ -2583,7 +2579,7 @@ fn test_program_sbf_upgrade() {
             .unwrap();
     }
     bank_client
-        .advance_slot(1, &bank_forks, &Pubkey::default())
+        .advance_slot(1, &bank_forks, SlotLeader::default())
         .expect("Failed to advance the slot");
 
     // Call upgraded program
@@ -2698,7 +2694,7 @@ fn test_program_sbf_upgrade_via_cpi() {
         .send_and_confirm_message(&[&mint_keypair, &new_authority_keypair], message)
         .unwrap();
     bank_client
-        .advance_slot(1, &bank_forks, &Pubkey::default())
+        .advance_slot(1, &bank_forks, SlotLeader::default())
         .expect("Failed to advance the slot");
 
     // Call the upgraded program via CPI
@@ -4051,7 +4047,7 @@ fn test_program_sbf_inner_instruction_alignment_checks() {
     // unaligned should be allowed once invoke completes
     let mut bank_client = BankClient::new_shared(bank);
     bank_client
-        .advance_slot(1, bank_forks.as_ref(), &Pubkey::default())
+        .advance_slot(1, bank_forks.as_ref(), SlotLeader::default())
         .expect("Failed to advance the slot");
     let mut instruction = Instruction::new_with_bytes(
         inner_instruction_alignment_check,
@@ -5580,7 +5576,6 @@ fn test_function_call_args() {
     let result = bank
         .load_execute_and_commit_transactions(
             &tx_batch,
-            MAX_PROCESSING_AGE,
             ExecutionRecordingConfig {
                 enable_cpi_recording: false,
                 enable_log_recording: false,

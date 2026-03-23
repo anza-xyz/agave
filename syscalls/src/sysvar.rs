@@ -45,7 +45,7 @@ declare_builtin_function!(
     /// Get a Clock sysvar
     SyscallGetClockSysvar,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -67,7 +67,7 @@ declare_builtin_function!(
     /// Get a EpochSchedule sysvar
     SyscallGetEpochScheduleSysvar,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -89,7 +89,7 @@ declare_builtin_function!(
     /// Get a EpochRewards sysvar
     SyscallGetEpochRewardsSysvar,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -111,7 +111,7 @@ declare_builtin_function!(
     /// Get a Fees sysvar
     SyscallGetFeesSysvar,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -136,7 +136,7 @@ declare_builtin_function!(
     /// Get a Rent sysvar
     SyscallGetRentSysvar,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -158,7 +158,7 @@ declare_builtin_function!(
     /// Get a Last Restart Slot sysvar
     SyscallGetLastRestartSlotSysvar,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -185,7 +185,7 @@ declare_builtin_function!(
     /// Get a slice of a Sysvar in-memory representation
     SyscallGetSysvar,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         sysvar_id_addr: u64,
         var_addr: u64,
         offset: u64,

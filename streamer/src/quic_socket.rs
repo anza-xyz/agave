@@ -1,7 +1,7 @@
 //! This module defines [`QuicSocket`] enum which wraps `std::net::UdpSocket` along with [`QuicXdpSocketBundle`].
 
 use {
-    agave_xdp::xdp_retransmitter::XdpSender,
+    agave_xdp::transmitter::XdpSender,
     std::{
         fmt::{self, Debug},
         io::{self},

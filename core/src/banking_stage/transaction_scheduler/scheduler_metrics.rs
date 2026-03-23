@@ -450,8 +450,8 @@ impl SchedulingDetails {
                     self.sum_starting_queue_size / self.num_schedule_calls;
                 let avg_starting_buffer_size =
                     self.sum_starting_buffer_size / self.num_schedule_calls;
-                datapoint_info!(
-                    "scheduling_details",
+                let datapoint = create_datapoint!(
+                    @point "scheduling_details",
                     ("num_schedule_calls", self.num_schedule_calls, i64),
                     ("min_starting_queue_size", self.min_starting_queue_size, i64),
                     ("max_starting_queue_size", self.max_starting_queue_size, i64),
@@ -479,6 +479,7 @@ impl SchedulingDetails {
                         i64
                     ),
                 );
+                solana_metrics::submit(datapoint, log::Level::Trace);
                 *self = Self {
                     last_report: now,
                     ..Self::default()

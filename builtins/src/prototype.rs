@@ -2,7 +2,7 @@
 
 use {
     crate::core_bpf_migration::CoreBpfMigrationConfig,
-    solana_program_runtime::invoke_context::BuiltinFunctionWithContext, solana_pubkey::Pubkey,
+    solana_program_runtime::invoke_context::BuiltinFunctionRegisterer, solana_pubkey::Pubkey,
 };
 
 /// Transitions of built-in programs at epoch boundaries when features are activated.
@@ -16,8 +16,8 @@ pub struct BuiltinPrototype {
     pub program_id: Pubkey,
     /// The program's name, ie "system_program".
     pub name: &'static str,
-    /// The program's entrypoint function.
-    pub entrypoint: BuiltinFunctionWithContext,
+    /// The method that registers the syscall with the supplied context.
+    pub register_fn: BuiltinFunctionRegisterer,
 }
 
 impl std::fmt::Debug for BuiltinPrototype {

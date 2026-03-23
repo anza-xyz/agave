@@ -14,9 +14,9 @@ use {
     solana_core::snapshot_packager_service::SnapshotPackagerService,
     solana_genesis_config::GenesisConfig,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
+    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_net_utils::SocketAddrSpace,
-    solana_pubkey::Pubkey,
     solana_runtime::{
         accounts_background_service::{
             AbsRequestHandlers, AccountsBackgroundService, PendingSnapshotPackages,
@@ -30,7 +30,6 @@ use {
         snapshot_controller::SnapshotController,
         snapshot_package::SnapshotPackage,
         snapshot_utils,
-        status_cache::MAX_CACHE_ENTRIES,
     },
     solana_sha256_hasher::hashv,
     solana_signer::Signer,
@@ -139,6 +138,7 @@ fn restore_from_snapshot(
         old_genesis_config,
         &RuntimeConfig::default(),
         None,
+        None, // leader_for_tests
         None,
         false,
         false,
@@ -184,11 +184,8 @@ where
         pending_snapshot_packages,
     };
     for slot in 1..=last_slot {
-        let bank = Bank::new_from_parent(
-            bank_forks.read().unwrap().get(slot - 1).unwrap().clone(),
-            &Pubkey::default(),
-            slot,
-        );
+        let parent = bank_forks.read().unwrap().get(slot - 1).unwrap().clone();
+        let bank = Bank::new_from_parent(parent.clone(), *parent.leader(), slot);
         let bank = bank_forks.write().unwrap().insert(bank);
         f(bank.clone_without_scheduler().as_ref(), mint_keypair);
         // Set root to make sure we don't end up with too many account storage entries
@@ -197,6 +194,9 @@ where
         if slot % set_root_interval == 0 || slot == last_slot {
             if !bank.is_complete() {
                 bank.fill_bank_with_ticks_for_tests();
+            }
+            if bank.block_id().is_none() {
+                bank.set_block_id(Some(Hash::default()));
             }
             bank_forks.read().unwrap().prune_program_cache(bank.slot());
             // set_root should send a snapshot request
@@ -265,10 +265,23 @@ fn goto_end_of_slot(bank: &Bank) {
     }
 }
 
+fn get_default_max_status_cache_entries() -> u64 {
+    SnapshotTestConfig::new(SnapshotInterval::Disabled, SnapshotInterval::Disabled)
+        .bank_forks
+        .read()
+        .unwrap()
+        .root_bank()
+        .status_cache
+        .read()
+        .unwrap()
+        .max_root_entries() as u64
+}
+
 #[test]
 fn test_slots_to_snapshot() {
     agave_logger::setup();
-    let num_set_roots = MAX_CACHE_ENTRIES * 2;
+    let status_cache_max_entries = get_default_max_status_cache_entries();
+    let num_set_roots = status_cache_max_entries * 2;
 
     for add_root_interval in &[1, 3, 9] {
         let (snapshot_sender, _snapshot_receiver) = unbounded();
@@ -291,7 +304,8 @@ fn test_slots_to_snapshot() {
         for _ in 0..num_set_roots {
             for _ in 0..*add_root_interval {
                 let new_slot = current_bank.slot() + 1;
-                let new_bank = Bank::new_from_parent(current_bank, &Pubkey::default(), new_slot);
+                let leader = *current_bank.leader();
+                let new_bank = Bank::new_from_parent(current_bank, leader, new_slot);
                 current_bank = bank_forks.write().unwrap().insert(new_bank).clone();
             }
             bank_forks
@@ -305,9 +319,8 @@ fn test_slots_to_snapshot() {
             );
         }
 
-        let num_old_slots = num_set_roots * *add_root_interval - MAX_CACHE_ENTRIES + 1;
-        let expected_slots_to_snapshot =
-            num_old_slots as u64..=num_set_roots as u64 * *add_root_interval as u64;
+        let num_old_slots = num_set_roots * *add_root_interval - status_cache_max_entries + 1;
+        let expected_slots_to_snapshot = num_old_slots..=num_set_roots * *add_root_interval;
 
         let slots_to_snapshot = bank_forks
             .read()
@@ -326,15 +339,16 @@ fn test_slots_to_snapshot() {
 
 #[test]
 fn test_bank_forks_status_cache_snapshot() {
-    // create banks up to slot (MAX_CACHE_ENTRIES * 2) + 1 while transferring 1 lamport into 2 different accounts each time
+    // create banks up to slot (`max_root_entries` * 2) + 1 while transferring 1 lamport into 2 different accounts each time
     // this is done to ensure the AccountStorageEntries keep getting cleaned up as the root moves
     // ahead. Also tests the status_cache purge and status cache snapshotting.
     // Makes sure that the last bank is restored correctly
+    let status_cache_max_entries = get_default_max_status_cache_entries();
     let key1 = Keypair::new().pubkey();
     let key2 = Keypair::new().pubkey();
     for set_root_interval in &[1, 4] {
         run_bank_forks_snapshot_n(
-            (MAX_CACHE_ENTRIES * 2) as u64,
+            status_cache_max_entries + 1,
             |bank, mint_keypair| {
                 let tx = system_transaction::transfer(
                     mint_keypair,
@@ -416,7 +430,7 @@ fn test_bank_forks_incremental_snapshot() {
         // Make a new bank and perform some transactions
         let bank = {
             let parent = bank_forks.read().unwrap().get(slot - 1).unwrap();
-            let bank = Bank::new_from_parent(parent, &Pubkey::default(), slot);
+            let bank = Bank::new_from_parent(parent.clone(), *parent.leader(), slot);
             let bank_scheduler = bank_forks.write().unwrap().insert(bank);
             let bank = bank_scheduler.clone_without_scheduler();
 
@@ -429,6 +443,7 @@ fn test_bank_forks_incremental_snapshot() {
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
             bank.fill_bank_with_ticks_for_tests();
+            bank.set_block_id(Some(Hash::default()));
 
             bank_scheduler
         };
@@ -493,6 +508,8 @@ fn make_full_snapshot_archive(
         "Making full snapshot archive from bank at slot: {}",
         bank.slot(),
     );
+    // The bank must have a block id set to take a snapshot.
+    Bank::calculate_and_set_block_id_for_dcou(bank);
     snapshot_bank_utils::bank_to_full_snapshot_archive(
         &snapshot_config.bank_snapshots_dir,
         bank,
@@ -514,6 +531,8 @@ fn make_incremental_snapshot_archive(
         bank.slot(),
         incremental_snapshot_base_slot,
     );
+    // The bank must have a block id set to take a snapshot.
+    Bank::calculate_and_set_block_id_for_dcou(bank);
     snapshot_bank_utils::bank_to_incremental_snapshot_archive(
         &snapshot_config.bank_snapshots_dir,
         bank,
@@ -653,11 +672,8 @@ fn test_snapshots_with_background_services() {
     for slot in 1..=LAST_SLOT {
         // Make a new bank and process some transactions
         {
-            let bank = Bank::new_from_parent(
-                bank_forks.read().unwrap().get(slot - 1).unwrap(),
-                &Pubkey::default(),
-                slot,
-            );
+            let parent = bank_forks.read().unwrap().get(slot - 1).unwrap();
+            let bank = Bank::new_from_parent(parent.clone(), *parent.leader(), slot);
             let bank = bank_forks
                 .write()
                 .unwrap()
@@ -673,6 +689,7 @@ fn test_snapshots_with_background_services() {
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
             bank.fill_bank_with_ticks_for_tests();
+            bank.set_block_id(Some(Hash::default()));
         }
 
         // Call `BankForks::set_root()` to cause snapshots to be taken
@@ -816,7 +833,11 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
         let bank = bank_forks
             .write()
             .unwrap()
-            .insert(Bank::new_from_parent(parent_bank, &Pubkey::default(), slot))
+            .insert(Bank::new_from_parent(
+                parent_bank.clone(),
+                *parent_bank.leader(),
+                slot,
+            ))
             .clone_without_scheduler();
 
         let key = solana_pubkey::new_rand();
@@ -828,6 +849,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
         assert_eq!(bank.process_transaction(&tx), Ok(()));
 
         bank.fill_bank_with_ticks_for_tests();
+        bank.set_block_id(Some(Hash::default()));
 
         // Inject a fastboot snapshot at a specific slot
         if slot % FASTBOOT_SNAPSHOT_INTERVAL_SLOTS == 0 {
@@ -883,6 +905,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
         &snapshot_test_config.genesis_config_info.genesis_config,
         &RuntimeConfig::default(),
         None,
+        None, // leader_for_tests
         None,
         false,
         ACCOUNTS_DB_CONFIG_FOR_TESTING,

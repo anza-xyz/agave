@@ -8,6 +8,7 @@ use {
     },
     solana_program_runtime::invoke_context::mock_process_instruction,
     solana_pubkey::Pubkey,
+    solana_sbpf::program::BuiltinFunctionDefinition,
     solana_sdk_ids::bpf_loader_upgradeable,
 };
 
@@ -147,7 +148,7 @@ impl TestSetup {
             self.transaction_accounts.clone(),
             self.instruction_accounts.clone(),
             Ok(()),
-            Entrypoint::vm,
+            Entrypoint::register,
             |_invoke_context| {},
             |_invoke_context| {},
         );

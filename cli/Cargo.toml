@@ -36,9 +36,6 @@ bs58 = { workspace = true }
 clap = { workspace = true }
 console = { workspace = true }
 const_format = { workspace = true }
-criterion-stats = { workspace = true }
-crossbeam-channel = { workspace = true }
-ctrlc = { workspace = true, features = ["termination"] }
 hex = { workspace = true }
 humantime = { workspace = true }
 log = { workspace = true }
@@ -61,11 +58,8 @@ solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-compute-budget-interface = { workspace = true, features = ["borsh"] }
 solana-config-interface = { workspace = true }
-solana-connection-cache = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-feature-gate-interface = { workspace = true, features = ["bincode"] }
-solana-fee-calculator = { workspace = true }
-solana-fee-structure = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
@@ -80,7 +74,6 @@ solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
-solana-quic-client = { workspace = true }
 solana-remote-wallet = { workspace = true }
 solana-rent = { workspace = true }
 solana-rpc-client = { workspace = true, features = ["default"] }
@@ -108,6 +101,8 @@ tokio = { workspace = true }
 assert_matches = { workspace = true }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-faucet = { path = "../faucet", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-fee-calculator = { workspace = true }
+solana-fee-structure = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-nonce-account = { workspace = true }
 solana-presigner = { workspace = true }

@@ -39,7 +39,6 @@ jobs:
           - os: ubuntu-24.04
             container: docker.io/rust:1-alpine3.22
             rustflags: -C target-feature=-crt-static
-          - os: windows-2025
     runs-on: ${{ matrix.os.os }}
     container:
       image: ${{ matrix.os.container }}
@@ -54,6 +53,25 @@ jobs:
           apk update
           apk add bash git
 
+      - uses: actions/checkout@v6
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: "v0.10.0"
+
+      - shell: bash
+        run: |
+          git config --global --add safe.directory "$(pwd)"
+          source .github/scripts/install-all-deps.sh ${{ runner.os }}
+          source ci/rust-version.sh nightly
+          rustup component add clippy --toolchain "$rust_nightly"
+          scripts/cargo-clippy-nightly.sh
+
+  clippy-nightly-windows-2025:
+    name: clippy-nightly (windows-2025)
+    if: github.repository == 'anza-xyz/agave' && github.event_name == 'push'
+    runs-on: windows-2025
+    steps:
       - uses: actions/checkout@v6
 
       - uses: mozilla-actions/sccache-action@v0.0.9

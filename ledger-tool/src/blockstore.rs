@@ -125,7 +125,6 @@ fn analyze_storage(blockstore: &Blockstore) -> Result<()> {
     analyze_column(blockstore, TransactionStatus::NAME)?;
     analyze_column(blockstore, AddressSignatures::NAME)?;
     analyze_column(blockstore, TransactionMemos::NAME)?;
-    analyze_column(blockstore, TransactionStatusIndex::NAME)?;
     analyze_column(blockstore, Rewards::NAME)?;
     analyze_column(blockstore, Blocktime::NAME)?;
     analyze_column(blockstore, PerfSamples::NAME)?;
@@ -153,7 +152,6 @@ fn raw_key_to_slot(key: &[u8], column_name: &str) -> Option<Slot> {
             cf::AddressSignatures::index(key),
         )),
         cf::TransactionMemos::NAME => None, // does not implement slot()
-        cf::TransactionStatusIndex::NAME => None, // does not implement slot()
         cf::Rewards::NAME => Some(cf::Rewards::slot(cf::Rewards::index(key))),
         cf::Blocktime::NAME => Some(cf::Blocktime::slot(cf::Blocktime::index(key))),
         cf::PerfSamples::NAME => Some(cf::PerfSamples::slot(cf::PerfSamples::index(key))),

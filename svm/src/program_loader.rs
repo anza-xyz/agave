@@ -7,7 +7,7 @@ use {
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::loaded_programs::{
         DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryOwner,
-        ProgramCacheEntryType, ProgramRuntimeEnvironments,
+        ProgramCacheEntryType, ProgramRuntimeEnvironment,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
@@ -87,7 +87,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
 /// account is `Closed`, contains invalid data or any of the programdata accounts are invalid.
 pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     callbacks: &CB,
-    environments: &ProgramRuntimeEnvironments,
+    program_runtime_environment: &ProgramRuntimeEnvironment,
     pubkey: &Pubkey,
     current_slot: Slot,
     execute_timings: &mut ExecuteTimings,
@@ -108,7 +108,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
 
         ProgramAccountLoadResult::ProgramOfLoaderV1(program_account) => ProgramCacheEntry::new(
             program_account.owner(),
-            environments.program_runtime_v1.clone(),
+            ProgramRuntimeEnvironment::clone(program_runtime_environment),
             0,
             DELAY_VISIBILITY_SLOT_OFFSET,
             program_account.data(),
@@ -120,7 +120,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
 
         ProgramAccountLoadResult::ProgramOfLoaderV2(program_account) => ProgramCacheEntry::new(
             program_account.owner(),
-            environments.program_runtime_v1.clone(),
+            ProgramRuntimeEnvironment::clone(program_runtime_environment),
             0,
             DELAY_VISIBILITY_SLOT_OFFSET,
             program_account.data(),
@@ -141,7 +141,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
             .and_then(|programdata| {
                 ProgramCacheEntry::new(
                     program_account.owner(),
-                    environments.program_runtime_v1.clone(),
+                    ProgramRuntimeEnvironment::clone(program_runtime_environment),
                     deployment_slot,
                     deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
                     programdata,
@@ -164,7 +164,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
                 .and_then(|elf_bytes| {
                     ProgramCacheEntry::new(
                         &loader_v4::id(),
-                        environments.program_runtime_v1.clone(),
+                        ProgramRuntimeEnvironment::clone(program_runtime_environment),
                         deployment_slot,
                         deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
                         elf_bytes,
@@ -178,7 +178,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
         }
     }
     .unwrap_or_else(|(deployment_slot, owner)| {
-        let env = environments.program_runtime_v1.clone();
+        let env = ProgramRuntimeEnvironment::clone(program_runtime_environment);
         ProgramCacheEntry::new_tombstone(
             deployment_slot,
             owner,
@@ -238,7 +238,7 @@ mod tests {
         solana_program_runtime::{
             loaded_programs::{
                 BlockRelation, ForkGraph, ProgramRuntimeEnvironment,
-                get_mock_program_runtime_environments,
+                get_mock_program_runtime_environment,
             },
             solana_sbpf::program::BuiltinProgram,
         },
@@ -463,11 +463,11 @@ mod tests {
         let loader = bpf_loader_upgradeable::id();
         let size = buffer.len();
         let slot: Slot = 2;
-        let environment = ProgramRuntimeEnvironment::new(BuiltinProgram::new_mock());
+        let environment = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
 
         let result = ProgramCacheEntry::new(
             &loader,
-            environment.clone(),
+            ProgramRuntimeEnvironment::clone(&environment),
             slot,
             slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             &buffer,
@@ -487,7 +487,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(50),
+            &batch_processor.program_runtime_environment_for_epoch(50),
             &key,
             500,
             &mut ExecuteTimings::default(),
@@ -509,7 +509,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20),
+            &batch_processor.program_runtime_environment_for_epoch(20),
             &key,
             0, // Slot 0
             &mut ExecuteTimings::default(),
@@ -519,9 +519,7 @@ mod tests {
             0, // Slot 0
             ProgramCacheEntryOwner::LoaderV4,
             ProgramCacheEntryType::FailedVerification(
-                batch_processor
-                    .get_environments_for_epoch(20)
-                    .program_runtime_v1,
+                batch_processor.program_runtime_environment_for_epoch(20),
             ),
         );
         assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
@@ -542,7 +540,7 @@ mod tests {
         // This should return an error
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20),
+            &batch_processor.program_runtime_environment_for_epoch(20),
             &key,
             200,
             &mut ExecuteTimings::default(),
@@ -551,9 +549,7 @@ mod tests {
             0,
             ProgramCacheEntryOwner::LoaderV2,
             ProgramCacheEntryType::FailedVerification(
-                batch_processor
-                    .get_environments_for_epoch(20)
-                    .program_runtime_v1,
+                batch_processor.program_runtime_environment_for_epoch(20),
             ),
         );
         assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
@@ -568,16 +564,16 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20),
+            &batch_processor.program_runtime_environment_for_epoch(20),
             &key,
             200,
             &mut ExecuteTimings::default(),
         );
 
-        let environments = get_mock_program_runtime_environments();
+        let program_runtime_environment = get_mock_program_runtime_environment();
         let expected = ProgramCacheEntry::new(
             account_data.owner(),
-            environments.program_runtime_v1.clone(),
+            ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             0,
             DELAY_VISIBILITY_SLOT_OFFSET,
             account_data.data(),
@@ -622,7 +618,7 @@ mod tests {
         // This should return an error
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(0),
+            &batch_processor.program_runtime_environment_for_epoch(0),
             &key1,
             0,
             &mut ExecuteTimings::default(),
@@ -631,9 +627,7 @@ mod tests {
             0,
             ProgramCacheEntryOwner::LoaderV3,
             ProgramCacheEntryType::FailedVerification(
-                batch_processor
-                    .get_environments_for_epoch(0)
-                    .program_runtime_v1,
+                batch_processor.program_runtime_environment_for_epoch(0),
             ),
         );
         assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
@@ -658,7 +652,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20),
+            &batch_processor.program_runtime_environment_for_epoch(20),
             &key1,
             200,
             &mut ExecuteTimings::default(),
@@ -668,10 +662,10 @@ mod tests {
         account_data
             .set_data(data[UpgradeableLoaderState::size_of_programdata_metadata()..].to_vec());
 
-        let environments = get_mock_program_runtime_environments();
+        let program_runtime_environment = get_mock_program_runtime_environment();
         let expected = ProgramCacheEntry::new(
             account_data.owner(),
-            environments.program_runtime_v1.clone(),
+            ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             0,
             DELAY_VISIBILITY_SLOT_OFFSET,
             account_data.data(),
@@ -708,7 +702,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(0),
+            &batch_processor.program_runtime_environment_for_epoch(0),
             &key,
             0,
             &mut ExecuteTimings::default(),
@@ -717,9 +711,7 @@ mod tests {
             0,
             ProgramCacheEntryOwner::LoaderV4,
             ProgramCacheEntryType::FailedVerification(
-                batch_processor
-                    .get_environments_for_epoch(0)
-                    .program_runtime_v1,
+                batch_processor.program_runtime_environment_for_epoch(0),
             ),
         );
         assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
@@ -740,7 +732,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20),
+            &batch_processor.program_runtime_environment_for_epoch(20),
             &key,
             200,
             &mut ExecuteTimings::default(),
@@ -753,10 +745,10 @@ mod tests {
             .borrow_mut()
             .insert(key, (account_data.clone(), 0));
 
-        let environments = get_mock_program_runtime_environments();
+        let program_runtime_environment = get_mock_program_runtime_environment();
         let expected = ProgramCacheEntry::new(
             account_data.owner(),
-            environments.program_runtime_v1.clone(),
+            ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             0,
             DELAY_VISIBILITY_SLOT_OFFSET,
             account_data.data(),
@@ -774,13 +766,14 @@ mod tests {
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(bpf_loader::id());
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        let upcoming_environments = get_mock_program_runtime_environments();
-        let current_environments = batch_processor.environments.clone();
+        let upcoming_environment = get_mock_program_runtime_environment();
+        let current_environment =
+            ProgramRuntimeEnvironment::clone(&batch_processor.program_runtime_environment);
         {
             let mut epoch_boundary_preparation =
                 batch_processor.epoch_boundary_preparation.write().unwrap();
             epoch_boundary_preparation.upcoming_epoch = 1;
-            epoch_boundary_preparation.upcoming_environments = Some(upcoming_environments.clone());
+            epoch_boundary_preparation.upcoming_environment = Some(upcoming_environment.clone());
         }
         mock_bank
             .account_shared_data
@@ -790,7 +783,7 @@ mod tests {
         for is_upcoming_env in [false, true] {
             let (result, _last_modification_slot) = load_program_with_pubkey(
                 &mock_bank,
-                &batch_processor.get_environments_for_epoch(is_upcoming_env as u64),
+                &batch_processor.program_runtime_environment_for_epoch(is_upcoming_env as u64),
                 &key,
                 200,
                 &mut ExecuteTimings::default(),
@@ -798,17 +791,11 @@ mod tests {
             .unwrap();
             assert_ne!(
                 is_upcoming_env,
-                Arc::ptr_eq(
-                    result.program.get_environment().unwrap(),
-                    &current_environments.program_runtime_v1,
-                )
+                result.program.get_environment().unwrap() == &current_environment,
             );
             assert_eq!(
                 is_upcoming_env,
-                Arc::ptr_eq(
-                    result.program.get_environment().unwrap(),
-                    &upcoming_environments.program_runtime_v1,
-                )
+                result.program.get_environment().unwrap() == &upcoming_environment,
             );
         }
     }

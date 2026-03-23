@@ -929,7 +929,6 @@ mod tests {
             record_channels::record_channels,
             transaction_recorder::RecordTransactionsSummary,
         },
-        solana_poh_config::PohConfig,
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, genesis_utils::bootstrap_validator_stake_lamports},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -1001,86 +1000,6 @@ mod tests {
         exit.store(true, Ordering::Relaxed);
         banking_stage.join().unwrap();
         poh_service.join().unwrap();
-    }
-
-    #[test]
-    fn test_banking_stage_tick() {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            mut genesis_config, ..
-        } = create_genesis_config(2);
-        genesis_config.ticks_per_slot = 4;
-        let num_extra_ticks = 2;
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let start_hash = bank.last_blockhash();
-        let banking_tracer = BankingTracer::new_disabled();
-        let Channels {
-            non_vote_sender,
-            non_vote_receiver,
-            tpu_vote_sender,
-            tpu_vote_receiver,
-            gossip_vote_sender,
-            gossip_vote_receiver,
-        } = banking_tracer.create_channels();
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Arc::new(
-            Blockstore::open(ledger_path.path())
-                .expect("Expected to be able to open database ledger"),
-        );
-        let poh_config = PohConfig {
-            target_tick_count: Some(bank.max_tick_height() + num_extra_ticks),
-            ..PohConfig::default()
-        };
-        let (
-            exit,
-            poh_recorder,
-            _poh_controller,
-            transaction_recorder,
-            poh_service,
-            entry_receiver,
-        ) = create_test_recorder(bank.clone(), blockstore, Some(poh_config), None);
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-
-        let banking_stage = BankingStage::new_num_threads(
-            BlockProductionMethod::CentralScheduler,
-            poh_recorder.clone(),
-            transaction_recorder,
-            non_vote_receiver,
-            tpu_vote_receiver,
-            gossip_vote_receiver,
-            mpsc::channel(1).1,
-            DEFAULT_NUM_WORKERS,
-            SchedulerConfig {
-                scheduler_pacing: SchedulerPacing::Disabled,
-            },
-            None,
-            replay_vote_sender,
-            None,
-            bank_forks,
-            None,
-        );
-        trace!("sending bank");
-        drop(non_vote_sender);
-        drop(tpu_vote_sender);
-        drop(gossip_vote_sender);
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
-        drop(poh_recorder);
-        banking_stage.join().unwrap();
-
-        trace!("getting entries");
-        let entries: Vec<_> = entry_receiver
-            .iter()
-            .map(|(_bank, (entry, _tick_height))| entry)
-            .collect();
-        trace!("done");
-        assert_eq!(entries.len(), genesis_config.ticks_per_slot as usize);
-        assert!(
-            entries
-                .verify(&start_hash, &entry::thread_pool_for_tests())
-                .status()
-        );
-        assert_eq!(entries[entries.len() - 1].hash, bank.last_blockhash());
     }
 
     #[test]

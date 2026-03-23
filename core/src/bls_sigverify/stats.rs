@@ -2,10 +2,37 @@
 use qualifier_attr::qualifiers;
 use {
     agave_math_utils::welford_stats::WelfordStats,
+    solana_clock::Slot,
     std::time::{Duration, Instant},
 };
 
-const STATS_INTERVAL_DURATION: Duration = Duration::from_secs(1);
+/// Max number of root slots to wait before triggering reporting of stats.  At 400ms slot times, this is 4s.
+const SLOTS_INTERVAL: Slot = 10;
+/// Max amount of seconds to wait before triggering reporting of stats.
+const DURATION_INTERVAL: Duration = Duration::from_secs(5);
+
+/// A struct to control when stats should be reported depending on how many slots or time has passed.
+#[derive(Debug)]
+pub(super) struct Reporting {
+    /// The last time when reporting was done.
+    time: Instant,
+    /// The last slot when reporting was done.
+    slot: Slot,
+}
+
+impl Reporting {
+    fn new(root_slot: Slot) -> Self {
+        Self {
+            time: Instant::now(),
+            slot: root_slot,
+        }
+    }
+
+    /// Returns `true` if reporting should be done else `false`.
+    fn should_report(&self, root_slot: Slot) -> bool {
+        self.slot + SLOTS_INTERVAL >= root_slot || self.time.elapsed() > DURATION_INTERVAL
+    }
+}
 
 /// Stats for the sigverifier.
 #[derive(Debug)]
@@ -34,12 +61,14 @@ pub(super) struct SigVerifierStats {
     pub(super) num_old_certs_received: u64,
     /// Number of already verified certs received.
     pub(super) num_verified_certs_received: u64,
+    /// Number of certs received that the node has already generated.
+    pub(super) num_generated_certs_received: u64,
     /// Last time the stats were reported.
-    pub(super) last_report: Instant,
+    pub(super) last_report: Reporting,
 }
 
-impl Default for SigVerifierStats {
-    fn default() -> Self {
+impl SigVerifierStats {
+    pub(super) fn new(root_slot: Slot) -> Self {
         Self {
             vote_stats: SigVerifyVoteStats::default(),
             cert_stats: SigVerifyCertStats::default(),
@@ -52,14 +81,24 @@ impl Default for SigVerifierStats {
             num_old_votes_received: 0,
             num_old_certs_received: 0,
             num_verified_certs_received: 0,
+            num_generated_certs_received: 0,
             verify_and_send_batch_us: WelfordStats::default(),
-            last_report: Instant::now(),
+            last_report: Reporting::new(root_slot),
         }
     }
-}
 
-impl SigVerifierStats {
-    pub(super) fn maybe_report(&mut self) {
+    /// Reports stats if they have not been reported in some time.
+    ///
+    /// Also resets all stats.
+    pub(super) fn maybe_report(&mut self, root_slot: Slot) {
+        if self.last_report.should_report(root_slot) {
+            self.do_report(root_slot);
+            *self = SigVerifierStats::new(root_slot);
+        }
+    }
+
+    /// Reports stats regardless of when they were last reported.
+    pub(super) fn do_report(&mut self, root_slot: Slot) {
         let Self {
             vote_stats,
             cert_stats,
@@ -70,19 +109,18 @@ impl SigVerifierStats {
             num_old_votes_received,
             num_old_certs_received,
             num_verified_certs_received,
+            num_generated_certs_received,
             discard_vote_invalid_rank,
             discard_vote_no_epoch_stakes,
             verify_and_send_batch_us,
-            last_report,
+            last_report: _,
         } = self;
-        if last_report.elapsed() < STATS_INTERVAL_DURATION {
-            return;
-        }
 
         vote_stats.report();
         cert_stats.report();
         datapoint_info!(
             "bls_sig_verifier_stats",
+            ("root_slot", root_slot, i64),
             (
                 "extract_and_verify_us_count",
                 extract_filter_msgs_us.count(),
@@ -99,6 +137,11 @@ impl SigVerifierStats {
             (
                 "num_verified_certs_received",
                 *num_verified_certs_received,
+                i64
+            ),
+            (
+                "num_generated_certs_received",
+                *num_generated_certs_received,
                 i64
             ),
             (
@@ -127,7 +170,6 @@ impl SigVerifierStats {
             ("num_pkts_mean", num_pkts.mean().unwrap_or(0), i64),
             ("num_pkts_count", num_pkts.count(), i64),
         );
-        *self = SigVerifierStats::default();
     }
 }
 
@@ -138,6 +180,9 @@ pub(super) struct SigVerifyCertStats {
     pub(super) certs_to_sig_verify: u64,
     /// Number of certs [`verify_and_send_certificates`] successfully verified the signature of.
     pub(super) sig_verified_certs: u64,
+    /// Number of certs that were verified unnecessarily because another cert of the same
+    /// `CertificateType` was already verified.
+    pub(super) unnecessary_certs_verified: u64,
 
     /// Number of times stake verification failed on a cert.
     pub(super) stake_verification_failed: u64,
@@ -160,6 +205,7 @@ impl SigVerifyCertStats {
         let Self {
             certs_to_sig_verify,
             sig_verified_certs,
+            unnecessary_certs_verified,
             stake_verification_failed,
             signature_verification_failed,
             too_far_in_future,
@@ -169,6 +215,7 @@ impl SigVerifyCertStats {
         } = other;
         self.certs_to_sig_verify += certs_to_sig_verify;
         self.sig_verified_certs += sig_verified_certs;
+        self.unnecessary_certs_verified += unnecessary_certs_verified;
         self.stake_verification_failed += stake_verification_failed;
         self.signature_verification_failed += signature_verification_failed;
         self.too_far_in_future += too_far_in_future;
@@ -182,6 +229,7 @@ impl SigVerifyCertStats {
         let Self {
             certs_to_sig_verify,
             sig_verified_certs,
+            unnecessary_certs_verified,
             stake_verification_failed,
             signature_verification_failed,
             too_far_in_future,
@@ -193,6 +241,11 @@ impl SigVerifyCertStats {
             "bls_cert_sigverify_stats",
             ("certs_to_sig_verify", *certs_to_sig_verify, i64),
             ("sig_verified_certs", *sig_verified_certs, i64),
+            (
+                "unnecessary_certs_verified",
+                *unnecessary_certs_verified,
+                i64
+            ),
             ("stake_verification_failed", *stake_verification_failed, i64),
             (
                 "signature_verification_failed",

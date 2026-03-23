@@ -6,14 +6,15 @@ use {
     solana_instruction::AccountMeta,
     solana_message::{LegacyMessage, Message, SanitizedMessage},
     solana_sdk_ids::sysvar,
-    solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
+    std::collections::{HashMap, HashSet},
 };
 use {
     crate::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         loaded_programs::{
-            ProgramCacheEntryType, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
+            ProgramCacheEntryType, ProgramCacheForTxBatch, ProgramRuntimeEnvironment,
+            ProgramRuntimeEnvironments,
         },
         stable_log,
         sysvar_cache::SysvarCache,
@@ -23,10 +24,10 @@ use {
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
-        elf::Executable as GenericExecutable,
+        elf::{ElfError, Executable as GenericExecutable},
         error::{EbpfError, ProgramResult},
         memory_region::MemoryMapping,
-        program::{BuiltinFunction, SBPFVersion},
+        program::{BuiltinProgram, SBPFVersion},
         vm::{Config, ContextObject, EbpfVm},
     },
     solana_sdk_ids::{
@@ -38,6 +39,7 @@ use {
     solana_svm_measure::measure::Measure,
     solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{
         IndexOfAccount, MAX_ACCOUNTS_PER_TRANSACTION, instruction::InstructionContext,
         instruction_accounts::InstructionAccount, transaction::TransactionContext,
@@ -46,13 +48,14 @@ use {
         alloc::Layout,
         borrow::Cow,
         cell::RefCell,
-        collections::{HashMap, HashSet},
         fmt::{self, Debug},
         rc::Rc,
+        time::Duration,
     },
 };
 
-pub type BuiltinFunctionWithContext = BuiltinFunction<InvokeContext<'static, 'static>>;
+pub type BuiltinFunctionRegisterer =
+    fn(&mut BuiltinProgram<InvokeContext<'static, 'static>>, &str) -> Result<(), ElfError>;
 pub type Executable = GenericExecutable<InvokeContext<'static, 'static>>;
 pub type RegisterTrace<'a> = &'a [[u64; 12]];
 
@@ -63,14 +66,14 @@ macro_rules! declare_process_instruction {
         $crate::solana_sbpf::declare_builtin_function!(
             $process_instruction,
             fn rust(
-                invoke_context: &mut $crate::invoke_context::InvokeContext,
+                invoke_context: &mut $crate::invoke_context::InvokeContext<'_, '_>,
                 _arg0: u64,
                 _arg1: u64,
                 _arg2: u64,
                 _arg3: u64,
                 _arg4: u64,
                 _memory_mapping: &mut $crate::solana_sbpf::memory_region::MemoryMapping,
-            ) -> std::result::Result<u64, Box<dyn std::error::Error>> {
+            ) -> Result<u64, Box<dyn std::error::Error>> {
                 fn process_instruction_inner(
                     $invoke_context: &mut $crate::invoke_context::InvokeContext,
                 ) -> std::result::Result<(), $crate::__private::InstructionError>
@@ -146,29 +149,29 @@ impl BpfAllocator {
 pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
+    alpenglow_migration_succeeded: bool,
     epoch_stake_callback: &'a dyn InvokeContextCallback,
     feature_set: &'a SVMFeatureSet,
-    pub program_runtime_environments_for_execution: &'a ProgramRuntimeEnvironments,
-    pub program_runtime_environments_for_deployment: &'a ProgramRuntimeEnvironments,
+    program_runtime_environments: &'a ProgramRuntimeEnvironments,
     sysvar_cache: &'a SysvarCache,
 }
 impl<'a> EnvironmentConfig<'a> {
     pub fn new(
         blockhash: Hash,
         blockhash_lamports_per_signature: u64,
+        alpenglow_migration_succeeded: bool,
         epoch_stake_callback: &'a dyn InvokeContextCallback,
         feature_set: &'a SVMFeatureSet,
-        program_runtime_environments_for_execution: &'a ProgramRuntimeEnvironments,
-        program_runtime_environments_for_deployment: &'a ProgramRuntimeEnvironments,
+        program_runtime_environments: &'a ProgramRuntimeEnvironments,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
         Self {
             blockhash,
             blockhash_lamports_per_signature,
+            alpenglow_migration_succeeded,
             epoch_stake_callback,
             feature_set,
-            program_runtime_environments_for_execution,
-            program_runtime_environments_for_deployment,
+            program_runtime_environments,
             sysvar_cache,
         }
     }
@@ -204,8 +207,8 @@ pub struct InvokeContext<'a, 'ix_data> {
     /// the designated compute budget during program execution.
     compute_meter: RefCell<u64>,
     log_collector: Option<Rc<RefCell<LogCollector>>>,
-    /// Latest measurement not yet accumulated in [ExecuteDetailsTimings::execute_us]
-    pub execute_time: Option<Measure>,
+    /// Time spent so far executing nested program calls.
+    pub total_nested_exec_time: Duration,
     pub timings: ExecuteDetailsTimings,
     pub syscall_context: Vec<Option<SyscallContext>>,
     /// Pairs of index in TX instruction trace and VM register trace
@@ -232,7 +235,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             compute_budget,
             execution_cost,
             compute_meter: RefCell::new(compute_budget.compute_unit_limit),
-            execute_time: None,
+            total_nested_exec_time: Duration::ZERO,
             timings: ExecuteDetailsTimings::default(),
             syscall_context: Vec::new(),
             register_traces: Vec::new(),
@@ -464,12 +467,9 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     pub fn prepare_top_level_instructions(
         &mut self,
         message: &'ix_data impl SVMMessage,
-        program_indices: &[IndexOfAccount],
     ) -> Result<(), (u8, InstructionError)> {
-        for (top_level_instruction_index, ((_, instruction), program_account_index)) in message
-            .program_instructions_iter()
-            .zip(program_indices.iter())
-            .enumerate()
+        for (top_level_instruction_index, (_, instruction)) in
+            message.program_instructions_iter().enumerate()
         {
             let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
 
@@ -495,7 +495,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             self.transaction_context
                 .configure_instruction_at_index(
                     top_level_instruction_index,
-                    *program_account_index,
+                    instruction.program_id_index as u16,
                     instruction_accounts,
                     transaction_callee_map,
                     Cow::Borrowed(instruction.data),
@@ -570,7 +570,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             ProgramCacheEntryType::Builtin(program) => program
                 .get_function_registry()
                 .lookup_by_key(ENTRYPOINT_KEY)
-                .map(|(_name, function)| function),
+                .map(|(_name, (function, _codegen))| function),
             _ => None,
         }
         .ok_or(InstructionError::UnsupportedProgramId)?;
@@ -586,10 +586,12 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         let empty_memory_mapping =
             MemoryMapping::new(Vec::new(), &mock_config, SBPFVersion::V0).unwrap();
         let mut vm = EbpfVm::new(
-            self.environment_config
-                .program_runtime_environments_for_execution
-                .program_runtime_v1
-                .clone(),
+            Arc::clone(
+                &**self
+                    .environment_config
+                    .program_runtime_environments
+                    .get_env_for_execution(),
+            ),
             SBPFVersion::V0,
             // Removes lifetime tracking
             unsafe { std::mem::transmute::<&mut InvokeContext, &mut InvokeContext>(self) },
@@ -655,6 +657,11 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         *self.compute_meter.borrow_mut() = remaining;
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn set_alpenglow_migration_succeeded_for_tests(&mut self, succeeded: bool) {
+        self.environment_config.alpenglow_migration_succeeded = succeeded;
+    }
+
     /// Get this invocation's compute budget
     pub fn get_compute_budget(&self) -> &SVMTransactionExecutionBudget {
         &self.compute_budget
@@ -670,21 +677,20 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         self.environment_config.feature_set
     }
 
-    pub fn get_program_runtime_environments_for_deployment(&self) -> &ProgramRuntimeEnvironments {
+    pub fn get_program_runtime_environment_for_deployment(&self) -> &ProgramRuntimeEnvironment {
         self.environment_config
-            .program_runtime_environments_for_deployment
-    }
-
-    pub fn is_stake_raise_minimum_delegation_to_1_sol_active(&self) -> bool {
-        self.environment_config
-            .feature_set
-            .stake_raise_minimum_delegation_to_1_sol
+            .program_runtime_environments
+            .get_env_for_deployment()
     }
 
     pub fn is_deprecate_legacy_vote_ixs_active(&self) -> bool {
         self.environment_config
             .feature_set
             .deprecate_legacy_vote_ixs
+    }
+
+    pub fn is_alpenglow_migration_succeeded(&self) -> bool {
+        self.environment_config.alpenglow_migration_succeeded
     }
 
     /// Get cached sysvars
@@ -810,7 +816,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
-                loaded_programs::{ProgramCacheForTxBatch, get_mock_program_runtime_environments},
+                loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
                 sysvar_cache::SysvarCache,
             },
         };
@@ -836,13 +842,13 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             compute_budget.max_instruction_trace_length,
             $top_level_instructions,
         );
-        let program_runtime_environments = get_mock_program_runtime_environments();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockInvokeContextCallback {},
             $feature_set,
-            &program_runtime_environments,
             &program_runtime_environments,
             &sysvar_cache,
         );
@@ -970,7 +976,7 @@ pub fn mock_process_instruction_with_feature_set<
     mut accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     expected_result: Result<(), InstructionError>,
-    builtin_function: BuiltinFunctionWithContext,
+    builtin: BuiltinFunctionRegisterer,
     mut pre_adjustments: F,
     mut post_adjustments: G,
     feature_set: &SVMFeatureSet,
@@ -1014,7 +1020,7 @@ pub fn mock_process_instruction_with_feature_set<
         } else {
             program_owner
         },
-        Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin_function)),
+        Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin)),
     );
     program_cache_for_tx_batch.set_slot_for_tests(
         invoke_context
@@ -1027,10 +1033,8 @@ pub fn mock_process_instruction_with_feature_set<
 
     pre_adjustments(&mut invoke_context);
 
-    let compiled_ix = sanitized_message.instructions().first().unwrap();
-    let program_account_index = compiled_ix.program_id_index as u16;
     invoke_context
-        .prepare_top_level_instructions(&sanitized_message, &[program_account_index])
+        .prepare_top_level_instructions(&sanitized_message)
         .unwrap();
 
     let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
@@ -1060,7 +1064,7 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
     accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     expected_result: Result<(), InstructionError>,
-    builtin_function: BuiltinFunctionWithContext,
+    builtin: BuiltinFunctionRegisterer,
     pre_adjustments: F,
     post_adjustments: G,
 ) -> Vec<AccountSharedData> {
@@ -1070,7 +1074,7 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
         accounts,
         instruction_account_metas,
         expected_result,
-        builtin_function,
+        builtin,
         pre_adjustments,
         post_adjustments,
         &SVMFeatureSet::all_enabled(),
@@ -1086,6 +1090,7 @@ mod tests {
         solana_account::Account,
         solana_keypair::Keypair,
         solana_rent::Rent,
+        solana_sbpf::program::BuiltinFunctionDefinition,
         solana_sdk_ids::system_program,
         solana_signer::Signer,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
@@ -1392,7 +1397,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             callee_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::register)),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
@@ -1447,7 +1452,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             callee_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::register)),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
@@ -1531,7 +1536,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             program_key,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register)),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
@@ -1667,7 +1672,7 @@ mod tests {
         }
 
         invoke_context
-            .prepare_top_level_instructions(&sanitized, &[90, 90])
+            .prepare_top_level_instructions(&sanitized)
             .unwrap();
 
         test_case_1(&invoke_context);
@@ -1734,7 +1739,7 @@ mod tests {
                 .unwrap();
 
         invoke_context
-            .prepare_top_level_instructions(&sanitized, &[90, 90])
+            .prepare_top_level_instructions(&sanitized)
             .unwrap();
 
         {
@@ -1819,7 +1824,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             TEST_CALLEE_PROGRAM_ID,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::register)),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 

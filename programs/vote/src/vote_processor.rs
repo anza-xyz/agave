@@ -75,6 +75,11 @@ fn is_vote_authorize_with_bls_enabled(invoke_context: &InvokeContext) -> bool {
     feature_set.vote_state_v4 && feature_set.bls_pubkey_management_in_vote_account
 }
 
+fn should_reject_legacy_vote_instructions(invoke_context: &InvokeContext) -> bool {
+    invoke_context.is_deprecate_legacy_vote_ixs_active()
+        || invoke_context.is_alpenglow_migration_succeeded()
+}
+
 // Citing `runtime/src/block_cost_limit.rs`, vote has statically defined 2100
 // units; can consume based on instructions in the future like `bpf_loader` does.
 pub const DEFAULT_COMPUTE_UNITS: u64 = 2_100;
@@ -201,7 +206,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             )
         }
         VoteInstruction::Vote(vote) | VoteInstruction::VoteSwitch(vote, _) => {
-            if invoke_context.is_deprecate_legacy_vote_ixs_active() {
+            if should_reject_legacy_vote_instructions(invoke_context) {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let slot_hashes = get_sysvar_with_account_check::slot_hashes(
@@ -222,7 +227,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::UpdateVoteState(vote_state_update)
         | VoteInstruction::UpdateVoteStateSwitch(vote_state_update, _) => {
-            if invoke_context.is_deprecate_legacy_vote_ixs_active() {
+            if should_reject_legacy_vote_instructions(invoke_context) {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let sysvar_cache = invoke_context.get_sysvar_cache();
@@ -239,7 +244,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::CompactUpdateVoteState(vote_state_update)
         | VoteInstruction::CompactUpdateVoteStateSwitch(vote_state_update, _) => {
-            if invoke_context.is_deprecate_legacy_vote_ixs_active() {
+            if should_reject_legacy_vote_instructions(invoke_context) {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let sysvar_cache = invoke_context.get_sysvar_cache();
@@ -256,6 +261,9 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::TowerSync(tower_sync)
         | VoteInstruction::TowerSyncSwitch(tower_sync, _) => {
+            if invoke_context.is_alpenglow_migration_succeeded() {
+                return Err(InstructionError::InvalidInstructionData);
+            }
             let sysvar_cache = invoke_context.get_sysvar_cache();
             let slot_hashes = sysvar_cache.get_slot_hashes()?;
             let clock = sysvar_cache.get_clock()?;
@@ -427,7 +435,8 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_program_runtime::{
             invoke_context::mock_process_instruction_with_feature_set,
-            loaded_programs::ProgramCacheEntry, solana_sbpf::vm::ContextObject,
+            loaded_programs::ProgramCacheEntry,
+            solana_sbpf::{program::BuiltinFunctionDefinition, vm::ContextObject},
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
@@ -490,6 +499,7 @@ mod tests {
         custom_commission_collector: bool,
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
+        alpenglow_migration_succeeded: bool,
     }
 
     impl VoteProgramFeatures {
@@ -501,6 +511,7 @@ mod tests {
                 custom_commission_collector: true,
                 block_revenue_sharing: true,
                 vote_account_initialize_v2: true,
+                alpenglow_migration_succeeded: false,
             }
         }
     }
@@ -537,6 +548,7 @@ mod tests {
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
+            alpenglow_migration_succeeded,
         } = features;
         let cu_consumed = RefCell::new(0u64);
         let accounts = mock_process_instruction_with_feature_set(
@@ -545,15 +557,17 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             expected_result,
-            Entrypoint::vm,
+            Entrypoint::register,
             |invoke_context| {
+                invoke_context
+                    .set_alpenglow_migration_succeeded_for_tests(alpenglow_migration_succeeded);
                 // Register system program for CPI support.
                 invoke_context.program_cache_for_tx_batch.replenish(
                     solana_sdk_ids::system_program::id(),
                     Arc::new(ProgramCacheEntry::new_builtin(
                         0,
                         0,
-                        solana_system_program::system_processor::Entrypoint::vm,
+                        solana_system_program::system_processor::Entrypoint::register,
                     )),
                 );
                 *cu_consumed.borrow_mut() = invoke_context.get_remaining();
@@ -942,6 +956,7 @@ mod tests {
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
+            alpenglow_migration_succeeded: false,
         };
 
         let accounts = process_instruction(
@@ -1074,6 +1089,7 @@ mod tests {
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
+            alpenglow_migration_succeeded: false,
         };
 
         let all_v2_features_enabled = vote_state_v4
@@ -4024,6 +4040,30 @@ mod tests {
                 &Pubkey::new_unique(),
             ),
             Err(InstructionError::InvalidAccountData),
+        );
+    }
+
+    #[test]
+    fn test_tower_sync_rejected_after_alpenglow_migration_succeeds() {
+        let features = VoteProgramFeatures {
+            alpenglow_migration_succeeded: true,
+            ..Default::default()
+        };
+
+        process_instruction_as_one_arg(
+            features,
+            &tower_sync(&Pubkey::default(), &Pubkey::default(), TowerSync::default()),
+            Err(InstructionError::InvalidInstructionData),
+        );
+        process_instruction_as_one_arg(
+            features,
+            &tower_sync_switch(
+                &Pubkey::default(),
+                &Pubkey::default(),
+                TowerSync::default(),
+                Hash::default(),
+            ),
+            Err(InstructionError::InvalidInstructionData),
         );
     }
 

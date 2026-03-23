@@ -532,6 +532,7 @@ pub fn serialize_snapshot(
                 unused_epoch_accounts_hash: None,
                 versioned_epoch_stakes,
                 accounts_lt_hash: Some(bank_fields.accounts_lt_hash.clone().into()),
+                block_id: Some(bank_fields.block_id),
             };
             serde_snapshot::serialize_bank_snapshot_into(
                 stream,

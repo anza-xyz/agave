@@ -2,12 +2,14 @@
 
 use {
     crate::fixture::{instr_context::InstrContext, instr_effects::InstrEffects},
-    agave_syscalls::create_program_runtime_environment_v1,
+    agave_syscalls::create_program_runtime_environment,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction_error::InstructionError,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext, mock_compile_message},
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+        loaded_programs::{
+            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
+        },
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -16,7 +18,7 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_transaction_context::transaction::TransactionContext,
-    std::{rc::Rc, sync::Arc},
+    std::rc::Rc,
 };
 
 /// Default callback with no precompile support.
@@ -72,18 +74,13 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         sanitized_message.num_instructions(),
     );
 
-    let environments = ProgramRuntimeEnvironments {
-        program_runtime_v1: Arc::new(
-            create_program_runtime_environment_v1(
-                &input.feature_set,
-                &compute_budget.to_budget(),
-                false, /* deployment */
-                false, /* debugging_features */
-            )
-            .unwrap(),
-        ),
-        ..ProgramRuntimeEnvironments::default()
-    };
+    let program_runtime_environment = create_program_runtime_environment(
+        &input.feature_set,
+        &compute_budget.to_budget(),
+        false, /* deployment */
+        false, /* debugging_features */
+    )
+    .unwrap();
 
     let result = {
         #[expect(deprecated)]
@@ -94,16 +91,20 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
             .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
             .unwrap_or_default();
 
+        let program_runtime_environments = ProgramRuntimeEnvironments::new(
+            ProgramRuntimeEnvironment::clone(&program_runtime_environment),
+            program_runtime_environment,
+        );
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             program_cache,
             EnvironmentConfig::new(
                 blockhash,
                 blockhash_lamports_per_signature,
+                false,
                 callback,
                 &feature_set,
-                &environments,
-                &environments,
+                &program_runtime_environments,
                 sysvar_cache,
             ),
             Some(log_collector.clone()),
@@ -111,11 +112,8 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
             compute_budget.to_cost(),
         );
 
-        let compiled_ix = sanitized_message.instructions().first()?;
-        let program_account_index = compiled_ix.program_id_index as u16;
-
         invoke_context
-            .prepare_top_level_instructions(&sanitized_message, &[program_account_index])
+            .prepare_top_level_instructions(&sanitized_message)
             .ok()?;
 
         if invoke_context.is_precompile(&input.instruction.program_id) {
@@ -294,18 +292,13 @@ mod tests {
         // Create Program Cache
         let mut program_cache = crate::program_cache::new_with_builtins(slot);
 
-        let environments = ProgramRuntimeEnvironments {
-            program_runtime_v1: Arc::new(
-                create_program_runtime_environment_v1(
-                    &context.feature_set,
-                    &compute_budget.to_budget(),
-                    false, /* deployment */
-                    false, /* debugging_features */
-                )
-                .unwrap(),
-            ),
-            ..ProgramRuntimeEnvironments::default()
-        };
+        let environments = create_program_runtime_environment(
+            &context.feature_set,
+            &compute_budget.to_budget(),
+            false, /* deployment */
+            false, /* debugging_features */
+        )
+        .unwrap();
 
         crate::program_cache::fill_from_accounts(
             &mut program_cache,

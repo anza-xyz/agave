@@ -42,7 +42,8 @@ fn main() {
     let mut text = vec![];
     file.read_to_end(&mut text).unwrap();
     let text = str::from_utf8(&text).unwrap();
-    let sysc_re = Regex::new(r#"register_function\([[:space:]]*"([^"]+)","#).unwrap();
+    let sysc_re =
+        Regex::new(r#"(?m)::register\([ \n]*&mut result,[ \n]*"([^"]+)"[, \n]*\)"#).unwrap();
     let feature_gate_syscall_re =
         Regex::new(r#"register_feature_gated_function!\([^"]+"([^"]+)","#).unwrap();
     let new_num_syscalls = sysc_re

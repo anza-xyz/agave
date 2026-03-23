@@ -119,12 +119,11 @@ impl Entry {
 mod tests {
     use {
         super::*,
-        solana_bls_signatures::{Keypair as BlsKeypair, Pubkey as BlsPubkey},
+        solana_bls_signatures::{Keypair as BlsKeypair, PubkeyCompressed as BlsPubkeyCompressed},
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
-        solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::Bank,
+            bank::{Bank, SlotLeader},
             genesis_utils::{
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
@@ -160,7 +159,12 @@ mod tests {
             .collect::<Vec<_>>();
         let keypair_map = validator_keypairs
             .iter()
-            .map(|k| (BlsPubkey::from(k.bls_keypair.public), k.bls_keypair.clone()))
+            .map(|k| {
+                (
+                    BlsPubkeyCompressed::from(k.bls_keypair.public),
+                    k.bls_keypair.clone(),
+                )
+            })
             .collect::<HashMap<_, _>>();
         let mut genesis_config = create_genesis_config_with_alpenglow_vote_accounts(
             1_000_000_000,
@@ -169,13 +173,20 @@ mod tests {
         )
         .genesis_config;
         genesis_config.epoch_schedule = EpochSchedule::without_warmup();
-        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let bank = Bank::new_from_parent(bank, &Pubkey::default(), slot);
+        let (bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::default(),
+            slot,
+        );
         let rank_map = bank.get_rank_map(slot).unwrap().clone();
         let signing_keys = (0..max_validators)
             .map(|index| {
+                let pubkey_affine = rank_map.get_pubkey_stake_entry(index).unwrap().bls_pubkey;
                 keypair_map
-                    .get(&rank_map.get_pubkey_stake_entry(index).unwrap().bls_pubkey)
+                    .get(&BlsPubkeyCompressed::from(pubkey_affine))
                     .unwrap()
                     .clone()
             })

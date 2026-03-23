@@ -42,7 +42,7 @@ use {
         vote_history_storage::{NullVoteHistoryStorage, VoteHistoryStorage},
         voting_service::VotingServiceOverride,
     },
-    agave_xdp::xdp_retransmitter::{XdpRetransmitBuilder, XdpRetransmitter},
+    agave_xdp::transmitter::{Transmitter, TransmitterBuilder},
     anyhow::{Context, Result, anyhow},
     crossbeam_channel::{Receiver, bounded, unbounded},
     quinn::Endpoint,
@@ -78,7 +78,7 @@ use {
     solana_hard_forks::HardForks,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_leader_schedule::FixedSchedule,
+    solana_leader_schedule::{FixedSchedule, SlotLeader},
     solana_ledger::{
         bank_forks_utils,
         blockstore::{
@@ -143,7 +143,7 @@ use {
     },
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
-    solana_turbine::{self, broadcast_stage::BroadcastStageType},
+    solana_turbine::{self, XdpSender, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_logic::SchedulingMode,
     solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
     solana_validator_exit::Exit,
@@ -152,7 +152,7 @@ use {
         borrow::Cow,
         cmp,
         collections::{HashMap, HashSet},
-        net::SocketAddr,
+        net::{SocketAddr, SocketAddrV4},
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         str::FromStr,
@@ -652,7 +652,7 @@ pub struct Validator {
     repair_quic_endpoints: Option<[Endpoint; 3]>,
     repair_quic_endpoints_runtime: Option<TokioRuntime>,
     repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
-    xdp_retransmitter: Option<XdpRetransmitter>,
+    xdp_transmitter: Option<Transmitter>,
     // This runtime is used to run the client owned by SendTransactionService.
     // We don't wait for its JoinHandle here because ownership and shutdown
     // are managed elsewhere. This variable is intentionally unused.
@@ -675,7 +675,7 @@ impl Validator {
         socket_addr_space: SocketAddrSpace,
         tpu_config: ValidatorTpuConfig,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
-        maybe_xdp_retransmit_builder: Option<XdpRetransmitBuilder>,
+        xdp_builder_with_src_addr: Option<(TransmitterBuilder, SocketAddrV4)>,
     ) -> Result<Self> {
         let exit = Arc::new(AtomicBool::new(false));
         Self::new_with_exit(
@@ -692,7 +692,7 @@ impl Validator {
             socket_addr_space,
             tpu_config,
             admin_rpc_service_post_init,
-            maybe_xdp_retransmit_builder,
+            xdp_builder_with_src_addr,
             exit,
         )
     }
@@ -712,7 +712,7 @@ impl Validator {
         socket_addr_space: SocketAddrSpace,
         tpu_config: ValidatorTpuConfig,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
-        maybe_xdp_retransmit_builder: Option<XdpRetransmitBuilder>,
+        xdp_builder_with_src_addr: Option<(TransmitterBuilder, SocketAddrV4)>,
         exit: Arc<AtomicBool>,
     ) -> Result<Self> {
         #[cfg(debug_assertions)]
@@ -1583,10 +1583,10 @@ impl Validator {
         // This channel backing up indicates a serious problem in votor
         let (votor_event_sender, votor_event_receiver) = bounded(1000);
 
-        let (xdp_retransmitter, xdp_sender) =
-            if let Some(xdp_retransmit_builder) = maybe_xdp_retransmit_builder {
-                let (rtx, sender) = xdp_retransmit_builder.build();
-                (Some(rtx), Some(sender))
+        let (xdp_transmitter, turbine_xdp_sender) =
+            if let Some((xdp_transmit_builder, src_addr)) = xdp_builder_with_src_addr {
+                let (rtx, sender) = xdp_transmit_builder.build();
+                (Some(rtx), Some(XdpSender::new(sender, src_addr)))
             } else {
                 (None, None)
             };
@@ -1646,7 +1646,7 @@ impl Validator {
                 replay_transactions_threads: config.replay_transactions_threads,
                 shred_sigverify_threads: config.tvu_shred_sigverify_threads,
                 bls_sigverify_threads: config.tvu_bls_sigverify_threads,
-                xdp_sender: xdp_sender.clone(),
+                turbine_xdp_sender: turbine_xdp_sender.clone(),
             },
             &max_slots,
             block_metadata_notifier,
@@ -1711,7 +1711,7 @@ impl Validator {
             entry_notification_sender,
             blockstore.clone(),
             &config.broadcast_stage_type,
-            xdp_sender,
+            turbine_xdp_sender,
             exit.clone(),
             node.info.shred_version(),
             vote_tracker,
@@ -1815,7 +1815,7 @@ impl Validator {
             repair_quic_endpoints,
             repair_quic_endpoints_runtime,
             repair_quic_endpoints_join_handle,
-            xdp_retransmitter,
+            xdp_transmitter,
             _tpu_client_next_runtime: tpu_client_next_runtime,
         })
     }
@@ -1988,8 +1988,8 @@ impl Validator {
         self.accounts_background_service
             .join()
             .expect("accounts_background_service");
-        if let Some(xdp_retransmitter) = self.xdp_retransmitter {
-            xdp_retransmitter.join().expect("xdp_retransmitter");
+        if let Some(xdp_transmitter) = self.xdp_transmitter {
+            xdp_transmitter.join().expect("xdp_transmitter");
         }
         self.tpu.join().expect("tpu");
         self.tvu.join().expect("tvu");
@@ -2450,6 +2450,7 @@ impl<'a> ProcessBlockStore<'a> {
     }
 }
 
+// `--warp-slot`: runs at startup only (before PoH/replay), so fork graph access is serial here.
 fn maybe_warp_slot(
     config: &ValidatorConfig,
     process_blockstore: &mut ProcessBlockStore,
@@ -2482,15 +2483,20 @@ fn maybe_warp_slot(
 
         bank_forks.insert(Bank::warp_from_parent(
             root_bank,
-            &Pubkey::default(),
+            SlotLeader::default(),
             warp_slot,
         ));
+        // The bank must have a block id set to take a snapshot.
+        // Also must be set before calling set_root() just incase the warp slot triggers a
+        // snapshot request based on the snapshot config inside snapshot_controller.
+        let warp_bank = bank_forks.get(warp_slot).unwrap();
+        Bank::calculate_and_set_block_id_for_dcou(&warp_bank);
         bank_forks.set_root(warp_slot, Some(snapshot_controller), Some(warp_slot));
-        leader_schedule_cache.set_root(&bank_forks.root_bank());
+        leader_schedule_cache.set_root(&warp_bank);
 
         let full_snapshot_archive_info = match snapshot_bank_utils::bank_to_full_snapshot_archive(
             ledger_path,
-            &bank_forks.root_bank(),
+            &warp_bank,
             None,
             &config.snapshot_config.full_snapshot_archives_dir,
             &config.snapshot_config.incremental_snapshot_archives_dir,
@@ -2944,6 +2950,7 @@ mod tests {
         solana_entry::entry,
         solana_genesis_config::create_genesis_config,
         solana_gossip::contact_info::ContactInfo,
+        solana_leader_schedule::SlotLeader,
         solana_ledger::{
             blockstore, create_new_tmp_ledger, genesis_utils::create_genesis_config_with_leader,
             get_tmp_ledger_path_auto_delete,
@@ -3281,7 +3288,7 @@ mod tests {
         // bank=1, wait=0, should pass, bank is past the wait slot
         let bank_forks = BankForks::new_rw_arc(Bank::new_from_parent(
             bank_forks.read().unwrap().root_bank(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             1,
         ));
         config.wait_for_supermajority = Some(0);

@@ -145,12 +145,22 @@ use {
     wincode::{
         ReadResult, SchemaRead, SchemaWrite, WriteResult,
         config::{Config, DefaultConfig},
-        containers::{Pod, Vec as WincodeVec},
+        containers::Vec as WincodeVec,
         error::write_length_encoding_overflow,
         io::{Reader, Writer},
         len::{BincodeLen, FixIntLen},
+        pod_wrapper,
     },
 };
+
+pod_wrapper! {
+    // Use `BLSSignature` directly once `BLSSignature` wincode support
+    // is released in solana-sdk.
+    unsafe struct PodBLSSignature(BLSSignature);
+    // Use `BLSSignatureCompressed` directly once `BLSSignature` wincode support
+    // is released in solana-sdk.
+    unsafe struct PodBLSSignatureCompressed(BLSSignatureCompressed);
+}
 
 /// Wraps a value with a u16 length prefix for TLV-style serialization.
 ///
@@ -222,7 +232,7 @@ pub struct UpdateParentV1 {
 pub struct GenesisCertificate {
     pub slot: Slot,
     pub block_id: Hash,
-    #[wincode(with = "Pod<BLSSignature>")]
+    #[wincode(with = "PodBLSSignature")]
     pub bls_signature: BLSSignature,
     #[wincode(with = "WincodeVec<u8, BincodeLen>")]
     pub bitmap: Vec<u8>,
@@ -291,7 +301,7 @@ impl FinalCertificate {
 
 #[derive(Clone, PartialEq, Eq, Debug, SchemaRead, SchemaWrite)]
 pub struct VotesAggregate {
-    #[wincode(with = "Pod<BLSSignatureCompressed>")]
+    #[wincode(with = "PodBLSSignatureCompressed")]
     signature: BLSSignatureCompressed,
     #[wincode(with = "WincodeVec<u8, FixIntLen<u16>>")]
     bitmap: Vec<u8>,
@@ -517,25 +527,16 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for BlockComponent {
     type Dst = Self;
 
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        // Read the entry count (first 8 bytes) to determine variant
-        let count_bytes = reader.fill_array::<8>()?;
-        let entry_count = u64::from_le_bytes(*count_bytes);
+        let entries =
+            <WincodeVec<Entry, MaxDataShredsLen> as SchemaRead<'de, C>>::get(reader.by_ref())?;
 
-        if entry_count == 0 {
-            // This is a BlockMarker - consume the count bytes and read the marker
-            // SAFETY: fill_array::<8>() above guarantees at least 8 bytes are available
-            unsafe { reader.consume_unchecked(8) };
+        if entries.is_empty() {
             dst.write(Self::BlockMarker(<VersionedBlockMarker as SchemaRead<
                 C,
             >>::get(reader)?));
+        } else if entries.len() >= Self::MAX_ENTRIES {
+            return Err(wincode::ReadError::Custom("Too many entries"));
         } else {
-            let entries: Vec<Entry> =
-                <WincodeVec<Entry, MaxDataShredsLen> as SchemaRead<'de, C>>::get(reader)?;
-
-            if entries.len() >= Self::MAX_ENTRIES {
-                return Err(wincode::ReadError::Custom("Too many entries"));
-            }
-
             dst.write(Self::EntryBatch(entries));
         }
 

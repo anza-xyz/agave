@@ -679,11 +679,12 @@ mod tests {
             std::iter::repeat(Ok(())),
         );
 
-        // set cost tracker limit to fit 1 transfer tx and 1 vote tx
+        // set cost tracker limit to bare minimum that will fit 1 transfer tx
+        // and 1 vote tx
         let cost_limit = transfer_tx_cost + vote_tx_cost;
         bank.write_cost_tracker()
             .unwrap()
-            .set_limits(cost_limit, cost_limit, cost_limit);
+            .set_limits(cost_limit, cost_limit, cost_limit, 0);
         let (results, num_selected) =
             qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
         assert_eq!(num_selected, 2);

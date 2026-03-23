@@ -21,7 +21,6 @@ use {
         },
         validator::SchedulerPacing,
     },
-    solana_clock::MAX_PROCESSING_AGE,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
@@ -233,7 +232,7 @@ where
                         bank.feature_set
                             .is_active(&agave_feature_set::relax_intrabatch_account_locks::ID),
                         |txs, results| {
-                            Self::pre_graph_filter(txs, results, bank, MAX_PROCESSING_AGE)
+                            Self::pre_graph_filter(txs, results, bank, bank.max_processing_age())
                         },
                         |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
                     )?
@@ -359,7 +358,7 @@ where
         let results = bank.check_transactions::<R::Transaction>(
             &txs,
             &lock_results,
-            MAX_PROCESSING_AGE,
+            bank.max_processing_age(),
             &mut error_counters,
         );
 

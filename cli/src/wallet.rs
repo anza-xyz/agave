@@ -612,7 +612,7 @@ pub fn parse_transfer(
     default_signer: &DefaultSigner,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
 ) -> Result<CliCommandInfo, CliError> {
-    let amount = SpendAmount::new_from_matches(matches, "amount");
+    let amount = SpendAmount::new_from_matches(matches, "amount")?;
     let to = pubkey_of_signer(matches, "to", wallet_manager)?.unwrap();
     let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
     let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);

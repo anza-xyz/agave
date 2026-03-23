@@ -9,8 +9,14 @@ use {
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
     solana_hash::Hash,
-    wincode::{SchemaRead, SchemaWrite, containers::Pod},
+    wincode::{SchemaRead, SchemaWrite, pod_wrapper},
 };
+
+// Use `BLSSignature` directly once `BLSSignature` wincode support
+// is released in solana-sdk.
+pod_wrapper! {
+    unsafe struct PodBLSSignature(BLSSignature);
+}
 
 /// The seed used to derive the BLS keypair
 pub const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
@@ -28,7 +34,7 @@ pub struct VoteMessage {
     /// The type of the vote.
     pub vote: Vote,
     /// The signature.
-    #[wincode(with = "Pod<BLSSignature>")]
+    #[wincode(with = "PodBLSSignature")]
     pub signature: BLSSignature,
     /// The rank of the validator.
     pub rank: u16,
@@ -214,7 +220,7 @@ pub struct Certificate {
     /// The certificate type.
     pub cert_type: CertificateType,
     /// The aggregate signature.
-    #[wincode(with = "Pod<BLSSignature>")]
+    #[wincode(with = "PodBLSSignature")]
     pub signature: BLSSignature,
     /// A rank bitmap for validators' signatures included in the aggregate.
     /// See solana-signer-store for encoding format.

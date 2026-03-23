@@ -148,12 +148,14 @@ mod tests {
         agave_votor_messages::consensus_message::VoteMessage,
         bitvec::vec::BitVec,
         solana_bls_signatures::{
-            Keypair as BlsKeypair, Pubkey as BLSPubkey, Signature as BLSSignature,
+            Keypair as BlsKeypair, Signature as BLSSignature,
             SignatureCompressed as BlsSignatureCompressed, SignatureProjective,
+            pubkey::PubkeyCompressed as BLSPubkeyCompressed,
         },
         solana_hash::Hash,
+        solana_leader_schedule::SlotLeader,
         solana_signer_store::encode_base2,
-        std::{collections::HashMap, sync::Arc},
+        std::collections::HashMap,
     };
 
     fn new_vote(vote: Vote, rank: usize, keypair: &BlsKeypair) -> VoteMessage {
@@ -195,15 +197,21 @@ mod tests {
             .collect::<Vec<_>>();
         let keypair_map = validator_keypairs
             .iter()
-            .map(|k| (BLSPubkey::from(k.bls_keypair.public), k.bls_keypair.clone()))
+            .map(|k| {
+                (
+                    BLSPubkeyCompressed::from(k.bls_keypair.public),
+                    k.bls_keypair.clone(),
+                )
+            })
             .collect::<HashMap<_, _>>();
         let genesis = create_genesis_config_with_alpenglow_vote_accounts(
             1_000_000_000,
             &validator_keypairs,
             vec![100; validator_keypairs.len()],
         );
-        let bank = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
-        let bank = Bank::new_from_parent(bank, &Pubkey::default(), bank_slot);
+        let (bank, _bank_forks) =
+            Bank::new_for_tests(&genesis.genesis_config).wrap_with_bank_forks_for_tests();
+        let bank = Bank::new_from_parent(bank, SlotLeader::default(), bank_slot);
 
         let rank_map = bank
             .epoch_stakes_from_slot(reward_slot)
@@ -211,8 +219,9 @@ mod tests {
             .bls_pubkey_to_rank_map();
         let signing_keys = (0..num_validators)
             .map(|index| {
+                let pubkey_affine = rank_map.get_pubkey_stake_entry(index).unwrap().bls_pubkey;
                 keypair_map
-                    .get(&rank_map.get_pubkey_stake_entry(index).unwrap().bls_pubkey)
+                    .get(&BLSPubkeyCompressed::from(pubkey_affine))
                     .unwrap()
             })
             .collect::<Vec<_>>();

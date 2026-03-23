@@ -245,7 +245,6 @@ mod tests {
 
         let loaded0 = LoadedTransaction {
             accounts: transaction_accounts0,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -254,7 +253,6 @@ mod tests {
 
         let loaded1 = LoadedTransaction {
             accounts: transaction_accounts1,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -317,7 +315,6 @@ mod tests {
 
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::FeePayerOnly {
                 fee_payer: (from_address, from_account_pre.clone()),
@@ -408,7 +405,6 @@ mod tests {
 
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::SeparateNonceAndFeePayer {
                 nonce: (nonce_address, nonce_account_pre.clone()),
@@ -516,7 +512,6 @@ mod tests {
 
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::SameNonceAndFeePayer {
                 nonce: (nonce_address, nonce_account_pre.clone()),

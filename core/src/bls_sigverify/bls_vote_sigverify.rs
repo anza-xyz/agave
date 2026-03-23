@@ -2,33 +2,25 @@
 use qualifier_attr::qualifiers;
 use {
     super::{errors::SigVerifyVoteError, stats::SigVerifyVoteStats},
-    crate::{
-        bls_sigverify::{
-            bls_sigverifier::NUM_SLOTS_FOR_VERIFY,
-            utils::{
-                send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair,
-                send_votes_to_rewards,
-            },
+    crate::bls_sigverify::{
+        bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
+        utils::{
+            send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
         },
-        cluster_info_vote_listener::VerifiedVoterSlotsSender,
     },
-    agave_votor::{
-        consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
-        consensus_rewards,
-    },
+    agave_votor::{consensus_metrics::ConsensusMetricsEvent, consensus_rewards},
     agave_votor_messages::{
         consensus_message::{ConsensusMessage, VoteMessage},
         reward_certificate::AddVoteMessage,
         vote::Vote,
     },
-    crossbeam_channel::Sender,
     rayon::{
         ThreadPool, current_thread_index,
-        iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
+        iter::{Either, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
     },
     solana_bls_signatures::{
         BlsError,
-        pubkey::{Pubkey as BlsPubkey, PubkeyProjective, VerifiablePubkey},
+        pubkey::{PubkeyAffine as BlsPubkeyAffine, PubkeyProjective, VerifiablePubkey},
         signature::SignatureProjective,
     },
     solana_clock::Slot,
@@ -37,6 +29,7 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
+    solana_streamer::nonblocking::simple_qos::SimpleQosBanlist,
     std::collections::HashMap,
 };
 
@@ -45,8 +38,9 @@ use {
 #[derive(Clone, Debug)]
 pub(super) struct VotePayload {
     pub vote_message: VoteMessage,
-    pub bls_pubkey: BlsPubkey,
+    pub bls_pubkey: BlsPubkeyAffine,
     pub pubkey: Pubkey,
+    pub remote_pubkey: Pubkey,
 }
 
 impl VotePayload {
@@ -64,19 +58,15 @@ impl VotePayload {
 /// Verifies votes and sends the verified votes to the consensus pool; and sends the desired subset
 /// to rewards container and repair.
 ///
-/// Returns the Vec of [`VoteToVerify`] to the caller to enable reuse.  The length of the returned
-/// buffer might be lower than the input buffer.
-#[allow(clippy::too_many_arguments)]
+/// Any vote that fails fallback individual signature verification will have its sender banlisted.
 pub(super) fn verify_and_send_votes(
     votes_to_verify: Vec<VotePayload>,
     root_bank: &Bank,
     cluster_info: &ClusterInfo,
     leader_schedule: &LeaderScheduleCache,
-    channel_to_pool: &Sender<Vec<ConsensusMessage>>,
-    channel_to_repair: &VerifiedVoterSlotsSender,
-    channel_to_reward: &Sender<AddVoteMessage>,
-    channel_to_metrics: &ConsensusMetricsEventSender,
+    banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
+    channels: &SigVerifierChannels,
 ) -> Result<SigVerifyVoteStats, SigVerifyVoteError> {
     let mut measure = Measure::start("verify_and_send_votes");
     let mut stats = SigVerifyVoteStats::default();
@@ -84,16 +74,16 @@ pub(super) fn verify_and_send_votes(
         return Ok(stats);
     }
     stats.votes_to_sig_verify += votes_to_verify.len() as u64;
-    let verified_votes = verify_votes(root_bank, votes_to_verify, &mut stats, thread_pool);
+    let verified_votes = verify_votes(root_bank, votes_to_verify, &mut stats, banlist, thread_pool);
     stats.sig_verified_votes += verified_votes.len() as u64;
 
     let (votes_for_pool, msgs_for_repair, msg_for_reward, msg_for_metrics) =
         process_verified_votes(&verified_votes, root_bank, cluster_info, leader_schedule);
 
-    send_votes_to_pool(votes_for_pool, channel_to_pool, &mut stats)?;
-    send_votes_to_repair(msgs_for_repair, channel_to_repair, &mut stats)?;
-    send_votes_to_rewards(msg_for_reward, channel_to_reward, &mut stats)?;
-    send_votes_to_metrics(msg_for_metrics, channel_to_metrics, &mut stats)?;
+    send_votes_to_pool(votes_for_pool, &channels.channel_to_pool, &mut stats)?;
+    send_votes_to_repair(msgs_for_repair, &channels.channel_to_repair, &mut stats)?;
+    send_votes_to_rewards(msg_for_reward, &channels.channel_to_reward, &mut stats)?;
+    send_votes_to_metrics(msg_for_metrics, &channels.channel_to_metrics, &mut stats)?;
 
     measure.stop();
     stats
@@ -179,6 +169,7 @@ fn verify_votes(
     root_bank: &Bank,
     votes_to_verify: Vec<VotePayload>,
     stats: &mut SigVerifyVoteStats,
+    banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
 ) -> Vec<VotePayload> {
     // Filter votes too far in the future.
@@ -198,9 +189,13 @@ fn verify_votes(
     }
 
     // Fallback to individual verification
-    let (verified_votes, time_us) =
+    let ((verified_votes, invalid_remote_pubkeys), time_us) =
         measure_us!(verify_individual_votes(votes_to_verify, thread_pool));
+    for remote_pubkey in invalid_remote_pubkeys {
+        banlist.ban(remote_pubkey, BAN_TIMEOUT);
+    }
     stats.fn_verify_individual_votes_stats.add_sample(time_us);
+
     verified_votes
 }
 
@@ -281,7 +276,7 @@ fn aggregate_pubkeys_by_payload(
     stats: &mut SigVerifyVoteStats,
 ) -> (Vec<Vec<u8>>, Result<Vec<PubkeyProjective>, BlsError>) {
     debug_assert!(current_thread_index().is_some());
-    let mut grouped_votes: HashMap<&Vote, Vec<&BlsPubkey>> = HashMap::new();
+    let mut grouped_votes: HashMap<&Vote, Vec<&BlsPubkeyAffine>> = HashMap::new();
 
     for v in votes {
         grouped_votes
@@ -310,16 +305,24 @@ fn aggregate_pubkeys_by_payload(
     (distinct_payloads, aggregate_pubkeys_result)
 }
 
+/// Verifies votes individually on a thread pool.
+///
+/// Returns:
+/// - `Vec<VotePayload>`: votes that passed verification.
+/// - `Vec<Pubkey>`: remote pubkeys for votes that failed verification.
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn verify_individual_votes(
     votes_to_verify: Vec<VotePayload>,
     thread_pool: &ThreadPool,
-) -> Vec<VotePayload> {
+) -> (Vec<VotePayload>, Vec<Pubkey>) {
     thread_pool.install(|| {
-        votes_to_verify
-            .into_par_iter()
-            .filter_map(|vote| vote.verify())
-            .collect()
+        votes_to_verify.into_par_iter().partition_map(|vote| {
+            let remote_pubkey = vote.remote_pubkey;
+            match vote.verify() {
+                Some(vote) => Either::Left(vote),
+                None => Either::Right(remote_pubkey),
+            }
+        })
     })
 }
 

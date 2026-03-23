@@ -1,7 +1,7 @@
 SBF_SDK_PATH := ../../platform-tools-sdk/sbf
 SRC_DIR := c/src
 OUT_DIR := target/deploy
-TOOLCHAIN := 1.89.0-sbpf-solana-v1.53
+TOOLCHAIN := 1.89.0-sbpf-solana-v1.54
 
 test-v3:
 	mkdir -p target/deploy ; \

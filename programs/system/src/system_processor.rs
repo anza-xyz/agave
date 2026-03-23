@@ -571,7 +571,8 @@ mod tests {
         bincode::serialize,
         solana_nonce_account::{SystemAccountKind, get_system_account_kind},
         solana_program_runtime::{
-            invoke_context::mock_process_instruction, with_mock_invoke_context,
+            invoke_context::mock_process_instruction,
+            solana_sbpf::program::BuiltinFunctionDefinition, with_mock_invoke_context,
         },
         std::collections::BinaryHeap,
     };
@@ -620,7 +621,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             expected_result,
-            Entrypoint::vm,
+            Entrypoint::register,
             |_invoke_context| {},
             |_invoke_context| {},
         )
@@ -1630,7 +1631,7 @@ mod tests {
                 },
             ],
             Ok(()),
-            Entrypoint::vm,
+            Entrypoint::register,
             |invoke_context: &mut InvokeContext| {
                 invoke_context.environment_config.blockhash = hash(&serialize(&0).unwrap());
             },
@@ -1925,7 +1926,7 @@ mod tests {
                 },
             ],
             Err(SystemError::NonceNoRecentBlockhashes.into()),
-            Entrypoint::vm,
+            Entrypoint::register,
             |invoke_context: &mut InvokeContext| {
                 invoke_context.environment_config.blockhash = hash(&serialize(&0).unwrap());
             },
@@ -2175,7 +2176,7 @@ mod tests {
             ],
             vec![AccountMeta::new(to, true), AccountMeta::new(from, true)],
             Err(InstructionError::InvalidInstructionData),
-            Entrypoint::vm,
+            Entrypoint::register,
             |_| {},
             |_| {},
             &solana_svm_feature_set::SVMFeatureSet::default(),

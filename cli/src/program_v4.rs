@@ -397,10 +397,11 @@ pub fn parse_program_v4_subcommand(
             let authority_signer_index = signer_info
                 .index_of(authority_pubkey)
                 .expect("Authority signer is missing");
-            assert!(
-                program_address.is_some() != program_signer_index.is_some(),
-                "Requires either --program-keypair or --program-id",
-            );
+            if program_address.is_some() == program_signer_index.is_some() {
+                return Err(CliError::BadParameter(
+                    "Requires either --program-keypair or --program-id".to_string(),
+                ));
+            }
 
             CliCommandInfo {
                 command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
@@ -735,7 +736,7 @@ pub async fn process_deploy_program(
                 }
             });
     }
-    let program_runtime_environment = agave_syscalls::create_program_runtime_environment_v1(
+    let program_runtime_environment = agave_syscalls::create_program_runtime_environment(
         &feature_set.runtime_features(),
         &SVMTransactionExecutionBudget::new_with_defaults(
             feature_set.is_active(&raise_cpi_nesting_limit_to_8::id()),
@@ -766,9 +767,11 @@ pub async fn process_deploy_program(
         )
         .into());
     }
-    let executable =
-        Executable::<InvokeContext>::from_elf(program_data, Arc::new(program_runtime_environment))
-            .map_err(|err| format!("ELF error: {err}"))?;
+    let executable = Executable::<InvokeContext>::from_elf(
+        program_data,
+        Arc::clone(&*program_runtime_environment),
+    )
+    .map_err(|err| format!("ELF error: {err}"))?;
     executable
         .verify::<RequisiteVerifier>()
         .map_err(|err| format!("ELF error: {err}"))?;

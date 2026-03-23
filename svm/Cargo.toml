@@ -20,10 +20,7 @@ name = "solana_svm"
 default = ["metrics"]
 agave-unstable-api = []
 dummy-for-ci-check = ["metrics"]
-dev-context-only-utils = [
-    "dep:qualifier_attr",
-    "solana-program-runtime/dev-context-only-utils",
-]
+dev-context-only-utils = ["dep:qualifier_attr", "solana-program-runtime/dev-context-only-utils"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
@@ -65,7 +62,7 @@ solana-loader-v4-interface = { workspace = true }
 solana-loader-v4-program = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
-solana-nonce-account = { workspace = true }
+solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-program-entrypoint = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-program-runtime = { workspace = true }

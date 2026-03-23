@@ -267,9 +267,9 @@ impl CrdsGossipPush {
             ping_cache,
             pings,
         );
-        let nodes = crds_gossip::dedup_gossip_addresses(nodes, stakes)
-            .into_values()
-            .map(|(_stake, node)| *node.pubkey())
+        let nodes = crds_gossip::dedup_gossip_addresses(nodes)
+            .into_iter()
+            .map(|(_gossip, _stake, pubkey)| pubkey)
             .collect::<Vec<_>>();
         if nodes.is_empty() {
             return;

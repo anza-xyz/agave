@@ -494,18 +494,26 @@ mod tests {
     use {
         super::*,
         crate::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
+        solana_client::{
+            pubsub_client::PubsubClient,
+            rpc_config::{RpcBlockSubscribeConfig, RpcBlockSubscribeFilter},
+        },
+        solana_commitment_config::CommitmentConfig,
+        solana_ledger::blockstore::Blockstore,
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
-            commitment::BlockCommitmentCache,
+            commitment::{BlockCommitmentCache, CommitmentSlots},
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
         },
         std::{
-            net::{IpAddr, Ipv4Addr},
+            net::{IpAddr, Ipv4Addr, TcpStream},
             sync::{
                 RwLock,
                 atomic::{AtomicBool, AtomicU64},
             },
+            thread::sleep,
+            time::{Duration, Instant},
         },
     };
 
@@ -530,5 +538,88 @@ mod tests {
             PubSubService::new(PubSubConfig::default(), &subscriptions, pubsub_addr);
         let thread = pubsub_service.thread_hdl.thread();
         assert_eq!(thread.name().unwrap(), "solRpcPubSub");
+    }
+
+    #[test]
+    fn test_pubsub_block_subscribe() {
+        // Setup pubsub service.
+        let port = solana_net_utils::sockets::unique_port_range_for_tests(1).start;
+        let pubsub_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+        let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
+        let bank_slot = bank.slot();
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let blockstore =
+            Arc::new(Blockstore::open(&solana_ledger::get_tmp_ledger_path!()).unwrap());
+        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests_with_blockstore(
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::default()),
+            blockstore.clone(),
+            bank_forks.clone(),
+            Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests())),
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
+        ));
+        let (trigger, _pubsub_service) = PubSubService::new(
+            PubSubConfig {
+                enable_block_subscription: true,
+                ..Default::default()
+            },
+            &subscriptions,
+            pubsub_addr,
+        );
+
+        // Wait for pubsub service to spin up.
+        let connect_deadline = Instant::now() + Duration::from_secs(30);
+        while TcpStream::connect((pubsub_addr.ip(), pubsub_addr.port())).is_err() {
+            assert!(
+                Instant::now() <= connect_deadline,
+                "Timed out waiting for pubsub service to start",
+            );
+            sleep(Duration::from_millis(100));
+        }
+
+        // Setup pubsub client.
+        let (mut block_subscribe_client, receiver) = PubsubClient::block_subscribe(
+            format!("ws://{pubsub_addr}"),
+            RpcBlockSubscribeFilter::All,
+            Some(RpcBlockSubscribeConfig {
+                commitment: Some(CommitmentConfig::finalized()),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+
+        // Put the block into blockstore.
+        let bank = bank_forks.read().unwrap().get(bank_slot).unwrap();
+        blockstore.insert_shreds_and_meta_for_bank(bank);
+
+        // Trigger the block update.
+        subscriptions.notify_subscribers(CommitmentSlots {
+            slot: bank_slot,
+            root: bank_slot,
+            highest_confirmed_slot: bank_slot,
+            highest_super_majority_root: bank_slot,
+        });
+
+        // Wait to receive a block update.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            assert!(
+                Instant::now() <= deadline,
+                "Went too long without receiving a confirmed block",
+            );
+            match receiver.recv_timeout(Duration::from_millis(100)) {
+                Ok(response) => {
+                    assert!(response.value.err.is_none());
+                    assert!(response.value.block.is_some());
+                    assert_eq!(response.value.slot, bank_slot);
+                    break;
+                }
+                _ => continue,
+            };
+        }
+
+        // Safely shutdown the threads.
+        trigger.cancel();
+        block_subscribe_client.shutdown().unwrap();
     }
 }

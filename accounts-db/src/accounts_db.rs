@@ -36,11 +36,12 @@ use {
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
         account_storage_entry::AccountStorageEntry,
-        accounts_cache::{AccountsCache, CachedAccount, SlotCache},
+        accounts_cache::{AccountsCache, CachedAccount, SlotCache, SlotStatus},
         accounts_db::stats::{
-            AccountsStats, CleanAccountsStats, FlushStats, ObsoleteAccountsStats, PurgeStats,
-            ShrinkAncientStats, ShrinkStats, ShrinkStatsSub, StoreAccountsFrozenStats,
-            StoreAccountsTiming, StoreAccountsUnfrozenStats, WriteAccountsToCacheStats,
+            AccountsStats, CleanAccountsStats, FlushStats, LoadAccountsStats,
+            ObsoleteAccountsStats, PurgeStats, ShrinkAncientStats, ShrinkStats, ShrinkStatsSub,
+            StoreAccountsFrozenStats, StoreAccountsTiming, StoreAccountsUnfrozenStats,
+            WriteAccountsToCacheStats,
         },
         accounts_file::{AccountsFile, AccountsFileProvider, StorageAccess},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
@@ -913,6 +914,9 @@ pub struct AccountsDb {
 
     pub stats: AccountsStats,
 
+    /// Stats for loading accounts during transaction processing
+    load_account_stats: LoadAccountsStats,
+
     /// Stats from storing accounts unfrozen
     store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats,
 
@@ -986,11 +990,6 @@ pub struct AccountsDb {
     /// Members are Slot and capacity. If capacity is smaller, then
     /// that means the storage was already shrunk.
     pub(crate) best_ancient_slots_to_shrink: RwLock<VecDeque<(Slot, u64)>>,
-
-    /// Flag to indicate if the experimental obsolete account tracking feature is enabled.
-    /// This feature tracks obsolete accounts in the account storage entry allowing
-    /// for earlier cleaning of obsolete accounts in the storages and index.
-    pub mark_obsolete_accounts: MarkObsoleteAccounts,
 }
 
 pub fn quarter_thread_count() -> usize {
@@ -1129,6 +1128,7 @@ impl AccountsDb {
             shrink_stats: ShrinkStats::default(),
             shrink_ancient_stats: ShrinkAncientStats::default(),
             stats: AccountsStats::default(),
+            load_account_stats: LoadAccountsStats::default(),
             store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats::default(),
             store_accounts_frozen_stats: StoreAccountsFrozenStats::default(),
             #[cfg(test)]
@@ -1141,7 +1141,6 @@ impl AccountsDb {
             accounts_file_provider: AccountsFileProvider::default(),
             latest_full_snapshot_slot: SeqLock::new(None),
             best_ancient_slots_to_shrink: RwLock::default(),
-            mark_obsolete_accounts: MarkObsoleteAccounts::Enabled,
         };
 
         {
@@ -3912,6 +3911,23 @@ impl AccountsDb {
     ) -> Option<(AccountSharedData, Slot)> {
         let starting_max_root = self.accounts_index.max_root_inclusive();
 
+        // First check the write cache
+        let cache_result = self.accounts_cache.load_latest(pubkey, ancestors);
+
+        if let Some((cached_account, cached_slot, slot_status)) = &cache_result {
+            // If the slot is an ancestor or an unflushed root, it hasn't been flushed to
+            // storage yet, so the write cache is authoritative — return it directly.
+            if matches!(
+                slot_status,
+                SlotStatus::Ancestor | SlotStatus::UnflushedRoot
+            ) {
+                self.load_account_stats
+                    .num_loaded_from_write_cache
+                    .fetch_add(1, Ordering::Relaxed);
+                return Some((cached_account.account.clone(), *cached_slot));
+            }
+        }
+
         let (slot, storage_location, _maybe_account_accessor) =
             self.read_index_for_accessor_or_load_slow(ancestors, pubkey, false)?;
         // Notice the subtle `?` at previous line, we bail out pretty early if missing.
@@ -3920,6 +3936,9 @@ impl AccountsDb {
         if !in_write_cache {
             let result = self.read_only_accounts_cache.load(*pubkey, slot);
             if let Some(account) = result {
+                self.load_account_stats
+                    .num_loaded_from_read_cache
+                    .fetch_add(1, Ordering::Relaxed);
                 return Some((account, slot));
             }
         }
@@ -3934,6 +3953,23 @@ impl AccountsDb {
         // note that the account being in the cache could be different now than it was previously
         // since the cache could be flushed in between the 2 calls.
         let in_write_cache = matches!(account_accessor, LoadedAccountAccessor::Cached(_));
+        if in_write_cache {
+            // While the account wasn't loaded directly from the write cache, the write cache
+            // provided the correct slot, so count this as a load from the write cache
+            if cache_result.is_some_and(|(_, cached_slot, _)| cached_slot == slot) {
+                self.load_account_stats
+                    .num_loaded_from_write_cache
+                    .fetch_add(1, Ordering::Relaxed);
+            } else {
+                self.load_account_stats
+                    .num_loaded_from_index_cache
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        } else {
+            self.load_account_stats
+                .num_loaded_from_index_storage
+                .fetch_add(1, Ordering::Relaxed);
+        }
         let account = account_accessor.check_and_get_loaded_account_shared_data();
 
         if !in_write_cache && populate_read_cache == PopulateReadCache::True {
@@ -4522,7 +4558,8 @@ impl AccountsDb {
         mut should_flush_f: Option<&mut impl FnMut(&Pubkey) -> bool>,
     ) -> (usize, usize, FlushStats) {
         // Always flush up to `requested_flush_root`, which is necessary for things like snapshotting.
-        let flushed_roots: BTreeSet<Slot> = self.accounts_cache.clear_roots(requested_flush_root);
+        let flushed_roots: BTreeSet<Slot> =
+            self.accounts_cache.begin_flush_roots(requested_flush_root);
         let max_flush_root = flushed_roots.last().copied();
         let num_new_roots = flushed_roots.len();
 
@@ -4540,6 +4577,9 @@ impl AccountsDb {
         }
 
         max_flush_root.inspect(|&root| self.accounts_cache.set_max_flush_root(root));
+
+        // Now that all the rooted slots are flushed, we can clear the roots from the cache
+        self.accounts_cache.end_flush_roots();
 
         (num_new_roots, num_roots_flushed, flush_stats)
     }
@@ -4602,9 +4642,7 @@ impl AccountsDb {
         // should_flush_f is set to None when
         // 1) There's an ongoing scan to avoid reclaiming accounts being scanned.
         // 2) The slot is > max_clean_root to prevent unrooted slots from reclaiming rooted versions.
-        let reclaim_method = if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
-            && should_flush_f.is_some()
-        {
+        let reclaim_method = if should_flush_f.is_some() {
             UpsertReclaim::ReclaimOldSlots
         } else {
             UpsertReclaim::IgnoreReclaims
@@ -5750,6 +5788,8 @@ impl AccountsDb {
                     i64
                 ),
             );
+
+            self.load_account_stats.report();
         }
     }
 
@@ -6605,6 +6645,12 @@ impl AccountsDb {
         let ancestors = Ancestors::from(vec![slot]);
         let load = self.load_without_fixed_root(&ancestors, &pubkey);
         assert!(load.is_none(), "{load:?}");
+    }
+
+    /// Is `pubkey` in the db?
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn contains(&self, pubkey: &Pubkey) -> bool {
+        self.accounts_cache.contains_pubkey(pubkey) || self.accounts_index.contains(pubkey)
     }
 
     pub fn check_accounts(&self, pubkeys: &[Pubkey], slot: Slot, num: usize, count: usize) {

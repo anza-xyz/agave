@@ -9,7 +9,7 @@ use {
     rayon::{iter::IntoParallelRefIterator, join},
     solana_bls_signatures::{
         BlsError, PubkeyProjective, Signature as BlsSignature, SignatureProjective,
-        VerifiablePubkey, pubkey::Pubkey as BlsPubkey, signature::AsSignatureAffine,
+        VerifiablePubkey, pubkey::PubkeyAffine as BlsPubkeyAffine, signature::AsSignatureAffine,
     },
     solana_signer_store::{DecodeError, Decoded, decode},
     thiserror::Error,
@@ -60,7 +60,7 @@ pub enum Error {
 pub fn verify_certificate(
     cert: &Certificate,
     max_validators: usize,
-    mut rank_map: impl FnMut(usize) -> Option<(u64, BlsPubkey)>,
+    mut rank_map: impl FnMut(usize) -> Option<(u64, BlsPubkeyAffine)>,
 ) -> Result<u64, Error> {
     let mut total_stake = 0u64;
 
@@ -133,7 +133,7 @@ pub fn verify_base2<S: AsSignatureAffine>(
     signature: &S,
     ranks: &[u8],
     max_validators: usize,
-    rank_map: impl FnMut(usize) -> Option<BlsPubkey>,
+    rank_map: impl FnMut(usize) -> Option<BlsPubkeyAffine>,
 ) -> Result<(), Error> {
     let ranks = decode(ranks, max_validators).map_err(Error::Decode)?;
     let ranks = match ranks {
@@ -147,7 +147,7 @@ fn verify_single_vote_signature<S: AsSignatureAffine>(
     payload: &[u8],
     signature: &S,
     ranks: &BitVec<u8>,
-    rank_map: impl FnMut(usize) -> Option<BlsPubkey>,
+    rank_map: impl FnMut(usize) -> Option<BlsPubkeyAffine>,
 ) -> Result<(), Error> {
     let pubkeys = collect_pubkeys(ranks, rank_map)?;
     let agg_pubkey = aggregate_pubkeys(&pubkeys)?;
@@ -166,7 +166,7 @@ fn verify_base3(
     signature: &BlsSignature,
     ranks: &[u8],
     max_validators: usize,
-    mut rank_map: impl FnMut(usize) -> Option<BlsPubkey>,
+    mut rank_map: impl FnMut(usize) -> Option<BlsPubkeyAffine>,
 ) -> Result<(), Error> {
     let ranks = decode(ranks, max_validators).map_err(Error::Decode)?;
     match ranks {
@@ -195,15 +195,15 @@ fn verify_base3(
 }
 
 /// Aggregates a slice of public keys into a single projective public key.
-pub fn aggregate_pubkeys(pubkeys: &[BlsPubkey]) -> Result<PubkeyProjective, Error> {
+pub fn aggregate_pubkeys(pubkeys: &[BlsPubkeyAffine]) -> Result<PubkeyProjective, Error> {
     PubkeyProjective::par_aggregate(pubkeys.par_iter()).map_err(Error::VerifySig)
 }
 
 /// Collects public keys sequentially based on the provided ranks bitmap.
 pub fn collect_pubkeys(
     ranks: &BitVec<u8>,
-    mut rank_map: impl FnMut(usize) -> Option<BlsPubkey>,
-) -> Result<Vec<BlsPubkey>, Error> {
+    mut rank_map: impl FnMut(usize) -> Option<BlsPubkeyAffine>,
+) -> Result<Vec<BlsPubkeyAffine>, Error> {
     let mut pubkeys = Vec::with_capacity(ranks.count_ones());
     for rank in ranks.iter_ones() {
         let pubkey = rank_map(rank).ok_or(Error::MissingRank)?;
@@ -276,7 +276,7 @@ mod test {
         );
         assert_eq!(
             verify_certificate(&cert, 10, |rank| {
-                bls_keypairs.get(rank).map(|kp| (100, kp.public.into()))
+                bls_keypairs.get(rank).map(|kp| (100, kp.public))
             })
             .unwrap(),
             600
@@ -309,7 +309,7 @@ mod test {
         let cert = builder.build().expect("Failed to build certificate");
         assert_eq!(
             verify_certificate(&cert, 10, |rank| {
-                bls_keypairs.get(rank).map(|kp| (100, kp.public.into()))
+                bls_keypairs.get(rank).map(|kp| (100, kp.public))
             })
             .unwrap(),
             700
@@ -338,7 +338,7 @@ mod test {
         };
         assert_eq!(
             verify_certificate(&cert, 10, |rank| {
-                bls_keypairs.get(rank).map(|kp| (100, kp.public.into()))
+                bls_keypairs.get(rank).map(|kp| (100, kp.public))
             })
             .unwrap_err(),
             Error::VerifySig(BlsError::PointConversion)

@@ -72,6 +72,7 @@ pub struct Config {
     pub commitment_config: CommitmentConfig,
     pub block_data_file: Option<String>,
     pub transaction_data_file: Option<String>,
+    pub use_txv1: bool,
 }
 
 impl Eq for Config {}
@@ -108,6 +109,7 @@ impl Default for Config {
             commitment_config: CommitmentConfig::confirmed(),
             block_data_file: None,
             transaction_data_file: None,
+            use_txv1: false,
         }
     }
 }
@@ -386,6 +388,12 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                      useful for debug purposes.",
                 ),
         )
+        .arg(
+            Arg::with_name("use_txv1")
+                .long("use-txv1")
+                .takes_value(false)
+                .help("Generate and send Transfer transaction in V1 format"),
+        )
 }
 
 /// Parses a clap `ArgMatches` structure into a `Config`
@@ -561,6 +569,8 @@ pub fn parse_args(matches: &ArgMatches) -> Result<Config, &'static str> {
     args.transaction_data_file = matches
         .value_of("transaction_data_file")
         .map(|s| s.to_string());
+
+    args.use_txv1 = matches.is_present("use_txv1");
 
     Ok(args)
 }

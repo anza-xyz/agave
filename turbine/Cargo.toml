@@ -17,6 +17,7 @@ agave-feature-set = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
 agave-xdp = { workspace = true }
+bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 lazy-lru = { workspace = true }
@@ -57,7 +58,7 @@ assert_matches = { workspace = true }
 bencher = { workspace = true }
 bs58 = { workspace = true }
 solana-genesis-config = { workspace = true }
-solana-ledger = { path = "../ledger", features = ["agave-unstable-api","dev-context-only-utils"] }
+solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-transaction = { workspace = true }

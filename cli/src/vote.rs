@@ -824,7 +824,7 @@ pub fn parse_withdraw_from_vote_account(
         pubkey_of_signer(matches, "vote_account_pubkey", wallet_manager)?.unwrap();
     let destination_account_pubkey =
         pubkey_of_signer(matches, "destination_account_pubkey", wallet_manager)?.unwrap();
-    let mut withdraw_amount = SpendAmount::new_from_matches(matches, "amount");
+    let mut withdraw_amount = SpendAmount::new_from_matches(matches, "amount")?;
     // As a safeguard for vote accounts for running validators, `ALL` withdraws only the amount in
     // excess of the rent-exempt minimum. In order to close the account with this subcommand, a
     // validator must specify the withdrawal amount precisely.

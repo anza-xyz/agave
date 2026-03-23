@@ -17,11 +17,11 @@ name = "solana_net_utils"
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = ["dep:pcap-file", "dep:hxdmp"]
+dev-context-only-utils = ["dep:anyhow", "dep:pcap-file", "dep:hxdmp"]
 shuttle-test = ["dep:shuttle", "solana-svm-type-overrides/shuttle-test"]
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, optional = true }
 bincode = { workspace = true }
 bytes = { workspace = true }
 cfg-if = { workspace = true }
@@ -37,6 +37,7 @@ shuttle = { workspace = true, optional = true }
 socket2 = { workspace = true }
 solana-serde = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
 

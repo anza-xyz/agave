@@ -14,7 +14,9 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
-        loaded_programs::{ProgramCacheEntryType, ProgramCacheForTxBatch},
+        loaded_programs::{
+            ProgramCacheEntryType, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
+        },
     },
     solana_pubkey::Pubkey,
     solana_svm::{
@@ -24,7 +26,7 @@ use {
         },
         transaction_processor::{
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingConfig,
-            TransactionProcessingEnvironment,
+            TransactionProcessingEnvironment, get_mock_transaction_processing_environment,
         },
     },
     solana_svm_feature_set::SVMFeatureSet,
@@ -69,12 +71,12 @@ fn program_cache_execution(threads: usize) {
                     0,
                 );
                 let mut result = ProgramCacheForTxBatch::new(processor.slot);
-                let program_runtime_environments_for_execution =
-                    processor.get_environments_for_epoch(processor.epoch);
+                let program_runtime_environment_for_execution =
+                    processor.program_runtime_environment_for_epoch(processor.epoch);
                 processor.replenish_program_cache(
                     &account_loader,
                     &maps,
-                    &program_runtime_environments_for_execution,
+                    &program_runtime_environment_for_execution,
                     &mut result,
                     &mut ExecuteTimings::default(),
                     false,
@@ -144,7 +146,7 @@ fn svm_concurrent() {
         5,
         2,
         Arc::downgrade(&fork_graph),
-        Some(Arc::new(create_custom_loader())),
+        Some(create_custom_loader()),
     ));
 
     mock_bank.configure_sysvars();
@@ -264,10 +266,11 @@ fn svm_concurrent() {
                     &th_txs,
                     check_results,
                     &TransactionProcessingEnvironment {
-                        program_runtime_environments_for_execution: local_batch
-                            .environments
-                            .clone(),
-                        ..TransactionProcessingEnvironment::default()
+                        program_runtime_environments: ProgramRuntimeEnvironments::new(
+                            local_batch.program_runtime_environment.clone(),
+                            local_batch.program_runtime_environment.clone(),
+                        ),
+                        ..get_mock_transaction_processing_environment()
                     },
                     &processing_config,
                 );

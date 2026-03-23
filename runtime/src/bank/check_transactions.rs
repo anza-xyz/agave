@@ -2,7 +2,7 @@ use {
     super::{Bank, BankStatusCache},
     agave_feature_set::{FeatureSet, raise_cpi_nesting_limit_to_8},
     solana_accounts_db::blockhash_queue::BlockhashQueue,
-    solana_clock::{MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY, Slot},
+    solana_clock::{MAX_TRANSACTION_FORWARDING_DELAY, Slot},
     solana_fee::{FeeFeatures, calculate_fee_details},
     solana_fee_structure::{FeeBudgetLimits, FeeDetails},
     solana_nonce::state::{Data as NonceData, DurableNonce},
@@ -37,7 +37,7 @@ impl Bank {
         self.check_transactions(
             transactions,
             filter,
-            (MAX_PROCESSING_AGE)
+            self.max_processing_age
                 .saturating_sub(max_tx_fwd_delay)
                 .saturating_sub(forward_transactions_to_leader_at_slot_offset as usize),
             &mut error_counters,
