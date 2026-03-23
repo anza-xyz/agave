@@ -759,7 +759,7 @@ impl ProgramCacheEntry {
     /// How hard should we try to retain this entry. Higher number -> retention more likely.
     pub fn retention_score(&self) -> u64 {
         let last_access = self.latest_access_slot.load(Ordering::Relaxed);
-        let weight = self.stats.compilation_time_ema.load(Ordering::Relaxed);
+        let recovery_cost = self.stats.compilation_time_ema.load(Ordering::Relaxed);
         let frequency = self.stats.uses.load(Ordering::Relaxed);
         // Traditionally GDSF uses the following logic:
         //
@@ -787,7 +787,7 @@ impl ProgramCacheEntry {
         // up-to 128 slots of "bonus" towards their retention compared to rarely used peers.
         //
         // Feel free to adjust the specific formulae used.
-        let weight = u128::from(weight).wrapping_mul(u128::from(frequency));
+        let weight = u128::from(recovery_cost).wrapping_mul(u128::from(frequency));
         let weight_log = u128::BITS.wrapping_sub(weight.leading_zeros());
         last_access.saturating_add(u64::from(weight_log))
     }
