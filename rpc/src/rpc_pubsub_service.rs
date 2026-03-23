@@ -568,13 +568,18 @@ mod tests {
         );
 
         // Wait for pubsub service to spin up.
+        let connect_deadline = Instant::now() + Duration::from_secs(30);
         while TcpStream::connect((pubsub_addr.ip(), pubsub_addr.port())).is_err() {
+            assert!(
+                Instant::now() <= connect_deadline,
+                "Timed out waiting for pubsub service to start",
+            );
             sleep(Duration::from_millis(100));
         }
 
         // Setup pubsub client.
         let (mut block_subscribe_client, receiver) = PubsubClient::block_subscribe(
-            format!("ws://{}", &pubsub_addr.to_string()),
+            format!("ws://{pubsub_addr}"),
             RpcBlockSubscribeFilter::All,
             Some(RpcBlockSubscribeConfig {
                 commitment: Some(CommitmentConfig::finalized()),
@@ -584,12 +589,15 @@ mod tests {
         .unwrap();
 
         // Put the block into blockstore.
-        blockstore.insert_simple_slot_with_meta(bank_slot, 0);
+        let bank = bank_forks.read().unwrap().get(bank_slot).unwrap();
+        blockstore.insert_shreds_and_meta_for_bank(bank);
 
         // Trigger the block update.
         subscriptions.notify_subscribers(CommitmentSlots {
-            slot: 0,
-            ..CommitmentSlots::default()
+            slot: bank_slot,
+            root: bank_slot,
+            highest_confirmed_slot: bank_slot,
+            highest_super_majority_root: bank_slot,
         });
 
         // Wait to receive a block update.
@@ -603,6 +611,7 @@ mod tests {
                 Ok(response) => {
                     assert!(response.value.err.is_none());
                     assert!(response.value.block.is_some());
+                    assert_eq!(response.value.slot, bank_slot);
                     break;
                 }
                 _ => continue,

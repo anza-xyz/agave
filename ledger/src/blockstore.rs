@@ -4903,17 +4903,17 @@ impl Blockstore {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn insert_simple_slot_with_meta(&self, slot: Slot, parent_slot: Slot) {
-        let entries = create_ticks(42, 1, Hash::new_unique());
-        let shreds = entries_to_test_shreds(&entries, slot, parent_slot, true, 0);
+    pub fn insert_shreds_and_meta_for_bank(&self, bank: Arc<Bank>) {
+        let entries = create_ticks(bank.ticks_per_slot(), 1, Hash::new_unique());
+        let shreds = entries_to_test_shreds(&entries, bank.slot(), bank.parent_slot(), true, 0);
         let num_shreds = shreds.len() as u64;
         self.insert_shreds(shreds, None, false).unwrap();
-        let mut meta = SlotMeta::new(slot, Some(0));
+        let mut meta = self.meta(bank.slot()).unwrap().unwrap();
         meta.consumed = num_shreds;
         meta.received = num_shreds;
         meta.last_index = Some(num_shreds - 1);
         meta.completed_data_indexes.insert(num_shreds as u32 - 1);
-        self.put_meta(slot, &meta).unwrap();
+        self.put_meta(bank.slot(), &meta).unwrap();
     }
 }
 
