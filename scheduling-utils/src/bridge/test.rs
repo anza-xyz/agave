@@ -122,16 +122,16 @@ where
         self.agave.tpu_to_pack.producer.commit();
     }
 
-    pub fn queue_check_response(
+    pub fn queue_check_response_ok(
         &mut self,
         batch: &ScheduleBatch<Vec<KeyedTransactionMeta<M>>>,
         index: usize,
         keys: Option<Vec<Pubkey>>,
     ) {
-        self.queue_check_response_with(batch, index, keys, self.check_ok());
+        self.queue_check_response(batch, index, keys, self.check_ok());
     }
 
-    pub fn queue_check_response_with(
+    pub fn queue_check_response(
         &mut self,
         batch: &ScheduleBatch<Vec<KeyedTransactionMeta<M>>>,
         index: usize,
@@ -191,7 +191,7 @@ where
             assert_eq!(batch.flags & 1, pack_message_flags::CHECK);
 
             for i in 0..batch.transactions.len() {
-                self.queue_check_response(&batch, i, None);
+                self.queue_check_response_ok(&batch, i, None);
             }
         }
     }
