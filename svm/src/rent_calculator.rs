@@ -34,22 +34,20 @@ pub enum RentState {
 /// This method has a default implementation that calls into
 /// `check_rent_state_with_account`.
 pub fn check_rent_state(
-    pre_rent_state: Option<&RentState>,
-    post_rent_state: Option<&RentState>,
+    pre_rent_state: &RentState,
+    post_rent_state: &RentState,
     transaction_context: &TransactionContext,
     index: IndexOfAccount,
 ) -> TransactionResult<()> {
-    if let Some((pre_rent_state, post_rent_state)) = pre_rent_state.zip(post_rent_state) {
-        let expect_msg = "account must exist at TransactionContext index if rent-states are Some";
-        check_rent_state_with_account(
-            pre_rent_state,
-            post_rent_state,
-            transaction_context
-                .get_key_of_account_at_index(index)
-                .expect(expect_msg),
-            index,
-        )?;
-    }
+    let expect_msg = "account must exist at TransactionContext index";
+    check_rent_state_with_account(
+        pre_rent_state,
+        post_rent_state,
+        transaction_context
+            .get_key_of_account_at_index(index)
+            .expect(expect_msg),
+        index,
+    )?;
     Ok(())
 }
 

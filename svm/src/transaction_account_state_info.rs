@@ -28,7 +28,7 @@ impl TransactionAccountStateInfo {
         (0..message.account_keys().len())
             .map(|i| {
                 let info = if message.is_writable(i) {
-                    if let Ok(account) = transaction_context
+                    let state = if let Ok(account) = transaction_context
                         .accounts()
                         .try_borrow(i as IndexOfAccount)
                     {
@@ -42,9 +42,13 @@ impl TransactionAccountStateInfo {
                             data_size,
                         })
                     } else {
-                        debug_assert!(false, "message and transaction context out of sync, fatal");
                         None
-                    }
+                    };
+                    debug_assert!(
+                        state.is_some(),
+                        "message and transaction context out of sync, fatal"
+                    );
+                    state
                 } else {
                     None
                 };
@@ -54,8 +58,8 @@ impl TransactionAccountStateInfo {
     }
 
     pub(crate) fn verify_changes(
-        pre_state_infos: &[TransactionAccountStateInfo],
-        post_state_infos: &[TransactionAccountStateInfo],
+        pre_state_infos: &[Self],
+        post_state_infos: &[Self],
         transaction_context: &TransactionContext,
     ) -> Result<()> {
         for (i, (pre_state_info, post_state_info)) in
@@ -65,8 +69,8 @@ impl TransactionAccountStateInfo {
                 (pre_state_info.info.as_ref(), post_state_info.info.as_ref())
             {
                 check_rent_state(
-                    Some(&pre_state_info.rent_state),
-                    Some(&post_state_info.rent_state),
+                    &pre_state_info.rent_state,
+                    &post_state_info.rent_state,
                     transaction_context,
                     i as IndexOfAccount,
                 )?;
