@@ -15,12 +15,6 @@ pub struct WritableTransactionAccountStateInfo {
 }
 
 #[derive(PartialEq, Debug)]
-pub(crate) struct AccountDeltas {
-    pub num_delta: i64,
-    pub data_size_delta: i64,
-}
-
-#[derive(PartialEq, Debug)]
 pub(crate) struct TransactionAccountStateInfo {
     info: Option<WritableTransactionAccountStateInfo>, // None: readonly account
 }
@@ -82,7 +76,7 @@ impl TransactionAccountStateInfo {
     }
 }
 
-// Returns delta for num_accounts and account_size given the pre and post state infos.
+// Returns account data size delta for a given transaction execution
 pub(crate) fn get_account_data_len_delta(
     pre: &[TransactionAccountStateInfo],
     post: &[TransactionAccountStateInfo],
@@ -90,13 +84,14 @@ pub(crate) fn get_account_data_len_delta(
 ) -> i64 {
     // accounts_resize_delta accounts doesn't account for deleted accounts, so the overall
     // state delta is computed by subtracting the data size of every deleted account.
-    let data_size_delta = pre.iter().zip(post).fold(
+    pre.iter().zip(post).fold(
         accounts_resize_delta,
         |data_size_delta, (pre_info, post_info)| {
             match (&pre_info.info, &post_info.info) {
                 (Some(pre), Some(post)) => {
                     match (&pre.rent_state, &post.rent_state) {
-                        // deleted
+                        // deleted: post data size is used because pre_size - post_size is already
+                        // accounted for in the accounts_resize_delta.
                         (RentState::RentExempt, RentState::Uninitialized) => {
                             data_size_delta - post.data_size as i64
                         }
@@ -108,8 +103,7 @@ pub(crate) fn get_account_data_len_delta(
                 _ => data_size_delta,
             }
         },
-    );
-    data_size_delta
+    )
 }
 
 #[cfg(test)]
@@ -304,5 +298,51 @@ mod test {
             result.err(),
             Some(TransactionError::InsufficientFundsForRent { account_index: 0 })
         );
+    }
+
+    #[test]
+    fn test_get_account_data_len_delta_with_deleted_account() {
+        // Test that deleted accounts (RentExempt -> Uninitialized) are correctly subtracted from delta
+        let pre_state_infos = vec![
+            TransactionAccountStateInfo {
+                info: Some(WritableTransactionAccountStateInfo {
+                    rent_state: RentState::RentExempt,
+                    balance: 1000,
+                    data_size: 100,
+                }),
+            },
+            TransactionAccountStateInfo {
+                info: Some(WritableTransactionAccountStateInfo {
+                    rent_state: RentState::Uninitialized,
+                    balance: 0,
+                    data_size: 0,
+                }),
+            },
+        ];
+
+        let post_state_infos = vec![
+            TransactionAccountStateInfo {
+                info: Some(WritableTransactionAccountStateInfo {
+                    rent_state: RentState::Uninitialized,
+                    balance: 0,
+                    data_size: 50, // This was 100 before deletion
+                }),
+            },
+            TransactionAccountStateInfo {
+                info: Some(WritableTransactionAccountStateInfo {
+                    rent_state: RentState::RentExempt,
+                    balance: 2000,
+                    data_size: 50,
+                }),
+            },
+        ];
+
+        // accounts_resize_delta starts at 50 - 50 = 0
+        let accounts_resize_delta = 0i64;
+        let delta =
+            get_account_data_len_delta(&pre_state_infos, &post_state_infos, accounts_resize_delta);
+
+        // The deleted account (first one) should subtract its remaining data size (50) from the delta, resulting in -50
+        assert_eq!(delta, -50);
     }
 }
