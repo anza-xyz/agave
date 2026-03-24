@@ -6,7 +6,7 @@ use {
             AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, PopulateReadCache,
             ScanAccountStorageData, ScanStorageResult, UpdateIndexThreadSelection,
         },
-        accounts_index::{IndexKey, ScanConfig, ScanError, ScanOrder, ScanResult},
+        accounts_index::{IndexKey, ScanConfig, ScanError, ScanResult},
         ancestors::Ancestors,
         is_loadable::IsLoadable as _,
         storable_accounts::StorableAccounts,
@@ -258,16 +258,11 @@ impl Accounts {
         num: usize,
         filter_by_address: &HashSet<Pubkey>,
         filter: AccountAddressFilter,
-        sort_results: bool,
+        _sort_results: bool, // can be removed, results are always sorted
     ) -> ScanResult<Vec<(Pubkey, u64)>> {
         if num == 0 {
             return Ok(vec![]);
         }
-        let scan_order = if sort_results {
-            ScanOrder::Sorted
-        } else {
-            ScanOrder::Unsorted
-        };
         let mut account_balances = BinaryHeap::new();
         self.accounts_db.scan_accounts(
             ancestors,
@@ -297,7 +292,7 @@ impl Accounts {
                     account_balances.push(Reverse((account.lamports(), *pubkey)));
                 }
             },
-            &ScanConfig::new(scan_order),
+            &ScanConfig::default(),
         )?;
         Ok(account_balances
             .into_sorted_vec()
@@ -450,26 +445,23 @@ impl Accounts {
         bank_id: BankId,
         sort_results: bool,
     ) -> ScanResult<Vec<PubkeyAccountSlot>> {
-        let scan_order = if sort_results {
-            ScanOrder::Sorted
-        } else {
-            ScanOrder::Unsorted
-        };
         let mut collector = Vec::new();
-        self.accounts_db
-            .scan_accounts(
-                ancestors,
-                bank_id,
-                |some_account_tuple| {
-                    if let Some((pubkey, account, slot)) =
-                        some_account_tuple.filter(|(_, account, _)| account.is_loadable())
-                    {
-                        collector.push((*pubkey, account, slot))
-                    }
-                },
-                &ScanConfig::new(scan_order),
-            )
-            .map(|_| collector)
+        self.accounts_db.scan_accounts(
+            ancestors,
+            bank_id,
+            |some_account_tuple| {
+                if let Some((pubkey, account, slot)) =
+                    some_account_tuple.filter(|(_, account, _)| account.is_loadable())
+                {
+                    collector.push((*pubkey, account, slot))
+                }
+            },
+            &ScanConfig::default(),
+        )?;
+        if sort_results {
+            collector.sort_unstable_by(|(a_addr, _, _), (b_addr, _, _)| a_addr.cmp(b_addr));
+        }
+        Ok(collector)
     }
 
     pub fn scan_all<F>(
@@ -623,6 +615,7 @@ impl Accounts {
 mod tests {
     use {
         super::*,
+        crate::accounts_index::ScanOrder,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{AccountSharedData, WritableAccount},
         solana_address_lookup_table_interface::state::LookupTableMeta,
