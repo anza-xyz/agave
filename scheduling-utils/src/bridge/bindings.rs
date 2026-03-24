@@ -49,7 +49,7 @@ where
     /// # Note
     ///
     /// This bridge will leak any contained transaction allocations and in
-    /// flight message batch allocations on drop. It is inteded to have a 1 to
+    /// flight message batch allocations on drop. It is intended to have a 1 to
     /// 1 lifetime with the [`Allocator`] it owns (you should be dropping the
     /// allocator shortly after you drop the bridge).
     ///
