@@ -21,6 +21,7 @@ Release channels have their own copy of this changelog:
 #### Breaking
 #### Deprecations
 * Using `minimal` for `--accounts-index-limit` is now deprecated.
+* `--account-shrink-path` is now deprecated.
 #### Changes
 
 ## 4.0.0

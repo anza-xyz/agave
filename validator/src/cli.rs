@@ -128,6 +128,15 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
     }
 
     add_arg!(
+        // deprecated in v4.1.0
+        Arg::with_name("account_shrink_path")
+            .long("account-shrink-path")
+            .value_name("PATH")
+            .takes_value(true)
+            .multiple(true)
+            .help("Path to accounts shrink path which can hold a compacted account set."),
+    );
+    add_arg!(
         // deprecated in v4.0.0
         Arg::with_name("enable_accounts_disk_index")
             .long("enable-accounts-disk-index")
