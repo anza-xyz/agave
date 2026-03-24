@@ -102,10 +102,20 @@ where
         self.workers.len()
     }
 
+    /// Looks up the given worker by ID.
+    ///
+    /// # Panics
+    ///
+    /// - If the worker does not exist.
     pub fn worker(&mut self, id: usize) -> &mut SchedulerWorker {
         &mut self.workers[id]
     }
 
+    /// Looks up the given transaction key.
+    ///
+    /// # Panics
+    ///
+    /// - If the transaction does not exist.
     pub fn transaction(&self, key: TransactionKey) -> &TransactionState {
         &self.state[key]
     }
