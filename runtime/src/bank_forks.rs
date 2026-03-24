@@ -29,19 +29,6 @@ use {
 };
 
 pub type AtomicSlot = AtomicU64;
-#[derive(Clone)]
-pub struct ReadOnlyAtomicSlot {
-    slot: Arc<AtomicSlot>,
-}
-
-impl ReadOnlyAtomicSlot {
-    pub fn get(&self) -> Slot {
-        // The expectation is that an instance `ReadOnlyAtomicSlot` is on a different thread than
-        // BankForks *and* this instance is being accessed *without* locking BankForks first.
-        // Thus, to ensure atomic ordering correctness, we must use Acquire-Release semantics.
-        self.slot.load(Ordering::Acquire)
-    }
-}
 
 /// Convenience type since often root/working banks are fetched together.
 #[derive(Clone)]
@@ -424,9 +411,8 @@ impl BankForks {
             .get(root)
             .expect("root bank didn't exist in bank_forks");
 
-        // To support `RootBankCache` (via `ReadOnlyAtomicSlot`) accessing `root` *without* locking
-        // BankForks first *and* from a different thread, this store *must* be at least Release to
-        // ensure atomic ordering correctness.
+        // Readers may observe root changes from other threads without taking the BankForks lock,
+        // so this store must remain at least Release.
         self.root.store(root, Ordering::Release);
         self.sharable_banks.root_bank.store(Arc::clone(root_bank));
 
@@ -606,13 +592,6 @@ impl BankForks {
 
     pub fn root(&self) -> Slot {
         self.root.load(Ordering::Relaxed)
-    }
-
-    /// Gets a read-only wrapper to an atomic slot holding the root slot.
-    pub fn get_atomic_root(&self) -> ReadOnlyAtomicSlot {
-        ReadOnlyAtomicSlot {
-            slot: self.root.clone(),
-        }
     }
 
     /// After setting a new root, prune the banks that are no longer on rooted paths
