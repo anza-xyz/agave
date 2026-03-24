@@ -4,7 +4,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
-        bank_forks::{BankForks, ReadOnlyAtomicSlot},
+        bank_forks::{BankForks, SharableBanks},
     },
     std::{
         collections::HashMap,
@@ -18,8 +18,7 @@ use {
 pub struct EpochSpecs {
     epoch: Epoch, // when fields were last updated.
     epoch_schedule: EpochSchedule,
-    root: ReadOnlyAtomicSlot, // updated by bank-forks.
-    bank_forks: Arc<RwLock<BankForks>>,
+    sharable_banks: SharableBanks, // updated by bank-forks.
     current_epoch_staked_nodes: Arc<HashMap<Pubkey, /*stake:*/ u64>>,
     epoch_duration: Duration,
 }
@@ -39,10 +38,10 @@ impl EpochSpecs {
 
     // Updates fields if root bank has moved to a new epoch.
     fn maybe_refresh(&mut self) {
-        if self.epoch_schedule.get_epoch(self.root.get()) == self.epoch {
+        let root_bank = self.sharable_banks.root();
+        if root_bank.epoch() == self.epoch {
             return; // still same epoch. nothing to update.
         }
-        let root_bank = self.bank_forks.read().unwrap().root_bank();
         debug_assert_eq!(
             self.epoch_schedule.get_epoch(root_bank.slot()),
             root_bank.epoch()
@@ -56,21 +55,28 @@ impl EpochSpecs {
 
 impl Clone for EpochSpecs {
     fn clone(&self) -> Self {
-        Self::from(self.bank_forks.clone())
+        Self {
+            epoch: self.epoch,
+            epoch_schedule: self.epoch_schedule.clone(),
+            sharable_banks: self.sharable_banks.clone(),
+            current_epoch_staked_nodes: self.current_epoch_staked_nodes.clone(),
+            epoch_duration: self.epoch_duration,
+        }
     }
 }
 
 impl From<Arc<RwLock<BankForks>>> for EpochSpecs {
     fn from(bank_forks: Arc<RwLock<BankForks>>) -> Self {
-        let (root, root_bank) = {
+        let (sharable_banks, root_bank) = {
             let bank_forks = bank_forks.read().unwrap();
-            (bank_forks.get_atomic_root(), bank_forks.root_bank())
+            let sharable_banks = bank_forks.sharable_banks();
+            let root_bank = sharable_banks.root();
+            (sharable_banks, root_bank)
         };
         Self {
             epoch: root_bank.epoch(),
             epoch_schedule: root_bank.epoch_schedule().clone(),
-            root,
-            bank_forks,
+            sharable_banks,
             current_epoch_staked_nodes: root_bank.current_epoch_staked_nodes(),
             epoch_duration: get_epoch_duration(&root_bank),
         }
@@ -169,7 +175,7 @@ mod tests {
         assert_eq!(root_bank.epoch(), epoch);
         assert_eq!(epoch_specs.epoch, epoch);
         assert_eq!(&epoch_specs.epoch_schedule, root_bank.epoch_schedule());
-        assert_eq!(epoch_specs.root.get(), slot);
+        assert_eq!(epoch_specs.sharable_banks.root().slot(), slot);
     }
 
     #[test]
