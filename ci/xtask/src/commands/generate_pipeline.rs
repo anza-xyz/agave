@@ -364,7 +364,7 @@ fn default_local_cluster_step(parallel: u64) -> buildkite::Step {
                 ),
                 agents: Some(HashMap::from([(
                     String::from("queue"),
-                    String::from("solana"),
+                    String::from("default"),
                 )])),
                 timeout_in_minutes: Some(15),
                 retry: Some(HashMap::from([(
