@@ -17,6 +17,7 @@ use {
         net::{IpAddr, SocketAddr},
         time::{Duration, Instant},
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 const KEY_REFRESH_CADENCE: Duration = Duration::from_secs(60);
@@ -27,7 +28,7 @@ const PONG_SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 5;
 // N should always be >= 8 and only the first 8 bytes are used. So the new code
 // should only use N == 8.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub struct Ping<const N: usize> {
     from: Pubkey,
     #[serde(with = "BigArray")]
@@ -36,7 +37,8 @@ pub struct Ping<const N: usize> {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Deserialize, Serialize)]
+#[repr(C)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub struct Pong {
     from: Pubkey,
     hash: Hash, // Hash of received ping token.

@@ -17,15 +17,17 @@ use {
     solana_signature::Signature,
     solana_signer::Signer,
     std::borrow::{Borrow, Cow},
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 /// CrdsValue that is replicated across the cluster
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct CrdsValue {
     signature: Signature,
     data: CrdsData,
     #[serde(skip_serializing)]
+    #[wincode(skip)]
     hash: Hash, // Sha256 hash of [signature, data].
 }
 

@@ -1,10 +1,11 @@
 use {
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default, SchemaRead, SchemaWrite)]
 enum CompressionType {
     #[default]
     Uncompressed,
@@ -13,7 +14,7 @@ enum CompressionType {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct EpochIncompleteSlots {
     first: Slot,
     compression: CompressionType,

@@ -37,6 +37,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-sanitize = { workspace = true }
 solana-time-utils = { workspace = true }
+wincode = { workspace = true, features = ["bv"] }
 
 [dev-dependencies]
 bencher = { workspace = true }

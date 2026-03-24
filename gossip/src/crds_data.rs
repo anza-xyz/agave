@@ -17,6 +17,7 @@ use {
     solana_transaction::Transaction,
     solana_vote::vote_parser,
     std::collections::BTreeSet,
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 pub(crate) const MAX_WALLCLOCK: u64 = 1_000_000_000_000_000;
@@ -40,7 +41,7 @@ pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
 /// * LowestSlot index is deprecated
 #[allow(clippy::large_enum_variant)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum CrdsData {
     #[allow(private_interfaces)]
     LegacyContactInfo(LegacyContactInfo),
@@ -216,7 +217,7 @@ impl From<&ContactInfo> for CrdsData {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct AccountsHashes {
     pub(crate) from: Pubkey,
     pub(crate) hashes: Vec<(Slot, Hash)>,
@@ -258,7 +259,7 @@ impl AccountsHashes {
 type LegacySnapshotHashes = AccountsHashes;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct SnapshotHashes {
     pub from: Pubkey,
     pub full: (Slot, Hash),
@@ -285,7 +286,7 @@ impl Sanitize for SnapshotHashes {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct LowestSlot {
     pub(crate) from: Pubkey,
     root: Slot, //deprecated
@@ -355,12 +356,13 @@ where
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, SchemaRead, SchemaWrite)]
 pub struct Vote {
     pub(crate) from: Pubkey,
     transaction: Transaction,
     pub(crate) wallclock: u64,
     #[serde(skip_serializing)]
+    #[wincode(skip)]
     slot: Option<Slot>,
 }
 
@@ -423,7 +425,7 @@ impl<'de> Deserialize<'de> for Vote {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct LegacyVersion {
     from: Pubkey,
     wallclock: u64,
@@ -440,7 +442,7 @@ impl Sanitize for LegacyVersion {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct Version {
     from: Pubkey,
     wallclock: u64,
@@ -457,7 +459,7 @@ impl Sanitize for Version {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, SchemaRead, SchemaWrite)]
 pub(crate) struct NodeInstance {
     from: Pubkey,
     wallclock: u64,

@@ -87,6 +87,7 @@ solana-transaction = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+solana-wincode-varint = { workspace = true }
 static_assertions = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }

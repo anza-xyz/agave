@@ -1,11 +1,12 @@
 use {
     serde::{Deserialize, Serialize},
     solana_sanitize::Sanitize,
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 // Older version structure used earlier 1.3.x releases
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Version {
     major: u16,
     minor: u16,

@@ -48,6 +48,7 @@ use {
         },
         time::Duration,
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 pub const CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS: u64 = 15000;
@@ -57,7 +58,7 @@ pub const FALSE_RATE: f64 = 0.1f64;
 pub const KEYS: f64 = 8f64;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct CrdsFilter {
     pub filter: Bloom<Hash>,
     mask: u64,

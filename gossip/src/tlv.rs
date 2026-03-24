@@ -1,10 +1,11 @@
 use {
     serde::{Deserialize, Serialize},
     solana_short_vec as short_vec,
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 /// Type-Length-Value encoding wrapper for bincode
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub(crate) struct TlvRecord {
     // type
     pub(crate) typ: u8,
@@ -30,6 +31,20 @@ macro_rules! define_tlv_enum {
             $(
                 $variant($inner),
             )*
+        }
+
+        unsafe impl<C: wincode::config::Config> wincode::SchemaWrite<C> for $enum_name {
+            type Src = Self;
+
+            fn size_of(value: &Self::Src) -> wincode::WriteResult<usize> {
+                let tlv_rec = TlvRecord::try_from(value).map_err(|_| wincode::WriteError::Custom("invalid as tlv_rec"))?;
+                <TlvRecord as wincode::SchemaWrite<C>>::size_of(&tlv_rec)
+            }
+
+            fn write(writer: impl wincode::io::Writer, value: &Self::Src) -> wincode::WriteResult<()> {
+                let tlv_rec = TlvRecord::try_from(value).map_err(|_| wincode::WriteError::Custom("invalid as tlv_rec"))?;
+                <TlvRecord as wincode::SchemaWrite<C>>::write(writer, &tlv_rec)
+            }
         }
 
         // Serialize enum by first converting into TlvRecord, and then serializing that

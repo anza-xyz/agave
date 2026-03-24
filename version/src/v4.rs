@@ -5,10 +5,11 @@ use {
     solana_sanitize::Sanitize,
     solana_serde_varint as serde_varint,
     std::{convert::TryInto, fmt, str::FromStr},
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum Prerelease {
     Stable,
     ReleaseCandidate(u16),
@@ -146,7 +147,7 @@ impl PackedMinor {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Version {
     major: u16,
     minor: u16,

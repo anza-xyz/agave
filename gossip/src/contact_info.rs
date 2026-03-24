@@ -11,14 +11,19 @@ use {
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_serde_varint as serde_varint, solana_short_vec as short_vec,
+    solana_wincode_varint::Leb128Int,
     static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,
         collections::HashSet,
+        mem::MaybeUninit,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         time::{SystemTime, UNIX_EPOCH},
     },
     thiserror::Error,
+    wincode::{
+        ReadError, SchemaRead, SchemaWrite, config::Config, containers, io::Reader, len::ShortU16,
+    },
 };
 
 const DEFAULT_RPC_PORT: u16 = 8899;
@@ -77,10 +82,11 @@ pub enum Error {
     UnusedIpAddr(IpAddr),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, SchemaWrite)]
 pub struct ContactInfo {
     pubkey: Pubkey,
     #[serde(with = "serde_varint")]
+    #[wincode(with = "Leb128Int<u64>")]
     wallclock: u64,
     // When the node instance was first created.
     // Identifies duplicate running instances.
@@ -89,23 +95,29 @@ pub struct ContactInfo {
     version: solana_version::Version,
     // All IP addresses are unique and referenced at least once in sockets.
     #[serde(with = "short_vec")]
+    #[wincode(with = "containers::Vec<_, ShortU16>")]
     addrs: Vec<IpAddr>,
     // All sockets have a unique key and a valid IP address index.
     #[serde(with = "short_vec")]
+    #[wincode(with = "containers::Vec<_, ShortU16>")]
     sockets: Vec<SocketEntry>,
     #[serde(with = "short_vec")]
+    #[wincode(with = "containers::Vec<_, ShortU16>")]
     extensions: Vec<Extension>,
     // Only sanitized socket-addrs can be cached!
     #[serde(skip_serializing)]
+    #[wincode(skip)]
     cache: [SocketAddr; SOCKET_CACHE_SIZE],
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 struct SocketEntry {
     key: u8,   // Protocol identifier, e.g. tvu, tpu, etc
     index: u8, // IpAddr index in the accompanying addrs vector.
     #[serde(with = "serde_varint")]
+    #[wincode(with = "Leb128Int<u16>")]
     offset: u16, // Port offset with respect to the previous entry.
 }
 
@@ -127,10 +139,11 @@ define_tlv_enum!(
 // verified and self.cache needs to be populated. This type serves as a
 // workaround since serde does not have an initializer.
 // https://github.com/serde-rs/serde/issues/642
-#[derive(Deserialize)]
+#[derive(Deserialize, SchemaRead)]
 struct ContactInfoLite {
     pubkey: Pubkey,
     #[serde(with = "serde_varint")]
+    #[wincode(with = "Leb128Int<u64>")]
     wallclock: u64,
     outset: u64,
     shred_version: u16,
@@ -534,6 +547,18 @@ impl<'de> Deserialize<'de> for ContactInfo {
     {
         let node = ContactInfoLite::deserialize(deserializer)?;
         ContactInfo::try_from(node).map_err(serde::de::Error::custom)
+    }
+}
+
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for ContactInfo {
+    type Dst = Self;
+
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> wincode::ReadResult<()> {
+        let node = <ContactInfoLite as SchemaRead<'de, C>>::get(reader)?;
+        let contact_info =
+            ContactInfo::try_from(node).map_err(|_| ReadError::Custom("invalid contact info"))?;
+        dst.write(contact_info);
+        Ok(())
     }
 }
 

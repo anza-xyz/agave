@@ -14,6 +14,7 @@ use {
         ops::Deref,
         sync::atomic::{AtomicU64, Ordering},
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 /// Generate a stable hash of `self` for each `hash_index`
@@ -23,7 +24,7 @@ pub trait BloomHashIndex {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Default, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Default, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Bloom<T: BloomHashIndex> {
     pub keys: Vec<u64>,
     pub bits: BitVec<u64>,

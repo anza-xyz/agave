@@ -11,11 +11,12 @@ use {
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     std::{borrow::Cow, cell::RefCell, sync::Arc},
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 pub const MAX_SLOTS_PER_ENTRY: usize = 2048 * 8;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Uncompressed {
     pub first_slot: Slot,
     pub num: usize,
@@ -44,7 +45,7 @@ impl Sanitize for Uncompressed {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Flate2 {
     pub first_slot: Slot,
     pub num: usize,
@@ -198,7 +199,7 @@ impl Uncompressed {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum CompressedSlots {
     Flate2(Flate2),
     Uncompressed(Uncompressed),
@@ -265,7 +266,7 @@ impl CompressedSlots {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct EpochSlots {
     pub from: Pubkey,
     pub slots: Vec<CompressedSlots>,

@@ -1,6 +1,9 @@
-use std::fmt;
+use {
+    std::fmt,
+    wincode::{SchemaRead, SchemaWrite},
+};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, SchemaRead, SchemaWrite)]
 pub enum ClientId {
     SolanaLabs,
     JitoLabs,

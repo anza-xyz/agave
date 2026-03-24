@@ -18,6 +18,7 @@ use {
         fmt::Debug,
         result::Result,
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 pub(crate) const MAX_CRDS_OBJECT_SIZE: usize = 928;
@@ -45,7 +46,7 @@ const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
 
 /// Gossip protocol messages base enum
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, SchemaRead, SchemaWrite)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Protocol {
     PullRequest(CrdsFilter, CrdsValue),
@@ -63,7 +64,7 @@ pub(crate) type Ping = ping_pong::Ping<GOSSIP_PING_TOKEN_SIZE>;
 pub(crate) type PingCache = ping_pong::PingCache<GOSSIP_PING_TOKEN_SIZE>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, SchemaRead, SchemaWrite)]
 pub(crate) struct PruneData {
     /// Pubkey of the node that sent this prune data
     pub(crate) pubkey: Pubkey,

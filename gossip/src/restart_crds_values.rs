@@ -9,11 +9,13 @@ use {
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_serde_varint as serde_varint,
+    solana_wincode_varint::Leb128Int,
     thiserror::Error,
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, SchemaRead, SchemaWrite)]
 pub struct RestartLastVotedForkSlots {
     pub from: Pubkey,
     pub wallclock: u64,
@@ -30,7 +32,7 @@ pub enum RestartLastVotedForkSlotsError {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, SchemaRead, SchemaWrite)]
 pub struct RestartHeaviestFork {
     pub from: Pubkey,
     pub wallclock: u64,
@@ -41,24 +43,28 @@ pub struct RestartHeaviestFork {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 enum SlotsOffsets {
     RunLengthEncoding(RunLengthEncoding),
     RawOffsets(RawOffsets),
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-struct U16(#[serde(with = "serde_varint")] u16);
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
+struct U16(
+    #[serde(with = "serde_varint")]
+    #[wincode(with = "Leb128Int<u16>")]
+    u16,
+);
 
 // The vector always starts with 1. Encode number of 1's and 0's consecutively.
 // For example, 110000111 is [2, 4, 3].
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct RunLengthEncoding(Vec<U16>);
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct RawOffsets(BitVec<u8>);
 
 impl Sanitize for RestartLastVotedForkSlots {

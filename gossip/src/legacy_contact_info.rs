@@ -6,11 +6,12 @@ use {
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     std::net::SocketAddr,
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 /// Structure representing a node on the network
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, SchemaRead, SchemaWrite)]
 pub(crate) struct LegacyContactInfo {
     id: Pubkey,
     /// gossip address

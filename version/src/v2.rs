@@ -3,10 +3,11 @@ use {
     serde::{Deserialize, Serialize},
     solana_sanitize::Sanitize,
     std::{convert::TryInto, fmt},
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Version {
     pub major: u16,
     pub minor: u16,
