@@ -927,9 +927,10 @@ mod tests {
             bank_forks,
         ) = create_reward_bank(100, 50, starting_slot - 1);
         let mut starting_hash = None;
+        let mut reward_distribution_completion_slot = None;
 
         // simulate block progress
-        for slot in starting_slot..=SLOTS_PER_EPOCH + 3 {
+        for slot in starting_slot..=SLOTS_PER_EPOCH + 4 {
             let pre_cap = previous_bank.capitalization();
 
             let pre_sysvar_account = previous_bank
@@ -946,7 +947,14 @@ mod tests {
             );
             let post_cap = curr_bank.capitalization();
 
-            if slot == SLOTS_PER_EPOCH {
+            if slot < SLOTS_PER_EPOCH {
+                // Verify we haven't hit the rewards interval yet.
+                assert_matches!(
+                    curr_bank.get_reward_interval(),
+                    RewardInterval::OutsideInterval
+                );
+                assert_eq!(post_cap, pre_cap);
+            } else if slot == SLOTS_PER_EPOCH {
                 // This is the first block of epoch 1. Reward computation should happen in this block.
                 // assert reward compute status activated at epoch boundary
                 assert_matches!(
@@ -965,25 +973,25 @@ mod tests {
                 );
                 assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
                 starting_hash = Some(curr_bank.parent_hash);
-            } else if slot == SLOTS_PER_EPOCH + 1 {
-                // When curr_slot == SLOTS_PER_EPOCH + 1, the 2nd block of
-                // epoch 1, reward distribution should happen in this block. The
-                // cap should increase accordingly.
+
+                // Grab the number of slots to complete rewards payout from the
+                // epoch rewards sysvar.
+                let account = curr_bank
+                    .get_account(&solana_sysvar::epoch_rewards::id())
+                    .unwrap();
+                let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
+                    solana_account::from_account(&account).unwrap();
+                reward_distribution_completion_slot =
+                    Some(SLOTS_PER_EPOCH + epoch_rewards.num_partitions);
+            } else if slot
+                < reward_distribution_completion_slot
+                    .expect("epoch boundary must set completion slot")
+            {
+                // Reward distribution should be active in this range.
                 assert_matches!(
                     curr_bank.get_reward_interval(),
                     RewardInterval::InsideInterval
                 );
-
-                // The first block of the epoch has not rooted yet, so the cache
-                // should still have the results.
-                assert!(
-                    curr_bank
-                        .get_epoch_rewards_from_cache(&starting_hash.unwrap())
-                        .is_some()
-                );
-                assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
-
-                // 1st reward distribution block, state should be partitioned.
                 assert!(curr_bank.is_partitioned());
 
                 let account = curr_bank
@@ -996,16 +1004,28 @@ mod tests {
                     pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
                 );
 
-                // Now make a root the  first bank in the epoch.
-                // This should clear the cache.
-                let _ = bank_forks.write().unwrap().set_root(slot - 1, None, None);
-                assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 0);
-            } else if slot == SLOTS_PER_EPOCH + 2 {
-                // When curr_slot == SLOTS_PER_EPOCH + 2, the 3rd block of
-                // epoch 1, reward distribution should happen in this block.
-                // however, all stake rewards are paid at the this block
-                // therefore reward_status should have transitioned to inactive.
-                // The cap should increase accordingly.
+                if slot == SLOTS_PER_EPOCH + 1 {
+                    // The first block of the epoch has not rooted yet, so the
+                    // cache should still have the results.
+                    assert!(
+                        curr_bank
+                            .get_epoch_rewards_from_cache(&starting_hash.unwrap())
+                            .is_some()
+                    );
+                    assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
+
+                    // Now make a root the first bank in the epoch.
+                    // This should clear the cache.
+                    let _ = bank_forks.write().unwrap().set_root(slot - 1, None, None);
+                    assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 0);
+                }
+            } else if slot
+                == reward_distribution_completion_slot
+                    .expect("epoch boundary must set completion slot")
+            {
+                // All stake rewards should have been paid by now. Therefore,
+                // reward_status should have transitioned to inactive. The cap
+                // should increase accordingly.
                 assert_matches!(
                     curr_bank.get_reward_interval(),
                     RewardInterval::OutsideInterval
