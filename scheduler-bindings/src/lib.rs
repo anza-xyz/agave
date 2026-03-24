@@ -2,7 +2,7 @@
 #![no_std]
 
 //! Messages passed between agave and an external pack process.
-//! Messages are passed via `shaq::Consumer/Producer`.
+//! Messages are passed via `shaq::spsc::Consumer/Producer`.
 //!
 //! Memory freeing is responsibility of the external pack process,
 //! and is done via `rts-alloc` crate. It is also possible the external

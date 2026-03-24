@@ -24,8 +24,8 @@ use {
 
 pub struct SchedulerBindingsBridge<M> {
     allocator: Allocator,
-    tpu_to_pack: shaq::Consumer<TpuToPackMessage>,
-    progress_tracker: shaq::Consumer<ProgressMessage>,
+    tpu_to_pack: shaq::spsc::Consumer<TpuToPackMessage>,
+    progress_tracker: shaq::spsc::Consumer<ProgressMessage>,
     workers: Vec<SchedulerWorker>,
 
     progress: ProgressMessage,

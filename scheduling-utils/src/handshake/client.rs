@@ -176,8 +176,8 @@ pub fn setup_session(
     // underlying object alive until process exit or munmap.
     let session = ClientSession {
         allocators,
-        tpu_to_pack: unsafe { shaq::Consumer::join(tpu_to_pack_file)? },
-        progress_tracker: unsafe { shaq::Consumer::join(progress_tracker_file)? },
+        tpu_to_pack: unsafe { shaq::spsc::Consumer::join(tpu_to_pack_file)? },
+        progress_tracker: unsafe { shaq::spsc::Consumer::join(progress_tracker_file)? },
         workers: worker_files
             .chunks(2)
             .map(|window| {
@@ -186,8 +186,8 @@ pub fn setup_session(
                 };
 
                 Ok(ClientWorkerSession {
-                    pack_to_worker: unsafe { shaq::Producer::join(pack_to_worker)? },
-                    worker_to_pack: unsafe { shaq::Consumer::join(worker_to_pack)? },
+                    pack_to_worker: unsafe { shaq::spsc::Producer::join(pack_to_worker)? },
+                    worker_to_pack: unsafe { shaq::spsc::Consumer::join(worker_to_pack)? },
                 })
             })
             .collect::<Result<_, ClientHandshakeError>>()?,
@@ -202,15 +202,15 @@ pub fn setup_session(
 /// The complete initialized scheduling session.
 pub struct ClientSession {
     pub allocators: Vec<Allocator>,
-    pub tpu_to_pack: shaq::Consumer<TpuToPackMessage>,
-    pub progress_tracker: shaq::Consumer<ProgressMessage>,
+    pub tpu_to_pack: shaq::spsc::Consumer<TpuToPackMessage>,
+    pub progress_tracker: shaq::spsc::Consumer<ProgressMessage>,
     pub workers: Vec<ClientWorkerSession>,
 }
 
 /// An per worker scheduling session.
 pub struct ClientWorkerSession {
-    pub pack_to_worker: shaq::Producer<PackToWorkerMessage>,
-    pub worker_to_pack: shaq::Consumer<WorkerToPackMessage>,
+    pub pack_to_worker: shaq::spsc::Producer<PackToWorkerMessage>,
+    pub worker_to_pack: shaq::spsc::Consumer<WorkerToPackMessage>,
 }
 
 /// Potential errors that can occur during the client's side of the handshake.
