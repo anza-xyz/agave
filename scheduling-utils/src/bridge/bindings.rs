@@ -293,14 +293,23 @@ where
     ) -> Result<(), ScheduleError> {
         let queue = &mut self.workers[worker].0.pack_to_worker;
 
+        // Check we have space.
         queue.sync();
+        if queue.len() == queue.capacity() {
+            return Err(ScheduleError::Queue);
+        }
+
+        // Try allocate the batch.
+        let batch = Self::collect_batch(&self.allocator, &mut self.state, batch)?;
+
+        // Write the batch.
         queue
             .try_write(PackToWorkerMessage {
                 flags,
                 max_working_slot,
-                batch: Self::collect_batch(&self.allocator, &mut self.state, batch)?,
+                batch,
             })
-            .map_err(|_| ScheduleError::Queue)?;
+            .expect("space checked above");
         queue.commit();
 
         Ok(())
