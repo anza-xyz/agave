@@ -1,7 +1,7 @@
 use {
     crate::handshake::{
         ClientLogon,
-        shared::{GLOBAL_ALLOCATORS, LOGON_FAILURE, MAX_WORKERS, VERSION},
+        shared::{LOGON_FAILURE, MAX_WORKERS, VERSION},
     },
     agave_scheduler_bindings::{
         PackToWorkerMessage, ProgressMessage, TpuToPackMessage, WorkerToPackMessage,
@@ -151,17 +151,7 @@ pub fn setup_session(
 
     // Setup requested allocators.
     let allocators = (0..logon.allocator_handles)
-        .map(|offset| {
-            // NB: Server validates all requested counts are within expected bands so this should
-            // never panic.
-            let id = GLOBAL_ALLOCATORS
-                .checked_add(logon.worker_count)
-                .unwrap()
-                .checked_add(offset)
-                .unwrap();
-
-            unsafe { Allocator::join(allocator_file, u32::try_from(id).unwrap()) }
-        })
+        .map(|_| Allocator::join(allocator_file))
         .collect::<Result<Vec<_>, _>>()?;
 
     // Ensure worker file count matches expectations.

@@ -161,13 +161,8 @@ impl Server {
         // Setup the worker sessions.
         let (worker_files, workers) = (0..logon.worker_count).try_fold(
             (Vec::default(), Vec::default()),
-            |(mut fds, mut workers), offset| {
-                // NB: Server validates all requested counts are within expected bands so this
-                // should never panic.
-                let worker_index = GLOBAL_ALLOCATORS.checked_add(offset).unwrap();
-                let worker_index = u32::try_from(worker_index).unwrap();
-                // SAFETY: Worker index is guaranteed to be unique.
-                let allocator = unsafe { Allocator::join(&allocator_file, worker_index) }?;
+            |(mut fds, mut workers), _| {
+                let allocator = Allocator::join(&allocator_file)?;
 
                 let (pack_to_worker_file, pack_to_worker) =
                     Self::create_consumer(logon.pack_to_worker_capacity)?;
@@ -213,13 +208,15 @@ impl Server {
             let allocator_file = Self::create_shmem(huge)?;
             let allocator_file_size = Self::align_file_size(logon.allocator_size, huge);
 
-            Allocator::create(
-                &allocator_file,
-                allocator_file_size,
-                u32::try_from(allocator_count).unwrap(),
-                2 * 1024 * 1024,
-                0,
-            )
+            // SAFETY: We just created this file and thus can uniquely initialize it.
+            unsafe {
+                Allocator::create(
+                    &allocator_file,
+                    allocator_file_size,
+                    u32::try_from(allocator_count).unwrap(),
+                    2 * 1024 * 1024,
+                )
+            }
             .map(|allocator| (allocator_file, allocator))
         };
 
