@@ -108,7 +108,13 @@ use {
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_cost_model::{block_cost_limits::simd_0286_block_limits, cost_tracker::CostTracker},
+    solana_cost_model::{
+        block_cost_limits::{
+            MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA, MAX_BLOCK_UNITS, MAX_VOTE_UNITS,
+            simd_0286_block_limits,
+        },
+        cost_tracker::CostTracker,
+    },
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface as feature,
@@ -4456,6 +4462,24 @@ impl Bank {
         self.rc.accounts.clone()
     }
 
+    fn apply_cost_tracker_limits_for_active_features(&mut self) {
+        let block_cost_limit = if self
+            .feature_set
+            .is_active(&feature_set::raise_block_limits_to_100m::id())
+        {
+            simd_0286_block_limits()
+        } else {
+            MAX_BLOCK_UNITS
+        };
+        let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
+        self.write_cost_tracker().unwrap().set_limits(
+            account_cost_limit,
+            block_cost_limit,
+            MAX_VOTE_UNITS,
+            MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA,
+        );
+    }
+
     fn apply_simd_0339_invoke_cost_changes(&mut self) {
         let simd_0268_active = self
             .feature_set
@@ -4486,23 +4510,7 @@ impl Bank {
         // We must apply previously activated features related to limits here
         // so that the initial bank state is consistent with the feature set.
         // Cost-tracker limits are propagated through children banks.
-        if self
-            .feature_set
-            .is_active(&feature_set::raise_block_limits_to_100m::id())
-        {
-            let block_cost_limit = simd_0286_block_limits();
-            let mut cost_tracker = self.write_cost_tracker().unwrap();
-            let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
-            let vote_cost_limit = cost_tracker.get_vote_limit();
-            let allocated_data_size_limit = cost_tracker.get_allocated_data_size_limit();
-            cost_tracker.set_limits(
-                account_cost_limit,
-                block_cost_limit,
-                vote_cost_limit,
-                allocated_data_size_limit,
-            );
-        }
-
+        self.apply_cost_tracker_limits_for_active_features();
         self.apply_simd_0339_invoke_cost_changes();
 
         let program_runtime_environment =
@@ -5727,19 +5735,8 @@ impl Bank {
         }
 
         self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
-
         if new_feature_activations.contains(&feature_set::raise_block_limits_to_100m::id()) {
-            let block_cost_limit = simd_0286_block_limits();
-            let mut cost_tracker = self.write_cost_tracker().unwrap();
-            let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
-            let vote_cost_limit = cost_tracker.get_vote_limit();
-            let allocated_data_size_limit = cost_tracker.get_allocated_data_size_limit();
-            cost_tracker.set_limits(
-                account_cost_limit,
-                block_cost_limit,
-                vote_cost_limit,
-                allocated_data_size_limit,
-            );
+            self.apply_cost_tracker_limits_for_active_features();
         }
 
         if new_feature_activations.contains(&feature_set::vote_state_v4::id()) {
