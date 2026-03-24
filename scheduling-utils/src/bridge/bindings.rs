@@ -694,6 +694,19 @@ impl TransactionState {
             .map(|(_, key)| key)
     }
 
+    /// Determines if the account at `index` is writable based on its position
+    /// in the transaction header. This is a simplified version of the canonical
+    /// implementation in `ResolvedTransactionView::cache_is_writable` that
+    /// intentionally omits:
+    ///
+    /// - **Reserved account key demotion**: reserved accounts (sysvars, builtins)
+    ///   in writable positions are not demoted to read-only.
+    /// - **Program account demotion**: writable program accounts are not demoted
+    ///   when `bpf_loader_upgradeable` is absent.
+    ///
+    /// Both omissions make this implementation **conservatively over-report**
+    /// writability, which may reduce scheduling parallelism but cannot cause
+    /// incorrect lock conflicts.
     fn is_writable(&self, index: u8) -> bool {
         if index >= self.data.num_static_account_keys() {
             let loaded_address_index = index.wrapping_sub(self.data.num_static_account_keys());
