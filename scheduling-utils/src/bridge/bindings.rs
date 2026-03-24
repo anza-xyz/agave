@@ -574,14 +574,18 @@ where
 
 pub struct SchedulerWorker(ClientWorkerSession);
 
-impl Worker for SchedulerWorker {
-    fn len(&mut self) -> usize {
+impl SchedulerWorker {
+    pub fn is_empty(&mut self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn len(&mut self) -> usize {
         self.0.pack_to_worker.sync();
 
         self.0.pack_to_worker.len()
     }
 
-    fn rem(&mut self) -> usize {
+    pub fn rem(&mut self) -> usize {
         self.0.pack_to_worker.sync();
         let cap = self.0.pack_to_worker.capacity();
         let len = self.0.pack_to_worker.len();
@@ -617,16 +621,6 @@ pub enum ScheduleError {
     Queue,
     #[error("Allocation failed")]
     Allocation,
-}
-
-pub trait Worker {
-    fn is_empty(&mut self) -> bool {
-        self.len() == 0
-    }
-
-    fn len(&mut self) -> usize;
-
-    fn rem(&mut self) -> usize;
 }
 
 #[derive(Debug, Clone)]
