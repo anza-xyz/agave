@@ -110,6 +110,11 @@ where
         &self.state[key]
     }
 
+    /// Inserts a non TPU transaction into the bridge.
+    ///
+    /// # Panics
+    ///
+    /// - If the transaction exceeds 4096 bytes.
     pub fn insert_transaction(
         &mut self,
         tx: &[u8],
@@ -119,7 +124,7 @@ where
 
         let ptr = self
             .allocator
-            .allocate(tx.len().try_into().unwrap())
+            .allocate(tx.len().try_into().expect("4096 fits in u32"))
             .ok_or(TransactionInsertError::Allocate)?;
         // SAFETY:
         // - We own this pointer exclusively.
