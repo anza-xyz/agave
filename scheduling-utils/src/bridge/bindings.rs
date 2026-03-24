@@ -286,7 +286,8 @@ where
     ///
     /// # Panics
     ///
-    /// - If the provided batch exceeds [`MAX_TRANSACTIONS_PER_MESSAGE`].
+    /// - If the worker index does not exist.
+    /// - If the batch size exceeds [`MAX_TRANSACTIONS_PER_MESSAGE`].
     pub fn schedule(
         &mut self,
         ScheduleBatch {
