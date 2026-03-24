@@ -1716,17 +1716,17 @@ mod tests {
             &recalculated_rewards[starting_index..],
         );
 
-        // Advance to last distribution slot
-        let new_slot = bank.slot() + 1;
-        let bank = Bank::new_from_parent_with_bank_forks(
-            bank_forks.as_ref(),
-            bank,
-            SlotLeader::default(),
-            new_slot,
-        );
+        // Advance until reward distribution has completed.
+        let mut bank = bank;
+        for _ in (num_rewards_per_block..expected_num_delegations as u64)
+            .step_by(num_rewards_per_block as usize)
+        {
+            assert!(bank.get_epoch_rewards_sysvar().active);
+            let new_slot = bank.slot() + 1;
+            bank = Arc::new(Bank::new_from_parent(bank, SlotLeader::default(), new_slot));
+        }
 
-        let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
-        assert!(!epoch_rewards_sysvar.active);
+        assert!(!bank.get_epoch_rewards_sysvar().active);
         // Recalculation would panic, tested separately
     }
 
@@ -1786,12 +1786,15 @@ mod tests {
         assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
         compare_stake_rewards(&expected_stake_rewards, &recalculated_rewards);
 
-        // Advance to first distribution slot
-        let new_slot = bank.slot() + 1;
-        let bank = Arc::new(Bank::new_from_parent(bank, SlotLeader::default(), new_slot));
+        // Advance until reward distribution has completed.
+        let mut bank = bank;
+        for _ in (0..expected_num_delegations as u64).step_by(num_rewards_per_block as usize) {
+            assert!(bank.get_epoch_rewards_sysvar().active);
+            let new_slot = bank.slot() + 1;
+            bank = Arc::new(Bank::new_from_parent(bank, SlotLeader::default(), new_slot));
+        }
 
-        let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
-        assert!(!epoch_rewards_sysvar.active);
+        assert!(!bank.get_epoch_rewards_sysvar().active);
         // Should panic
         let _recalculated_rewards =
             bank.recalculate_stake_rewards(&epoch_rewards_sysvar, &thread_pool);
@@ -1922,10 +1925,17 @@ mod tests {
             &recalculated_rewards[starting_index..],
         );
 
-        // Advance to last distribution slot
-        let mut bank =
-            Bank::new_from_parent(Arc::new(bank), SlotLeader::default(), SLOTS_PER_EPOCH + 2);
-        bank.recalculate_partitioned_rewards_if_active(|| &thread_pool);
+        // Advance until reward distribution has completed.
+        let mut bank = bank;
+        for _ in (num_rewards_per_block..expected_num_delegations as u64)
+            .step_by(num_rewards_per_block as usize)
+        {
+            assert!(bank.get_epoch_rewards_sysvar().active);
+            let next_slot = bank.slot() + 1;
+            bank = Bank::new_from_parent(Arc::new(bank), SlotLeader::default(), next_slot);
+            bank.recalculate_partitioned_rewards_if_active(|| &thread_pool);
+        }
+
         assert_eq!(bank.epoch_reward_status, EpochRewardStatus::Inactive);
     }
 
