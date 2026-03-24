@@ -17,6 +17,7 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
   * The `TransactionStatus`, `TransactionMemos`, and `AddressSignatures` columns
   were updated in v1.18 to write a new key format. The old key format will no
   no longer be supported for fallback reads as of v4.0
+* `getSignaturesForAddress` returns an error with code `-32020` if the `before` or `until` signatures are not found, rather than a successful response with an empty array
 #### Changes
 * Added `--enable-scheduler-bindings` which binds an IPC server at `<ledger-path>/scheduler_bindings.ipc` for external schedulers to connect to.
 * Added `clientId` field to each node in `getClusterNodes` response
