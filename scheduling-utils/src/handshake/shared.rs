@@ -69,7 +69,7 @@ pub struct ClientSession {
     pub workers: Vec<ClientWorkerSession>,
 }
 
-/// An per worker scheduling session.
+/// A per worker scheduling session.
 pub struct ClientWorkerSession {
     pub pack_to_worker: shaq::spsc::Producer<PackToWorkerMessage>,
     pub worker_to_pack: shaq::spsc::Consumer<WorkerToPackMessage>,
