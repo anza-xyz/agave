@@ -1912,27 +1912,29 @@ impl Bank {
             "should be populated (from fields.versioned_epoch_stakes)"
         );
 
-        // Compute and validate the slot leader from epoch stakes
-        let leader: SlotLeader;
-        #[cfg(not(feature = "dev-context-only-utils"))]
-        {
-            _ = leader_for_tests;
-            leader = Self::slot_leader_from_epoch_stakes(
-                fields.slot,
-                &fields.epoch_schedule,
-                &epoch_stakes,
-            );
-        }
-        #[cfg(feature = "dev-context-only-utils")]
-        {
-            leader = leader_for_tests.unwrap_or_else(|| {
+        // Compute and validate the slot leader from epoch stakes.
+        let compute_leader = || {
+            if slot == 0 {
+                // Genesis snapshot has no leader for the genesis block.
+                // Instead the leader is set to the maximum delegated vote account.
+                stakes
+                    .highest_staked_node()
+                    .expect("genesis snapshot should contain at least one staked vote account")
+            } else {
                 Self::slot_leader_from_epoch_stakes(
                     fields.slot,
                     &fields.epoch_schedule,
                     &epoch_stakes,
                 )
-            });
-        }
+            }
+        };
+        #[cfg(not(feature = "dev-context-only-utils"))]
+        let leader = {
+            _ = leader_for_tests;
+            compute_leader()
+        };
+        #[cfg(feature = "dev-context-only-utils")]
+        let leader = leader_for_tests.unwrap_or_else(compute_leader);
         assert_eq!(
             fields.leader_id, leader.id,
             "snapshot leader_id does not match computed slot leader"
