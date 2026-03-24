@@ -931,7 +931,7 @@ mod tests {
         let mut reward_distribution_completion_slot = None;
 
         // simulate block progress
-        for slot in starting_slot..=SLOTS_PER_EPOCH + 4 {
+        for slot in starting_slot..=SLOTS_PER_EPOCH.saturating_mul(2) {
             let pre_cap = previous_bank.capitalization();
 
             let pre_sysvar_account = previous_bank
@@ -1042,17 +1042,14 @@ mod tests {
                     pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
                 );
             } else {
-                // When curr_slot == SLOTS_PER_EPOCH + 3, the 4th block of
-                // epoch 1 (or any other slot). reward distribution should have
-                // already completed. Therefore, reward_status should stay
-                // inactive and cap should stay the same.
+                // First slot after rewards payout. Verify we are outside the
+                // interval and capitalization doesn't change this slot.
                 assert_matches!(
                     curr_bank.get_reward_interval(),
                     RewardInterval::OutsideInterval
                 );
-
-                // slot is not in rewards, cap should not change
                 assert_eq!(post_cap, pre_cap);
+                break;
             }
             previous_bank = curr_bank;
         }
