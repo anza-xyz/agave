@@ -517,6 +517,7 @@ pub fn broadcast_shreds(
                 let protocol = cluster_nodes::get_broadcast_protocol(&key);
                 cluster_nodes
                     .get_broadcast_peer(&key)?
+<<<<<<< HEAD
                     .tvu(protocol)
                     .filter(|addr| socket_addr_space.check(addr))
                     .map(|addr| {
@@ -525,6 +526,12 @@ pub fn broadcast_shreds(
                             Protocol::UDP => Either::Left,
                         })((shred.payload(), addr))
                     })
+=======
+                    .tvu(Protocol::UDP)
+                    .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))?;
+
+                Some((shred.payload(), addr))
+>>>>>>> 32d2adb99 (turbine: filter out ipv6 addrs (#11481))
             })
         })
         .partition_map(std::convert::identity);

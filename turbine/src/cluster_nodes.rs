@@ -296,7 +296,7 @@ impl ClusterNodes<RetransmitStage> {
             let protocol = get_broadcast_protocol(shred);
             let peers = peers
                 .filter_map(|k| self.nodes[k].contact_info()?.tvu(protocol))
-                .filter(|addr| socket_addr_space.check(addr))
+                .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))
                 .collect();
             let root_distance = get_root_distance(index, fanout);
             Ok((root_distance, peers))
