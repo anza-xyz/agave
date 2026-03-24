@@ -20,7 +20,7 @@ frozen-abi = []
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.6.0", features = ["derive"] }
-env_logger = "0.11.9"
+env_logger = "0.11.10"
 log = "0.4.28"
 tokio = { version = "1.50.0", features = ["full"] }
 xtask_shared = { package = "xtask", git = "https://github.com/anza-xyz/xtask", rev = "a9b0cf5facf85eb11458bbefc651132722c18dae" }
