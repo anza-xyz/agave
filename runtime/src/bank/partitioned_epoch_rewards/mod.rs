@@ -913,9 +913,10 @@ mod tests {
         }
     }
 
-    /// Test rewards computation and partitioned rewards distribution at the epoch boundary (two reward distribution blocks)
+    /// Test rewards computation and partitioned rewards distribution at the
+    /// epoch boundary (multiple reward distribution blocks)
     #[test]
-    fn test_rewards_computation_and_partitioned_distribution_two_blocks() {
+    fn test_rewards_computation_and_partitioned_distribution_multi_blocks() {
         agave_logger::setup();
 
         let starting_slot = SLOTS_PER_EPOCH - 1;
