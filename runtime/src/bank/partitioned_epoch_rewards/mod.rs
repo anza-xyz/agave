@@ -1155,54 +1155,41 @@ mod tests {
             assert_eq!(reward.reward_type, RewardType::Voting);
         }
         assert_eq!(keyed_rewards.len(), num_rewards);
-        assert_eq!(
-            num_partitions,
-            Some(num_rewards as u64 / stake_account_stores_per_block)
-        );
+        let expected_num_partitions = (num_rewards as u64)
+            .div_ceil(epoch_boundary_bank.partitioned_rewards_stake_account_stores_per_block())
+            .clamp(1, (SLOTS_PER_EPOCH / 10).max(1));
+        assert_eq!(num_partitions, Some(expected_num_partitions));
 
         let mut total_staking_rewards = 0;
-
-        let partition0_bank = Bank::new_from_parent_with_bank_forks(
-            bank_forks.as_ref(),
-            epoch_boundary_bank,
-            SlotLeader::default(),
-            SLOTS_PER_EPOCH + 1,
-        );
-        // Slot after the epoch boundary contains first partition of staking
-        // rewards, and no partitions because not at the epoch boundary
-        let KeyedRewardsAndNumPartitions {
-            keyed_rewards,
-            num_partitions,
-        } = partition0_bank.get_rewards_and_num_partitions();
-        for (_pubkey, reward) in keyed_rewards.iter() {
-            assert_eq!(reward.reward_type, RewardType::Staking);
+        let mut previous_bank = epoch_boundary_bank;
+        for partition_index in 0..expected_num_partitions {
+            let partition_bank = Arc::new(Bank::new_from_parent(
+                previous_bank,
+                SlotLeader::default(),
+                SLOTS_PER_EPOCH + partition_index + 1,
+            ));
+            // Slot after the epoch boundary contains partitioned staking
+            // rewards, and no partition metadata because it's not an epoch
+            // boundary bank.
+            let KeyedRewardsAndNumPartitions {
+                keyed_rewards,
+                num_partitions,
+            } = partition_bank.get_rewards_and_num_partitions();
+            for (_pubkey, reward) in keyed_rewards.iter() {
+                assert_eq!(reward.reward_type, RewardType::Staking);
+            }
+            total_staking_rewards += keyed_rewards.len();
+            assert_eq!(num_partitions, None);
+            previous_bank = partition_bank;
         }
-        total_staking_rewards += keyed_rewards.len();
-        assert_eq!(num_partitions, None);
-
-        let partition1_bank = Bank::new_from_parent_with_bank_forks(
-            bank_forks.as_ref(),
-            partition0_bank,
-            SlotLeader::default(),
-            SLOTS_PER_EPOCH + 2,
-        );
-        // Slot 2 after the epoch boundary contains second partition of staking
-        // rewards, and no partitions because not at the epoch boundary
-        let KeyedRewardsAndNumPartitions {
-            keyed_rewards,
-            num_partitions,
-        } = partition1_bank.get_rewards_and_num_partitions();
-        for (_pubkey, reward) in keyed_rewards.iter() {
-            assert_eq!(reward.reward_type, RewardType::Staking);
-        }
-        total_staking_rewards += keyed_rewards.len();
-        assert_eq!(num_partitions, None);
 
         // All rewards are recorded
         assert_eq!(total_staking_rewards, num_rewards);
-
-        let bank =
-            Bank::new_from_parent(partition1_bank, SlotLeader::default(), SLOTS_PER_EPOCH + 3);
+        let bank = Bank::new_from_parent(
+            previous_bank,
+            SlotLeader::default(),
+            SLOTS_PER_EPOCH + expected_num_partitions + 1,
+        );
         // Next slot contains empty rewards (since fees are off), and no
         // partitions because not at the epoch boundary
         assert_eq!(
