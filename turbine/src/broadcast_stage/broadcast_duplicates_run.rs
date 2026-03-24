@@ -200,35 +200,16 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         )
         .expect("Expected to create a new shredder");
 
-        // Avoid generating an empty FEC set
-        let (data_shreds, coding_shreds) =
-            if let BlockComponent::EntryBatch(ref entries) = component {
-                if !entries.is_empty() {
-                    shredder.component_to_merkle_shreds_for_tests(
-                        keypair,
-                        &component,
-                        last_tick_height == bank.max_tick_height() && last_entries.is_none(),
-                        self.chained_merkle_root,
-                        self.next_shred_index,
-                        self.next_code_index,
-                        &self.reed_solomon_cache,
-                        &mut stats,
-                    )
-                } else {
-                    (vec![], vec![])
-                }
-            } else {
-                shredder.component_to_merkle_shreds_for_tests(
-                    keypair,
-                    &component,
-                    last_tick_height == bank.max_tick_height() && last_entries.is_none(),
-                    self.chained_merkle_root,
-                    self.next_shred_index,
-                    self.next_code_index,
-                    &self.reed_solomon_cache,
-                    &mut stats,
-                )
-            };
+        let (data_shreds, coding_shreds) = shredder.component_to_merkle_shreds_for_tests(
+            keypair,
+            &component,
+            last_tick_height == bank.max_tick_height() && last_entries.is_none(),
+            self.chained_merkle_root,
+            self.next_shred_index,
+            self.next_code_index,
+            &self.reed_solomon_cache,
+            &mut stats,
+        );
         if let Some(shred) = data_shreds.iter().max_by_key(|shred| shred.index()) {
             self.chained_merkle_root = shred.merkle_root().unwrap();
         }

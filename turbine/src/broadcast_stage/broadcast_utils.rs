@@ -85,6 +85,20 @@ pub(super) fn recv_slot_entries(
     carryover_entry: &mut Option<WorkingBankEntryMarker>,
     process_stats: &mut ProcessShredsStats,
 ) -> Result<ReceiveResults> {
+    loop {
+        if let Some(result) =
+            recv_slot_entries_maybe_empty(receiver, carryover_entry, process_stats)?
+        {
+            return Ok(result);
+        }
+    }
+}
+
+fn recv_slot_entries_maybe_empty(
+    receiver: &Receiver<WorkingBankEntryMarker>,
+    carryover_entry: &mut Option<WorkingBankEntryMarker>,
+    process_stats: &mut ProcessShredsStats,
+) -> Result<Option<ReceiveResults>> {
     let recv_start = Instant::now();
 
     // If there is a carryover entry, use it. Else, see if there is a new entry.
@@ -98,11 +112,11 @@ pub(super) fn recv_slot_entries(
     if entry_marker.as_marker().is_some() {
         process_stats.receive_elapsed = recv_start.elapsed().as_micros() as u64;
 
-        return Ok(ReceiveResults {
+        return Ok(Some(ReceiveResults {
             component: BlockComponent::BlockMarker(entry_marker.into_marker().unwrap()),
             bank,
             last_tick_height,
-        });
+        }));
     }
 
     // Otherwise, drain entries into a batch
@@ -208,10 +222,14 @@ pub(super) fn recv_slot_entries(
     }
     process_stats.receive_elapsed = recv_start.elapsed().as_micros() as u64;
     process_stats.coalesce_elapsed = coalesce_start.elapsed().as_micros() as u64;
-    Ok(ReceiveResults {
-        component: BlockComponent::EntryBatch(entries),
-        bank,
-        last_tick_height,
+
+    Ok(match entries.is_empty() {
+        true => None,
+        false => Some(ReceiveResults {
+            component: BlockComponent::EntryBatch(entries),
+            bank,
+            last_tick_height,
+        }),
     })
 }
 
@@ -433,6 +451,64 @@ mod tests {
             recv_slot_entries(&r, &mut carryover, &mut ProcessShredsStats::default()).unwrap();
         assert!(matches!(result.component, BlockComponent::BlockMarker(_)));
         assert_eq!(result.last_tick_height, max_tick);
+    }
+
+    #[test]
+    fn test_bank_change_then_marker_skips_empty_entry_batch() {
+        let (genesis_config, bank0, tx) = setup_test();
+        let bank1 = Arc::new(Bank::new_from_parent(
+            bank0.clone(),
+            SlotLeader::default(),
+            1,
+        ));
+        let bank2 = Arc::new(Bank::new_from_parent(
+            bank1.clone(),
+            SlotLeader::default(),
+            2,
+        ));
+        let (s, r) = unbounded();
+
+        let mut last_hash = genesis_config.hash();
+
+        // Send one entry for bank1 with tick_height=5
+        let entry = Entry::new(&last_hash, 1, vec![tx.clone()]);
+        last_hash = entry.hash;
+        s.send((bank1.clone(), (EntryMarker::Entry(entry), 5)))
+            .unwrap();
+
+        // Bank changes to bank2, but the next item is a marker with tick_height=3 — this should
+        // leave entries empty after the clear. The stale last_tick_height (5, from bank1) must not
+        // leak into subsequent results.
+        let marker = solana_entry::block_component::VersionedBlockMarker::new_block_header(
+            solana_entry::block_component::BlockHeaderV1 {
+                parent_slot: 1,
+                parent_block_id: Hash::default(),
+            },
+        );
+        s.send((bank2.clone(), (EntryMarker::Marker(marker), 3)))
+            .unwrap();
+
+        // Ensure that the inner function returns None when the channel has no more items after the
+        // bank change + marker.
+        let mut carryover = None;
+        let result =
+            recv_slot_entries_maybe_empty(&r, &mut carryover, &mut ProcessShredsStats::default())
+                .unwrap();
+        assert!(result.is_none());
+        assert!(carryover.is_some());
+
+        // Now send a real entry for bank2 so recv_slot_entries has something to return after
+        // skipping the empty batch.
+        let entry2 = Entry::new(&last_hash, 1, vec![tx.clone()]);
+        s.send((bank2.clone(), (EntryMarker::Entry(entry2.clone()), 2)))
+            .unwrap();
+
+        // Verify that the outer function skips the empty batch and returns the carried-over marker.
+        // last_tick_height must be 3 (from the marker), not 5 (stale value from bank1).
+        let result =
+            recv_slot_entries(&r, &mut carryover, &mut ProcessShredsStats::default()).unwrap();
+        assert!(matches!(result.component, BlockComponent::BlockMarker(_)));
+        assert_eq!(result.last_tick_height, 3);
     }
 
     #[test]
