@@ -19,7 +19,6 @@ use {
         stake_utils,
         stakes::Stakes,
     },
-    agave_feature_set as feature_set,
     log::{debug, info},
     rayon::{
         ThreadPool,
@@ -380,13 +379,10 @@ impl Bank {
         &self,
         stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
     ) -> FilteredStakeDelegations<'a> {
-        let min_stake_delegation = if self
-            .feature_set
-            .is_active(&feature_set::stake_minimum_delegation_for_rewards::id())
-        {
+        let feature_snapshot = self.feature_set.snapshot();
+        let min_stake_delegation = if feature_snapshot.stake_minimum_delegation_for_rewards {
             let min_stake_delegation = stake_utils::get_minimum_delegation(
-                self.feature_set
-                    .is_active(&agave_feature_set::upgrade_bpf_stake_program_to_v5::id()),
+                feature_snapshot.upgrade_bpf_stake_program_to_v5,
             )
             .max(LAMPORTS_PER_SOL);
             Some(min_stake_delegation)
@@ -541,12 +537,9 @@ impl Bank {
         metrics: &mut RewardsMetrics,
     ) -> (RewardCommissionAccounts, StakeRewardCalculation) {
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
-        let delay_commission_updates = self
-            .feature_set
-            .is_active(&agave_feature_set::delay_commission_updates::id());
-        let commission_rate_in_basis_points = self
-            .feature_set
-            .is_active(&feature_set::commission_rate_in_basis_points::id());
+        let feature_snapshot = self.feature_set.snapshot();
+        let delay_commission_updates = feature_snapshot.delay_commission_updates;
+        let commission_rate_in_basis_points = feature_snapshot.commission_rate_in_basis_points;
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
         // For N stake delegations, where N is >1,000,000, we produce:
@@ -1327,7 +1320,7 @@ mod tests {
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
         let (bank, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        assert!(bank.feature_set.is_active(&delay_commission_updates::id()));
+        assert!(bank.feature_set.snapshot().delay_commission_updates);
 
         let vote_address = Pubkey::new_unique();
         let mut bank = apply_epoch_operations(
@@ -1419,7 +1412,7 @@ mod tests {
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
         let (bank, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        assert!(bank.feature_set.is_active(&delay_commission_updates::id()));
+        assert!(bank.feature_set.snapshot().delay_commission_updates);
 
         let genesis_vote_address = voting_keypair.pubkey();
 

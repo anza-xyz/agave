@@ -3222,8 +3222,7 @@ fn test_bank_cloned_stake_delegations() {
         let vote_rent_exempt_reserve = rent.minimum_balance(VoteStateV4::size_of());
         let stake_rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
         let minimum_delegation = stake_utils::get_minimum_delegation(
-            bank.feature_set
-                .is_active(&agave_feature_set::upgrade_bpf_stake_program_to_v5::id()),
+            bank.feature_set.snapshot().upgrade_bpf_stake_program_to_v5,
         );
         (
             vote_rent_exempt_reserve,
@@ -6764,11 +6763,7 @@ fn test_block_limits() {
     let mut bank = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
 
     // Ensure increased block limits features are inactive.
-    assert!(
-        !bank
-            .feature_set
-            .is_active(&feature_set::raise_block_limits_to_100m::id())
-    );
+    assert!(!bank.feature_set.snapshot().raise_block_limits_to_100m);
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_block_limit(),
         MAX_BLOCK_UNITS,
@@ -6839,10 +6834,7 @@ fn test_block_limits() {
         feature_set::raise_block_limits_to_100m::id(),
     );
     let bank = Bank::new_for_tests(&genesis_config);
-    assert!(
-        bank.feature_set
-            .is_active(&feature_set::raise_block_limits_to_100m::id())
-    );
+    assert!(bank.feature_set.snapshot().raise_block_limits_to_100m);
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_block_limit(),
         MAX_BLOCK_UNITS_SIMD_0286,
@@ -6948,14 +6940,8 @@ fn test_simd_0437_rent_feature_gate_activation_ordering() {
     }
     goto_end_of_slot(bank.clone());
     bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
-    assert!(
-        bank.feature_set
-            .is_active(&feature_set::set_lamports_per_byte_to_6333::id())
-    );
-    assert!(
-        bank.feature_set
-            .is_active(&feature_set::set_lamports_per_byte_to_2575::id())
-    );
+    assert!(bank.feature_set.snapshot().set_lamports_per_byte_to_6333);
+    assert!(bank.feature_set.snapshot().set_lamports_per_byte_to_2575);
     assert_eq!(
         bank.rent_collector.rent.lamports_per_byte,
         feature_set::set_lamports_per_byte_to_2575::LAMPORTS_PER_BYTE,
@@ -6969,10 +6955,7 @@ fn test_simd_0437_rent_feature_gate_activation_ordering() {
     );
     goto_end_of_slot(bank.clone());
     bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
-    assert!(
-        bank.feature_set
-            .is_active(&feature_set::set_lamports_per_byte_to_1322::id())
-    );
+    assert!(bank.feature_set.snapshot().set_lamports_per_byte_to_1322);
     assert_eq!(
         bank.rent_collector.rent.lamports_per_byte,
         feature_set::set_lamports_per_byte_to_1322::LAMPORTS_PER_BYTE,
@@ -6985,10 +6968,7 @@ fn test_simd_0437_rent_feature_gate_activation_ordering() {
     );
     goto_end_of_slot(bank.clone());
     bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
-    assert!(
-        bank.feature_set
-            .is_active(&feature_set::set_lamports_per_byte_to_5080::id())
-    );
+    assert!(bank.feature_set.snapshot().set_lamports_per_byte_to_5080);
     assert_eq!(
         bank.rent_collector.rent.lamports_per_byte,
         feature_set::set_lamports_per_byte_to_5080::LAMPORTS_PER_BYTE,

@@ -66,10 +66,7 @@ use {
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
     agave_bls_cert_verify::cert_verify::{self, Error as CertVerifyError},
-    agave_feature_set::{
-        self as feature_set, FeatureSet, raise_cpi_nesting_limit_to_8,
-        relax_programdata_account_check_migration,
-    },
+    agave_feature_set::{self as feature_set, FeatureSet},
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::snapshot_hash::SnapshotHash,
@@ -1778,10 +1775,7 @@ impl Bank {
 
         // the vote reward account state should be created at the epoch boundary in which we
         // activate alpenglow as it will need info from the previous epoch.
-        if self
-            .feature_set
-            .is_active(&agave_feature_set::alpenglow::id())
-        {
+        if self.feature_set.snapshot().alpenglow {
             VoteRewardAccountState::new_epoch_update_account(
                 self,
                 parent_epoch,
@@ -2440,13 +2434,8 @@ impl Bank {
     /// to the top `MAX_ALPENGLOW_VOTE_ACCOUNTS` that contain enough balance for admission.
     fn maybe_burn_vat_from_staked_accounts(&mut self, epoch_stakes: &VersionedEpochStakes) {
         // Only deduct and burn the VAT if both the VAT and alpenglow features are active.
-        if !self
-            .feature_set
-            .is_active(&agave_feature_set::alpenglow::id())
-            || !self
-                .feature_set
-                .is_active(&agave_feature_set::validator_admission_ticket::id())
-        {
+        let feature_snapshot = self.feature_set.snapshot();
+        if !feature_snapshot.alpenglow || !feature_snapshot.validator_admission_ticket {
             return;
         }
 
@@ -3073,7 +3062,7 @@ impl Bank {
     /// Update the clock sysvar from a block footer's nanosecond timestamp.
     /// Also stores the nanosecond value for later retrieval via `get_nanosecond_clock`.
     pub fn update_clock_from_footer(&self, unix_timestamp_nanos: i64) {
-        if !self.feature_set.is_active(&feature_set::alpenglow::id()) {
+        if !self.feature_set.snapshot().alpenglow {
             return;
         }
 
@@ -3290,10 +3279,7 @@ impl Bank {
     pub fn get_transaction_account_lock_limit(&self) -> usize {
         if let Some(transaction_account_lock_limit) = self.transaction_account_lock_limit {
             transaction_account_lock_limit
-        } else if self
-            .feature_set
-            .is_active(&feature_set::increase_tx_account_lock_limit::id())
-        {
+        } else if self.feature_set.snapshot().increase_tx_account_lock_limit {
             MAX_TX_ACCOUNT_LOCKS
         } else {
             64
@@ -3306,9 +3292,8 @@ impl Bank {
         &self,
         txs: Vec<VersionedTransaction>,
     ) -> Result<TransactionBatch<'_, '_, RuntimeTransaction<SanitizedTransaction>>> {
-        let enable_instruction_account_limit = self
-            .feature_set
-            .is_active(&agave_feature_set::limit_instruction_accounts::id());
+        let enable_instruction_account_limit =
+            self.feature_set.snapshot().limit_instruction_accounts;
         let sanitized_txs = txs
             .into_iter()
             .map(|tx| {
@@ -3342,9 +3327,8 @@ impl Bank {
         tx_results: impl Iterator<Item = Result<()>>,
     ) -> Vec<Result<()>> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let relax_intrabatch_account_locks = self
-            .feature_set
-            .is_active(&feature_set::relax_intrabatch_account_locks::id());
+        let relax_intrabatch_account_locks =
+            self.feature_set.snapshot().relax_intrabatch_account_locks;
 
         // with simd83 enabled, we must fail transactions that duplicate a prior message hash
         // previously, conflicting account locks would fail such transactions as a side effect
@@ -4460,10 +4444,7 @@ impl Bank {
 
     fn apply_cost_tracker_limits_for_active_features(&mut self) {
         let mut cost_tracker = self.write_cost_tracker().unwrap();
-        let block_cost_limit = if self
-            .feature_set
-            .is_active(&feature_set::raise_block_limits_to_100m::id())
-        {
+        let block_cost_limit = if self.feature_set.snapshot().raise_block_limits_to_100m {
             simd_0286_block_limit()
         } else {
             cost_tracker.get_block_limit()
@@ -4480,9 +4461,7 @@ impl Bank {
     }
 
     fn apply_simd_0339_invoke_cost_changes(&mut self) {
-        let simd_0268_active = self
-            .feature_set
-            .is_active(&raise_cpi_nesting_limit_to_8::id());
+        let simd_0268_active = self.feature_set.snapshot().raise_cpi_nesting_limit_to_8;
         let compute_budget = self
             .compute_budget()
             .as_ref()
@@ -4531,7 +4510,7 @@ impl Bank {
         &self,
         feature_set: &FeatureSet,
     ) -> ProgramRuntimeEnvironment {
-        let simd_0268_active = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
+        let simd_0268_active = feature_set.snapshot().raise_cpi_nesting_limit_to_8;
         let compute_budget = self
             .compute_budget()
             .as_ref()
@@ -5081,9 +5060,8 @@ impl Bank {
             return Err(TransactionError::UnsupportedVersion);
         }
 
-        let enable_instruction_account_limit = self
-            .feature_set
-            .is_active(&agave_feature_set::limit_instruction_accounts::id());
+        let enable_instruction_account_limit =
+            self.feature_set.snapshot().limit_instruction_accounts;
 
         let sanitized_tx = {
             let size =
@@ -5634,7 +5612,8 @@ impl Bank {
         // After feature cleanup, assert that rent exemption threshold is 1.0
         if self
             .feature_set
-            .is_active(&feature_set::deprecate_rent_exemption_threshold::id())
+            .snapshot()
+            .deprecate_rent_exemption_threshold
         {
             self.rent_collector.deprecate_rent_exemption_threshold();
         }
@@ -5753,7 +5732,8 @@ impl Bank {
                 &feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID,
                 &feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
                 self.feature_set
-                    .is_active(&relax_programdata_account_check_migration::id()),
+                    .snapshot()
+                    .relax_programdata_account_check_migration,
                 "replace_spl_token_with_p_token",
             ) {
                 warn!(
@@ -5802,7 +5782,8 @@ impl Bank {
                         &builtin.program_id,
                         core_bpf_migration_config,
                         self.feature_set
-                            .is_active(&relax_programdata_account_check_migration::id()),
+                            .snapshot()
+                            .relax_programdata_account_check_migration,
                     ) {
                         warn!(
                             "Failed to migrate builtin {} to Core BPF: {}",
@@ -5823,7 +5804,8 @@ impl Bank {
                         &stateless_builtin.program_id,
                         core_bpf_migration_config,
                         self.feature_set
-                            .is_active(&relax_programdata_account_check_migration::id()),
+                            .snapshot()
+                            .relax_programdata_account_check_migration,
                     ) {
                         warn!(
                             "Failed to migrate stateless builtin {} to Core BPF: {}",
@@ -6138,20 +6120,17 @@ impl Bank {
             .rent_collector
             .rent
             .minimum_balance(VoteStateV4::size_of());
-        let minimum_vote_account_balance =
-            if self.feature_set.is_active(&feature_set::alpenglow::id()) {
-                // When alpenglow is active the minimum required balance is
-                // VAT + rent-exempt minimum for vote account.
-                vote_account_rent_exempt_minimum + VAT_TO_BURN_PER_EPOCH
-            } else {
-                // If alpenglow is not active, the minimum required balance is rent-exempt-minimum
-                vote_account_rent_exempt_minimum
-            };
+        let feature_snapshot = self.feature_set.snapshot();
+        let minimum_vote_account_balance = if feature_snapshot.alpenglow {
+            // When alpenglow is active the minimum required balance is
+            // VAT + rent-exempt minimum for vote account.
+            vote_account_rent_exempt_minimum + VAT_TO_BURN_PER_EPOCH
+        } else {
+            // If alpenglow is not active, the minimum required balance is rent-exempt-minimum
+            vote_account_rent_exempt_minimum
+        };
 
-        if self
-            .feature_set
-            .is_active(&feature_set::validator_admission_ticket::id())
-        {
+        if feature_snapshot.validator_admission_ticket {
             self.stakes_cache
                 .stakes()
                 .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, minimum_vote_account_balance)
