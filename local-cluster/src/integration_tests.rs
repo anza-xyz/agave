@@ -540,7 +540,8 @@ pub fn test_faulty_node(
     }
 
     let mut cluster_config = ClusterConfig {
-        mint_lamports: 10_000,
+        mint_lamports: crate::local_cluster::DEFAULT_MINT_LAMPORTS
+            + node_stakes.iter().sum::<u64>().saturating_mul(2),
         node_stakes,
         validator_configs,
         validator_keys: Some(validator_keys.clone()),
