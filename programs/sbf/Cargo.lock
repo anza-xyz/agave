@@ -6147,9 +6147,9 @@ dependencies = [
 
 [[package]]
 name = "solana-borsh"
-version = "3.0.1"
+version = "3.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be4a37fc44f0633779a619840b5117c2a895996cec57eb3dc10597fac7867875"
+checksum = "c04abbae16f57178a163125805637b8a076175bb5c0002fb04f4792bea901cf7"
 dependencies = [
  "borsh",
 ]
