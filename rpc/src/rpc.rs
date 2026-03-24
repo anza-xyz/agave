@@ -25,9 +25,7 @@ use {
     },
     solana_accounts_db::{
         accounts::AccountAddressFilter,
-        accounts_index::{
-            AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig, ScanOrder, ScanResult,
-        },
+        accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig, ScanResult},
     },
     solana_client::connection_cache::Protocol,
     solana_clock::{Slot, UnixTimestamp},
@@ -309,15 +307,11 @@ impl JsonRpcRequestProcessor {
         filters: Vec<RpcFilterType>,
         sort_results: bool,
     ) -> ScanResult<Vec<KeyedAccountSharedData>> {
-        let scan_order = if sort_results {
-            ScanOrder::Sorted
-        } else {
-            ScanOrder::Unsorted
-        };
         let bank = Arc::clone(bank);
         let index_key = index_key.to_owned();
         let program_id = program_id.to_owned();
-        self.runtime
+        let mut accounts = self
+            .runtime
             .spawn_blocking(move || {
                 bank.get_filtered_indexed_accounts(
                     &index_key,
@@ -332,12 +326,16 @@ impl JsonRpcRequestProcessor {
                                 .iter()
                                 .all(|filter_type| filter_allows(filter_type, account))
                     },
-                    &ScanConfig::new(scan_order),
+                    &ScanConfig::default(),
                     bank.byte_limit_for_scans(),
                 )
             })
             .await
-            .expect("Failed to spawn blocking task")
+            .expect("Failed to spawn blocking task")?;
+        if sort_results {
+            accounts.sort_unstable_by(|(a_addr, _), (b_addr, _)| a_addr.cmp(b_addr));
+        }
+        Ok(accounts)
     }
 
     #[allow(deprecated)]
@@ -2228,12 +2226,8 @@ impl JsonRpcRequestProcessor {
             })
         } else {
             // this path does not need to provide a mb limit because we only want to support secondary indexes
-            let scan_order = if sort_results {
-                ScanOrder::Sorted
-            } else {
-                ScanOrder::Unsorted
-            };
-            self.runtime
+            let mut accounts = self
+                .runtime
                 .spawn_blocking(move || {
                     bank.get_filtered_program_accounts(
                         &program_id,
@@ -2242,14 +2236,18 @@ impl JsonRpcRequestProcessor {
                                 .iter()
                                 .all(|filter_type| filter_allows(filter_type, account))
                         },
-                        &ScanConfig::new(scan_order),
+                        &ScanConfig::default(),
                     )
                     .map_err(|e| RpcCustomError::ScanError {
                         message: e.to_string(),
                     })
                 })
                 .await
-                .expect("Failed to spawn blocking task")
+                .expect("Failed to spawn blocking task")?;
+            if sort_results {
+                accounts.sort_unstable_by(|(a_addr, _), (b_addr, _)| a_addr.cmp(b_addr));
+            }
+            Ok(accounts)
         }
     }
 
