@@ -10,7 +10,7 @@ use {
         nonce_info::NonceInfo,
         program_loader::{get_program_deployment_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
-        transaction_account_state_info::TransactionAccountStateInfo,
+        transaction_account_state_info::{TransactionAccountStateInfo, get_account_data_len_delta},
         transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
@@ -1011,7 +1011,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     &post_account_state_info,
                     &transaction_context,
                 )
-                .map(|_| info)
+                .map(|_| post_account_state_info)
             })
             .map_err(|err| {
                 match err {
@@ -1045,7 +1045,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             accounts,
             return_data,
             touched_account_count,
-            accounts_resize_delta: accounts_data_len_delta,
+            accounts_resize_delta,
         } = execution_record;
 
         if status.is_ok()
@@ -1055,7 +1055,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         {
             status = Err(TransactionError::UnbalancedTransaction);
         }
-        let status = status.map(|_| ());
+
+        let post_account_state_info = status;
+        let status = match &post_account_state_info {
+            Ok(_) => Ok(()),
+            Err(err) => Err(err.clone()),
+        };
 
         loaded_transaction.accounts = accounts;
         execute_timings.details.total_account_count += loaded_transaction.accounts.len() as u64;
@@ -1067,6 +1072,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             Some(return_data)
         } else {
             None
+        };
+
+        let accounts_data_len_delta = if let Ok(post_state_info) = post_account_state_info {
+            get_account_data_len_delta(
+                &pre_account_state_info,
+                &post_state_info,
+                accounts_resize_delta,
+            )
+        } else {
+            0
         };
 
         ExecutedTransaction {

@@ -8,8 +8,21 @@ use {
 };
 
 #[derive(PartialEq, Debug)]
+pub struct WritableTransactionAccountStateInfo {
+    rent_state: RentState,
+    balance: u64,
+    data_size: usize,
+}
+
+#[derive(PartialEq, Debug)]
+pub(crate) struct AccountDeltas {
+    pub num_delta: i64,
+    pub data_size_delta: i64,
+}
+
+#[derive(PartialEq, Debug)]
 pub(crate) struct TransactionAccountStateInfo {
-    rent_state: Option<RentState>, // None: readonly account
+    info: Option<WritableTransactionAccountStateInfo>, // None: readonly account
 }
 
 impl TransactionAccountStateInfo {
@@ -20,49 +33,83 @@ impl TransactionAccountStateInfo {
     ) -> Vec<Self> {
         (0..message.account_keys().len())
             .map(|i| {
-                let rent_state = if message.is_writable(i) {
-                    let state = if let Ok(account) = transaction_context
+                let info = if message.is_writable(i) {
+                    if let Ok(account) = transaction_context
                         .accounts()
                         .try_borrow(i as IndexOfAccount)
                     {
-                        Some(get_account_rent_state(
-                            rent,
-                            account.lamports(),
-                            account.data().len(),
-                        ))
+                        let rent_state =
+                            get_account_rent_state(rent, account.lamports(), account.data().len());
+                        let balance = account.lamports();
+                        let data_size = account.data().len();
+                        Some(WritableTransactionAccountStateInfo {
+                            rent_state,
+                            balance,
+                            data_size,
+                        })
                     } else {
+                        debug_assert!(false, "message and transaction context out of sync, fatal");
                         None
-                    };
-                    debug_assert!(
-                        state.is_some(),
-                        "message and transaction context out of sync, fatal"
-                    );
-                    state
+                    }
                 } else {
                     None
                 };
-                Self { rent_state }
+                Self { info }
             })
             .collect()
     }
 
     pub(crate) fn verify_changes(
-        pre_state_infos: &[Self],
-        post_state_infos: &[Self],
+        pre_state_infos: &[TransactionAccountStateInfo],
+        post_state_infos: &[TransactionAccountStateInfo],
         transaction_context: &TransactionContext,
     ) -> Result<()> {
         for (i, (pre_state_info, post_state_info)) in
             pre_state_infos.iter().zip(post_state_infos).enumerate()
         {
-            check_rent_state(
-                pre_state_info.rent_state.as_ref(),
-                post_state_info.rent_state.as_ref(),
-                transaction_context,
-                i as IndexOfAccount,
-            )?;
+            if let (Some(pre_state_info), Some(post_state_info)) =
+                (pre_state_info.info.as_ref(), post_state_info.info.as_ref())
+            {
+                check_rent_state(
+                    Some(&pre_state_info.rent_state),
+                    Some(&post_state_info.rent_state),
+                    transaction_context,
+                    i as IndexOfAccount,
+                )?;
+            }
         }
         Ok(())
     }
+}
+
+// Returns delta for num_accounts and account_size given the pre and post state infos.
+pub(crate) fn get_account_data_len_delta(
+    pre: &[TransactionAccountStateInfo],
+    post: &[TransactionAccountStateInfo],
+    accounts_resize_delta: i64,
+) -> i64 {
+    // accounts_resize_delta accounts doesn't account for deleted accounts, so the overall
+    // state delta is computed by subtracting the data size of every deleted account.
+    let data_size_delta = pre.iter().zip(post).fold(
+        accounts_resize_delta,
+        |data_size_delta, (pre_info, post_info)| {
+            match (&pre_info.info, &post_info.info) {
+                (Some(pre), Some(post)) => {
+                    match (&pre.rent_state, &post.rent_state) {
+                        // deleted
+                        (RentState::RentExempt, RentState::Uninitialized) => {
+                            data_size_delta - post.data_size as i64
+                        }
+                        // ephemeral account, existing account realloc, or new account creation
+                        _ => data_size_delta,
+                    }
+                }
+                // None indicates non write-locked accounts -> no change
+                _ => data_size_delta,
+            }
+        },
+    );
+    data_size_delta
 }
 
 #[cfg(test)]
@@ -124,11 +171,19 @@ mod test {
             result,
             vec![
                 TransactionAccountStateInfo {
-                    rent_state: Some(RentState::Uninitialized)
+                    info: Some(WritableTransactionAccountStateInfo {
+                        rent_state: RentState::Uninitialized,
+                        balance: 0,
+                        data_size: 0,
+                    })
                 },
-                TransactionAccountStateInfo { rent_state: None },
+                TransactionAccountStateInfo { info: None },
                 TransactionAccountStateInfo {
-                    rent_state: Some(RentState::Uninitialized)
+                    info: Some(WritableTransactionAccountStateInfo {
+                        rent_state: RentState::Uninitialized,
+                        balance: 0,
+                        data_size: 0,
+                    })
                 }
             ]
         );
@@ -180,14 +235,26 @@ mod test {
         let key2 = Keypair::new();
         let pre_rent_state = vec![
             TransactionAccountStateInfo {
-                rent_state: Some(RentState::Uninitialized),
+                info: Some(WritableTransactionAccountStateInfo {
+                    rent_state: RentState::Uninitialized,
+                    balance: 0,
+                    data_size: 0,
+                }),
             },
             TransactionAccountStateInfo {
-                rent_state: Some(RentState::Uninitialized),
+                info: Some(WritableTransactionAccountStateInfo {
+                    rent_state: RentState::Uninitialized,
+                    balance: 0,
+                    data_size: 0,
+                }),
             },
         ];
         let post_rent_state = vec![TransactionAccountStateInfo {
-            rent_state: Some(RentState::Uninitialized),
+            info: Some(WritableTransactionAccountStateInfo {
+                rent_state: RentState::Uninitialized,
+                balance: 0,
+                data_size: 0,
+            }),
         }];
 
         let transaction_accounts = vec![
@@ -205,12 +272,20 @@ mod test {
         assert!(result.is_ok());
 
         let pre_rent_state = vec![TransactionAccountStateInfo {
-            rent_state: Some(RentState::Uninitialized),
+            info: Some(WritableTransactionAccountStateInfo {
+                rent_state: RentState::Uninitialized,
+                balance: 0,
+                data_size: 0,
+            }),
         }];
         let post_rent_state = vec![TransactionAccountStateInfo {
-            rent_state: Some(RentState::RentPaying {
+            info: Some(WritableTransactionAccountStateInfo {
+                rent_state: RentState::RentPaying {
+                    data_size: 2,
+                    lamports: 5,
+                },
+                balance: 5,
                 data_size: 2,
-                lamports: 5,
             }),
         }];
 
