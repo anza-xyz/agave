@@ -396,7 +396,7 @@ solana-bloom = { path = "bloom", version = "=4.1.0-alpha.0", features = ["agave-
 solana-bls-signatures = { version = "3.2.0", features = ["serde"] }
 solana-bls12-381-syscall = { path = "bls12-381-syscall", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-bn254 = "3.2.1"
-solana-borsh = "3.0.1"
+solana-borsh = "3.0.2"
 solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=4.1.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-bucket-map = { path = "bucket_map", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-builtins = { path = "builtins", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
