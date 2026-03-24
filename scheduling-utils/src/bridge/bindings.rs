@@ -44,6 +44,11 @@ where
     const TRANSACTION_BATCH_META_OFFSET: usize = Batch::<M>::TRANSACTION_META_START;
     const TRANSACTION_BATCH_SIZE: usize = Batch::<M>::TRANSACTION_META_END;
 
+    /// Creates a new [`SchedulerBindingsBridge`] from a [`ClientSession`].
+    ///
+    /// # Panics
+    ///
+    /// - If the session contains more than one allocator.
     #[must_use]
     pub fn new(
         ClientSession {
@@ -117,7 +122,10 @@ where
     ///
     /// - If the transaction does not exist.
     pub fn transaction(&self, key: TransactionKey) -> &TransactionState {
-        &self.state[key]
+        let tx = &self.state[key];
+        assert!(!tx.dead);
+
+        tx
     }
 
     /// Inserts a non TPU transaction into the bridge.
@@ -226,7 +234,7 @@ where
         let additional = std::cmp::min(self.tpu_to_pack.len(), max_count);
         let mut sanitize_failures = 0usize;
         for _ in 0..additional {
-            let msg = self.tpu_to_pack.try_read().unwrap();
+            let msg = self.tpu_to_pack.try_read().expect("len checked above");
 
             // SAFETY:
             // - Trust Agave to have properly transferred ownership to use & not to
@@ -297,6 +305,7 @@ where
     /// # Panics
     ///
     /// - If the worker index does not exist.
+    /// - If any transaction in the batch does not exist.
     /// - If the batch size exceeds [`MAX_TRANSACTIONS_PER_MESSAGE`].
     pub fn schedule(
         &mut self,
