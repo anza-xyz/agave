@@ -37,7 +37,7 @@ impl Bank {
         self.check_transactions(
             transactions,
             filter,
-            self.max_processing_age
+            self.max_processing_age()
                 .saturating_sub(max_tx_fwd_delay)
                 .saturating_sub(forward_transactions_to_leader_at_slot_offset as usize),
             &mut error_counters,

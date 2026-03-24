@@ -2981,7 +2981,7 @@ impl Bank {
 
     pub fn is_blockhash_valid(&self, hash: &Hash) -> bool {
         let blockhash_queue = self.blockhash_queue.read().unwrap();
-        blockhash_queue.is_hash_valid_for_age(hash, self.max_processing_age)
+        blockhash_queue.is_hash_valid_for_age(hash, self.max_processing_age())
     }
 
     pub fn get_minimum_balance_for_rent_exemption(&self, data_len: usize) -> u64 {
@@ -3036,7 +3036,7 @@ impl Bank {
         // length is made variable by epoch
         blockhash_queue
             .get_hash_age(blockhash)
-            .map(|age| self.block_height + self.max_processing_age as u64 - age)
+            .map(|age| self.block_height + self.max_processing_age() as u64 - age)
     }
 
     /// Query the alpenglow genesis certificate account.
@@ -3483,7 +3483,7 @@ impl Bank {
             // After simulation, transactions will need to be forwarded to the leader
             // for processing. During forwarding, the transaction could expire if the
             // delay is not accounted for.
-            self.max_processing_age
+            self.max_processing_age()
                 .saturating_sub(MAX_TRANSACTION_FORWARDING_DELAY),
             &mut timings,
             &mut TransactionErrorMetrics::default(),
@@ -4224,7 +4224,7 @@ impl Bank {
             balance_collector,
         } = self.load_and_execute_transactions(
             batch,
-            self.max_processing_age,
+            self.max_processing_age(),
             timings,
             &mut TransactionErrorMetrics::default(),
             TransactionProcessingConfig {
