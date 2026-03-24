@@ -615,7 +615,6 @@ impl Accounts {
 mod tests {
     use {
         super::*,
-        crate::accounts_index::ScanOrder,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{AccountSharedData, WritableAccount},
         solana_address_lookup_table_interface::state::LookupTableMeta,
@@ -1621,11 +1620,7 @@ mod tests {
     #[test]
     fn test_maybe_abort_scan() {
         assert!(Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &ScanConfig::default()).is_ok());
-        assert!(
-            Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &ScanConfig::new(ScanOrder::Sorted))
-                .is_ok()
-        );
-        let config = ScanConfig::new(ScanOrder::Sorted).recreate_with_abort();
+        let config = ScanConfig::default().recreate_with_abort();
         assert!(Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &config).is_ok());
         config.abort();
         assert!(Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &config).is_err());

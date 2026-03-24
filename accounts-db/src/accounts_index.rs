@@ -138,32 +138,13 @@ pub enum UpsertReclaim {
     ReclaimOldSlots,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ScanConfig {
     /// checked by the scan. When true, abort scan.
     pub abort: Option<Arc<AtomicBool>>,
-
-    /// In what order should items be scanned?
-    pub scan_order: ScanOrder,
-}
-
-impl Default for ScanConfig {
-    fn default() -> Self {
-        Self {
-            abort: None,
-            scan_order: ScanOrder::Unsorted,
-        }
-    }
 }
 
 impl ScanConfig {
-    pub fn new(scan_order: ScanOrder) -> Self {
-        Self {
-            scan_order,
-            ..Default::default()
-        }
-    }
-
     /// mark the scan as aborted
     pub fn abort(&self) {
         if let Some(abort) = self.abort.as_ref() {
@@ -175,7 +156,6 @@ impl ScanConfig {
     pub fn recreate_with_abort(&self) -> Self {
         ScanConfig {
             abort: Some(self.abort.clone().unwrap_or_default()),
-            scan_order: self.scan_order,
         }
     }
 
@@ -187,18 +167,6 @@ impl ScanConfig {
             false
         }
     }
-}
-
-/// In what order should items be scanned?
-///
-/// Users should prefer `Unsorted`, unless required otherwise,
-/// as sorting incurs additional runtime cost.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum ScanOrder {
-    /// Scan items in any order
-    Unsorted,
-    /// Scan items in sorted order
-    Sorted,
 }
 
 pub trait IsCached {
@@ -659,11 +627,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     ) where
         F: FnMut(&Pubkey, (&T, Slot)),
     {
-        let returns_items = match config.scan_order {
-            ScanOrder::Unsorted => AccountsIndexPubkeyIterOrder::Unsorted,
-            ScanOrder::Sorted => AccountsIndexPubkeyIterOrder::Sorted,
-        };
-
         // TODO: expand to use mint index to find the `pubkey_list` below more efficiently
         // instead of scanning the entire range
         let mut total_elapsed_timer = Measure::start("total");
@@ -674,7 +637,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         let mut iterator_elapsed = 0;
         let mut iterator_timer = Measure::start("iterator_elapsed");
 
-        for pubkeys in self.iter(returns_items) {
+        for pubkeys in self.iter(AccountsIndexPubkeyIterOrder::Unsorted) {
             iterator_timer.stop();
             iterator_elapsed += iterator_timer.as_us();
             for pubkey in pubkeys {
@@ -4094,22 +4057,11 @@ mod tests {
 
     #[test]
     fn test_scan_config() {
-        for scan_order in [ScanOrder::Sorted, ScanOrder::Unsorted] {
-            let config = ScanConfig::new(scan_order);
-            assert_eq!(config.scan_order, scan_order);
-            assert!(config.abort.is_none()); // not allocated
-            assert!(!config.is_aborted());
-            config.abort(); // has no effect
-            assert!(!config.is_aborted());
-        }
-
-        let config = ScanConfig::new(ScanOrder::Sorted);
-        assert_eq!(config.scan_order, ScanOrder::Sorted);
-        assert!(config.abort.is_none());
-
         let config = ScanConfig::default();
-        assert_eq!(config.scan_order, ScanOrder::Unsorted);
-        assert!(config.abort.is_none());
+        assert!(config.abort.is_none()); // not allocated
+        assert!(!config.is_aborted());
+        config.abort(); // has no effect
+        assert!(!config.is_aborted());
 
         let config = config.recreate_with_abort();
         assert!(config.abort.is_some());
