@@ -72,6 +72,7 @@ get() {
 
   if $job; then
     popd
+    mv "$cache_partial_dirname" "$cache_dirname" || return 1
     return 0
   fi
   popd
