@@ -28,7 +28,6 @@ use {
     },
 };
 
-pub const MAX_ROOT_DISTANCE_FOR_VOTE_ONLY: Slot = 400;
 pub type AtomicSlot = AtomicU64;
 #[derive(Clone)]
 pub struct ReadOnlyAtomicSlot {
