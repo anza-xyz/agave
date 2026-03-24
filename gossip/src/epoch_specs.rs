@@ -53,18 +53,6 @@ impl EpochSpecs {
     }
 }
 
-impl Clone for EpochSpecs {
-    fn clone(&self) -> Self {
-        Self {
-            epoch: self.epoch,
-            epoch_schedule: self.epoch_schedule.clone(),
-            sharable_banks: self.sharable_banks.clone(),
-            current_epoch_staked_nodes: self.current_epoch_staked_nodes.clone(),
-            epoch_duration: self.epoch_duration,
-        }
-    }
-}
-
 impl From<Arc<RwLock<BankForks>>> for EpochSpecs {
     fn from(bank_forks: Arc<RwLock<BankForks>>) -> Self {
         let (sharable_banks, root_bank) = {
