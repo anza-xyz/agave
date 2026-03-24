@@ -516,7 +516,7 @@ pub fn broadcast_shreds(
                 let addr = cluster_nodes
                     .get_broadcast_peer(&key)?
                     .tvu(Protocol::UDP)
-                    .filter(|addr| socket_addr_space.check(addr))?;
+                    .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))?;
 
                 Some((shred.payload(), addr))
             })
