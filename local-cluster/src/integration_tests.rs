@@ -350,8 +350,8 @@ pub fn run_cluster_partition<C>(
         .map(|stake_weight| 100 * *stake_weight as u64)
         .collect();
     assert_eq!(node_stakes.len(), num_nodes);
-    let mint_lamports =
-        crate::local_cluster::DEFAULT_MINT_LAMPORTS + node_stakes.iter().sum::<u64>();
+    let mint_lamports = crate::local_cluster::DEFAULT_MINT_LAMPORTS
+        + node_stakes.iter().sum::<u64>().saturating_mul(2);
     let turbine_disabled = Arc::new(AtomicBool::new(false));
     let wait_for_supermajority = if no_wait_for_vote_to_start_leader {
         // This helps nodes get a little more in sync by waiting for
