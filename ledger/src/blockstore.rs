@@ -256,6 +256,7 @@ pub struct Blockstore {
     index_cf: LedgerColumn<cf::Index>,
     erasure_meta_cf: LedgerColumn<cf::ErasureMeta>,
     merkle_root_meta_cf: LedgerColumn<cf::MerkleRootMeta>,
+    orphans_cf: LedgerColumn<cf::Orphans>,
     duplicate_slots_cf: LedgerColumn<cf::DuplicateSlots>,
 
     // Shred insertion column families for handling Alpenglow alternate blocks
@@ -269,7 +270,6 @@ pub struct Blockstore {
     optimistic_slots_cf: LedgerColumn<cf::OptimisticSlots>,
     roots_cf: LedgerColumn<cf::Root>,
     dead_slots_cf: LedgerColumn<cf::DeadSlots>,
-    orphans_cf: LedgerColumn<cf::Orphans>,
 
     // Block and transaction metadata column families (for RPC)
     block_height_cf: LedgerColumn<cf::BlockHeight>,
@@ -408,6 +408,7 @@ impl Blockstore {
         let index_cf = db.column();
         let erasure_meta_cf = db.column();
         let merkle_root_meta_cf = db.column();
+        let orphans_cf = db.column();
         let duplicate_slots_cf = db.column();
 
         let alt_data_shred_cf = db.column();
@@ -419,7 +420,6 @@ impl Blockstore {
         let optimistic_slots_cf = db.column();
         let roots_cf = db.column();
         let dead_slots_cf = db.column();
-        let orphans_cf = db.column();
 
         let block_height_cf = db.column();
         let blocktime_cf = db.column();
@@ -449,13 +449,13 @@ impl Blockstore {
             code_shred_cf,
             data_shred_cf,
             dead_slots_cf,
+            orphans_cf,
             duplicate_slots_cf,
             erasure_meta_cf,
             index_cf,
             merkle_root_meta_cf,
             meta_cf,
             optimistic_slots_cf,
-            orphans_cf,
             perf_samples_cf,
             rewards_cf,
             roots_cf,
@@ -972,6 +972,7 @@ impl Blockstore {
         self.index_cf.submit_rocksdb_cf_metrics();
         self.erasure_meta_cf.submit_rocksdb_cf_metrics();
         self.merkle_root_meta_cf.submit_rocksdb_cf_metrics();
+        self.orphans_cf.submit_rocksdb_cf_metrics();
         self.duplicate_slots_cf.submit_rocksdb_cf_metrics();
 
         self.alt_data_shred_cf.submit_rocksdb_cf_metrics();
@@ -983,7 +984,6 @@ impl Blockstore {
         self.optimistic_slots_cf.submit_rocksdb_cf_metrics();
         self.roots_cf.submit_rocksdb_cf_metrics();
         self.dead_slots_cf.submit_rocksdb_cf_metrics();
-        self.orphans_cf.submit_rocksdb_cf_metrics();
 
         self.block_height_cf.submit_rocksdb_cf_metrics();
         self.blocktime_cf.submit_rocksdb_cf_metrics();
