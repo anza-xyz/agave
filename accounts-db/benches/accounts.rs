@@ -220,7 +220,6 @@ fn bench_load_largest_accounts(b: &mut Bencher) {
             20,
             &HashSet::new(),
             AccountAddressFilter::Exclude,
-            false,
         )
     });
 }

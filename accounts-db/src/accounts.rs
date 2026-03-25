@@ -258,7 +258,6 @@ impl Accounts {
         num: usize,
         filter_by_address: &HashSet<Pubkey>,
         filter: AccountAddressFilter,
-        _sort_results: bool, // can be removed, results are always sorted
     ) -> ScanResult<Vec<(Pubkey, u64)>> {
         if num == 0 {
             return Ok(vec![]);
@@ -1438,7 +1437,6 @@ mod tests {
                     0,
                     &HashSet::new(),
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![]
@@ -1451,7 +1449,6 @@ mod tests {
                     0,
                     &all_pubkeys,
                     AccountAddressFilter::Include,
-                    false
                 )
                 .unwrap(),
             vec![]
@@ -1467,7 +1464,6 @@ mod tests {
                     1,
                     &HashSet::new(),
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey1, 42)]
@@ -1480,7 +1476,6 @@ mod tests {
                     2,
                     &HashSet::new(),
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey1, 42), (pubkey0, 42)]
@@ -1493,7 +1488,6 @@ mod tests {
                     3,
                     &HashSet::new(),
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey1, 42), (pubkey0, 42), (pubkey2, 41)]
@@ -1508,7 +1502,6 @@ mod tests {
                     6,
                     &HashSet::new(),
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey1, 42), (pubkey0, 42), (pubkey2, 41)]
@@ -1524,7 +1517,6 @@ mod tests {
                     1,
                     &exclude1,
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey0, 42)]
@@ -1537,7 +1529,6 @@ mod tests {
                     2,
                     &exclude1,
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey0, 42), (pubkey2, 41)]
@@ -1550,7 +1541,6 @@ mod tests {
                     3,
                     &exclude1,
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey0, 42), (pubkey2, 41)]
@@ -1566,7 +1556,6 @@ mod tests {
                     1,
                     &include1_2,
                     AccountAddressFilter::Include,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey1, 42)]
@@ -1579,7 +1568,6 @@ mod tests {
                     2,
                     &include1_2,
                     AccountAddressFilter::Include,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey1, 42), (pubkey2, 41)]
@@ -1592,7 +1580,6 @@ mod tests {
                     3,
                     &include1_2,
                     AccountAddressFilter::Include,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey1, 42), (pubkey2, 41)]

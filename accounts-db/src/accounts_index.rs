@@ -17,7 +17,7 @@ use {
     in_mem_accounts_index::{
         ExistedLocation, InMemAccountsIndex, InsertNewEntryResults, StartupStats,
     },
-    iter::{AccountsIndexPubkeyIterOrder, AccountsIndexPubkeyIterator},
+    iter::AccountsIndexPubkeyIterator,
     log::*,
     rand::{Rng, rng},
     rayon::iter::{IntoParallelIterator, ParallelIterator},
@@ -367,11 +367,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         (account_maps, bin_calculator, storage)
     }
 
-    fn iter<'a>(
-        &'a self,
-        iter_order: AccountsIndexPubkeyIterOrder,
-    ) -> AccountsIndexPubkeyIterator<'a, T, U> {
-        AccountsIndexPubkeyIterator::new(self, iter_order)
+    fn iter<'a>(&'a self) -> AccountsIndexPubkeyIterator<'a, T, U> {
+        AccountsIndexPubkeyIterator::new(self)
     }
 
     /// is the accounts index using disk as a backing store
@@ -637,7 +634,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         let mut iterator_elapsed = 0;
         let mut iterator_timer = Measure::start("iterator_elapsed");
 
-        for pubkeys in self.iter(AccountsIndexPubkeyIterOrder::Unsorted) {
+        for pubkeys in self.iter() {
             iterator_timer.stop();
             iterator_elapsed += iterator_timer.as_us();
             for pubkey in pubkeys {
