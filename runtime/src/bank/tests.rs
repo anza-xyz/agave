@@ -69,7 +69,6 @@ use {
         get_program_data_address, instruction::UpgradeableLoaderInstruction,
         state::UpgradeableLoaderState,
     },
-    solana_loader_v4_interface::{instruction as loader_v4, state::LoaderV4State},
     solana_message::{
         Message, MessageHeader, SanitizedMessage, compiled_instruction::CompiledInstruction,
     },
@@ -11427,15 +11426,12 @@ fn test_filter_program_errors_and_collect_fee_details() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_deploy_last_epoch_slot() {
     agave_logger::setup();
 
     // Bank Setup
-    let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    activate_feature(
-        &mut genesis_config,
-        agave_feature_set::enable_loader_v4::id(),
-    );
+    let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
     let bank = Bank::new_for_tests(&genesis_config);
 
     // go to the last slot in the epoch
@@ -11449,47 +11445,50 @@ fn test_deploy_last_epoch_slot() {
     );
     eprintln!("now at slot {} epoch {}", bank.slot(), bank.epoch());
 
-    // deploy a program
+    // deploy a program using the upgradeable loader
     let payer_keypair = Keypair::new();
     let program_keypair = Keypair::new();
+    let buffer_address = Pubkey::new_unique();
+    let upgrade_authority_keypair = Keypair::new();
     let mut file = File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so").unwrap();
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
-    let min_program_balance = bank.get_minimum_balance_for_rent_exemption(
-        LoaderV4State::program_data_offset().saturating_add(elf.len()),
-    );
-    let upgrade_authority_keypair = Keypair::new();
 
-    let mut program_account = AccountSharedData::new(
-        min_program_balance,
-        LoaderV4State::program_data_offset().saturating_add(elf.len()),
-        &solana_sdk_ids::loader_v4::id(),
+    let min_program_balance =
+        bank.get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program());
+    let min_buffer_balance = bank
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(elf.len()));
+    let min_programdata_balance = bank.get_minimum_balance_for_rent_exemption(
+        UpgradeableLoaderState::size_of_programdata(elf.len()),
     );
-    let program_state = <&mut [u8; LoaderV4State::program_data_offset()]>::try_from(
-        program_account
-            .data_as_mut_slice()
-            .get_mut(0..LoaderV4State::program_data_offset())
-            .unwrap(),
-    )
-    .unwrap();
-    let program_state = unsafe {
-        std::mem::transmute::<&mut [u8; LoaderV4State::program_data_offset()], &mut LoaderV4State>(
-            program_state,
-        )
-    };
-    program_state.authority_address_or_next_version = upgrade_authority_keypair.pubkey();
-    program_account
+
+    // Setup buffer account with ELF
+    let mut buffer_account = AccountSharedData::new(
+        min_buffer_balance,
+        UpgradeableLoaderState::size_of_buffer(elf.len()),
+        &bpf_loader_upgradeable::id(),
+    );
+    buffer_account
+        .set_state(&UpgradeableLoaderState::Buffer {
+            authority_address: Some(upgrade_authority_keypair.pubkey()),
+        })
+        .unwrap();
+    buffer_account
         .data_as_mut_slice()
-        .get_mut(LoaderV4State::program_data_offset()..)
+        .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
         .unwrap()
         .copy_from_slice(&elf);
+    bank.store_account(&buffer_address, &buffer_account);
 
     let payer_base_balance = LAMPORTS_PER_SOL;
     let deploy_fees = {
         let fee_calculator = genesis_config.fee_rate_governor.create_fee_calculator();
         3 * fee_calculator.lamports_per_signature
     };
-    let min_payer_balance = min_program_balance.saturating_add(deploy_fees);
+    let min_payer_balance = min_program_balance
+        .saturating_add(min_programdata_balance)
+        .saturating_sub(min_buffer_balance)
+        .saturating_add(deploy_fees);
     bank.store_account(
         &payer_keypair.pubkey(),
         &AccountSharedData::new(
@@ -11498,15 +11497,20 @@ fn test_deploy_last_epoch_slot() {
             &system_program::id(),
         ),
     );
-    bank.store_account(&program_keypair.pubkey(), &program_account);
+
     let message = Message::new(
-        &[loader_v4::deploy(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
+            &payer_keypair.pubkey(),
             &program_keypair.pubkey(),
+            &buffer_address,
             &upgrade_authority_keypair.pubkey(),
-        )],
+            min_program_balance,
+            elf.len(),
+        )
+        .unwrap(),
         Some(&payer_keypair.pubkey()),
     );
-    let signers = &[&payer_keypair, &upgrade_authority_keypair];
+    let signers = &[&payer_keypair, &program_keypair, &upgrade_authority_keypair];
     let transaction = Transaction::new(signers, message, bank.last_blockhash());
     let ret = bank.process_transaction(&transaction);
     assert!(ret.is_ok(), "ret: {ret:?}");
@@ -11528,313 +11532,6 @@ fn test_deploy_last_epoch_slot() {
     let transaction = Transaction::new(&signers, message, bank.last_blockhash());
     let result_with_feature_enabled = bank.process_transaction(&transaction);
     assert_eq!(result_with_feature_enabled, Ok(()));
-}
-
-#[test]
-fn test_loader_v3_to_v4_migration() {
-    agave_logger::setup();
-
-    // Bank Setup
-    let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    activate_feature(
-        &mut genesis_config,
-        agave_feature_set::enable_loader_v4::id(),
-    );
-    let bank = Bank::new_for_tests(&genesis_config);
-    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let fee_calculator = genesis_config.fee_rate_governor.create_fee_calculator();
-    let mut next_slot = 1;
-
-    // deploy a program
-    let mut file = File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so").unwrap();
-    let mut elf = Vec::new();
-    file.read_to_end(&mut elf).unwrap();
-
-    let program_keypair = Keypair::new();
-    let (programdata_address, _) = Pubkey::find_program_address(
-        &[program_keypair.pubkey().as_ref()],
-        &bpf_loader_upgradeable::id(),
-    );
-    let payer_keypair = Keypair::new();
-    let upgrade_authority_keypair = Keypair::new();
-
-    let min_program_balance =
-        bank.get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program());
-    let mut program_account = AccountSharedData::new(
-        min_program_balance,
-        UpgradeableLoaderState::size_of_program(),
-        &bpf_loader_upgradeable::id(),
-    );
-    program_account
-        .set_state(&UpgradeableLoaderState::Program {
-            programdata_address,
-        })
-        .unwrap();
-    bank.store_account(&program_keypair.pubkey(), &program_account);
-
-    let closed_programdata_account = AccountSharedData::new(0, 0, &bpf_loader_upgradeable::id());
-
-    let mut uninitialized_programdata_account = AccountSharedData::new(
-        0,
-        UpgradeableLoaderState::size_of_programdata_metadata(),
-        &bpf_loader_upgradeable::id(),
-    );
-    uninitialized_programdata_account
-        .set_state(&UpgradeableLoaderState::Uninitialized)
-        .unwrap();
-
-    let mut finalized_programdata_account = AccountSharedData::new(
-        0,
-        UpgradeableLoaderState::size_of_programdata(elf.len()),
-        &bpf_loader_upgradeable::id(),
-    );
-    finalized_programdata_account
-        .set_state(&UpgradeableLoaderState::ProgramData {
-            slot: 0,
-            upgrade_authority_address: None,
-        })
-        .unwrap();
-    finalized_programdata_account
-        .data_as_mut_slice()
-        .get_mut(UpgradeableLoaderState::size_of_programdata_metadata()..)
-        .unwrap()
-        .copy_from_slice(&elf);
-    let message = Message::new(
-        &[
-            solana_loader_v3_interface::instruction::migrate_program(
-                &programdata_address,
-                &program_keypair.pubkey(),
-                &program_keypair.pubkey(),
-            ),
-            ComputeBudgetInstruction::set_compute_unit_limit(12_000),
-        ],
-        Some(&payer_keypair.pubkey()),
-    );
-    let signers = &[&payer_keypair, &program_keypair];
-    let finalized_migration_transaction = Transaction::new(signers, message, bank.last_blockhash());
-
-    let mut upgradeable_programdata_account = AccountSharedData::new(
-        0,
-        UpgradeableLoaderState::size_of_programdata(elf.len()),
-        &bpf_loader_upgradeable::id(),
-    );
-    let min_programdata_balance =
-        bank.get_minimum_balance_for_rent_exemption(upgradeable_programdata_account.data().len());
-    upgradeable_programdata_account.set_lamports(min_programdata_balance);
-    upgradeable_programdata_account
-        .set_state(&UpgradeableLoaderState::ProgramData {
-            slot: 0,
-            upgrade_authority_address: Some(upgrade_authority_keypair.pubkey()),
-        })
-        .unwrap();
-    upgradeable_programdata_account
-        .data_as_mut_slice()
-        .get_mut(UpgradeableLoaderState::size_of_programdata_metadata()..)
-        .unwrap()
-        .copy_from_slice(&elf);
-    let message = Message::new(
-        &[
-            solana_loader_v3_interface::instruction::migrate_program(
-                &programdata_address,
-                &program_keypair.pubkey(),
-                &upgrade_authority_keypair.pubkey(),
-            ),
-            ComputeBudgetInstruction::set_compute_unit_limit(10_000),
-        ],
-        Some(&payer_keypair.pubkey()),
-    );
-    let signers = &[&payer_keypair, &upgrade_authority_keypair];
-    let upgradeable_migration_transaction =
-        Transaction::new(signers, message, bank.last_blockhash());
-
-    let payer_account = AccountSharedData::new(LAMPORTS_PER_SOL, 0, &system_program::id());
-    bank.store_account(
-        &programdata_address,
-        &upgradeable_programdata_account.clone(),
-    );
-    bank.store_account(&payer_keypair.pubkey(), &payer_account);
-
-    // Error case: Program was deployed in this block already
-    let case_redeployment_cooldown = vec![
-        AccountMeta::new(programdata_address, false),
-        AccountMeta::new(programdata_address, false),
-        AccountMeta::new(programdata_address, false),
-    ];
-    let message = Message::new(
-        &[Instruction::new_with_bincode(
-            bpf_loader_upgradeable::id(),
-            &UpgradeableLoaderInstruction::Migrate,
-            case_redeployment_cooldown,
-        )],
-        Some(&payer_keypair.pubkey()),
-    );
-    let signers = &[&payer_keypair];
-    let transaction = Transaction::new(signers, message, bank.last_blockhash());
-    let error = bank.process_transaction(&transaction).unwrap_err();
-    assert_eq!(
-        error,
-        TransactionError::InstructionError(0, InstructionError::InvalidArgument)
-    );
-
-    let bank =
-        Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), next_slot);
-    next_slot += 1;
-
-    // All other error cases
-    let case_too_few_accounts = vec![
-        AccountMeta::new(programdata_address, false),
-        AccountMeta::new_readonly(upgrade_authority_keypair.pubkey(), true),
-    ];
-    let case_readonly_programdata = vec![
-        AccountMeta::new_readonly(programdata_address, false),
-        AccountMeta::new(program_keypair.pubkey(), false),
-        AccountMeta::new_readonly(upgrade_authority_keypair.pubkey(), true),
-    ];
-    let case_incorrect_authority = vec![
-        AccountMeta::new(programdata_address, false),
-        AccountMeta::new_readonly(upgrade_authority_keypair.pubkey(), true),
-        AccountMeta::new(program_keypair.pubkey(), false),
-    ];
-    let case_missing_signature = vec![
-        AccountMeta::new(programdata_address, false),
-        AccountMeta::new(program_keypair.pubkey(), false),
-        AccountMeta::new_readonly(upgrade_authority_keypair.pubkey(), false),
-    ];
-    let case_readonly_program = vec![
-        AccountMeta::new(programdata_address, false),
-        AccountMeta::new_readonly(program_keypair.pubkey(), false),
-        AccountMeta::new_readonly(upgrade_authority_keypair.pubkey(), true),
-    ];
-    let case_program_has_wrong_owner = vec![
-        AccountMeta::new(programdata_address, false),
-        AccountMeta::new(upgrade_authority_keypair.pubkey(), false),
-        AccountMeta::new_readonly(upgrade_authority_keypair.pubkey(), true),
-    ];
-    let case_incorrect_programdata_address = vec![
-        AccountMeta::new(program_keypair.pubkey(), false),
-        AccountMeta::new(program_keypair.pubkey(), false),
-        AccountMeta::new_readonly(program_keypair.pubkey(), true),
-        AccountMeta::new_readonly(upgrade_authority_keypair.pubkey(), true),
-    ];
-    let case_invalid_program_account = vec![
-        AccountMeta::new(programdata_address, false),
-        AccountMeta::new(programdata_address, false),
-        AccountMeta::new_readonly(upgrade_authority_keypair.pubkey(), true),
-    ];
-    let case_missing_loader_v4 = vec![
-        AccountMeta::new(programdata_address, false),
-        AccountMeta::new(program_keypair.pubkey(), false),
-        AccountMeta::new_readonly(upgrade_authority_keypair.pubkey(), true),
-    ];
-    for (instruction_accounts, expected_error) in [
-        (case_too_few_accounts, InstructionError::MissingAccount),
-        (case_readonly_programdata, InstructionError::InvalidArgument),
-        (
-            case_incorrect_authority,
-            InstructionError::IncorrectAuthority,
-        ),
-        (
-            case_missing_signature,
-            InstructionError::MissingRequiredSignature,
-        ),
-        (case_readonly_program, InstructionError::InvalidArgument),
-        (
-            case_program_has_wrong_owner,
-            InstructionError::IncorrectProgramId,
-        ),
-        (
-            case_incorrect_programdata_address,
-            InstructionError::InvalidArgument,
-        ),
-        (
-            case_invalid_program_account,
-            InstructionError::InvalidAccountData,
-        ),
-        (case_missing_loader_v4, InstructionError::MissingAccount),
-    ] {
-        let message = Message::new(
-            &[Instruction::new_with_bincode(
-                bpf_loader_upgradeable::id(),
-                &UpgradeableLoaderInstruction::Migrate,
-                instruction_accounts,
-            )],
-            Some(&payer_keypair.pubkey()),
-        );
-        let signers = &[&payer_keypair, &upgrade_authority_keypair, &program_keypair];
-        let transaction = Transaction::new(
-            &signers[..message.header.num_required_signatures as usize],
-            message.clone(),
-            bank.last_blockhash(),
-        );
-        let error = bank.process_transaction(&transaction).unwrap_err();
-        assert_eq!(error, TransactionError::InstructionError(0, expected_error));
-    }
-
-    for (mut programdata_account, transaction, expected_execution_result) in [
-        (
-            closed_programdata_account,
-            finalized_migration_transaction.clone(),
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::UnsupportedProgramId,
-            )),
-        ),
-        (
-            uninitialized_programdata_account,
-            finalized_migration_transaction.clone(),
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::UnsupportedProgramId,
-            )),
-        ),
-        (
-            finalized_programdata_account,
-            finalized_migration_transaction,
-            Ok(()),
-        ),
-        (
-            upgradeable_programdata_account,
-            upgradeable_migration_transaction,
-            Ok(()),
-        ),
-    ] {
-        let bank = Bank::new_from_parent_with_bank_forks(
-            &bank_forks,
-            bank.clone(),
-            SlotLeader::default(),
-            next_slot,
-        );
-        next_slot += 1;
-
-        let min_programdata_balance =
-            bank.get_minimum_balance_for_rent_exemption(programdata_account.data().len());
-        programdata_account.set_lamports(min_programdata_balance);
-        let payer_balance = min_program_balance
-            .saturating_add(min_programdata_balance)
-            .saturating_add(LAMPORTS_PER_SOL)
-            .saturating_add(fee_calculator.lamports_per_signature);
-        let payer_account = AccountSharedData::new(payer_balance, 0, &system_program::id());
-        bank.store_account(&programdata_address, &programdata_account);
-        bank.store_account(&payer_keypair.pubkey(), &payer_account);
-        let result = bank.process_transaction(&transaction);
-        assert!(result.is_ok(), "result: {result:?}");
-
-        goto_end_of_slot(bank.clone());
-        let bank = Bank::new_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            SlotLeader::default(),
-            next_slot,
-        );
-        next_slot += 1;
-
-        let instruction = Instruction::new_with_bytes(program_keypair.pubkey(), &[], Vec::new());
-        let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-        let binding = mint_keypair.insecure_clone();
-        let transaction = Transaction::new(&[&binding], message, bank.last_blockhash());
-        let execution_result = bank.process_transaction(&transaction);
-        assert_eq!(execution_result, expected_execution_result);
-    }
 }
 
 #[test]
