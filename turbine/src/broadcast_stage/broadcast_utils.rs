@@ -417,7 +417,7 @@ mod tests {
 
     #[test]
     fn test_marker_carryover_does_not_advance_last_tick_height() {
-        let (genesis_config, bank0, tx) = setup_test();
+        let (genesis_config, bank0, _bank_forks, tx) = setup_test();
         let bank1 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
         let (s, r) = unbounded();
         let max_tick = bank1.max_tick_height();
@@ -455,7 +455,7 @@ mod tests {
 
     #[test]
     fn test_bank_change_then_marker_skips_empty_entry_batch() {
-        let (genesis_config, bank0, tx) = setup_test();
+        let (genesis_config, bank0, _bank_forks, tx) = setup_test();
         let bank1 = Arc::new(Bank::new_from_parent(
             bank0.clone(),
             SlotLeader::default(),
