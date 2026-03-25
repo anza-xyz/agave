@@ -93,7 +93,7 @@ solana-account-info = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bls-signatures = { workspace = true }
-solana-builtins = { workspace = true }
+solana-builtins = { workspace = true, features = ["metrics"] }
 solana-client-traits = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }

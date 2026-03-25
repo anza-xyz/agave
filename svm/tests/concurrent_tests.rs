@@ -151,7 +151,7 @@ fn svm_concurrent() {
 
     mock_bank.configure_sysvars();
     batch_processor.fill_missing_sysvar_cache_entries(&*mock_bank);
-    register_builtins(&mock_bank, &batch_processor, false);
+    register_builtins(&mock_bank, &batch_processor);
 
     let program_id = deploy_program("transfer-from-account".to_string(), 0, &mock_bank);
 

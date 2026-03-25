@@ -12,6 +12,7 @@ edition = { workspace = true }
 [features]
 agave-unstable-api = []
 dev-context-only-utils = []
+metrics = ["solana-bpf-loader-program/metrics", "solana-loader-v4-program/metrics"]
 
 [dependencies]
 agave-feature-set = { workspace = true }

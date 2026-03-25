@@ -9053,8 +9053,6 @@ dependencies = [
  "solana-instruction",
  "solana-instructions-sysvar",
  "solana-loader-v3-interface",
- "solana-loader-v4-interface",
- "solana-loader-v4-program",
  "solana-message",
  "solana-nonce",
  "solana-nonce-account",

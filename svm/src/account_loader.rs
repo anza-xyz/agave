@@ -512,9 +512,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             // handle cases that LoaderV3 presumably makes impossible, such as self-referential
             // program accounts or multiply-referenced programdata accounts, for added safety.
             //
-            // If in the future LoaderV3 programs are migrated to LoaderV4, this entire code block
-            // can be deleted.
-            //
             // If this is a valid LoaderV3 program...
             if bpf_loader_upgradeable::check_id(account.owner())
                 && let Ok(UpgradeableLoaderState::Program {
