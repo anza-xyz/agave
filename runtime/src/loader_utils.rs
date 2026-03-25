@@ -119,7 +119,6 @@ pub fn load_upgradeable_buffer<T: Client>(
     program
 }
 
-#[deprecated(since = "2.2.0", note = "Use load_program_of_loader_v4() instead")]
 pub fn load_upgradeable_program(
     bank_client: &BankClient,
     from_keypair: &Keypair,
@@ -167,7 +166,6 @@ pub fn load_upgradeable_program(
     });
 }
 
-#[deprecated(since = "2.2.0", note = "Use load_program_of_loader_v4() instead")]
 pub fn load_upgradeable_program_wrapper(
     bank_client: &BankClient,
     mint_keypair: &Keypair,
@@ -176,7 +174,6 @@ pub fn load_upgradeable_program_wrapper(
 ) -> Pubkey {
     let buffer_keypair = Keypair::new();
     let program_keypair = Keypair::new();
-    #[allow(deprecated)]
     load_upgradeable_program(
         bank_client,
         mint_keypair,
@@ -188,7 +185,6 @@ pub fn load_upgradeable_program_wrapper(
     program_keypair.pubkey()
 }
 
-#[deprecated(since = "2.2.0", note = "Use load_program_of_loader_v4() instead")]
 pub fn load_upgradeable_program_and_advance_slot(
     bank_client: &mut BankClient,
     bank_forks: &RwLock<BankForks>,
@@ -196,7 +192,6 @@ pub fn load_upgradeable_program_and_advance_slot(
     authority_keypair: &Keypair,
     name: &str,
 ) -> (Arc<Bank>, Pubkey) {
-    #[allow(deprecated)]
     let program_id =
         load_upgradeable_program_wrapper(bank_client, mint_keypair, authority_keypair, name);
 
