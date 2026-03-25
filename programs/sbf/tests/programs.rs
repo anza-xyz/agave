@@ -976,10 +976,7 @@ fn test_program_sbf_invoke_sanity() {
             bank,
             &feature_set::raise_cpi_nesting_limit_to_8::id(),
         );
-        assert!(
-            bank.feature_set
-                .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id())
-        );
+        assert!(bank.feature_set.snapshot().raise_cpi_nesting_limit_to_8);
         {
             // Reset the account balances for `ARGUMENT` and `INVOKED_ARGUMENT`
             let account = AccountSharedData::new(42, 100, &invoke_program_id);
@@ -1027,11 +1024,7 @@ fn test_program_sbf_invoke_sanity() {
             bank,
             &feature_set::increase_tx_account_lock_limit::id(),
         );
-        assert!(
-            !bank
-                .feature_set
-                .is_active(&feature_set::increase_tx_account_lock_limit::id())
-        );
+        assert!(!bank.feature_set.snapshot().increase_tx_account_lock_limit);
 
         do_invoke_success(
             TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339,
@@ -1045,10 +1038,7 @@ fn test_program_sbf_invoke_sanity() {
             &feature_set::increase_tx_account_lock_limit::id(),
         );
 
-        assert!(
-            bank.feature_set
-                .is_active(&feature_set::increase_tx_account_lock_limit::id())
-        );
+        assert!(bank.feature_set.snapshot().increase_tx_account_lock_limit);
 
         // failure cases
 
@@ -1224,11 +1214,7 @@ fn test_program_sbf_invoke_sanity() {
             &feature_set::increase_tx_account_lock_limit::id(),
         );
 
-        assert!(
-            !bank
-                .feature_set
-                .is_active(&feature_set::increase_tx_account_lock_limit::id())
-        );
+        assert!(!bank.feature_set.snapshot().increase_tx_account_lock_limit);
 
         do_invoke_failure_test_local(
             TEST_RETURN_ERROR,
@@ -1269,11 +1255,7 @@ fn test_program_sbf_invoke_sanity() {
             bank,
             &feature_set::raise_cpi_nesting_limit_to_8::id(),
         );
-        assert!(
-            !bank
-                .feature_set
-                .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id())
-        );
+        assert!(!bank.feature_set.snapshot().raise_cpi_nesting_limit_to_8);
         do_invoke_failure_test_local(
             TEST_NESTED_INVOKE_TOO_DEEP,
             TransactionError::InstructionError(0, InstructionError::CallDepth),
@@ -1294,10 +1276,7 @@ fn test_program_sbf_invoke_sanity() {
             bank,
             &feature_set::raise_cpi_nesting_limit_to_8::id(),
         );
-        assert!(
-            bank.feature_set
-                .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id())
-        );
+        assert!(bank.feature_set.snapshot().raise_cpi_nesting_limit_to_8);
         do_invoke_failure_test_local(
             TEST_NESTED_INVOKE_SIMD_0268_TOO_DEEP,
             TransactionError::InstructionError(0, InstructionError::CallDepth),
