@@ -467,7 +467,7 @@ fn compute_slot_cost(
                     None,
                     SimpleAddressLoader::Disabled,
                     &reserved_account_keys.active,
-                    feature_set.is_active(&agave_feature_set::limit_instruction_accounts::id()),
+                    feature_set.snapshot().limit_instruction_accounts,
                 )
                 .map_err(|err| {
                     warn!("Failed to compute cost of transaction: {err:?}");
@@ -2390,10 +2390,7 @@ fn main() {
                                 ),
                             );
 
-                            let vote_account = if bank
-                                .feature_set
-                                .is_active(&feature_set::vote_state_v4::id())
-                            {
+                            let vote_account = if bank.feature_set.snapshot().vote_state_v4 {
                                 vote_state::create_v4_account_with_authorized(
                                     identity_pubkey,
                                     identity_pubkey,
