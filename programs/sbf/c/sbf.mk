@@ -113,7 +113,14 @@ OBJ_DUMP_FLAGS := \
 READ_ELF_FLAGS := \
   --all \
 
-CRITERION_FOLDER=$(HOME)/.cache/solana/v2.3.2/criterion
+OS := $(shell uname -s)
+ifeq ($(OS),Linux)
+    CRITERION_VERSION=v2.3.3
+else
+    CRITERION_VERSION=v2.3.2
+endif
+
+CRITERION_FOLDER=$(HOME)/.cache/solana/$(CRITERION_VERSION)/criterion
 TESTFRAMEWORK_RPATH := $(abspath $(CRITERION_FOLDER)/lib)
 TESTFRAMEWORK_FLAGS := \
   -DSOL_TEST \
