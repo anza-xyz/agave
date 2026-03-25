@@ -75,11 +75,11 @@ impl LeaderSchedule {
             }
             None => HashMap::default(),
         };
-        for (slot, leader) in slot_leaders.iter().enumerate() {
+        for (index, leader) in slot_leaders.iter().enumerate() {
             grouped_slot_leaders
                 .entry(leader.id)
-                .and_modify(|slots: &mut Vec<_>| slots.push(slot))
-                .or_insert(vec![slot]);
+                .and_modify(|indices: &mut Vec<_>| indices.push(index))
+                .or_insert(vec![index]);
         }
         grouped_slot_leaders
     }
