@@ -355,11 +355,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .read()
             .unwrap()
             .upcoming_environment
-            && *self.program_runtime_environment == **upcoming_environment
-            && self.program_runtime_environment != *upcoming_environment
         {
-            // Use the prediction if equal but not identical
-            self.program_runtime_environment = upcoming_environment.clone();
+            let upcoming_environment = ProgramRuntimeEnvironment::clone(upcoming_environment);
+            if self.program_runtime_environment != upcoming_environment
+                && *self.program_runtime_environment == *upcoming_environment
+            {
+                // Use the prediction if equal but not identical
+                self.program_runtime_environment = upcoming_environment;
+            }
         }
     }
 
