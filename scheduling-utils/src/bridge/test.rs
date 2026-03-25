@@ -1,10 +1,7 @@
 use {
     crate::{
         bridge::{KeyedTransactionMeta, ScheduleBatch, SchedulerBindingsBridge, TransactionKey},
-        handshake::{
-            ClientLogon, client,
-            server::{AgaveSession, Server},
-        },
+        handshake::{AgaveSession, ClientLogon, client, server::Server},
         responses_region::{execution_responses_from_iter, resolve_responses_from_iter},
         transaction_ptr::TransactionPtrBatch,
     },

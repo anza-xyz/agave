@@ -1795,10 +1795,10 @@ mod tests {
 
     #[test]
     fn test_recalculate_partitioned_rewards() {
-        let expected_num_delegations = 3;
+        let expected_num_delegations = 4;
         let num_rewards_per_block = 2;
         // Distribute 4 rewards over 2 blocks
-        let mut stakes = vec![2_000_000_000; expected_num_delegations];
+        let mut stakes = vec![2_000_000_000; expected_num_delegations - 1];
         // Add stake large enough to be affected by total-rewards discrepancy
         stakes.push(40_000_000_000);
         let (RewardBank { bank, .. }, _bank_forks) = create_reward_bank_with_specific_stakes(

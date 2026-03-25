@@ -25,15 +25,12 @@ solana-fee = { workspace = true, features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true }
 solana-transaction = { workspace = true, optional = true, features = ["serde"] }
 solana-transaction-error = { workspace = true }
+thiserror = { workspace = true }
 wincode = { workspace = true, optional = true }
 
 [target."cfg(unix)".dependencies]
-agave-transaction-view = { workspace = true }
 libc = { workspace = true }
 nix = { workspace = true, features = ["socket", "uio"] }
-rts-alloc = { workspace = true }
-shaq = { workspace = true }
-thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

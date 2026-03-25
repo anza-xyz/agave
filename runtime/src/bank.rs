@@ -4736,7 +4736,6 @@ impl Bank {
         num: usize,
         filter_by_address: &HashSet<Pubkey>,
         filter: AccountAddressFilter,
-        sort_results: bool,
     ) -> ScanResult<Vec<(Pubkey, u64)>> {
         self.rc.accounts.load_largest_accounts(
             &self.ancestors,
@@ -4744,7 +4743,6 @@ impl Bank {
             num,
             filter_by_address,
             filter,
-            sort_results,
         )
     }
 

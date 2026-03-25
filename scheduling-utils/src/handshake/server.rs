@@ -1,14 +1,12 @@
 use {
     crate::handshake::{
-        ClientLogon,
+        AgaveHandshakeError, AgaveTpuToPackSession, AgaveWorkerSession, ClientLogon,
         shared::{
-            GLOBAL_ALLOCATORS, LOGON_FAILURE, LOGON_SUCCESS, MAX_ALLOCATOR_HANDLES, MAX_WORKERS,
-            VERSION,
+            AgaveSession, GLOBAL_ALLOCATORS, LOGON_FAILURE, LOGON_SUCCESS, MAX_ALLOCATOR_HANDLES,
+            MAX_WORKERS, VERSION,
         },
     },
-    agave_scheduler_bindings::{
-        PackToWorkerMessage, ProgressMessage, TpuToPackMessage, WorkerToPackMessage,
-    },
+    agave_scheduler_bindings::PackToWorkerMessage,
     nix::sys::socket::{self, ControlMessage, MsgFlags, UnixAddr},
     rts_alloc::Allocator,
     std::{
@@ -22,7 +20,6 @@ use {
         path::Path,
         time::{Duration, Instant},
     },
-    thiserror::Error,
 };
 
 type ShaqError = shaq::error::Error;
@@ -339,50 +336,4 @@ impl Server {
             false => size.next_multiple_of(4096),
         }
     }
-}
-
-/// An initialized scheduling session.
-pub struct AgaveSession {
-    pub flags: u16,
-    pub tpu_to_pack: AgaveTpuToPackSession,
-    pub progress_tracker: shaq::spsc::Producer<ProgressMessage>,
-    pub workers: Vec<AgaveWorkerSession>,
-}
-
-/// Shared memory objects for the tpu to pack worker.
-pub struct AgaveTpuToPackSession {
-    pub allocator: Allocator,
-    pub producer: shaq::spsc::Producer<TpuToPackMessage>,
-}
-
-/// Shared memory objects for a single banking worker.
-pub struct AgaveWorkerSession {
-    pub allocator: Allocator,
-    pub pack_to_worker: shaq::spsc::Consumer<PackToWorkerMessage>,
-    pub worker_to_pack: shaq::spsc::Producer<WorkerToPackMessage>,
-}
-
-/// Potential errors that can occur during the Agave side of the handshake.
-///
-/// # Note
-///
-/// These errors are stringified (up to 256 bytes then truncated) and sent to the client.
-#[derive(Debug, Error)]
-pub enum AgaveHandshakeError {
-    #[error("Io; err={0}")]
-    Io(#[from] std::io::Error),
-    #[error("Timeout")]
-    Timeout,
-    #[error("Close during handshake")]
-    EofDuringHandshake,
-    #[error("Version; server={server}; client={client}")]
-    Version { server: u64, client: u64 },
-    #[error("Worker count; count={0}")]
-    WorkerCount(usize),
-    #[error("Allocator handles; count={0}")]
-    AllocatorHandles(usize),
-    #[error("Rts alloc; err={0:?}")]
-    RtsAlloc(#[from] RtsAllocError),
-    #[error("Shaq; err={0:?}")]
-    Shaq(#[from] ShaqError),
 }
