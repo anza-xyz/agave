@@ -33,6 +33,7 @@ libc = { workspace = true }
 nix = { workspace = true, features = ["socket", "uio"] }
 
 [target."cfg(windows)".dependencies]
+sha2 = { workspace = true }
 windows-sys = { version = "0.59.0", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",

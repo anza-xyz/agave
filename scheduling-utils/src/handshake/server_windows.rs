@@ -1,6 +1,7 @@
 use {
     crate::handshake::{
         AgaveHandshakeError, AgaveTpuToPackSession, AgaveWorkerSession, ClientLogon,
+        pipe_windows::pipe_name,
         shared::{
             AgaveSession, GLOBAL_ALLOCATORS, HANDSHAKE_BUFFER_SIZE, LOGON_FAILURE, LOGON_SUCCESS,
             recv_logon,
@@ -287,24 +288,6 @@ fn unique_region_path() -> PathBuf {
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
     std::env::temp_dir().join(format!("agave-scheduler-bindings-{pid}-{id}.shmem"))
-}
-
-fn pipe_name(path: &Path) -> Vec<u16> {
-    use std::{
-        collections::hash_map::DefaultHasher,
-        hash::{Hash, Hasher},
-    };
-
-    let mut hasher = DefaultHasher::new();
-    path.as_os_str().hash(&mut hasher);
-    let pipe_name = format!(
-        r"\\.\pipe\agave-scheduler-bindings-{:016x}",
-        hasher.finish()
-    );
-    OsStr::new(&pipe_name)
-        .encode_wide()
-        .chain(core::iter::once(0))
-        .collect()
 }
 
 fn timeout_ms(timeout: Duration) -> u32 {

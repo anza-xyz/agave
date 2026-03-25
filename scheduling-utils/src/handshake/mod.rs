@@ -3,6 +3,8 @@ pub mod client;
 #[cfg(windows)]
 #[path = "client_windows.rs"]
 pub mod client;
+#[cfg(windows)]
+mod pipe_windows;
 #[cfg(unix)]
 pub mod server;
 #[cfg(windows)]

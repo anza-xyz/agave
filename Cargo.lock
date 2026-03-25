@@ -261,6 +261,7 @@ dependencies = [
  "libc",
  "nix",
  "rts-alloc",
+ "sha2 0.10.9",
  "shaq",
  "slotmap",
  "solana-fee",

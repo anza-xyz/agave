@@ -1,6 +1,7 @@
 use {
     crate::handshake::{
         ClientHandshakeError, ClientLogon, ClientSession,
+        pipe_windows::pipe_name,
         shared::{HANDSHAKE_BUFFER_SIZE, LOGON_FAILURE, join_session, send_logon},
     },
     std::{
@@ -146,23 +147,4 @@ fn open_region_file(path: &Path) -> Result<File, ClientHandshakeError> {
     open_options.read(true).write(true);
     open_options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
     open_options.open(path).map_err(Into::into)
-}
-
-fn pipe_name(path: &Path) -> Vec<u16> {
-    use std::{
-        collections::hash_map::DefaultHasher,
-        hash::{Hash, Hasher},
-        os::windows::ffi::OsStrExt,
-    };
-
-    let mut hasher = DefaultHasher::new();
-    path.as_os_str().hash(&mut hasher);
-    let pipe_name = format!(
-        r"\\.\pipe\agave-scheduler-bindings-{:016x}",
-        hasher.finish()
-    );
-    std::ffi::OsStr::new(&pipe_name)
-        .encode_wide()
-        .chain(core::iter::once(0))
-        .collect()
 }
