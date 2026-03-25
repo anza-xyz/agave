@@ -465,6 +465,7 @@ fn default_crate_publish_test_step() -> buildkite::Step {
             String::from("queue"),
             String::from("default"),
         )])),
+        timeout_in_minutes: Some(45),
         ..Default::default()
     })
 }
