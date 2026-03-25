@@ -78,7 +78,7 @@ impl LeaderSchedule {
         for (slot, leader) in slot_leaders.iter().enumerate() {
             grouped_slot_leaders
                 .entry(leader.id)
-                .and_modify(|slots: &mut Vec<usize>| slots.push(slot))
+                .and_modify(|slots: &mut Vec<_>| slots.push(slot))
                 .or_insert(vec![slot]);
         }
         grouped_slot_leaders
