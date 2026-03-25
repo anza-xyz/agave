@@ -21,8 +21,8 @@ pub struct FeatureSnapshot {
     pub blake3_syscall_enabled: bool,
     pub disable_fees_sysvar: bool,
     pub curve25519_syscall_enabled: bool,
-    pub stake_minimum_delegation_for_rewards: bool,
     pub stake_raise_minimum_delegation_to_1_sol: bool,
+    pub stake_minimum_delegation_for_rewards: bool,
     pub disable_deploy_of_alloc_free_syscall: bool,
     pub increase_tx_account_lock_limit: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
@@ -93,11 +93,11 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             blake3_syscall_enabled: is_active(&blake3_syscall_enabled::ID),
             disable_fees_sysvar: is_active(&disable_fees_sysvar::ID),
             curve25519_syscall_enabled: is_active(&curve25519_syscall_enabled::ID),
-            stake_minimum_delegation_for_rewards: is_active(
-                &stake_minimum_delegation_for_rewards::ID,
-            ),
             stake_raise_minimum_delegation_to_1_sol: is_active(
                 &stake_raise_minimum_delegation_to_1_sol::ID,
+            ),
+            stake_minimum_delegation_for_rewards: is_active(
+                &stake_minimum_delegation_for_rewards::ID,
             ),
             disable_deploy_of_alloc_free_syscall: is_active(
                 &disable_deploy_of_alloc_free_syscall::ID,
