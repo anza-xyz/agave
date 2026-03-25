@@ -1334,7 +1334,7 @@ mod tests {
     #[test]
     fn test_process_token_allocations() {
         let alice = Keypair::new();
-        let test_validator = simple_test_validator_no_fees(alice.pubkey());
+        let test_validator = simple_test_validator(alice.pubkey());
         let url = test_validator.rpc_url();
 
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
@@ -1344,21 +1344,17 @@ mod tests {
     #[test]
     fn test_process_transfer_amount_allocations() {
         let alice = Keypair::new();
-        let test_validator = simple_test_validator_no_fees(alice.pubkey());
+        let test_validator = simple_test_validator(alice.pubkey());
         let url = test_validator.rpc_url();
 
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
         test_process_distribute_tokens_with_client(&client, alice, sol_str_to_lamports("1.5"));
     }
 
-    fn simple_test_validator_no_fees(pubkey: Pubkey) -> TestValidator {
-        TestValidator::start_with_config(pubkey, None, SocketAddrSpace::Unspecified)
-    }
-
     #[test]
     fn test_create_stake_allocations() {
         let alice = Keypair::new();
-        let test_validator = simple_test_validator_no_fees(alice.pubkey());
+        let test_validator = simple_test_validator(alice.pubkey());
         let url = test_validator.rpc_url();
 
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
@@ -1368,7 +1364,7 @@ mod tests {
     #[test]
     fn test_process_stake_allocations() {
         let alice = Keypair::new();
-        let test_validator = simple_test_validator_no_fees(alice.pubkey());
+        let test_validator = simple_test_validator(alice.pubkey());
         let url = test_validator.rpc_url();
 
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
@@ -2507,7 +2503,7 @@ mod tests {
     #[test]
     fn test_distribute_allocations_dump_db() {
         let sender_keypair = Keypair::new();
-        let test_validator = simple_test_validator_no_fees(sender_keypair.pubkey());
+        let test_validator = simple_test_validator(sender_keypair.pubkey());
         let url = test_validator.rpc_url();
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
 
