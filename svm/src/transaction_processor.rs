@@ -345,19 +345,20 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
     /// Updates the environments when entering a new Epoch.
     pub fn set_program_runtime_environment(&mut self, new_environment: ProgramRuntimeEnvironment) {
-        // First update the parts of the environments which changed
-        if self.program_runtime_environment != new_environment {
+        // First update the environment only if it is different
+        if *self.program_runtime_environment != *new_environment {
             self.program_runtime_environment = new_environment;
         }
-        // Then try to consolidate with the upcoming environments (to reuse their address)
+        // Then try to consolidate with the upcoming environment (to reuse the address)
         if let Some(upcoming_environment) = &self
             .epoch_boundary_preparation
             .read()
             .unwrap()
             .upcoming_environment
-            && &self.program_runtime_environment == upcoming_environment
-            && &self.program_runtime_environment != upcoming_environment
+            && *self.program_runtime_environment == **upcoming_environment
+            && self.program_runtime_environment != *upcoming_environment
         {
+            // Use the prediction if equal but not identical
             self.program_runtime_environment = upcoming_environment.clone();
         }
     }
