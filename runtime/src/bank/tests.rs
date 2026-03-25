@@ -10560,37 +10560,6 @@ fn test_cap_accounts_data_allocations_per_transaction() {
 }
 
 #[test]
-fn test_calculate_fee_with_congestion_multiplier() {
-    let signature_count: u64 = 2;
-    let signature_fee: u64 = 10;
-    let fee_structure = FeeStructure {
-        lamports_per_signature: signature_fee,
-        ..FeeStructure::default()
-    };
-
-    // Two signatures, double the fee.
-    let key0 = Pubkey::new_unique();
-    let key1 = Pubkey::new_unique();
-    let ix0 = system_instruction::transfer(&key0, &key1, 1);
-    let ix1 = system_instruction::transfer(&key1, &key0, 1);
-    let message = new_sanitized_message(Message::new(&[ix0, ix1], Some(&key0)));
-
-    // assert when lamports_per_signature is less than BASE_LAMPORTS, turnning on/off
-    // congestion_multiplier has no effect on fee.
-    assert_eq!(
-        calculate_test_fee(&message, &fee_structure),
-        signature_fee * signature_count
-    );
-
-    // assert when lamports_per_signature is more than BASE_LAMPORTS, turnning on/off
-    // congestion_multiplier will change calculated fee.
-    assert_eq!(
-        calculate_test_fee(&message, &fee_structure,),
-        signature_fee * signature_count
-    );
-}
-
-#[test]
 fn test_calculate_fee_with_request_heap_frame_flag() {
     let key0 = Pubkey::new_unique();
     let key1 = Pubkey::new_unique();
