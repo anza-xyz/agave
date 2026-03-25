@@ -424,6 +424,7 @@ fn default_shuttle_step() -> buildkite::Step {
             String::from("queue"),
             String::from("default"),
         )])),
+        timeout_in_minutes: Some(10),
         ..Default::default()
     })
 }
