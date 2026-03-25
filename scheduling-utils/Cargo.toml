@@ -32,6 +32,13 @@ wincode = { workspace = true, optional = true }
 libc = { workspace = true }
 nix = { workspace = true, features = ["socket", "uio"] }
 
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.59.0", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Pipes",
+] }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

@@ -12,11 +12,18 @@ use {
     tempfile::NamedTempFile,
 };
 
+fn new_ipc_path() -> std::path::PathBuf {
+    let ipc = NamedTempFile::new().unwrap();
+    let path = ipc.path().to_path_buf();
+    #[cfg(unix)]
+    std::fs::remove_file(&path).unwrap();
+    path
+}
+
 #[test]
 fn message_passing_on_all_queues() {
-    let ipc = NamedTempFile::new().unwrap();
-    std::fs::remove_file(ipc.path()).unwrap();
-    let mut server = Server::new(ipc.path()).unwrap();
+    let ipc = new_ipc_path();
+    let mut server = Server::new(&ipc).unwrap();
 
     // Test messages.
     let tpu_to_pack = TpuToPackMessage {
@@ -176,9 +183,8 @@ fn message_passing_on_all_queues() {
 
 #[test]
 fn accept_worker_count_max() {
-    let ipc = NamedTempFile::new().unwrap();
-    std::fs::remove_file(ipc.path()).unwrap();
-    let mut server = Server::new(ipc.path()).unwrap();
+    let ipc = new_ipc_path();
+    let mut server = Server::new(&ipc).unwrap();
 
     let server_handle = std::thread::spawn(move || {
         let res = server.accept();
@@ -208,9 +214,8 @@ fn accept_worker_count_max() {
 
 #[test]
 fn reject_worker_count_low() {
-    let ipc = NamedTempFile::new().unwrap();
-    std::fs::remove_file(ipc.path()).unwrap();
-    let mut server = Server::new(ipc.path()).unwrap();
+    let ipc = new_ipc_path();
+    let mut server = Server::new(&ipc).unwrap();
 
     let server_handle = std::thread::spawn(move || {
         let res = server.accept();
@@ -246,9 +251,8 @@ fn reject_worker_count_low() {
 
 #[test]
 fn reject_worker_count_high() {
-    let ipc = NamedTempFile::new().unwrap();
-    std::fs::remove_file(ipc.path()).unwrap();
-    let mut server = Server::new(ipc.path()).unwrap();
+    let ipc = new_ipc_path();
+    let mut server = Server::new(&ipc).unwrap();
 
     let server_handle = std::thread::spawn(move || {
         let res = server.accept();
