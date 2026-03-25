@@ -231,48 +231,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agave-syscalls"
-version = "4.1.0-alpha.0"
-dependencies = [
- "bincode",
- "libsecp256k1",
- "num-traits",
- "solana-account 4.1.0",
- "solana-account-info",
- "solana-big-mod-exp",
- "solana-blake3-hasher",
- "solana-bls12-381-syscall",
- "solana-bn254",
- "solana-clock",
- "solana-cpi",
- "solana-curve25519 4.0.0",
- "solana-hash 4.2.0",
- "solana-instruction",
- "solana-keccak-hasher",
- "solana-loader-v3-interface",
- "solana-poseidon",
- "solana-program-entrypoint",
- "solana-program-runtime",
- "solana-pubkey 4.1.0",
- "solana-sbpf",
- "solana-sdk-ids",
- "solana-secp256k1-recover",
- "solana-sha256-hasher",
- "solana-stable-layout",
- "solana-stake-interface",
- "solana-svm-callback",
- "solana-svm-feature-set",
- "solana-svm-log-collector",
- "solana-svm-measure",
- "solana-svm-timings",
- "solana-svm-type-overrides",
- "solana-sysvar",
- "solana-sysvar-id",
- "solana-transaction-context",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "agave-transaction-view"
 version = "4.1.0-alpha.0"
 dependencies = [
@@ -6173,7 +6131,6 @@ dependencies = [
 name = "solana-bpf-loader-program"
 version = "4.1.0-alpha.0"
 dependencies = [
- "agave-syscalls",
  "bincode",
  "qualifier_attr",
  "solana-account 4.1.0",
@@ -6191,6 +6148,7 @@ dependencies = [
  "solana-svm-log-collector",
  "solana-svm-measure",
  "solana-svm-type-overrides",
+ "solana-syscalls",
  "solana-system-interface 3.1.0",
  "solana-transaction-context",
 ]
@@ -8168,7 +8126,6 @@ dependencies = [
  "agave-precompiles",
  "agave-reserved-account-keys",
  "agave-snapshots",
- "agave-syscalls",
  "agave-votor-messages",
  "ahash 0.8.12",
  "aquamarine",
@@ -8264,6 +8221,7 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-timings",
  "solana-svm-transaction",
+ "solana-syscalls",
  "solana-system-interface 3.1.0",
  "solana-system-transaction",
  "solana-sysvar",
@@ -9491,7 +9449,6 @@ dependencies = [
 name = "solana-svm-test-harness-instr"
 version = "4.1.0-alpha.0"
 dependencies = [
- "agave-syscalls",
  "bincode",
  "env_logger",
  "solana-account 4.1.0",
@@ -9513,6 +9470,7 @@ dependencies = [
  "solana-svm-test-harness-fixture",
  "solana-svm-timings",
  "solana-svm-transaction",
+ "solana-syscalls",
  "solana-sysvar-id",
  "solana-transaction-context",
 ]
@@ -9543,6 +9501,48 @@ name = "solana-svm-type-overrides"
 version = "4.1.0-alpha.0"
 dependencies = [
  "rand 0.9.2",
+]
+
+[[package]]
+name = "solana-syscalls"
+version = "4.1.0-alpha.0"
+dependencies = [
+ "bincode",
+ "libsecp256k1",
+ "num-traits",
+ "solana-account 4.1.0",
+ "solana-account-info",
+ "solana-big-mod-exp",
+ "solana-blake3-hasher",
+ "solana-bls12-381-syscall",
+ "solana-bn254",
+ "solana-clock",
+ "solana-cpi",
+ "solana-curve25519 4.0.0",
+ "solana-hash 4.2.0",
+ "solana-instruction",
+ "solana-keccak-hasher",
+ "solana-loader-v3-interface",
+ "solana-poseidon",
+ "solana-program-entrypoint",
+ "solana-program-runtime",
+ "solana-pubkey 4.1.0",
+ "solana-sbpf",
+ "solana-sdk-ids",
+ "solana-secp256k1-recover",
+ "solana-sha256-hasher",
+ "solana-stable-layout",
+ "solana-stake-interface",
+ "solana-svm-callback",
+ "solana-svm-feature-set",
+ "solana-svm-log-collector",
+ "solana-svm-measure",
+ "solana-svm-timings",
+ "solana-svm-type-overrides",
+ "solana-sysvar",
+ "solana-sysvar-id",
+ "solana-transaction-context",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -9663,7 +9663,6 @@ version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-snapshots",
- "agave-syscalls",
  "arc-swap",
  "base64 0.22.1",
  "bincode",
@@ -9705,6 +9704,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-signer",
  "solana-streamer",
+ "solana-syscalls",
  "solana-transaction",
  "solana-validator-exit",
  "tokio",

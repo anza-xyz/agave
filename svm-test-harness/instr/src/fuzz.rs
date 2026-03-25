@@ -10,12 +10,12 @@ use {
         logger,
     },
     agave_precompiles::{get_precompile, is_precompile},
-    agave_syscalls::create_program_runtime_environment,
     prost::Message,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_precompile_error::PrecompileError,
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,
+    solana_syscalls::create_program_runtime_environment,
     std::{env, ffi::c_int},
 };
 

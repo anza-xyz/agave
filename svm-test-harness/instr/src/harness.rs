@@ -2,7 +2,6 @@
 
 use {
     crate::fixture::{instr_context::InstrContext, instr_effects::InstrEffects},
-    agave_syscalls::create_program_runtime_environment,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction_error::InstructionError,
     solana_program_runtime::{
@@ -17,6 +16,7 @@ use {
     solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
+    solana_syscalls::create_program_runtime_environment,
     solana_transaction_context::transaction::TransactionContext,
     std::rc::Rc,
 };
