@@ -45,11 +45,3 @@ jobs:
 
       - run: |
           ci/check-crates.sh
-
-  error_reporting:
-    needs:
-      - check
-    if: failure() && github.event_name == 'push'
-    uses: ./.github/workflows/error-reporting.yml
-    secrets:
-      WEBHOOK: ${{ secrets.SLACK_ERROR_REPORTING_WEBHOOK }}

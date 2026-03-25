@@ -70,12 +70,3 @@ jobs:
 
       - name: Stable build
         run: ./cargo stable build --target ${{ matrix.target }} -p solana-client
-
-  error_reporting:
-    needs:
-      - android
-      - ios
-    if: failure() && github.event_name == 'push'
-    uses: ./.github/workflows/error-reporting.yml
-    secrets:
-      WEBHOOK: ${{ secrets.SLACK_ERROR_REPORTING_WEBHOOK }}
