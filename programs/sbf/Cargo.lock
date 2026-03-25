@@ -8321,8 +8321,6 @@ dependencies = [
  "agave-validator",
  "bincode",
  "borsh",
- "itertools 0.14.0",
- "log",
  "solana-account 4.1.0",
  "solana-account-info",
  "solana-client-traits",
