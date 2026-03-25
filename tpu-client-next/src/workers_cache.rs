@@ -11,7 +11,7 @@ use {
     },
     lru::LruCache,
     quinn::Endpoint,
-    std::{net::SocketAddr, sync::Arc, time::Duration},
+    std::{net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration},
     thiserror::Error,
     tokio::{
         sync::mpsc::{self, error::TrySendError},
@@ -138,7 +138,7 @@ pub enum WorkersCacheError {
 }
 
 impl WorkersCache {
-    pub fn new(capacity: usize, cancel: CancellationToken) -> Self {
+    pub fn new(capacity: NonZeroUsize, cancel: CancellationToken) -> Self {
         Self {
             workers: LruCache::new(capacity),
             cancel,
@@ -376,6 +376,7 @@ mod tests {
         solana_tls_utils::QuicClientCertificate,
         std::{
             net::{Ipv4Addr, SocketAddr},
+            num::NonZeroUsize,
             sync::Arc,
             time::Duration,
         },
@@ -461,7 +462,7 @@ mod tests {
         let endpoint = create_test_endpoint();
 
         let cancel = CancellationToken::new();
-        let mut cache = WorkersCache::new(10, cancel.clone());
+        let mut cache = WorkersCache::new(NonZeroUsize::new(10).unwrap(), cancel.clone());
 
         let port_range = unique_port_range_for_tests(2);
         let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);
