@@ -4,12 +4,13 @@ use {
     std::sync::Arc,
 };
 
-pub const ITER_BATCH_SIZE: usize = 1000;
-
+/// Iterator over AccountsIndex
+///
+/// One bin is inspected per call to `next()`, and bins may be empty.
+/// Thus, clients must be able to handle `next()` returning `Some(vec![])`.
 pub struct AccountsIndexPubkeyIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     account_maps: &'a [Arc<InMemAccountsIndex<T, U>>],
     current_bin: usize,
-    items: Vec<Pubkey>,
 }
 
 impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
@@ -19,7 +20,6 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
         Self {
             account_maps: &index.account_maps,
             current_bin: 0,
-            items: Vec::new(),
         }
     }
 }
@@ -30,18 +30,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
 {
     type Item = Vec<Pubkey>;
     fn next(&mut self) -> Option<Self::Item> {
-        while self.items.len() < ITER_BATCH_SIZE {
-            if self.current_bin >= self.account_maps.len() {
-                break;
-            }
-
-            let map = &self.account_maps[self.current_bin];
-            let mut items = map.keys();
-            self.items.append(&mut items);
+        if self.current_bin < self.account_maps.len() {
+            let items = self.account_maps[self.current_bin].keys();
             self.current_bin += 1;
+            Some(items)
+        } else {
+            None
         }
-
-        (!self.items.is_empty()).then(|| std::mem::take(&mut self.items))
     }
 }
 
@@ -57,102 +52,26 @@ mod tests {
         std::iter,
     };
 
-    /// Ensure that when there are fewer than ITER_BATCH_SIZE items in a bin that `next()`
-    /// will correctly get items from the next bin, in a loop, until the iterator has
-    /// collected at least ITER_BATCH_SIZE items, or it has visited all the bins.
+    /// Ensure iterator visits all bins.
     #[test]
-    fn test_accounts_index_iter_batched_small() {
+    fn test_visits_all_bins() {
         let index = AccountsIndex::<bool, bool>::default_for_tests();
-        // this test requires the index to have more than one bin
-        assert!(index.bins() > 1);
-        // ensure each bin ends up with fewer than ITER_BATCH_SIZE items
-        let num_pubkeys = ITER_BATCH_SIZE;
-        let pubkeys = iter::repeat_with(solana_pubkey::new_rand)
-            .take(num_pubkeys)
-            .collect::<Vec<_>>();
 
-        for key in pubkeys {
-            let slot = 0;
-            let value = true;
-            let mut gc = ReclaimsSlotList::new();
-            index.upsert(
-                slot,
-                slot,
-                &key,
-                &AccountSharedData::default(),
-                &AccountSecondaryIndexes::default(),
-                value,
-                &mut gc,
-                UpsertReclaim::PopulateReclaims,
-            );
-        }
-
-        // Create an iterator for the whole pubkey range.
-        let mut iter = index.iter();
-        // First iter.next() should return all the pubkeys
-        let x = iter.next().unwrap();
-        assert_eq!(x.len(), num_pubkeys);
-        assert_eq!(iter.items.len(), 0); // should be empty.
-
-        // Then iter.next() should return None.
-        assert!(iter.next().is_none());
+        let num_bins_visited = index.iter().count();
+        assert_eq!(num_bins_visited, index.bins());
     }
 
-    /// Ensure that when there are at least ITER_BATCH_SIZE items in a bin that `next()`
-    /// will return those items immediately and *not* visit the next bin.
+    /// Ensure exhausted iterator continues to return None if new entries are added to the index.
     #[test]
-    fn test_accounts_index_iter_batched_large() {
+    fn test_exhausted() {
         let index = AccountsIndex::<bool, bool>::default_for_tests();
-        // this test requires the index to have two bins
-        assert_eq!(index.bins(), 2);
-        // ensure each bin ends up with more than ITER_BATCH_SIZE items
-        let num_pubkeys = ITER_BATCH_SIZE * (index.bins() + 1);
-        let pubkeys = iter::repeat_with(solana_pubkey::new_rand)
-            .take(num_pubkeys)
-            .collect::<Vec<_>>();
-
-        for key in pubkeys {
-            let slot = 0;
-            let value = true;
-            let mut gc = ReclaimsSlotList::new();
-            index.upsert(
-                slot,
-                slot,
-                &key,
-                &AccountSharedData::default(),
-                &AccountSecondaryIndexes::default(),
-                value,
-                &mut gc,
-                UpsertReclaim::PopulateReclaims,
-            );
+        let mut iter = index.iter();
+        for _items in iter.by_ref() {
+            // exhaust the iterator
         }
-
-        // Create an iterator for the whole pubkey range.
-        let mut iter = index.iter();
-        // First iter.next() should return the whole first bin.
-        let x = iter.next().unwrap();
-        let (len0, _) = index.account_maps[0].len_and_cap_for_startup();
-        assert_eq!(x.len(), len0);
-        assert_eq!(iter.items.len(), 0); // should be empty.
-
-        // Second iter.next() should return all the remaining
-        let num_remaining = num_pubkeys - len0;
-        let y = iter.next().unwrap();
-        let (len1, _) = index.account_maps[1].len_and_cap_for_startup();
-        assert_eq!(y.len(), num_remaining);
-        assert_eq!(y.len(), len1);
-        assert_eq!(iter.items.len(), 0); // should be empty.
-
-        // Third iter.next() should return None.
         assert!(iter.next().is_none());
-    }
 
-    #[test]
-    fn test_accounts_iter_finished() {
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        index.add_root(0);
-        let mut iter = index.iter();
-        assert!(iter.next().is_none());
+        // add a new entry to the index
         let mut gc = ReclaimsSlotList::new();
         index.upsert(
             0,
@@ -164,6 +83,96 @@ mod tests {
             &mut gc,
             UpsertReclaim::PopulateReclaims,
         );
+
+        // ensure the iterator remains exhausted
         assert!(iter.next().is_none());
+    }
+
+    /// Ensure iterators return all the pubkeys, even if some bins are empty.
+    #[test]
+    fn test_some_empty_bins() {
+        let index = AccountsIndex::<bool, bool>::default_for_tests();
+        let num_bins = index.bins();
+        // need more than one bin to ensure some are empty and some are not
+        assert!(num_bins > 1);
+        // need at least one empty bin
+        let num_pubkeys = num_bins - 1;
+        let mut pubkeys: Vec<_> = iter::repeat_with(solana_pubkey::new_rand)
+            .take(num_pubkeys)
+            .collect();
+        // need the pubkeys sorted for assertions later
+        pubkeys.sort_unstable();
+
+        for pubkey in &pubkeys {
+            let slot = 0;
+            let value = true;
+            let mut gc = ReclaimsSlotList::new();
+            index.upsert(
+                slot,
+                slot,
+                pubkey,
+                &AccountSharedData::default(),
+                &AccountSecondaryIndexes::default(),
+                value,
+                &mut gc,
+                UpsertReclaim::PopulateReclaims,
+            );
+        }
+
+        let mut num_empty_bins = 0;
+        let mut actual_pubkeys = Vec::new();
+        for mut items in index.iter() {
+            if items.is_empty() {
+                num_empty_bins += 1;
+            }
+            actual_pubkeys.append(&mut items);
+        }
+        actual_pubkeys.sort_unstable();
+
+        assert_ne!(num_empty_bins, 0);
+        assert_eq!(pubkeys, actual_pubkeys);
+    }
+
+    /// Ensure iterators return all the pubkeys, when none of the bins are empty.
+    #[test]
+    fn test_no_empty_bins() {
+        let index = AccountsIndex::<bool, bool>::default_for_tests();
+        let num_bins = index.bins();
+        // need enough pubkeys so no bins are empty
+        let num_pubkeys = num_bins * 123;
+        let mut pubkeys: Vec<_> = iter::repeat_with(solana_pubkey::new_rand)
+            .take(num_pubkeys)
+            .collect();
+        // need the pubkeys sorted for assertions later
+        pubkeys.sort_unstable();
+
+        for pubkey in &pubkeys {
+            let slot = 0;
+            let value = true;
+            let mut gc = ReclaimsSlotList::new();
+            index.upsert(
+                slot,
+                slot,
+                pubkey,
+                &AccountSharedData::default(),
+                &AccountSecondaryIndexes::default(),
+                value,
+                &mut gc,
+                UpsertReclaim::PopulateReclaims,
+            );
+        }
+
+        let mut num_empty_bins = 0;
+        let mut actual_pubkeys = Vec::new();
+        for mut items in index.iter() {
+            if items.is_empty() {
+                num_empty_bins += 1;
+            }
+            actual_pubkeys.append(&mut items);
+        }
+        actual_pubkeys.sort_unstable();
+
+        assert_eq!(num_empty_bins, 0);
+        assert_eq!(pubkeys, actual_pubkeys);
     }
 }
