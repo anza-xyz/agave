@@ -757,9 +757,8 @@ pub(crate) mod external {
             Vec<TxView>,
             &'a mut [CheckResponse],
         ) {
-            let enable_instruction_accounts_limit = bank
-                .feature_set
-                .is_active(&agave_feature_set::limit_instruction_accounts::ID);
+            let enable_instruction_accounts_limit =
+                bank.feature_set.snapshot().limit_instruction_accounts;
             let mut parsing_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut parsed_transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             for (tx_ptr, _) in batch.iter() {
@@ -946,9 +945,8 @@ pub(crate) mod external {
             batch: &TransactionPtrBatch,
             bank: &Bank,
         ) -> (Vec<Result<(), PacketHandlingError>>, Vec<Tx>, Vec<MaxAge>) {
-            let enable_instruction_accounts_limit = bank
-                .feature_set
-                .is_active(&agave_feature_set::limit_instruction_accounts::ID);
+            let enable_instruction_accounts_limit =
+                bank.feature_set.snapshot().limit_instruction_accounts;
             let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
 
             let mut translation_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
@@ -2537,8 +2535,7 @@ mod tests {
                 None,
                 loader,
                 &HashSet::default(),
-                bank.feature_set
-                    .is_active(&agave_feature_set::limit_instruction_accounts::id()),
+                bank.feature_set.snapshot().limit_instruction_accounts,
             )
             .unwrap()
         };
