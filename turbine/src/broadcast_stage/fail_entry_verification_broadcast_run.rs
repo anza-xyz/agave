@@ -135,13 +135,12 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
                     self.next_code_index = self.next_code_index.max(shred.index() + 1);
                 }
             }
-            if let Some(shred) = header_shreds
-                .iter()
-                .filter(|s| s.is_data())
-                .max_by_key(|shred| shred.index())
-            {
+            if let Some(shred) = header_shreds.iter().filter(|s| s.is_data()).last() {
                 self.chained_merkle_root = shred.merkle_root().unwrap();
             }
+            let header_shreds = Arc::new(header_shreds);
+            blockstore_sender.send((header_shreds.clone(), None))?;
+            socket_sender.send((header_shreds, None))?;
         }
 
         let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(

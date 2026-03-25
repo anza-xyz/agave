@@ -221,7 +221,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 .filter(|s| s.is_data())
                 .cloned()
                 .collect();
-            if let Some(shred) = header_data.iter().max_by_key(|shred| shred.index()) {
+            if let Some(shred) = header_data.last() {
                 self.chained_merkle_root = shred.merkle_root().unwrap();
             }
             self.next_shred_index += header_data.len() as u32;
@@ -233,6 +233,9 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             {
                 self.next_code_index = index + 1;
             }
+            let header_shreds = Arc::new(header_shreds);
+            blockstore_sender.send((header_shreds.clone(), None))?;
+            socket_sender.send((header_shreds, None))?;
             header_data
         } else {
             vec![]
@@ -301,10 +304,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 );
                 self.next_shred_index += u32::try_from(original_last_data_shred.len()).unwrap();
                 // Update chained_merkle_root to the merkle root of the original last FEC set
-                if let Some(shred) = original_last_data_shred
-                    .iter()
-                    .max_by_key(|shred| shred.index())
-                {
+                if let Some(shred) = original_last_data_shred.last() {
                     self.chained_merkle_root = shred.merkle_root().unwrap();
                 }
                 (original_last_data_shred, partition_last_data_shred)

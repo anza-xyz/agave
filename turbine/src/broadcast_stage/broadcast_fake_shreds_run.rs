@@ -124,11 +124,19 @@ impl BroadcastRun for BroadcastFakeShredsRun {
             for shred in &header_shreds {
                 if shred.is_data() {
                     self.next_shred_index = self.next_shred_index.max(shred.index() + 1);
-                    self.chained_merkle_root = shred.merkle_root().unwrap();
                 } else {
                     self.next_code_index = self.next_code_index.max(shred.index() + 1);
                 }
             }
+
+            // Set the chained merkle root to the last data shred's root
+            if let Some(shred) = header_shreds.iter().filter(|s| s.is_data()).last() {
+                self.chained_merkle_root = shred.merkle_root().unwrap();
+            }
+
+            let header_shreds = Arc::new(header_shreds);
+            blockstore_sender.send((header_shreds.clone(), None))?;
+            socket_sender.send((header_shreds, None))?;
         }
 
         let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
