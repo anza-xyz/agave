@@ -182,7 +182,7 @@ fn generate_full_pipeline() -> Result<buildkite::Pipeline> {
 fn default_sanity_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("sanity"),
-        command: String::from("ci/test-sanity.sh"),
+        command: String::from("ci/docker-run-default-image.sh ci/test-sanity.sh"),
         agents: Some(HashMap::from([(
             String::from("queue"),
             String::from("default"),
