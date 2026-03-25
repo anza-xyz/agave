@@ -288,9 +288,8 @@ impl TransactionStatusService {
                 keyed_rewards,
                 num_partitions,
             } = rewards;
-            let commission_rate_in_basis_points = bank
-                .feature_set
-                .is_active(&agave_feature_set::commission_rate_in_basis_points::id());
+            let commission_rate_in_basis_points =
+                bank.feature_set.snapshot().commission_rate_in_basis_points;
             let rewards = keyed_rewards
                 .into_iter()
                 .map(|(pubkey, reward_info)| Reward {
