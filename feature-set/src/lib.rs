@@ -1308,7 +1308,7 @@ pub mod vote_account_initialize_v2 {
 }
 
 pub mod validate_chained_block_id {
-    solana_pubkey::declare_id!("vbiddkDHTSHSvL8B21AetWvTBLxxUZ1FmU6DFjztyRn");
+    solana_pubkey::declare_id!("vcmrbYbiMVKaq1snKP6eCacNDcr6qZvpCNUjmk6gxvZ");
 }
 
 pub mod validator_admission_ticket {
