@@ -4,7 +4,7 @@
 use qualifier_attr::qualifiers;
 use {
     crate::{
-        execution_budget::MAX_INSTRUCTION_STACK_DEPTH,
+        execution_budget::MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268,
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
         loaded_programs::ProgramCacheEntry,
         mem_pool::VmMemoryPool,
@@ -267,8 +267,8 @@ pub fn execute<'a, 'b: 'a>(
         MEMORY_POOL.with_borrow_mut(|memory_pool| {
             memory_pool.put_stack(stack);
             memory_pool.put_heap(heap);
-            debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH);
-            debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH);
+            debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268);
+            debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268);
         });
         drop(vm);
         invoke_context.insert_register_trace(register_trace);
