@@ -2,7 +2,7 @@ use {
     anyhow::Result,
     clap::Args,
     futures_util::TryStreamExt,
-    log::info,
+    log::{info, warn},
     regex::Regex,
     std::{collections::HashMap, env, fs, path::PathBuf, process::Command},
     tokio::pin,
@@ -90,7 +90,20 @@ fn generate_merge_queue_pipeline() -> Result<buildkite::Pipeline> {
 
 async fn get_changed_files(pr_number: u64) -> Result<Vec<String>> {
     let mut changed_files = vec![];
-    let github_client = octocrab::instance();
+    let github_client_builder = match env::var("GH_TOKEN") {
+        Ok(token) if !token.trim().is_empty() => {
+            octocrab::Octocrab::builder().personal_token(token)
+        }
+        Ok(_) | Err(env::VarError::NotPresent) => {
+            warn!("`GH_TOKEN` is not set; using unauthenticated GitHub client");
+            octocrab::Octocrab::builder()
+        }
+        Err(err) => {
+            warn!("failed to read `GH_TOKEN` ({err}); using unauthenticated GitHub client");
+            octocrab::Octocrab::builder()
+        }
+    };
+    let github_client = github_client_builder.build()?;
     let stream = github_client
         .pulls("anza-xyz", "agave")
         .list_files(pr_number)
