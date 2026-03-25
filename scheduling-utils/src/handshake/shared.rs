@@ -3,6 +3,10 @@ use {
         PackToWorkerMessage, ProgressMessage, TpuToPackMessage, WorkerToPackMessage,
     },
     rts_alloc::Allocator,
+    std::{
+        fs::File,
+        io::{Read, Write},
+    },
     thiserror::Error,
 };
 
@@ -17,6 +21,8 @@ pub(crate) const LOGON_SUCCESS: u8 = 0x01;
 pub(crate) const LOGON_FAILURE: u8 = 0x02;
 pub(crate) const MAX_ALLOCATOR_HANDLES: usize = 128;
 pub(crate) const GLOBAL_ALLOCATORS: usize = 1;
+pub(crate) const GLOBAL_SHMEM: usize = 3;
+pub(crate) const HANDSHAKE_BUFFER_SIZE: usize = 1024;
 
 /// The logon message sent by the client to the server.
 #[derive(Debug, Default, Clone, Copy)]
@@ -57,6 +63,102 @@ impl ClientLogon {
         // - `Self` is valid for any byte pattern
         Some(unsafe { core::ptr::read_unaligned(buffer.as_ptr().cast()) })
     }
+}
+
+pub(crate) fn send_logon<W: Write>(
+    stream: &mut W,
+    logon: ClientLogon,
+) -> Result<(), ClientHandshakeError> {
+    let mut buf = [0; HANDSHAKE_BUFFER_SIZE];
+    buf[..8].copy_from_slice(&VERSION.to_le_bytes());
+    const LOGON_END: usize = 8 + core::mem::size_of::<ClientLogon>();
+    let ptr = buf[8..LOGON_END].as_mut_ptr().cast::<ClientLogon>();
+    // SAFETY:
+    // - `buf` is valid for writes.
+    // - `buf.len()` has enough space for logon's size in memory.
+    unsafe {
+        core::ptr::write_unaligned(ptr, logon);
+    }
+    stream.write_all(&buf)?;
+
+    Ok(())
+}
+
+pub(crate) fn recv_logon<R: Read>(
+    stream: &mut R,
+    buffer: &mut [u8; HANDSHAKE_BUFFER_SIZE],
+) -> Result<ClientLogon, AgaveHandshakeError> {
+    stream.read_exact(buffer)?;
+
+    let version = u64::from_le_bytes(buffer[..8].try_into().unwrap());
+    if version != VERSION {
+        return Err(AgaveHandshakeError::Version {
+            server: VERSION,
+            client: version,
+        });
+    }
+
+    const LOGON_END: usize = 8 + core::mem::size_of::<ClientLogon>();
+    let logon = ClientLogon::try_from_bytes(&buffer[8..LOGON_END]).unwrap();
+
+    if !(1..=MAX_WORKERS).contains(&logon.worker_count) {
+        return Err(AgaveHandshakeError::WorkerCount(logon.worker_count));
+    }
+
+    if !(1..=MAX_ALLOCATOR_HANDLES).contains(&logon.allocator_handles) {
+        return Err(AgaveHandshakeError::AllocatorHandles(
+            logon.allocator_handles,
+        ));
+    }
+
+    Ok(logon)
+}
+
+pub(crate) fn join_session(
+    logon: &ClientLogon,
+    files: Vec<File>,
+) -> Result<ClientSession, ClientHandshakeError> {
+    if files.len() < GLOBAL_SHMEM {
+        return Err(ClientHandshakeError::ProtocolViolation);
+    }
+    let (global_files, worker_files) = files.split_at(GLOBAL_SHMEM);
+    let [allocator_file, tpu_to_pack_file, progress_tracker_file] = global_files else {
+        unreachable!();
+    };
+
+    let allocators = (0..logon.allocator_handles)
+        .map(|_| Allocator::join(allocator_file))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if worker_files.is_empty()
+        || !worker_files.len().is_multiple_of(2)
+        || worker_files.len() / 2 != logon.worker_count
+    {
+        return Err(ClientHandshakeError::ProtocolViolation);
+    }
+
+    let session = ClientSession {
+        allocators,
+        tpu_to_pack: unsafe { shaq::spsc::Consumer::join(tpu_to_pack_file)? },
+        progress_tracker: unsafe { shaq::spsc::Consumer::join(progress_tracker_file)? },
+        workers: worker_files
+            .chunks(2)
+            .map(|window| {
+                let [pack_to_worker, worker_to_pack] = window else {
+                    panic!();
+                };
+
+                Ok(ClientWorkerSession {
+                    pack_to_worker: unsafe { shaq::spsc::Producer::join(pack_to_worker)? },
+                    worker_to_pack: unsafe { shaq::spsc::Consumer::join(worker_to_pack)? },
+                })
+            })
+            .collect::<Result<_, ClientHandshakeError>>()?,
+    };
+
+    drop(files);
+
+    Ok(session)
 }
 
 pub mod logon_flags {}

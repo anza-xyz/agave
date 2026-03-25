@@ -1,14 +1,14 @@
 use {
+    super::shared::MAX_WORKERS,
     crate::handshake::{
-        ClientHandshakeError, ClientLogon, ClientSession, ClientWorkerSession,
-        shared::{LOGON_FAILURE, MAX_WORKERS, VERSION},
+        ClientHandshakeError, ClientLogon, ClientSession,
+        shared::{GLOBAL_SHMEM, HANDSHAKE_BUFFER_SIZE, LOGON_FAILURE, join_session, send_logon},
     },
     libc::CMSG_LEN,
     nix::sys::socket::{self, ControlMessageOwned, MsgFlags, UnixAddr},
-    rts_alloc::Allocator,
     std::{
         fs::File,
-        io::{IoSliceMut, Write},
+        io::IoSliceMut,
         os::{
             fd::{AsRawFd, FromRawFd},
             unix::net::UnixStream,
@@ -17,9 +17,6 @@ use {
         time::Duration,
     },
 };
-
-/// Number of global shared memory objects (in addition to per worker objects).
-const GLOBAL_SHMEM: usize = 3;
 
 /// The maximum size in bytes of the control message containing the queues assuming [`MAX_WORKERS`]
 /// is respected.
@@ -69,31 +66,14 @@ fn connect_path(
     let files = recv_response(&mut stream)?;
 
     // Join the shared memory regions.
-    let session = setup_session(&logon, files)?;
+    let session = join_session(&logon, files)?;
 
     Ok(session)
 }
 
-fn send_logon(stream: &mut UnixStream, logon: ClientLogon) -> Result<(), ClientHandshakeError> {
-    // Send the logon message.
-    let mut buf = [0; 1024];
-    buf[..8].copy_from_slice(&VERSION.to_le_bytes());
-    const LOGON_END: usize = 8 + core::mem::size_of::<ClientLogon>();
-    let ptr = buf[8..LOGON_END].as_mut_ptr().cast::<ClientLogon>();
-    // SAFETY:
-    // - `buf` is valid for writes.
-    // - `buf.len()` has enough space for logon's size in memory.
-    unsafe {
-        core::ptr::write_unaligned(ptr, logon);
-    }
-    stream.write_all(&buf)?;
-
-    Ok(())
-}
-
 fn recv_response(stream: &mut UnixStream) -> Result<Vec<File>, ClientHandshakeError> {
     // Receive the requested FDs.
-    let mut buf = [0; 1024];
+    let mut buf = [0; HANDSHAKE_BUFFER_SIZE];
     let mut iov = [IoSliceMut::new(&mut buf)];
     // SAFETY: CMSG_LEN is always safe (const expression).
     let mut cmsgs = [0u8; unsafe { CMSG_LEN(CMSG_MAX_SIZE as u32) as usize }];
@@ -134,52 +114,7 @@ pub fn setup_session(
     logon: &ClientLogon,
     files: Vec<File>,
 ) -> Result<ClientSession, ClientHandshakeError> {
-    if files.len() < GLOBAL_SHMEM {
-        return Err(ClientHandshakeError::ProtocolViolation);
-    }
-    let (global_files, worker_files) = files.split_at(GLOBAL_SHMEM);
-    let [allocator_file, tpu_to_pack_file, progress_tracker_file] = global_files else {
-        unreachable!();
-    };
-
-    // Setup requested allocators.
-    let allocators = (0..logon.allocator_handles)
-        .map(|_| Allocator::join(allocator_file))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // Ensure worker file count matches expectations.
-    if worker_files.is_empty()
-        || !worker_files.len().is_multiple_of(2)
-        || worker_files.len() / 2 != logon.worker_count
-    {
-        return Err(ClientHandshakeError::ProtocolViolation);
-    }
-
-    // NB: After creating & mapping the queues we are fine to drop the files as mmap will keep the
-    // underlying object alive until process exit or munmap.
-    let session = ClientSession {
-        allocators,
-        tpu_to_pack: unsafe { shaq::spsc::Consumer::join(tpu_to_pack_file)? },
-        progress_tracker: unsafe { shaq::spsc::Consumer::join(progress_tracker_file)? },
-        workers: worker_files
-            .chunks(2)
-            .map(|window| {
-                let [pack_to_worker, worker_to_pack] = window else {
-                    panic!();
-                };
-
-                Ok(ClientWorkerSession {
-                    pack_to_worker: unsafe { shaq::spsc::Producer::join(pack_to_worker)? },
-                    worker_to_pack: unsafe { shaq::spsc::Consumer::join(worker_to_pack)? },
-                })
-            })
-            .collect::<Result<_, ClientHandshakeError>>()?,
-    };
-
-    // Drop the file handles now that mmaps are completed.
-    drop(files);
-
-    Ok(session)
+    join_session(logon, files)
 }
 
 impl From<nix::Error> for ClientHandshakeError {

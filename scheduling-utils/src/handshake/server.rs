@@ -2,8 +2,8 @@ use {
     crate::handshake::{
         AgaveHandshakeError, AgaveTpuToPackSession, AgaveWorkerSession, ClientLogon,
         shared::{
-            AgaveSession, GLOBAL_ALLOCATORS, LOGON_FAILURE, LOGON_SUCCESS, MAX_ALLOCATOR_HANDLES,
-            MAX_WORKERS, VERSION,
+            AgaveSession, GLOBAL_ALLOCATORS, HANDSHAKE_BUFFER_SIZE, LOGON_FAILURE, LOGON_SUCCESS,
+            recv_logon,
         },
     },
     agave_scheduler_bindings::PackToWorkerMessage,
@@ -12,13 +12,13 @@ use {
     std::{
         ffi::CStr,
         fs::File,
-        io::{IoSlice, Read, Write},
+        io::{IoSlice, Write},
         os::{
             fd::{AsRawFd, FromRawFd},
             unix::net::{UnixListener, UnixStream},
         },
         path::Path,
-        time::{Duration, Instant},
+        time::Duration,
     },
 };
 
@@ -41,7 +41,7 @@ impl Server {
 
         Ok(Self {
             listener,
-            buffer: [0; 1024],
+            buffer: [0; HANDSHAKE_BUFFER_SIZE],
         })
     }
 
@@ -95,51 +95,7 @@ impl Server {
     }
 
     fn recv_logon(&mut self, stream: &mut UnixStream) -> Result<ClientLogon, AgaveHandshakeError> {
-        // Read the logon message.
-        let handshake_start = Instant::now();
-        let mut buffer_len = 0;
-        while buffer_len < self.buffer.len() {
-            let read = stream.read(&mut self.buffer[buffer_len..])?;
-            if read == 0 {
-                return Err(AgaveHandshakeError::EofDuringHandshake);
-            }
-
-            // SAFETY: We cannot read a value greater than buffer.len() which itself is a usize.
-            buffer_len = buffer_len.checked_add(read).unwrap();
-
-            if handshake_start.elapsed() > HANDSHAKE_TIMEOUT {
-                return Err(AgaveHandshakeError::Timeout);
-            }
-        }
-
-        // Ensure exact version match, version will be bumped any time a backwards incompatible
-        // change is made to handshake/shared memory objects.
-        let version = u64::from_le_bytes(self.buffer[..8].try_into().unwrap());
-        if version != VERSION {
-            return Err(AgaveHandshakeError::Version {
-                server: VERSION,
-                client: version,
-            });
-        }
-
-        // Read the logon message, cannot panic as we ensure the correct buf size at compile time
-        // (hence the const just below).
-        const LOGON_END: usize = 8 + core::mem::size_of::<ClientLogon>();
-        let logon = ClientLogon::try_from_bytes(&self.buffer[8..LOGON_END]).unwrap();
-
-        // Put a hard limit of 64 worker threads for now.
-        if !(1..=MAX_WORKERS).contains(&logon.worker_count) {
-            return Err(AgaveHandshakeError::WorkerCount(logon.worker_count));
-        }
-
-        // Hard limit allocator handles to 128.
-        if !(1..=MAX_ALLOCATOR_HANDLES).contains(&logon.allocator_handles) {
-            return Err(AgaveHandshakeError::AllocatorHandles(
-                logon.allocator_handles,
-            ));
-        }
-
-        Ok(logon)
+        recv_logon(stream, &mut self.buffer)
     }
 
     pub fn setup_session(
