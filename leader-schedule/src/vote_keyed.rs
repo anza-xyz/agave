@@ -73,7 +73,7 @@ impl LeaderSchedule {
             Some(nodes_len) => {
                 HashMap::with_capacity_and_hasher(nodes_len, PubkeyHasherBuilder::default())
             }
-            None => HashMap::with_hasher(PubkeyHasherBuilder::default()),
+            None => HashMap::default(),
         };
         for (slot, leader) in slot_leaders.iter().enumerate() {
             grouped_slot_leaders
