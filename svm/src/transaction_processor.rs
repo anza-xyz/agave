@@ -1253,6 +1253,7 @@ mod tests {
             loaded_programs::{BlockRelation, ProgramCacheEntryType},
         },
         solana_rent::Rent,
+        solana_sbpf::vm,
         solana_sdk_ids::{bpf_loader, loader_v4, system_program, sysvar},
         solana_signature::Signature,
         solana_svm_callback::{AccountState, InvokeContextCallback},
@@ -2670,6 +2671,57 @@ mod tests {
         assert_eq!(
             actual_inspected_accounts.as_slice(),
             &[(fee_payer_address, vec![(Some(fee_payer_account), true)])],
+        );
+    }
+
+    #[test]
+    fn test_set_program_runtime_environment() {
+        let mut transaction_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let current_environment =
+            ProgramRuntimeEnvironment::clone(&transaction_processor.program_runtime_environment);
+        let new_environment = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
+        let config = vm::Config {
+            enable_symbol_and_section_labels: true,
+            ..vm::Config::default()
+        };
+        let new_environment2 = ProgramRuntimeEnvironment::from(BuiltinProgram::new_loader(config));
+        assert_ne!(current_environment, new_environment);
+        assert_ne!(current_environment, new_environment2);
+        assert_ne!(new_environment, new_environment2);
+        // Assign an equal and identical environment: No changes
+        transaction_processor.set_program_runtime_environment(ProgramRuntimeEnvironment::clone(
+            &current_environment,
+        ));
+        assert_eq!(
+            transaction_processor.program_runtime_environment,
+            current_environment,
+        );
+        // Assign an equal but not identical environment: No changes
+        transaction_processor
+            .set_program_runtime_environment(ProgramRuntimeEnvironment::clone(&new_environment));
+        assert_eq!(
+            transaction_processor.program_runtime_environment,
+            current_environment,
+        );
+        // Assign a different and not identical environment: Overwritten
+        transaction_processor
+            .set_program_runtime_environment(ProgramRuntimeEnvironment::clone(&new_environment2));
+        assert_eq!(
+            transaction_processor.program_runtime_environment,
+            new_environment2,
+        );
+        // Assign an environment which is equal to the upcoming_environment: Overwritten
+        transaction_processor
+            .epoch_boundary_preparation
+            .write()
+            .unwrap()
+            .upcoming_environment = Some(ProgramRuntimeEnvironment::clone(&new_environment));
+        transaction_processor.set_program_runtime_environment(ProgramRuntimeEnvironment::clone(
+            &current_environment,
+        ));
+        assert_eq!(
+            transaction_processor.program_runtime_environment,
+            new_environment,
         );
     }
 }
