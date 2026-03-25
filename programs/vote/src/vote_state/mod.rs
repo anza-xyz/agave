@@ -4951,19 +4951,17 @@ mod tests {
             acct.set_data_from_slice(&serialized);
             let transaction_context = setup_withdraw_context(vote_pubkey, acct);
             let ix = transaction_context.get_next_instruction_context().unwrap();
-            assert!(
-                withdraw(
-                    &ix,
-                    0,
-                    target_version,
-                    min_balance,
-                    1,
-                    &signers,
-                    &rent,
-                    &clock
-                )
-                .is_ok()
-            );
+            withdraw(
+                &ix,
+                0,
+                target_version,
+                min_balance,
+                1,
+                &signers,
+                &rent,
+                &clock,
+            )
+            .unwrap();
         }
 
         // Account at rent_exempt + 100: withdraw 100 succeeds.
@@ -4972,7 +4970,7 @@ mod tests {
             acct.set_data_from_slice(&serialized);
             let transaction_context = setup_withdraw_context(vote_pubkey, acct);
             let ix = transaction_context.get_next_instruction_context().unwrap();
-            assert!(withdraw(&ix, 0, target_version, 100, 1, &signers, &rent, &clock).is_ok());
+            withdraw(&ix, 0, target_version, 100, 1, &signers, &rent, &clock).unwrap();
         }
 
         // Account at rent_exempt + 100: withdraw 101 fails.
@@ -5052,19 +5050,17 @@ mod tests {
             let ix = tx.get_next_instruction_context().unwrap();
 
             // Withdraw 1 succeeds.
-            assert!(
-                withdraw(
-                    &ix,
-                    0,
-                    VoteStateTargetVersion::V4,
-                    1,
-                    1,
-                    &signers,
-                    &rent,
-                    &clock
-                )
-                .is_ok()
-            );
+            withdraw(
+                &ix,
+                0,
+                VoteStateTargetVersion::V4,
+                1,
+                1,
+                &signers,
+                &rent,
+                &clock,
+            )
+            .unwrap();
         }
 
         // pending = 1000, extra = 1001. Withdraw 2 fails.
@@ -5123,19 +5119,17 @@ mod tests {
             let tx = setup_withdraw_context(vote_pubkey, account);
             let ix = tx.get_next_instruction_context().unwrap();
 
-            assert!(
-                withdraw(
-                    &ix,
-                    0,
-                    VoteStateTargetVersion::V4,
-                    lamports,
-                    1,
-                    &signers,
-                    &rent,
-                    &clock
-                )
-                .is_ok()
-            );
+            withdraw(
+                &ix,
+                0,
+                VoteStateTargetVersion::V4,
+                lamports,
+                1,
+                &signers,
+                &rent,
+                &clock,
+            )
+            .unwrap();
         }
     }
 
@@ -5256,9 +5250,15 @@ mod tests {
 
         let deserialized = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
         assert_eq!(deserialized.node_pubkey, node_pubkey);
+        assert_eq!(deserialized.authorized_withdrawer, authorized_withdrawer);
+        assert_eq!(deserialized.root_slot, root_slot);
         assert_eq!(deserialized.votes, votes);
         assert_eq!(deserialized.epoch_credits, epoch_credits);
         assert_eq!(deserialized.authorized_voters, authorized_voters);
+        assert_eq!(
+            deserialized.inflation_rewards_commission_bps,
+            commission as u16 * 100
+        );
         assert_eq!(deserialized.last_timestamp, last_timestamp);
     }
 
