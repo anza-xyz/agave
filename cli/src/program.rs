@@ -11,7 +11,7 @@ use {
         },
         feature::{CliFeatureStatus, status_from_account},
     },
-    agave_feature_set::{FEATURE_NAMES, FeatureSet, raise_cpi_nesting_limit_to_8},
+    agave_feature_set::{FEATURE_NAMES, FeatureSet},
     agave_syscalls::create_program_runtime_environment,
     bip39::{Language, Mnemonic, MnemonicType, Seed},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
@@ -1462,9 +1462,7 @@ async fn process_program_deploy(
         fetch_feature_set(&rpc_client).await?
     };
 
-    if !skip_feature_verification
-        && feature_set.is_active(&agave_feature_set::enable_loader_v4::id())
-    {
+    if !skip_feature_verification && feature_set.snapshot().enable_loader_v4 {
         warn!("Loader-v4 is available now. Please migrate your program.");
     }
 
@@ -2558,21 +2556,20 @@ async fn process_extend_program(
     let blockhash = rpc_client.get_latest_blockhash().await?;
     let feature_set = fetch_feature_set(rpc_client).await?;
 
-    let instruction =
-        if feature_set.is_active(&agave_feature_set::enable_extend_program_checked::id()) {
-            loader_v3_instruction::extend_program_checked(
-                &program_pubkey,
-                &upgrade_authority_address,
-                Some(&payer_pubkey),
-                additional_bytes,
-            )
-        } else {
-            loader_v3_instruction::extend_program(
-                &program_pubkey,
-                Some(&payer_pubkey),
-                additional_bytes,
-            )
-        };
+    let instruction = if feature_set.snapshot().enable_extend_program_checked {
+        loader_v3_instruction::extend_program_checked(
+            &program_pubkey,
+            &upgrade_authority_address,
+            Some(&payer_pubkey),
+            additional_bytes,
+        )
+    } else {
+        loader_v3_instruction::extend_program(
+            &program_pubkey,
+            Some(&payer_pubkey),
+            additional_bytes,
+        )
+    };
     let mut tx = Transaction::new_unsigned(Message::new(&[instruction], Some(&fee_payer_pubkey)));
 
     tx.try_sign(
@@ -3173,17 +3170,16 @@ async fn extend_program_data_if_needed(
         u32::try_from(additional_bytes).expect("`u32` is big enough to hold an account size");
 
     let feature_set = fetch_feature_set(rpc_client).await?;
-    let instruction =
-        if feature_set.is_active(&agave_feature_set::enable_extend_program_checked::id()) {
-            loader_v3_instruction::extend_program_checked(
-                program_id,
-                &upgrade_authority_address,
-                Some(fee_payer),
-                additional_bytes,
-            )
-        } else {
-            loader_v3_instruction::extend_program(program_id, Some(fee_payer), additional_bytes)
-        };
+    let instruction = if feature_set.snapshot().enable_extend_program_checked {
+        loader_v3_instruction::extend_program_checked(
+            program_id,
+            &upgrade_authority_address,
+            Some(fee_payer),
+            additional_bytes,
+        )
+    } else {
+        loader_v3_instruction::extend_program(program_id, Some(fee_payer), additional_bytes)
+    };
     initial_instructions.push(instruction);
 
     Ok(())
@@ -3212,7 +3208,7 @@ fn verify_elf(
     let program_runtime_environment = create_program_runtime_environment(
         &feature_set.runtime_features(),
         &SVMTransactionExecutionBudget::new_with_defaults(
-            feature_set.is_active(&raise_cpi_nesting_limit_to_8::id()),
+            feature_set.snapshot().raise_cpi_nesting_limit_to_8,
         ),
         true,
         false,

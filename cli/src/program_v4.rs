@@ -8,7 +8,7 @@ use {
         feature::{CliFeatureStatus, status_from_account},
         program::calculate_max_chunk_size,
     },
-    agave_feature_set::{FEATURE_NAMES, FeatureSet, raise_cpi_nesting_limit_to_8},
+    agave_feature_set::{FEATURE_NAMES, FeatureSet},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand, value_t},
     log::*,
     solana_account::Account,
@@ -739,7 +739,7 @@ pub async fn process_deploy_program(
     let program_runtime_environment = agave_syscalls::create_program_runtime_environment(
         &feature_set.runtime_features(),
         &SVMTransactionExecutionBudget::new_with_defaults(
-            feature_set.is_active(&raise_cpi_nesting_limit_to_8::id()),
+            feature_set.snapshot().raise_cpi_nesting_limit_to_8,
         ),
         true,
         false,
