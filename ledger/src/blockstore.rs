@@ -207,7 +207,8 @@ impl LastFECSetCheckResults {
         if self.last_fec_set_merkle_root.is_none() {
             return Err(BlockstoreProcessorError::IncompleteFinalFecSet);
         } else if feature_set
-            .is_active(&agave_feature_set::vote_only_retransmitter_signed_fec_sets::id())
+            .snapshot()
+            .vote_only_retransmitter_signed_fec_sets
             && !self.is_retransmitter_signed
         {
             return Err(BlockstoreProcessorError::InvalidRetransmitterSignatureFinalFecSet);
