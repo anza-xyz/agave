@@ -7383,8 +7383,6 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-loader-v3-interface",
- "solana-loader-v4-interface",
- "solana-loader-v4-program",
  "solana-message",
  "solana-native-token",
  "solana-net-utils",
