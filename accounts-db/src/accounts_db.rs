@@ -2137,13 +2137,13 @@ impl AccountsDb {
             ),
             (
                 "active_scans",
-                self.accounts_index.active_scans.load(Ordering::Relaxed),
+                self.accounts_index.scan_tracker.active_scans.load(Ordering::Relaxed),
                 i64
             ),
             (
                 "max_distance_to_min_scan_slot",
                 self.accounts_index
-                    .max_distance_to_min_scan_slot
+                    .scan_tracker.max_distance_to_min_scan_slot
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -4095,6 +4095,7 @@ impl AccountsDb {
         // safe to remove this bank_id from the `removed_bank_ids` list at this point.
         if self
             .accounts_index
+            .scan_tracker
             .removed_bank_ids
             .lock()
             .unwrap()
@@ -4330,7 +4331,8 @@ impl AccountsDb {
             //
             // Also note roots are never removed via `remove_unrooted_slot()`, so
             // it's safe to filter them out here as they won't need deletion from
-            // self.accounts_index.removed_bank_ids in `purge_slots_from_cache_and_store()`.
+            // self.accounts_index.scan_tracker.removed_bank_ids in
+            // `purge_slots_from_cache_and_store()`.
             .filter(|slot| !self.accounts_index.is_alive_root(**slot));
         safety_checks_elapsed.stop();
         self.external_purge_slots_stats
@@ -4354,7 +4356,12 @@ impl AccountsDb {
         // banks fail, and any ongoing scans over these slots will detect that they should abort
         // their results
         {
-            let mut locked_removed_bank_ids = self.accounts_index.removed_bank_ids.lock().unwrap();
+            let mut locked_removed_bank_ids = self
+                .accounts_index
+                .scan_tracker
+                .removed_bank_ids
+                .lock()
+                .unwrap();
             for (_slot, remove_bank_id) in remove_slots.iter() {
                 locked_removed_bank_ids.insert(*remove_bank_id);
             }

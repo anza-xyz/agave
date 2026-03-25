@@ -259,6 +259,37 @@ pub struct AccountsIndexRootsStats {
     pub clean_dead_slot_us: u64,
 }
 
+/// Runtime state for tracking in-progress account scans.
+#[derive(Debug, Default)]
+pub struct ScanTracker {
+    ongoing_scan_roots: RwLock<BTreeMap<Slot, u64>>,
+    // Each scan has some latest slot `S` that is the tip of the fork the scan
+    // is iterating over. The unique id of that slot `S` is recorded here (note we don't use
+    // `S` as the id because there can be more than one version of a slot `S`). If a fork
+    // is abandoned, all of the slots on that fork up to `S` will be removed via
+    // `AccountsDb::remove_unrooted_slots()`. When the scan finishes, it'll realize that the
+    // results of the scan may have been corrupted by `remove_unrooted_slots` and abort its results.
+    //
+    // `removed_bank_ids` tracks all the slot ids that were removed via `remove_unrooted_slots()` so any attempted scans
+    // on any of these slots fails. This is safe to purge once the associated Bank is dropped and
+    // scanning the fork with that Bank at the tip is no longer possible.
+    pub removed_bank_ids: Mutex<HashSet<BankId>>,
+    /// # scans active currently
+    pub active_scans: AtomicUsize,
+    /// # of slots between latest max and latest scan
+    pub max_distance_to_min_scan_slot: AtomicU64,
+}
+
+impl ScanTracker {
+    fn min_ongoing_scan_root_from_btree(ongoing_scan_roots: &BTreeMap<Slot, u64>) -> Option<Slot> {
+        ongoing_scan_roots.keys().next().cloned()
+    }
+
+    pub fn min_ongoing_scan_root(&self) -> Option<Slot> {
+        Self::min_ongoing_scan_root_from_btree(&self.ongoing_scan_roots.read().unwrap())
+    }
+}
+
 #[derive(Copy, Clone)]
 pub enum AccountsIndexScanResult {
     /// if the entry is not in the in-memory index, do not add it unless the entry becomes dirty
@@ -283,18 +314,7 @@ pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     spl_token_mint_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     spl_token_owner_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     pub roots_tracker: RwLock<RootsTracker>,
-    ongoing_scan_roots: RwLock<BTreeMap<Slot, u64>>,
-    // Each scan has some latest slot `S` that is the tip of the fork the scan
-    // is iterating over. The unique id of that slot `S` is recorded here (note we don't use
-    // `S` as the id because there can be more than one version of a slot `S`). If a fork
-    // is abandoned, all of the slots on that fork up to `S` will be removed via
-    // `AccountsDb::remove_unrooted_slots()`. When the scan finishes, it'll realize that the
-    // results of the scan may have been corrupted by `remove_unrooted_slots` and abort its results.
-    //
-    // `removed_bank_ids` tracks all the slot ids that were removed via `remove_unrooted_slots()` so any attempted scans
-    // on any of these slots fails. This is safe to purge once the associated Bank is dropped and
-    // scanning the fork with that Bank at the tip is no longer possible.
-    pub removed_bank_ids: Mutex<HashSet<BankId>>,
+    pub scan_tracker: ScanTracker,
 
     storage: AccountsIndexStorage<T, U>,
 
@@ -307,10 +327,6 @@ pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     pub roots_added: AtomicUsize,
     /// # roots removed since last check
     pub roots_removed: AtomicUsize,
-    /// # scans active currently
-    pub active_scans: AtomicUsize,
-    /// # of slots between latest max and latest scan
-    pub max_distance_to_min_scan_slot: AtomicU64,
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
@@ -335,14 +351,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 "spl_token_owner_index_stats",
             ),
             roots_tracker: RwLock::<RootsTracker>::default(),
-            ongoing_scan_roots: RwLock::<BTreeMap<Slot, u64>>::default(),
-            removed_bank_ids: Mutex::<HashSet<BankId>>::default(),
+            scan_tracker: ScanTracker::default(),
             storage,
             scan_results_limit_bytes,
             roots_added: AtomicUsize::default(),
             roots_removed: AtomicUsize::default(),
-            active_scans: AtomicUsize::default(),
-            max_distance_to_min_scan_slot: AtomicU64::default(),
         }
     }
 
@@ -375,10 +388,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         self.storage.storage.is_disk_index_enabled()
     }
 
-    fn min_ongoing_scan_root_from_btree(ongoing_scan_roots: &BTreeMap<Slot, u64>) -> Option<Slot> {
-        ongoing_scan_roots.keys().next().cloned()
-    }
-
     fn do_checked_scan_accounts<F>(
         &self,
         metric_name: &'static str,
@@ -392,7 +401,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         F: FnMut(&Pubkey, (&T, Slot)),
     {
         {
-            let locked_removed_bank_ids = self.removed_bank_ids.lock().unwrap();
+            let locked_removed_bank_ids = self.scan_tracker.removed_bank_ids.lock().unwrap();
             if locked_removed_bank_ids.contains(&scan_bank_id) {
                 return Err(ScanError::SlotRemoved {
                     slot: ancestors.max_slot(),
@@ -401,9 +410,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             }
         }
 
-        self.active_scans.fetch_add(1, Ordering::Relaxed);
+        self.scan_tracker
+            .active_scans
+            .fetch_add(1, Ordering::Relaxed);
         let max_root = {
             let mut w_ongoing_scan_roots = self
+                .scan_tracker
                 // This lock is also grabbed by clean_accounts(), so clean
                 // has at most cleaned up to the current `max_root` (since
                 // clean only happens *after* BankForks::set_root() which sets
@@ -417,11 +429,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             // deadlock
             let max_root_inclusive = self.max_root_inclusive();
             if let Some(min_ongoing_scan_root) =
-                Self::min_ongoing_scan_root_from_btree(&w_ongoing_scan_roots)
+                ScanTracker::min_ongoing_scan_root_from_btree(&w_ongoing_scan_roots)
             {
                 if min_ongoing_scan_root < max_root_inclusive {
                     let current = max_root_inclusive - min_ongoing_scan_root;
-                    self.max_distance_to_min_scan_slot
+                    self.scan_tracker
+                        .max_distance_to_min_scan_slot
                         .fetch_max(current, Ordering::Relaxed);
                 }
             }
@@ -583,8 +596,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }
 
         {
-            self.active_scans.fetch_sub(1, Ordering::Relaxed);
-            let mut ongoing_scan_roots = self.ongoing_scan_roots.write().unwrap();
+            self.scan_tracker
+                .active_scans
+                .fetch_sub(1, Ordering::Relaxed);
+            let mut ongoing_scan_roots = self.scan_tracker.ongoing_scan_roots.write().unwrap();
             let count = ongoing_scan_roots.get_mut(&max_root).unwrap();
             *count -= 1;
             if *count == 0 {
@@ -595,6 +610,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         // If the fork with tip at bank `scan_bank_id` was removed during our scan, then the scan
         // may have been corrupted, so abort the results.
         let was_scan_corrupted = self
+            .scan_tracker
             .removed_bank_ids
             .lock()
             .unwrap()
@@ -883,7 +899,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     }
 
     pub fn min_ongoing_scan_root(&self) -> Option<Slot> {
-        Self::min_ongoing_scan_root_from_btree(&self.ongoing_scan_roots.read().unwrap())
+        self.scan_tracker.min_ongoing_scan_root()
     }
 
     // Given a SlotList `L`, a list of ancestors and a maximum slot, find the latest element
