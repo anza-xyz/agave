@@ -20,6 +20,7 @@ use {
         validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
     solana_epoch_schedule::EpochSchedule,
+    solana_fee_structure::FeeStructure,
     solana_genesis_config::GenesisConfig,
     solana_gossip::{
         contact_info::{ContactInfo, Protocol},
@@ -1289,7 +1290,7 @@ impl LocalCluster {
         stake
             .saturating_mul(2)
             .saturating_add(2) // 1 lamport for each new account
-            .saturating_add(10_000 * 2 * 5_000) // vote txs are paid by the node identity and carry two signatures
+            .saturating_add(10_000 * 2 * FeeStructure::default().lamports_per_signature) // vote txs are paid by the node identity and carry two signatures
     }
 }
 
