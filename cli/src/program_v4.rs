@@ -523,7 +523,10 @@ pub fn parse_program_v4_subcommand(
         ("download", Some(matches)) => {
             CliCommandInfo::without_signers(CliCommand::ProgramV4(ProgramV4CliCommand::Dump {
                 account_pubkey: pubkey_of(matches, "program-id"),
-                output_location: matches.value_of("path-to-elf").unwrap().to_string(),
+                output_location: matches
+                    .value_of("path-to-elf")
+                    .ok_or_else(|| CliError::BadParameter("PATH-TO-ELF is required".to_string()))?
+                    .to_string(),
             }))
         }
         _ => unreachable!(),
