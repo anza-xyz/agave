@@ -193,10 +193,43 @@ impl<'a> ScanGuard<'a> {
     /// when bank 4 was frozen, so we default to a scan on the latest roots by
     /// removing all `ancestors`.
     ///
-    /// When ancestors **is** used:
-    /// - Ancestors <= `max_root` are all rooted, protected by `ongoing_scan_roots`.
-    /// - Ancestors > `max_root` are kept alive by the `Bank::parent` reference
-    ///   chain, so they cannot be cleaned mid-scan.
+    /// After calling this, there are two cases:
+    ///
+    /// 1) **Ancestors is empty** (this method returned `false`): the scan behaves
+    ///    like a scan on a rooted bank. `ongoing_scan_roots` protects the roots
+    ///    needed by the scan, and passing `max_root` to the scan ensures newer
+    ///    roots don't appear in the results.
+    ///
+    /// 2) **Ancestors is non-empty** (this method returned `true`): the fork
+    ///    structure must look something like:
+    ///
+    /// ```text
+    ///            slot 0
+    ///              |
+    ///        slot 1 (max_root)
+    ///        /            \
+    ///   slot 2              |
+    ///      |            slot 3 (potential newer max root)
+    ///    slot 4
+    ///      |
+    ///   slot 5 (scan)
+    /// ```
+    ///
+    ///    Consider both types of ancestors, `ancestor <= max_root` and
+    ///    `ancestor > max_root`, where `max_root == 1` as illustrated above.
+    ///
+    ///    a) The set of `ancestors <= max_root` are all rooted, which means their
+    ///       state is protected by the same guarantees as case 1.
+    ///
+    ///    b) The `ancestors > max_root` have at least one reference discoverable
+    ///       through the chain of `Bank::BankRc::parent` starting from the calling
+    ///       bank. For instance bank 5's parent reference keeps bank 4 alive, which
+    ///       prevents `Bank::drop()` from running and cleaning up bank 4.
+    ///       Furthermore, no cleans can happen past the saved `max_root == 1`, so a
+    ///       potential newer max root at slot 3 will not clean up any of the
+    ///       ancestors > 1, and slot 4 will not be cleaned in the middle of the
+    ///       scan either. (NOTE: similar reasoning is employed for the `assert!()`
+    ///       justification in `AccountsDb::retry_to_get_account_accessor`.)
     pub(crate) fn should_use_ancestors(&self, ancestors: &Ancestors) -> bool {
         ancestors.contains_key(&self.max_root)
     }

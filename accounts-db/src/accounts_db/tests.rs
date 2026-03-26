@@ -1357,18 +1357,15 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
     let mut found_accounts = HashSet::new();
     let index_key = IndexKey::SplTokenMint(mint_key);
     let bank_id = 0;
-    accounts
-        .accounts_index
-        .index_scan_accounts(
-            &Ancestors::default(),
-            bank_id,
-            index_key,
-            |key, _| {
-                found_accounts.insert(*key);
-            },
-            &ScanConfig::default(),
-        )
-        .unwrap();
+    accounts.accounts_index.index_scan_accounts(
+        &Ancestors::default(),
+        accounts.accounts_index.max_root_inclusive(),
+        index_key,
+        |key, _| {
+            found_accounts.insert(*key);
+        },
+        &ScanConfig::default(),
+    );
     assert_eq!(found_accounts.len(), 2);
     assert!(found_accounts.contains(&pubkey1));
     assert!(found_accounts.contains(&pubkey2));
@@ -1435,16 +1432,13 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
 
     // Secondary index should have purged `pubkey1` as well
     let mut found_accounts = vec![];
-    accounts
-        .accounts_index
-        .index_scan_accounts(
-            &Ancestors::default(),
-            bank_id,
-            IndexKey::SplTokenMint(mint_key),
-            |key, _| found_accounts.push(*key),
-            &ScanConfig::default(),
-        )
-        .unwrap();
+    accounts.accounts_index.index_scan_accounts(
+        &Ancestors::default(),
+        accounts.accounts_index.max_root_inclusive(),
+        IndexKey::SplTokenMint(mint_key),
+        |key, _| found_accounts.push(*key),
+        &ScanConfig::default(),
+    );
     assert_eq!(found_accounts, vec![pubkey2]);
 }
 

@@ -50,7 +50,7 @@ use {
             AccountsIndexScanResult, IndexKey, IsCached, ReclaimsSlotList, RefCount, ScanFilter,
             SlotList, Startup, UpsertReclaim, in_mem_accounts_index::StartupStats,
         },
-        accounts_scan::{ScanConfig, ScanResult},
+        accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult},
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
@@ -3351,10 +3351,26 @@ impl AccountsDb {
     where
         F: FnMut(Option<(&Pubkey, AccountSharedData, Slot)>),
     {
-        // This can error out if the slots being scanned over are aborted
+        // Register this scan so that slots needed by the scan are not cleaned out from under us.
+        let scan_guard = ScanGuard::try_new(&self.accounts_index.scan_tracker, bank_id, || {
+            self.accounts_index.max_root_inclusive()
+        })
+        .ok_or(ScanError::SlotRemoved {
+            slot: ancestors.max_slot(),
+            bank_id,
+        })?;
+
+        // If the scan's ancestors are all rooted, drop them and scan roots only
+        let empty_ancestors = Ancestors::default();
+        let ancestors = if scan_guard.should_use_ancestors(ancestors) {
+            ancestors
+        } else {
+            &empty_ancestors
+        };
+
         self.accounts_index.scan_accounts(
             ancestors,
-            bank_id,
+            scan_guard.max_root(),
             |pubkey, (account_info, slot)| {
                 let mut account_accessor =
                     self.get_account_accessor(slot, pubkey, &account_info.storage_location());
@@ -3368,8 +3384,15 @@ impl AccountsDb {
                 scan_func(account_slot)
             },
             config,
-        )?;
+        );
 
+        // Check whether the bank was removed while the scan was in progress.
+        if scan_guard.was_scan_corrupted() {
+            return Err(ScanError::SlotRemoved {
+                slot: ancestors.max_slot(),
+                bank_id,
+            });
+        }
         Ok(())
     }
 
@@ -3396,9 +3419,26 @@ impl AccountsDb {
             return Ok(used_index);
         }
 
+        // Register this scan so that slots needed by the scan are not cleaned out from under us.
+        let scan_guard = ScanGuard::try_new(&self.accounts_index.scan_tracker, bank_id, || {
+            self.accounts_index.max_root_inclusive()
+        })
+        .ok_or(ScanError::SlotRemoved {
+            slot: ancestors.max_slot(),
+            bank_id,
+        })?;
+
+        // If the scan's ancestors are all rooted, drop them and scan roots only
+        let empty_ancestors = Ancestors::default();
+        let ancestors = if scan_guard.should_use_ancestors(ancestors) {
+            ancestors
+        } else {
+            &empty_ancestors
+        };
+
         self.accounts_index.index_scan_accounts(
             ancestors,
-            bank_id,
+            scan_guard.max_root(),
             index_key,
             |pubkey, (account_info, slot)| {
                 let account_slot = self
@@ -3409,7 +3449,15 @@ impl AccountsDb {
                 scan_func(account_slot)
             },
             config,
-        )?;
+        );
+
+        // Check whether the bank was removed while the scan was in progress.
+        if scan_guard.was_scan_corrupted() {
+            return Err(ScanError::SlotRemoved {
+                slot: ancestors.max_slot(),
+                bank_id,
+            });
+        }
         let used_index = true;
         Ok(used_index)
     }
@@ -3843,7 +3891,7 @@ impl AccountsDb {
                             // retry_to_get_account_accessor() must outlive the Arc<Bank> (and its all
                             // ancestors) over this fn invocation, guaranteeing the prevention of being purged,
                             // first of all.
-                            // For details, see the comment in AccountIndex::do_checked_scan_accounts(),
+                            // For details, see the comment in ScanGuard::should_use_ancestors(),
                             // which is referring back here.
                             panic!("{message}");
                         });

@@ -8,7 +8,7 @@ mod secondary;
 mod stats;
 use {
     crate::{
-        accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanTracker},
+        accounts_scan::{ScanConfig, ScanTracker},
         ancestors::Ancestors,
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
@@ -29,7 +29,7 @@ use {
     secondary::{RwLockSecondaryIndexEntry, SecondaryIndex, SecondaryIndexEntry},
     smallvec::SmallVec,
     solana_account::ReadableAccount,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     stats::Stats,
@@ -312,70 +312,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         &self,
         metric_name: &'static str,
         ancestors: &Ancestors,
-        scan_bank_id: BankId,
+        max_root: Slot,
         func: F,
         scan_type: ScanTypes,
         config: &ScanConfig,
-    ) -> Result<(), ScanError>
-    where
+    ) where
         F: FnMut(&Pubkey, (&T, Slot)),
     {
-        let ancestors_max_slot = ancestors.max_slot();
-        let scan_guard = ScanGuard::try_new(&self.scan_tracker, scan_bank_id, || {
-            self.max_root_inclusive()
-        })
-        .ok_or(ScanError::SlotRemoved {
-            slot: ancestors_max_slot,
-            bank_id: scan_bank_id,
-        })?;
-        let max_root = scan_guard.max_root();
-        let use_ancestors = scan_guard.should_use_ancestors(ancestors);
-        let empty_ancestors = Ancestors::default();
-        let ancestors = if use_ancestors {
-            ancestors
-        } else {
-            &empty_ancestors
-        };
-
-        /*
-        Now there are two cases, either `ancestors` is empty or nonempty
-        (see `ScanGuard::should_use_ancestors` for the proof and edge-case diagrams):
-
-        1) If ancestors is empty, then this is the same as a scan on a rooted bank,
-        and `ongoing_scan_roots` provides protection against cleanup of roots necessary
-        for the scan, and  passing `Some(max_root)` to `do_scan_accounts()` ensures newer
-        roots don't appear in the scan.
-
-        2) If ancestors is non-empty, then from `should_use_ancestors` we know
-        that the fork structure must look something like:
-
-        Diagram 2:
-
-                Build fork structure:
-                        slot 0
-                          |
-                    slot 1 (max_root)
-                    /            \
-             slot 2              |
-                |            slot 3 (potential newer max root)
-              slot 4
-                |
-             slot 5 (scan)
-
-        Consider both types of ancestors, ancestor <= `max_root` and
-        ancestor > `max_root`, where `max_root == 1` as illustrated above.
-
-        a) The set of `ancestors <= max_root` are all rooted, which means their state
-        is protected by the same guarantees as 1).
-
-        b) As for the `ancestors > max_root`, those banks have at least one reference discoverable
-        through the chain of `Bank::BankRc::parent` starting from the calling bank. For instance
-        bank 5's parent reference keeps bank 4 alive, which will prevent the `Bank::drop()` from
-        running and cleaning up bank 4. Furthermore, no cleans can happen past the saved max_root == 1,
-        so a potential newer max root at 3 will not clean up any of the ancestors > 1, so slot 4
-        will not be cleaned in the middle of the scan either. (NOTE similar reasoning is employed for
-        assert!() justification in AccountsDb::retry_to_get_account_accessor)
-        */
         match scan_type {
             ScanTypes::Unindexed => {
                 // Pass "" not to log metrics, so RPC doesn't get spammy
@@ -412,14 +355,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 );
             }
         }
-
-        if scan_guard.was_scan_corrupted() {
-            return Err(ScanError::SlotRemoved {
-                slot: ancestors.max_slot(),
-                bank_id: scan_bank_id,
-            });
-        }
-        Ok(())
     }
 
     // Scan accounts and return latest version of each account that is either:
@@ -616,41 +551,32 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     pub(crate) fn scan_accounts<F>(
         &self,
         ancestors: &Ancestors,
-        scan_bank_id: BankId,
+        max_root: Slot,
         func: F,
         config: &ScanConfig,
-    ) -> Result<(), ScanError>
-    where
+    ) where
         F: FnMut(&Pubkey, (&T, Slot)),
     {
         // Pass "" not to log metrics, so RPC doesn't get spammy
-        self.do_checked_scan_accounts(
-            "",
-            ancestors,
-            scan_bank_id,
-            func,
-            ScanTypes::Unindexed,
-            config,
-        )
+        self.do_checked_scan_accounts("", ancestors, max_root, func, ScanTypes::Unindexed, config)
     }
 
     /// call func with every pubkey and index visible from a given set of ancestors
     pub(crate) fn index_scan_accounts<F>(
         &self,
         ancestors: &Ancestors,
-        scan_bank_id: BankId,
+        max_root: Slot,
         index_key: IndexKey,
         func: F,
         config: &ScanConfig,
-    ) -> Result<(), ScanError>
-    where
+    ) where
         F: FnMut(&Pubkey, (&T, Slot)),
     {
         // Pass "" not to log metrics, so RPC doesn't get spammy
         self.do_checked_scan_accounts(
             "",
             ancestors,
-            scan_bank_id,
+            max_root,
             func,
             ScanTypes::Indexed(index_key),
             config,
@@ -1571,14 +1497,12 @@ mod tests {
         assert!(!index.contains_with(key, None, None));
 
         let mut num = 0;
-        index
-            .scan_accounts(
-                &ancestors,
-                0,
-                |_pubkey, _index| num += 1,
-                &ScanConfig::default(),
-            )
-            .expect("scan should succeed");
+        index.scan_accounts(
+            &ancestors,
+            index.max_root_inclusive(),
+            |_pubkey, _index| num += 1,
+            &ScanConfig::default(),
+        );
         assert_eq!(num, 0);
     }
 
@@ -1651,14 +1575,12 @@ mod tests {
         assert!(!index.contains_with(&key, None, None));
 
         let mut num = 0;
-        index
-            .scan_accounts(
-                &ancestors,
-                0,
-                |_pubkey, _index| num += 1,
-                &ScanConfig::default(),
-            )
-            .expect("scan should succeed");
+        index.scan_accounts(
+            &ancestors,
+            index.max_root_inclusive(),
+            |_pubkey, _index| num += 1,
+            &ScanConfig::default(),
+        );
         assert_eq!(num, 0);
     }
 
@@ -1715,26 +1637,22 @@ mod tests {
         assert!(!index.contains_with(pubkey, None, None));
 
         let mut num = 0;
-        index
-            .scan_accounts(
-                &ancestors,
-                0,
-                |_pubkey, _index| num += 1,
-                &ScanConfig::default(),
-            )
-            .expect("scan should succeed");
+        index.scan_accounts(
+            &ancestors,
+            index.max_root_inclusive(),
+            |_pubkey, _index| num += 1,
+            &ScanConfig::default(),
+        );
         assert_eq!(num, 0);
         ancestors.insert(slot);
         assert!(index.contains_with(pubkey, Some(&ancestors), None));
         assert_eq!(index.ref_count_from_storage(pubkey), 1);
-        index
-            .scan_accounts(
-                &ancestors,
-                0,
-                |_pubkey, _index| num += 1,
-                &ScanConfig::default(),
-            )
-            .expect("scan should succeed");
+        index.scan_accounts(
+            &ancestors,
+            index.max_root_inclusive(),
+            |_pubkey, _index| num += 1,
+            &ScanConfig::default(),
+        );
         assert_eq!(num, 1);
 
         // not zero lamports
@@ -1752,26 +1670,22 @@ mod tests {
         assert!(!index.contains_with(pubkey, None, None));
 
         let mut num = 0;
-        index
-            .scan_accounts(
-                &ancestors,
-                0,
-                |_pubkey, _index| num += 1,
-                &ScanConfig::default(),
-            )
-            .expect("scan should succeed");
+        index.scan_accounts(
+            &ancestors,
+            index.max_root_inclusive(),
+            |_pubkey, _index| num += 1,
+            &ScanConfig::default(),
+        );
         assert_eq!(num, 0);
         ancestors.insert(slot);
         assert!(index.contains_with(pubkey, Some(&ancestors), None));
         assert_eq!(index.ref_count_from_storage(pubkey), 1);
-        index
-            .scan_accounts(
-                &ancestors,
-                0,
-                |_pubkey, _index| num += 1,
-                &ScanConfig::default(),
-            )
-            .expect("scan should succeed");
+        index.scan_accounts(
+            &ancestors,
+            index.max_root_inclusive(),
+            |_pubkey, _index| num += 1,
+            &ScanConfig::default(),
+        );
         assert_eq!(num, 1);
     }
 
@@ -2171,25 +2085,21 @@ mod tests {
         });
 
         let mut num = 0;
-        index
-            .scan_accounts(
-                &ancestors,
-                0,
-                |_pubkey, _index| num += 1,
-                &ScanConfig::default(),
-            )
-            .expect("scan should succeed");
+        index.scan_accounts(
+            &ancestors,
+            index.max_root_inclusive(),
+            |_pubkey, _index| num += 1,
+            &ScanConfig::default(),
+        );
         assert_eq!(num, 0);
         ancestors.insert(slot);
         assert!(index.contains_with(&key, Some(&ancestors), None));
-        index
-            .scan_accounts(
-                &ancestors,
-                0,
-                |_pubkey, _index| num += 1,
-                &ScanConfig::default(),
-            )
-            .expect("scan should succeed");
+        index.scan_accounts(
+            &ancestors,
+            index.max_root_inclusive(),
+            |_pubkey, _index| num += 1,
+            &ScanConfig::default(),
+        );
         assert_eq!(num, 1);
     }
 
@@ -2214,14 +2124,12 @@ mod tests {
         assert!(!index.contains_with(&key, Some(&ancestors), None));
 
         let mut num = 0;
-        index
-            .scan_accounts(
-                &ancestors,
-                0,
-                |_pubkey, _index| num += 1,
-                &ScanConfig::default(),
-            )
-            .expect("scan should succeed");
+        index.scan_accounts(
+            &ancestors,
+            index.max_root_inclusive(),
+            |_pubkey, _index| num += 1,
+            &ScanConfig::default(),
+        );
         assert_eq!(num, 0);
     }
     #[test]
@@ -2352,19 +2260,17 @@ mod tests {
 
         let mut num = 0;
         let mut found_key = false;
-        index
-            .scan_accounts(
-                &ancestors,
-                0,
-                |pubkey, _index| {
-                    if pubkey == &key {
-                        found_key = true
-                    };
-                    num += 1
-                },
-                &ScanConfig::default(),
-            )
-            .expect("scan should succeed");
+        index.scan_accounts(
+            &ancestors,
+            index.max_root_inclusive(),
+            |pubkey, _index| {
+                if pubkey == &key {
+                    found_key = true
+                };
+                num += 1
+            },
+            &ScanConfig::default(),
+        );
 
         assert_eq!(num, 1);
         assert!(found_key);
@@ -2414,16 +2320,14 @@ mod tests {
         let (index, _) = setup_accounts_index_keys(num_pubkeys);
 
         let mut scanned_keys = HashSet::new();
-        index
-            .scan_accounts(
-                &Ancestors::default(),
-                0,
-                |pubkey, _index| {
-                    scanned_keys.insert(*pubkey);
-                },
-                &ScanConfig::default(),
-            )
-            .expect("scan should succeed");
+        index.scan_accounts(
+            &Ancestors::default(),
+            index.max_root_inclusive(),
+            |pubkey, _index| {
+                scanned_keys.insert(*pubkey);
+            },
+            &ScanConfig::default(),
+        );
         assert_eq!(scanned_keys.len(), num_pubkeys);
     }
 
@@ -2675,20 +2579,18 @@ mod tests {
 
         let mut num = 0;
         let mut found_key = false;
-        index
-            .scan_accounts(
-                &Ancestors::default(),
-                0,
-                |pubkey, index| {
-                    if pubkey == &key {
-                        found_key = true;
-                        assert_eq!(index, (&true, 3));
-                    };
-                    num += 1
-                },
-                &ScanConfig::default(),
-            )
-            .expect("scan should succeed");
+        index.scan_accounts(
+            &Ancestors::default(),
+            index.max_root_inclusive(),
+            |pubkey, index| {
+                if pubkey == &key {
+                    found_key = true;
+                    assert_eq!(index, (&true, 3));
+                };
+                num += 1
+            },
+            &ScanConfig::default(),
+        );
         assert_eq!(num, 1);
         assert!(found_key);
     }
