@@ -19,7 +19,7 @@ Release channels have their own copy of this changelog:
 #### Changes
 ### Validator
 #### Breaking
-* `--bind-address` no longer determines the validator's advertised gossip IP. Use `--advertised-ip` to explicitly set the advertised public IP; otherwise the validator resolves it via the entrypoint IP echo server, or falls back to `127.0.0.1` when no entrypoint is configured.
+* `--bind-address` no longer determines the validator's advertised gossip IP. Use `--advertised-ip` to explicitly set the advertised public IP; otherwise the validator resolves it via the entrypoint IP echo server, or falls back to `127.0.0.1` when no entrypoint is configured. Bootstrap validators that do not pass `--entrypoint` must now also pass `--advertised-ip`.
 #### Deprecations
 * Using `minimal` for `--accounts-index-limit` is now deprecated.
 * `--account-shrink-path` is now deprecated.
