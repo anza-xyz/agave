@@ -70,7 +70,17 @@ async fn generate_agave_pipeline() -> Result<buildkite::Pipeline> {
 fn generate_private_pipeline() -> Result<buildkite::Pipeline> {
     let mut pipeline = buildkite::Pipeline::new();
 
-    pipeline.add_step(default_sanity_step());
+    pipeline.add_step(buildkite::Step::Command(buildkite::CommandStep {
+        name: String::from("sanity"),
+        command: String::from("ci/test-sanity.sh"),
+        agents: Some(HashMap::from([(
+            String::from("queue"),
+            String::from("default"),
+        )])),
+        timeout_in_minutes: Some(5),
+        ..Default::default()
+    }));
+
     pipeline.add_step(default_shellcheck_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
