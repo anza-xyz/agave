@@ -1,6 +1,6 @@
 use {
     anyhow::Result,
-    clap::Args,
+    clap::{Args, ValueEnum},
     futures_util::TryStreamExt,
     log::{info, warn},
     regex::Regex,
@@ -13,33 +13,19 @@ use {
 pub struct CommandArgs {
     #[arg(short, long, default_value = "./pipeline.yml")]
     pub output_file: PathBuf,
+
+    #[arg(long, value_enum, default_value_t = Pipeline::Agave)]
+    pub pipeline: Pipeline,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum Pipeline {
+    Agave,
 }
 
 pub async fn run(args: CommandArgs) -> Result<()> {
-    let branch = env::var("BUILDKITE_BRANCH")
-        .map_err(|e| anyhow::anyhow!("failed to get `BUILDKITE_BRANCH`: {e}"))?;
-    info!("Generating pipeline for branch: {branch}");
-
-    let pipeline = if branch.starts_with("gh-readonly-queue") {
-        info!("Branch is a GitHub Readonly Queue branch, exiting early.");
-        generate_merge_queue_pipeline()?
-    } else if let Some(captures) = Regex::new(r"pull/(\d+)/head")?.captures(&branch) {
-        if let Some(pr_match) = captures.get(1) {
-            let pr_number = pr_match
-                .as_str()
-                .parse::<u64>()
-                .map_err(|e| anyhow::anyhow!("failed to parse PR number: {e}"))?;
-
-            annotate_pull_request(pr_number)?;
-
-            generate_pull_request_pipeline(pr_number).await?
-        } else {
-            info!("failed to get PR number from branch: {branch}, running full pipeline.");
-            generate_full_pipeline()?
-        }
-    } else {
-        info!("Branch matches no known pattern, running full pipeline.");
-        generate_full_pipeline()?
+    let pipeline = match args.pipeline {
+        Pipeline::Agave => generate_agave_pipeline().await?,
     };
 
     let output = args.output_file;
@@ -48,6 +34,35 @@ pub async fn run(args: CommandArgs) -> Result<()> {
     info!("Pipeline written to: {:?}", fs::canonicalize(&output)?);
 
     Ok(())
+}
+
+async fn generate_agave_pipeline() -> Result<buildkite::Pipeline> {
+    let branch = env::var("BUILDKITE_BRANCH")
+        .map_err(|e| anyhow::anyhow!("failed to get `BUILDKITE_BRANCH`: {e}"))?;
+    info!("Generating agave pipeline for branch: {branch}");
+
+    if branch.starts_with("gh-readonly-queue") {
+        info!("Branch is a GitHub Readonly Queue branch, exiting early.");
+        return generate_merge_queue_pipeline();
+    }
+
+    if let Some(captures) = Regex::new(r"pull/(\d+)/head")?.captures(&branch) {
+        if let Some(pr_match) = captures.get(1) {
+            let pr_number = pr_match
+                .as_str()
+                .parse::<u64>()
+                .map_err(|e| anyhow::anyhow!("failed to parse PR number: {e}"))?;
+
+            annotate_pull_request(pr_number)?;
+            return generate_pull_request_pipeline(pr_number).await;
+        }
+
+        info!("failed to get PR number from branch: {branch}, running full pipeline.");
+        return generate_full_pipeline();
+    }
+
+    info!("Branch matches no known pattern, running full pipeline.");
+    generate_full_pipeline()
 }
 
 fn annotate_pull_request(pr_number: u64) -> Result<()> {
