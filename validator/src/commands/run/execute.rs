@@ -179,8 +179,6 @@ pub fn execute(
 
     let advertised_ip = if let Some(cli_ip) = advertised_ip {
         cli_ip
-    } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
-        bind_addresses.active()
     } else if !entrypoint_addrs.is_empty() {
         let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
         order.shuffle(&mut rng());
@@ -190,7 +188,8 @@ pub fn execute(
             .find_map(|i| {
                 let entrypoint_addr = &entrypoint_addrs[i];
                 info!(
-                    "Contacting {entrypoint_addr} to determine the validator's public IP address"
+                    "Contacting {entrypoint_addr} to determine the validator's public IP \
+                     address"
                 );
                 solana_net_utils::get_public_ip_addr_with_binding(
                     entrypoint_addr,
@@ -475,9 +474,7 @@ pub fn execute(
         for (flag, msg) in [
             (
                 "advertised_ip",
-                "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
-                 validator will advertise the first --bind-address as this node's public IP \
-                 address.",
+                "--advertised-ip cannot be used in a multihoming context",
             ),
             (
                 "public_tpu_addr",

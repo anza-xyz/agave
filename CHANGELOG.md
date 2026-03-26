@@ -19,10 +19,12 @@ Release channels have their own copy of this changelog:
 #### Changes
 ### Validator
 #### Breaking
+* `--bind-address` no longer determines the validator's advertised gossip IP. Use `--advertised-ip` to explicitly set the advertised public IP; otherwise the validator resolves it via the entrypoint IP echo server, or falls back to `127.0.0.1` when no entrypoint is configured.
 #### Deprecations
 * Using `minimal` for `--accounts-index-limit` is now deprecated.
 * `--account-shrink-path` is now deprecated.
 #### Changes
+* Added `--advertised-ip` to configure the validator's advertised gossip IP independently of `--bind-address`. In multihomed configurations, the active `--bind-address` continues to be advertised.
 
 ## 4.0.0
 ### RPC

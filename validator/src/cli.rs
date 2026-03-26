@@ -634,7 +634,6 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .value_name("HOST")
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
-                .hidden(hidden_unless_forced())
                 .help(
                     "Use when running a validator behind a NAT. DNS name or IP address for this \
                      validator to advertise in gossip. This address will be used as the target \
