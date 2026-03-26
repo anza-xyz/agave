@@ -4882,4 +4882,885 @@ mod tests {
             );
         }
     }
+
+    /// recipient at index 2.
+    fn setup_withdraw_context(
+        vote_pubkey: Pubkey,
+        vote_account: AccountSharedData,
+    ) -> TransactionContext<'static> {
+        let rent = Rent::default();
+        let recipient = solana_pubkey::new_rand();
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let mut transaction_context = TransactionContext::new(
+            vec![
+                (id(), program_account),
+                (vote_pubkey, vote_account),
+                (recipient, AccountSharedData::default()),
+            ],
+            rent,
+            0,
+            0,
+            1,
+        );
+        transaction_context
+            .configure_top_level_instruction_for_tests(
+                0,
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                vec![],
+            )
+            .unwrap();
+        transaction_context
+    }
+
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_withdraw(target_version: VoteStateTargetVersion) {
+        // Verify withdraw boundary conditions around the rent-exempt
+        // minimum: partial withdraw, full deinit, and over-withdraw.
+        let vote_pubkey = solana_pubkey::new_rand();
+        let vote_state = vote_state_new_for_test(&vote_pubkey, target_version);
+        let withdrawer = *vote_state.authorized_withdrawer();
+        let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+        let rent = Rent::default();
+        let serialized = vote_state.clone().serialize();
+        let serialized_len = serialized.len();
+        let min_balance = rent.minimum_balance(serialized_len);
+        let clock = Clock {
+            epoch: 100,
+            ..Clock::default()
+        };
+
+        // Account at exact rent-exempt minimum: withdraw 1 fails.
+        {
+            let mut acct = AccountSharedData::new(min_balance, serialized_len, &id());
+            acct.set_data_from_slice(&serialized);
+            let transaction_context = setup_withdraw_context(vote_pubkey, acct);
+            let ix = transaction_context.get_next_instruction_context().unwrap();
+            assert_eq!(
+                withdraw(&ix, 0, target_version, 1, 1, &signers, &rent, &clock),
+                Err(InstructionError::InsufficientFunds)
+            );
+        }
+
+        // Account at exact rent-exempt minimum: withdraw all succeeds (deinit).
+        {
+            let mut acct = AccountSharedData::new(min_balance, serialized_len, &id());
+            acct.set_data_from_slice(&serialized);
+            let transaction_context = setup_withdraw_context(vote_pubkey, acct);
+            let ix = transaction_context.get_next_instruction_context().unwrap();
+            withdraw(
+                &ix,
+                0,
+                target_version,
+                min_balance,
+                1,
+                &signers,
+                &rent,
+                &clock,
+            )
+            .unwrap();
+        }
+
+        // Account at rent_exempt + 100: withdraw 100 succeeds.
+        {
+            let mut acct = AccountSharedData::new(min_balance + 100, serialized_len, &id());
+            acct.set_data_from_slice(&serialized);
+            let transaction_context = setup_withdraw_context(vote_pubkey, acct);
+            let ix = transaction_context.get_next_instruction_context().unwrap();
+            withdraw(&ix, 0, target_version, 100, 1, &signers, &rent, &clock).unwrap();
+        }
+
+        // Account at rent_exempt + 100: withdraw 101 fails.
+        {
+            let mut acct = AccountSharedData::new(min_balance + 100, serialized_len, &id());
+            acct.set_data_from_slice(&serialized);
+            let transaction_context = setup_withdraw_context(vote_pubkey, acct);
+            let ix = transaction_context.get_next_instruction_context().unwrap();
+            assert_eq!(
+                withdraw(&ix, 0, target_version, 101, 1, &signers, &rent, &clock),
+                Err(InstructionError::InsufficientFunds)
+            );
+        }
+    }
+
+    /// Helper to create a V4 vote account with a specific
+    /// `pending_delegator_rewards` value.
+    fn make_v4_account_with_pending(
+        vote_pubkey: &Pubkey,
+        pending: u64,
+        extra_lamports: u64,
+    ) -> (VoteStateHandler, AccountSharedData) {
+        let vote_state = vote_state_new_for_test(vote_pubkey, VoteStateTargetVersion::V4);
+        let mut v4 = vote_state.as_ref_v4().clone();
+        v4.pending_delegator_rewards = pending;
+        let handler = VoteStateHandler::new_v4(v4);
+        let serialized = handler.clone().serialize();
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(serialized.len()) + extra_lamports;
+        let mut account = AccountSharedData::new(lamports, serialized.len(), &id());
+        account.set_data_from_slice(&serialized);
+        (handler, account)
+    }
+
+    #[test]
+    fn test_withdraw_with_pending_delegator_rewards() {
+        // Verify withdraw protects pending_delegator_rewards: partial
+        // withdrawals respect the pending reserve, and full close is
+        // blocked when pending > 0.
+        let vote_pubkey = solana_pubkey::new_rand();
+        let rent = Rent::default();
+        let clock = Clock {
+            epoch: 100,
+            ..Clock::default()
+        };
+
+        // pending = 1000, extra = 1000. withdrawable = 0.
+        {
+            let (handler, account) = make_v4_account_with_pending(&vote_pubkey, 1000, 1000);
+            let withdrawer = *handler.authorized_withdrawer();
+            let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+            let tx = setup_withdraw_context(vote_pubkey, account);
+            let ix = tx.get_next_instruction_context().unwrap();
+
+            // Withdraw 1 fails (withdrawable = lamports - rent - pending = 0).
+            assert_eq!(
+                withdraw(
+                    &ix,
+                    0,
+                    VoteStateTargetVersion::V4,
+                    1,
+                    1,
+                    &signers,
+                    &rent,
+                    &clock
+                ),
+                Err(InstructionError::InsufficientFunds)
+            );
+        }
+
+        // pending = 1000, extra = 1001. withdrawable = 1.
+        {
+            let (handler, account) = make_v4_account_with_pending(&vote_pubkey, 1000, 1001);
+            let withdrawer = *handler.authorized_withdrawer();
+            let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+            let tx = setup_withdraw_context(vote_pubkey, account);
+            let ix = tx.get_next_instruction_context().unwrap();
+
+            // Withdraw 1 succeeds.
+            withdraw(
+                &ix,
+                0,
+                VoteStateTargetVersion::V4,
+                1,
+                1,
+                &signers,
+                &rent,
+                &clock,
+            )
+            .unwrap();
+        }
+
+        // pending = 1000, extra = 1001. Withdraw 2 fails.
+        {
+            let (handler, account) = make_v4_account_with_pending(&vote_pubkey, 1000, 1001);
+            let withdrawer = *handler.authorized_withdrawer();
+            let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+            let tx = setup_withdraw_context(vote_pubkey, account);
+            let ix = tx.get_next_instruction_context().unwrap();
+
+            assert_eq!(
+                withdraw(
+                    &ix,
+                    0,
+                    VoteStateTargetVersion::V4,
+                    2,
+                    1,
+                    &signers,
+                    &rent,
+                    &clock
+                ),
+                Err(InstructionError::InsufficientFunds)
+            );
+        }
+
+        // Full close blocked when pending > 0.
+        {
+            let (handler, account) = make_v4_account_with_pending(&vote_pubkey, 1, 1_000_000);
+            let withdrawer = *handler.authorized_withdrawer();
+            let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+            let lamports = rent.minimum_balance(VoteStateV4::size_of()) + 1_000_000;
+            let tx = setup_withdraw_context(vote_pubkey, account);
+            let ix = tx.get_next_instruction_context().unwrap();
+
+            assert_eq!(
+                withdraw(
+                    &ix,
+                    0,
+                    VoteStateTargetVersion::V4,
+                    lamports,
+                    1,
+                    &signers,
+                    &rent,
+                    &clock
+                ),
+                Err(InstructionError::InsufficientFunds)
+            );
+        }
+
+        // Full close succeeds when pending = 0.
+        {
+            let (handler, account) = make_v4_account_with_pending(&vote_pubkey, 0, 100);
+            let withdrawer = *handler.authorized_withdrawer();
+            let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+            let lamports = rent.minimum_balance(VoteStateV4::size_of()) + 100;
+            let tx = setup_withdraw_context(vote_pubkey, account);
+            let ix = tx.get_next_instruction_context().unwrap();
+
+            withdraw(
+                &ix,
+                0,
+                VoteStateTargetVersion::V4,
+                lamports,
+                1,
+                &signers,
+                &rent,
+                &clock,
+            )
+            .unwrap();
+        }
+    }
+
+    /// Build a maximum-size V3 vote state with all variable-length
+    /// collections at capacity (votes, epoch_credits, authorized_voters).
+    fn get_max_sized_vote_state_v3() -> VoteStateV3 {
+        let root_slot = 42u64;
+        let votes: VecDeque<LandedVote> = (0..MAX_LOCKOUT_HISTORY)
+            .map(|i| LandedVote {
+                latency: i as u8,
+                lockout: Lockout::new_with_confirmation_count(
+                    root_slot + i as u64 + 1,
+                    (MAX_LOCKOUT_HISTORY - i) as u32,
+                ),
+            })
+            .collect();
+        let epoch_credits: Vec<(u64, u64, u64)> = (0..MAX_EPOCH_CREDITS_HISTORY)
+            .map(|i| (i as u64, (i as u64 + 1) * 100, i as u64 * 100))
+            .collect();
+        let mut authorized_voters = AuthorizedVoters::default();
+        for i in 0..=solana_epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET {
+            authorized_voters.insert(i, solana_pubkey::new_rand());
+        }
+
+        VoteStateV3 {
+            node_pubkey: solana_pubkey::new_rand(),
+            authorized_withdrawer: solana_pubkey::new_rand(),
+            commission: 42,
+            votes,
+            root_slot: Some(root_slot),
+            epoch_credits,
+            authorized_voters,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_v3_to_v4_stale_trailing_bytes() {
+        // V4 deserializer must ignore trailing bytes left over from a
+        // V3 to V4 conversion in a fixed-size account buffer.
+        //
+        // The conversion and serialization is driven through the handler, ie.
+        // `get_vote_state_handler_checked`/`try_convert_to_vote_state_v4`.
+        //
+        // We conduct this test through `get_vote_state_handler_checked` to
+        // ensure we're testing program code.
+        let vote_pubkey = solana_pubkey::new_rand();
+        let v3 = get_max_sized_vote_state_v3();
+        let node_pubkey = v3.node_pubkey;
+        let authorized_withdrawer = v3.authorized_withdrawer;
+        let commission = v3.commission;
+        let root_slot = v3.root_slot;
+        let votes = v3.votes.clone();
+        let epoch_credits = v3.epoch_credits.clone();
+        let authorized_voters = v3.authorized_voters.clone();
+        let last_timestamp = v3.last_timestamp.clone();
+
+        // Serialize V3 into a fixed-size account buffer.
+        let buf_size = VoteStateV3::size_of();
+        let v3_versioned = VoteStateVersions::V3(Box::new(v3));
+        let v3_serialized_len = bincode::serialized_size(&v3_versioned).unwrap() as usize;
+        let mut vote_account_data = vec![0u8; buf_size];
+        bincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
+
+        // Drive V3 to V4 conversion through the program handler.
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(buf_size) + 1_000_000;
+        let mut vote_account = AccountSharedData::new(lamports, buf_size, &id());
+        vote_account.set_data_from_slice(&vote_account_data);
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let transaction_context = new_transaction_context(
+            vec![(id(), program_account), (vote_pubkey, vote_account)],
+            vec![InstructionAccount::new(1, false, true)],
+            &rent,
+        );
+        let ix = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed = ix.try_borrow_instruction_account(0).unwrap();
+
+        // `get_vote_state_handler_checked` with V4 target triggers the full
+        // deser -> conversion path; `set_vote_account_state` writes it back.
+        let vote_state =
+            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+        vote_state.set_vote_account_state(&mut borrowed).unwrap();
+
+        // Inspect raw account data written by the handler.
+        let account_data = borrowed.get_data();
+        let v4_serialized_len = {
+            let v4 = VoteStateV4::deserialize(account_data, &vote_pubkey).unwrap();
+            bincode::serialized_size(&VoteStateVersions::new_v4(v4)).unwrap() as usize
+        };
+        assert!(
+            v4_serialized_len < v3_serialized_len,
+            "v4 ({v4_serialized_len}) should be smaller than v3 ({v3_serialized_len})",
+        );
+
+        // The V4 deserializer must produce the correct state despite
+        // trailing bytes left from the larger V3 serialization.
+        let deserialized = VoteStateV4::deserialize(account_data, &vote_pubkey).unwrap();
+        assert_eq!(deserialized.node_pubkey, node_pubkey);
+        assert_eq!(deserialized.authorized_withdrawer, authorized_withdrawer);
+        assert_eq!(deserialized.root_slot, root_slot);
+        assert_eq!(deserialized.votes, votes);
+        assert_eq!(deserialized.epoch_credits, epoch_credits);
+        assert_eq!(deserialized.authorized_voters, authorized_voters);
+        assert_eq!(
+            deserialized.inflation_rewards_commission_bps,
+            commission as u16 * 100
+        );
+        assert_eq!(deserialized.last_timestamp, last_timestamp);
+
+        // Fill the trailing region with non-zero garbage, then round-trip
+        // through the handler again to verify the program handles it.
+        borrowed.get_data_mut().unwrap()[v4_serialized_len..].fill(0xDE);
+
+        let vote_state =
+            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+        vote_state.set_vote_account_state(&mut borrowed).unwrap();
+
+        let deserialized = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
+        assert_eq!(deserialized.node_pubkey, node_pubkey);
+        assert_eq!(deserialized.authorized_withdrawer, authorized_withdrawer);
+        assert_eq!(deserialized.root_slot, root_slot);
+        assert_eq!(deserialized.votes, votes);
+        assert_eq!(deserialized.epoch_credits, epoch_credits);
+        assert_eq!(deserialized.authorized_voters, authorized_voters);
+        assert_eq!(
+            deserialized.inflation_rewards_commission_bps,
+            commission as u16 * 100
+        );
+        assert_eq!(deserialized.last_timestamp, last_timestamp);
+    }
+
+    #[test]
+    fn test_v3_to_v4_trailing_bytes_shrink_and_regrow() {
+        // Exercises the full lifecycle of trailing-byte behavior in a
+        // fixed-size account buffer, driven through the program handlers
+        // `get_vote_state_handler_checked` and `set_vote_account_state`:
+        // * Step 1: Start with a max-size V3 state (all collections full).
+        // * Step 2: Convert V3 -> V4 via the handler. V4's serialized form
+        //           is smaller, leaving trailing garbage.
+        // * Step 3: Clear all votes, simulating the extreme case of a
+        //           validator whose entire tower has expired, which shrinks
+        //           the v4 vote state.
+        // * Step 4: Re-add votes incrementally, round-tripping through the
+        //           handler each time to verify the program handles the
+        //           growing serialized region over stale trailing bytes.
+
+        let vote_pubkey = solana_pubkey::new_rand();
+        let v3 = get_max_sized_vote_state_v3();
+        let node_pubkey = v3.node_pubkey;
+        let authorized_withdrawer = v3.authorized_withdrawer;
+        let commission = v3.commission;
+        let root_slot = v3.root_slot;
+        let votes = v3.votes.clone();
+        let epoch_credits = v3.epoch_credits.clone();
+        let authorized_voters = v3.authorized_voters.clone();
+        let last_timestamp = v3.last_timestamp.clone();
+
+        // Step 1: Populate V3 account and record V3 serialized size.
+        let buf_size = VoteStateV3::size_of();
+        let v3_versioned = VoteStateVersions::V3(Box::new(v3));
+        let v3_serialized_len = bincode::serialized_size(&v3_versioned).unwrap() as usize;
+        let mut vote_account_data = vec![0u8; buf_size];
+        bincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
+
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(buf_size) + 1_000_000;
+        let mut vote_account = AccountSharedData::new(lamports, buf_size, &id());
+        vote_account.set_data_from_slice(&vote_account_data);
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let transaction_context = new_transaction_context(
+            vec![(id(), program_account), (vote_pubkey, vote_account)],
+            vec![InstructionAccount::new(1, false, true)],
+            &rent,
+        );
+        let ix = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed = ix.try_borrow_instruction_account(0).unwrap();
+
+        // Step 2: V3 -> V4 conversion via the handler.
+        let vote_state =
+            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+        vote_state.set_vote_account_state(&mut borrowed).unwrap();
+
+        let v4_after_convert = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
+        let v4_serialized_len =
+            bincode::serialized_size(&VoteStateVersions::new_v4(v4_after_convert.clone())).unwrap()
+                as usize;
+
+        assert!(
+            v4_serialized_len < v3_serialized_len,
+            "v4 ({v4_serialized_len}) should be smaller than v3 ({v3_serialized_len})",
+        );
+        let trailing_len_after_convert = buf_size - v4_serialized_len;
+        assert!(
+            trailing_len_after_convert > 0,
+            "expected trailing bytes after v3 -> v4 conversion"
+        );
+
+        // Verify field-level correctness of the converted state.
+        assert_eq!(v4_after_convert.node_pubkey, node_pubkey);
+        assert_eq!(
+            v4_after_convert.authorized_withdrawer,
+            authorized_withdrawer
+        );
+        assert_eq!(v4_after_convert.root_slot, root_slot);
+        assert_eq!(v4_after_convert.votes, votes);
+        assert_eq!(v4_after_convert.epoch_credits, epoch_credits);
+        assert_eq!(v4_after_convert.authorized_voters, authorized_voters);
+        assert_eq!(
+            v4_after_convert.inflation_rewards_commission_bps,
+            commission as u16 * 100,
+        );
+        assert_eq!(v4_after_convert.last_timestamp, last_timestamp);
+
+        // Step 3a: Clear all votes, round-trip with resulting stale bytes.
+        let mut v4_empty_votes = v4_after_convert.clone();
+        v4_empty_votes.votes.clear();
+        let v4_empty_serialized_len =
+            bincode::serialized_size(&VoteStateVersions::new_v4(v4_empty_votes.clone())).unwrap()
+                as usize;
+        assert!(
+            v4_empty_serialized_len < v4_serialized_len,
+            "empty-votes v4 ({v4_empty_serialized_len}) should be smaller than full v4 \
+             ({v4_serialized_len})",
+        );
+
+        // Write the vote-cleared state. The trailing region now contains
+        // stale bytes from the previous (larger) V4 serialization.
+        borrowed
+            .set_state(&VoteStateVersions::new_v4(v4_empty_votes.clone()))
+            .unwrap();
+        let trailing_len_after_clear = buf_size - v4_empty_serialized_len;
+        assert!(
+            trailing_len_after_clear > trailing_len_after_convert,
+            "trailing region should grow after clearing votes: {trailing_len_after_clear} vs \
+             {trailing_len_after_convert}",
+        );
+
+        // Round-trip through the handler with the stale bytes.
+        let vote_state =
+            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+        vote_state.set_vote_account_state(&mut borrowed).unwrap();
+
+        let deserialized = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
+        assert!(deserialized.votes.is_empty(),);
+        assert_eq!(deserialized.epoch_credits.len(), MAX_EPOCH_CREDITS_HISTORY,);
+        assert_eq!(deserialized.authorized_voters, authorized_voters,);
+        assert_eq!(deserialized.last_timestamp, last_timestamp);
+
+        // Step 3b: Fill trailing with explicit garbage and round-trip again.
+        //
+        // Overwrite the trailing region with a non-zero pattern to verify
+        // the handler is not sensitive to arbitrary trailing content.
+        borrowed.get_data_mut().unwrap()[v4_empty_serialized_len..].fill(0xCD);
+
+        let vote_state =
+            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+        vote_state.set_vote_account_state(&mut borrowed).unwrap();
+
+        let deserialized = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
+        assert!(deserialized.votes.is_empty());
+        assert_eq!(deserialized.epoch_credits.len(), MAX_EPOCH_CREDITS_HISTORY);
+        assert_eq!(deserialized.authorized_voters, authorized_voters);
+        assert_eq!(deserialized.last_timestamp, last_timestamp);
+
+        // Step 4: Re-add votes, growing the serialized region.
+        //
+        // Incrementally add votes back, writing each state and filling
+        // trailing with garbage, then round-tripping through the handler
+        // to verify it handles the growing data region correctly.
+        let mut v4_regrowing = v4_empty_votes;
+        for i in 0..MAX_LOCKOUT_HISTORY {
+            v4_regrowing.votes.push_back(LandedVote {
+                latency: (i % 256) as u8,
+                lockout: Lockout::new_with_confirmation_count(
+                    root_slot.unwrap() + 1000 + i as u64,
+                    (MAX_LOCKOUT_HISTORY - i) as u32,
+                ),
+            });
+
+            // Write the updated state, fill trailing with garbage.
+            borrowed
+                .set_state(&VoteStateVersions::new_v4(v4_regrowing.clone()))
+                .unwrap();
+            let current_serialized_len =
+                bincode::serialized_size(&VoteStateVersions::new_v4(v4_regrowing.clone())).unwrap()
+                    as usize;
+            let current_trailing = buf_size - current_serialized_len;
+            assert!(
+                current_trailing < trailing_len_after_clear,
+                "trailing region should shrink as votes are added"
+            );
+            if current_serialized_len < buf_size {
+                borrowed.get_data_mut().unwrap()[current_serialized_len..].fill(0xEF);
+            }
+
+            // Round-trip through the handler to verify.
+            let vote_state =
+                get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4)
+                    .unwrap();
+            vote_state.set_vote_account_state(&mut borrowed).unwrap();
+
+            let deserialized = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
+            assert_eq!(
+                deserialized.votes.len(),
+                i + 1,
+                "expected {} votes after re-adding",
+                i + 1,
+            );
+            assert_eq!(deserialized, v4_regrowing);
+        }
+
+        // Final consistency check: all votes are back and all fields correct.
+        let final_deserialized =
+            VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
+        assert_eq!(final_deserialized.votes.len(), MAX_LOCKOUT_HISTORY);
+        assert_eq!(final_deserialized.epoch_credits, epoch_credits);
+        assert_eq!(final_deserialized.authorized_voters, authorized_voters);
+        assert_eq!(final_deserialized.last_timestamp, last_timestamp);
+    }
+
+    #[test]
+    fn test_bls_absent_after_v3_to_v4_migration() {
+        // V3 to V4 migration via get_vote_state_handler_checked must
+        // produce bls_pubkey_compressed = None.
+        let vote_pubkey = solana_pubkey::new_rand();
+        let v3 = VoteStateV3::new(
+            &VoteInit {
+                node_pubkey: solana_pubkey::new_rand(),
+                authorized_voter: solana_pubkey::new_rand(),
+                authorized_withdrawer: solana_pubkey::new_rand(),
+                commission: 10,
+            },
+            &Clock::default(),
+        );
+        let last_timestamp = v3.last_timestamp.clone();
+
+        // Serialize V3 into an account.
+        let buf_size = VoteStateV3::size_of();
+        let v3_versioned = VoteStateVersions::V3(Box::new(v3));
+        let mut vote_account_data = vec![0u8; buf_size];
+        bincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
+
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(buf_size) + 1_000_000;
+        let mut vote_account = AccountSharedData::new(lamports, buf_size, &id());
+        vote_account.set_data_from_slice(&vote_account_data);
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let transaction_context = new_transaction_context(
+            vec![(id(), program_account), (vote_pubkey, vote_account)],
+            vec![InstructionAccount::new(1, false, true)],
+            &rent,
+        );
+        let ix = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed = ix.try_borrow_instruction_account(0).unwrap();
+
+        // Drive conversion through the handler.
+        let vote_state =
+            get_vote_state_handler_checked(&borrowed, PreserveBehaviorInHandlerHelper::V4).unwrap();
+        vote_state.set_vote_account_state(&mut borrowed).unwrap();
+
+        let v4 = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
+        assert_eq!(v4.bls_pubkey_compressed, None);
+        assert!(!v4.has_bls_pubkey());
+        assert_eq!(v4.last_timestamp, last_timestamp);
+    }
+
+    #[test]
+    fn test_bls_overwrite_via_voter_with_bls() {
+        // BLS pubkey set to A, then overwritten to B via VoterWithBLS.
+        let vote_pubkey = Pubkey::new_unique();
+        let (bls_a, pop_a) = create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+        let (bls_b, pop_b) = create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+
+        let vote_state = vote_state_new_for_test(&vote_pubkey, VoteStateTargetVersion::V4);
+        let withdrawer = *vote_state.authorized_withdrawer();
+        let node_pubkey = *vote_state.node_pubkey();
+        let serialized = vote_state.serialize();
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(serialized.len());
+        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
+        vote_account.set_data_from_slice(&serialized);
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let transaction_context = new_transaction_context(
+            vec![(id(), program_account), (vote_pubkey, vote_account)],
+            vec![InstructionAccount::new(1, false, true)],
+            &rent,
+        );
+        let ix = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed = ix.try_borrow_instruction_account(0).unwrap();
+
+        let signers: HashSet<Pubkey> = [withdrawer, Pubkey::new_unique()].into_iter().collect();
+
+        // Set BLS A.
+        authorize(
+            &mut borrowed,
+            VoteStateTargetVersion::V4,
+            &Pubkey::new_unique(),
+            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                bls_pubkey: bls_a,
+                bls_proof_of_possession: pop_a,
+            }),
+            &signers,
+            &Clock::default(),
+            true,
+            || Ok(()),
+        )
+        .unwrap();
+
+        let v4 = VoteStateV4::deserialize(borrowed.get_data(), &node_pubkey).unwrap();
+        assert_eq!(v4.bls_pubkey_compressed, Some(bls_a));
+
+        // Overwrite with BLS B.
+        let clock = Clock {
+            epoch: 3,
+            ..Clock::default()
+        };
+        authorize(
+            &mut borrowed,
+            VoteStateTargetVersion::V4,
+            &Pubkey::new_unique(),
+            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                bls_pubkey: bls_b,
+                bls_proof_of_possession: pop_b,
+            }),
+            &signers,
+            &clock,
+            true,
+            || Ok(()),
+        )
+        .unwrap();
+
+        let v4 = VoteStateV4::deserialize(borrowed.get_data(), &node_pubkey).unwrap();
+        assert_eq!(v4.bls_pubkey_compressed, Some(bls_b));
+    }
+
+    #[test]
+    fn test_bls_pop_cryptographic_failures() {
+        // Invalid PoP scenarios: zero bytes, garbage bytes, and
+        // PoP bound to the wrong vote account.
+        let vote_pubkey = Pubkey::new_unique();
+        let vote_state = vote_state_new_for_test(&vote_pubkey, VoteStateTargetVersion::V4);
+        let withdrawer = *vote_state.authorized_withdrawer();
+        let serialized = vote_state.serialize();
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(serialized.len());
+        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
+        vote_account.set_data_from_slice(&serialized);
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let transaction_context = new_transaction_context(
+            vec![(id(), program_account), (vote_pubkey, vote_account)],
+            vec![InstructionAccount::new(1, false, true)],
+            &rent,
+        );
+        let ix = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed = ix.try_borrow_instruction_account(0).unwrap();
+        let signers: HashSet<Pubkey> = [withdrawer, Pubkey::new_unique()].into_iter().collect();
+        let clock = Clock::default();
+
+        // All-zero BLS pubkey + PoP.
+        assert_eq!(
+            authorize(
+                &mut borrowed,
+                VoteStateTargetVersion::V4,
+                &Pubkey::new_unique(),
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                    bls_proof_of_possession: [0u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+                }),
+                &signers,
+                &clock,
+                true,
+                || Ok(()),
+            ),
+            Err(InstructionError::InvalidArgument)
+        );
+
+        // Random garbage BLS pubkey + PoP.
+        assert_eq!(
+            authorize(
+                &mut borrowed,
+                VoteStateTargetVersion::V4,
+                &Pubkey::new_unique(),
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: [0xAB; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                    bls_proof_of_possession: [0xCD; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+                }),
+                &signers,
+                &clock,
+                true,
+                || Ok(()),
+            ),
+            Err(InstructionError::InvalidArgument)
+        );
+
+        // Valid BLS pubkey but PoP for wrong vote account.
+        let other_vote = Pubkey::new_unique();
+        let (bls_for_other, pop_for_other) = create_bls_pubkey_and_proof_of_possession(&other_vote);
+        assert_eq!(
+            authorize(
+                &mut borrowed,
+                VoteStateTargetVersion::V4,
+                &Pubkey::new_unique(),
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: bls_for_other,
+                    bls_proof_of_possession: pop_for_other,
+                }),
+                &signers,
+                &clock,
+                true,
+                || Ok(()),
+            ),
+            Err(InstructionError::InvalidArgument)
+        );
+    }
+
+    #[test]
+    fn test_collector_fields_immutable_in_v4_only_scope() {
+        // Verify `inflation_rewards_collector` and `block_revenue_collector`
+        // are not modified by `Authorize` or `UpdateCommission` post-v4.
+        let vote_pubkey = solana_pubkey::new_rand();
+        let vote_state = vote_state_new_for_test(&vote_pubkey, VoteStateTargetVersion::V4);
+        let withdrawer = *vote_state.authorized_withdrawer();
+        let original_inflation_collector = vote_state.as_ref_v4().inflation_rewards_collector;
+        let original_block_revenue_collector = vote_state.as_ref_v4().block_revenue_collector;
+
+        let serialized = vote_state.clone().serialize();
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(serialized.len());
+        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
+        vote_account.set_data_from_slice(&serialized);
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let transaction_context = new_transaction_context(
+            vec![(id(), program_account), (vote_pubkey, vote_account)],
+            vec![InstructionAccount::new(1, false, true)],
+            &rent,
+        );
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+        let clock = Clock::default();
+
+        // Authorize: should not change collectors.
+        authorize(
+            &mut borrowed,
+            VoteStateTargetVersion::V4,
+            &solana_pubkey::new_rand(),
+            VoteAuthorize::Voter,
+            &signers,
+            &clock,
+            false,
+            || Ok(()),
+        )
+        .unwrap();
+
+        let v4 = VoteStateV4::deserialize(borrowed.get_data(), &vote_state.as_ref_v4().node_pubkey)
+            .unwrap();
+        assert_eq!(v4.inflation_rewards_collector, original_inflation_collector);
+        assert_eq!(v4.block_revenue_collector, original_block_revenue_collector);
+
+        // UpdateCommission: should not change collectors.
+        update_commission(
+            &mut borrowed,
+            VoteStateTargetVersion::V4,
+            50,
+            &signers,
+            &solana_epoch_schedule::EpochSchedule::without_warmup(),
+            &clock,
+            false,
+        )
+        .unwrap();
+
+        let v4 = VoteStateV4::deserialize(borrowed.get_data(), &vote_state.as_ref_v4().node_pubkey)
+            .unwrap();
+        assert_eq!(v4.inflation_rewards_collector, original_inflation_collector);
+        assert_eq!(v4.block_revenue_collector, original_block_revenue_collector);
+    }
+
+    #[test]
+    fn test_pending_delegator_rewards_zero_in_v4_only_scope() {
+        // Verify `pending_delegator_rewards` stays 0 through post-v4
+        // instructions (SIMD-0123 not active).
+        let vote_pubkey = solana_pubkey::new_rand();
+        let vote_state = vote_state_new_for_test(&vote_pubkey, VoteStateTargetVersion::V4);
+        let withdrawer = *vote_state.authorized_withdrawer();
+
+        let serialized = vote_state.clone().serialize();
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(serialized.len());
+        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
+        vote_account.set_data_from_slice(&serialized);
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let transaction_context = new_transaction_context(
+            vec![(id(), program_account), (vote_pubkey, vote_account)],
+            vec![InstructionAccount::new(1, false, true)],
+            &rent,
+        );
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        assert_eq!(
+            VoteStateV4::deserialize(borrowed.get_data(), &vote_state.as_ref_v4().node_pubkey)
+                .unwrap()
+                .pending_delegator_rewards,
+            0
+        );
+
+        // Authorize: pending should stay 0.
+        let signers: HashSet<Pubkey> = [withdrawer].into_iter().collect();
+        authorize(
+            &mut borrowed,
+            VoteStateTargetVersion::V4,
+            &solana_pubkey::new_rand(),
+            VoteAuthorize::Voter,
+            &signers,
+            &Clock::default(),
+            false,
+            || Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            VoteStateV4::deserialize(borrowed.get_data(), &vote_state.as_ref_v4().node_pubkey)
+                .unwrap()
+                .pending_delegator_rewards,
+            0
+        );
+    }
 }

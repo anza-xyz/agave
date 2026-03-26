@@ -7289,7 +7289,7 @@ fn test_store_scan_consistency<F>(
     bank0.set_callback(drop_callback);
 
     // Set up pubkeys to write to
-    let total_pubkeys = 1000 * 10;
+    let total_pubkeys = 10_000;
     let total_pubkeys_to_modify = 10;
     let all_pubkeys: Vec<Pubkey> = std::iter::repeat_with(solana_pubkey::new_rand)
         .take(total_pubkeys)

@@ -626,7 +626,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             self.global_program_cache
                 .write()
                 .unwrap()
-                .evict_using_2s_random_selection(
+                .evict_using_random_selection(
                     Percentage::from(SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE),
                     self.slot,
                 );

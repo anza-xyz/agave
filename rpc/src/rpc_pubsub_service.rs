@@ -590,7 +590,7 @@ mod tests {
 
         // Put the block into blockstore.
         let bank = bank_forks.read().unwrap().get(bank_slot).unwrap();
-        blockstore.insert_shreds_and_meta_for_bank(bank);
+        blockstore.insert_shreds_for_bank(bank);
 
         // Trigger the block update.
         subscriptions.notify_subscribers(CommitmentSlots {

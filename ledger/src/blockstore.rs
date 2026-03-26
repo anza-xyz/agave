@@ -3439,17 +3439,6 @@ impl Blockstore {
             .map(|(index, transaction)| (transaction, index as u32)))
     }
 
-    // DEPRECATED and decommissioned
-    // This method always returns an empty Vec
-    fn find_address_signatures(
-        &self,
-        _pubkey: Pubkey,
-        _start_slot: Slot,
-        _end_slot: Slot,
-    ) -> Result<Vec<(Slot, Signature)>> {
-        Ok(vec![])
-    }
-
     // Returns all signatures for an address in a particular slot, regardless of whether that slot
     // has been rooted. The transactions will be ordered by their occurrence in the block
     fn find_address_signatures_for_slot(
@@ -3479,18 +3468,6 @@ impl Blockstore {
         }
         drop(lock);
         Ok(signatures)
-    }
-
-    // DEPRECATED and decommissioned
-    // This method always returns an empty Vec
-    pub fn get_confirmed_signatures_for_address(
-        &self,
-        pubkey: Pubkey,
-        start_slot: Slot,
-        end_slot: Slot,
-    ) -> Result<Vec<Signature>> {
-        self.find_address_signatures(pubkey, start_slot, end_slot)
-            .map(|signatures| signatures.iter().map(|(_, signature)| *signature).collect())
     }
 
     fn get_block_signatures_rev(&self, slot: Slot) -> Result<Vec<Signature>> {
@@ -4910,17 +4887,10 @@ impl Blockstore {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn insert_shreds_and_meta_for_bank(&self, bank: Arc<Bank>) {
+    pub fn insert_shreds_for_bank(&self, bank: Arc<Bank>) {
         let entries = create_ticks(bank.ticks_per_slot(), 1, Hash::new_unique());
         let shreds = entries_to_test_shreds(&entries, bank.slot(), bank.parent_slot(), true, 0);
-        let num_shreds = shreds.len() as u64;
         self.insert_shreds(shreds, None, false).unwrap();
-        let mut meta = self.meta(bank.slot()).unwrap().unwrap();
-        meta.consumed = num_shreds;
-        meta.received = num_shreds;
-        meta.last_index = Some(num_shreds - 1);
-        meta.completed_data_indexes.insert(num_shreds as u32 - 1);
-        self.put_meta(bank.slot(), &meta).unwrap();
     }
 }
 

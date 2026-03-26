@@ -9,7 +9,7 @@ jobs:
   dependabot:
     timeout-minutes: 10
     runs-on: ubuntu-24.04
-    if: github.triggering_actor == 'dependabot[bot]'
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     steps:
       - name: checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -18,8 +18,10 @@ jobs:
           token: ${{ secrets.PAT }}
 
       - name: update code
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          input="${{ github.event.pull_request.title }}"
+          input="$PR_TITLE"
 
           regex='[Bb]ump (.+) from ([^ ]+) to ([^ ]+)( in .*)?'
           if [[ ! "$input" =~ $regex ]]; then
