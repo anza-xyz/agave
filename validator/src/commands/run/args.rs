@@ -802,12 +802,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(solana_net_utils::is_host)
             .help(
-                "Use when running a validator behind a NAT. DNS name or IP address for this \
-                 validator to advertise in gossip. This address will be used as the target \
-                 destination address for peers trying to contact this node. [default: ask \
-                 --entrypoint, or 127.0.0.1 when --entrypoint is not provided]. Note: this \
-                 argument cannot be used in a multihoming context (when multiple --bind-address \
-                 values are provided).",
+                "Public IP address for this validator to advertise in gossip. [default: ask \
+                 --entrypoint via its IP echo server, or 127.0.0.1 when --entrypoint is not \
+                 provided]. In a multihoming context (> 1 --bind-address), this flag is ignored \
+                 and the active --bind-address is advertised instead.",
             ),
     )
     .arg(
