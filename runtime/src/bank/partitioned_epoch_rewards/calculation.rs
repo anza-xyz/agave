@@ -8,8 +8,8 @@ use {
     },
     crate::{
         bank::{
-            EpochInflationRewards, RewardCalcTracer, RewardCalculationEvent, RewardCommission,
-            RewardCommissions, RewardsMetrics, null_tracer,
+            RewardCalcTracer, RewardCalculationEvent, RewardCommission, RewardCommissions,
+            RewardsMetrics, null_tracer,
         },
         inflation_rewards::{
             points::{DelegatedVoteState, PointValue, calculate_points},
@@ -211,8 +211,6 @@ impl Bank {
         let PartitionedRewardsCalculation {
             reward_commission_accounts,
             stake_rewards,
-            validator_rate,
-            foundation_rate,
             capitalization,
             point_value,
             ..
@@ -256,8 +254,6 @@ impl Bank {
             "epoch_rewards",
             ("slot", self.slot, i64),
             ("epoch", prev_epoch, i64),
-            ("validator_rate", *validator_rate, f64),
-            ("foundation_rate", *foundation_rate, f64),
             ("validator_rewards", total_reward_commissions, i64),
             ("active_stake", active_stake, i64),
             ("pre_capitalization", *capitalization, i64),
@@ -297,11 +293,8 @@ impl Bank {
         metrics: &mut RewardsMetrics,
     ) -> PartitionedRewardsCalculation {
         let capitalization = self.capitalization();
-        let EpochInflationRewards {
-            validator_rewards_lamports,
-            validator_rate,
-            foundation_rate,
-        } = self.calculate_epoch_inflation_rewards(capitalization, rewarded_epoch);
+        let validator_rewards_lamports =
+            self.calculate_epoch_inflation_rewards(capitalization, rewarded_epoch);
 
         let CalculateValidatorRewardsResult {
             reward_commission_accounts,
@@ -328,8 +321,6 @@ impl Bank {
         PartitionedRewardsCalculation {
             reward_commission_accounts,
             stake_rewards,
-            validator_rate,
-            foundation_rate,
             capitalization,
             point_value,
         }

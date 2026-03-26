@@ -989,18 +989,6 @@ impl Default for BankTestConfig {
     }
 }
 
-/// Data returned from [`Bank::calculate_epoch_inflation_rewards()`].
-pub(crate) struct EpochInflationRewards {
-    /// Amount of rewards a validator should get if it voted in every slot in
-    /// the epoch and its stake is equal to the network capitalization i.e.
-    /// the total supply.
-    pub(crate) validator_rewards_lamports: u64,
-    /// The current inflation rate for the validators.
-    pub(crate) validator_rate: f64,
-    /// The current inflation rate for the foundation.
-    pub(crate) foundation_rate: f64,
-}
-
 #[derive(Debug, Default, PartialEq)]
 pub struct ProcessedTransactionCounts {
     pub processed_transactions_count: u64,
@@ -2565,30 +2553,17 @@ impl Bank {
         num_slots as f64 / self.slots_per_year
     }
 
-    /// For a given [`capitalization`] (total_supply in lamports) and [`epoch`], calculates various inflation related info.
+    /// For a given `capitalization` (total_supply in lamports) and `epoch`, returns the
+    /// `epoch inflation rewards` in lamports.
     pub(crate) fn calculate_epoch_inflation_rewards(
         &self,
         capitalization: u64,
         epoch: Epoch,
-    ) -> EpochInflationRewards {
+    ) -> u64 {
         let slot_in_year = self.slot_in_year_for_inflation();
-        let (validator_rate, foundation_rate) = {
-            let inflation = self.inflation.read().unwrap();
-            (
-                (*inflation).validator(slot_in_year),
-                (*inflation).foundation(slot_in_year),
-            )
-        };
-
+        let validator_rate = self.inflation.read().unwrap().validator(slot_in_year);
         let epoch_duration_in_years = self.epoch_duration_in_years(epoch);
-        let validator_rewards_lamports =
-            (validator_rate * capitalization as f64 * epoch_duration_in_years) as u64;
-
-        EpochInflationRewards {
-            validator_rewards_lamports,
-            validator_rate,
-            foundation_rate,
-        }
+        (validator_rate * capitalization as f64 * epoch_duration_in_years) as u64
     }
 
     /// Convert computed RewardCommissions to RewardCommissionAccounts for storing.

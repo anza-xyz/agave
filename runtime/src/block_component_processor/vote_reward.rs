@@ -1,5 +1,5 @@
 use {
-    crate::bank::{Bank, EpochInflationRewards},
+    crate::bank::Bank,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
@@ -68,16 +68,12 @@ impl VoteRewardAccountState {
         prev_epoch_capitalization: u64,
         additional_validator_rewards: u64,
     ) {
-        let EpochInflationRewards {
-            validator_rewards_lamports,
-            validator_rate: _,
-            foundation_rate: _,
-        } = bank.calculate_epoch_inflation_rewards(
+        let epoch_validator_rewards_lamports = bank.calculate_epoch_inflation_rewards(
             prev_epoch_capitalization + additional_validator_rewards,
             prev_epoch,
         );
         let state = Self {
-            epoch_validator_rewards_lamports: validator_rewards_lamports,
+            epoch_validator_rewards_lamports,
         };
         state.set_state(bank);
     }
@@ -191,10 +187,8 @@ mod tests {
         let circulating_supply = 566_000_000 * LAMPORTS_PER_SOL;
 
         let bank = Bank::new_for_tests(&GenesisConfig::default());
-        let EpochInflationRewards {
-            validator_rewards_lamports,
-            ..
-        } = bank.calculate_epoch_inflation_rewards(circulating_supply, 1);
+        let validator_rewards_lamports =
+            bank.calculate_epoch_inflation_rewards(circulating_supply, 1);
 
         calculate_voting_reward(
             bank.epoch_schedule().slots_per_epoch,
@@ -230,10 +224,7 @@ mod tests {
         let VoteRewardAccountState {
             epoch_validator_rewards_lamports,
         } = VoteRewardAccountState::new_from_bank(&bank);
-        let EpochInflationRewards {
-            validator_rewards_lamports,
-            ..
-        } = bank.calculate_epoch_inflation_rewards(
+        let validator_rewards_lamports = bank.calculate_epoch_inflation_rewards(
             prev_epoch_capitalization + additional_validator_rewards,
             prev_epoch,
         );
