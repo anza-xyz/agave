@@ -21,11 +21,13 @@ pub struct CommandArgs {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Pipeline {
     Agave,
+    Private,
 }
 
 pub async fn run(args: CommandArgs) -> Result<()> {
     let pipeline = match args.pipeline {
         Pipeline::Agave => generate_agave_pipeline().await?,
+        Pipeline::Private => generate_private_pipeline()?,
     };
 
     let output = args.output_file;
@@ -63,6 +65,31 @@ async fn generate_agave_pipeline() -> Result<buildkite::Pipeline> {
 
     info!("Branch matches no known pattern, running full pipeline.");
     generate_full_pipeline()
+}
+
+fn generate_private_pipeline() -> Result<buildkite::Pipeline> {
+    let mut pipeline = buildkite::Pipeline::new();
+
+    pipeline.add_step(default_sanity_step());
+    pipeline.add_step(default_shellcheck_step());
+
+    pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
+
+    pipeline.add_step(default_checks_step());
+
+    pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
+
+    pipeline.add_step(default_stable_step(3));
+    pipeline.add_step(default_local_cluster_step(10));
+    pipeline.add_step(default_docs_check_step());
+    pipeline.add_step(default_localnet_step());
+
+    pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
+
+    pipeline.add_step(default_stable_sbf_step());
+    pipeline.add_step(default_shuttle_step());
+
+    Ok(pipeline)
 }
 
 fn annotate_pull_request(pr_number: u64) -> Result<()> {
