@@ -8,6 +8,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, SlotLeader},
+        bank_forks::BankForks,
         genesis_utils::{
             GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
         },
@@ -21,7 +22,11 @@ use {
     solana_sysvar::epoch_rewards::{self, EpochRewards},
     solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
     solana_vote_program::vote_state::process_slot_vote_unchecked,
-    std::{hint::black_box, sync::Arc, time::Duration},
+    std::{
+        hint::black_box,
+        sync::{Arc, RwLock},
+        time::Duration,
+    },
 };
 
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
@@ -82,7 +87,7 @@ fn populate_vote_accounts(bank: &Bank, vote_pubkeys: Vec<Pubkey>) {
     }
 }
 
-fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> Arc<Bank> {
+fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
     let validators = (0..vote_accounts)
         .map(|_| ValidatorVoteKeypairs::new_rand())
         .collect::<Vec<_>>();
@@ -114,17 +119,21 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> Arc<Bank> {
         }
     }
 
-    let initial_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+    let (initial_bank, bank_forks) =
+        Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 
     populate_vote_accounts(&initial_bank, vote_pubkeys);
 
     let last_slot_in_epoch = initial_bank.get_slots_in_epoch(0).checked_sub(1).unwrap();
 
-    Arc::new(Bank::new_from_parent(
-        initial_bank,
-        SlotLeader::default(),
-        last_slot_in_epoch,
-    ))
+    (
+        Arc::new(Bank::new_from_parent(
+            initial_bank,
+            SlotLeader::default(),
+            last_slot_in_epoch,
+        )),
+        bank_forks,
+    )
 }
 
 // start with a bank at the last slot in an epoch, measure advancing the slot
@@ -134,11 +143,12 @@ fn bench_epoch_turnover(c: &mut Criterion) {
     for (vote_accounts, stake_accounts) in iproduct!(VOTE_ACCOUNTS, STAKE_ACCOUNTS) {
         let name = format!("{vote_accounts}_votes_{stake_accounts}_stakes");
 
-        let initial_bank = setup_bank(vote_accounts, stake_accounts);
+        let (initial_bank, bank_forks) = setup_bank(vote_accounts, stake_accounts);
         let first_epoch_slot = initial_bank.slot() + 1;
 
         group.bench_function(name.as_str(), move |b| {
             b.iter(|| {
+                let _ = &bank_forks; // Keep in scope so parent banks retain fork_graph.
                 let bank = Bank::new_from_parent(
                     initial_bank.clone(),
                     SlotLeader::default(),
@@ -158,7 +168,7 @@ fn bench_epoch_rewards_period(c: &mut Criterion) {
     for (vote_accounts, stake_accounts) in iproduct!(VOTE_ACCOUNTS, STAKE_ACCOUNTS) {
         let name = format!("{vote_accounts}_votes_{stake_accounts}_stakes");
 
-        let initial_bank = setup_bank(vote_accounts, stake_accounts);
+        let (initial_bank, bank_forks) = setup_bank(vote_accounts, stake_accounts);
         let first_epoch_slot = initial_bank.slot() + 1;
 
         let bank = Arc::new(Bank::new_from_parent(
@@ -177,6 +187,7 @@ fn bench_epoch_rewards_period(c: &mut Criterion) {
 
         group.bench_function(name.as_str(), move |b| {
             b.iter(|| {
+                let _ = &bank_forks; // Keep in scope so parent banks retain fork_graph.
                 let mut bank = bank.clone();
 
                 for slot in (first_epoch_slot + 1)..=final_rewards_slot {

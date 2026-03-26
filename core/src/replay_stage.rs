@@ -3730,9 +3730,8 @@ impl ReplayStage {
                         .parent()
                         .map(|bank| bank.last_blockhash())
                         .unwrap_or_default();
-                    let commission_rate_in_basis_points = bank
-                        .feature_set
-                        .is_active(&agave_feature_set::commission_rate_in_basis_points::id());
+                    let commission_rate_in_basis_points =
+                        bank.feature_set.snapshot().commission_rate_in_basis_points;
                     block_metadata_notifier.notify_block_metadata(
                         bank.parent_slot(),
                         &parent_blockhash.to_string(),

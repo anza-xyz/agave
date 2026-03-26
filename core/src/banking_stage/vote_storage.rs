@@ -1,7 +1,6 @@
 use {
     super::latest_validator_vote_packet::{LatestValidatorVote, VoteSource},
     crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
-    agave_feature_set as feature_set,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     ahash::HashMap,
     itertools::Itertools,
@@ -68,9 +67,7 @@ impl VoteStorage {
             cached_epoch_stakes,
             cached_epoch_authorized_voters,
             current_epoch: bank.epoch(),
-            deprecate_legacy_vote_ixs: bank
-                .feature_set
-                .is_active(&feature_set::deprecate_legacy_vote_ixs::id()),
+            deprecate_legacy_vote_ixs: bank.feature_set.snapshot().deprecate_legacy_vote_ixs,
         }
     }
 
@@ -198,9 +195,7 @@ impl VoteStorage {
                 .expect("Epoch stakes for the current bank must be available");
             self.cached_epoch_stakes = current_epoch_stakes;
             self.current_epoch = bank.epoch();
-            self.deprecate_legacy_vote_ixs = bank
-                .feature_set
-                .is_active(&feature_set::deprecate_legacy_vote_ixs::id());
+            self.deprecate_legacy_vote_ixs = bank.feature_set.snapshot().deprecate_legacy_vote_ixs;
         }
 
         // Evict any now unstaked pubkeys

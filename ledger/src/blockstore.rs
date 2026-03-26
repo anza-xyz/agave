@@ -207,7 +207,8 @@ impl LastFECSetCheckResults {
         if self.last_fec_set_merkle_root.is_none() {
             return Err(BlockstoreProcessorError::IncompleteFinalFecSet);
         } else if feature_set
-            .is_active(&agave_feature_set::vote_only_retransmitter_signed_fec_sets::id())
+            .snapshot()
+            .vote_only_retransmitter_signed_fec_sets
             && !self.is_retransmitter_signed
         {
             return Err(BlockstoreProcessorError::InvalidRetransmitterSignatureFinalFecSet);
@@ -256,6 +257,7 @@ pub struct Blockstore {
     index_cf: LedgerColumn<cf::Index>,
     erasure_meta_cf: LedgerColumn<cf::ErasureMeta>,
     merkle_root_meta_cf: LedgerColumn<cf::MerkleRootMeta>,
+    orphans_cf: LedgerColumn<cf::Orphans>,
     duplicate_slots_cf: LedgerColumn<cf::DuplicateSlots>,
 
     // Shred insertion column families for handling Alpenglow alternate blocks
@@ -269,7 +271,6 @@ pub struct Blockstore {
     optimistic_slots_cf: LedgerColumn<cf::OptimisticSlots>,
     roots_cf: LedgerColumn<cf::Root>,
     dead_slots_cf: LedgerColumn<cf::DeadSlots>,
-    orphans_cf: LedgerColumn<cf::Orphans>,
 
     // Block and transaction metadata column families (for RPC)
     block_height_cf: LedgerColumn<cf::BlockHeight>,
@@ -408,6 +409,7 @@ impl Blockstore {
         let index_cf = db.column();
         let erasure_meta_cf = db.column();
         let merkle_root_meta_cf = db.column();
+        let orphans_cf = db.column();
         let duplicate_slots_cf = db.column();
 
         let alt_data_shred_cf = db.column();
@@ -419,7 +421,6 @@ impl Blockstore {
         let optimistic_slots_cf = db.column();
         let roots_cf = db.column();
         let dead_slots_cf = db.column();
-        let orphans_cf = db.column();
 
         let block_height_cf = db.column();
         let blocktime_cf = db.column();
@@ -449,13 +450,13 @@ impl Blockstore {
             code_shred_cf,
             data_shred_cf,
             dead_slots_cf,
+            orphans_cf,
             duplicate_slots_cf,
             erasure_meta_cf,
             index_cf,
             merkle_root_meta_cf,
             meta_cf,
             optimistic_slots_cf,
-            orphans_cf,
             perf_samples_cf,
             rewards_cf,
             roots_cf,
@@ -972,6 +973,7 @@ impl Blockstore {
         self.index_cf.submit_rocksdb_cf_metrics();
         self.erasure_meta_cf.submit_rocksdb_cf_metrics();
         self.merkle_root_meta_cf.submit_rocksdb_cf_metrics();
+        self.orphans_cf.submit_rocksdb_cf_metrics();
         self.duplicate_slots_cf.submit_rocksdb_cf_metrics();
 
         self.alt_data_shred_cf.submit_rocksdb_cf_metrics();
@@ -983,7 +985,6 @@ impl Blockstore {
         self.optimistic_slots_cf.submit_rocksdb_cf_metrics();
         self.roots_cf.submit_rocksdb_cf_metrics();
         self.dead_slots_cf.submit_rocksdb_cf_metrics();
-        self.orphans_cf.submit_rocksdb_cf_metrics();
 
         self.block_height_cf.submit_rocksdb_cf_metrics();
         self.blocktime_cf.submit_rocksdb_cf_metrics();
@@ -3438,17 +3439,6 @@ impl Blockstore {
             .map(|(index, transaction)| (transaction, index as u32)))
     }
 
-    // DEPRECATED and decommissioned
-    // This method always returns an empty Vec
-    fn find_address_signatures(
-        &self,
-        _pubkey: Pubkey,
-        _start_slot: Slot,
-        _end_slot: Slot,
-    ) -> Result<Vec<(Slot, Signature)>> {
-        Ok(vec![])
-    }
-
     // Returns all signatures for an address in a particular slot, regardless of whether that slot
     // has been rooted. The transactions will be ordered by their occurrence in the block
     fn find_address_signatures_for_slot(
@@ -3478,18 +3468,6 @@ impl Blockstore {
         }
         drop(lock);
         Ok(signatures)
-    }
-
-    // DEPRECATED and decommissioned
-    // This method always returns an empty Vec
-    pub fn get_confirmed_signatures_for_address(
-        &self,
-        pubkey: Pubkey,
-        start_slot: Slot,
-        end_slot: Slot,
-    ) -> Result<Vec<Signature>> {
-        self.find_address_signatures(pubkey, start_slot, end_slot)
-            .map(|signatures| signatures.iter().map(|(_, signature)| *signature).collect())
     }
 
     fn get_block_signatures_rev(&self, slot: Slot) -> Result<Vec<Signature>> {
@@ -4909,17 +4887,10 @@ impl Blockstore {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn insert_shreds_and_meta_for_bank(&self, bank: Arc<Bank>) {
+    pub fn insert_shreds_for_bank(&self, bank: Arc<Bank>) {
         let entries = create_ticks(bank.ticks_per_slot(), 1, Hash::new_unique());
         let shreds = entries_to_test_shreds(&entries, bank.slot(), bank.parent_slot(), true, 0);
-        let num_shreds = shreds.len() as u64;
         self.insert_shreds(shreds, None, false).unwrap();
-        let mut meta = self.meta(bank.slot()).unwrap().unwrap();
-        meta.consumed = num_shreds;
-        meta.received = num_shreds;
-        meta.last_index = Some(num_shreds - 1);
-        meta.completed_data_indexes.insert(num_shreds as u32 - 1);
-        self.put_meta(bank.slot(), &meta).unwrap();
     }
 }
 

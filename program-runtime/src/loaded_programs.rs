@@ -761,40 +761,45 @@ impl ProgramCacheEntry {
         let last_access = self.latest_access_slot.load(Ordering::Relaxed);
         let recovery_cost = self.stats.compilation_time_ema.load(Ordering::Relaxed);
         let frequency = self.stats.uses.load(Ordering::Relaxed);
-        // Traditionally GDSF uses the following logic:
-        //
-        // on_access:
-        //   entry.frequency += 1
-        //   entry.H := cache.L + (entry.cost * entry.frequency) / entry.size
-        //
-        // on_eviction:
-        //   victim = pick_victim_minimizing_H()
-        //   cache.L := victim.H
-        //
-        // It achieves decay by virtue of L increasing over time (and therefore the “value” of
-        // stored score of each entry decreasing over time.) Entry recovery and frequency, as well
-        // as size are otherwise also accounted for by them inflating the overall score by a bit.
-        //
-        // We adapt this algorithm slightly: we already have a kind of `L` – access slot. It does
-        // not include the weight of the evicted entry as the original algorithm does, that is
-        // *probably* fine (the author has not done any empirical experiments to verify it it
-        // actually matters.)
-        //
-        // Additionally we ignore the size component altogether as irrelevant and instead of
-        // applying entry weight linearly, we use a `log_2`. We can't use plain `weight*frequency`
-        // as the most heavily used entries would never ever get evicted after just some runtime,
-        // even if they're no longer used. With `log_2` weight and frequency can contribute to
-        // up-to 128 slots of "bonus" towards their retention compared to rarely used peers.
-        //
-        // Feel free to adjust the specific formulae used.
-        let weight = u128::from(recovery_cost).wrapping_mul(u128::from(frequency));
-        let weight_log = u128::BITS.wrapping_sub(weight.leading_zeros());
-        last_access.saturating_add(u64::from(weight_log))
+        retention_score(last_access, recovery_cost, frequency)
     }
 
     pub fn account_owner(&self) -> Pubkey {
         self.account_owner.into()
     }
+}
+
+/// See [`ProgramCacheEntry::retention_score`].
+const fn retention_score(last_access: u64, recovery_cost: u64, frequency: u64) -> u64 {
+    // Traditionally GDSF uses the following logic:
+    //
+    // on_access:
+    //   entry.frequency += 1
+    //   entry.H := cache.L + (entry.cost * entry.frequency) / entry.size
+    //
+    // on_eviction:
+    //   victim = pick_victim_minimizing_H()
+    //   cache.L := victim.H
+    //
+    // It achieves decay by virtue of L increasing over time (and therefore the “value” of
+    // stored score of each entry decreasing over time.) Entry recovery and frequency, as well
+    // as size are otherwise also accounted for by them inflating the overall score by a bit.
+    //
+    // We adapt this algorithm slightly: we already have a kind of `L` – access slot. It does
+    // not include the weight of the evicted entry as the original algorithm does, that is
+    // *probably* fine (the author has not done any empirical experiments to verify it it
+    // actually matters.)
+    //
+    // Additionally we ignore the size component altogether as irrelevant and instead of
+    // applying entry weight linearly, we use a `log_2`. We can't use plain `weight*frequency`
+    // as the most heavily used entries would never ever get evicted after just some runtime,
+    // even if they're no longer used. With `log_2` weight and frequency can contribute to
+    // up-to 128 slots of "bonus" towards their retention compared to rarely used peers.
+    //
+    // Feel free to adjust the specific formulae used.
+    let weight = (recovery_cost as u128).wrapping_mul(frequency as u128);
+    let weight_log = u128::BITS.wrapping_sub(weight.leading_zeros());
+    last_access.saturating_add(weight_log as u64)
 }
 
 /// Globally manages the transition between environments at the epoch boundary
@@ -1520,20 +1525,21 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
     }
 
-    /// Evicts programs using 2's random selection, choosing the least used program out of the two entries.
-    /// The eviction is performed enough number of times to reduce the cache usage to the given percentage.
-    pub fn evict_using_2s_random_selection(&mut self, shrink_to: PercentageInteger, _now: Slot) {
+    /// Evicts programs using random selection, choosing the worst scoring program out of the
+    /// entries sampled.
+    ///
+    /// The eviction is performed enough number of times to reduce the cache usage to the given
+    /// percentage.
+    pub fn evict_using_random_selection(&mut self, shrink_to: PercentageInteger, now: Slot) {
         let mut candidates = self.get_flattened_entries();
+        let mut rng = rng();
         self.stats
             .water_level
             .store(candidates.len() as u64, Ordering::Relaxed);
         let num_to_unload = candidates
             .len()
             .saturating_sub(shrink_to.apply_to(MAX_LOADED_ENTRY_COUNT));
-        fn random_index_and_usage_counter(
-            candidates: &[(Pubkey, Slot, Arc<ProgramCacheEntry>)],
-        ) -> (usize, u64) {
-            let mut rng = rng();
+        let mut sample_entry = |candidates: &Vec<(Pubkey, u64, Arc<ProgramCacheEntry>)>| {
             // gen_range is deprecated in favor of random_range in rand>=0.9, but we also get
             // rnd() from shuttle, which doesn't yet support rand 0.9 APIs
             #[cfg(feature = "shuttle-test")]
@@ -1546,17 +1552,30 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 .2
                 .retention_score();
             (index, usage_counter)
-        }
+        };
 
+        // Random sampling with just 2 choices can frequently lead to a situation where both
+        // entries chosen have relatively high retention scores, having us to pick one out of two
+        // poor options. We can tell what a relatively high retention score is, so we can make a
+        // few additional samples until we hit some other entry that isn't as highly scoring.
+        //
+        // Note that the "high enough" compilation time and use count numbers used here are
+        // relatively arbitrary.
+        const MAX_ADDITIONAL_SAMPLES: usize = 3;
+        let avoid_evicting_above_score = retention_score(now, 500 * EMA_SCALE, 500);
         for _ in 0..num_to_unload {
-            let (index1, retention_score1) = random_index_and_usage_counter(&candidates);
-            let (index2, retention_score2) = random_index_and_usage_counter(&candidates);
-
-            let (id, last_modification_slot, entry) = if retention_score1 < retention_score2 {
-                candidates.swap_remove(index1)
-            } else {
-                candidates.swap_remove(index2)
-            };
+            let (mut index, mut score) = sample_entry(&candidates);
+            for _ in 0..MAX_ADDITIONAL_SAMPLES {
+                let (sample_index, sample_score) = sample_entry(&candidates);
+                if score > sample_score {
+                    index = sample_index;
+                    score = sample_score;
+                }
+                if score < avoid_evicting_above_score {
+                    break;
+                }
+            }
+            let (id, last_modification_slot, entry) = candidates.swap_remove(index);
             self.unload_program_entry(id, last_modification_slot, &entry);
         }
     }
@@ -2025,7 +2044,7 @@ mod tests {
         let num_loaded_expected =
             Percentage::from(eviction_pct).apply_to(crate::loaded_programs::MAX_LOADED_ENTRY_COUNT);
         let num_unloaded_expected = num_unloaded_expected + num_loaded - num_loaded_expected;
-        cache.evict_using_2s_random_selection(Percentage::from(eviction_pct), 21);
+        cache.evict_using_random_selection(Percentage::from(eviction_pct), 21);
 
         // Count the number of loaded, unloaded and tombstone entries.
         let num_loaded = num_matching_entries(&cache, |program_type| {

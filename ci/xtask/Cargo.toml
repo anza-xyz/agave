@@ -16,14 +16,24 @@ publish = false
 agave-unstable-api = []
 dummy-for-ci-check = []
 frozen-abi = []
+integration-tests = []
 
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.6.0", features = ["derive"] }
 env_logger = "0.11.10"
+futures-util = "0.3.31"
 log = "0.4.28"
+octocrab = { version = "0.49.5", features = ["stream"] }
+regex = "1.12.3"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+serde_yaml = "0.9.34"
 tokio = { version = "1.50.0", features = ["full"] }
 xtask_shared = { package = "xtask", git = "https://github.com/anza-xyz/xtask", rev = "a9b0cf5facf85eb11458bbefc651132722c18dae" }
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
 
 [profile.dev]
 debug = "line-tables-only"

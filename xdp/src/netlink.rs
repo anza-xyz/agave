@@ -587,7 +587,7 @@ pub fn parse_rtm_newneigh(msg: &NetlinkMessage, if_index: Option<u32>) -> Option
     Some(neighbor)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct RouteEntry {
     pub destination: Option<IpAddr>,
     pub gateway: Option<IpAddr>,
@@ -602,17 +602,6 @@ pub struct RouteEntry {
     pub family: u8,
     pub dst_len: u8,
     pub flags: u32,
-}
-
-impl RouteEntry {
-    #[inline]
-    pub fn same_key(&self, other: &Self) -> bool {
-        self.family == other.family
-            && self.dst_len == other.dst_len
-            && self.destination == other.destination
-            && self.table == other.table
-            && self.type_ == other.type_
-    }
 }
 
 #[repr(C)]

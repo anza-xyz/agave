@@ -43,7 +43,6 @@ use {
 };
 pub use {
     bucket_map_holder::{DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT},
-    iter::ITER_BATCH_SIZE,
     secondary::{
         AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude, IndexKey,
     },
@@ -2620,9 +2619,9 @@ mod tests {
     fn test_scan_accounts() {
         run_test_scan_accounts(0);
         run_test_scan_accounts(1);
-        run_test_scan_accounts(ITER_BATCH_SIZE * 10);
-        run_test_scan_accounts(ITER_BATCH_SIZE * 10 - 1);
-        run_test_scan_accounts(ITER_BATCH_SIZE * 10 + 1);
+        run_test_scan_accounts(1000 * 10);
+        run_test_scan_accounts(1000 * 10 - 1);
+        run_test_scan_accounts(1000 * 10 + 1);
     }
 
     #[test]

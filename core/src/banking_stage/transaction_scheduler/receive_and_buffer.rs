@@ -242,9 +242,8 @@ impl TransactionViewReceiveAndBuffer {
         // If outside holding window, do not parse.
         let should_parse = !matches!(decision, BufferedPacketsDecision::Forward);
 
-        let enable_instruction_accounts_limit = root_bank
-            .feature_set
-            .is_active(&agave_feature_set::limit_instruction_accounts::ID);
+        let enable_instruction_accounts_limit =
+            root_bank.feature_set.snapshot().limit_instruction_accounts;
         let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
 
         // Create temporary batches of transactions to be age-checked.

@@ -118,8 +118,8 @@ fn run_check_duplicate(
             root_bank = bank_forks.read().unwrap().root_bank();
         }
         let shred_slot = shred.slot();
-        let chained_merkle_conflict_duplicate_proofs = cluster_nodes::check_feature_activation(
-            &feature_set::chained_merkle_conflict_duplicate_proofs::id(),
+        let validate_chained_block_id = cluster_nodes::check_feature_activation(
+            &feature_set::validate_chained_block_id::id(),
             shred_slot,
             &root_bank,
         );
@@ -127,23 +127,13 @@ fn run_check_duplicate(
             PossibleDuplicateShred::LastIndexConflict(shred, conflict)
             | PossibleDuplicateShred::ErasureConflict(shred, conflict)
             | PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => (shred, conflict),
-            PossibleDuplicateShred::ChainedMerkleRootConflict(shred, conflict) => {
-                if chained_merkle_conflict_duplicate_proofs {
-                    // Although this proof can be immediately stored on detection, we wait until
-                    // here in order to check the feature flag, as storage in blockstore can
-                    // preclude the detection of other duplicate proofs in this slot
-                    if blockstore.has_duplicate_shreds_in_slot(shred_slot) {
-                        return Ok(());
-                    }
-                    blockstore.store_duplicate_slot(
-                        shred_slot,
-                        conflict.clone(),
-                        shred.clone().into_payload(),
-                    )?;
-                    (shred, conflict)
-                } else {
-                    return Ok(());
+            PossibleDuplicateShred::ChainedMerkleRootConflict(_shred, _conflict) => {
+                if validate_chained_block_id {
+                    // Although chained merkle roots are not necessary for agave duplicate resolution protocols,
+                    // We still need to mark the block as dead for other client teams.
+                    blockstore.set_dead_slot(shred_slot)?;
                 }
+                return Ok(());
             }
             PossibleDuplicateShred::Exists(shred) => {
                 // Unlike the other cases we have to wait until here to decide to handle the duplicate and store

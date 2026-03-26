@@ -2396,8 +2396,7 @@ impl JsonRpcRequestProcessor {
     fn get_stake_minimum_delegation(&self, config: RpcContextConfig) -> Result<RpcResponse<u64>> {
         let bank = self.get_bank_with_config(config)?;
         let stake_minimum_delegation = stake_utils::get_minimum_delegation(
-            bank.feature_set
-                .is_active(&agave_feature_set::upgrade_bpf_stake_program_to_v5::id()),
+            bank.feature_set.snapshot().upgrade_bpf_stake_program_to_v5,
         );
         Ok(new_response(&bank, stake_minimum_delegation))
     }
@@ -3857,7 +3856,8 @@ pub mod rpc_full {
                 preflight_bank.get_reserved_account_keys(),
                 preflight_bank
                     .feature_set
-                    .is_active(&agave_feature_set::limit_instruction_accounts::id()),
+                    .snapshot()
+                    .limit_instruction_accounts,
             )?;
             let blockhash = *transaction.message().recent_blockhash();
             let message_hash = *transaction.message_hash();
@@ -4019,8 +4019,7 @@ pub mod rpc_full {
                 unsanitized_tx,
                 bank,
                 bank.get_reserved_account_keys(),
-                bank.feature_set
-                    .is_active(&agave_feature_set::limit_instruction_accounts::id()),
+                bank.feature_set.snapshot().limit_instruction_accounts,
             )?;
 
             let verification_error = if sig_verify {
@@ -9253,8 +9252,7 @@ pub mod tests {
         let rpc = RpcHandler::start();
         let bank = rpc.working_bank();
         let expected_stake_minimum_delegation = stake_utils::get_minimum_delegation(
-            bank.feature_set
-                .is_active(&agave_feature_set::upgrade_bpf_stake_program_to_v5::id()),
+            bank.feature_set.snapshot().upgrade_bpf_stake_program_to_v5,
         );
 
         let request = create_test_request("getStakeMinimumDelegation", None);

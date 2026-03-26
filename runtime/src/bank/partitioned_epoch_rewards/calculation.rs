@@ -1711,86 +1711,13 @@ mod tests {
 
         // Advance until reward distribution has completed.
         let mut bank = bank;
-        for _ in (num_rewards_per_block..expected_num_delegations as u64)
-            .step_by(num_rewards_per_block as usize)
-        {
+        for _ in 1..bank.get_epoch_rewards_sysvar().num_partitions {
             assert!(bank.get_epoch_rewards_sysvar().active);
             let new_slot = bank.slot() + 1;
             bank = Arc::new(Bank::new_from_parent(bank, SlotLeader::default(), new_slot));
         }
 
         assert!(!bank.get_epoch_rewards_sysvar().active);
-        // Recalculation would panic, tested separately
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_recalculate_stake_rewards_distribution_complete() {
-        let expected_num_delegations = 2;
-        let num_rewards_per_block = 2;
-        // Distribute 2 rewards over 1 block
-        let (RewardBank { bank, .. }, _) = create_reward_bank(
-            expected_num_delegations,
-            num_rewards_per_block,
-            SLOTS_PER_EPOCH,
-        );
-        let rewarded_epoch = bank.epoch();
-
-        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        let mut rewards_metrics = RewardsMetrics::default();
-        let stakes = bank.stakes_cache.stakes();
-        let EpochRewardCalculateParamInfo {
-            stake_history,
-            stake_delegations,
-            cached_vote_accounts,
-        } = bank.get_epoch_params_for_recalculation(rewarded_epoch, &stakes);
-        let PartitionedRewardsCalculation {
-            stake_rewards:
-                StakeRewardCalculation {
-                    stake_rewards: expected_stake_rewards,
-                    ..
-                },
-            ..
-        } = bank.calculate_rewards_for_partitioning(
-            &stake_history,
-            &stake_delegations,
-            cached_vote_accounts,
-            rewarded_epoch,
-            null_tracer(),
-            &thread_pool,
-            &mut rewards_metrics,
-        );
-        drop(stakes);
-
-        let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
-        let expected_partition_indices = hash_rewards_into_partitions(
-            &expected_stake_rewards,
-            &epoch_rewards_sysvar.parent_blockhash,
-            epoch_rewards_sysvar.num_partitions as usize,
-        );
-        let expected_stake_rewards =
-            build_partitioned_stake_rewards(&expected_stake_rewards, &expected_partition_indices);
-
-        let (_, recalculated_rewards, recalculated_partition_indices) =
-            bank.recalculate_stake_rewards(&epoch_rewards_sysvar, &thread_pool);
-        let recalculated_rewards =
-            build_partitioned_stake_rewards(&recalculated_rewards, &recalculated_partition_indices);
-
-        assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
-        compare_stake_rewards(&expected_stake_rewards, &recalculated_rewards);
-
-        // Advance until reward distribution has completed.
-        let mut bank = bank;
-        for _ in (0..expected_num_delegations as u64).step_by(num_rewards_per_block as usize) {
-            assert!(bank.get_epoch_rewards_sysvar().active);
-            let new_slot = bank.slot() + 1;
-            bank = Arc::new(Bank::new_from_parent(bank, SlotLeader::default(), new_slot));
-        }
-
-        assert!(!bank.get_epoch_rewards_sysvar().active);
-        // Should panic
-        let _recalculated_rewards =
-            bank.recalculate_stake_rewards(&epoch_rewards_sysvar, &thread_pool);
     }
 
     #[test]
@@ -1920,9 +1847,7 @@ mod tests {
 
         // Advance until reward distribution has completed.
         let mut bank = bank;
-        for _ in (num_rewards_per_block..expected_num_delegations as u64)
-            .step_by(num_rewards_per_block as usize)
-        {
+        for _ in 1..bank.get_epoch_rewards_sysvar().num_partitions {
             assert!(bank.get_epoch_rewards_sysvar().active);
             let next_slot = bank.slot() + 1;
             bank = Bank::new_from_parent(Arc::new(bank), SlotLeader::default(), next_slot);
