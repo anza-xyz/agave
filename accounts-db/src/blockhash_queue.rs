@@ -110,12 +110,7 @@ impl BlockhashQueue {
 
     pub fn register_hash(&mut self, hash: &Hash, lamports_per_signature: u64) {
         self.last_hash_index += 1;
-        if self.hashes.len() >= self.max_age {
-            self.hashes.retain(|_, info| {
-                Self::is_hash_index_valid(self.last_hash_index, self.max_age, info.hash_index)
-            });
-        }
-
+        self.purge();
         self.hashes.insert(
             *hash,
             HashInfo {
@@ -128,15 +123,18 @@ impl BlockhashQueue {
         self.last_hash = Some(*hash);
     }
 
-    pub fn set_max_age(&mut self, max_age: usize) {
-        assert!(max_age > 0, "max blockhash age must be >0");
-        if max_age < self.max_age {
-            // Max age is being reduced. Prune the queue of expired hashes.
+    fn purge(&mut self) {
+        if self.hashes.len() >= self.max_age {
             self.hashes.retain(|_, info| {
-                Self::is_hash_index_valid(self.last_hash_index, max_age, info.hash_index)
+                Self::is_hash_index_valid(self.last_hash_index, self.max_age, info.hash_index)
             });
         }
+    }
+
+    pub fn set_max_age(&mut self, max_age: usize) {
+        assert!(max_age > 0, "max blockhash age must be >0");
         self.max_age = max_age;
+        self.purge();
     }
 
     #[deprecated(
