@@ -796,6 +796,21 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("advertised_ip")
+            .long("advertised-ip")
+            .value_name("HOST")
+            .takes_value(true)
+            .validator(solana_net_utils::is_host)
+            .help(
+                "Use when running a validator behind a NAT. DNS name or IP address for this \
+                 validator to advertise in gossip. This address will be used as the target \
+                 destination address for peers trying to contact this node. [default: ask \
+                 --entrypoint, or 127.0.0.1 when --entrypoint is not provided]. Note: this \
+                 argument cannot be used in a multihoming context (when multiple --bind-address \
+                 values are provided).",
+            ),
+    )
+    .arg(
         Arg::with_name("rpc_bind_address")
             .long("rpc-bind-address")
             .value_name("HOST")
@@ -1634,6 +1649,16 @@ mod tests {
                 expected_args,
             );
         }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_advertised_ip() {
+        let default_run_args = RunArgs::default();
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args.clone(),
+            vec!["--advertised-ip", "127.0.0.2"],
+            default_run_args,
+        );
     }
 
     #[test]
