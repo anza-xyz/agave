@@ -2619,9 +2619,9 @@ mod tests {
     fn test_scan_accounts() {
         run_test_scan_accounts(0);
         run_test_scan_accounts(1);
-        run_test_scan_accounts(1000 * 10);
-        run_test_scan_accounts(1000 * 10 - 1);
-        run_test_scan_accounts(1000 * 10 + 1);
+        run_test_scan_accounts(9_999);
+        run_test_scan_accounts(10_000);
+        run_test_scan_accounts(10_001)
     }
 
     #[test]
