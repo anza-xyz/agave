@@ -717,8 +717,7 @@ mod tests {
         let GenesisConfigInfo {
             mut genesis_config, ..
         } = create_genesis_config(2);
-        let hashes_per_tick = Some(DEFAULT_HASHES_PER_TICK);
-        genesis_config.poh_config.hashes_per_tick = hashes_per_tick;
+        genesis_config.poh_config.hashes_per_tick = Some(DEFAULT_HASHES_PER_TICK);
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let prev_hash = bank.last_blockhash();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -729,7 +728,7 @@ mod tests {
             PohConfig::default().target_tick_duration.as_micros() as u64;
         let target_tick_duration = Duration::from_micros(default_target_tick_duration);
         let poh_config = PohConfig {
-            hashes_per_tick,
+            hashes_per_tick: *bank.hashes_per_tick(),
             target_tick_duration,
             target_tick_count: None,
         };
