@@ -129,7 +129,7 @@ impl BlockhashQueue {
     }
 
     pub fn set_max_age(&mut self, max_age: usize) {
-        debug_assert!(max_age > 0, "max blockhash age must be >0");
+        assert!(max_age > 0, "max blockhash age must be >0");
         if max_age < self.max_age {
             // Max age is being reduced. Prune the queue of expired hashes.
             self.hashes.retain(|_, info| {
