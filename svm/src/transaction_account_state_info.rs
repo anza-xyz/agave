@@ -82,32 +82,26 @@ impl TransactionAccountStateInfo {
 
 // Returns account data size delta for a given transaction execution
 pub(crate) fn get_account_data_len_delta(
-    pre: &[TransactionAccountStateInfo],
     post: &[TransactionAccountStateInfo],
     accounts_resize_delta: i64,
 ) -> i64 {
     // accounts_resize_delta accounts doesn't account for deleted accounts, so the overall
     // state delta is computed by subtracting the data size of every deleted account.
-    pre.iter().zip(post).fold(
-        accounts_resize_delta,
-        |data_size_delta, (pre_info, post_info)| {
-            match (&pre_info.info, &post_info.info) {
-                (Some(pre), Some(post)) => {
-                    match (&pre.rent_state, &post.rent_state) {
-                        // deleted: post data size is used because pre_size - post_size is already
-                        // accounted for in the accounts_resize_delta.
-                        (RentState::RentExempt, RentState::Uninitialized) => {
-                            data_size_delta - post.data_size as i64
-                        }
-                        // ephemeral account, existing account realloc, or new account creation
-                        _ => data_size_delta,
-                    }
+    post.iter()
+        .fold(accounts_resize_delta, |data_size_delta, post_info| {
+            if let Some(post) = &post_info.info {
+                match &post.rent_state {
+                    // deleted: post-exec data size is used because `post_size - pre_size` is already
+                    // accounted for in accounts_resize_delta.
+                    RentState::Uninitialized => data_size_delta - post.data_size as i64,
+                    // existing account or new account creation
+                    _ => data_size_delta,
                 }
+            } else {
                 // None indicates non write-locked accounts -> no change
-                _ => data_size_delta,
+                data_size_delta
             }
-        },
-    )
+        })
 }
 
 #[cfg(test)]
@@ -306,47 +300,41 @@ mod test {
 
     #[test]
     fn test_get_account_data_len_delta_with_deleted_account() {
-        // Test that deleted accounts (RentExempt -> Uninitialized) are correctly subtracted from delta
-        let pre_state_infos = vec![
-            TransactionAccountStateInfo {
-                info: Some(WritableTransactionAccountStateInfo {
-                    rent_state: RentState::RentExempt,
-                    balance: 1000,
-                    data_size: 100,
-                }),
-            },
-            TransactionAccountStateInfo {
-                info: Some(WritableTransactionAccountStateInfo {
-                    rent_state: RentState::Uninitialized,
-                    balance: 0,
-                    data_size: 0,
-                }),
-            },
-        ];
-
         let post_state_infos = vec![
             TransactionAccountStateInfo {
                 info: Some(WritableTransactionAccountStateInfo {
                     rent_state: RentState::Uninitialized,
                     balance: 0,
-                    data_size: 50, // This was 100 before deletion
+                    data_size: 50,
+                }),
+            },
+            TransactionAccountStateInfo {
+                info: Some(WritableTransactionAccountStateInfo {
+                    rent_state: RentState::Uninitialized,
+                    balance: 0,
+                    data_size: 50,
+                }),
+            },
+            TransactionAccountStateInfo {
+                info: Some(WritableTransactionAccountStateInfo {
+                    rent_state: RentState::Uninitialized,
+                    balance: 0,
+                    data_size: 50,
                 }),
             },
             TransactionAccountStateInfo {
                 info: Some(WritableTransactionAccountStateInfo {
                     rent_state: RentState::RentExempt,
-                    balance: 2000,
+                    balance: 10000,
                     data_size: 50,
                 }),
             },
         ];
 
-        // accounts_resize_delta starts at 50 - 50 = 0
-        let accounts_resize_delta = 0i64;
-        let delta =
-            get_account_data_len_delta(&pre_state_infos, &post_state_infos, accounts_resize_delta);
+        let accounts_resize_delta = 0;
+        let delta = get_account_data_len_delta(&post_state_infos, accounts_resize_delta);
 
-        // The deleted account (first one) should subtract its remaining data size (50) from the delta, resulting in -50
-        assert_eq!(delta, -50);
+        // 3 deleted accounts should contribute 3 * (-50) = -150 to the delta
+        assert_eq!(delta, -150);
     }
 }

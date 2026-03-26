@@ -1074,11 +1074,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         };
 
         let accounts_data_len_delta = if let Ok(post_state_info) = post_account_state_info_result {
-            get_account_data_len_delta(
-                &pre_account_state_info,
-                &post_state_info,
-                accounts_resize_delta,
-            )
+            get_account_data_len_delta(&post_state_info, accounts_resize_delta)
         } else {
             // If transaction execution failed, no delta is expected
             0

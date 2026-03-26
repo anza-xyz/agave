@@ -9602,46 +9602,112 @@ fn create_mock_transfer(
 
 #[test]
 fn test_accounts_data_size_delta_on_chain_with_deleted_account_transaction() {
-    let GenesisConfigInfo {
-        mut genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config_with_leader(100 * LAMPORTS_PER_SOL, &Pubkey::new_unique(), 42);
-    genesis_config.rent = Rent::default();
+    #[derive(Clone, Copy)]
+    enum PreExecState {
+        RentExempt,
+        RentPaying,
+        Uninitialized,
+    }
 
-    let mock_program_id = Pubkey::new_unique();
-    let account_data_size = 100usize;
-    let deleted_account = Keypair::new();
-    let deleted_account_balance = genesis_config.rent.minimum_balance(account_data_size) + 1;
-    genesis_config.accounts.insert(
-        deleted_account.pubkey(),
-        Account::new(deleted_account_balance, account_data_size, &mock_program_id),
-    );
+    let account_data_size = 100;
 
-    let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
-        &genesis_config,
-        mock_program_id,
-        MockTransferBuiltin::register,
-    );
-    let recent_blockhash = bank.last_blockhash();
+    for pre_exec_state in [
+        PreExecState::RentExempt,
+        PreExecState::RentPaying,
+        PreExecState::Uninitialized,
+    ] {
+        let (mut genesis_config, mint_keypair) = create_genesis_config(100 * LAMPORTS_PER_SOL);
+        genesis_config.rent = Rent::default();
+        let mock_program_id = Pubkey::new_unique();
+        let rent_exempt_minimum = genesis_config.rent.minimum_balance(account_data_size);
+        let deleted_account = Keypair::new();
 
-    let accounts_data_size_delta_on_chain_before = bank.load_accounts_data_size_delta_on_chain();
-    let tx = create_mock_transfer(
-        &mint_keypair,
-        &deleted_account,
-        &mint_keypair,
-        deleted_account_balance,
-        mock_program_id,
-        recent_blockhash,
-    );
-    bank.process_transaction(&tx).unwrap();
-    let accounts_data_size_delta_on_chain_after = bank.load_accounts_data_size_delta_on_chain();
+        // Cases 1 and 2 begin with an existing account. Case 3 creates and
+        // drains the account within the same transaction.
+        let balance = match pre_exec_state {
+            PreExecState::RentExempt => {
+                let balance = rent_exempt_minimum + 1;
+                genesis_config.accounts.insert(
+                    deleted_account.pubkey(),
+                    Account::new(balance, account_data_size, &mock_program_id),
+                );
+                balance
+            }
+            PreExecState::RentPaying => {
+                let balance = rent_exempt_minimum - 1;
+                genesis_config.accounts.insert(
+                    deleted_account.pubkey(),
+                    Account::new_rent_epoch(
+                        balance,
+                        account_data_size,
+                        &mock_program_id,
+                        INITIAL_RENT_EPOCH + 1,
+                    ),
+                );
+                balance
+            }
+            PreExecState::Uninitialized => 0,
+        };
 
-    assert!(bank.get_account(&deleted_account.pubkey()).is_none());
-    assert_eq!(
-        accounts_data_size_delta_on_chain_after - accounts_data_size_delta_on_chain_before,
-        -(account_data_size as i64),
-    );
+        let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
+            &genesis_config,
+            mock_program_id,
+            MockTransferBuiltin::register,
+        );
+        let recent_blockhash = bank.last_blockhash();
+
+        let accounts_data_size_delta_on_chain_before =
+            bank.load_accounts_data_size_delta_on_chain();
+        let tx = match pre_exec_state {
+            // Existing rent-exempt/rent-paying account is fully drained and deleted.
+            PreExecState::RentExempt | PreExecState::RentPaying => create_mock_transfer(
+                &mint_keypair,
+                &deleted_account,
+                &mint_keypair,
+                balance,
+                mock_program_id,
+                recent_blockhash,
+            ),
+            // The account starts uninitialized, is created, then immediately drained.
+            PreExecState::Uninitialized => {
+                let create_instruction = system_instruction::create_account(
+                    &mint_keypair.pubkey(),
+                    &deleted_account.pubkey(),
+                    rent_exempt_minimum,
+                    account_data_size as u64,
+                    &mock_program_id,
+                );
+                let transfer_from_instruction = Instruction::new_with_bincode(
+                    mock_program_id,
+                    &MockTransferInstruction::Transfer(rent_exempt_minimum),
+                    vec![
+                        AccountMeta::new(mint_keypair.pubkey(), true),
+                        AccountMeta::new(deleted_account.pubkey(), true),
+                        AccountMeta::new(mint_keypair.pubkey(), false),
+                    ],
+                );
+                Transaction::new_signed_with_payer(
+                    &[create_instruction, transfer_from_instruction],
+                    Some(&mint_keypair.pubkey()),
+                    &[&mint_keypair, &deleted_account],
+                    recent_blockhash,
+                )
+            }
+        };
+        bank.process_transaction(&tx).unwrap();
+        let accounts_data_size_delta_on_chain_after = bank.load_accounts_data_size_delta_on_chain();
+
+        assert!(bank.get_account(&deleted_account.pubkey()).is_none());
+        assert_eq!(
+            accounts_data_size_delta_on_chain_after - accounts_data_size_delta_on_chain_before,
+            match pre_exec_state {
+                PreExecState::RentExempt | PreExecState::RentPaying => {
+                    -(account_data_size as i64)
+                }
+                PreExecState::Uninitialized => 0,
+            },
+        );
+    }
 }
 
 #[test]
