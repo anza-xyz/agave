@@ -24,15 +24,23 @@ pub const DEFAULT_INVOCATION_COST: u64 = 946;
 pub const MAX_CALL_DEPTH: usize = 64;
 
 /// The size of one SBF stack frame.
+/// Configurable via the `SBF_STACK_FRAME_SIZE` environment variable.
 #[inline(always)]
 pub fn get_stack_frame_size() -> usize {
     const STACK_FRAME_SIZE: usize = 4096;
     static STACK_FRAME_SIZE_CACHE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *STACK_FRAME_SIZE_CACHE.get_or_init(|| {
-        std::env::var("SBF_STACK_FRAME_SIZE")
+        let size = std::env::var("SBF_STACK_FRAME_SIZE")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(STACK_FRAME_SIZE)
+            .unwrap_or(STACK_FRAME_SIZE);
+        if size != STACK_FRAME_SIZE {
+            log::warn!(
+                "SBF_STACK_FRAME_SIZE is set to {size} (default: {STACK_FRAME_SIZE}). This is a \
+                 development/debugging option and must not be used on validator nodes."
+            );
+        }
+        size
     })
 }
 
