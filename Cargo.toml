@@ -248,7 +248,7 @@ dashmap = "5.5.3"
 derive-where = "1.6.1"
 derive_more = { version = "2.1.1", features = ["full"] }
 dialoguer = "0.12.0"
-digest = "0.10.7"
+digest = "0.11.2"
 dirs-next = "2.0.0"
 dlopen2 = "0.8.2"
 dyn-clone = "1.0.20"
