@@ -133,9 +133,13 @@ fn main() {
     };
     agave_logger::initialize_logging(logfile);
     // NB: Align with agave to abort.
+    let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|info| {
-        eprintln!("{info}");
-        std::process::abort();
+        // Call the default hook.
+        default_hook(info);
+
+        // Force a process exit (no stack unwind).
+        std::process::exit(1);
     }));
 
     info!("{} {}", crate_name!(), solana_version::version!());
