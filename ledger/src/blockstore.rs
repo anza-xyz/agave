@@ -3439,17 +3439,6 @@ impl Blockstore {
             .map(|(index, transaction)| (transaction, index as u32)))
     }
 
-    // DEPRECATED and decommissioned
-    // This method always returns an empty Vec
-    fn find_address_signatures(
-        &self,
-        _pubkey: Pubkey,
-        _start_slot: Slot,
-        _end_slot: Slot,
-    ) -> Result<Vec<(Slot, Signature)>> {
-        Ok(vec![])
-    }
-
     // Returns all signatures for an address in a particular slot, regardless of whether that slot
     // has been rooted. The transactions will be ordered by their occurrence in the block
     fn find_address_signatures_for_slot(
@@ -3479,18 +3468,6 @@ impl Blockstore {
         }
         drop(lock);
         Ok(signatures)
-    }
-
-    // DEPRECATED and decommissioned
-    // This method always returns an empty Vec
-    pub fn get_confirmed_signatures_for_address(
-        &self,
-        pubkey: Pubkey,
-        start_slot: Slot,
-        end_slot: Slot,
-    ) -> Result<Vec<Signature>> {
-        self.find_address_signatures(pubkey, start_slot, end_slot)
-            .map(|signatures| signatures.iter().map(|(_, signature)| *signature).collect())
     }
 
     fn get_block_signatures_rev(&self, slot: Slot) -> Result<Vec<Signature>> {
