@@ -3371,7 +3371,7 @@ impl AccountsDb {
         }
     }
 
-    pub fn scan_accounts<F>(
+    pub(crate) fn scan_accounts<F>(
         &self,
         ancestors: &Ancestors,
         bank_id: BankId,
@@ -3403,7 +3403,7 @@ impl AccountsDb {
         Ok(())
     }
 
-    pub fn index_scan_accounts<F>(
+    pub(crate) fn index_scan_accounts<F>(
         &self,
         ancestors: &Ancestors,
         bank_id: BankId,

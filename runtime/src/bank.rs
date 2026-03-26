@@ -89,7 +89,7 @@ use {
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
         accounts_db::{AccountsDb, AccountsDbConfig},
         accounts_hash::AccountsLtHash,
-        accounts_index::{IndexKey, ScanConfig, ScanResult},
+        accounts_index::{IndexKey, ScanResult},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::Ancestors,
         blockhash_queue::BlockhashQueue,
@@ -4633,25 +4633,22 @@ impl Bank {
     pub fn get_program_accounts(
         &self,
         program_id: &Pubkey,
-        config: &ScanConfig,
     ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         self.rc
             .accounts
-            .load_by_program(&self.ancestors, self.bank_id, program_id, config)
+            .load_by_program(&self.ancestors, self.bank_id, program_id)
     }
 
     pub fn get_filtered_program_accounts<F: Fn(&AccountSharedData) -> bool>(
         &self,
         program_id: &Pubkey,
         filter: F,
-        config: &ScanConfig,
     ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         self.rc.accounts.load_by_program_with_filter(
             &self.ancestors,
             self.bank_id,
             program_id,
             filter,
-            config,
         )
     }
 
@@ -4659,7 +4656,6 @@ impl Bank {
         &self,
         index_key: &IndexKey,
         filter: F,
-        config: &ScanConfig,
         byte_limit_for_scan: Option<usize>,
     ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         self.rc.accounts.load_by_index_key_with_filter(
@@ -4667,7 +4663,6 @@ impl Bank {
             self.bank_id,
             index_key,
             filter,
-            config,
             byte_limit_for_scan,
         )
     }

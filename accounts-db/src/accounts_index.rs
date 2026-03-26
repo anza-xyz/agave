@@ -138,28 +138,28 @@ pub enum UpsertReclaim {
 }
 
 #[derive(Debug, Default)]
-pub struct ScanConfig {
+pub(crate) struct ScanConfig {
     /// checked by the scan. When true, abort scan.
-    pub abort: Option<Arc<AtomicBool>>,
+    pub(crate) abort: Option<Arc<AtomicBool>>,
 }
 
 impl ScanConfig {
     /// mark the scan as aborted
-    pub fn abort(&self) {
+    pub(crate) fn abort(&self) {
         if let Some(abort) = self.abort.as_ref() {
             abort.store(true, Ordering::Relaxed)
         }
     }
 
     /// use existing 'abort' if available, otherwise allocate one
-    pub fn recreate_with_abort(&self) -> Self {
+    pub(crate) fn recreate_with_abort(&self) -> Self {
         ScanConfig {
             abort: Some(self.abort.clone().unwrap_or_default()),
         }
     }
 
     /// true if scan should abort
-    pub fn is_aborted(&self) -> bool {
+    pub(crate) fn is_aborted(&self) -> bool {
         if let Some(abort) = self.abort.as_ref() {
             abort.load(Ordering::Relaxed)
         } else {
