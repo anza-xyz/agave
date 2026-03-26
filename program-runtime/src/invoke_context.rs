@@ -30,9 +30,7 @@ use {
         program::{BuiltinProgram, SBPFVersion},
         vm::{Config, ContextObject, EbpfVm},
     },
-    solana_sdk_ids::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
-    },
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader},
     solana_svm_callback::InvokeContextCallback,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::{LogCollector, ic_msg},
@@ -552,7 +550,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             } else if bpf_loader_deprecated::check_id(&owner_id)
                 || bpf_loader::check_id(&owner_id)
                 || bpf_loader_upgradeable::check_id(&owner_id)
-                || loader_v4::check_id(&owner_id)
             {
                 owner_id
             } else {

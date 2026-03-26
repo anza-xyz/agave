@@ -7,9 +7,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_sbpf::{elf::Executable, program::BuiltinProgram, verifier::RequisiteVerifier},
-    solana_sdk_ids::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
-    },
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader},
     solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::{
         rand::{Rng, rng},
@@ -149,7 +147,6 @@ pub enum ProgramCacheEntryOwner {
     LoaderV1,
     LoaderV2,
     LoaderV3,
-    LoaderV4,
 }
 
 impl TryFrom<&Pubkey> for ProgramCacheEntryOwner {
@@ -163,8 +160,6 @@ impl TryFrom<&Pubkey> for ProgramCacheEntryOwner {
             Ok(ProgramCacheEntryOwner::LoaderV2)
         } else if bpf_loader_upgradeable::check_id(loader_key) {
             Ok(ProgramCacheEntryOwner::LoaderV3)
-        } else if loader_v4::check_id(loader_key) {
-            Ok(ProgramCacheEntryOwner::LoaderV4)
         } else {
             Err(())
         }
@@ -178,7 +173,6 @@ impl From<ProgramCacheEntryOwner> for Pubkey {
             ProgramCacheEntryOwner::LoaderV1 => bpf_loader_deprecated::id(),
             ProgramCacheEntryOwner::LoaderV2 => bpf_loader::id(),
             ProgramCacheEntryOwner::LoaderV3 => bpf_loader_upgradeable::id(),
-            ProgramCacheEntryOwner::LoaderV4 => loader_v4::id(),
         }
     }
 }
