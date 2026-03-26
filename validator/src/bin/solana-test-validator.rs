@@ -132,6 +132,9 @@ fn main() {
         None
     };
     agave_logger::initialize_logging(logfile);
+    // NB: This hook is used to shutdown the validator, so don't remove it even if you
+    // don't want metrics.
+    solana_metrics::set_panic_hook("solana-test-validator", None);
 
     info!("{} {}", crate_name!(), solana_version::version!());
     info!("Starting validator with: {:#?}", std::env::args_os());
