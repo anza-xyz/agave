@@ -12,7 +12,6 @@ use {
     rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
-        partitioned_rewards::PartitionedEpochRewardsConfig,
         stake_rewards::StakeReward,
         storable_accounts::{AccountForStorage, StorableAccounts},
     },
@@ -376,17 +375,12 @@ impl Bank {
         ));
     }
 
-    pub(super) fn partitioned_epoch_rewards_config(&self) -> &PartitionedEpochRewardsConfig {
-        &self
-            .rc
+    /// # stake accounts to store in one block during partitioned reward interval
+    pub(super) fn partitioned_rewards_stake_account_stores_per_block(&self) -> u64 {
+        self.rc
             .accounts
             .accounts_db
             .partitioned_epoch_rewards_config
-    }
-
-    /// # stake accounts to store in one block during partitioned reward interval
-    pub(super) fn partitioned_rewards_stake_account_stores_per_block(&self) -> u64 {
-        self.partitioned_epoch_rewards_config()
             .stake_account_stores_per_block
     }
 
@@ -433,7 +427,10 @@ mod tests {
         },
         assert_matches::assert_matches,
         solana_account::{Account, state_traits::StateMut},
-        solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
+        solana_accounts_db::{
+            accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
+            partitioned_rewards::PartitionedEpochRewardsConfig,
+        },
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_keypair::Keypair,
