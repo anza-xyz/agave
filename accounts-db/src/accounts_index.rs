@@ -295,34 +295,28 @@ impl ScanTracker {
 /// Pins `max_root` in `ongoing_scan_roots` on creation and unpins it on drop,
 /// preventing clean from advancing past the pinned root while the scan is active.
 #[derive(Debug)]
-pub(crate) struct ScanGuard<'a> {
+struct ScanGuard<'a> {
     scan_tracker: &'a ScanTracker,
     max_root: Slot,
     scan_bank_id: BankId,
-    ancestors_max_slot: Slot,
-    ancestors_are_valid: bool,
 }
 
 impl<'a> ScanGuard<'a> {
-    /// Begin a scan: checks the bank hasn't been removed, pins `max_root` in `ongoing_scan_roots`,
-    /// and resolves whether ancestors should be used.
+    /// Begin a scan: checks the bank hasn't been removed and pins `max_root` in
+    /// `ongoing_scan_roots`.
+    ///
+    /// Returns `None` if the bank has already been removed.
     ///
     /// `max_root_inclusive_fn` is called while holding the `ongoing_scan_roots` write lock.
-    pub(crate) fn new(
+    fn try_new(
         scan_tracker: &'a ScanTracker,
-        ancestors: &Ancestors,
         scan_bank_id: BankId,
         max_root_inclusive_fn: impl FnOnce() -> Slot,
-    ) -> Result<Self, ScanError> {
-        let ancestors_max_slot = ancestors.max_slot();
-
+    ) -> Option<Self> {
         {
             let locked_removed_bank_ids = scan_tracker.removed_bank_ids.lock().unwrap();
             if locked_removed_bank_ids.contains(&scan_bank_id) {
-                return Err(ScanError::SlotRemoved {
-                    slot: ancestors_max_slot,
-                    bank_id: scan_bank_id,
-                });
+                return None;
             }
         }
 
@@ -354,20 +348,16 @@ impl<'a> ScanGuard<'a> {
             max_root_inclusive
         };
 
-        let ancestors_are_valid = ancestors.contains_key(&max_root_inclusive);
-
         scan_tracker.active_scans.fetch_add(1, Ordering::Relaxed);
-        Ok(Self {
+        Some(Self {
             scan_tracker,
             max_root: max_root_inclusive,
             scan_bank_id,
-            ancestors_max_slot,
-            ancestors_are_valid,
         })
     }
 
     /// The inclusive max root pinned by this scan guard.
-    pub(crate) fn max_root(&self) -> Slot {
+    fn max_root(&self) -> Slot {
         self.max_root
     }
 
@@ -412,40 +402,22 @@ impl<'a> ScanGuard<'a> {
     /// - Ancestors <= `max_root` are all rooted, protected by `ongoing_scan_roots`.
     /// - Ancestors > `max_root` are kept alive by the `Bank::parent` reference
     ///   chain, so they cannot be cleaned mid-scan.
-    pub(crate) fn resolve_ancestors(&self, ancestors: &Ancestors) -> Ancestors {
-        if self.ancestors_are_valid {
+    fn resolve_ancestors(&self, ancestors: &Ancestors) -> Ancestors {
+        if ancestors.contains_key(&self.max_root) {
             ancestors.clone()
         } else {
             Ancestors::default()
         }
     }
 
-    /// Finalize the scan: checks whether the bank was removed during the scan.
+    /// Finalize the scan: returns whether the bank was removed during the scan.
     /// The `Drop` impl handles unpinning regardless of whether this is called.
-    pub(crate) fn finish(self) -> Result<(), ScanError> {
-        let was_scan_corrupted = self
-            .scan_tracker
+    fn was_scan_corrupted(self) -> bool {
+        self.scan_tracker
             .removed_bank_ids
             .lock()
             .unwrap()
-            .contains(&self.scan_bank_id);
-
-        if was_scan_corrupted {
-            // When ancestors are invalid, the scan fell back to an empty
-            // ancestor set, so report slot 0 rather than the original
-            // ancestors' max slot.
-            let slot = if self.ancestors_are_valid {
-                self.ancestors_max_slot
-            } else {
-                0
-            };
-            Err(ScanError::SlotRemoved {
-                slot,
-                bank_id: self.scan_bank_id,
-            })
-        } else {
-            Ok(())
-        }
+            .contains(&self.scan_bank_id)
     }
 }
 
@@ -573,8 +545,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     where
         F: FnMut(&Pubkey, (&T, Slot)),
     {
-        let scan_guard = ScanGuard::new(&self.scan_tracker, ancestors, scan_bank_id, || {
+        let ancestors_max_slot = ancestors.max_slot();
+        let scan_guard = ScanGuard::try_new(&self.scan_tracker, scan_bank_id, || {
             self.max_root_inclusive()
+        })
+        .ok_or(ScanError::SlotRemoved {
+            slot: ancestors_max_slot,
+            bank_id: scan_bank_id,
         })?;
         let max_root = scan_guard.max_root();
         let ancestors = &scan_guard.resolve_ancestors(ancestors);
@@ -655,7 +632,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             }
         }
 
-        scan_guard.finish()
+        if scan_guard.was_scan_corrupted() {
+            return Err(ScanError::SlotRemoved {
+                slot: ancestors.max_slot(),
+                bank_id: scan_bank_id,
+            });
+        }
+        Ok(())
     }
 
     // Scan accounts and return latest version of each account that is either:
@@ -4120,18 +4103,16 @@ mod tests {
     #[test]
     fn test_scan_guard_pins_and_unpins_root() {
         let tracker = ScanTracker::default();
-        let ancestors = Ancestors::default();
 
         assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 0);
         assert!(tracker.min_ongoing_scan_root().is_none());
 
-        {
-            let guard = ScanGuard::new(&tracker, &ancestors, 0, || 42).unwrap();
-            assert_eq!(guard.max_root(), 42);
-            assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 1);
-            assert_eq!(tracker.min_ongoing_scan_root(), Some(42));
-        }
+        let guard = ScanGuard::try_new(&tracker, 0, || 42).unwrap();
+        assert_eq!(guard.max_root(), 42);
+        assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 1);
+        assert_eq!(tracker.min_ongoing_scan_root(), Some(42));
 
+        assert!(!guard.was_scan_corrupted());
         assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 0);
         assert!(tracker.min_ongoing_scan_root().is_none());
     }
@@ -4139,10 +4120,9 @@ mod tests {
     #[test]
     fn test_scan_guard_refcounts_same_root() {
         let tracker = ScanTracker::default();
-        let ancestors = Ancestors::default();
 
-        let guard1 = ScanGuard::new(&tracker, &ancestors, 0, || 10).unwrap();
-        let guard2 = ScanGuard::new(&tracker, &ancestors, 0, || 10).unwrap();
+        let guard1 = ScanGuard::try_new(&tracker, 0, || 10).unwrap();
+        let guard2 = ScanGuard::try_new(&tracker, 0, || 10).unwrap();
         assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 2);
         assert_eq!(
             *tracker.ongoing_scan_roots.read().unwrap().get(&10).unwrap(),
@@ -4160,10 +4140,9 @@ mod tests {
     #[test]
     fn test_scan_guard_multiple_different_roots() {
         let tracker = ScanTracker::default();
-        let ancestors = Ancestors::default();
 
-        let guard1 = ScanGuard::new(&tracker, &ancestors, 0, || 5).unwrap();
-        let guard2 = ScanGuard::new(&tracker, &ancestors, 0, || 15).unwrap();
+        let guard1 = ScanGuard::try_new(&tracker, 0, || 5).unwrap();
+        let guard2 = ScanGuard::try_new(&tracker, 0, || 15).unwrap();
         assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 2);
         assert_eq!(tracker.min_ongoing_scan_root(), Some(5));
 
@@ -4179,53 +4158,21 @@ mod tests {
         let tracker = ScanTracker::default();
         tracker.removed_bank_ids.lock().unwrap().insert(7);
 
-        let mut ancestors = Ancestors::default();
-        ancestors.insert(30);
-        let result = ScanGuard::new(&tracker, &ancestors, 7, || 100);
-        assert!(result.is_err());
-        // slot should reflect the original ancestors' max_slot, not 0
-        assert_eq!(
-            result.unwrap_err(),
-            ScanError::SlotRemoved {
-                slot: 30,
-                bank_id: 7
-            }
-        );
+        let result = ScanGuard::try_new(&tracker, 7, || 100);
+        assert!(result.is_none());
         // should not have incremented active_scans
         assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 0);
     }
 
     #[test]
-    fn test_scan_guard_finish_ok_when_bank_not_removed() {
+    fn test_scan_guard_corrupted_when_bank_removed_during_scan() {
         let tracker = ScanTracker::default();
-        let ancestors = Ancestors::default();
-        let guard = ScanGuard::new(&tracker, &ancestors, 0, || 50).unwrap();
-        assert!(guard.finish().is_ok());
-        assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 0);
-        assert!(tracker.min_ongoing_scan_root().is_none());
-    }
-
-    #[test]
-    fn test_scan_guard_finish_err_when_bank_removed_during_scan() {
-        let tracker = ScanTracker::default();
-        let mut ancestors = Ancestors::default();
-        ancestors.insert(20);
-        // max_root = 50 is NOT in ancestors, so ancestors_are_valid = false
-        let guard = ScanGuard::new(&tracker, &ancestors, 5, || 50).unwrap();
+        let guard = ScanGuard::try_new(&tracker, 5, || 50).unwrap();
 
         // simulate bank removal mid-scan
         tracker.removed_bank_ids.lock().unwrap().insert(5);
 
-        let result = guard.finish();
-        assert!(result.is_err());
-        // slot is 0 (not 20) because ancestors fell back to empty
-        assert_eq!(
-            result.unwrap_err(),
-            ScanError::SlotRemoved {
-                slot: 0,
-                bank_id: 5
-            }
-        );
+        assert!(guard.was_scan_corrupted());
         // guard should still have cleaned up
         assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 0);
         assert!(tracker.min_ongoing_scan_root().is_none());
@@ -4237,7 +4184,7 @@ mod tests {
         let mut ancestors = Ancestors::default();
         ancestors.insert(42);
 
-        let guard = ScanGuard::new(&tracker, &ancestors, 0, || 42).unwrap();
+        let guard = ScanGuard::try_new(&tracker, 0, || 42).unwrap();
         let resolved = guard.resolve_ancestors(&ancestors);
         assert!(resolved.contains_key(&42));
     }
@@ -4249,7 +4196,7 @@ mod tests {
         ancestors.insert(10);
 
         // max_root_inclusive = 42, which is NOT in ancestors
-        let guard = ScanGuard::new(&tracker, &ancestors, 0, || 42).unwrap();
+        let guard = ScanGuard::try_new(&tracker, 0, || 42).unwrap();
         let resolved = guard.resolve_ancestors(&ancestors);
         assert!(!resolved.contains_key(&10));
     }
