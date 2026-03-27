@@ -11067,6 +11067,7 @@ dependencies = [
  "solana-system-interface 3.1.0",
  "solana-transaction-context",
  "static_assertions",
+ "wincode",
 ]
 
 [[package]]
