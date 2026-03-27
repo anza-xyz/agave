@@ -43,7 +43,10 @@ use {
             },
         },
         bank_forks::BankForks,
-        block_component_processor::{BlockComponentProcessor, vote_reward::VoteRewardAccountState},
+        block_component_processor::{
+            BlockComponentProcessor,
+            vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
+        },
         epoch_stakes::{
             BLSPubkeyToRankMap, DeserializableVersionedEpochStakes, NodeVoteAccounts,
             VersionedEpochStakes,
@@ -1764,7 +1767,7 @@ impl Bank {
         // the vote reward account state should be created at the epoch boundary in which we
         // activate alpenglow as it will need info from the previous epoch.
         if self.feature_set.snapshot().alpenglow {
-            VoteRewardAccountState::new_epoch_update_account(
+            EpochInflationAccountState::new_epoch_update_account(
                 self,
                 parent_epoch,
                 parent_capitalization,
