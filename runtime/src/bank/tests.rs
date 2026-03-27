@@ -13,8 +13,8 @@ use {
             self, GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
             activate_feature, bootstrap_validator_stake_lamports,
             create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
-            create_lockup_stake_account, genesis_sysvar_and_builtin_program_lamports,
-            minimum_vote_account_balance_for_vat,
+            create_lockup_stake_account, deactivate_features,
+            genesis_sysvar_and_builtin_program_lamports, minimum_vote_account_balance_for_vat,
         },
         runtime_config::RuntimeConfig,
         serde_snapshot::fields_from_stream,
@@ -22,7 +22,7 @@ use {
         stake_utils,
         stakes::InvalidCacheEntryReason,
     },
-    agave_feature_set::{self as feature_set, FeatureSet},
+    agave_feature_set::{self as feature_set, FeatureSet, delay_commission_updates},
     agave_reserved_account_keys::ReservedAccount,
     agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET,
     ahash::AHashMap,
@@ -320,6 +320,90 @@ fn test_bank_new() {
     assert_eq!(rent.burn_percent, Rent::default().burn_percent);
     assert_eq!(rent.exemption_threshold, 1.0f64.to_le_bytes());
     assert_eq!(rent.lamports_per_byte, 6);
+}
+
+#[test]
+fn test_process_new_epoch_vat_burn() {
+    let GenesisConfigInfo {
+        mut genesis_config,
+        voting_keypair,
+        ..
+    } = create_genesis_config_with_leader(
+        1_000_000 * LAMPORTS_PER_SOL,
+        &Pubkey::new_unique(),
+        42 * LAMPORTS_PER_SOL,
+    );
+    genesis_config.epoch_schedule = EpochSchedule::new(MINIMUM_SLOTS_PER_EPOCH);
+    activate_feature(&mut genesis_config, agave_feature_set::alpenglow::id());
+    deactivate_features(&mut genesis_config, &vec![delay_commission_updates::id()]);
+
+    let bank = Bank::new_for_tests(&genesis_config);
+    let vote_address = voting_keypair.pubkey();
+    assert!(
+        bank.feature_set
+            .is_active(&agave_feature_set::validator_admission_ticket::id())
+    );
+
+    let mut vote_account = bank.get_account(&vote_address).unwrap();
+    let vote_state_versions = vote_account
+        .deserialize_data::<VoteStateVersions>()
+        .unwrap();
+    let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
+        panic!("unexpected vote state version");
+    };
+    vote_state.inflation_rewards_commission_bps = 10_000;
+    let last_credits = vote_state
+        .epoch_credits
+        .last()
+        .map(|(_epoch, credits, _)| *credits)
+        .unwrap_or(0);
+    vote_state
+        .epoch_credits
+        .push((bank.epoch(), last_credits + 1_000, last_credits));
+    vote_account
+        .serialize_data(&VoteStateVersions::V4(vote_state))
+        .unwrap();
+    bank.store_account(&vote_address, &vote_account);
+
+    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let before_vote_balance = bank.get_balance(&vote_address);
+    let before_incinerator_balance = bank.get_balance(&incinerator::id());
+    let next_epoch_slot = bank.slot() + bank.epoch_schedule().get_slots_in_epoch(bank.epoch());
+
+    let bank = Bank::new_from_parent_with_bank_forks(
+        &bank_forks,
+        bank,
+        SlotLeader::new_unique(),
+        next_epoch_slot,
+    );
+
+    let after_vote_balance = bank.get_balance(&vote_address);
+    let after_incinerator_balance = bank.get_balance(&incinerator::id());
+    let reward_lamports = bank
+        .rewards
+        .read()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|(address, reward)| {
+            address == &vote_address && reward.reward_type == RewardType::Voting
+        })
+        .map(|(_, reward)| u64::try_from(reward.lamports).unwrap())
+        .expect("expected voting reward entry");
+
+    assert!(reward_lamports > 0, "must receive voting reward");
+    assert_eq!(
+        after_incinerator_balance - before_incinerator_balance,
+        VAT_TO_BURN_PER_EPOCH,
+        "VAT burn moved lamports into the incinerator"
+    );
+    assert_eq!(
+        after_vote_balance,
+        before_vote_balance
+            .saturating_add(reward_lamports)
+            .saturating_sub(VAT_TO_BURN_PER_EPOCH),
+        "vote account balance should receive rewards and burn the VAT"
+    );
 }
 
 pub(crate) fn create_simple_test_bank(lamports: u64) -> Bank {

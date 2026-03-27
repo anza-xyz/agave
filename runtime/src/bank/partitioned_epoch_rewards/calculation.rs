@@ -24,6 +24,7 @@ use {
         ThreadPool,
         iter::{IndexedParallelIterator, ParallelIterator},
     },
+    solana_account::{ReadableAccount, WritableAccount},
     solana_clock::{Epoch, Slot},
     solana_measure::{measure::Measure, measure_us},
     solana_native_token::LAMPORTS_PER_SOL,
@@ -216,9 +217,11 @@ impl Bank {
             ..
         } = rewards_calculation;
 
+        let reward_commission_accounts =
+            self.refresh_reward_commission_accounts(reward_commission_accounts);
         let total_reward_commissions = reward_commission_accounts.total_reward_commission_lamports;
-        self.store_commission_accounts_partitioned(reward_commission_accounts, rewards_metrics);
-        self.update_reward_commissions(reward_commission_accounts);
+        self.store_commission_accounts_partitioned(&reward_commission_accounts, rewards_metrics);
+        self.update_reward_commissions(&reward_commission_accounts);
 
         let StakeRewardCalculation {
             total_stake_rewards_lamports,
@@ -261,6 +264,56 @@ impl Bank {
             ("num_stake_accounts", num_stake_accounts, i64),
             ("num_vote_accounts", num_vote_accounts, i64),
         );
+    }
+
+    /// Rebuild reward commission account updates against the latest account state.
+    ///
+    /// Reward commission calculations happen before epoch-boundary account updates
+    /// (for example VAT burns). Refreshing here ensures commission writes compose
+    /// with those updates instead of overwriting them with stale snapshots.
+    fn refresh_reward_commission_accounts(
+        &self,
+        reward_commission_accounts: &RewardCommissionAccounts,
+    ) -> RewardCommissionAccounts {
+        let mut refreshed = RewardCommissionAccounts {
+            accounts_with_rewards: Vec::with_capacity(
+                reward_commission_accounts.accounts_with_rewards.len(),
+            ),
+            total_reward_commission_lamports: 0,
+        };
+
+        for (commission_pubkey, reward_info, fallback_account) in
+            &reward_commission_accounts.accounts_with_rewards
+        {
+            let Ok(commission_lamports) = u64::try_from(reward_info.lamports) else {
+                debug!(
+                    "reward redemption failed for {commission_pubkey}: invalid negative reward \
+                     lamports {}",
+                    reward_info.lamports
+                );
+                continue;
+            };
+            let mut commission_account = self
+                .get_account(commission_pubkey)
+                .unwrap_or_else(|| fallback_account.clone());
+            if let Err(err) = commission_account.checked_add_lamports(commission_lamports) {
+                debug!("reward redemption failed for {commission_pubkey}: {err:?}");
+                continue;
+            }
+
+            let mut reward_info = *reward_info;
+            reward_info.post_balance = commission_account.lamports();
+            refreshed.accounts_with_rewards.push((
+                *commission_pubkey,
+                reward_info,
+                commission_account,
+            ));
+            refreshed.total_reward_commission_lamports = refreshed
+                .total_reward_commission_lamports
+                .saturating_add(commission_lamports);
+        }
+
+        refreshed
     }
 
     fn store_commission_accounts_partitioned(
