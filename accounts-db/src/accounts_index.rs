@@ -402,12 +402,8 @@ impl<'a> ScanGuard<'a> {
     /// - Ancestors <= `max_root` are all rooted, protected by `ongoing_scan_roots`.
     /// - Ancestors > `max_root` are kept alive by the `Bank::parent` reference
     ///   chain, so they cannot be cleaned mid-scan.
-    fn resolve_ancestors(&self, ancestors: &Ancestors) -> Ancestors {
-        if ancestors.contains_key(&self.max_root) {
-            ancestors.clone()
-        } else {
-            Ancestors::default()
-        }
+    fn should_use_ancestors(&self, ancestors: &Ancestors) -> bool {
+        ancestors.contains_key(&self.max_root)
     }
 
     /// Finalize the scan: returns whether the bank was removed during the scan.
@@ -554,11 +550,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             bank_id: scan_bank_id,
         })?;
         let max_root = scan_guard.max_root();
-        let ancestors = &scan_guard.resolve_ancestors(ancestors);
+        let use_ancestors = scan_guard.should_use_ancestors(ancestors);
+        let empty_ancestors = Ancestors::default();
+        let ancestors = if use_ancestors {
+            ancestors
+        } else {
+            &empty_ancestors
+        };
 
         /*
         Now there are two cases, either `ancestors` is empty or nonempty
-        (see `ScanGuard::resolve_ancestors` for the proof and edge-case diagrams):
+        (see `ScanGuard::should_use_ancestors` for the proof and edge-case diagrams):
 
         1) If ancestors is empty, then this is the same as a scan on a rooted bank,
         and `ongoing_scan_roots` provides protection against cleanup of roots necessary
@@ -4179,25 +4181,23 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_guard_resolve_ancestors_uses_provided_when_max_root_in_ancestors() {
+    fn test_scan_guard_should_use_ancestors_when_max_root_in_ancestors() {
         let tracker = ScanTracker::default();
         let mut ancestors = Ancestors::default();
         ancestors.insert(42);
 
         let guard = ScanGuard::try_new(&tracker, 0, || 42).unwrap();
-        let resolved = guard.resolve_ancestors(&ancestors);
-        assert!(resolved.contains_key(&42));
+        assert!(guard.should_use_ancestors(&ancestors));
     }
 
     #[test]
-    fn test_scan_guard_resolve_ancestors_uses_empty_when_max_root_not_in_ancestors() {
+    fn test_scan_guard_skip_ancestors_when_max_root_not_in_ancestors() {
         let tracker = ScanTracker::default();
         let mut ancestors = Ancestors::default();
         ancestors.insert(10);
 
         // max_root_inclusive = 42, which is NOT in ancestors
         let guard = ScanGuard::try_new(&tracker, 0, || 42).unwrap();
-        let resolved = guard.resolve_ancestors(&ancestors);
-        assert!(!resolved.contains_key(&10));
+        assert!(!guard.should_use_ancestors(&ancestors));
     }
 }
