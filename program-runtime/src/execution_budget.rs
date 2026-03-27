@@ -23,25 +23,36 @@ pub const DEFAULT_INVOCATION_COST: u64 = 946;
 /// Max call depth. This is the maximum nesting of SBF to SBF call that can happen within a program.
 pub const MAX_CALL_DEPTH: usize = 64;
 
-/// The size of one SBF stack frame.
-/// Configurable via the `SBF_STACK_FRAME_SIZE` environment variable.
-#[inline(always)]
-pub fn get_stack_frame_size() -> usize {
-    const STACK_FRAME_SIZE: usize = 4096;
-    static STACK_FRAME_SIZE_CACHE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *STACK_FRAME_SIZE_CACHE.get_or_init(|| {
-        let size = std::env::var("SBF_STACK_FRAME_SIZE")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(STACK_FRAME_SIZE);
-        if size != STACK_FRAME_SIZE {
-            log::warn!(
-                "SBF_STACK_FRAME_SIZE is set to {size} (default: {STACK_FRAME_SIZE}). This is a \
-                 development/debugging option and must not be used on validator nodes."
-            );
+cfg_if::cfg_if! {
+    if #[cfg(feature = "dev-context-only-utils")] {
+        /// The size of one SBF stack frame.
+        /// Configurable via the `SBF_STACK_FRAME_SIZE` environment variable.
+        #[inline(always)]
+        pub fn get_stack_frame_size() -> usize {
+            const STACK_FRAME_SIZE: usize = 4096;
+            static STACK_FRAME_SIZE_CACHE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            *STACK_FRAME_SIZE_CACHE.get_or_init(|| {
+                let size = std::env::var("SBF_STACK_FRAME_SIZE")
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(STACK_FRAME_SIZE);
+                if size != STACK_FRAME_SIZE {
+                    log::warn!(
+                        "SBF_STACK_FRAME_SIZE is set to {size} (default: {STACK_FRAME_SIZE}). This is a \
+                        development/debugging option and must not be used on validator nodes."
+                    );
+                }
+                size
+            })
         }
-        size
-    })
+    } else {
+        /// The size of one SBF stack frame.
+        #[inline(always)]
+        pub fn get_stack_frame_size() -> usize {
+            const STACK_FRAME_SIZE: usize = 4096;
+            STACK_FRAME_SIZE
+        }
+    }
 }
 
 pub const MAX_COMPUTE_UNIT_LIMIT: u32 = 1_400_000;
