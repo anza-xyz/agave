@@ -40,7 +40,7 @@ use {
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_accounts_db::{
         accounts::AccountAddressFilter,
-        accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig, ScanError},
+        accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanError},
         ancestors::Ancestors,
     },
     solana_client_traits::SyncClient,
@@ -843,10 +843,8 @@ where
         - bank2_sysvar_delta();
 
     // this assumes that no new builtins or precompiles were activated in bank1 or bank2
-    let EpochInflationRewards {
-        validator_rewards_lamports,
-        ..
-    } = bank2.calculate_epoch_inflation_rewards(bank0.capitalization(), bank0.epoch());
+    let validator_rewards_lamports =
+        bank2.calculate_epoch_inflation_rewards(bank0.capitalization(), bank0.epoch());
 
     // verify the stake and vote accounts are the right size
     assert!(
@@ -3342,15 +3340,11 @@ fn test_bank_get_program_accounts() {
     let bank1 = Arc::new(new_from_parent(bank0.clone()));
     bank1.squash();
     assert_eq!(
-        bank0
-            .get_program_accounts(&program_id, &ScanConfig::default(),)
-            .unwrap(),
+        bank0.get_program_accounts(&program_id).unwrap(),
         vec![(pubkey0, account0.clone())]
     );
     assert_eq!(
-        bank1
-            .get_program_accounts(&program_id, &ScanConfig::default(),)
-            .unwrap(),
+        bank1.get_program_accounts(&program_id).unwrap(),
         vec![(pubkey0, account0)]
     );
     assert_eq!(
@@ -3369,20 +3363,8 @@ fn test_bank_get_program_accounts() {
 
     let bank3 = Arc::new(new_from_parent(bank2));
     bank3.squash();
-    assert_eq!(
-        bank1
-            .get_program_accounts(&program_id, &ScanConfig::default(),)
-            .unwrap()
-            .len(),
-        2
-    );
-    assert_eq!(
-        bank3
-            .get_program_accounts(&program_id, &ScanConfig::default(),)
-            .unwrap()
-            .len(),
-        2
-    );
+    assert_eq!(bank1.get_program_accounts(&program_id).unwrap().len(), 2);
+    assert_eq!(bank3.get_program_accounts(&program_id).unwrap().len(), 2);
 }
 
 #[test]
@@ -3411,7 +3393,6 @@ fn test_get_filtered_indexed_accounts_limit_exceeded() {
         bank.get_filtered_indexed_accounts(
             &IndexKey::ProgramId(program_id),
             |_| true,
-            &ScanConfig::default(),
             Some(limit), // limit here will be exceeded, resulting in aborted scan
         )
         .is_err()
@@ -3438,12 +3419,7 @@ fn test_get_filtered_indexed_accounts() {
     bank.store_account(&address, &account);
 
     let indexed_accounts = bank
-        .get_filtered_indexed_accounts(
-            &IndexKey::ProgramId(program_id),
-            |_| true,
-            &ScanConfig::default(),
-            None,
-        )
+        .get_filtered_indexed_accounts(&IndexKey::ProgramId(program_id), |_| true, None)
         .unwrap();
     assert_eq!(indexed_accounts.len(), 1);
     assert_eq!(indexed_accounts[0], (address, account));
@@ -3461,22 +3437,12 @@ fn test_get_filtered_indexed_accounts() {
     );
     bank.store_account(&address, &new_account);
     let indexed_accounts = bank
-        .get_filtered_indexed_accounts(
-            &IndexKey::ProgramId(program_id),
-            |_| true,
-            &ScanConfig::default(),
-            None,
-        )
+        .get_filtered_indexed_accounts(&IndexKey::ProgramId(program_id), |_| true, None)
         .unwrap();
     assert_eq!(indexed_accounts.len(), 1);
     assert_eq!(indexed_accounts[0], (address, new_account.clone()));
     let indexed_accounts = bank
-        .get_filtered_indexed_accounts(
-            &IndexKey::ProgramId(another_program_id),
-            |_| true,
-            &ScanConfig::default(),
-            None,
-        )
+        .get_filtered_indexed_accounts(&IndexKey::ProgramId(another_program_id), |_| true, None)
         .unwrap();
     assert_eq!(indexed_accounts.len(), 1);
     assert_eq!(indexed_accounts[0], (address, new_account.clone()));
@@ -3486,7 +3452,6 @@ fn test_get_filtered_indexed_accounts() {
         .get_filtered_indexed_accounts(
             &IndexKey::ProgramId(program_id),
             |account| account.owner() == &program_id,
-            &ScanConfig::default(),
             None,
         )
         .unwrap();
@@ -3495,7 +3460,6 @@ fn test_get_filtered_indexed_accounts() {
         .get_filtered_indexed_accounts(
             &IndexKey::ProgramId(another_program_id),
             |account| account.owner() == &another_program_id,
-            &ScanConfig::default(),
             None,
         )
         .unwrap();
@@ -5285,9 +5249,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "CJJZGTf9hSxCa54aw6koyLsixsVzN6vqQsRBDDmq2xPZ"
+                    "Gqd3QevNuGLvzL91YbUa86FCcPFCi3GsSDqrhbq2gjX7"
                 } else {
-                    "GAcpLy2beH4eyygZaprWWzn4geSCd3xvLvnn2tudvhy1"
+                    "HV9Wr7XVke8YYYxMnsQWYf8GnBC5PPKJyGX52raDvev8"
                 },
             );
         }
@@ -5296,9 +5260,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "D1fVqmYoLjX8YRDKdfxdyvjUGZJQuPkczgb45ska2MAQ"
+                    "Gdes9UEi7nxJyytpnAPM8wRMpZ39W8G3tqJSHUj49GQk"
                 } else {
-                    "EKG6nQZnUHiv56HpYfxGSkXpn2uo8ea9bJfR6uYvKBR1"
+                    "5Gp1HpKChMPo1t34WHCFM2mhWxy5s8QYFkf3FnxEAmku"
                 },
             );
             break;
@@ -7346,8 +7310,7 @@ fn test_store_scan_consistency<F>(
                         bank_to_scan_receiver.recv_timeout(Duration::from_millis(10))
                     {
                         info!("scanning program accounts for slot {}", bank_to_scan.slot());
-                        let accounts_result =
-                            bank_to_scan.get_program_accounts(&program_id, &ScanConfig::default());
+                        let accounts_result = bank_to_scan.get_program_accounts(&program_id);
                         let _ = scan_finished_sender.send(bank_to_scan.bank_id());
                         num_banks_scanned.fetch_add(1, Relaxed);
                         match (&acceptable_scan_results, accounts_result.is_err()) {

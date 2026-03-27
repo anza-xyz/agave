@@ -1,7 +1,10 @@
 use {
     crate::{
         bank::Bank,
-        validated_block_finalization::ValidatedBlockFinalizationCert,
+        block_component_processor::vote_reward::calculate_and_pay_voting_reward_and_update_vote_state,
+        validated_block_finalization::{
+            BlockFinalizationCertError, ValidatedBlockFinalizationCert,
+        },
         validated_reward_certificate::{Error as ValidatedRewardCertError, ValidatedRewardCert},
     },
     agave_votor_messages::{
@@ -16,10 +19,10 @@ use {
         BlockFooterV1, BlockMarkerV1, GenesisCertificate, VersionedBlockFooter,
         VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
     },
+    solana_hash::Hash,
     solana_pubkey::Pubkey,
     std::{num::NonZeroU64, sync::Arc},
     thiserror::Error,
-    vote_reward::calculate_and_pay_voting_reward,
 };
 
 pub(crate) mod vote_reward;
@@ -36,8 +39,8 @@ pub enum BlockComponentProcessorError {
     GenesisCertificateOnNonChild,
     #[error("GenesisCertificate was invalid and failed to verify")]
     GenesisCertificateFailedVerification,
-    #[error("FinalizationCertificate was invalid or failed to verify")]
-    InvalidFinalizationCertificate,
+    #[error("FinalizationCertificate was invalid or failed to verify {0}")]
+    InvalidFinalizationCertificate(#[from] BlockFinalizationCertError),
     #[error("Missing block footer")]
     MissingBlockFooter,
     #[error("Missing parent marker (neither a header nor an update parent was present)")]
@@ -248,25 +251,38 @@ impl BlockComponentProcessor {
 
         Self::enforce_nanosecond_clock_bounds(&bank, &parent_bank, &footer)?;
 
-        let reward_slot_and_validators = match ValidatedRewardCert::try_new(
+        let BlockFooterV1 {
+            bank_hash,
+            block_producer_time_nanos,
+            block_user_agent: _,
+            final_cert,
+            skip_reward_cert,
+            notar_reward_cert,
+        } = footer;
+
+        let reward_slot_and_validators =
+            match ValidatedRewardCert::try_new(&bank, &skip_reward_cert, &notar_reward_cert) {
+                Ok(c) => Some(c.into_parts()),
+                Err(ValidatedRewardCertError::Empty) => None,
+                Err(e) => return Err(e.into()),
+            };
+        let validated_final_cert = final_cert
+            .map(|final_cert| {
+                ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank)
+                    .map_err(BlockComponentProcessorError::InvalidFinalizationCertificate)
+            })
+            .transpose()?;
+
+        Self::update_bank_with_footer_fields(
             &bank,
-            &footer.skip_reward_cert,
-            &footer.notar_reward_cert,
-        ) {
-            Ok(c) => Some(c.into_parts()),
-            Err(ValidatedRewardCertError::Empty) => None,
-            Err(e) => return Err(e.into()),
-        };
-        Self::update_bank_with_footer(&bank, &footer, reward_slot_and_validators);
+            block_producer_time_nanos as i64,
+            bank_hash,
+            reward_slot_and_validators,
+            validated_final_cert.as_ref(),
+        );
 
-        // Verify finalization certificate and send to consensus pool
-        if let Some(final_cert) = footer.final_cert {
-            let validated = ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank)
-                .map_err(|e| {
-                    warn!("Failed to validate finalization certificate: {e}");
-                    BlockComponentProcessorError::InvalidFinalizationCertificate
-                })?;
-
+        // Send finalization cert(s) to consensus pool
+        if let Some(validated) = validated_final_cert {
             if let Some(sender) = finalization_cert_sender {
                 let (finalize_cert, notarize_cert) = validated.into_certificates();
                 if let Some(notarize_cert) = notarize_cert {
@@ -369,17 +385,24 @@ impl BlockComponentProcessor {
         (min_working_bank_time, max_working_bank_time)
     }
 
-    pub fn update_bank_with_footer(
+    pub fn update_bank_with_footer_fields(
         bank: &Bank,
-        footer: &BlockFooterV1,
+        block_producer_time_nanos: i64,
+        bank_hash: Hash,
         reward_slot_and_validators: Option<(Slot, Vec<Pubkey>)>,
+        final_cert: Option<&ValidatedBlockFinalizationCert>,
     ) {
         // Update clock sysvar
-        bank.update_clock_from_footer(footer.block_producer_time_nanos as i64);
+        bank.update_clock_from_footer(block_producer_time_nanos);
 
-        calculate_and_pay_voting_reward(bank, reward_slot_and_validators).unwrap();
+        calculate_and_pay_voting_reward_and_update_vote_state(
+            bank,
+            reward_slot_and_validators,
+            final_cert,
+        )
+        .unwrap();
         // Record expected bank hash from footer for later verification when the bank is frozen.
-        bank.set_expected_bank_hash(footer.bank_hash);
+        bank.set_expected_bank_hash(bank_hash);
     }
 }
 

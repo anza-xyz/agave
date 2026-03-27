@@ -1,7 +1,11 @@
 #[expect(deprecated)]
 use solana_stake_interface::config::Config as StakeConfig;
 use {
-    crate::{bank::VAT_TO_BURN_PER_EPOCH, stake_utils},
+    crate::{
+        bank::VAT_TO_BURN_PER_EPOCH,
+        block_component_processor::vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
+        stake_utils,
+    },
     agave_feature_set::{FEATURE_NAMES, FeatureSet},
     agave_votor_messages::{
         self,
@@ -355,6 +359,7 @@ pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
     genesis_config
         .accounts
         .insert(*GENESIS_CERTIFICATE_ACCOUNT, certificate_account);
+    EpochInflationAccountState::insert_into_genesis_config(genesis_config);
 }
 
 pub fn activate_all_features(genesis_config: &mut GenesisConfig) {

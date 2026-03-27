@@ -17,6 +17,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
+        blockstore_meta::BlockLocation,
         leader_schedule_cache::LeaderScheduleCache,
         shred::{self, ReedSolomonCache, Shred},
     },
@@ -195,7 +196,7 @@ where
             ws_metrics.num_repairs.fetch_add(1, Ordering::Relaxed);
         }
         let shred = Shred::new_from_serialized_shred(shred).ok()?;
-        Some((Cow::Owned(shred), repair))
+        Some((Cow::Owned(shred), repair, BlockLocation::Original))
     };
     let now = Instant::now();
     let shreds: Vec<_> = thread_pool.install(|| {
@@ -207,7 +208,7 @@ where
     });
     ws_metrics.handle_packets_elapsed_us += now.elapsed().as_micros() as u64;
     ws_metrics.num_shreds_received += shreds.len();
-    let completed_data_sets = blockstore.insert_shreds_handle_duplicate(
+    let completed_data_sets = blockstore.insert_shreds_at_location_handle_duplicate(
         shreds,
         Some(leader_schedule_cache),
         false, // is_trusted

@@ -318,7 +318,6 @@ impl Accounts {
         ancestors: &Ancestors,
         bank_id: BankId,
         program_id: &Pubkey,
-        config: &ScanConfig,
     ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         let mut collector = Vec::new();
         self.accounts_db
@@ -330,7 +329,7 @@ impl Accounts {
                         account.owner() == program_id
                     })
                 },
-                config,
+                &ScanConfig::default(),
             )
             .map(|_| collector)
     }
@@ -341,7 +340,6 @@ impl Accounts {
         bank_id: BankId,
         program_id: &Pubkey,
         filter: F,
-        config: &ScanConfig,
     ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         let mut collector = Vec::new();
         self.accounts_db
@@ -353,7 +351,7 @@ impl Accounts {
                         account.owner() == program_id && filter(account)
                     })
                 },
-                config,
+                &ScanConfig::default(),
             )
             .map(|_| collector)
     }
@@ -400,11 +398,10 @@ impl Accounts {
         bank_id: BankId,
         index_key: &IndexKey,
         filter: F,
-        config: &ScanConfig,
         byte_limit_for_scan: Option<usize>,
     ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         let sum = AtomicUsize::default();
-        let config = config.recreate_with_abort();
+        let config = ScanConfig::default().recreate_with_abort();
         let mut collector = Vec::new();
         let result = self
             .accounts_db

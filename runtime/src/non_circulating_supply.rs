@@ -2,7 +2,7 @@ use {
     crate::bank::Bank,
     log::*,
     solana_account::ReadableAccount,
-    solana_accounts_db::accounts_index::{AccountIndex, IndexKey, ScanConfig, ScanResult},
+    solana_accounts_db::accounts_index::{AccountIndex, IndexKey, ScanResult},
     solana_pubkey::Pubkey,
     solana_stake_interface::{self as stake, state::StakeStateV2},
     std::collections::HashSet,
@@ -23,7 +23,6 @@ pub fn calculate_non_circulating_supply(bank: &Bank) -> ScanResult<NonCirculatin
     let withdraw_authority_list = withdraw_authority();
 
     let clock = bank.clock();
-    let config = &ScanConfig::default();
     let stake_accounts = if bank
         .rc
         .accounts
@@ -38,11 +37,10 @@ pub fn calculate_non_circulating_supply(bank: &Bank) -> ScanResult<NonCirculatin
             // zero-lamport Account::Default() after being wiped and reinitialized in later
             // updates. We include the redundant filter here to avoid returning these accounts.
             |account| account.owner() == &stake::program::id(),
-            config,
             None,
         )?
     } else {
-        bank.get_program_accounts(&stake::program::id(), config)?
+        bank.get_program_accounts(&stake::program::id())?
     };
 
     for (pubkey, account) in stake_accounts.iter() {

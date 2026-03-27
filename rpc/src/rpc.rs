@@ -25,7 +25,7 @@ use {
     },
     solana_accounts_db::{
         accounts::AccountAddressFilter,
-        accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig, ScanResult},
+        accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanResult},
     },
     solana_client::connection_cache::Protocol,
     solana_clock::{Slot, UnixTimestamp},
@@ -326,7 +326,6 @@ impl JsonRpcRequestProcessor {
                                 .iter()
                                 .all(|filter_type| filter_allows(filter_type, account))
                     },
-                    &ScanConfig::default(),
                     bank.byte_limit_for_scans(),
                 )
             })
@@ -2256,7 +2255,6 @@ impl JsonRpcRequestProcessor {
                                 .iter()
                                 .all(|filter_type| filter_allows(filter_type, account))
                         },
-                        &ScanConfig::default(),
                     )
                     .map_err(|e| RpcCustomError::ScanError {
                         message: e.to_string(),
