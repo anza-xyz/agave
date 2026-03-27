@@ -500,7 +500,7 @@ impl Accounts {
         &self,
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
-        ancestors: Option<&Ancestors>,
+        ancestors: &Ancestors,
     ) {
         self._store_accounts(
             accounts,
@@ -518,7 +518,7 @@ impl Accounts {
         &self,
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
-        ancestors: Option<&Ancestors>,
+        ancestors: &Ancestors,
     ) {
         self._store_accounts(
             accounts,
@@ -538,7 +538,7 @@ impl Accounts {
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
         update_index_thread_selection: UpdateIndexThreadSelection,
-        ancestors: Option<&Ancestors>,
+        ancestors: &Ancestors,
     ) {
         let accounts_db = &self.accounts_db;
         if accounts_db.has_accounts_update_notifier() {

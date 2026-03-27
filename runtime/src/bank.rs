@@ -3930,11 +3930,9 @@ impl Bank {
             self.update_bank_hash_stats(&to_store);
             // See https://github.com/solana-labs/solana/pull/31455 for discussion
             // on *not* updating the index within a threadpool.
-            self.rc.accounts.store_accounts_seq(
-                to_store,
-                transactions.as_deref(),
-                Some(&self.ancestors),
-            );
+            self.rc
+                .accounts
+                .store_accounts_seq(to_store, transactions.as_deref(), &self.ancestors);
         });
 
         // Cached vote and stake accounts are synchronized with accounts-db
@@ -4309,7 +4307,7 @@ impl Bank {
         self.update_bank_hash_stats(&accounts);
         self.rc
             .accounts
-            .store_accounts_par(accounts, None, Some(&self.ancestors));
+            .store_accounts_par(accounts, None, &self.ancestors);
         m.stop();
         self.rc
             .accounts
