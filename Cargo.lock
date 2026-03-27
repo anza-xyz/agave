@@ -8468,6 +8468,7 @@ dependencies = [
  "static_assertions",
  "test-case",
  "thiserror 2.0.18",
+ "wincode",
 ]
 
 [[package]]
@@ -12965,6 +12966,7 @@ version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "657690780ce23e6f66576a782ffd88eb353512381817029cc1d7a99154bb6d1f"
 dependencies = [
+ "bytes",
  "pastey",
  "proc-macro2",
  "quote",

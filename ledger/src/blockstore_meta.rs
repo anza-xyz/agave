@@ -11,6 +11,7 @@ use {
         fmt::Display,
         ops::{Range, RangeBounds},
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 bitflags! {
@@ -275,7 +276,7 @@ pub struct MerkleRootMeta {
     first_received_shred_type: ShredType,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub struct DuplicateSlotProof {
     #[serde(with = "shred::serde_bytes_payload")]
     pub shred1: shred::Payload,
