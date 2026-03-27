@@ -118,7 +118,9 @@ fn verify_certs(
                 Some(ConsensusMessage::Certificate(cert))
             }
             Err(e) => {
-                banlist.ban(cert_payload.remote_pubkey, BAN_TIMEOUT);
+                if banlist.ban(cert_payload.remote_pubkey, BAN_TIMEOUT) {
+                    stats.already_banned += 1;
+                }
 
                 match e {
                     CertVerifyError::NotEnoughStake { .. } => {

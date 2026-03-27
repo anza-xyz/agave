@@ -192,7 +192,9 @@ fn verify_votes(
     let ((verified_votes, invalid_remote_pubkeys), time_us) =
         measure_us!(verify_individual_votes(votes_to_verify, thread_pool));
     for remote_pubkey in invalid_remote_pubkeys {
-        banlist.ban(remote_pubkey, BAN_TIMEOUT);
+        if banlist.ban(remote_pubkey, BAN_TIMEOUT) {
+            stats.already_banned += 1;
+        };
     }
     stats.fn_verify_individual_votes_stats.add_sample(time_us);
 
