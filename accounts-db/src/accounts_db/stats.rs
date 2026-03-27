@@ -482,7 +482,6 @@ pub struct ShrinkStats {
     pub last_report: AtomicInterval,
     pub num_slots_shrunk: AtomicUsize,
     pub storage_read_elapsed: AtomicU64,
-    pub num_duplicated_accounts: AtomicU64,
     pub index_read_elapsed: AtomicU64,
     pub create_and_insert_store_elapsed: AtomicU64,
     pub store_accounts_elapsed: AtomicU64,
@@ -555,11 +554,6 @@ impl ShrinkStats {
                 (
                     "storage_read_elapsed",
                     self.storage_read_elapsed.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "num_duplicated_accounts",
-                    self.num_duplicated_accounts.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -716,13 +710,6 @@ impl ShrinkAncientStats {
                 "storage_read_elapsed",
                 self.shrink_stats
                     .storage_read_elapsed
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "num_duplicated_accounts",
-                self.shrink_stats
-                    .num_duplicated_accounts
                     .swap(0, Ordering::Relaxed),
                 i64
             ),

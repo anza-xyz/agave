@@ -321,7 +321,6 @@ impl AccountFromStorage {
 pub struct GetUniqueAccountsResult {
     pub stored_accounts: Vec<AccountFromStorage>,
     pub capacity: u64,
-    pub num_duplicated_accounts: usize,
 }
 
 pub struct AccountsAddRootTiming {
@@ -2484,44 +2483,22 @@ impl AccountsDb {
             })
             .expect("must scan accounts storage");
 
-        // sort by pubkey to keep account index lookups close
-        let num_duplicated_accounts = Self::sort_and_remove_dups(&mut stored_accounts);
+        // sort by pubkey bin to keep account index lookups close
+        stored_accounts.sort_unstable_by_key(|account| {
+            self.accounts_index
+                .bin_calculator
+                .bin_from_pubkey(account.pubkey())
+        });
 
         GetUniqueAccountsResult {
             stored_accounts,
             capacity,
-            num_duplicated_accounts,
         }
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn set_storage_access(&mut self, storage_access: StorageAccess) {
         self.storage_access = storage_access;
-    }
-
-    /// Sort `accounts` by pubkey and removes all but the *last* of consecutive
-    /// accounts in the vector with the same pubkey.
-    ///
-    /// Return the number of duplicated elements in the vector.
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn sort_and_remove_dups(accounts: &mut Vec<AccountFromStorage>) -> usize {
-        // stable sort because we want the most recent only
-        accounts.sort_by(|a, b| a.pubkey().cmp(b.pubkey()));
-        let len0 = accounts.len();
-        if accounts.len() > 1 {
-            let mut last = 0;
-            let mut curr = 1;
-
-            while curr < accounts.len() {
-                if accounts[curr].pubkey() != accounts[last].pubkey() {
-                    last += 1;
-                }
-                accounts[last] = accounts[curr];
-                curr += 1;
-            }
-            accounts.truncate(last + 1);
-        }
-        len0 - accounts.len()
     }
 
     pub(crate) fn get_unique_accounts_from_storage_for_shrink(
@@ -2550,7 +2527,6 @@ impl AccountsDb {
         let GetUniqueAccountsResult {
             stored_accounts,
             capacity,
-            num_duplicated_accounts,
         } = unique_accounts;
 
         let mut index_read_elapsed = Measure::start("index_read_elapsed");
@@ -2586,9 +2562,6 @@ impl AccountsDb {
         stats
             .obsolete_accounts_filtered
             .fetch_add((total_starting_accounts - len) as u64, Ordering::Relaxed);
-        stats
-            .num_duplicated_accounts
-            .fetch_add(*num_duplicated_accounts as u64, Ordering::Relaxed);
         self.thread_pool_background.install(|| {
             stored_accounts
                 .par_chunks(SHRINK_COLLECT_CHUNK_SIZE)
