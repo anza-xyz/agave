@@ -188,6 +188,7 @@ mod tests {
         status: Result<()>,
         loaded_transaction: LoadedTransaction,
     ) -> TransactionProcessingResult {
+        let accounts_data_len_delta = status.as_ref().ok().map(|_| 0);
         Ok(ProcessedTransaction::Executed(Box::new(
             ExecutedTransaction {
                 execution_details: TransactionExecutionDetails {
@@ -196,7 +197,7 @@ mod tests {
                     inner_instructions: None,
                     return_data: None,
                     executed_units: 0,
-                    accounts_data_len_delta: 0,
+                    accounts_data_len_delta,
                 },
                 loaded_transaction,
                 programs_modified_by_tx: HashMap::new(),

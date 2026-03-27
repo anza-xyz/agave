@@ -4051,12 +4051,7 @@ impl Bank {
             .iter()
             .filter_map(|processing_result| processing_result.processed_transaction())
             .filter_map(|processed_tx| processed_tx.execution_details())
-            .filter_map(|details| {
-                details
-                    .status
-                    .is_ok()
-                    .then_some(details.accounts_data_len_delta)
-            })
+            .filter_map(|details| details.accounts_data_len_delta)
             .sum();
         self.update_accounts_data_size_delta_on_chain(accounts_data_len_delta);
 

@@ -238,6 +238,7 @@ fn new_executed_processing_result(
     status: Result<()>,
     fee_details: FeeDetails,
 ) -> TransactionProcessingResult {
+    let accounts_data_len_delta = status.as_ref().ok().map(|_| 0);
     Ok(ProcessedTransaction::Executed(Box::new(
         ExecutedTransaction {
             loaded_transaction: LoadedTransaction {
@@ -250,7 +251,7 @@ fn new_executed_processing_result(
                 inner_instructions: None,
                 return_data: None,
                 executed_units: 0,
-                accounts_data_len_delta: 0,
+                accounts_data_len_delta,
             },
             programs_modified_by_tx: HashMap::new(),
         },

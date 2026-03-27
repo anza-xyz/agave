@@ -8,15 +8,14 @@ use {
 };
 
 #[derive(PartialEq, Debug)]
-pub struct WritableTransactionAccountStateInfo {
-    rent_state: RentState,
-    balance: u64,
-    data_size: usize,
+pub(crate) struct TransactionAccountStateInfo {
+    info: Option<WritableTransactionAccountStateInfo>, // None: readonly account
 }
 
 #[derive(PartialEq, Debug)]
-pub(crate) struct TransactionAccountStateInfo {
-    info: Option<WritableTransactionAccountStateInfo>, // None: readonly account
+pub struct WritableTransactionAccountStateInfo {
+    rent_state: RentState,
+    data_size: usize,
 }
 
 impl TransactionAccountStateInfo {
@@ -32,13 +31,11 @@ impl TransactionAccountStateInfo {
                         .accounts()
                         .try_borrow(i as IndexOfAccount)
                     {
-                        let rent_state =
-                            get_account_rent_state(rent, account.lamports(), account.data().len());
                         let balance = account.lamports();
                         let data_size = account.data().len();
+                        let rent_state = get_account_rent_state(rent, balance, data_size);
                         Some(WritableTransactionAccountStateInfo {
                             rent_state,
-                            balance,
                             data_size,
                         })
                     } else {
@@ -165,7 +162,6 @@ mod test {
                 TransactionAccountStateInfo {
                     info: Some(WritableTransactionAccountStateInfo {
                         rent_state: RentState::Uninitialized,
-                        balance: 0,
                         data_size: 0,
                     })
                 },
@@ -173,7 +169,6 @@ mod test {
                 TransactionAccountStateInfo {
                     info: Some(WritableTransactionAccountStateInfo {
                         rent_state: RentState::Uninitialized,
-                        balance: 0,
                         data_size: 0,
                     })
                 }
@@ -229,14 +224,12 @@ mod test {
             TransactionAccountStateInfo {
                 info: Some(WritableTransactionAccountStateInfo {
                     rent_state: RentState::Uninitialized,
-                    balance: 0,
                     data_size: 0,
                 }),
             },
             TransactionAccountStateInfo {
                 info: Some(WritableTransactionAccountStateInfo {
                     rent_state: RentState::Uninitialized,
-                    balance: 0,
                     data_size: 0,
                 }),
             },
@@ -244,7 +237,6 @@ mod test {
         let post_rent_state = vec![TransactionAccountStateInfo {
             info: Some(WritableTransactionAccountStateInfo {
                 rent_state: RentState::Uninitialized,
-                balance: 0,
                 data_size: 0,
             }),
         }];
@@ -266,7 +258,6 @@ mod test {
         let pre_rent_state = vec![TransactionAccountStateInfo {
             info: Some(WritableTransactionAccountStateInfo {
                 rent_state: RentState::Uninitialized,
-                balance: 0,
                 data_size: 0,
             }),
         }];
@@ -276,7 +267,6 @@ mod test {
                     data_size: 2,
                     lamports: 5,
                 },
-                balance: 5,
                 data_size: 2,
             }),
         }];
@@ -304,28 +294,24 @@ mod test {
             TransactionAccountStateInfo {
                 info: Some(WritableTransactionAccountStateInfo {
                     rent_state: RentState::Uninitialized,
-                    balance: 0,
                     data_size: 50,
                 }),
             },
             TransactionAccountStateInfo {
                 info: Some(WritableTransactionAccountStateInfo {
                     rent_state: RentState::Uninitialized,
-                    balance: 0,
                     data_size: 50,
                 }),
             },
             TransactionAccountStateInfo {
                 info: Some(WritableTransactionAccountStateInfo {
                     rent_state: RentState::Uninitialized,
-                    balance: 0,
                     data_size: 50,
                 }),
             },
             TransactionAccountStateInfo {
                 info: Some(WritableTransactionAccountStateInfo {
                     rent_state: RentState::RentExempt,
-                    balance: 10000,
                     data_size: 50,
                 }),
             },

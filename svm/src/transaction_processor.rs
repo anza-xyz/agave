@@ -1056,10 +1056,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             post_account_state_info_result = Err(TransactionError::UnbalancedTransaction);
         }
 
-        let status = match &post_account_state_info_result {
-            Ok(_) => Ok(()),
-            Err(err) => Err(err.clone()),
-        };
+        let (status, accounts_data_len_delta) = post_account_state_info_result
+            .map(|post_state_info| {
+                (
+                    Ok(()),
+                    Some(get_account_data_len_delta(
+                        &post_state_info,
+                        accounts_resize_delta,
+                    )),
+                )
+            })
+            .unwrap_or_else(|err| (Err(err), None));
 
         loaded_transaction.accounts = accounts;
         execute_timings.details.total_account_count += loaded_transaction.accounts.len() as u64;
@@ -1071,13 +1078,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             Some(return_data)
         } else {
             None
-        };
-
-        let accounts_data_len_delta = if let Ok(post_state_info) = post_account_state_info_result {
-            get_account_data_len_delta(&post_state_info, accounts_resize_delta)
-        } else {
-            // If transaction execution failed, no delta is expected
-            0
         };
 
         ExecutedTransaction {
