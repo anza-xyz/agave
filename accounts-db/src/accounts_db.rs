@@ -1448,11 +1448,8 @@ impl AccountsDb {
             {
                 // Sort all keys by bin index so that we can insert
                 // them in `candidates` more efficiently.
-                removed_pubkeys.sort_by(|a, b| {
-                    self.accounts_index
-                        .bin_calculator
-                        .bin_from_pubkey(a)
-                        .cmp(&self.accounts_index.bin_calculator.bin_from_pubkey(b))
+                removed_pubkeys.sort_unstable_by_key(|pubkey| {
+                    self.accounts_index.bin_calculator.bin_from_pubkey(pubkey)
                 });
                 if let Some(first_removed_pubkey) = removed_pubkeys.first() {
                     let mut prev_bin = self
