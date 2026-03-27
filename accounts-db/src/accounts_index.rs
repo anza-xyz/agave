@@ -361,10 +361,9 @@ impl<'a> ScanGuard<'a> {
         self.max_root
     }
 
-    /// Resolve which ancestors to use for this scan.
-    ///
-    /// Returns `ancestors` if valid, or an empty set if the scan's bank is not
-    /// descended from `max_root` (different fork or ancestor of `max_root`).
+    /// Returns true if ancestors should be used, or false if the scan's bank
+    /// is not descended from `max_root` (different fork or ancestor of
+    /// `max_root`).
     ///
     /// For any bank `B` descended from the current `max_root`, it must be true
     /// that `B.ancestors.contains(max_root)`, regardless of squash behavior.
@@ -567,7 +566,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         for the scan, and  passing `Some(max_root)` to `do_scan_accounts()` ensures newer
         roots don't appear in the scan.
 
-        2) If ancestors is non-empty, then from `resolve_ancestors` we know
+        2) If ancestors is non-empty, then from `should_use_ancestors` we know
         that the fork structure must look something like:
 
         Diagram 2:
