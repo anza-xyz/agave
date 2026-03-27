@@ -238,7 +238,7 @@ fn new_executed_processing_result(
     status: Result<()>,
     fee_details: FeeDetails,
 ) -> TransactionProcessingResult {
-    let accounts_data_len_delta = status.as_ref().ok().map(|_| 0);
+    let accounts_data_len_delta = status.as_ref().is_ok().then_some(0);
     Ok(ProcessedTransaction::Executed(Box::new(
         ExecutedTransaction {
             loaded_transaction: LoadedTransaction {

@@ -188,7 +188,7 @@ mod tests {
         status: Result<()>,
         loaded_transaction: LoadedTransaction,
     ) -> TransactionProcessingResult {
-        let accounts_data_len_delta = status.as_ref().ok().map(|_| 0);
+        let accounts_data_len_delta = status.as_ref().is_ok().then_some(0);
         Ok(ProcessedTransaction::Executed(Box::new(
             ExecutedTransaction {
                 execution_details: TransactionExecutionDetails {
