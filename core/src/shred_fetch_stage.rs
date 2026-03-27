@@ -35,13 +35,6 @@ use {
     },
 };
 
-// When running with very short epochs (e.g. for testing), we want to avoid
-// filtering out shreds that we actually need. This value was chosen empirically
-// because it's large enough to protect against observed short epoch problems
-// while being small enough to keep the overhead small on deduper, blockstore,
-// etc.
-const MAX_SHRED_DISTANCE_MINIMUM: u64 = 500;
-
 pub(crate) struct ShredFetchStage {
     thread_hdls: Vec<JoinHandle<()>>,
 }
@@ -71,6 +64,13 @@ struct ShredFilterContext {
 }
 
 impl ShredFilterContext {
+    // When running with very short epochs (e.g. for testing), we want to avoid
+    // filtering out shreds that we actually need. This value was chosen empirically
+    // because it's large enough to protect against observed short epoch problems
+    // while being small enough to keep the overhead small on deduper, blockstore,
+    // etc.
+    const MAX_SHRED_DISTANCE_MINIMUM: u64 = 500;
+
     fn new(root_bank: Arc<Bank>, repair_context: Option<&RepairContext>) -> ShredFilterContext {
         Self {
             last_updated: Instant::now(),
@@ -89,7 +89,7 @@ impl ShredFilterContext {
     }
 
     fn max_slot(&self) -> u64 {
-        self.last_root + MAX_SHRED_DISTANCE_MINIMUM.max(2 * self.slots_per_epoch)
+        self.last_root + Self::MAX_SHRED_DISTANCE_MINIMUM.max(2 * self.slots_per_epoch)
     }
 }
 
