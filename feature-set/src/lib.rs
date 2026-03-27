@@ -1521,6 +1521,10 @@ pub mod upgrade_bpf_stake_program_to_v5 {
     }
 }
 
+pub mod integer_inflation_rewards {
+    solana_pubkey::declare_id!("intsdD7D3LrPd9GAYgSvaUNJZc5ywoRKQfUeQrGCwtU");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2560,6 +2564,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             upgrade_bpf_stake_program_to_v5::id(),
             "SIMD-0490: Upgrade BPF Stake Program to v5.0.0",
+        ),
+        (
+            integer_inflation_rewards::id(),
+            "use integer math for inflation reward calculations",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
