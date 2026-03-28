@@ -5807,9 +5807,11 @@ pub mod tests {
 
     fn confirm_slot_with_block_markers_common()
     -> (Blockstore, GenesisConfig, tempfile::TempDir, ThreadPool) {
-        use crate::shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder};
-        use solana_entry::block_component::{
-            BlockComponent, BlockFooterV1, BlockHeaderV1, VersionedBlockMarker,
+        use {
+            crate::shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+            solana_entry::block_component::{
+                BlockComponent, BlockFooterV1, BlockHeaderV1, VersionedBlockMarker,
+            },
         };
 
         let GenesisConfigInfo {
