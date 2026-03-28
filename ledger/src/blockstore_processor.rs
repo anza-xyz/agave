@@ -2708,13 +2708,17 @@ pub mod tests {
             genesis_utils::{
                 GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
+            shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         },
         assert_matches::assert_matches,
         rand::{Rng, rng},
         rayon::ThreadPoolBuilder,
         solana_account::{AccountSharedData, WritableAccount},
         solana_cost_model::transaction_cost::TransactionCost,
-        solana_entry::entry::{create_ticks, next_entry, next_entry_mut},
+        solana_entry::{
+            block_component::{BlockComponent, BlockFooterV1, BlockHeaderV1, VersionedBlockMarker},
+            entry::{create_ticks, next_entry, next_entry_mut},
+        },
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_instruction::{Instruction, error::InstructionError},
@@ -5807,13 +5811,6 @@ pub mod tests {
 
     fn confirm_slot_with_block_markers_common()
     -> (Blockstore, GenesisConfig, tempfile::TempDir, ThreadPool) {
-        use {
-            crate::shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
-            solana_entry::block_component::{
-                BlockComponent, BlockFooterV1, BlockHeaderV1, VersionedBlockMarker,
-            },
-        };
-
         let GenesisConfigInfo {
             mut genesis_config, ..
         } = create_genesis_config(100 * LAMPORTS_PER_SOL);
@@ -5963,7 +5960,7 @@ pub mod tests {
                 &replay_tx_thread_pool,
                 &mut ConfirmationTiming::default(),
                 &mut ConfirmationProgress::new(bank0.last_blockhash()),
-                true, // skip_verification: alpenglow banks have different tick expectations
+                true,
                 None,
                 None,
                 None,
