@@ -142,16 +142,12 @@ pub struct SlotMetaBase<T> {
     pub completed_data_indexes: T,
 }
 
-pub type SlotMeta = SlotMetaBase<CompletedDataIndexes>;
+pub type SlotMetaV2 = SlotMetaBase<CompletedDataIndexes>;
 
-/// SlotMetaV3 extends SlotMeta with two additional fields: `parent_block_id`
-/// and `replay_fec_set_index`. The SlotMeta type will continue to be used
-/// (written) for now, but a SlotMetaV3 can be read from the Blockstore and
-/// converted into a SlotMeta. The logic to read and convert SlotMetaV3 to
-/// SlotMeta enables this software to read a Blockstore modified by a future
-/// version where the SlotMetaV3 format is persisted.
+/// SlotMetaV2 with two additional fields: `parent_block_id` and
+/// `replay_fec_set_index`, used for fast leader handover in Alpenglow.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
-pub(crate) struct SlotMetaV3 {
+pub struct SlotMetaV3 {
     pub slot: Slot,
     pub consumed: u64,
     pub received: u64,
@@ -165,27 +161,15 @@ pub(crate) struct SlotMetaV3 {
     pub completed_data_indexes: CompletedDataIndexes,
     /// The block id of the parent block.
     /// Populated from the block header / update parent marker.
+    #[serde(deserialize_with = "solana_serde::default_on_eof")]
     pub parent_block_id: Hash,
     /// The FEC set index from which replay should start for this block.
     /// Populated from the block header / update parent marker.
+    #[serde(deserialize_with = "solana_serde::default_on_eof")]
     pub replay_fec_set_index: u32,
 }
 
-impl From<SlotMetaV3> for SlotMeta {
-    fn from(v3: SlotMetaV3) -> Self {
-        SlotMeta {
-            slot: v3.slot,
-            consumed: v3.consumed,
-            received: v3.received,
-            first_shred_timestamp: v3.first_shred_timestamp,
-            last_index: v3.last_index,
-            parent_slot: v3.parent_slot,
-            next_slots: v3.next_slots,
-            connected_flags: v3.connected_flags,
-            completed_data_indexes: v3.completed_data_indexes,
-        }
-    }
-}
+pub type SlotMeta = SlotMetaV3;
 
 // Serde implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
