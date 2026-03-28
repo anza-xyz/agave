@@ -5805,6 +5805,175 @@ pub mod tests {
         }
     }
 
+    fn confirm_slot_with_block_markers_common()
+    -> (Blockstore, GenesisConfig, tempfile::TempDir, ThreadPool) {
+        use crate::shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder};
+        use solana_entry::block_component::{
+            BlockComponent, BlockFooterV1, BlockHeaderV1, VersionedBlockMarker,
+        };
+
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(100 * LAMPORTS_PER_SOL);
+
+        let ticks_per_slot = 1;
+        genesis_config.ticks_per_slot = ticks_per_slot;
+
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let keypair = Arc::new(Keypair::new());
+        let reed_solomon_cache = ReedSolomonCache::default();
+
+        let header = VersionedBlockMarker::new_block_header(BlockHeaderV1 {
+            parent_slot: 0,
+            parent_block_id: Hash::default(),
+        });
+        let header_component = BlockComponent::new_block_marker(header);
+
+        let footer = VersionedBlockMarker::new_block_footer(BlockFooterV1 {
+            bank_hash: Hash::new_unique(),
+            block_producer_time_nanos: 1_000_000_000,
+            block_user_agent: b"test".to_vec(),
+            final_cert: None,
+            skip_reward_cert: None,
+            notar_reward_cert: None,
+        });
+        let footer_component = BlockComponent::new_block_marker(footer);
+
+        let shredder = Shredder::new(1, 0, 0, 0).unwrap();
+        let mut next_shred_index = 0u32;
+
+        let header_shreds: Vec<Shred> = shredder
+            .make_merkle_shreds_from_component(
+                &keypair,
+                &header_component,
+                false,
+                Hash::default(),
+                next_shred_index,
+                0,
+                &reed_solomon_cache,
+                &mut ProcessShredsStats::default(),
+            )
+            .filter(Shred::is_data)
+            .collect();
+        next_shred_index = header_shreds.last().unwrap().index() + 1;
+
+        let entries = create_ticks(ticks_per_slot, 0, genesis_config.hash());
+        let entry_shreds: Vec<Shred> = shredder
+            .make_merkle_shreds_from_entries(
+                &keypair,
+                &entries,
+                false,
+                Hash::default(),
+                next_shred_index,
+                0,
+                &reed_solomon_cache,
+                &mut ProcessShredsStats::default(),
+            )
+            .filter(Shred::is_data)
+            .collect();
+        next_shred_index = entry_shreds.last().unwrap().index() + 1;
+
+        let footer_shreds: Vec<Shred> = shredder
+            .make_merkle_shreds_from_component(
+                &keypair,
+                &footer_component,
+                true, // last in slot
+                Hash::default(),
+                next_shred_index,
+                0,
+                &reed_solomon_cache,
+                &mut ProcessShredsStats::default(),
+            )
+            .filter(Shred::is_data)
+            .collect();
+
+        let mut all_shreds = header_shreds;
+        all_shreds.extend(entry_shreds);
+        all_shreds.extend(footer_shreds);
+        blockstore.insert_shreds(all_shreds, None, true).unwrap();
+
+        let replay_tx_thread_pool = create_thread_pool(1);
+
+        (
+            blockstore,
+            genesis_config,
+            ledger_path,
+            replay_tx_thread_pool,
+        )
+    }
+
+    #[test]
+    fn test_confirm_slot_block_with_markers_fails_without_alpenglow() {
+        let (blockstore, genesis_config, _ledger_path, replay_tx_thread_pool) =
+            confirm_slot_with_block_markers_common();
+
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        let bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+        assert!(
+            !bank1
+                .feature_set
+                .is_active(&agave_feature_set::alpenglow::id())
+        );
+        let bank1 = bank_forks.write().unwrap().insert(bank1);
+
+        assert!(
+            confirm_slot(
+                &blockstore,
+                &bank1,
+                &replay_tx_thread_pool,
+                &mut ConfirmationTiming::default(),
+                &mut ConfirmationProgress::new(bank0.last_blockhash()),
+                false,
+                None,
+                None,
+                None,
+                false,
+                None,
+                None,
+                &MigrationStatus::default(),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn test_confirm_slot_block_with_markers_succeeds_with_alpenglow() {
+        let (blockstore, genesis_config, _ledger_path, replay_tx_thread_pool) =
+            confirm_slot_with_block_markers_common();
+
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        let mut bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+        bank1.activate_feature(&agave_feature_set::alpenglow::id());
+        assert!(
+            bank1
+                .feature_set
+                .is_active(&agave_feature_set::alpenglow::id())
+        );
+        let bank1 = bank_forks.write().unwrap().insert(bank1);
+
+        assert!(
+            confirm_slot(
+                &blockstore,
+                &bank1,
+                &replay_tx_thread_pool,
+                &mut ConfirmationTiming::default(),
+                &mut ConfirmationProgress::new(bank0.last_blockhash()),
+                true, // skip_verification: alpenglow banks have different tick expectations
+                None,
+                None,
+                None,
+                false,
+                None,
+                None,
+                &MigrationStatus::post_migration_status(),
+            )
+            .is_ok()
+        );
+    }
+
     #[test]
     fn test_check_block_cost_limit() {
         let dummy_leader_pubkey = solana_pubkey::new_rand();
