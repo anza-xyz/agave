@@ -205,6 +205,10 @@ pub fn parse_port_range(port_range: &str) -> Option<PortRange> {
 }
 
 pub fn parse_host(host: &str) -> Result<IpAddr, String> {
+    if let Ok(IpAddr::V6(_)) = host.parse::<IpAddr>() {
+        return Err(format!("IPv6 addresses are not supported: {host}"));
+    }
+
     // First, check if the host syntax is valid. This check is needed because addresses
     // such as `("localhost:1234", 0)` will resolve to IPs on some networks.
     let parsed_url = Url::parse(&format!("http://{host}")).map_err(|e| e.to_string())?;
@@ -386,6 +390,7 @@ mod tests {
         parse_host("localhost").unwrap();
         parse_host("127.0.0.0:1234").unwrap_err();
         parse_host("127.0.0.0").unwrap();
+        parse_host("2001:db8:abcd:42::dead:beef").unwrap_err();
     }
 
     #[test]

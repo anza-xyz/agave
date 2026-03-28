@@ -616,7 +616,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .validator(solana_net_utils::is_host)
                 .default_value("127.0.0.1")
                 .help(
-                    "IP address to bind the validator ports. Can be repeated. The first \
+                    "IPv4 address to bind the validator ports. Can be repeated. The first \
                      --bind-address MUST be your public internet address. ALL protocols (gossip, \
                      repair, IP echo, TVU, TPU, etc.) bind to this address on startup. Additional \
                      --bind-address values enable multihoming for Gossip/TVU/TPU - these \
