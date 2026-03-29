@@ -44,7 +44,6 @@ indexmap = { workspace = true, features = ["rayon"] }
 itertools = { workspace = true }
 lazy-lru = { workspace = true }
 log = { workspace = true }
-lru = { workspace = true }
 num-traits = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
@@ -90,6 +89,7 @@ solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 static_assertions = { workspace = true }
 thiserror = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }

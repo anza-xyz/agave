@@ -305,10 +305,15 @@ EOF
     annotate --style info --context test-coverage \
       "Coverage skipped as no .rs files were modified"
   fi
+
+  # crate publish test
+  if [[ -z $CI_PULL_REQUEST ]]; then
+    command_step crate-publish-test "cargo xtask publish test" 45 default
+  fi
 }
 
 pull_or_push_steps() {
-  command_step sanity "ci/test-sanity.sh" 5 default
+  command_step sanity "ci/docker-run-default-image.sh ci/test-sanity.sh" 5 default
   wait_step
 
   # Check for any .sh file changes

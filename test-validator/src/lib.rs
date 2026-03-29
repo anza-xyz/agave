@@ -4,7 +4,6 @@ use {
     agave_snapshots::{
         SnapshotInterval, paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig,
     },
-    agave_syscalls::create_program_runtime_environment,
     arc_swap::ArcSwap,
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::Receiver,
@@ -66,6 +65,7 @@ use {
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
     solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
+    solana_syscalls::create_program_runtime_environment,
     solana_transaction::{Transaction, TransactionError},
     solana_validator_exit::Exit,
     std::{
@@ -954,7 +954,6 @@ impl TestValidator {
             true,
             false,
         )?;
-        let program_runtime_environment = Arc::new(program_runtime_environment);
 
         let mut accounts = config.accounts.clone();
         for (address, account) in solana_program_binaries::spl_programs(&config.rent) {
@@ -969,9 +968,11 @@ impl TestValidator {
         }
         for upgradeable_program in &config.upgradeable_programs {
             let data = solana_program_test::read_file(&upgradeable_program.program_path);
-            let executable =
-                Executable::<InvokeContext>::from_elf(&data, program_runtime_environment.clone())
-                    .map_err(|err| format!("ELF error: {err}"))?;
+            let executable = Executable::<InvokeContext>::from_elf(
+                &data,
+                Arc::clone(&*program_runtime_environment),
+            )
+            .map_err(|err| format!("ELF error: {err}"))?;
             executable
                 .verify::<RequisiteVerifier>()
                 .map_err(|err| format!("ELF error: {err}"))?;

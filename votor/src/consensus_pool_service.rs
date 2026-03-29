@@ -11,6 +11,7 @@ use {
             AddVoteError, ConsensusPool, parent_ready_tracker::BlockProductionParent,
         },
         event::{LeaderWindowInfo, VotorEvent, VotorEventSender},
+        generated_cert_types::GeneratedCertTypes,
         voting_service::BLSOp,
     },
     agave_votor_messages::{
@@ -41,6 +42,7 @@ use {
 pub(crate) struct ConsensusPoolContext {
     pub(crate) exit: Arc<AtomicBool>,
     pub(crate) migration_status: Arc<MigrationStatus>,
+    pub(crate) generated_cert_types: Arc<GeneratedCertTypes>,
 
     pub(crate) cluster_info: Arc<ClusterInfo>,
     pub(crate) my_vote_pubkey: Pubkey,
@@ -93,7 +95,7 @@ impl ConsensusPoolService {
             stats.new_finalized_slot += 1;
         }
         let bank = sharable_banks.root();
-        consensus_pool.prune_old_state(bank.slot());
+        consensus_pool.maybe_prune(bank.slot());
         stats.prune_old_state_called += 1;
         // Send new certificates to peers
         Self::send_certificates(bls_sender, new_certificates_to_send, stats)
@@ -188,11 +190,16 @@ impl ConsensusPoolService {
         // Unlike the other votor threads, consensus pool starts even before alpenglow is enabled
         // As it is required to track the Genesis Vote.
         let mut consensus_pool = if ctx.migration_status.is_alpenglow_enabled() {
-            ConsensusPool::new_from_root_bank(my_pubkey, &root_bank)
+            ConsensusPool::new_from_root_bank(
+                my_pubkey,
+                &root_bank,
+                ctx.generated_cert_types.clone(),
+            )
         } else {
             ConsensusPool::new_from_root_bank_pre_migration(
                 my_pubkey,
                 &root_bank,
+                ctx.generated_cert_types.clone(),
                 ctx.migration_status.clone(),
             )
         };
@@ -512,7 +519,11 @@ mod tests {
                 Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
 
             let root_bank = sharable_banks.root();
-            let consensus_pool = ConsensusPool::new_from_root_bank(my_pubkey, &root_bank);
+            let consensus_pool = ConsensusPool::new_from_root_bank(
+                my_pubkey,
+                &root_bank,
+                Arc::new(GeneratedCertTypes::default()),
+            );
             let my_vote_pubkey = Pubkey::new_unique();
 
             TestContext {
@@ -722,6 +733,7 @@ mod tests {
         let mut pool_ctx = ConsensusPoolContext {
             exit: ctx.exit.clone(),
             migration_status: Arc::new(MigrationStatus::post_migration_status()),
+            generated_cert_types: Arc::new(GeneratedCertTypes::default()),
             cluster_info: Arc::new(ClusterInfo::new(
                 ContactInfo::new_localhost(&ctx.my_pubkey, 0),
                 Arc::new(ctx.validator_keypairs[0].node_keypair.insecure_clone()),

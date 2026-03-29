@@ -7,7 +7,7 @@
 
 use {
     crate::{block_cost_limits::*, transaction_cost::*},
-    agave_feature_set::{self as feature_set, FeatureSet},
+    agave_feature_set::FeatureSet,
     solana_bincode::limited_deserialize,
     solana_compute_budget::compute_budget_limits::DEFAULT_HEAP_COST,
     solana_fee_structure::FeeStructure,
@@ -37,7 +37,7 @@ impl CostModel {
         feature_set: &FeatureSet,
     ) -> TransactionCost<'a, Tx> {
         let remove_simple_vote_from_cost_model =
-            feature_set.is_active(&feature_set::remove_simple_vote_from_cost_model::id());
+            feature_set.snapshot().remove_simple_vote_from_cost_model;
         if transaction.is_simple_vote_transaction() && !remove_simple_vote_from_cost_model {
             TransactionCost::SimpleVote { transaction }
         } else {
@@ -65,7 +65,7 @@ impl CostModel {
         feature_set: &FeatureSet,
     ) -> TransactionCost<'a, Tx> {
         let remove_simple_vote_from_cost_model =
-            feature_set.is_active(&feature_set::remove_simple_vote_from_cost_model::id());
+            feature_set.snapshot().remove_simple_vote_from_cost_model;
         if transaction.is_simple_vote_transaction() && !remove_simple_vote_from_cost_model {
             TransactionCost::SimpleVote { transaction }
         } else {
@@ -98,7 +98,7 @@ impl CostModel {
         feature_set: &FeatureSet,
     ) -> TransactionCost<'a, Tx> {
         let remove_simple_vote_from_cost_model =
-            feature_set.is_active(&feature_set::remove_simple_vote_from_cost_model::id());
+            feature_set.snapshot().remove_simple_vote_from_cost_model;
         if transaction.is_simple_vote_transaction() && !remove_simple_vote_from_cost_model {
             return TransactionCost::SimpleVote { transaction };
         }
@@ -227,7 +227,7 @@ impl CostModel {
             | SystemInstruction::Allocate { space }
             | SystemInstruction::AllocateWithSeed { space, .. } => validate_space(space),
             SystemInstruction::CreateAccountAllowPrefund { space, .. } => {
-                if !feature_set.is_active(&feature_set::create_account_allow_prefund::id()) {
+                if !feature_set.snapshot().create_account_allow_prefund {
                     return SystemProgramAccountAllocation::Failed;
                 }
                 validate_space(space)

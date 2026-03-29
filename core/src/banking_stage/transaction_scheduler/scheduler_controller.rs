@@ -225,18 +225,15 @@ where
                 let scheduling_budget = cost_pacer
                     .expect("cost pacer must be set for Consume")
                     .scheduling_budget(now);
-                let (scheduling_summary, schedule_time_us) = measure_us!(
-                    self.scheduler.schedule(
-                        &mut self.container,
-                        scheduling_budget,
-                        bank.feature_set
-                            .is_active(&agave_feature_set::relax_intrabatch_account_locks::ID),
-                        |txs, results| {
-                            Self::pre_graph_filter(txs, results, bank, bank.max_processing_age())
-                        },
-                        |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
-                    )?
-                );
+                let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
+                    &mut self.container,
+                    scheduling_budget,
+                    bank.feature_set.snapshot().relax_intrabatch_account_locks,
+                    |txs, results| {
+                        Self::pre_graph_filter(txs, results, bank, bank.max_processing_age())
+                    },
+                    |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
+                )?);
 
                 self.count_metrics.update(|count_metrics| {
                     count_metrics.num_scheduled += scheduling_summary.num_scheduled;

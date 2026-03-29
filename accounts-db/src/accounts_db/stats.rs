@@ -482,7 +482,6 @@ pub struct ShrinkStats {
     pub last_report: AtomicInterval,
     pub num_slots_shrunk: AtomicUsize,
     pub storage_read_elapsed: AtomicU64,
-    pub num_duplicated_accounts: AtomicU64,
     pub index_read_elapsed: AtomicU64,
     pub create_and_insert_store_elapsed: AtomicU64,
     pub store_accounts_elapsed: AtomicU64,
@@ -555,11 +554,6 @@ impl ShrinkStats {
                 (
                     "storage_read_elapsed",
                     self.storage_read_elapsed.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "num_duplicated_accounts",
-                    self.num_duplicated_accounts.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -716,13 +710,6 @@ impl ShrinkAncientStats {
                 "storage_read_elapsed",
                 self.shrink_stats
                     .storage_read_elapsed
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "num_duplicated_accounts",
-                self.shrink_stats
-                    .num_duplicated_accounts
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -947,4 +934,41 @@ pub struct WriteAccountsToCacheStats {
     pub num_ephemeral_accounts_skipped: u64,
     pub num_ancestors_zero_lamport_skipped: u64,
     pub account_data_bytes_stored: u64,
+}
+
+#[derive(Debug, Default)]
+pub struct LoadAccountsStats {
+    pub num_loaded_from_write_cache: AtomicU64,
+    pub num_loaded_from_read_cache: AtomicU64,
+    pub num_loaded_from_index_cache: AtomicU64,
+    pub num_loaded_from_index_storage: AtomicU64,
+}
+
+impl LoadAccountsStats {
+    pub fn report(&self) {
+        datapoint_info!(
+            "accounts_db_load_accounts",
+            (
+                "num_loaded_from_write_cache",
+                self.num_loaded_from_write_cache.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_loaded_from_read_cache",
+                self.num_loaded_from_read_cache.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_loaded_from_index_cache",
+                self.num_loaded_from_index_cache.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_loaded_from_index_storage",
+                self.num_loaded_from_index_storage
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+        );
+    }
 }

@@ -208,6 +208,7 @@ impl RepairWeight {
         max_new_shreds: usize,
         max_unknown_last_index_repairs: usize,
         max_closest_completion_repairs: usize,
+        ticks_per_second: u64,
         repair_metrics: &mut RepairMetrics,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
@@ -239,6 +240,7 @@ impl RepairWeight {
             &mut slot_meta_cache,
             &mut best_shreds_repairs,
             max_new_shreds,
+            ticks_per_second,
             outstanding_repairs,
         );
         let num_best_shreds_repairs = best_shreds_repairs.len();
@@ -275,6 +277,7 @@ impl RepairWeight {
             &mut slot_meta_cache,
             &mut processed_slots,
             max_closest_completion_repairs,
+            ticks_per_second,
             outstanding_repairs,
         );
         let num_closest_completion_repairs = closest_completion_repairs.len();
@@ -502,6 +505,7 @@ impl RepairWeight {
         slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
         repairs: &mut Vec<ShredRepairType>,
         max_new_shreds: usize,
+        ticks_per_second: u64,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) {
         let root_tree = self.trees.get(&self.root).expect("Root tree must exist");
@@ -511,6 +515,7 @@ impl RepairWeight {
             slot_meta_cache,
             repairs,
             max_new_shreds,
+            ticks_per_second,
             outstanding_repairs,
         );
     }
@@ -628,6 +633,7 @@ impl RepairWeight {
         slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
         processed_slots: &mut HashSet<Slot>,
         max_new_repairs: usize,
+        ticks_per_second: u64,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> (Vec<ShredRepairType>, /* processed slots */ usize) {
         let mut repairs = Vec::default();
@@ -643,6 +649,7 @@ impl RepairWeight {
                 slot_meta_cache,
                 processed_slots,
                 max_new_repairs - repairs.len(),
+                ticks_per_second,
                 outstanding_repairs,
             );
             repairs.extend(new_repairs);

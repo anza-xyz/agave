@@ -235,6 +235,18 @@ pub unsafe fn read_type<'a, T: Sized>(bytes: &'a [u8], offset: &mut usize) -> Re
     Ok(unsafe { &*(current_ptr as *const T) })
 }
 
+/// Copy a `T` in the buffer without checking bounds or advancing offset.
+///
+/// # Safety
+/// 1. `bytes` must be a valid slice of bytes.
+/// 2. `offset` must be a valid offset into `bytes`.
+/// 4. `T` must be validly initialized.
+#[inline(always)]
+pub unsafe fn unchecked_copy_value<T: Sized>(bytes: &[u8], offset: usize) -> T {
+    let current_ptr = unsafe { bytes.as_ptr().add(offset) }.cast::<T>();
+    unsafe { current_ptr.read_unaligned() }
+}
+
 #[cfg(test)]
 mod tests {
     use {

@@ -93,7 +93,7 @@ use {
         fs,
         io::Read,
         iter,
-        num::NonZeroU64,
+        num::{NonZeroU64, NonZeroUsize},
         path::Path,
         sync::{
             Arc, Mutex,
@@ -1959,12 +1959,12 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
 
     let validator_keypairs = match cluster_mode {
         ClusterMode::MasterOnly => vec![
-        "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
-    ],
+            "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
+        ],
         ClusterMode::MasterSlave => vec![
-        "4qhhXNTbKD1a5vxDDLZcHKj7ELNeiivtUBxn3wUK1F5VRsQVP89VUhfXqSfgiFB14GfuBgtrQ96n9NvWQADVkcCg",
-        "3kHBzVwie5vTEaY6nFCPeFT8qDpoXzn7dCEioGRNBTnUDpvwnG85w8Wq63gVWpVTP8k2a8cgcWRjSXyUkEygpXWS",
-    ],
+            "4qhhXNTbKD1a5vxDDLZcHKj7ELNeiivtUBxn3wUK1F5VRsQVP89VUhfXqSfgiFB14GfuBgtrQ96n9NvWQADVkcCg",
+            "3kHBzVwie5vTEaY6nFCPeFT8qDpoXzn7dCEioGRNBTnUDpvwnG85w8Wq63gVWpVTP8k2a8cgcWRjSXyUkEygpXWS",
+        ],
     };
 
     let validator_keys = create_test_validator_keys(&validator_keypairs);
@@ -2610,80 +2610,6 @@ fn test_run_test_load_program_accounts_partition_root() {
 
 #[test]
 #[serial]
-fn test_rpc_block_subscribe() {
-    let leader_stake = 100 * DEFAULT_NODE_STAKE;
-    let rpc_stake = DEFAULT_NODE_STAKE;
-    let total_stake = leader_stake + rpc_stake;
-    let node_stakes = vec![leader_stake, rpc_stake];
-    let mut validator_config = ValidatorConfig::default_for_test();
-    validator_config.enable_default_rpc_block_subscribe();
-    validator_config.wait_for_supermajority = Some(0);
-
-    let validator_keys = create_test_validator_keys(&[
-        "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
-        "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
-    ]);
-    let rpc_node_pubkey = &validator_keys[1].0.node_keypair.pubkey();
-
-    let mut config = ClusterConfig {
-        mint_lamports: total_stake,
-        node_stakes,
-        validator_configs: make_identical_validator_configs(&validator_config, 2),
-        validator_keys: Some(validator_keys),
-        skip_warmup_slots: true,
-        ..ClusterConfig::default()
-    };
-    let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-    let rpc_node_contact_info = cluster.get_contact_info(rpc_node_pubkey).unwrap();
-    let (mut block_subscribe_client, receiver) = PubsubClient::block_subscribe(
-        format!(
-            "ws://{}",
-            // It is important that we subscribe to a non leader node as there
-            // is a race condition which can cause leader nodes to not send
-            // BlockUpdate notifications properly. See https://github.com/solana-labs/solana/pull/34421
-            &rpc_node_contact_info.rpc_pubsub().unwrap().to_string()
-        ),
-        RpcBlockSubscribeFilter::All,
-        Some(RpcBlockSubscribeConfig {
-            commitment: Some(CommitmentConfig::confirmed()),
-            encoding: None,
-            transaction_details: None,
-            show_rewards: None,
-            max_supported_transaction_version: None,
-        }),
-    )
-    .unwrap();
-
-    let mut received_block = false;
-    let max_wait = 10_000;
-    let start = Instant::now();
-    while !received_block {
-        assert!(
-            start.elapsed() <= Duration::from_millis(max_wait),
-            "Went too long {max_wait} ms without receiving a confirmed block",
-        );
-        let responses: Vec<_> = receiver.try_iter().collect();
-        // Wait for a response
-        if !responses.is_empty() {
-            for response in responses {
-                assert!(response.value.err.is_none());
-                assert!(response.value.block.is_some());
-                if response.value.slot > 1 {
-                    received_block = true;
-                }
-            }
-        }
-        sleep(Duration::from_millis(100));
-    }
-
-    // If we don't drop the cluster, the blocking web socket service
-    // won't return, and the `block_subscribe_client` won't shut down
-    drop(cluster);
-    block_subscribe_client.shutdown().unwrap();
-}
-
-#[test]
-#[serial]
 #[allow(unused_attributes)]
 fn test_oc_bad_signatures() {
     agave_logger::setup_with_default(RUST_LOG_FILTER);
@@ -2701,9 +2627,10 @@ fn test_oc_bad_signatures() {
     // to casting votes with invalid blockhash. This is not what is meant to be
     // test and only inflates test time.
     let fixed_schedule = FixedSchedule {
-        leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(vec![SlotLeader::from(
-            &validator_keys.first().unwrap().0,
-        )])),
+        leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(
+            vec![SlotLeader::from(&validator_keys.first().unwrap().0)],
+            NonZeroUsize::new(1).unwrap(),
+        )),
     };
 
     let mut validator_config = ValidatorConfig {

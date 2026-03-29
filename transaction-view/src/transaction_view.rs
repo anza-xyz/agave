@@ -2,8 +2,8 @@ use {
     crate::{
         address_table_lookup_frame::AddressTableLookupIterator,
         instructions_frame::InstructionsIterator, result::Result, sanitize::sanitize,
-        transaction_data::TransactionData, transaction_frame::TransactionFrame,
-        transaction_version::TransactionVersion,
+        transaction_config_frame::TransactionConfigView, transaction_data::TransactionData,
+        transaction_frame::TransactionFrame, transaction_version::TransactionVersion,
     },
     core::fmt::{Debug, Formatter},
     solana_hash::Hash,
@@ -158,6 +158,18 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
         let data = self.data();
         // SAFETY: `frame` was created from `data`.
         unsafe { self.frame.address_table_lookup_iter(data) }
+    }
+
+    /// Return Some(TransactionConfigView) for V1, None for legacy/V0
+    #[inline]
+    pub fn transaction_config(&self) -> Option<TransactionConfigView<'_>> {
+        let transaction_config_frame = self.frame.transaction_config_frame();
+        transaction_config_frame
+            .is_present()
+            .then_some(TransactionConfigView {
+                transaction_config_frame,
+                bytes: self.data(),
+            })
     }
 
     /// Return the full serialized transaction data.
@@ -392,6 +404,8 @@ mod tests {
                 .map(|x| x.len() as u8)
                 .unwrap_or(0)
         );
+
+        assert!(view.transaction_config().is_none());
     }
 
     fn multiple_transfers() -> VersionedTransaction {

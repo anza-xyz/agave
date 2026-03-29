@@ -101,10 +101,6 @@ filter = 'package(solana-client-test) & test(/^test_send_and_confirm_transaction
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-runtime) & test(/^test_race_register_tick_freeze/)'
-slow-timeout = { period = "60s", terminate-after = 3 }
-
-[[profile.ci.overrides]]
 filter = 'package(solana-svm) & test(/^execute_fixtures/)'
 slow-timeout = { period = "60s", terminate-after = 2 }
 

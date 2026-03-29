@@ -2,7 +2,7 @@
 /bloom/ @anza-xyz/networking
 /bls-cert-verify/ @anza-xyz/consensus
 /compute-budget-instruction/ @anza-xyz/fees
-/core/src/bls_sigverifier/ @anza-xyz/consensus
+/core/src/bls_sigverify/ @anza-xyz/consensus
 /core/src/consensus.rs @anza-xyz/consensus
 /core/src/consensus/ @anza-xyz/consensus
 /core/src/repair/ @anza-xyz/networking @anza-xyz/consensus

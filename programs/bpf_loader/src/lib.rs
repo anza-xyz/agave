@@ -19,9 +19,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
-    solana_sdk_ids::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
-    },
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader},
     solana_svm_log_collector::{LogCollector, ic_logger_msg, ic_msg},
     solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::sync::Arc,
@@ -135,7 +133,7 @@ pub(crate) fn process_instruction_inner<'a>(
             ic_logger_msg!(log_collector, "Program is not deployed");
             Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>)
         }
-        ProgramCacheEntryType::Loaded(executable) => execute(executable, invoke_context),
+        ProgramCacheEntryType::Loaded(executable) => execute(executable, invoke_context, &executor),
         _ => Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>),
     }
     .map(|_| 0)
@@ -769,165 +767,9 @@ fn process_loader_upgradeable_instruction(
             common_extend_program(invoke_context, additional_bytes, true)?;
         }
         UpgradeableLoaderInstruction::Migrate => {
-            if !invoke_context.get_feature_set().enable_loader_v4 {
-                return Err(InstructionError::InvalidInstructionData);
-            }
-
-            instruction_context.check_number_of_instruction_accounts(3)?;
-            let programdata_address = *instruction_context.get_key_of_instruction_account(0)?;
-            let program_address = *instruction_context.get_key_of_instruction_account(1)?;
-            let provided_authority_address =
-                *instruction_context.get_key_of_instruction_account(2)?;
-            let clock_slot = invoke_context
-                .get_sysvar_cache()
-                .get_clock()
-                .map(|clock| clock.slot)?;
-
-            // Verify ProgramData account
-            let programdata = instruction_context.try_borrow_instruction_account(0)?;
-            if !programdata.is_writable() {
-                ic_logger_msg!(log_collector, "ProgramData account not writeable");
-                return Err(InstructionError::InvalidArgument);
-            }
-            let (program_len, upgrade_authority_address) =
-                if let Ok(UpgradeableLoaderState::ProgramData {
-                    slot,
-                    upgrade_authority_address,
-                }) = programdata.get_state()
-                {
-                    if clock_slot == slot {
-                        ic_logger_msg!(log_collector, "Program was deployed in this block already");
-                        return Err(InstructionError::InvalidArgument);
-                    }
-                    (
-                        programdata
-                            .get_data()
-                            .len()
-                            .saturating_sub(UpgradeableLoaderState::size_of_programdata_metadata()),
-                        upgrade_authority_address,
-                    )
-                } else {
-                    (0, None)
-                };
-            let programdata_funds = programdata.get_lamports();
-            drop(programdata);
-
-            // Verify authority signature
-            if !migration_authority::check_id(&provided_authority_address)
-                && provided_authority_address
-                    != upgrade_authority_address.unwrap_or(program_address)
-            {
-                ic_logger_msg!(log_collector, "Incorrect migration authority provided");
-                return Err(InstructionError::IncorrectAuthority);
-            }
-            if !instruction_context.is_instruction_account_signer(2)? {
-                ic_logger_msg!(log_collector, "Migration authority did not sign");
-                return Err(InstructionError::MissingRequiredSignature);
-            }
-
-            // Verify Program account
-            let mut program = instruction_context.try_borrow_instruction_account(1)?;
-            if !program.is_writable() {
-                ic_logger_msg!(log_collector, "Program account not writeable");
-                return Err(InstructionError::InvalidArgument);
-            }
-            if program.get_owner() != program_id {
-                ic_logger_msg!(log_collector, "Program account not owned by loader");
-                return Err(InstructionError::IncorrectProgramId);
-            }
-            if let UpgradeableLoaderState::Program {
-                programdata_address: stored_programdata_address,
-            } = program.get_state()?
-            {
-                if programdata_address != stored_programdata_address {
-                    ic_logger_msg!(log_collector, "Program and ProgramData account mismatch");
-                    return Err(InstructionError::InvalidArgument);
-                }
-            } else {
-                ic_logger_msg!(log_collector, "Invalid Program account");
-                return Err(InstructionError::InvalidAccountData);
-            }
-            program.set_data_from_slice(&[])?;
-            program.checked_add_lamports(programdata_funds)?;
-            program.set_owner(&loader_v4::id().to_bytes())?;
-            drop(program);
-
-            let mut programdata = instruction_context.try_borrow_instruction_account(0)?;
-            programdata.set_lamports(0)?;
-            drop(programdata);
-
-            if program_len == 0 {
-                invoke_context
-                    .program_cache_for_tx_batch
-                    .store_modified_entry(
-                        program_address,
-                        Arc::new(ProgramCacheEntry::new_tombstone(
-                            clock_slot,
-                            ProgramCacheEntryOwner::LoaderV4,
-                            ProgramCacheEntryType::Closed,
-                        )),
-                    );
-            } else {
-                invoke_context.native_invoke_signed(
-                    solana_loader_v4_interface::instruction::set_program_length(
-                        &program_address,
-                        &provided_authority_address,
-                        program_len as u32,
-                        &program_address,
-                    ),
-                    &[],
-                )?;
-
-                invoke_context.native_invoke_signed(
-                    solana_loader_v4_interface::instruction::copy(
-                        &program_address,
-                        &provided_authority_address,
-                        &programdata_address,
-                        0,
-                        0,
-                        program_len as u32,
-                    ),
-                    &[],
-                )?;
-
-                invoke_context.native_invoke_signed(
-                    solana_loader_v4_interface::instruction::deploy(
-                        &program_address,
-                        &provided_authority_address,
-                    ),
-                    &[],
-                )?;
-
-                if let Some(upgrade_authority_address) = upgrade_authority_address {
-                    if migration_authority::check_id(&provided_authority_address) {
-                        invoke_context.native_invoke_signed(
-                            solana_loader_v4_interface::instruction::transfer_authority(
-                                &program_address,
-                                &provided_authority_address,
-                                &upgrade_authority_address,
-                            ),
-                            &[],
-                        )?;
-                    }
-                } else {
-                    invoke_context.native_invoke_signed(
-                        solana_loader_v4_interface::instruction::finalize(
-                            &program_address,
-                            &provided_authority_address,
-                            &program_address,
-                        ),
-                        &[],
-                    )?;
-                }
-            }
-
-            let transaction_context = &invoke_context.transaction_context;
-            let instruction_context = transaction_context.get_current_instruction_context()?;
-            let mut programdata = instruction_context.try_borrow_instruction_account(0)?;
-            programdata.set_data_from_slice(&[])?;
-            drop(programdata);
-
-            ic_logger_msg!(log_collector, "Migrated program {:?}", &program_address);
+            // Loader V4 has been removed.
+            // This variant will be removed from the next interface release.
+            return Err(InstructionError::InvalidInstructionData);
         }
     }
 
@@ -1144,10 +986,14 @@ mod test_utils {
     use solana_program_runtime::loaded_programs::LoadProgramMetrics;
     #[cfg(feature = "svm-internal")]
     use {
-        super::*, agave_syscalls::create_program_runtime_environment,
-        solana_account::ReadableAccount, solana_loader_v4_interface::state::LoaderV4State,
-        solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
+        super::*,
+        solana_account::ReadableAccount,
+        solana_loader_v4_interface::state::LoaderV4State,
+        solana_program_runtime::loaded_programs::{
+            DELAY_VISIBILITY_SLOT_OFFSET, ProgramRuntimeEnvironment,
+        },
         solana_sdk_ids::loader_v4,
+        solana_syscalls::create_program_runtime_environment,
     };
 
     #[cfg(feature = "svm-internal")]
@@ -1166,8 +1012,8 @@ mod test_utils {
             invoke_context.get_compute_budget(),
             false, /* deployment */
             false, /* debugging_features */
-        );
-        let program_runtime_environment = Arc::new(program_runtime_environment.unwrap());
+        )
+        .unwrap();
         let num_accounts = invoke_context.transaction_context.get_number_of_accounts();
         for index in 0..num_accounts {
             let account = invoke_context
@@ -1192,11 +1038,10 @@ mod test_utils {
                     .data()
                     .get(programdata_data_offset.min(account.data().len())..)
                     .unwrap();
-                let program_runtime_environment = program_runtime_environment.clone();
                 let effective_slot = DELAY_VISIBILITY_SLOT_OFFSET;
                 let loaded_program = ProgramCacheEntry::new(
                     owner,
-                    program_runtime_environment,
+                    ProgramRuntimeEnvironment::clone(&program_runtime_environment),
                     0,
                     effective_slot,
                     programdata,
@@ -1229,7 +1074,9 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_instruction::{AccountMeta, error::InstructionError},
         solana_program_runtime::{
-            invoke_context::mock_process_instruction, vm::calculate_heap_cost,
+            invoke_context::mock_process_instruction,
+            loaded_programs::{ProgramRuntimeEnvironment, ProgramStatistics},
+            vm::calculate_heap_cost,
             with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
@@ -3371,14 +3218,18 @@ mod tests {
         )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
-        let env = Arc::new(BuiltinProgram::new_mock());
+        let env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
+        let stats = ProgramStatistics {
+            uses: 100.into(),
+            ..Default::default()
+        };
         let program = ProgramCacheEntry {
             program: ProgramCacheEntryType::Unloaded(env),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             account_size: 0,
             deployment_slot: 0,
             effective_slot: 0,
-            tx_usage_counter: Arc::new(AtomicU64::new(100)),
+            stats: stats.into(),
             latest_access_slot: AtomicU64::new(0),
         };
         invoke_context
@@ -3399,10 +3250,7 @@ mod tests {
             .expect("Didn't find upgraded program in the cache");
 
         assert_eq!(updated_program.deployment_slot, 2);
-        assert_eq!(
-            updated_program.tx_usage_counter.load(Ordering::Relaxed),
-            100
-        );
+        assert_eq!(updated_program.stats.uses.load(Ordering::Relaxed), 100);
     }
 
     #[test]
@@ -3413,14 +3261,18 @@ mod tests {
         )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
-        let env = Arc::new(BuiltinProgram::new_mock());
+        let env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
+        let stats = ProgramStatistics {
+            uses: 100.into(),
+            ..Default::default()
+        };
         let program = ProgramCacheEntry {
             program: ProgramCacheEntryType::Unloaded(env),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             account_size: 0,
             deployment_slot: 0,
             effective_slot: 0,
-            tx_usage_counter: Arc::new(AtomicU64::new(100)),
+            stats: stats.into(),
             latest_access_slot: AtomicU64::new(0),
         };
         invoke_context
@@ -3442,6 +3294,6 @@ mod tests {
             .expect("Didn't find upgraded program in the cache");
 
         assert_eq!(program2.deployment_slot, 2);
-        assert_eq!(program2.tx_usage_counter.load(Ordering::Relaxed), 0);
+        assert_eq!(program2.stats.uses.load(Ordering::Relaxed), 0);
     }
 }

@@ -6,7 +6,7 @@ use {
             AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, PopulateReadCache,
             ScanAccountStorageData, ScanStorageResult, UpdateIndexThreadSelection,
         },
-        accounts_index::{IndexKey, ScanConfig, ScanError, ScanOrder, ScanResult},
+        accounts_index::{IndexKey, ScanConfig, ScanError, ScanResult},
         ancestors::Ancestors,
         is_loadable::IsLoadable as _,
         storable_accounts::StorableAccounts,
@@ -258,16 +258,10 @@ impl Accounts {
         num: usize,
         filter_by_address: &HashSet<Pubkey>,
         filter: AccountAddressFilter,
-        sort_results: bool,
     ) -> ScanResult<Vec<(Pubkey, u64)>> {
         if num == 0 {
             return Ok(vec![]);
         }
-        let scan_order = if sort_results {
-            ScanOrder::Sorted
-        } else {
-            ScanOrder::Unsorted
-        };
         let mut account_balances = BinaryHeap::new();
         self.accounts_db.scan_accounts(
             ancestors,
@@ -297,7 +291,7 @@ impl Accounts {
                     account_balances.push(Reverse((account.lamports(), *pubkey)));
                 }
             },
-            &ScanConfig::new(scan_order),
+            &ScanConfig::default(),
         )?;
         Ok(account_balances
             .into_sorted_vec()
@@ -324,7 +318,6 @@ impl Accounts {
         ancestors: &Ancestors,
         bank_id: BankId,
         program_id: &Pubkey,
-        config: &ScanConfig,
     ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         let mut collector = Vec::new();
         self.accounts_db
@@ -336,7 +329,7 @@ impl Accounts {
                         account.owner() == program_id
                     })
                 },
-                config,
+                &ScanConfig::default(),
             )
             .map(|_| collector)
     }
@@ -347,7 +340,6 @@ impl Accounts {
         bank_id: BankId,
         program_id: &Pubkey,
         filter: F,
-        config: &ScanConfig,
     ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         let mut collector = Vec::new();
         self.accounts_db
@@ -359,7 +351,7 @@ impl Accounts {
                         account.owner() == program_id && filter(account)
                     })
                 },
-                config,
+                &ScanConfig::default(),
             )
             .map(|_| collector)
     }
@@ -406,11 +398,10 @@ impl Accounts {
         bank_id: BankId,
         index_key: &IndexKey,
         filter: F,
-        config: &ScanConfig,
         byte_limit_for_scan: Option<usize>,
     ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         let sum = AtomicUsize::default();
-        let config = config.recreate_with_abort();
+        let config = ScanConfig::default().recreate_with_abort();
         let mut collector = Vec::new();
         let result = self
             .accounts_db
@@ -450,26 +441,23 @@ impl Accounts {
         bank_id: BankId,
         sort_results: bool,
     ) -> ScanResult<Vec<PubkeyAccountSlot>> {
-        let scan_order = if sort_results {
-            ScanOrder::Sorted
-        } else {
-            ScanOrder::Unsorted
-        };
         let mut collector = Vec::new();
-        self.accounts_db
-            .scan_accounts(
-                ancestors,
-                bank_id,
-                |some_account_tuple| {
-                    if let Some((pubkey, account, slot)) =
-                        some_account_tuple.filter(|(_, account, _)| account.is_loadable())
-                    {
-                        collector.push((*pubkey, account, slot))
-                    }
-                },
-                &ScanConfig::new(scan_order),
-            )
-            .map(|_| collector)
+        self.accounts_db.scan_accounts(
+            ancestors,
+            bank_id,
+            |some_account_tuple| {
+                if let Some((pubkey, account, slot)) =
+                    some_account_tuple.filter(|(_, account, _)| account.is_loadable())
+                {
+                    collector.push((*pubkey, account, slot))
+                }
+            },
+            &ScanConfig::default(),
+        )?;
+        if sort_results {
+            collector.sort_unstable_by(|(a_addr, _, _), (b_addr, _, _)| a_addr.cmp(b_addr));
+        }
+        Ok(collector)
     }
 
     pub fn scan_all<F>(
@@ -477,18 +465,12 @@ impl Accounts {
         ancestors: &Ancestors,
         bank_id: BankId,
         scan_func: F,
-        sort_results: bool,
     ) -> ScanResult<()>
     where
         F: FnMut(Option<(&Pubkey, AccountSharedData, Slot)>),
     {
-        let scan_order = if sort_results {
-            ScanOrder::Sorted
-        } else {
-            ScanOrder::Unsorted
-        };
         self.accounts_db
-            .scan_accounts(ancestors, bank_id, scan_func, &ScanConfig::new(scan_order))
+            .scan_accounts(ancestors, bank_id, scan_func, &ScanConfig::default())
     }
 
     /// This function will prevent multiple threads from modifying the same account state at the
@@ -1452,7 +1434,6 @@ mod tests {
                     0,
                     &HashSet::new(),
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![]
@@ -1465,7 +1446,6 @@ mod tests {
                     0,
                     &all_pubkeys,
                     AccountAddressFilter::Include,
-                    false
                 )
                 .unwrap(),
             vec![]
@@ -1481,7 +1461,6 @@ mod tests {
                     1,
                     &HashSet::new(),
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey1, 42)]
@@ -1494,7 +1473,6 @@ mod tests {
                     2,
                     &HashSet::new(),
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey1, 42), (pubkey0, 42)]
@@ -1507,7 +1485,6 @@ mod tests {
                     3,
                     &HashSet::new(),
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey1, 42), (pubkey0, 42), (pubkey2, 41)]
@@ -1522,7 +1499,6 @@ mod tests {
                     6,
                     &HashSet::new(),
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey1, 42), (pubkey0, 42), (pubkey2, 41)]
@@ -1538,7 +1514,6 @@ mod tests {
                     1,
                     &exclude1,
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey0, 42)]
@@ -1551,7 +1526,6 @@ mod tests {
                     2,
                     &exclude1,
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey0, 42), (pubkey2, 41)]
@@ -1564,7 +1538,6 @@ mod tests {
                     3,
                     &exclude1,
                     AccountAddressFilter::Exclude,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey0, 42), (pubkey2, 41)]
@@ -1580,7 +1553,6 @@ mod tests {
                     1,
                     &include1_2,
                     AccountAddressFilter::Include,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey1, 42)]
@@ -1593,7 +1565,6 @@ mod tests {
                     2,
                     &include1_2,
                     AccountAddressFilter::Include,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey1, 42), (pubkey2, 41)]
@@ -1606,7 +1577,6 @@ mod tests {
                     3,
                     &include1_2,
                     AccountAddressFilter::Include,
-                    false
                 )
                 .unwrap(),
             vec![(pubkey1, 42), (pubkey2, 41)]
@@ -1634,11 +1604,7 @@ mod tests {
     #[test]
     fn test_maybe_abort_scan() {
         assert!(Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &ScanConfig::default()).is_ok());
-        assert!(
-            Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &ScanConfig::new(ScanOrder::Sorted))
-                .is_ok()
-        );
-        let config = ScanConfig::new(ScanOrder::Sorted).recreate_with_abort();
+        let config = ScanConfig::default().recreate_with_abort();
         assert!(Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &config).is_ok());
         config.abort();
         assert!(Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &config).is_err());

@@ -1,8 +1,12 @@
 #[expect(deprecated)]
 use solana_stake_interface::config::Config as StakeConfig;
 use {
-    crate::{bank::VAT_TO_BURN_PER_EPOCH, stake_utils},
-    agave_feature_set::{FEATURE_NAMES, FeatureSet, vote_state_v4},
+    crate::{
+        bank::VAT_TO_BURN_PER_EPOCH,
+        block_component_processor::vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
+        stake_utils,
+    },
+    agave_feature_set::{FEATURE_NAMES, FeatureSet},
     agave_votor_messages::{
         self,
         consensus_message::{BLS_KEYPAIR_DERIVE_SEED, Certificate, CertificateType},
@@ -234,7 +238,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
             .bls_keypair
             .public
             .to_bytes_compressed();
-        let vote_account = if feature_set.is_active(&vote_state_v4::id()) {
+        let vote_account = if feature_set.snapshot().vote_state_v4 {
             // Vote state v4 feature active. Create a v4 account.
             vote_state::create_v4_account_with_authorized(
                 &node_pubkey,
@@ -355,6 +359,7 @@ pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
     genesis_config
         .accounts
         .insert(*GENESIS_CERTIFICATE_ACCOUNT, certificate_account);
+    EpochInflationAccountState::insert_into_genesis_config(genesis_config);
 }
 
 pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
@@ -437,7 +442,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
         )
     };
 
-    let validator_vote_account = if feature_set.is_active(&vote_state_v4::id()) {
+    let validator_vote_account = if feature_set.snapshot().vote_state_v4 {
         // Vote state v4 feature active. Create a v4 account.
         vote_state::create_v4_account_with_authorized(
             validator_pubkey,

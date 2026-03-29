@@ -145,12 +145,22 @@ use {
     wincode::{
         ReadResult, SchemaRead, SchemaWrite, WriteResult,
         config::{Config, DefaultConfig},
-        containers::{Pod, Vec as WincodeVec},
+        containers::Vec as WincodeVec,
         error::write_length_encoding_overflow,
         io::{Reader, Writer},
         len::{BincodeLen, FixIntLen},
+        pod_wrapper,
     },
 };
+
+pod_wrapper! {
+    // Use `BLSSignature` directly once `BLSSignature` wincode support
+    // is released in solana-sdk.
+    unsafe struct PodBLSSignature(BLSSignature);
+    // Use `BLSSignatureCompressed` directly once `BLSSignature` wincode support
+    // is released in solana-sdk.
+    unsafe struct PodBLSSignatureCompressed(BLSSignatureCompressed);
+}
 
 /// Wraps a value with a u16 length prefix for TLV-style serialization.
 ///
@@ -222,7 +232,7 @@ pub struct UpdateParentV1 {
 pub struct GenesisCertificate {
     pub slot: Slot,
     pub block_id: Hash,
-    #[wincode(with = "Pod<BLSSignature>")]
+    #[wincode(with = "PodBLSSignature")]
     pub bls_signature: BLSSignature,
     #[wincode(with = "WincodeVec<u8, BincodeLen>")]
     pub bitmap: Vec<u8>,
@@ -291,7 +301,7 @@ impl FinalCertificate {
 
 #[derive(Clone, PartialEq, Eq, Debug, SchemaRead, SchemaWrite)]
 pub struct VotesAggregate {
-    #[wincode(with = "Pod<BLSSignatureCompressed>")]
+    #[wincode(with = "PodBLSSignatureCompressed")]
     signature: BLSSignatureCompressed,
     #[wincode(with = "WincodeVec<u8, FixIntLen<u16>>")]
     bitmap: Vec<u8>,

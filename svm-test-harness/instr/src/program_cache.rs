@@ -1,5 +1,4 @@
 use {
-    agave_syscalls::create_program_runtime_environment,
     solana_account::{Account, AccountSharedData},
     solana_builtins::BUILTINS,
     solana_compute_budget::compute_budget::ComputeBudget,
@@ -11,6 +10,7 @@ use {
     solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
+    solana_syscalls::create_program_runtime_environment,
     std::{collections::HashSet, sync::Arc},
 };
 
@@ -42,15 +42,13 @@ pub fn add_program(
     feature_set: &SVMFeatureSet,
     compute_budget: &ComputeBudget,
 ) {
-    let program_runtime_environment = Arc::new(
-        create_program_runtime_environment(
-            feature_set,
-            &compute_budget.to_budget(),
-            false, /* reject_deployment_of_broken_elfs */
-            false, /* debugging_features */
-        )
-        .unwrap(),
-    );
+    let program_runtime_environment = create_program_runtime_environment(
+        feature_set,
+        &compute_budget.to_budget(),
+        false, /* reject_deployment_of_broken_elfs */
+        false, /* debugging_features */
+    )
+    .unwrap();
 
     let entry = ProgramCacheEntry::new(
         loader_key,

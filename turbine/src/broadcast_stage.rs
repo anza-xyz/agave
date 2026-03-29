@@ -8,9 +8,11 @@ use {
         fail_entry_verification_broadcast_run::FailEntryVerificationBroadcastRun,
         standard_broadcast_run::StandardBroadcastRun,
     },
-    crate::cluster_nodes::{ClusterNodes, ClusterNodesCache},
+    crate::{
+        XdpSender,
+        cluster_nodes::{ClusterNodes, ClusterNodesCache},
+    },
     agave_votor::event::VotorEventSender,
-    agave_xdp::xdp_retransmitter::XdpSender,
     crossbeam_channel::{Receiver, RecvError, RecvTimeoutError, Sender, unbounded},
     itertools::Itertools,
     solana_clock::Slot,
@@ -516,7 +518,7 @@ pub fn broadcast_shreds(
                 let addr = cluster_nodes
                     .get_broadcast_peer(&key)?
                     .tvu(Protocol::UDP)
-                    .filter(|addr| socket_addr_space.check(addr))?;
+                    .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))?;
 
                 Some((shred.payload(), addr))
             })

@@ -1,6 +1,6 @@
 use {
     super::{Bank, BankStatusCache},
-    agave_feature_set::{FeatureSet, raise_cpi_nesting_limit_to_8},
+    agave_feature_set::FeatureSet,
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_clock::{MAX_TRANSACTION_FORWARDING_DELAY, Slot},
     solana_fee::{FeeFeatures, calculate_fee_details},
@@ -37,7 +37,7 @@ impl Bank {
         self.check_transactions(
             transactions,
             filter,
-            self.max_processing_age
+            self.max_processing_age()
                 .saturating_sub(max_tx_fwd_delay)
                 .saturating_sub(forward_transactions_to_leader_at_slot_offset as usize),
             &mut error_counters,
@@ -95,9 +95,10 @@ impl Bank {
         let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
 
         let feature_set: &FeatureSet = &self.feature_set;
+        let feature_snapshot = feature_set.snapshot();
         let fee_features = FeeFeatures::from(feature_set);
 
-        let raise_cpi_limit = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
+        let raise_cpi_limit = feature_snapshot.raise_cpi_nesting_limit_to_8;
 
         sanitized_txs
             .iter()

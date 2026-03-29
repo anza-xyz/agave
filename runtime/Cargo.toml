@@ -19,6 +19,7 @@ name = "solana_runtime"
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
+    "agave-feature-set/dev-context-only-utils",
     "agave-votor-messages/dev-context-only-utils",
     "solana-accounts-db/dev-context-only-utils",
     "solana-svm/dev-context-only-utils",
@@ -56,7 +57,6 @@ agave-fs = { workspace = true }
 agave-precompiles = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
-agave-syscalls = { workspace = true }
 agave-votor-messages = { workspace = true }
 ahash = { workspace = true }
 aquamarine = { workspace = true }
@@ -127,13 +127,13 @@ solana-keypair = { workspace = true, features = ["seed-derivable"] }
 solana-lattice-hash = { workspace = true }
 solana-leader-schedule = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
-solana-loader-v4-interface = { workspace = true, features = ["serde"] }
+solana-loader-v4-interface = { workspace = true, features = ["bincode"] }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
 solana-nonce = { workspace = true }
-solana-nonce-account = { workspace = true }
+solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh-config = { workspace = true }
@@ -151,6 +151,7 @@ solana-serde = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
+solana-signer-store = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-slot-history = { workspace = true }
 solana-stake-interface = { workspace = true }
@@ -158,6 +159,7 @@ solana-svm = { workspace = true, features = ["metrics"] }
 solana-svm-callback = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
@@ -185,6 +187,7 @@ wincode = { workspace = true }
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-transaction-view = { path = "../transaction-view", features = ["agave-unstable-api"] }
 bitvec = { workspace = true }
+criterion = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
 proptest = { workspace = true }
@@ -206,8 +209,15 @@ solana-vote-program = { path = "../programs/vote", default-features = false, fea
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
+jemallocator = { workspace = true }
+
 [[bench]]
 name = "prioritization_fee_cache"
+
+[[bench]]
+name = "epoch_turnover"
+harness = false
 
 [lints]
 workspace = true

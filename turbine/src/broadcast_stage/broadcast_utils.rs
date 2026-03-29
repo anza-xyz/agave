@@ -221,18 +221,24 @@ mod tests {
         crossbeam_channel::unbounded,
         solana_genesis_config::GenesisConfig,
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
-        solana_pubkey::Pubkey,
+        solana_runtime::bank::SlotLeader,
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
     };
 
-    fn setup_test() -> (GenesisConfig, Arc<Bank>, Transaction) {
+    fn setup_test() -> (
+        GenesisConfig,
+        Arc<Bank>,
+        Arc<std::sync::RwLock<solana_runtime::bank_forks::BankForks>>,
+        Transaction,
+    ) {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
         } = create_genesis_config(2);
-        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let tx = system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
@@ -240,7 +246,7 @@ mod tests {
             genesis_config.hash(),
         );
 
-        (genesis_config, bank0, tx)
+        (genesis_config, bank0, bank_forks, tx)
     }
 
     const LAST_TICK_HEIGHT: u64 = 1;
@@ -248,9 +254,14 @@ mod tests {
 
     #[test]
     fn test_recv_slot_entries_1() {
-        let (genesis_config, bank0, tx) = setup_test();
+        let (genesis_config, bank0, bank_forks, tx) = setup_test();
 
-        let bank1 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 1));
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0,
+            SlotLeader::default(),
+            1,
+        );
         let (s, r) = unbounded();
         let mut last_hash = genesis_config.hash();
 
@@ -278,10 +289,20 @@ mod tests {
 
     #[test]
     fn test_recv_slot_entries_2() {
-        let (genesis_config, bank0, tx) = setup_test();
+        let (genesis_config, bank0, bank_forks, tx) = setup_test();
 
-        let bank1 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 1));
-        let bank2 = Arc::new(Bank::new_from_parent(bank1.clone(), &Pubkey::default(), 2));
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0,
+            SlotLeader::default(),
+            1,
+        );
+        let bank2 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank1.clone(),
+            SlotLeader::default(),
+            2,
+        );
         let (s, r) = unbounded();
 
         let mut last_hash = genesis_config.hash();

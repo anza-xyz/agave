@@ -286,26 +286,25 @@ impl CrdsGossipPull {
             .get(&self_keypair.pubkey())
             .copied()
             .unwrap_or_default();
-        let (weights, nodes): (Vec<u64>, Vec<ContactInfo>) =
-            crds_gossip::dedup_gossip_addresses(nodes, stakes)
-                .into_values()
-                .map(|(stake, node)| {
+        let (weights, gossips): (Vec<u64>, Vec<SocketAddr>) =
+            crds_gossip::dedup_gossip_addresses(nodes)
+                .into_iter()
+                .map(|(gossip, stake, _pubkey)| {
                     let stake = stake.min(stake_cap) / LAMPORTS_PER_SOL;
                     let weight = u64::BITS - stake.leading_zeros();
                     let weight = u64::from(weight).saturating_add(1).saturating_pow(2);
-                    (weight, node)
+                    (weight, gossip)
                 })
                 .unzip();
-        if nodes.is_empty() {
+        if gossips.is_empty() {
             return Err(CrdsGossipError::NoPeers);
         }
         let filters = self.build_crds_filters(thread_pool, crds, bloom_size);
         // Associate each pull-request filter with a randomly selected peer.
         let dist = WeightedIndex::new(weights).unwrap();
-        Ok(filters.into_iter().filter_map(move |filter| {
-            let node = &nodes[dist.sample(&mut rng)];
-            Some((node.gossip()?, filter))
-        }))
+        Ok(filters
+            .into_iter()
+            .map(move |filter| (gossips[dist.sample(&mut rng)], filter)))
     }
 
     /// Create gossip responses to pull requests
