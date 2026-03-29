@@ -15,8 +15,8 @@ use {
     solana_clock::Slot,
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, JoinHandle},
         time::{Duration, Instant},

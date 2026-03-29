@@ -152,8 +152,8 @@ mod tests {
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
         solana_instruction::error::InstructionError,
-        solana_keypair::{keypair_from_seed, Keypair},
-        solana_message::{compiled_instruction::CompiledInstruction, Message},
+        solana_keypair::{Keypair, keypair_from_seed},
+        solana_message::{Message, compiled_instruction::CompiledInstruction},
         solana_nonce::{
             state::{Data as NonceData, DurableNonce, State as NonceState},
             versions::Versions as NonceVersions,
@@ -161,13 +161,13 @@ mod tests {
         solana_nonce_account as nonce_account,
         solana_program_runtime::execution_budget::SVMTransactionExecutionBudget,
         solana_sdk_ids::native_loader,
-        solana_signer::{signers::Signers, Signer},
+        solana_signer::{Signer, signers::Signers},
         solana_svm::{
             account_loader::{FeesOnlyTransaction, LoadedTransaction},
             transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
         },
         solana_system_interface::{instruction as system_instruction, program as system_program},
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_error::{TransactionError, TransactionResult as Result},
         std::collections::HashMap,
     };
@@ -245,7 +245,6 @@ mod tests {
 
         let loaded0 = LoadedTransaction {
             accounts: transaction_accounts0,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -254,7 +253,6 @@ mod tests {
 
         let loaded1 = LoadedTransaction {
             accounts: transaction_accounts1,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -274,12 +272,16 @@ mod tests {
             let (collected_accounts, transactions) =
                 collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
             assert_eq!(collected_accounts.len(), 2);
-            assert!(collected_accounts
-                .iter()
-                .any(|(pubkey, _account)| *pubkey == &keypair0.pubkey()));
-            assert!(collected_accounts
-                .iter()
-                .any(|(pubkey, _account)| *pubkey == &keypair1.pubkey()));
+            assert!(
+                collected_accounts
+                    .iter()
+                    .any(|(pubkey, _account)| *pubkey == &keypair0.pubkey())
+            );
+            assert!(
+                collected_accounts
+                    .iter()
+                    .any(|(pubkey, _account)| *pubkey == &keypair1.pubkey())
+            );
 
             if collect_transactions {
                 let transactions = transactions.unwrap();
@@ -313,7 +315,6 @@ mod tests {
 
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::FeePayerOnly {
                 fee_payer: (from_address, from_account_pre.clone()),
@@ -404,7 +405,6 @@ mod tests {
 
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::SeparateNonceAndFeePayer {
                 nonce: (nonce_address, nonce_account_pre.clone()),
@@ -449,11 +449,13 @@ mod tests {
                 collected_nonce_account.lamports(),
                 nonce_account_pre.lamports(),
             );
-            assert!(nonce_account::verify_nonce_account(
-                &collected_nonce_account,
-                durable_nonce.as_hash()
-            )
-            .is_some());
+            assert!(
+                nonce_account::verify_nonce_account(
+                    &collected_nonce_account,
+                    durable_nonce.as_hash()
+                )
+                .is_some()
+            );
 
             if collect_transactions {
                 let transactions = transactions.unwrap();
@@ -510,7 +512,6 @@ mod tests {
 
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::SameNonceAndFeePayer {
                 nonce: (nonce_address, nonce_account_pre.clone()),
@@ -545,11 +546,13 @@ mod tests {
                 collected_nonce_account.lamports(),
                 nonce_account_pre.lamports()
             );
-            assert!(nonce_account::verify_nonce_account(
-                &collected_nonce_account,
-                durable_nonce.as_hash()
-            )
-            .is_some());
+            assert!(
+                nonce_account::verify_nonce_account(
+                    &collected_nonce_account,
+                    durable_nonce.as_hash()
+                )
+                .is_some()
+            );
 
             if collect_transactions {
                 let transactions = transactions.unwrap();

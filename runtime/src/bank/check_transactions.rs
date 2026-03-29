@@ -1,9 +1,9 @@
 use {
     super::{Bank, BankStatusCache},
-    agave_feature_set::{raise_cpi_nesting_limit_to_8, FeatureSet},
+    agave_feature_set::FeatureSet,
     solana_accounts_db::blockhash_queue::BlockhashQueue,
-    solana_clock::{Slot, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY},
-    solana_fee::{calculate_fee_details, FeeFeatures},
+    solana_clock::{MAX_TRANSACTION_FORWARDING_DELAY, Slot},
+    solana_fee::{FeeFeatures, calculate_fee_details},
     solana_fee_structure::{FeeBudgetLimits, FeeDetails},
     solana_nonce::state::{Data as NonceData, DurableNonce},
     solana_nonce_account as nonce_account,
@@ -37,7 +37,7 @@ impl Bank {
         self.check_transactions(
             transactions,
             filter,
-            (MAX_PROCESSING_AGE)
+            self.max_processing_age()
                 .saturating_sub(max_tx_fwd_delay)
                 .saturating_sub(forward_transactions_to_leader_at_slot_offset as usize),
             &mut error_counters,
@@ -95,9 +95,10 @@ impl Bank {
         let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
 
         let feature_set: &FeatureSet = &self.feature_set;
+        let feature_snapshot = feature_set.snapshot();
         let fee_features = FeeFeatures::from(feature_set);
 
-        let raise_cpi_limit = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
+        let raise_cpi_limit = feature_snapshot.raise_cpi_nesting_limit_to_8;
 
         sanitized_txs
             .iter()
@@ -214,10 +215,7 @@ impl Bank {
         &self,
         message: &impl SVMMessage,
     ) -> Option<(Pubkey, NonceData)> {
-        let require_static_nonce_account = self
-            .feature_set
-            .is_active(&agave_feature_set::require_static_nonce_account::id());
-        let nonce_address = message.get_durable_nonce(require_static_nonce_account)?;
+        let nonce_address = message.get_durable_nonce()?;
         let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
         let nonce_data =
             nonce_account::verify_nonce_account(&nonce_account, message.recent_blockhash())?;
@@ -289,10 +287,10 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::{
-            compiled_instruction::CompiledInstruction,
-            v0::{self, LoadedAddresses, MessageAddressTableLookup},
             Message, MessageHeader, SanitizedMessage, SanitizedVersionedMessage,
             SimpleAddressLoader, VersionedMessage,
+            compiled_instruction::CompiledInstruction,
+            v0::{self, LoadedAddresses, MessageAddressTableLookup},
         },
         solana_nonce::{state::State as NonceState, versions::Versions as NonceVersions},
         solana_signer::Signer,
@@ -301,21 +299,13 @@ mod tests {
             program as system_program,
         },
         std::collections::HashSet,
-        test_case::test_case,
     };
 
     #[test]
     fn test_check_nonce_transaction_validity_ok() {
         const STALE_LAMPORTS_PER_SIGNATURE: u64 = 42;
-        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
-            10_000_000,
-            |_| {},
-            5_000_000,
-            250_000,
-            None,
-            FeatureSet::all_enabled(),
-        )
-        .unwrap();
+        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) =
+            setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
         let custodian_pubkey = custodian_keypair.pubkey();
         let nonce_pubkey = nonce_keypair.pubkey();
 
@@ -349,15 +339,8 @@ mod tests {
 
     #[test]
     fn test_check_nonce_transaction_validity_not_nonce_fail() {
-        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
-            10_000_000,
-            |_| {},
-            5_000_000,
-            250_000,
-            None,
-            FeatureSet::all_enabled(),
-        )
-        .unwrap();
+        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) =
+            setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
         let custodian_pubkey = custodian_keypair.pubkey();
         let nonce_pubkey = nonce_keypair.pubkey();
 
@@ -370,22 +353,16 @@ mod tests {
             Some(&custodian_pubkey),
             &nonce_hash,
         ));
-        assert!(bank
-            .check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
-            .is_none());
+        assert!(
+            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
+                .is_none()
+        );
     }
 
     #[test]
     fn test_check_nonce_transaction_validity_missing_ix_pubkey_fail() {
-        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
-            10_000_000,
-            |_| {},
-            5_000_000,
-            250_000,
-            None,
-            FeatureSet::all_enabled(),
-        )
-        .unwrap();
+        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) =
+            setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
         let custodian_pubkey = custodian_keypair.pubkey();
         let nonce_pubkey = nonce_keypair.pubkey();
 
@@ -399,25 +376,19 @@ mod tests {
             &nonce_hash,
         );
         message.instructions[0].accounts.clear();
-        assert!(bank
-            .check_nonce_transaction_validity(
+        assert!(
+            bank.check_nonce_transaction_validity(
                 &new_sanitized_message(message),
                 &bank.next_durable_nonce(),
             )
-            .is_none());
+            .is_none()
+        );
     }
 
     #[test]
     fn test_check_nonce_transaction_validity_nonce_acc_does_not_exist_fail() {
-        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
-            10_000_000,
-            |_| {},
-            5_000_000,
-            250_000,
-            None,
-            FeatureSet::all_enabled(),
-        )
-        .unwrap();
+        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) =
+            setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
         let custodian_pubkey = custodian_keypair.pubkey();
         let nonce_pubkey = nonce_keypair.pubkey();
         let missing_keypair = Keypair::new();
@@ -432,22 +403,16 @@ mod tests {
             Some(&custodian_pubkey),
             &nonce_hash,
         ));
-        assert!(bank
-            .check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
-            .is_none());
+        assert!(
+            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
+                .is_none()
+        );
     }
 
     #[test]
     fn test_check_nonce_transaction_validity_bad_tx_hash_fail() {
-        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
-            10_000_000,
-            |_| {},
-            5_000_000,
-            250_000,
-            None,
-            FeatureSet::all_enabled(),
-        )
-        .unwrap();
+        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) =
+            setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
         let custodian_pubkey = custodian_keypair.pubkey();
         let nonce_pubkey = nonce_keypair.pubkey();
 
@@ -459,19 +424,14 @@ mod tests {
             Some(&custodian_pubkey),
             &Hash::default(),
         ));
-        assert!(bank
-            .check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
-            .is_none());
+        assert!(
+            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
+                .is_none()
+        );
     }
 
-    #[test_case(true; "test_check_nonce_transaction_validity_nonce_is_alt_disallowed")]
-    #[test_case(false; "test_check_nonce_transaction_validity_nonce_is_alt_allowed")]
-    fn test_check_nonce_transaction_validity_nonce_is_alt(require_static_nonce_account: bool) {
-        let feature_set = if require_static_nonce_account {
-            FeatureSet::all_enabled()
-        } else {
-            FeatureSet::default()
-        };
+    #[test]
+    fn test_check_nonce_transaction_validity_nonce_is_alt() {
         let nonce_authority = Pubkey::new_unique();
         let (bank, _mint_keypair, _custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
             10_000_000,
@@ -479,7 +439,6 @@ mod tests {
             5_000_000,
             250_000,
             Some(nonce_authority),
-            feature_set,
         )
         .unwrap();
 
@@ -524,9 +483,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
-                .is_none(),
-            require_static_nonce_account,
+            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce()),
+            None,
         );
     }
 }

@@ -2,36 +2,36 @@ use {
     crate::{
         checks::{check_account_for_fee_with_commitment, check_unique_pubkeys},
         cli::{
-            log_instruction_custom_error, CliCommand, CliCommandInfo, CliConfig, CliError,
-            ProcessResult,
+            CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
+            log_instruction_custom_error,
         },
         compute_budget::{
-            simulate_and_update_compute_unit_limit, ComputeUnitConfig, WithComputeUnitConfig,
+            ComputeUnitConfig, WithComputeUnitConfig, simulate_and_update_compute_unit_limit,
         },
         feature::get_feature_is_active,
         memo::WithMemo,
         nonce::check_nonce_account,
-        spend_utils::{resolve_spend_tx_and_check_account_balances, SpendAmount},
+        spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balances},
         stake::check_current_authority,
     },
-    agave_feature_set::bls_pubkey_management_in_vote_account,
+    agave_feature_set::{bls_pubkey_management_in_vote_account, vote_account_initialize_v2},
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
-    clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
+    clap::{App, Arg, ArgMatches, SubCommand, value_t_or_exit},
     solana_account::Account,
     solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clap_utils::{
-        compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
-        fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
+        compute_budget::{COMPUTE_UNIT_PRICE_ARG, ComputeUnitLimit, compute_unit_price_arg},
+        fee_payer::{FEE_PAYER_ARG, fee_payer_arg},
         input_parsers::*,
         input_validators::*,
         keypair::{DefaultSigner, SignerIndex},
-        memo::{memo_arg, MEMO_ARG},
+        memo::{MEMO_ARG, memo_arg},
         nonce::*,
         offline::*,
     },
     solana_cli_output::{
-        display::build_balance_message, return_signers_with_config, CliEpochVotingHistory,
-        CliLandedVote, CliVoteAccount, ReturnSignersConfig,
+        CliEpochVotingHistory, CliLandedVote, CliVoteAccount, ReturnSignersConfig,
+        display::build_balance_message, return_signers_with_config,
     },
     solana_commitment_config::CommitmentConfig,
     solana_feature_gate_interface::from_account,
@@ -45,10 +45,10 @@ use {
     solana_transaction::Transaction,
     solana_vote_program::{
         vote_error::VoteError,
-        vote_instruction::{self, withdraw, CreateVoteAccountConfig},
+        vote_instruction::{self, CreateVoteAccountConfig, withdraw},
         vote_state::{
-            create_bls_proof_of_possession, VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4,
-            VoterWithBLSArgs, VOTE_CREDITS_MAXIMUM_PER_SLOT,
+            VOTE_CREDITS_MAXIMUM_PER_SLOT, VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4,
+            VoterWithBLSArgs, create_bls_proof_of_possession,
         },
     },
     std::rc::Rc,
@@ -107,13 +107,13 @@ impl VoteSubCommands for App<'_, '_> {
                         .value_name("VOTER_PUBKEY"),
                     "Authorized voter [default: validator identity pubkey]."
                 ))
-                // SIMD-0387 VoteInitV2 arguments.
+                // SIMD-0464 VoteInitV2 arguments.
                 .arg(
                     Arg::with_name("use_v2_instruction")
                         .long("use-v2-instruction")
                         .takes_value(false)
                         .help(
-                            "Force use of VoteInitV2 (SIMD-0387). Required in sign-only mode \
+                            "Force use of VoteInitV2 (SIMD-0464). Required in sign-only mode \
                              after feature activation. In normal mode, instruction version is \
                              auto-detected based on feature status.",
                         ),
@@ -127,7 +127,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .help(
                             "Commission rate in basis points (0-10000) for inflation rewards. 100 \
                              basis points = 1%. Only valid with VoteInitV2 (--use-v2-instruction \
-                             or when SIMD-0387 feature is active). [default: 10000 (100%)]",
+                             or when SIMD-0464 feature is active). [default: 10000 (100%)]",
                         ),
                 )
                 .arg(pubkey!(
@@ -136,7 +136,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .value_name("COLLECTOR_PUBKEY")
                         .takes_value(true),
                     "Account to collect inflation rewards commission. Only valid with VoteInitV2 \
-                     (--use-v2-instruction or when SIMD-0387 feature is active). [default: vote \
+                     (--use-v2-instruction or when SIMD-0464 feature is active). [default: vote \
                      account address]"
                 ))
                 .arg(
@@ -148,7 +148,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .help(
                             "Commission rate in basis points (0-10000) for block revenue. 100 \
                              basis points = 1%. Only valid with VoteInitV2 (--use-v2-instruction \
-                             or when SIMD-0387 feature is active). [default: 10000 (100%)]",
+                             or when SIMD-0464 feature is active). [default: 10000 (100%)]",
                         ),
                 )
                 .arg(pubkey!(
@@ -157,7 +157,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .value_name("COLLECTOR_PUBKEY")
                         .takes_value(true),
                     "Account to collect block revenue commission. Only valid with VoteInitV2 \
-                     (--use-v2-instruction or when SIMD-0387 feature is active). [default: \
+                     (--use-v2-instruction or when SIMD-0464 feature is active). [default: \
                      identity account address]"
                 ))
                 .arg(
@@ -548,7 +548,7 @@ pub fn parse_create_vote_account(
     // VoteInit (v1) args.
     let commission: Option<u8> = value_of(matches, "commission");
 
-    // VoteInitV2 args (SIMD-0387).
+    // VoteInitV2 args (SIMD-0464).
     let use_v2_instruction = matches.is_present("use_v2_instruction");
     let inflation_rewards_commission_bps: Option<u16> =
         value_of(matches, "inflation_rewards_commission_bps");
@@ -824,7 +824,7 @@ pub fn parse_withdraw_from_vote_account(
         pubkey_of_signer(matches, "vote_account_pubkey", wallet_manager)?.unwrap();
     let destination_account_pubkey =
         pubkey_of_signer(matches, "destination_account_pubkey", wallet_manager)?.unwrap();
-    let mut withdraw_amount = SpendAmount::new_from_matches(matches, "amount");
+    let mut withdraw_amount = SpendAmount::new_from_matches(matches, "amount")?;
     // As a safeguard for vote accounts for running validators, `ALL` withdraws only the amount in
     // excess of the rent-exempt minimum. In order to close the account with this subcommand, a
     // validator must specify the withdrawal amount precisely.
@@ -917,7 +917,7 @@ pub async fn process_create_vote_account(
     authorized_withdrawer: Pubkey,
     // VoteInit (v1) args.
     commission: Option<u8>,
-    // VoteInitV2 args (SIMD-0387).
+    // VoteInitV2 args (SIMD-0464).
     use_v2_instruction: bool,
     inflation_rewards_commission_bps: Option<u16>,
     inflation_rewards_collector: Option<&Pubkey>,
@@ -964,8 +964,8 @@ pub async fn process_create_vote_account(
         // Sign-only without explicit flag, default to VoteInit (v1).
         false
     } else {
-        // Check SIMD-0387 feature gate status.
-        get_feature_is_active(rpc_client, &bls_pubkey_management_in_vote_account::id())
+        // Check SIMD-0464 feature gate status.
+        get_feature_is_active(rpc_client, &vote_account_initialize_v2::id())
             .await
             .unwrap_or(false)
     };
@@ -981,7 +981,7 @@ pub async fn process_create_vote_account(
         return Err(CliError::BadParameter(
             "VoteInitV2 arguments (--inflation-rewards-commission-bps, \
              --inflation-rewards-collector, --block-revenue-commission-bps, \
-             --block-revenue-collector) require --use-v2-instruction flag or SIMD-0387 feature to \
+             --block-revenue-collector) require --use-v2-instruction flag or SIMD-0464 feature to \
              be active."
                 .to_owned(),
         )
@@ -1890,7 +1890,7 @@ mod tests {
         super::*,
         crate::{clap_app::get_clap_app, cli::parse_command},
         solana_hash::Hash,
-        solana_keypair::{read_keypair_file, write_keypair, Keypair},
+        solana_keypair::{Keypair, read_keypair_file, write_keypair},
         solana_presigner::Presigner,
         solana_rpc_client_nonce_utils::nonblocking::blockhash_query::Source,
         solana_signer::Signer,

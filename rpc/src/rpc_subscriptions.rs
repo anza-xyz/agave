@@ -19,7 +19,7 @@ use {
     serde::Serialize,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_account_decoder::{
-        encode_ui_account, parse_token::is_known_spl_token_id, UiAccount, UiAccountEncoding,
+        UiAccount, UiAccountEncoding, encode_ui_account, parse_token::is_known_spl_token_id,
     },
     solana_clock::Slot,
     solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path},
@@ -47,8 +47,8 @@ use {
         io::Cursor,
         str,
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, RwLock, Weak,
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         },
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
@@ -1231,8 +1231,9 @@ pub(crate) mod tests {
             RpcTransactionLogsFilter,
         },
         solana_runtime::{
+            bank::SlotLeader,
             commitment::BlockCommitment,
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
             prioritization_fee_cache::PrioritizationFeeCache,
         },
         solana_signer::Signer,
@@ -1287,7 +1288,7 @@ pub(crate) mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let alice = Keypair::new();
 
@@ -1891,7 +1892,7 @@ pub(crate) mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
 
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get(1).unwrap();
 
@@ -1908,7 +1909,7 @@ pub(crate) mod tests {
 
         bank1.process_transaction(&tx).unwrap();
 
-        let bank2 = Bank::new_from_parent(bank1, &Pubkey::default(), 2);
+        let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
 
         // add account for bob and process the transaction at bank2
@@ -1925,7 +1926,7 @@ pub(crate) mod tests {
 
         bank2.process_transaction(&tx).unwrap();
 
-        let bank3 = Bank::new_from_parent(bank2, &Pubkey::default(), 3);
+        let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
         bank_forks.write().unwrap().insert(bank3);
 
         // add account for joe and process the transaction at bank3
@@ -2077,8 +2078,8 @@ pub(crate) mod tests {
     #[test]
     #[serial]
     #[should_panic]
-    fn test_check_program_subscribe_for_missing_optimistically_confirmed_slot_with_no_banks_no_notifications(
-    ) {
+    fn test_check_program_subscribe_for_missing_optimistically_confirmed_slot_with_no_banks_no_notifications()
+     {
         // Testing if we can get the pubsub notification if a slot does not
         // receive OptimisticallyConfirmed but its descendant slot get the confirmed
         // notification with a bank in the BankForks. We are not expecting to receive any notifications -- should panic.
@@ -2093,7 +2094,7 @@ pub(crate) mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
 
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get(1).unwrap();
 
@@ -2110,7 +2111,7 @@ pub(crate) mod tests {
 
         bank1.process_transaction(&tx).unwrap();
 
-        let bank2 = Bank::new_from_parent(bank1, &Pubkey::default(), 2);
+        let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
 
         // add account for bob and process the transaction at bank2
@@ -2212,7 +2213,7 @@ pub(crate) mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
 
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get(1).unwrap();
 
@@ -2229,7 +2230,7 @@ pub(crate) mod tests {
 
         bank1.process_transaction(&tx).unwrap();
 
-        let bank2 = Bank::new_from_parent(bank1, &Pubkey::default(), 2);
+        let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
 
         // add account for bob and process the transaction at bank2
@@ -2337,7 +2338,7 @@ pub(crate) mod tests {
             })
         };
 
-        let bank3 = Bank::new_from_parent(bank2, &Pubkey::default(), 3);
+        let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
         bank_forks.write().unwrap().insert(bank3);
 
         // add account for joe and process the transaction at bank3
@@ -2424,7 +2425,7 @@ pub(crate) mod tests {
 
         let next_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().get(0).unwrap(),
-            &solana_pubkey::new_rand(),
+            SlotLeader::new_unique(),
             1,
         );
         bank_forks.write().unwrap().insert(next_bank);
@@ -2524,12 +2525,16 @@ pub(crate) mod tests {
             )
             .unwrap();
 
-        assert!(subscriptions
-            .control
-            .signature_subscribed(&unprocessed_tx.signatures[0]));
-        assert!(subscriptions
-            .control
-            .signature_subscribed(&processed_tx.signatures[0]));
+        assert!(
+            subscriptions
+                .control
+                .signature_subscribed(&unprocessed_tx.signatures[0])
+        );
+        assert!(
+            subscriptions
+                .control
+                .signature_subscribed(&processed_tx.signatures[0])
+        );
 
         let mut commitment_slots = CommitmentSlots::default();
         let received_slot = 1;
@@ -2609,17 +2614,23 @@ pub(crate) mod tests {
 
         // Subscription should be automatically removed after notification
 
-        assert!(!subscriptions
-            .control
-            .signature_subscribed(&processed_tx.signatures[0]));
-        assert!(!subscriptions
-            .control
-            .signature_subscribed(&past_bank_tx.signatures[0]));
+        assert!(
+            !subscriptions
+                .control
+                .signature_subscribed(&processed_tx.signatures[0])
+        );
+        assert!(
+            !subscriptions
+                .control
+                .signature_subscribed(&past_bank_tx.signatures[0])
+        );
 
         // Unprocessed signature subscription should not be removed
-        assert!(subscriptions
-            .control
-            .signature_subscribed(&unprocessed_tx.signatures[0]));
+        assert!(
+            subscriptions
+                .control
+                .signature_subscribed(&unprocessed_tx.signatures[0])
+        );
     }
 
     #[test]
@@ -2722,9 +2733,9 @@ pub(crate) mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
-        let bank2 = Bank::new_from_parent(bank0, &Pubkey::default(), 2);
+        let bank2 = Bank::new_from_parent(bank0, SlotLeader::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
 
         let alice = Keypair::from_base58_string("sfLnS4rZ5a8gXke3aGxCgM6usFAVPxLUaBSRdssGY9uS5eoiEWQ41CqDcpXbcekpKsie8Lyy3LNFdhEvjUE1wd9");
@@ -2988,13 +2999,15 @@ pub(crate) mod tests {
             &system_program::id(),
         );
 
-        assert!(bank_forks
-            .read()
-            .unwrap()
-            .get(0)
-            .unwrap()
-            .process_transaction_with_metadata(tx.clone())
-            .is_ok());
+        assert!(
+            bank_forks
+                .read()
+                .unwrap()
+                .get(0)
+                .unwrap()
+                .process_transaction_with_metadata(tx.clone())
+                .is_ok()
+        );
 
         subscriptions.notify_subscribers(CommitmentSlots::new_from_slot(0));
 

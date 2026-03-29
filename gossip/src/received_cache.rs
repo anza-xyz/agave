@@ -1,6 +1,6 @@
 use {
     itertools::Itertools,
-    lru::LruCache,
+    lazy_lru::LruCache,
     solana_pubkey::Pubkey,
     std::{cmp::Reverse, collections::HashMap},
 };
@@ -42,7 +42,7 @@ impl ReceivedCache {
         min_ingress_nodes: usize,
         stakes: &HashMap<Pubkey, u64>,
     ) -> impl Iterator<Item = Pubkey> + use<> {
-        match self.0.peek_mut(&origin) {
+        match self.0.get_mut(&origin) {
             None => None,
             Some(entry) if entry.num_upserts < Self::MIN_NUM_UPSERTS => None,
             Some(entry) => Some(
@@ -56,12 +56,8 @@ impl ReceivedCache {
     }
 
     #[cfg(test)]
-    fn mock_clone(&self) -> Self {
-        let mut cache = LruCache::new(self.0.cap());
-        for (&origin, entry) in self.0.iter().rev() {
-            cache.put(origin, entry.clone());
-        }
-        Self(cache)
+    fn mock_clone(&mut self) -> Self {
+        Self(self.0.clone())
     }
 }
 

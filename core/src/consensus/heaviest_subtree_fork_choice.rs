@@ -2,9 +2,9 @@
 use trees::{Tree, TreeWalk};
 use {
     crate::consensus::{
-        fork_choice::ForkChoice,
+        Tower, fork_choice::ForkChoice,
         latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
-        progress_map::ProgressMap, tree_diff::TreeDiff, Tower,
+        progress_map::ProgressMap, tree_diff::TreeDiff,
     },
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
@@ -16,7 +16,7 @@ use {
         borrow::Borrow,
         cmp::Ordering,
         collections::{
-            btree_set::Iter, hash_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet, VecDeque,
+            BTreeMap, BTreeSet, HashMap, HashSet, VecDeque, btree_set::Iter, hash_map::Entry,
         },
         sync::{Arc, RwLock},
         time::Instant,
@@ -597,12 +597,13 @@ impl HeaviestSubtreeForkChoice {
         // Insert aggregate operations up to the root
         self.insert_aggregate_operations(&mut update_operations, *slot_hash_key);
         // Remove child link so that this slot cannot be chosen as best or deepest
-        assert!(self
-            .fork_infos
-            .get_mut(&parent)
-            .expect("Parent must exist in fork_infos")
-            .children
-            .remove(slot_hash_key));
+        assert!(
+            self.fork_infos
+                .get_mut(&parent)
+                .expect("Parent must exist in fork_infos")
+                .children
+                .remove(slot_hash_key)
+        );
         // Aggregate
         self.process_update_operations(update_operations);
 
@@ -1517,9 +1518,11 @@ mod test {
             5
         );
 
-        assert!(heaviest_subtree_fork_choice
-            .parent(&(2, Hash::default()))
-            .is_none());
+        assert!(
+            heaviest_subtree_fork_choice
+                .parent(&(2, Hash::default()))
+                .is_none()
+        );
     }
 
     #[test]
@@ -1555,10 +1558,12 @@ mod test {
                 .map(|s| (s, Hash::default()))
                 .collect::<Vec<_>>()
         );
-        assert!(heaviest_subtree_fork_choice
-            .ancestor_iterator((0, Hash::default()))
-            .next()
-            .is_none());
+        assert!(
+            heaviest_subtree_fork_choice
+                .ancestor_iterator((0, Hash::default()))
+                .next()
+                .is_none()
+        );
 
         // Set a root, everything but slots 2, 4 should be removed
         heaviest_subtree_fork_choice.set_tree_root((2, Hash::default()));
@@ -1605,9 +1610,11 @@ mod test {
             HeaviestSubtreeForkChoice::new_from_frozen_banks((root, root_hash), &frozen_banks);
 
         let bank0_hash = bank_forks.read().unwrap().get(0).unwrap().hash();
-        assert!(heaviest_subtree_fork_choice
-            .parent(&(0, bank0_hash))
-            .is_none());
+        assert!(
+            heaviest_subtree_fork_choice
+                .parent(&(0, bank0_hash))
+                .is_none()
+        );
 
         let bank1_hash = bank_forks.read().unwrap().get(1).unwrap().hash();
         assert_eq!(
@@ -1645,31 +1652,39 @@ mod test {
         );
         // Check parent and children of invalid hash don't exist
         let invalid_hash = Hash::new_unique();
-        assert!((&heaviest_subtree_fork_choice)
-            .children(&(2, invalid_hash))
-            .is_none());
-        assert!(heaviest_subtree_fork_choice
-            .parent(&(2, invalid_hash))
-            .is_none());
+        assert!(
+            (&heaviest_subtree_fork_choice)
+                .children(&(2, invalid_hash))
+                .is_none()
+        );
+        assert!(
+            heaviest_subtree_fork_choice
+                .parent(&(2, invalid_hash))
+                .is_none()
+        );
 
         assert_eq!(
             heaviest_subtree_fork_choice.parent(&(3, bank3_hash)),
             Some((1, bank1_hash))
         );
-        assert!((&heaviest_subtree_fork_choice)
-            .children(&(3, bank3_hash))
-            .unwrap()
-            .collect_vec()
-            .is_empty());
+        assert!(
+            (&heaviest_subtree_fork_choice)
+                .children(&(3, bank3_hash))
+                .unwrap()
+                .collect_vec()
+                .is_empty()
+        );
         assert_eq!(
             heaviest_subtree_fork_choice.parent(&(4, bank4_hash)),
             Some((2, bank2_hash))
         );
-        assert!((&heaviest_subtree_fork_choice)
-            .children(&(4, bank4_hash))
-            .unwrap()
-            .collect_vec()
-            .is_empty());
+        assert!(
+            (&heaviest_subtree_fork_choice)
+                .children(&(4, bank4_hash))
+                .unwrap()
+                .collect_vec()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1885,11 +1900,13 @@ mod test {
             .iter()
             .chain(std::iter::once(&duplicate_leaves_descended_from_4[1]))
         {
-            assert!((&heaviest_subtree_fork_choice)
-                .children(duplicate_leaf)
-                .unwrap()
-                .collect_vec()
-                .is_empty(),);
+            assert!(
+                (&heaviest_subtree_fork_choice)
+                    .children(duplicate_leaf)
+                    .unwrap()
+                    .collect_vec()
+                    .is_empty(),
+            );
         }
 
         // Re-adding same duplicate slot should not overwrite existing one
@@ -2241,14 +2258,9 @@ mod test {
                 }
             };
 
-        let expected_deepest_slot =
-            |slot, _heaviest_subtree_fork_choice: &HeaviestSubtreeForkChoice| -> Slot {
-                if [2, 4].contains(&slot) {
-                    4
-                } else {
-                    6
-                }
-            };
+        let expected_deepest_slot = |slot,
+                                     _heaviest_subtree_fork_choice: &HeaviestSubtreeForkChoice|
+         -> Slot { if [2, 4].contains(&slot) { 4 } else { 6 } };
 
         check_process_update_correctness(
             &mut heaviest_subtree_fork_choice,
@@ -3273,15 +3285,21 @@ mod test {
         let mut heaviest_subtree_fork_choice = setup_forks();
 
         // Diff of same root is empty, no matter root, intermediate node, or leaf
-        assert!((&heaviest_subtree_fork_choice)
-            .subtree_diff((0, Hash::default()), (0, Hash::default()))
-            .is_empty());
-        assert!((&heaviest_subtree_fork_choice)
-            .subtree_diff((5, Hash::default()), (5, Hash::default()))
-            .is_empty());
-        assert!((&heaviest_subtree_fork_choice)
-            .subtree_diff((6, Hash::default()), (6, Hash::default()))
-            .is_empty());
+        assert!(
+            (&heaviest_subtree_fork_choice)
+                .subtree_diff((0, Hash::default()), (0, Hash::default()))
+                .is_empty()
+        );
+        assert!(
+            (&heaviest_subtree_fork_choice)
+                .subtree_diff((5, Hash::default()), (5, Hash::default()))
+                .is_empty()
+        );
+        assert!(
+            (&heaviest_subtree_fork_choice)
+                .subtree_diff((6, Hash::default()), (6, Hash::default()))
+                .is_empty()
+        );
 
         // The set reachable from slot 3, excluding subtree 1, is just everything
         // in slot 3 since subtree 1 is an ancestor
@@ -3320,9 +3338,11 @@ mod test {
         heaviest_subtree_fork_choice.set_tree_root((1, Hash::default()));
 
         // Zero no longer exists, set reachable from 0 is empty
-        assert!((&heaviest_subtree_fork_choice)
-            .subtree_diff((0, Hash::default()), (6, Hash::default()))
-            .is_empty());
+        assert!(
+            (&heaviest_subtree_fork_choice)
+                .subtree_diff((0, Hash::default()), (6, Hash::default()))
+                .is_empty()
+        );
     }
 
     #[test]
@@ -3408,14 +3428,18 @@ mod test {
         // Mark slot 5 as invalid
         let invalid_candidate = last_voted_slot_hash;
         heaviest_subtree_fork_choice.mark_fork_invalid_candidate(&invalid_candidate);
-        assert!(!heaviest_subtree_fork_choice
-            .is_candidate(&invalid_candidate)
-            .unwrap());
+        assert!(
+            !heaviest_subtree_fork_choice
+                .is_candidate(&invalid_candidate)
+                .unwrap()
+        );
 
         // The ancestor 3 is still a candidate
-        assert!(heaviest_subtree_fork_choice
-            .is_candidate(&(3, Hash::default()))
-            .unwrap());
+        assert!(
+            heaviest_subtree_fork_choice
+                .is_candidate(&(3, Hash::default()))
+                .unwrap()
+        );
 
         // The best fork should be its ancestor 3, not the other fork at 4.
         assert_eq!(heaviest_subtree_fork_choice.best_overall_slot().0, 3);
@@ -3474,9 +3498,11 @@ mod test {
         // should also mark `invalid_candidate` as valid, and the best slot should
         // be the leaf of the heaviest fork, `new_leaf_slot`.
         heaviest_subtree_fork_choice.mark_fork_valid_candidate(&invalid_candidate);
-        assert!(heaviest_subtree_fork_choice
-            .is_candidate(&invalid_candidate)
-            .unwrap());
+        assert!(
+            heaviest_subtree_fork_choice
+                .is_candidate(&invalid_candidate)
+                .unwrap()
+        );
         assert_eq!(
             heaviest_subtree_fork_choice.best_overall_slot(),
             // Should pick the smaller slot of the two new equally weighted leaves
@@ -3622,17 +3648,23 @@ mod test {
         for slot_hash_key in heaviest_subtree_fork_choice.fork_infos.keys() {
             let slot = slot_hash_key.0;
             if slot <= duplicate_confirmed_slot {
-                assert!(heaviest_subtree_fork_choice
-                    .is_duplicate_confirmed(slot_hash_key)
-                    .unwrap());
+                assert!(
+                    heaviest_subtree_fork_choice
+                        .is_duplicate_confirmed(slot_hash_key)
+                        .unwrap()
+                );
             } else {
-                assert!(!heaviest_subtree_fork_choice
-                    .is_duplicate_confirmed(slot_hash_key)
-                    .unwrap());
+                assert!(
+                    !heaviest_subtree_fork_choice
+                        .is_duplicate_confirmed(slot_hash_key)
+                        .unwrap()
+                );
             }
-            assert!(heaviest_subtree_fork_choice
-                .latest_invalid_ancestor(slot_hash_key)
-                .is_none());
+            assert!(
+                heaviest_subtree_fork_choice
+                    .latest_invalid_ancestor(slot_hash_key)
+                    .is_none()
+            );
         }
 
         // Mark a later descendant invalid
@@ -3645,19 +3677,25 @@ mod test {
                 // All ancestors of the duplicate confirmed slot should:
                 // 1) Be duplicate confirmed
                 // 2) Have no invalid ancestors
-                assert!(heaviest_subtree_fork_choice
-                    .is_duplicate_confirmed(slot_hash_key)
-                    .unwrap());
-                assert!(heaviest_subtree_fork_choice
-                    .latest_invalid_ancestor(slot_hash_key)
-                    .is_none());
+                assert!(
+                    heaviest_subtree_fork_choice
+                        .is_duplicate_confirmed(slot_hash_key)
+                        .unwrap()
+                );
+                assert!(
+                    heaviest_subtree_fork_choice
+                        .latest_invalid_ancestor(slot_hash_key)
+                        .is_none()
+                );
             } else if slot >= invalid_descendant_slot {
                 // Anything descended from the invalid slot should:
                 // 1) Not be duplicate confirmed
                 // 2) Should have an invalid ancestor == `invalid_descendant_slot`
-                assert!(!heaviest_subtree_fork_choice
-                    .is_duplicate_confirmed(slot_hash_key)
-                    .unwrap());
+                assert!(
+                    !heaviest_subtree_fork_choice
+                        .is_duplicate_confirmed(slot_hash_key)
+                        .unwrap()
+                );
                 assert_eq!(
                     heaviest_subtree_fork_choice
                         .latest_invalid_ancestor(slot_hash_key)
@@ -3668,12 +3706,16 @@ mod test {
                 // Anything in between the duplicate confirmed slot and the invalid slot should:
                 // 1) Not be duplicate confirmed
                 // 2) Should not have an invalid ancestor
-                assert!(!heaviest_subtree_fork_choice
-                    .is_duplicate_confirmed(slot_hash_key)
-                    .unwrap());
-                assert!(heaviest_subtree_fork_choice
-                    .latest_invalid_ancestor(slot_hash_key)
-                    .is_none());
+                assert!(
+                    !heaviest_subtree_fork_choice
+                        .is_duplicate_confirmed(slot_hash_key)
+                        .unwrap()
+                );
+                assert!(
+                    heaviest_subtree_fork_choice
+                        .latest_invalid_ancestor(slot_hash_key)
+                        .is_none()
+                );
             }
         }
 
@@ -3692,19 +3734,25 @@ mod test {
                 // All ancestors of the later_duplicate_confirmed_slot should:
                 // 1) Be duplicate confirmed
                 // 2) Have no invalid ancestors
-                assert!(heaviest_subtree_fork_choice
-                    .is_duplicate_confirmed(slot_hash_key)
-                    .unwrap());
-                assert!(heaviest_subtree_fork_choice
-                    .latest_invalid_ancestor(slot_hash_key)
-                    .is_none());
+                assert!(
+                    heaviest_subtree_fork_choice
+                        .is_duplicate_confirmed(slot_hash_key)
+                        .unwrap()
+                );
+                assert!(
+                    heaviest_subtree_fork_choice
+                        .latest_invalid_ancestor(slot_hash_key)
+                        .is_none()
+                );
             } else if slot >= invalid_descendant_slot {
                 // Anything descended from the invalid slot should:
                 // 1) Not be duplicate confirmed
                 // 2) Should have an invalid ancestor == `invalid_descendant_slot`
-                assert!(!heaviest_subtree_fork_choice
-                    .is_duplicate_confirmed(slot_hash_key)
-                    .unwrap());
+                assert!(
+                    !heaviest_subtree_fork_choice
+                        .is_duplicate_confirmed(slot_hash_key)
+                        .unwrap()
+                );
                 assert_eq!(
                     heaviest_subtree_fork_choice
                         .latest_invalid_ancestor(slot_hash_key)
@@ -3715,12 +3763,16 @@ mod test {
                 // Anything in between the duplicate confirmed slot and the invalid slot should:
                 // 1) Not be duplicate confirmed
                 // 2) Should not have an invalid ancestor
-                assert!(!heaviest_subtree_fork_choice
-                    .is_duplicate_confirmed(slot_hash_key)
-                    .unwrap());
-                assert!(heaviest_subtree_fork_choice
-                    .latest_invalid_ancestor(slot_hash_key)
-                    .is_none());
+                assert!(
+                    !heaviest_subtree_fork_choice
+                        .is_duplicate_confirmed(slot_hash_key)
+                        .unwrap()
+                );
+                assert!(
+                    heaviest_subtree_fork_choice
+                        .latest_invalid_ancestor(slot_hash_key)
+                        .is_none()
+                );
             }
         }
 
@@ -3729,12 +3781,16 @@ mod test {
         let last_duplicate_confirmed_key = last_duplicate_confirmed_slot.slot_hash();
         heaviest_subtree_fork_choice.mark_fork_valid_candidate(&last_duplicate_confirmed_key);
         for slot_hash_key in heaviest_subtree_fork_choice.fork_infos.keys() {
-            assert!(heaviest_subtree_fork_choice
-                .is_duplicate_confirmed(slot_hash_key)
-                .unwrap());
-            assert!(heaviest_subtree_fork_choice
-                .latest_invalid_ancestor(slot_hash_key)
-                .is_none());
+            assert!(
+                heaviest_subtree_fork_choice
+                    .is_duplicate_confirmed(slot_hash_key)
+                    .unwrap()
+            );
+            assert!(
+                heaviest_subtree_fork_choice
+                    .latest_invalid_ancestor(slot_hash_key)
+                    .is_none()
+            );
         }
     }
 
@@ -3770,9 +3826,11 @@ mod test {
         for slot_hash_key in heaviest_subtree_fork_choice.fork_infos.keys() {
             let slot = slot_hash_key.0;
             if slot < smaller_duplicate_slot {
-                assert!(heaviest_subtree_fork_choice
-                    .latest_invalid_ancestor(slot_hash_key)
-                    .is_none());
+                assert!(
+                    heaviest_subtree_fork_choice
+                        .latest_invalid_ancestor(slot_hash_key)
+                        .is_none()
+                );
             } else if slot < larger_duplicate_slot {
                 assert_eq!(
                     heaviest_subtree_fork_choice
@@ -3810,24 +3868,32 @@ mod test {
             if slot < larger_duplicate_slot {
                 // Only slots <= smaller_duplicate_slot have been duplicate confirmed
                 if slot <= smaller_duplicate_slot {
-                    assert!(heaviest_subtree_fork_choice
-                        .is_duplicate_confirmed(slot_hash_key)
-                        .unwrap());
+                    assert!(
+                        heaviest_subtree_fork_choice
+                            .is_duplicate_confirmed(slot_hash_key)
+                            .unwrap()
+                    );
                 } else {
-                    assert!(!heaviest_subtree_fork_choice
-                        .is_duplicate_confirmed(slot_hash_key)
-                        .unwrap());
+                    assert!(
+                        !heaviest_subtree_fork_choice
+                            .is_duplicate_confirmed(slot_hash_key)
+                            .unwrap()
+                    );
                 }
                 // The unconfirmed duplicate flag has been cleared on the smaller
                 // descendants because their most recent duplicate ancestor has
                 // been confirmed
-                assert!(heaviest_subtree_fork_choice
-                    .latest_invalid_ancestor(slot_hash_key)
-                    .is_none());
+                assert!(
+                    heaviest_subtree_fork_choice
+                        .latest_invalid_ancestor(slot_hash_key)
+                        .is_none()
+                );
             } else {
-                assert!(!heaviest_subtree_fork_choice
-                    .is_duplicate_confirmed(slot_hash_key)
-                    .unwrap(),);
+                assert!(
+                    !heaviest_subtree_fork_choice
+                        .is_duplicate_confirmed(slot_hash_key)
+                        .unwrap(),
+                );
                 // The unconfirmed duplicate flag has not been cleared on the smaller
                 // descendants because their most recent duplicate ancestor,
                 // `larger_duplicate_slot` has  not yet been confirmed
@@ -3853,9 +3919,11 @@ mod test {
                     .unwrap(),
                 slot <= larger_duplicate_slot
             );
-            assert!(heaviest_subtree_fork_choice
-                .latest_invalid_ancestor(slot_hash_key)
-                .is_none());
+            assert!(
+                heaviest_subtree_fork_choice
+                    .latest_invalid_ancestor(slot_hash_key)
+                    .is_none()
+            );
         }
     }
 
@@ -3884,9 +3952,11 @@ mod test {
                     .unwrap(),
                 slot <= larger_duplicate_slot
             );
-            assert!(heaviest_subtree_fork_choice
-                .latest_invalid_ancestor(slot_hash_key)
-                .is_none());
+            assert!(
+                heaviest_subtree_fork_choice
+                    .latest_invalid_ancestor(slot_hash_key)
+                    .is_none()
+            );
         }
     }
 
@@ -3945,12 +4015,13 @@ mod test {
             tree.stake_voted_subtree(&(6, Hash::default())).unwrap()
         );
 
-        assert!(tree
-            .fork_infos
-            .get(&tree.tree_root)
-            .unwrap()
-            .parent
-            .is_none());
+        assert!(
+            tree.fork_infos
+                .get(&tree.tree_root)
+                .unwrap()
+                .parent
+                .is_none()
+        );
     }
 
     #[test]

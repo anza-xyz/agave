@@ -1,5 +1,5 @@
 use {
-    super::{list_view::ListView, Result, VoteStateViewError},
+    super::{Result, VoteStateViewError, list_view::ListView},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,

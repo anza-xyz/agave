@@ -5,8 +5,8 @@ use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_stage::{
-            transaction_scheduler::scheduler_controller::SchedulerConfig, BankingControlMsg,
-            BankingStage, BankingStageHandle,
+            BankingControlMsg, BankingStage, BankingStageHandle,
+            transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
         banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
@@ -15,8 +15,8 @@ use {
         },
         fetch_stage::FetchStage,
         forwarding_stage::{
-            spawn_forwarding_stage, ForwardAddressGetter, ForwardingClientConfig,
-            SpawnForwardingStageResult,
+            ForwardAddressGetter, ForwardingClientConfig, SpawnForwardingStageResult,
+            spawn_forwarding_stage,
         },
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
@@ -25,7 +25,7 @@ use {
         validator::{BlockProductionMethod, GeneratorConfig},
     },
     agave_votor::event::VotorEventSender,
-    crossbeam_channel::{bounded, unbounded, Receiver},
+    crossbeam_channel::{Receiver, bounded, unbounded},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
@@ -33,7 +33,6 @@ use {
         blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
         entry_notifier_service::EntryNotifierSender,
     },
-    solana_perf::data_budget::DataBudget,
     solana_poh::{
         poh_recorder::{PohRecorder, WorkingBankEntry},
         transaction_recorder::TransactionRecorder,
@@ -50,21 +49,22 @@ use {
     },
     solana_streamer::{
         quic::{
-            spawn_simple_qos_server, spawn_stake_wighted_qos_server, SimpleQosQuicStreamerConfig,
-            SpawnServerResult, SwQosQuicStreamerConfig,
+            SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
+            spawn_simple_qos_server, spawn_stake_weighted_qos_server,
         },
+        quic_socket::QuicSocket,
         streamer::StakedNodes,
     },
     solana_turbine::{
+        XdpSender,
         broadcast_stage::{BroadcastStage, BroadcastStageType},
-        xdp::XdpSender,
     },
     std::{
         collections::HashMap,
         net::UdpSocket,
         num::NonZeroUsize,
         path::PathBuf,
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicBool},
         thread::{self, JoinHandle},
     },
     tokio::sync::mpsc,
@@ -118,7 +118,7 @@ impl Tpu {
         entry_notification_sender: Option<EntryNotifierSender>,
         blockstore: Arc<Blockstore>,
         broadcast_type: &BroadcastStageType,
-        xdp_sender: Option<XdpSender>,
+        turbine_xdp_sender: Option<XdpSender>,
         exit: Arc<AtomicBool>,
         shred_version: u16,
         vote_tracker: Arc<VoteTracker>,
@@ -140,6 +140,7 @@ impl Tpu {
         tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
         vote_quic_server_config: SimpleQosQuicStreamerConfig,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+        tpu_sigverify_threads: NonZeroUsize,
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
         block_production_scheduler_config: SchedulerConfig,
@@ -190,16 +191,21 @@ impl Tpu {
         } = banking_tracer_channels;
 
         // Streamer for Votes:
-        let SpawnServerResult {
-            endpoints: _,
-            thread: tpu_vote_quic_t,
-            key_updater: vote_streamer_key_updater,
-        } = spawn_simple_qos_server(
+        let quic_vote_sockets: Vec<QuicSocket> =
+            tpu_vote_quic_sockets.into_iter().map(Into::into).collect();
+        let (
+            SpawnServerResult {
+                endpoints: _,
+                thread: tpu_vote_quic_t,
+                key_updater: vote_streamer_key_updater,
+            },
+            _banlist,
+        ) = spawn_simple_qos_server(
             "solQuicTVo",
             "quic_streamer_tpu_vote",
-            tpu_vote_quic_sockets,
+            quic_vote_sockets,
             keypair,
-            vote_packet_sender.clone(),
+            vote_packet_sender,
             staked_nodes.clone(),
             vote_quic_server_config.quic_streamer_config,
             vote_quic_server_config.qos_config,
@@ -208,11 +214,15 @@ impl Tpu {
         .unwrap();
 
         // Streamer for TPU
+        let transactions_quic_sockets: Vec<QuicSocket> = transactions_quic_sockets
+            .into_iter()
+            .map(Into::into)
+            .collect();
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_quic_t,
             key_updater,
-        } = spawn_stake_wighted_qos_server(
+        } = spawn_stake_weighted_qos_server(
             "solQuicTpu",
             "quic_streamer_tpu",
             transactions_quic_sockets,
@@ -226,11 +236,16 @@ impl Tpu {
         .unwrap();
 
         // Streamer for TPU forward
+        let transactions_forwards_quic_sockets: Vec<QuicSocket> =
+            transactions_forwards_quic_sockets
+                .into_iter()
+                .map(Into::into)
+                .collect();
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_forwards_quic_t,
             key_updater: forwards_key_updater,
-        } = spawn_stake_wighted_qos_server(
+        } = spawn_stake_weighted_qos_server(
             "solQuicTpuFwd",
             "quic_streamer_tpu_forwards",
             transactions_forwards_quic_sockets,
@@ -244,8 +259,18 @@ impl Tpu {
         .unwrap();
 
         let (forward_stage_sender, forward_stage_receiver) = bounded(1024);
+
+        let sigverify_threadpool = Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(tpu_sigverify_threads.get())
+                .thread_name(|i| format!("solSigVerify{i:02}"))
+                .build()
+                .expect("new rayon threadpool"),
+        );
+
         let sigverify_stage = {
             let verifier = TransactionSigVerifier::new(
+                sigverify_threadpool.clone(),
                 non_vote_sender,
                 enable_block_production_forwarding.then(|| forward_stage_sender.clone()),
             );
@@ -254,6 +279,7 @@ impl Tpu {
 
         let vote_sigverify_stage = {
             let verifier = TransactionSigVerifier::new_reject_non_vote(
+                sigverify_threadpool.clone(),
                 tpu_vote_sender,
                 Some(forward_stage_sender),
             );
@@ -268,6 +294,7 @@ impl Tpu {
         let cluster_info_vote_listener = ClusterInfoVoteListener::new(
             exit.clone(),
             cluster_info.clone(),
+            sigverify_threadpool,
             gossip_vote_sender,
             vote_tracker,
             bank_forks.clone(),
@@ -313,7 +340,6 @@ impl Tpu {
             vote_forwarding_client_socket,
             bank_forks.read().unwrap().sharable_banks(),
             ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
-            DataBudget::default(),
         );
 
         let (entry_receiver, tpu_entry_notifier) =
@@ -339,7 +365,7 @@ impl Tpu {
             blockstore,
             bank_forks,
             shred_version,
-            xdp_sender,
+            turbine_xdp_sender,
             votor_event_sender,
         );
 

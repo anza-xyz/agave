@@ -87,10 +87,11 @@ mod tests {
         },
         solana_hash::Hash,
         solana_keypair::Keypair,
+        solana_leader_schedule::SlotLeader,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::{
-            v0::{self, MessageAddressTableLookup},
             MessageHeader, VersionedMessage,
+            v0::{self, MessageAddressTableLookup},
         },
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks, genesis_utils::create_genesis_config},
@@ -167,14 +168,14 @@ mod tests {
 
         let slot = bank.slot() + 1;
         (
-            Arc::new(Bank::new_from_parent(bank, &Pubkey::new_unique(), slot)),
+            Arc::new(Bank::new_from_parent(bank, SlotLeader::new_unique(), slot)),
             address_table_key,
         )
     }
 
     fn create_test_bank() -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
-        Bank::new_no_wallclock_throttle_for_tests(&genesis_config)
+        Bank::new_with_bank_forks_for_tests(&genesis_config)
     }
 
     // Helper function (could potentially use test_case in future).

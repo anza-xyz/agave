@@ -7,17 +7,14 @@ use {
     itertools::Either,
     pretty_hex::PrettyHex,
     serde::{
-        ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
         Deserialize, Serialize,
+        ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
     },
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_accounts_db::{
-        accounts_index::{ScanConfig, ScanOrder},
-        is_loadable::IsLoadable as _,
-    },
+    solana_accounts_db::is_loadable::IsLoadable as _,
     solana_cli_output::{
-        display::{build_balance_message, writeln_transaction},
         CliAccount, CliAccountNewConfig, OutputFormat, QuietDisplay, VerboseDisplay,
+        display::{build_balance_message, writeln_transaction},
     },
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -40,7 +37,7 @@ use {
         cmp,
         collections::HashMap,
         fmt::{self, Display, Formatter},
-        io::{stdout, Write},
+        io::{Write, stdout},
         rc::Rc,
         sync::Arc,
     },
@@ -908,7 +905,7 @@ impl AccountsScanner {
 
         match &self.config.mode {
             AccountsOutputMode::All => {
-                self.bank.scan_all_accounts(scan_func, true).unwrap();
+                self.bank.scan_all_accounts(scan_func).unwrap();
             }
             AccountsOutputMode::Individual(pubkeys) => pubkeys.iter().for_each(|pubkey| {
                 if let Some((account, _slot)) = self
@@ -922,7 +919,7 @@ impl AccountsScanner {
             }),
             AccountsOutputMode::Program(program_pubkey) => self
                 .bank
-                .get_program_accounts(program_pubkey, &ScanConfig::new(ScanOrder::Sorted))
+                .get_program_accounts(program_pubkey)
                 .unwrap()
                 .iter()
                 .filter(|(_, account)| self.should_process_account(account))

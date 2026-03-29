@@ -9,14 +9,14 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::signers::Signers,
     solana_tpu_client::tpu_client::{Result, TpuClient as BackendTpuClient},
-    solana_transaction::Transaction,
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_error::{TransactionError, TransportResult},
     solana_udp_client::{UdpConfig, UdpConnectionManager, UdpPool},
     std::sync::Arc,
 };
 pub use {
     crate::nonblocking::tpu_client::TpuSenderError,
-    solana_tpu_client::tpu_client::{TpuClientConfig, DEFAULT_FANOUT_SLOTS, MAX_FANOUT_SLOTS},
+    solana_tpu_client::tpu_client::{DEFAULT_FANOUT_SLOTS, MAX_FANOUT_SLOTS, TpuClientConfig},
 };
 
 pub enum TpuClientWrapper {
@@ -55,14 +55,17 @@ where
     /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout
     /// size
     /// Returns the last error if all sends fail
-    pub fn try_send_transaction(&self, transaction: &Transaction) -> TransportResult<()> {
+    pub fn try_send_transaction(&self, transaction: &VersionedTransaction) -> TransportResult<()> {
         self.tpu_client.try_send_transaction(transaction)
     }
 
     /// Serialize and send a batch of transactions to the current and upcoming leader TPUs according
     /// to fanout size
     /// Returns the last error if all sends fail
-    pub fn try_send_transaction_batch(&self, transactions: &[Transaction]) -> TransportResult<()> {
+    pub fn try_send_transaction_batch(
+        &self,
+        transactions: &[VersionedTransaction],
+    ) -> TransportResult<()> {
         self.tpu_client.try_send_transaction_batch(transactions)
     }
 
@@ -85,7 +88,7 @@ impl TpuClient<QuicPool, QuicConnectionManager, QuicConfig> {
             ConnectionCache::Udp(_) => {
                 return Err(TpuSenderError::Custom(String::from(
                     "Invalid default connection cache",
-                )))
+                )));
             }
         };
         Self::new_with_connection_cache(rpc_client, websocket_url, config, connection_cache)

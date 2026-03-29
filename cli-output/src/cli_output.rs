@@ -1,26 +1,26 @@
 #![allow(clippy::to_string_in_format_args)]
 use {
     crate::{
+        QuietDisplay, VerboseDisplay,
         cli_clientid::CliClientId,
         cli_version::CliVersion,
         display::{
-            build_balance_message, build_balance_message_with_config, format_labeled_address,
-            unix_timestamp_to_string, writeln_name_value, writeln_transaction,
-            BuildBalanceMessageConfig,
+            BuildBalanceMessageConfig, build_balance_message, build_balance_message_with_config,
+            format_labeled_address, unix_timestamp_to_string, writeln_name_value,
+            writeln_transaction,
         },
-        QuietDisplay, VerboseDisplay,
     },
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     chrono::{Local, TimeZone, Utc},
     clap::ArgMatches,
-    console::{style, Emoji},
+    console::{Emoji, style},
     inflector::cases::titlecase::to_title_case,
     serde::{Deserialize, Serialize},
     serde_json::{Map, Value},
     solana_account::ReadableAccount,
     solana_account_decoder::{
-        encode_ui_account, parse_account_data::AccountAdditionalDataV3,
-        parse_token::UiTokenAccount, UiAccountEncoding, UiDataSliceConfig,
+        UiAccountEncoding, UiDataSliceConfig, encode_ui_account,
+        parse_account_data::AccountAdditionalDataV3, parse_token::UiTokenAccount,
     },
     solana_clap_utils::keypair::SignOnly,
     solana_clock::{Epoch, Slot, UnixTimestamp},
@@ -36,7 +36,7 @@ use {
         stake_history::StakeHistoryEntry,
         state::{Authorized, Lockup},
     },
-    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_status::{
         EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,
         UiTransactionStatusMeta,
@@ -440,7 +440,7 @@ fn slot_to_duration(slot: Slot, slot_time_ms: u64) -> Duration {
     Duration::from_secs((slot * slot_time_ms) / 1000)
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CliValidatorsStakeByVersion {
     pub current_validators: usize,
@@ -449,7 +449,7 @@ pub struct CliValidatorsStakeByVersion {
     pub delinquent_active_stake: u64,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CliValidatorsStakeByClientId {
     pub current_validators: usize,
@@ -458,7 +458,7 @@ pub struct CliValidatorsStakeByClientId {
     pub delinquent_active_stake: u64,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq, Clone, Copy)]
 pub enum CliValidatorsSortOrder {
     Delinquent,
     Commission,
@@ -467,13 +467,14 @@ pub enum CliValidatorsSortOrder {
     LastVote,
     Root,
     SkipRate,
+    #[default]
     Stake,
     VoteAccount,
     Version,
     ClientId,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CliValidators {
     pub total_active_stake: u64,
@@ -482,15 +483,15 @@ pub struct CliValidators {
     pub validators: Vec<CliValidator>,
     pub average_skip_rate: f64,
     pub average_stake_weighted_skip_rate: f64,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, skip_deserializing)]
     pub validators_sort_order: CliValidatorsSortOrder,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, skip_deserializing)]
     pub validators_reverse_sort: bool,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, skip_deserializing)]
     pub number_validators: bool,
     pub stake_by_version: BTreeMap<CliVersion, CliValidatorsStakeByVersion>,
     pub stake_by_client_id: BTreeMap<CliClientId, CliValidatorsStakeByClientId>,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, skip_deserializing)]
     pub use_lamports_unit: bool,
 }
 
@@ -521,7 +522,7 @@ impl fmt::Display for CliValidators {
 
             writeln!(
                 f,
-                "{} {:<44}  {:<44}  {:>3}%  {:>14}  {:>14} {:>7} {:>8}  {:>7} {:>9} {:>22} \
+                "{} {:<44}  {:<44}  {:>7}  {:>14}  {:>14} {:>7} {:>8}  {:>7} {:<14} {:>22} \
                  ({:.2}%)",
                 if validator.delinquent {
                     WARNING.to_string()
@@ -530,7 +531,7 @@ impl fmt::Display for CliValidators {
                 },
                 validator.identity_pubkey,
                 validator.vote_account_pubkey,
-                validator.commission,
+                format!("{:.2}%", validator.commission_bps as f64 / 100.0),
                 non_zero_or_dash(validator.last_vote, highest_last_vote),
                 non_zero_or_dash(validator.root_slot, highest_root),
                 if let Some(skip_rate) = validator.skip_rate {
@@ -560,7 +561,7 @@ impl fmt::Display for CliValidators {
             0
         };
         let header = style(format!(
-            "{:padding$} {:<44}  {:<38}  {}  {}  {} {}  {}  {} {:>9} {:>22}",
+            "{:padding$} {:<44}  {:<40}  {}  {}  {} {}  {}  {} {:<14} {:>22}",
             " ",
             "Identity",
             "Vote Account",
@@ -583,7 +584,7 @@ impl fmt::Display for CliValidators {
                 sorted_validators.sort_by_key(|a| a.delinquent);
             }
             CliValidatorsSortOrder::Commission => {
-                sorted_validators.sort_by_key(|a| a.commission);
+                sorted_validators.sort_by_key(|a| a.commission_bps);
             }
             CliValidatorsSortOrder::EpochCredits => {
                 sorted_validators.sort_by_key(|a| a.epoch_credits);
@@ -735,7 +736,8 @@ impl fmt::Display for CliValidators {
         for (client_id, info) in self.stake_by_client_id.iter() {
             writeln!(
                 f,
-                "{:>7} - {:4} current validators ({:>5.2}%){}",
+                "{:<14} - {:4} current validators ({:>5.2}%){}",
+                // convert to a string so that fill/alignment works correctly
                 client_id.to_string(),
                 info.current_validators,
                 100. * info.current_active_stake as f64 / self.total_active_stake as f64,
@@ -755,12 +757,12 @@ impl fmt::Display for CliValidators {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CliValidator {
     pub identity_pubkey: String,
     pub vote_account_pubkey: String,
-    pub commission: u8,
+    pub commission_bps: u16,
     pub last_vote: u64,
     pub root_slot: u64,
     pub credits: u64,       // lifetime credits
@@ -834,7 +836,9 @@ impl CliValidator {
         Self {
             identity_pubkey: format_labeled_address(&vote_account.node_pubkey, address_labels),
             vote_account_pubkey: format_labeled_address(&vote_account.vote_pubkey, address_labels),
-            commission: vote_account.commission,
+            commission_bps: vote_account
+                .inflation_rewards_commission_bps
+                .unwrap_or_else(|| (vote_account.commission as u16).saturating_mul(100)),
             last_vote: vote_account.last_vote,
             root_slot: vote_account.root_slot,
             credits,
@@ -2560,25 +2564,6 @@ impl fmt::Display for CliUpgradeableProgramExtended {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CliUpgradeableProgramMigrated {
-    pub program_id: String,
-}
-impl QuietDisplay for CliUpgradeableProgramMigrated {}
-impl VerboseDisplay for CliUpgradeableProgramMigrated {}
-impl fmt::Display for CliUpgradeableProgramMigrated {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f)?;
-        writeln!(
-            f,
-            "Migrated Program Id {} from loader-v3 to loader-v4",
-            &self.program_id,
-        )?;
-        Ok(())
-    }
-}
-
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliUpgradeableBuffer {
@@ -3403,7 +3388,7 @@ mod tests {
         solana_message::Message,
         solana_pubkey::Pubkey,
         solana_signature::Signature,
-        solana_signer::{null_signer::NullSigner, Signer, SignerError},
+        solana_signer::{Signer, SignerError, null_signer::NullSigner},
         solana_system_interface::instruction::transfer,
         solana_transaction::Transaction,
     };

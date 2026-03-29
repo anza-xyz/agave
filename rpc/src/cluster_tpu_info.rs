@@ -85,7 +85,7 @@ mod test {
         solana_runtime::{
             bank::Bank,
             genesis_utils::{
-                create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
+                GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
             },
         },
         solana_signer::Signer,

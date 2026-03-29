@@ -29,7 +29,6 @@ extraPrimordialStakes="${20:=0}"
 tmpfsAccounts="${21:false}"
 disableQuic="${22}"
 enableUdp="${23}"
-maybeWenRestart="${24}"
 
 set +x
 
@@ -270,10 +269,6 @@ cat >> ~/solana/on-reboot <<EOF
 EOF
     fi
 
-    if [[ -n "$maybeWenRestart" ]]; then
-      args+=(--wen-restart "$maybeWenRestart")
-    fi
-
     # shellcheck disable=SC2206 # Don't want to double quote $extraNodeArgs
     args+=($extraNodeArgs)
 
@@ -403,11 +398,6 @@ EOF
 
     if $enableUdp; then
       args+=(--tpu-enable-udp)
-    fi
-
-    if [[ -n "$maybeWenRestart" ]]; then
-      args+=(--wen-restart wen_restart.proto3)
-      args+=(--wen-restart-coordinator "$maybeWenRestart")
     fi
 
 cat >> ~/solana/on-reboot <<EOF

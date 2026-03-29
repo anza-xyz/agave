@@ -1,9 +1,8 @@
 use {
-    crate::common::certificate_limits_and_vote_types,
     agave_votor_messages::consensus_message::{Certificate, CertificateType, VoteMessage},
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, SignatureProjective},
-    solana_signer_store::{encode_base2, encode_base3, EncodeError},
+    solana_signer_store::{EncodeError, encode_base2, encode_base3},
     thiserror::Error,
 };
 
@@ -143,7 +142,7 @@ impl BuilderType {
         cert_type: &CertificateType,
         msgs: &[VoteMessage],
     ) -> Result<(), AggregateError> {
-        let vote_types = certificate_limits_and_vote_types(cert_type).1;
+        let vote_types = cert_type.limits_and_vote_types().1;
         match self {
             Self::Skip {
                 signature0,
@@ -157,8 +156,9 @@ impl BuilderType {
                         try_set_bitmap(bitmap0, msg.rank)?;
                     } else {
                         assert_eq!(vote_type, vote_types[1]);
-                        let (_, bitmap) = sig_and_bitmap1
-                            .get_or_insert((SignatureProjective::identity(), default_bitvec()));
+                        let (_, bitmap) = sig_and_bitmap1.get_or_insert_with(|| {
+                            (SignatureProjective::identity(), default_bitvec())
+                        });
                         try_set_bitmap(bitmap, msg.rank)?;
                     }
                 }
@@ -188,7 +188,7 @@ impl BuilderType {
                         try_set_bitmap(bitmap0, msg.rank)?;
                     } else {
                         assert_eq!(vote_type, vote_types[1]);
-                        let bitmap = bitmap1.get_or_insert(default_bitvec());
+                        let bitmap = bitmap1.get_or_insert_with(default_bitvec);
                         try_set_bitmap(bitmap, msg.rank)?;
                     }
                 }
@@ -279,7 +279,7 @@ mod tests {
             Signature as BLSSignature, SignatureProjective, VerifiablePubkey,
         },
         solana_hash::Hash,
-        solana_signer_store::{decode, Decoded},
+        solana_signer_store::{Decoded, decode},
     };
 
     #[test]

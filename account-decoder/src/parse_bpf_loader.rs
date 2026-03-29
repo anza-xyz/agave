@@ -1,9 +1,9 @@
 use {
     crate::{
-        parse_account_data::{ParsableAccount, ParseAccountError},
         UiAccountData, UiAccountEncoding,
+        parse_account_data::{ParsableAccount, ParseAccountError},
     },
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     bincode::{deserialize, serialized_size},
     serde::{Deserialize, Serialize},
     solana_loader_v3_interface::state::UpgradeableLoaderState,

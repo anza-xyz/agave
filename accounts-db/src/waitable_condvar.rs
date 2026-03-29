@@ -38,8 +38,8 @@ mod tests {
         super::*,
         std::{
             sync::{
-                atomic::{AtomicBool, Ordering},
                 Arc,
+                atomic::{AtomicBool, Ordering},
             },
             thread::Builder,
         },

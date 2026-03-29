@@ -2,12 +2,12 @@
 
 use {
     super::{
-        memory::{IoBufferChunk, PageAlignedMemory},
         IO_PRIO_BE_HIGHEST,
+        memory::{IoBufferChunk, PageAlignedMemory},
     },
-    crate::{buffered_reader::FileBufRead, io_uring::sqpoll, FileSize, IoSize},
-    agave_io_uring::{Completion, Ring, RingOp},
-    io_uring::{opcode, squeue, types, IoUring},
+    crate::{FileSize, IoSize, buffered_reader::FileBufRead, io_uring::sqpoll},
+    agave_io_uring::{Completion, Ring, RingAccess as _, RingOp},
+    io_uring::{IoUring, opcode, squeue, types},
     std::{
         collections::VecDeque,
         fs::{File, OpenOptions},
@@ -80,7 +80,6 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
     ///
     /// Enabling requires the filesystem to support directio and `read_capacity`
     /// to be a multiple of 4096.
-    #[cfg(test)]
     pub fn use_direct_io(mut self, use_direct_io: bool) -> Self {
         self.use_direct_io = use_direct_io;
         self
@@ -291,28 +290,33 @@ impl<'a> SequentialFileReader<'a> {
         state.current_buf_len = 0;
         state.left_to_consume = 0;
 
-        // Reclaim current and all subsequent unread buffers of removed file as uninitialized.
-        let sentinel_buf_index = state
-            .files
-            .front()
-            .and_then(|f| f.start_buf_index)
-            .unwrap_or(state.current_buf_index);
-        let num_bufs = self.ring.context().len();
-        loop {
-            self.ring.process_completions()?;
-            let current_buf = self.ring.context_mut().get_mut(state.current_buf_index);
-            if current_buf.is_reading() {
-                // Still no data, wait for more completions, but submit in case there are queued
-                // entries in the submission queue.
-                self.ring.submit()?;
-                continue;
-            }
-            current_buf.transition_to_uninit();
+        if removed_file.had_scheduled_reads() {
+            // Reclaim current and all subsequent unread buffers of removed file as uninitialized.
+            // This includes all buffers until sentinel index, which is:
+            // * an index used for next scheduled read (if any file has some scheduled)
+            // * otherwise `state.next_read_buf_index` (default buffer index to start read from)
+            let sentinel_buf_index = state
+                .files
+                .iter()
+                .find_map(|f| f.start_buf_index)
+                .unwrap_or(state.next_read_buf_index);
+            let num_bufs = self.ring.context().len();
+            loop {
+                self.ring.process_completions()?;
+                let current_buf = self.ring.context_mut().get_mut(state.current_buf_index);
+                if current_buf.is_reading() {
+                    // Still no data, wait for more completions, but submit in case there are queued
+                    // entries in the submission queue.
+                    self.ring.submit()?;
+                    continue;
+                }
+                current_buf.transition_to_uninit();
 
-            let next_buf_index = (state.current_buf_index + 1) % num_bufs;
-            state.current_buf_index = next_buf_index;
-            if sentinel_buf_index == next_buf_index {
-                break;
+                let next_buf_index = (state.current_buf_index + 1) % num_bufs;
+                state.current_buf_index = next_buf_index;
+                if sentinel_buf_index == next_buf_index {
+                    break;
+                }
             }
         }
 
@@ -352,7 +356,12 @@ impl<'a> SequentialFileReader<'a> {
     }
 
     fn wait_current_buf_full(&mut self) -> io::Result<bool> {
-        if self.state.files.is_empty() {
+        if self
+            .state
+            .files
+            .front()
+            .is_none_or(|file| !file.had_scheduled_reads())
+        {
             return Ok(false);
         }
         let num_bufs = self.ring.context().len();
@@ -615,6 +624,10 @@ impl FileState {
         self.raw_fd == file.as_raw_fd()
     }
 
+    fn had_scheduled_reads(&self) -> bool {
+        self.start_buf_index.is_some()
+    }
+
     /// Create a new read operation into the `bufs[index]` buffer and update file state.
     ///
     /// This is called whenever new reads can be scheduled (on added file or freed buffer).
@@ -825,7 +838,7 @@ impl RingOp<BuffersState> for ReadOp {
             // Safety:
             // The op points to a buffer which is guaranteed to be valid for the
             // lifetime of the operation
-            completion.push(op);
+            completion.push(op)?;
         } else {
             buffers[*reader_buf_index as usize] = ReadBufState::Full {
                 buf,
@@ -883,6 +896,11 @@ mod tests {
         for (i, byte) in all_read_data.iter().enumerate() {
             assert_eq!(*byte, pattern[i % pattern.len()], "Mismatch - pos {i}");
         }
+    }
+
+    #[test]
+    fn test_reading_empty_file() {
+        check_reading_file(0, 4096, 1024, false);
     }
 
     /// Test with buffer larger than the whole file
@@ -952,6 +970,7 @@ mod tests {
 
     #[test]
     fn test_direct_io_read() {
+        check_reading_file(0, 4096, 4096, true);
         check_reading_file(2_500, 4096, 4096, true);
         check_reading_file(2_500, 16384, 4096, true);
         check_reading_file(25_000, 4096, 4096, true);
@@ -1093,6 +1112,39 @@ mod tests {
         assert_eq!(read_as_vec(&mut reader), vec![0xa, 0xb, 0xc]);
 
         reader.set_file(temp2.as_file(), 4).unwrap();
+        assert_eq!(read_as_vec(&mut reader), vec![0xd, 0xe, 0xf, 0x10]);
+    }
+
+    #[test]
+    fn test_multiple_files_including_zero_limit() {
+        let mut temp1 = NamedTempFile::new().unwrap();
+        io::Write::write_all(&mut temp1, &[0xa, 0xb, 0xc]).unwrap();
+        let mut temp2 = NamedTempFile::new().unwrap();
+        io::Write::write_all(&mut temp2, &[0xd, 0xe, 0xf, 0x10]).unwrap();
+
+        let mut reader = SequentialFileReaderBuilder::new()
+            .read_capacity(512)
+            .build(1024)
+            .unwrap();
+
+        reader.add_file_to_prefetch(temp1.as_file(), 3).unwrap();
+        reader.add_file_to_prefetch(temp2.as_file(), 0).unwrap();
+        reader.add_file_to_prefetch(temp1.as_file(), 10).unwrap();
+
+        assert_eq!(read_as_vec(&mut reader), vec![0xa, 0xb, 0xc]);
+
+        reader.move_to_next_file().unwrap();
+        assert_eq!(read_as_vec(&mut reader), vec![]);
+
+        reader.move_to_next_file().unwrap();
+        assert_eq!(read_as_vec(&mut reader), vec![0xa, 0xb, 0xc]);
+
+        reader.add_file_to_prefetch(temp1.as_file(), 0).unwrap();
+        reader.move_to_next_file().unwrap();
+        assert_eq!(read_as_vec(&mut reader), vec![]);
+
+        reader.add_file_to_prefetch(temp2.as_file(), 4).unwrap();
+        reader.move_to_next_file().unwrap();
         assert_eq!(read_as_vec(&mut reader), vec![0xd, 0xe, 0xf, 0x10]);
     }
 }

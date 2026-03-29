@@ -10,7 +10,7 @@ use {
     solana_message::Message,
     solana_nonce::state::State,
     solana_pubkey::Pubkey,
-    solana_signer::{signers::Signers, Signer},
+    solana_signer::{Signer, signers::Signers},
     solana_system_interface::instruction as system_instruction,
     solana_tps_client::*,
     solana_transaction::Transaction,
@@ -18,8 +18,8 @@ use {
         collections::HashSet,
         marker::Send,
         sync::{
-            atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc, Mutex,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         thread::sleep,
         time::{Duration, Instant},
@@ -245,7 +245,10 @@ where
 
     fn send<C: TpsClient + ?Sized>(&self, client: &Arc<C>) {
         let mut send_txs = Measure::start("send_and_clone_txs");
-        let batch: Vec<_> = self.iter().map(|(_keypair, tx)| tx.clone()).collect();
+        let batch: Vec<_> = self
+            .iter()
+            .map(|(_keypair, tx)| tx.clone().into())
+            .collect();
         let result = client.send_batch(batch);
         send_txs.stop();
         if result.is_err() {

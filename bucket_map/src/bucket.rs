@@ -2,20 +2,20 @@
 use crate::bucket_item::BucketItem;
 use {
     crate::{
+        MaxSearch, RefCount,
         bucket_map::BucketMapError,
         bucket_stats::BucketMapStats,
         bucket_storage::{
-            BucketCapacity, BucketOccupied, BucketStorage, Capacity, IncludeHeader,
-            DEFAULT_CAPACITY_POW2,
+            BucketCapacity, BucketOccupied, BucketStorage, Capacity, DEFAULT_CAPACITY_POW2,
+            IncludeHeader,
         },
         index_entry::{
             DataBucket, IndexBucket, IndexEntry, IndexEntryPlaceInBucket, MultipleSlots,
             OccupiedEnum, OccupyIfMatches,
         },
         restart::RestartableBucket,
-        MaxSearch, RefCount,
     },
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     std::{
@@ -23,8 +23,8 @@ use {
         num::NonZeroU64,
         path::PathBuf,
         sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex,
+            atomic::{AtomicU64, AtomicUsize, Ordering},
         },
     },
 };
@@ -1299,16 +1299,18 @@ mod tests {
 
                     let mut entries_created = 0;
                     let mut duplicates = Vec::default();
-                    assert!(Bucket::<u64>::batch_insert_non_duplicates_internal(
-                        &mut index,
-                        &Vec::default(),
-                        &raw,
-                        &mut hashed,
-                        &mut entries_created,
-                        &mut duplicates,
-                        try_to_reuse_disk_data,
-                    )
-                    .is_ok());
+                    assert!(
+                        Bucket::<u64>::batch_insert_non_duplicates_internal(
+                            &mut index,
+                            &Vec::default(),
+                            &raw,
+                            &mut hashed,
+                            &mut entries_created,
+                            &mut duplicates,
+                            try_to_reuse_disk_data,
+                        )
+                        .is_ok()
+                    );
 
                     assert_eq!(duplicates.len(), len as usize - 1);
                     assert_eq!(hashed.len(), 0);
@@ -1352,16 +1354,18 @@ mod tests {
 
                     let mut duplicates = Vec::default();
                     let mut entries_created = 0;
-                    assert!(Bucket::<u64>::batch_insert_non_duplicates_internal(
-                        &mut index,
-                        &Vec::default(),
-                        &raw,
-                        &mut hashed,
-                        &mut entries_created,
-                        &mut duplicates,
-                        try_to_reuse_disk_data,
-                    )
-                    .is_ok());
+                    assert!(
+                        Bucket::<u64>::batch_insert_non_duplicates_internal(
+                            &mut index,
+                            &Vec::default(),
+                            &raw,
+                            &mut hashed,
+                            &mut entries_created,
+                            &mut duplicates,
+                            try_to_reuse_disk_data,
+                        )
+                        .is_ok()
+                    );
 
                     assert_eq!(hashed.len(), 0);
                     (0..len).for_each(|i| {

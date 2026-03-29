@@ -7,13 +7,12 @@ use {
         voting_service::BLSOp,
     },
     agave_votor_messages::{
-        consensus_message::{ConsensusMessage, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
+        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
         vote::Vote,
     },
     crossbeam_channel::{SendError, Sender},
     solana_bls_signatures::{
-        keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed, BlsError,
-        Pubkey as BLSPubkey,
+        BlsError, keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
     },
     solana_clock::Slot,
     solana_keypair::Keypair,
@@ -118,7 +117,7 @@ pub struct VotingContext {
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
     pub has_new_vote_been_rooted: bool,
-    pub own_vote_sender: Sender<ConsensusMessage>,
+    pub own_vote_sender: Sender<Vec<ConsensusMessage>>,
     pub bls_sender: Sender<BLSOp>,
     pub commitment_sender: Sender<CommitmentAggregationData>,
     pub wait_to_vote_slot: Option<u64>,
@@ -214,7 +213,7 @@ pub fn generate_vote_tx(
 
     let bls_keypair = get_or_insert_bls_keypair(derived_bls_keypairs, &authorized_voter_keypair)
         .unwrap_or_else(|e| panic!("Failed to derive my own BLS keypair: {e:?}"));
-    let my_bls_pubkey: BLSPubkey = bls_keypair.public.into();
+    let my_bls_pubkey = bls_keypair.public;
     if my_bls_pubkey != bls_pubkey_in_vote_account {
         panic!(
             "Vote account bls_pubkey mismatch: {bls_pubkey_in_vote_account:?} (expected: \
@@ -222,22 +221,14 @@ pub fn generate_vote_tx(
         );
     }
     let vote_serialized = bincode::serialize(&vote).unwrap();
-
-    let epoch = bank.epoch_schedule().get_epoch(vote.slot());
-
-    let Some(epoch_stakes) = bank.epoch_stakes(epoch) else {
-        panic!(
-            "The bank {} doesn't have its own epoch_stakes for {}",
-            bank.slot(),
-            epoch
-        );
-    };
-    let Some(my_rank) = epoch_stakes
-        .bls_pubkey_to_rank_map()
-        .get_rank(&my_bls_pubkey)
-    else {
+    let rank_map = bank
+        .epoch_stakes_from_slot(vote.slot())
+        .unwrap_or_else(|| panic!("could not find epoch stakes for slot {}", vote.slot()))
+        .bls_pubkey_to_rank_map();
+    let Some(my_rank) = rank_map.get_rank(&my_bls_pubkey) else {
         return GenerateVoteTxResult::NoRankFound;
     };
+
     GenerateVoteTxResult::ConsensusMessage(ConsensusMessage::Vote(VoteMessage {
         vote: *vote,
         signature: bls_keypair.sign(&vote_serialized).into(),
@@ -286,7 +277,7 @@ fn insert_vote_and_create_bls_message(
     };
     context
         .own_vote_sender
-        .send(message.clone())
+        .send(vec![message.clone()])
         .map_err(|_| SendError(()))?;
 
     // TODO: for refresh votes use a different BLSOp so we don't have to rewrite the same vote history to file
@@ -331,11 +322,11 @@ mod tests {
         crossbeam_channel::unbounded,
         solana_hash::Hash,
         solana_runtime::{
-            bank::Bank,
+            bank::{Bank, SlotLeader},
             bank_forks::BankForks,
             epoch_stakes::VersionedEpochStakes,
             genesis_utils::{
-                create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
+                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
         },
         std::sync::{Arc, RwLock},
@@ -355,10 +346,23 @@ mod tests {
     }
 
     fn setup_voting_context_and_bank_forks(
-        own_vote_sender: Sender<ConsensusMessage>,
+        own_vote_sender: Sender<Vec<ConsensusMessage>>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
     ) -> VotingContext {
+        let (voting_context, _) = setup_voting_context_and_bank_forks_with_forks(
+            own_vote_sender,
+            validator_keypairs,
+            my_index,
+        );
+        voting_context
+    }
+
+    fn setup_voting_context_and_bank_forks_with_forks(
+        own_vote_sender: Sender<Vec<ConsensusMessage>>,
+        validator_keypairs: &[ValidatorVoteKeypairs],
+        my_index: usize,
+    ) -> (VotingContext, Arc<RwLock<BankForks>>) {
         // Can't have stake of 0, so start at 1 and go to 10. In descending order, so 0 has largest stake.
         let stakes: Vec<u64> = (1u64..=10).rev().map(|x| x.saturating_mul(100)).collect();
         let genesis = create_genesis_config_with_alpenglow_vote_accounts(
@@ -374,7 +378,7 @@ mod tests {
         let bls_sender = unbounded().0;
         let commitment_sender = unbounded().0;
         let consensus_metrics_sender = unbounded().0;
-        VotingContext {
+        let voting_context = VotingContext {
             vote_history: VoteHistory::new(my_keys.node_keypair.pubkey(), 0),
             vote_account_pubkey: my_keys.vote_keypair.pubkey(),
             identity_keypair: Arc::new(my_keys.node_keypair.insecure_clone()),
@@ -389,7 +393,8 @@ mod tests {
             wait_to_vote_slot: None,
             sharable_banks,
             consensus_metrics_sender,
-        }
+        };
+        (voting_context, bank_forks)
     }
 
     #[test]
@@ -441,7 +446,7 @@ mod tests {
 
         // Check that own vote sender receives the vote
         let received_message = own_vote_receiver.recv().unwrap();
-        assert_eq!(received_message, expected_message);
+        assert_eq!(received_message, vec![expected_message]);
     }
 
     #[test]
@@ -458,15 +463,19 @@ mod tests {
         // If we haven't reached wait_to_vote_slot yet, return Ok(None)
         voting_context.wait_to_vote_slot = Some(4);
         let vote = Vote::new_finalization_vote(2);
-        assert!(generate_vote_message(vote, false, &mut voting_context)
-            .unwrap()
-            .is_none());
+        assert!(
+            generate_vote_message(vote, false, &mut voting_context)
+                .unwrap()
+                .is_none()
+        );
 
         // If we have reached wait_to_vote_slot, we should be able to vote
         voting_context.wait_to_vote_slot = Some(1);
-        assert!(generate_vote_message(vote, false, &mut voting_context)
-            .unwrap()
-            .is_some());
+        assert!(
+            generate_vote_message(vote, false, &mut voting_context)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -484,17 +493,21 @@ mod tests {
         voting_context.authorized_voter_keypairs = Arc::new(std::sync::RwLock::new(vec![]));
         let vote = Vote::new_skip_vote(5);
         // For non-voting nodes, we just return Ok(None)
-        assert!(generate_vote_message(vote, false, &mut voting_context)
-            .unwrap()
-            .is_none());
+        assert!(
+            generate_vote_message(vote, false, &mut voting_context)
+                .unwrap()
+                .is_none()
+        );
 
         // Recover correct value to vote again
         voting_context.authorized_voter_keypairs = Arc::new(RwLock::new(vec![Arc::new(
             validator_keypairs[my_index].vote_keypair.insecure_clone(),
         )]));
-        assert!(generate_vote_message(vote, false, &mut voting_context)
-            .unwrap()
-            .is_some());
+        assert!(
+            generate_vote_message(vote, false, &mut voting_context)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -511,16 +524,20 @@ mod tests {
         // Wrong identity keypair
         voting_context.identity_keypair = Arc::new(Keypair::new());
         let vote = Vote::new_notarization_vote(6, Hash::new_unique());
-        assert!(generate_vote_message(vote, true, &mut voting_context)
-            .unwrap()
-            .is_none());
+        assert!(
+            generate_vote_message(vote, true, &mut voting_context)
+                .unwrap()
+                .is_none()
+        );
 
         // Recover correct value to vote again
         voting_context.identity_keypair =
             Arc::new(validator_keypairs[my_index].node_keypair.insecure_clone());
-        assert!(generate_vote_message(vote, true, &mut voting_context)
-            .unwrap()
-            .is_some());
+        assert!(
+            generate_vote_message(vote, true, &mut voting_context)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -537,15 +554,19 @@ mod tests {
         // Wrong vote account pubkey
         voting_context.vote_account_pubkey = Pubkey::new_unique();
         let vote = Vote::new_notarization_vote(7, Hash::new_unique());
-        assert!(generate_vote_message(vote, true, &mut voting_context)
-            .unwrap()
-            .is_none());
+        assert!(
+            generate_vote_message(vote, true, &mut voting_context)
+                .unwrap()
+                .is_none()
+        );
 
         // Recover correct value to vote again
         voting_context.vote_account_pubkey = validator_keypairs[my_index].vote_keypair.pubkey();
-        assert!(generate_vote_message(vote, true, &mut voting_context)
-            .unwrap()
-            .is_some());
+        assert!(
+            generate_vote_message(vote, true, &mut voting_context)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -565,13 +586,15 @@ mod tests {
             Arc::new(BLSKeypair::new()),
         );
         let vote = Vote::new_notarization_vote(8, Hash::new_unique());
-        assert!(generate_vote_message(vote, true, &mut voting_context)
-            .unwrap()
-            .is_none());
+        assert!(
+            generate_vote_message(vote, true, &mut voting_context)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
-    #[should_panic(expected = "The bank 0 doesn't have its own epoch_stakes for")]
+    #[should_panic(expected = "could not find epoch stakes for slot 1000000000")]
     fn test_panic_on_future_slot() {
         agave_logger::setup();
         let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
@@ -597,8 +620,11 @@ mod tests {
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
-            setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
+        let (mut voting_context, bank_forks) = setup_voting_context_and_bank_forks_with_forks(
+            own_vote_sender,
+            &validator_keypairs,
+            my_index,
+        );
 
         // Set the stake of my_index to 0 in epoch 2
         // For epoch 2, make validator my_index to be zero stake, others have stake in ascending order, 1 < 2 < ... < 9
@@ -620,13 +646,14 @@ mod tests {
                 (authorized_voter, (stake as u64, vote_account))
             })
             .collect();
-        let mut new_bank = Bank::new_from_parent(bank, &Pubkey::default(), 1);
+        let mut new_bank = Bank::new_from_parent(bank, SlotLeader::default(), 1);
         assert!(new_bank.epoch_stakes(2).is_none());
         let epoch2_epoch_stakes = VersionedEpochStakes::new_for_tests(vote_accounts_hash_map, 2);
         new_bank.set_epoch_stakes_for_test(2, epoch2_epoch_stakes);
         assert!(new_bank.epoch_stakes(2).is_some());
         new_bank.freeze();
-        let bank_forks = BankForks::new_rw_arc(new_bank);
+        bank_forks.write().unwrap().insert(new_bank);
+        bank_forks.write().unwrap().set_root(1, None, None);
         voting_context.sharable_banks = bank_forks.read().unwrap().sharable_banks();
 
         // If we try to vote for a slot in epoch 1, it should succeed
@@ -636,9 +663,11 @@ mod tests {
             .epoch_schedule()
             .get_first_slot_in_epoch(1);
         let vote = Vote::new_notarization_vote(first_slot_in_epoch_1, Hash::new_unique());
-        assert!(generate_vote_message(vote, false, &mut voting_context)
-            .unwrap()
-            .is_some());
+        assert!(
+            generate_vote_message(vote, false, &mut voting_context)
+                .unwrap()
+                .is_some()
+        );
 
         // If we try to vote for a slot in epoch 2, we should get NoRankFound error
         let first_slot_in_epoch_2 = voting_context
@@ -647,8 +676,10 @@ mod tests {
             .epoch_schedule()
             .get_first_slot_in_epoch(2);
         let vote = Vote::new_notarization_vote(first_slot_in_epoch_2, Hash::new_unique());
-        assert!(generate_vote_message(vote, false, &mut voting_context)
-            .unwrap()
-            .is_none());
+        assert!(
+            generate_vote_message(vote, false, &mut voting_context)
+                .unwrap()
+                .is_none()
+        );
     }
 }

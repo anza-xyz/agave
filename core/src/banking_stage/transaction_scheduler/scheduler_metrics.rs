@@ -1,6 +1,5 @@
 use {
     super::scheduler::SchedulingSummary,
-    itertools::MinMaxResult,
     solana_clock::Slot,
     solana_time_utils::AtomicInterval,
     std::{
@@ -235,20 +234,11 @@ impl SchedulerCountMetricsInner {
         self.max_prioritization_fees = 0;
     }
 
-    pub fn update_priority_stats(&mut self, min_max_fees: MinMaxResult<u64>) {
+    pub fn update_priority_stats(&mut self, min_max_fees: Option<(u64, u64)>) {
         // update min/max priority
-        match min_max_fees {
-            itertools::MinMaxResult::NoElements => {
-                // do nothing
-            }
-            itertools::MinMaxResult::OneElement(e) => {
-                self.min_prioritization_fees = e;
-                self.max_prioritization_fees = e;
-            }
-            itertools::MinMaxResult::MinMax(min, max) => {
-                self.min_prioritization_fees = min;
-                self.max_prioritization_fees = max;
-            }
+        if let Some((min, max)) = min_max_fees {
+            self.min_prioritization_fees = min;
+            self.max_prioritization_fees = max;
         }
     }
 
@@ -460,8 +450,8 @@ impl SchedulingDetails {
                     self.sum_starting_queue_size / self.num_schedule_calls;
                 let avg_starting_buffer_size =
                     self.sum_starting_buffer_size / self.num_schedule_calls;
-                datapoint_info!(
-                    "scheduling_details",
+                let datapoint = create_datapoint!(
+                    @point "scheduling_details",
                     ("num_schedule_calls", self.num_schedule_calls, i64),
                     ("min_starting_queue_size", self.min_starting_queue_size, i64),
                     ("max_starting_queue_size", self.max_starting_queue_size, i64),
@@ -489,6 +479,7 @@ impl SchedulingDetails {
                         i64
                     ),
                 );
+                solana_metrics::submit(datapoint, log::Level::Trace);
                 *self = Self {
                     last_report: now,
                     ..Self::default()

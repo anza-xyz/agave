@@ -1,6 +1,6 @@
 use {
     crate::streamer::ChannelSend,
-    crossbeam_channel::{bounded, Receiver, SendError, Sender, TryRecvError, TrySendError},
+    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError, TrySendError, bounded},
 };
 
 /// A sender implementation that evicts the oldest message when the channel is full.

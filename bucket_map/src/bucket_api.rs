@@ -2,15 +2,15 @@
 use crate::bucket_item::BucketItem;
 use {
     crate::{
-        bucket::Bucket, bucket_map::BucketMapError, bucket_stats::BucketMapStats,
-        restart::RestartableBucket, MaxSearch, RefCount,
+        MaxSearch, RefCount, bucket::Bucket, bucket_map::BucketMapError,
+        bucket_stats::BucketMapStats, restart::RestartableBucket,
     },
     solana_pubkey::Pubkey,
     std::{
         path::PathBuf,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, RwLock, RwLockWriteGuard,
+            atomic::{AtomicU64, Ordering},
         },
     },
 };

@@ -1,10 +1,9 @@
 use {
     crate::{
-        spawn,
+        Config, spawn,
         syscalls::SYSCALLS,
         toolchain::rust_target_triple,
         utils::{copy_file, create_directory, generate_keypair},
-        Config,
     },
     log::{debug, error, info, warn},
     regex::Regex,
@@ -142,7 +141,7 @@ pub(crate) fn post_process(
 
     create_folders(config, &sbf_out_dir, &sbf_debug_dir);
 
-    let target_build_directory = if config.debug {
+    let target_build_directory = if config.debug && !config.cargo_args.contains(&"--release") {
         target_directory.join(&target_triple).join("debug")
     } else {
         target_directory.join(&target_triple).join("release")

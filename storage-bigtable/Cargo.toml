@@ -21,21 +21,16 @@ agave-unstable-api = []
 
 [dependencies]
 agave-reserved-account-keys = { workspace = true }
-backoff = { workspace = true, features = ["tokio"] }
+base64 = { workspace = true }
 bincode = { workspace = true }
-bytes = { workspace = true }
 bzip2 = { workspace = true }
 enum-iterator = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
 goauth = { workspace = true }
 http = { workspace = true }
-hyper = { workspace = true }
-hyper-proxy = { workspace = true }
+hyper-util = { workspace = true, features = ["client-legacy"] }
 log = { workspace = true }
-# openssl is a dependency of the goauth and smpl_jwt crates, but explicitly
-# declare it here as well to activate the "vendored" feature that builds OpenSSL
-openssl = { workspace = true, features = ["vendored"] }
 prost = { workspace = true }
 prost-types = { workspace = true }
 serde = { workspace = true }
@@ -53,7 +48,8 @@ solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-tonic = { workspace = true, features = ["tls", "transport"] }
+tonic = { workspace = true, features = ["tls-ring", "transport"] }
+tonic-prost = { workspace = true }
 zstd = { workspace = true }
 
 [dev-dependencies]
@@ -61,4 +57,4 @@ solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-transaction = { workspace = true }
-solana-transaction-context = { workspace = true }
+solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode"] }

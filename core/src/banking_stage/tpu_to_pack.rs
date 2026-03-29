@@ -3,8 +3,8 @@
 
 use {
     agave_banking_stage_ingress_types::BankingPacketReceiver,
-    agave_scheduler_bindings::{tpu_message_flags, SharableTransactionRegion, TpuToPackMessage},
-    agave_scheduling_utils::handshake::server::AgaveTpuToPackSession,
+    agave_scheduler_bindings::{SharableTransactionRegion, TpuToPackMessage, tpu_message_flags},
+    agave_scheduling_utils::handshake::AgaveTpuToPackSession,
     rts_alloc::Allocator,
     solana_packet::PacketFlags,
     solana_perf::packet::PacketBatch,
@@ -12,8 +12,8 @@ use {
         net::IpAddr,
         ptr::NonNull,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread::JoinHandle,
         time::Duration,
@@ -50,7 +50,7 @@ fn tpu_to_pack(
     shutdown_signal: CancellationToken,
     receivers: BankingPacketReceivers,
     allocator: Allocator,
-    mut producer: shaq::Producer<TpuToPackMessage>,
+    mut producer: shaq::spsc::Producer<TpuToPackMessage>,
 ) {
     // select! requires actual receivers, so in the case of None for vote receivers,
     // we create a dummy channel that can never receive.
@@ -83,7 +83,7 @@ fn tpu_to_pack(
 
 fn handle_packet_batches(
     allocator: &Allocator,
-    producer: &mut shaq::Producer<TpuToPackMessage>,
+    producer: &mut shaq::spsc::Producer<TpuToPackMessage>,
     packet_batches: Arc<Vec<PacketBatch>>,
 ) {
     // Clean all remote frees in allocator so we have as much

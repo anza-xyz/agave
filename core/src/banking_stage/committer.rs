@@ -12,7 +12,7 @@ use {
         bank_utils,
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_batch::TransactionBatch,
-        vote_sender_types::ReplayVoteSender,
+        vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::{
@@ -100,6 +100,7 @@ impl Committer {
                 batch.sanitized_transactions(),
                 &commit_results,
                 Some(&self.replay_vote_sender),
+                ReplayVoteSendType::VerifiedExecuted,
             );
 
             if let Some(prioritization_fee_cache) = self.prioritization_fee_cache.as_ref() {

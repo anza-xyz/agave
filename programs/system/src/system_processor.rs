@@ -15,11 +15,11 @@ use {
     solana_sdk_ids::system_program,
     solana_svm_log_collector::ic_msg,
     solana_system_interface::{
-        error::SystemError, instruction::SystemInstruction, MAX_PERMITTED_DATA_LENGTH,
+        MAX_PERMITTED_DATA_LENGTH, error::SystemError, instruction::SystemInstruction,
     },
     solana_transaction_context::{
-        instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
-        IndexOfAccount,
+        IndexOfAccount, instruction::InstructionContext,
+        instruction_accounts::BorrowedInstructionAccount,
     },
     std::collections::HashSet,
 };
@@ -188,7 +188,7 @@ fn create_account(
 fn create_account_allow_prefund(
     to_account_index: IndexOfAccount,
     to_address: &Address,
-    payer_and_lamports: Option<(IndexOfAccount, u64)>,
+    from_and_lamports: Option<(IndexOfAccount, u64)>,
     space: u64,
     owner: &Pubkey,
     signers: &HashSet<Pubkey>,
@@ -199,7 +199,7 @@ fn create_account_allow_prefund(
         let mut to = instruction_context.try_borrow_instruction_account(to_account_index)?;
         allocate_and_assign(&mut to, to_address, space, owner, signers, invoke_context)?;
     }
-    if let Some((from_account_index, lamports)) = payer_and_lamports {
+    if let Some((from_account_index, lamports)) = from_and_lamports {
         if lamports > 0 {
             transfer(
                 from_account_index,
@@ -538,7 +538,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             {
                 return Err(InstructionError::InvalidInstructionData);
             }
-            let payer_and_lamports = if lamports > 0 {
+            let from_and_lamports = if lamports > 0 {
                 instruction_context.check_number_of_instruction_accounts(2)?;
                 Some((1, lamports))
             } else {
@@ -553,7 +553,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             create_account_allow_prefund(
                 0,
                 &to_address,
-                payer_and_lamports,
+                from_and_lamports,
                 space,
                 &owner,
                 &signers,
@@ -569,21 +569,22 @@ mod tests {
     use {
         super::*,
         bincode::serialize,
-        solana_nonce_account::{get_system_account_kind, SystemAccountKind},
+        solana_nonce_account::{SystemAccountKind, get_system_account_kind},
         solana_program_runtime::{
-            invoke_context::mock_process_instruction, with_mock_invoke_context,
+            invoke_context::mock_process_instruction,
+            solana_sbpf::program::BuiltinFunctionDefinition, with_mock_invoke_context,
         },
         std::collections::BinaryHeap,
     };
     #[allow(deprecated)]
     use {
         solana_account::{
-            self as account, create_account_shared_data_with_fields, to_account, Account,
-            AccountSharedData, ReadableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
+            self as account, Account, AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
+            ReadableAccount, create_account_shared_data_with_fields, to_account,
         },
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
-        solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+        solana_instruction::{AccountMeta, Instruction, error::InstructionError},
         solana_nonce::{
             self as nonce,
             state::{Data as NonceData, DurableNonce, State as NonceState},
@@ -594,7 +595,7 @@ mod tests {
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_sysvar::{
             self as sysvar,
-            recent_blockhashes::{IntoIterSorted, IterItem, RecentBlockhashes, MAX_ENTRIES},
+            recent_blockhashes::{IntoIterSorted, IterItem, MAX_ENTRIES, RecentBlockhashes},
             rent::Rent,
         },
     };
@@ -616,12 +617,11 @@ mod tests {
     ) -> Vec<AccountSharedData> {
         mock_process_instruction(
             &system_program::id(),
-            None,
             instruction_data,
             transaction_accounts,
             instruction_accounts,
             expected_result,
-            Entrypoint::vm,
+            Entrypoint::register,
             |_invoke_context| {},
             |_invoke_context| {},
         )
@@ -1613,7 +1613,6 @@ mod tests {
             ]);
         mock_process_instruction(
             &system_program::id(),
-            None,
             &serialize(&SystemInstruction::AdvanceNonceAccount).unwrap(),
             vec![
                 (nonce_address, accounts[0].clone()),
@@ -1632,7 +1631,7 @@ mod tests {
                 },
             ],
             Ok(()),
-            Entrypoint::vm,
+            Entrypoint::register,
             |invoke_context: &mut InvokeContext| {
                 invoke_context.environment_config.blockhash = hash(&serialize(&0).unwrap());
             },
@@ -1909,7 +1908,6 @@ mod tests {
         let new_recent_blockhashes_account = create_recent_blockhashes_account_for_test(vec![]);
         mock_process_instruction(
             &system_program::id(),
-            None,
             &serialize(&SystemInstruction::AdvanceNonceAccount).unwrap(),
             vec![
                 (nonce_address, accounts[0].clone()),
@@ -1928,7 +1926,7 @@ mod tests {
                 },
             ],
             Err(SystemError::NonceNoRecentBlockhashes.into()),
-            Entrypoint::vm,
+            Entrypoint::register,
             |invoke_context: &mut InvokeContext| {
                 invoke_context.environment_config.blockhash = hash(&serialize(&0).unwrap());
             },
@@ -2166,7 +2164,6 @@ mod tests {
         use solana_program_runtime::invoke_context::mock_process_instruction_with_feature_set;
         mock_process_instruction_with_feature_set(
             &system_program::id(),
-            None,
             &bincode::serialize(&SystemInstruction::CreateAccountAllowPrefund {
                 lamports: 50,
                 space: 0,
@@ -2179,7 +2176,7 @@ mod tests {
             ],
             vec![AccountMeta::new(to, true), AccountMeta::new(from, true)],
             Err(InstructionError::InvalidInstructionData),
-            Entrypoint::vm,
+            Entrypoint::register,
             |_| {},
             |_| {},
             &solana_svm_feature_set::SVMFeatureSet::default(),

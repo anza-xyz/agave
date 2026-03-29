@@ -22,8 +22,11 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_nonce::{self as nonce, state::DurableNonce},
     solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
-    solana_program_runtime::execution_budget::{
-        MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, SVMTransactionExecutionAndFeeBudgetLimits,
+    solana_program_runtime::{
+        execution_budget::{
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, SVMTransactionExecutionAndFeeBudgetLimits,
+        },
+        loaded_programs::ProgramRuntimeEnvironments,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{bpf_loader_upgradeable, compute_budget, native_loader},
@@ -138,8 +141,7 @@ impl SvmTestEnvironment<'_> {
             EXECUTION_SLOT,
             EXECUTION_EPOCH,
             Arc::downgrade(&fork_graph),
-            Some(Arc::new(create_custom_loader())),
-            None, // We are not using program runtime v2.
+            Some(create_custom_loader()),
         );
 
         // The sysvars must be put in the cache
@@ -161,14 +163,15 @@ impl SvmTestEnvironment<'_> {
 
         let processing_environment = TransactionProcessingEnvironment {
             blockhash: LAST_BLOCKHASH,
-            feature_set: test_entry.feature_set,
             blockhash_lamports_per_signature: LAMPORTS_PER_SIGNATURE,
-            program_runtime_environments_for_execution: batch_processor
-                .get_environments_for_epoch(EXECUTION_EPOCH),
-            program_runtime_environments_for_deployment: batch_processor
-                .get_environments_for_epoch(EXECUTION_EPOCH),
+            alpenglow_migration_succeeded: false,
+            epoch_total_stake: 0,
+            feature_set: test_entry.feature_set,
+            program_runtime_environments: ProgramRuntimeEnvironments::new(
+                batch_processor.program_runtime_environment_for_epoch(EXECUTION_EPOCH),
+                batch_processor.program_runtime_environment_for_epoch(EXECUTION_EPOCH),
+            ),
             rent: test_entry.rent.clone(),
-            ..TransactionProcessingEnvironment::default()
         };
 
         Self {
@@ -329,7 +332,7 @@ impl SvmTestEnvironment<'_> {
                         .write()
                         .unwrap()
                         .merge(
-                            &self.batch_processor.environments,
+                            &self.batch_processor.program_runtime_environment,
                             self.batch_processor.slot,
                             programs_modified_by_tx,
                         );
@@ -1528,9 +1531,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         nonce::state::Data::new(fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
     let mut initial_nonce_account = AccountSharedData::new_data(
         LAMPORTS_PER_SOL,
-        &nonce::versions::Versions::new(nonce::state::State::Initialized(
-            initial_nonce_data.clone(),
-        )),
+        &nonce::versions::Versions::new(nonce::state::State::Initialized(initial_nonce_data)),
         &system_program::id(),
     )
     .unwrap();
@@ -1538,7 +1539,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     let initial_nonce_info = NonceInfo::new(nonce_pubkey, initial_nonce_account.clone());
 
     let advanced_durable = DurableNonce::from_blockhash(&LAST_BLOCKHASH);
-    let mut advanced_nonce_info = initial_nonce_info.clone();
+    let mut advanced_nonce_info = initial_nonce_info;
     advanced_nonce_info
         .try_advance_nonce(advanced_durable, LAMPORTS_PER_SIGNATURE)
         .unwrap();
@@ -1695,10 +1696,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[
-                successful_noop_instruction.clone(),
-                advance_instruction.clone(),
-            ],
+            &[successful_noop_instruction.clone(), advance_instruction],
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -1921,7 +1919,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
 
         test_entry.push_transaction(first_transaction);
         test_entry.push_nonce_transaction_with_status(
-            second_transaction.clone(),
+            second_transaction,
             nonce_pubkey,
             ExecutionStatus::Discarded,
         );
@@ -1944,7 +1942,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     // * a successful blockhash transaction that changes the nonce authority
     // * a nonce transaction that uses the nonce with the new authority; this transaction succeeds
     if !fee_paying_nonce {
-        let mut test_entry = common_test_entry.clone();
+        let mut test_entry = common_test_entry;
 
         let new_authority_keypair = Keypair::new();
         let new_authority = new_authority_keypair.pubkey();
@@ -1963,7 +1961,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let second_transaction = Transaction::new_signed_with_payer(
             &[
                 system_instruction::advance_nonce_account(&nonce_pubkey, &new_authority),
-                successful_noop_instruction.clone(),
+                successful_noop_instruction,
             ],
             Some(&fee_payer),
             &[&fee_payer_keypair, &new_authority_keypair],
@@ -1971,7 +1969,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         );
 
         test_entry.push_transaction(first_transaction);
-        test_entry.push_nonce_transaction(second_transaction.clone(), nonce_pubkey);
+        test_entry.push_nonce_transaction(second_transaction, nonce_pubkey);
 
         test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
 
@@ -2133,9 +2131,8 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
 
     // rent minimum needs to be adjusted so fee payer can be deallocated
     let rent = Rent {
-        lamports_per_byte_year: LAMPORTS_PER_SIGNATURE / solana_rent::ACCOUNT_STORAGE_OVERHEAD,
-        exemption_threshold: 1.0,
-        burn_percent: 0,
+        lamports_per_byte: LAMPORTS_PER_SIGNATURE / solana_rent::ACCOUNT_STORAGE_OVERHEAD,
+        ..Rent::default()
     };
     test_entry.set_rent_params(rent);
 
@@ -2227,9 +2224,7 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
             nonce::state::Data::new(dealloc_fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
         let mut initial_nonce_account = AccountSharedData::new_data(
             LAMPORTS_PER_SOL,
-            &nonce::versions::Versions::new(nonce::state::State::Initialized(
-                initial_nonce_data.clone(),
-            )),
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(initial_nonce_data)),
             &system_program::id(),
         )
         .unwrap();
@@ -2237,7 +2232,7 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
         let initial_nonce_info = NonceInfo::new(nonce_pubkey, initial_nonce_account.clone());
 
         let advanced_durable = DurableNonce::from_blockhash(&LAST_BLOCKHASH);
-        let mut advanced_nonce_info = initial_nonce_info.clone();
+        let mut advanced_nonce_info = initial_nonce_info;
         advanced_nonce_info
             .try_advance_nonce(advanced_durable, LAMPORTS_PER_SIGNATURE)
             .unwrap();
@@ -2363,7 +2358,7 @@ fn simd83_account_reallocate() -> Vec<SvmTestEntry> {
     // * successful large realloc up
     // * transaction is aborted based on the new transaction data size post-realloc
     {
-        let mut test_entry = common_test_entry.clone();
+        let mut test_entry = common_test_entry;
 
         let new_target_size = target_start_size + MAX_PERMITTED_DATA_INCREASE;
 
@@ -2371,10 +2366,8 @@ fn simd83_account_reallocate() -> Vec<SvmTestEntry> {
             .create_transaction(program_id, &fee_payer_keypair, target, None);
         test_entry.push_transaction(realloc_transaction);
 
-        test_entry.push_transaction_with_status(
-            print_transaction.clone(),
-            ExecutionStatus::ProcessedFailed,
-        );
+        test_entry
+            .push_transaction_with_status(print_transaction, ExecutionStatus::ProcessedFailed);
 
         test_entry.update_expected_account_data(target, &mk_target(new_target_size));
 
@@ -2979,7 +2972,7 @@ fn program_cache_stats() {
 
     test_entry.push_transaction_with_status(
         make_transaction(&[
-            failing_transfer_instruction.clone(),
+            failing_transfer_instruction,
             succesful_noop_instruction.clone(),
             succesful_transfer_instruction.clone(),
         ]),
@@ -2992,7 +2985,7 @@ fn program_cache_stats() {
     test_entry.push_transaction_with_status(
         make_transaction(&[
             succesful_noop_instruction.clone(),
-            fee_only_noop_instruction.clone(),
+            fee_only_noop_instruction,
         ]),
         ExecutionStatus::ProcessedFailed,
     );
@@ -3030,7 +3023,7 @@ fn program_cache_stats() {
         .unwrap();
 
     assert_eq!(
-        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_entry.stats.uses.load(Ordering::Relaxed),
         noop_tx_usage,
         "noop_tx_usage matches"
     );
@@ -3041,7 +3034,7 @@ fn program_cache_stats() {
         .unwrap();
 
     assert_eq!(
-        system_entry.tx_usage_counter.load(Ordering::Relaxed),
+        system_entry.stats.uses.load(Ordering::Relaxed),
         system_tx_usage,
         "system_tx_usage matches"
     );
@@ -3103,7 +3096,7 @@ fn program_cache_stats() {
         .unwrap();
 
     assert_eq!(
-        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_entry.stats.uses.load(Ordering::Relaxed),
         noop_tx_usage,
         "noop_tx_usage matches"
     );
@@ -3138,7 +3131,7 @@ fn program_cache_stats() {
         .unwrap();
 
     assert_eq!(
-        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_entry.stats.uses.load(Ordering::Relaxed),
         noop_tx_usage,
         "noop_tx_usage matches"
     );
@@ -3192,9 +3185,7 @@ fn svm_inspect_nonce_load_failure(fee_paying_nonce: bool) {
         nonce::state::Data::new(fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
     let mut initial_nonce_account = AccountSharedData::new_data(
         LAMPORTS_PER_SOL,
-        &nonce::versions::Versions::new(nonce::state::State::Initialized(
-            initial_nonce_data.clone(),
-        )),
+        &nonce::versions::Versions::new(nonce::state::State::Initialized(initial_nonce_data)),
         &system_program::id(),
     )
     .unwrap();
@@ -3203,7 +3194,7 @@ fn svm_inspect_nonce_load_failure(fee_paying_nonce: bool) {
     let initial_nonce_info = NonceInfo::new(nonce_pubkey, initial_nonce_account.clone());
 
     let advanced_durable = DurableNonce::from_blockhash(&LAST_BLOCKHASH);
-    let mut advanced_nonce_info = initial_nonce_info.clone();
+    let mut advanced_nonce_info = initial_nonce_info;
     advanced_nonce_info
         .try_advance_nonce(advanced_durable, LAMPORTS_PER_SIGNATURE)
         .unwrap();
@@ -3376,7 +3367,7 @@ fn svm_inspect_account() {
 
     let mut final_test_entry = SvmTestEntry {
         initial_accounts: initial_test_entry.final_accounts.clone(),
-        final_accounts: initial_test_entry.final_accounts.clone(),
+        final_accounts: initial_test_entry.final_accounts,
         ..SvmTestEntry::default()
     };
 
@@ -3470,7 +3461,7 @@ fn svm_metrics_accumulation() {
 mod balance_collector {
     use {
         super::*,
-        rand0_7::prelude::*,
+        rand::prelude::*,
         solana_program_pack::Pack,
         spl_generic_token::token_2022,
         spl_token_interface::state::{
@@ -3495,13 +3486,13 @@ mod balance_collector {
     impl Transfer {
         // given a set of users, picks two randomly and does a random transfer between them
         fn new_rand(users: &[Pubkey]) -> Self {
-            let mut rng = rand0_7::thread_rng();
+            let mut rng = rand::rng();
             let [from_idx, to_idx] = (0..users.len()).choose_multiple(&mut rng, 2)[..] else {
                 unreachable!()
             };
             let from = users[from_idx];
             let to = users[to_idx];
-            let amount = rng.gen_range(1, STARTING_BALANCE / 100);
+            let amount = rng.random_range(1..STARTING_BALANCE / 100);
 
             Self { from, to, amount }
         }
@@ -3541,7 +3532,7 @@ mod balance_collector {
     #[test_case(false; "native")]
     #[test_case(true; "token")]
     fn svm_collect_balances(use_tokens: bool) {
-        let mut rng = rand0_7::thread_rng();
+        let mut rng = rand::rng();
 
         let fee_payer_keypair = Keypair::new();
         let fake_fee_payer_keypair = Keypair::new();
@@ -3636,7 +3627,7 @@ mod balance_collector {
             for _ in 0..50 {
                 // failures result in no balance changes (note we use a separate fee-payer)
                 // we mix some in with the successes to test that we never record changes for failures
-                let expected_status = match rng.r#gen::<f64>() {
+                let expected_status = match rng.random::<f64>() {
                     n if n < 0.85 => ExecutionStatus::Succeeded,
                     n if n < 0.90 => ExecutionStatus::ExecutedFailed,
                     n if n < 0.95 => ExecutionStatus::ProcessedFailed,

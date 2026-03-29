@@ -2,11 +2,11 @@ use {
     serde_json::json,
     solana_cli::{
         check_balance,
-        cli::{process_command, request_and_confirm_airdrop, CliCommand, CliConfig},
+        cli::{CliCommand, CliConfig, process_command, request_and_confirm_airdrop},
     },
     solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
-    solana_keypair::{keypair_from_seed, Keypair},
+    solana_keypair::{Keypair, keypair_from_seed},
     solana_net_utils::SocketAddrSpace,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_test_validator::TestValidator,

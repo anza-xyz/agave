@@ -27,7 +27,7 @@ declare_builtin_function!(
     /// memcpy
     SyscallMemcpy,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         dst_addr: u64,
         src_addr: u64,
         n: u64,
@@ -50,7 +50,7 @@ declare_builtin_function!(
     /// memmove
     SyscallMemmove,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         dst_addr: u64,
         src_addr: u64,
         n: u64,
@@ -68,7 +68,7 @@ declare_builtin_function!(
     /// memcmp
     SyscallMemcmp,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         s1_addr: u64,
         s2_addr: u64,
         n: u64,
@@ -114,7 +114,7 @@ declare_builtin_function!(
     /// memset
     SyscallMemset,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         dst_addr: u64,
         c: u64,
         n: u64,

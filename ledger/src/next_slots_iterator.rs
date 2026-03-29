@@ -67,13 +67,7 @@ mod tests {
         let fork_point = 1;
         let mut fork_hash = Hash::default();
         for slot in 0..=3 {
-            let parent = {
-                if slot == 0 {
-                    0
-                } else {
-                    slot - 1
-                }
-            };
+            let parent = { if slot == 0 { 0 } else { slot - 1 } };
             let last_entry_hash = fill_blockstore_slot_with_ticks(
                 &blockstore,
                 ticks_per_slot,

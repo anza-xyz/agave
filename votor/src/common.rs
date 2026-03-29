@@ -1,7 +1,6 @@
 use {
     agave_votor_messages::{
         consensus_message::CertificateType,
-        migration::GENESIS_VOTE_THRESHOLD,
         vote::{Vote, VoteType},
     },
     std::time::Duration,
@@ -28,25 +27,6 @@ pub const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
             VoteType::Skip,
             VoteType::SkipFallback,
         ],
-    }
-}
-
-/// Lookup from `CertificateId` to the `VoteType`s that contribute,
-/// as well as the stake fraction required for certificate completion.
-///
-/// Must be in sync with `vote_to_cert_types`
-pub(crate) const fn certificate_limits_and_vote_types(
-    cert_type: &CertificateType,
-) -> (f64, &'static [VoteType]) {
-    match cert_type {
-        CertificateType::Notarize(_, _) => (0.6, &[VoteType::Notarize]),
-        CertificateType::NotarizeFallback(_, _) => {
-            (0.6, &[VoteType::Notarize, VoteType::NotarizeFallback])
-        }
-        CertificateType::FinalizeFast(_, _) => (0.8, &[VoteType::Notarize]),
-        CertificateType::Finalize(_) => (0.6, &[VoteType::Finalize]),
-        CertificateType::Skip(_) => (0.6, &[VoteType::Skip, VoteType::SkipFallback]),
-        CertificateType::Genesis(_, _) => (GENESIS_VOTE_THRESHOLD, &[VoteType::Genesis]),
     }
 }
 

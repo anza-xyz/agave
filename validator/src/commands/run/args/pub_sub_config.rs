@@ -2,7 +2,7 @@
 use qualifier_attr::qualifiers;
 use {
     crate::commands::{FromClapArgMatches, Result},
-    clap::{value_t, Arg, ArgMatches},
+    clap::{Arg, ArgMatches, value_t},
     solana_clap_utils::input_validators::is_parsable,
     solana_rayon_threadlimit::get_thread_count,
     solana_rpc::rpc_pubsub_service::PubSubConfig,
@@ -154,7 +154,7 @@ mod tests {
     use {
         super::*,
         crate::commands::run::args::{
-            tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
+            RunArgs, tests::verify_args_struct_by_command_run_with_identity_setup,
         },
         solana_rpc::rpc::JsonRpcConfig,
     };

@@ -3,23 +3,24 @@
 extern crate test;
 
 use {
-    agave_feature_set::{deprecate_legacy_vote_ixs, FeatureSet},
-    solana_account::{create_account_for_test, Account, AccountSharedData},
+    agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
+    solana_account::{Account, AccountSharedData, create_account_for_test},
     solana_clock::{Clock, Slot},
     solana_hash::Hash,
     solana_instruction::AccountMeta,
-    solana_program_runtime::invoke_context::{
-        mock_process_instruction, mock_process_instruction_with_feature_set,
+    solana_program_runtime::{
+        invoke_context::{mock_process_instruction, mock_process_instruction_with_feature_set},
+        solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
-    solana_slot_hashes::{SlotHashes, MAX_ENTRIES},
+    solana_slot_hashes::{MAX_ENTRIES, SlotHashes},
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_vote_program::{
         vote_instruction::VoteInstruction,
         vote_state::{
-            handler::VoteStateHandle, TowerSync, Vote, VoteInit, VoteStateUpdate, VoteStateV3,
-            VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            MAX_LOCKOUT_HISTORY, TowerSync, Vote, VoteInit, VoteStateUpdate, VoteStateV3,
+            VoteStateVersions, handler::VoteStateHandle,
         },
     },
     test::Bencher,
@@ -112,12 +113,11 @@ fn bench_process_deprecated_vote_instruction(
     bencher.iter(|| {
         mock_process_instruction_with_feature_set(
             &solana_vote_program::id(),
-            None,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_account_metas.clone(),
             Ok(()),
-            solana_vote_program::vote_processor::Entrypoint::vm,
+            solana_vote_program::vote_processor::Entrypoint::register,
             |_invoke_context| {},
             |_invoke_context| {},
             &deprecated_feature_set.runtime_features(),
@@ -134,12 +134,11 @@ fn bench_process_vote_instruction(
     bencher.iter(|| {
         mock_process_instruction(
             &solana_vote_program::id(),
-            None,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_account_metas.clone(),
             Ok(()),
-            solana_vote_program::vote_processor::Entrypoint::vm,
+            solana_vote_program::vote_processor::Entrypoint::register,
             |_invoke_context| {},
             |_invoke_context| {},
         );

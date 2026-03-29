@@ -4,7 +4,7 @@ use {
         cli::DefaultArgs,
         commands::{FromClapArgMatches, Result},
     },
-    clap::{value_t, App, Arg, ArgMatches, SubCommand},
+    clap::{App, Arg, ArgMatches, SubCommand, value_t},
     solana_core::{
         banking_stage::BankingStage,
         validator::{BlockProductionMethod, SchedulerPacing, TransactionStructure},

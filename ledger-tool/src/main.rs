@@ -15,18 +15,17 @@ use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::{
-        snapshot_archive_info::SnapshotArchiveInfoGetter as _, ArchiveFormat, SnapshotVersion,
-        DEFAULT_ARCHIVE_COMPRESSION, SUPPORTED_ARCHIVE_COMPRESSION,
+        ArchiveFormat, DEFAULT_ARCHIVE_COMPRESSION, SUPPORTED_ARCHIVE_COMPRESSION, SnapshotVersion,
+        snapshot_archive_info::SnapshotArchiveInfoGetter as _,
     },
     clap::{
-        crate_description, crate_name, value_t, value_t_or_exit, values_t_or_exit, App,
-        AppSettings, Arg, ArgMatches, SubCommand,
+        App, AppSettings, Arg, ArgMatches, SubCommand, crate_description, crate_name, value_t,
+        value_t_or_exit, values_t_or_exit,
     },
     dashmap::DashMap,
     log::*,
     serde::Serialize,
-    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_accounts_db::accounts_index::{ScanConfig, ScanOrder},
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut},
     solana_clap_utils::{
         input_parsers::{cluster_type_of, pubkey_of, pubkeys_of},
         input_validators::{
@@ -34,7 +33,7 @@ use {
             is_within_range,
         },
     },
-    solana_cli_output::{display::build_balance_message, CliAccount, OutputFormat},
+    solana_cli_output::{CliAccount, OutputFormat, display::build_balance_message},
     solana_clock::{Epoch, Slot},
     solana_cluster_type::ClusterType,
     solana_core::{
@@ -49,7 +48,7 @@ use {
     solana_inflation::Inflation,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_ledger::{
-        blockstore::{banking_trace_path, create_new_ledger, Blockstore},
+        blockstore::{Blockstore, banking_trace_path, create_new_ledger},
         blockstore_options::{AccessType, LedgerColumnOptions},
         blockstore_processor::{
             ProcessSlotCallback, TransactionStatusMessage, TransactionStatusSender,
@@ -57,13 +56,13 @@ use {
     },
     solana_measure::{measure::Measure, measure_time},
     solana_message::SimpleAddressLoader,
-    solana_native_token::{Sol, LAMPORTS_PER_SOL},
+    solana_native_token::{LAMPORTS_PER_SOL, Sol},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
         bank::{
-            bank_hash_details::{self, SlotDetails, TransactionDetails},
             Bank, RewardCalculationEvent,
+            bank_hash_details::{self, SlotDetails, TransactionDetails},
         },
         bank_forks::BankForks,
         inflation_rewards::points::{InflationPointCalculationEvent, PointValue},
@@ -82,20 +81,20 @@ use {
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::{
         self,
-        vote_state::{self, VoteStateV3, VoteStateV4, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
+        vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV3, VoteStateV4},
     },
     std::{
         collections::{HashMap, HashSet},
         ffi::{OsStr, OsString},
-        fs::{read_dir, File},
+        fs::{File, read_dir},
         io::{self, Write},
         mem::swap,
         path::{Path, PathBuf},
-        process::{exit, Command, Stdio},
+        process::{Command, Stdio, exit},
         str::FromStr,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::JoinHandle,
     },
@@ -467,8 +466,7 @@ fn compute_slot_cost(
                     None,
                     SimpleAddressLoader::Disabled,
                     &reserved_account_keys.active,
-                    feature_set.is_active(&agave_feature_set::static_instruction_limit::id()),
-                    feature_set.is_active(&agave_feature_set::limit_instruction_accounts::id()),
+                    feature_set.snapshot().limit_instruction_accounts,
                 )
                 .map_err(|err| {
                     warn!("Failed to compute cost of transaction: {err:?}");
@@ -2178,11 +2176,12 @@ fn main() {
 
                     // If we are creating an incremental snapshot, it must be based on a full snapshot
                     if is_incremental {
-                        assert!(bank
-                            .accounts()
-                            .accounts_db
-                            .latest_full_snapshot_slot()
-                            .is_some());
+                        assert!(
+                            bank.accounts()
+                                .accounts_db
+                                .latest_full_snapshot_slot()
+                                .is_some()
+                        );
                     }
 
                     // Snapshot creation will implicitly perform AccountsDb
@@ -2203,7 +2202,7 @@ fn main() {
 
                     if child_bank_required {
                         let mut child_bank =
-                            Bank::new_from_parent(bank.clone(), bank.leader_id(), bank.slot() + 1);
+                            Bank::new_from_parent(bank.clone(), *bank.leader(), bank.slot() + 1);
 
                         if let Ok(rent_burn_percentage) = rent_burn_percentage {
                             child_bank.set_rent_burn_percentage(rent_burn_percentage);
@@ -2258,10 +2257,7 @@ fn main() {
 
                     if remove_stake_accounts {
                         for (address, mut account) in bank
-                            .get_program_accounts(
-                                &stake::program::id(),
-                                &ScanConfig::new(ScanOrder::Sorted),
-                            )
+                            .get_program_accounts(&stake::program::id())
                             .unwrap()
                             .into_iter()
                         {
@@ -2285,10 +2281,7 @@ fn main() {
 
                     if !vote_accounts_to_destake.is_empty() {
                         for (address, mut account) in bank
-                            .get_program_accounts(
-                                &stake::program::id(),
-                                &ScanConfig::new(ScanOrder::Sorted),
-                            )
+                            .get_program_accounts(&stake::program::id())
                             .unwrap()
                             .into_iter()
                         {
@@ -2368,10 +2361,7 @@ fn main() {
 
                         // Delete existing vote accounts
                         for (address, mut account) in bank
-                            .get_program_accounts(
-                                &solana_vote_program::id(),
-                                &ScanConfig::new(ScanOrder::Sorted),
-                            )
+                            .get_program_accounts(&solana_vote_program::id())
                             .unwrap()
                             .into_iter()
                         {
@@ -2396,10 +2386,7 @@ fn main() {
                                 ),
                             );
 
-                            let vote_account = if bank
-                                .feature_set
-                                .is_active(&feature_set::vote_state_v4::id())
-                            {
+                            let vote_account = if bank.feature_set.snapshot().vote_state_v4 {
                                 vote_state::create_v4_account_with_authorized(
                                     identity_pubkey,
                                     identity_pubkey,
@@ -2503,7 +2490,7 @@ fn main() {
                         bank.force_flush_accounts_cache();
                         Arc::new(Bank::warp_from_parent(
                             bank.clone(),
-                            bank.leader_id(),
+                            *bank.leader(),
                             warp_slot,
                         ))
                     } else {
@@ -2529,6 +2516,9 @@ fn main() {
                         bank.slot(),
                     );
 
+                    // The bank must have a block id set to take a snapshot.
+                    Bank::calculate_and_set_block_id_for_dcou(&bank);
+
                     if is_incremental {
                         if starting_snapshot_hashes.is_none() {
                             eprintln!(
@@ -2537,7 +2527,7 @@ fn main() {
                             );
                             exit(1);
                         }
-                        let full_snapshot_slot = starting_snapshot_hashes.unwrap().full.0 .0;
+                        let full_snapshot_slot = starting_snapshot_hashes.unwrap().full.0.0;
                         if bank.slot() <= full_snapshot_slot {
                             eprintln!(
                                 "Unable to create incremental snapshot: Slot must be greater than \
@@ -2888,7 +2878,7 @@ fn main() {
                             voter_owner: Pubkey,
                             current_effective_stake: u64,
                             total_stake: u64,
-                            rent_exempt_reserve: u64,
+                            prior_total_lamports: u64,
                             points: Vec<PointDetail>,
                             base_rewards: u64,
                             commission_bps: u16,
@@ -2959,8 +2949,8 @@ fn main() {
                                 InflationPointCalculationEvent::CommissionBps(commission_bps) => {
                                     detail.commission_bps = *commission_bps;
                                 }
-                                InflationPointCalculationEvent::RentExemptReserve(reserve) => {
-                                    detail.rent_exempt_reserve = *reserve;
+                                InflationPointCalculationEvent::PriorTotalLamports(lamports) => {
+                                    detail.prior_total_lamports = *lamports;
                                 }
                                 InflationPointCalculationEvent::CreditsObserved(
                                     old_credits_observed,
@@ -2995,7 +2985,7 @@ fn main() {
                         };
                         let warped_bank = Bank::new_from_parent_with_tracer(
                             base_bank.clone(),
-                            base_bank.leader_id(),
+                            *base_bank.leader(),
                             next_epoch,
                             tracer,
                         );
@@ -3117,7 +3107,7 @@ fn main() {
                                         delegation_owner: String,
                                         effective_stake: String,
                                         delegated_stake: String,
-                                        rent_exempt_reserve: String,
+                                        prior_total_lamports: String,
                                         activation_epoch: String,
                                         deactivation_epoch: String,
                                         earned_epochs: String,
@@ -3177,8 +3167,8 @@ fn main() {
                                             delegated_stake: format_or_na(
                                                 detail.map(|d| d.total_stake),
                                             ),
-                                            rent_exempt_reserve: format_or_na(
-                                                detail.map(|d| d.rent_exempt_reserve),
+                                            prior_total_lamports: format_or_na(
+                                                detail.map(|d| d.prior_total_lamports),
                                             ),
                                             activation_epoch: format_or_na(detail.map(|d| {
                                                 if d.activation_epoch < Epoch::MAX {

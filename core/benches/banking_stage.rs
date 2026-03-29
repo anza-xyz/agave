@@ -16,24 +16,24 @@ use {
 extern crate test;
 
 use {
-    crossbeam_channel::{unbounded, Receiver},
+    crossbeam_channel::{Receiver, unbounded},
     log::*,
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     rayon::prelude::*,
     solana_core::{banking_stage::BankingStage, banking_trace::BankingTracer},
-    solana_entry::entry::{next_hash, Entry},
+    solana_entry::entry::{Entry, next_hash},
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore::Blockstore,
         blockstore_processor::process_entries_for_tests,
-        genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        genesis_utils::{GenesisConfigInfo, create_genesis_config},
         get_tmp_ledger_path_auto_delete,
     },
     solana_message::Message,
     solana_perf::packet::to_packet_batches,
-    solana_poh::poh_recorder::{create_test_recorder, WorkingBankEntry},
+    solana_poh::poh_recorder::{WorkingBankEntry, create_test_recorder},
     solana_pubkey as pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signature::Signature,
@@ -41,10 +41,10 @@ use {
     solana_system_interface::instruction as system_instruction,
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
-    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     std::{
         iter::repeat_with,
-        sync::{atomic::Ordering, Arc},
+        sync::{Arc, atomic::Ordering},
         time::{Duration, Instant},
     },
     test::Bencher,
@@ -172,9 +172,7 @@ fn bench_banking(
     let bank = bank_forks.read().unwrap().get(0).unwrap();
 
     // set cost tracker limits to MAX so it will not filter out TXs
-    bank.write_cost_tracker()
-        .unwrap()
-        .set_limits(u64::MAX, u64::MAX, u64::MAX);
+    bank.write_cost_tracker().unwrap().set_limits_max();
 
     debug!("threads: {num_threads} txs: {txes}");
 
@@ -236,7 +234,7 @@ fn bench_banking(
     let (s, _r) = unbounded();
     let _banking_stage = BankingStage::new_num_threads(
         block_production_method,
-        poh_recorder.clone(),
+        poh_recorder,
         transaction_recorder,
         non_vote_receiver,
         tpu_vote_receiver,

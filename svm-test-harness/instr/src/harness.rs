@@ -2,63 +2,29 @@
 
 use {
     crate::fixture::{instr_context::InstrContext, instr_effects::InstrEffects},
-    agave_syscalls::create_program_runtime_environment_v1,
-    solana_account::{AccountSharedData, WritableAccount},
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_instruction::Instruction,
     solana_instruction_error::InstructionError,
-    solana_message::{LegacyMessage, Message, SanitizedMessage},
     solana_program_runtime::{
-        invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+        invoke_context::{EnvironmentConfig, InvokeContext, mock_compile_message},
+        loaded_programs::{
+            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
+        },
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,
     solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
-    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMStaticMessage},
+    solana_svm_transaction::svm_message::SVMStaticMessage,
+    solana_syscalls::create_program_runtime_environment,
     solana_transaction_context::transaction::TransactionContext,
-    std::{collections::HashSet, rc::Rc, sync::Arc},
+    std::rc::Rc,
 };
 
 /// Default callback with no precompile support.
 struct DefaultCallback;
 
 impl InvokeContextCallback for DefaultCallback {}
-
-fn compile_message(
-    instruction: &Instruction,
-    accounts: &[(Pubkey, solana_account::Account)],
-    program_id: &Pubkey,
-    loader_key: &Pubkey,
-) -> Option<(SanitizedMessage, Vec<(Pubkey, AccountSharedData)>)> {
-    let message = Message::new(std::slice::from_ref(instruction), None);
-    let transaction_accounts: Vec<_> = message
-        .account_keys
-        .iter()
-        .map(|key| {
-            let account = accounts
-                .iter()
-                .find(|(k, _)| k == key)
-                .map(|(_, a)| AccountSharedData::from(a.clone()))
-                .unwrap_or_else(|| {
-                    if key == program_id {
-                        let mut account = AccountSharedData::new(0, 0, loader_key);
-                        account.set_executable(true);
-                        account
-                    } else {
-                        AccountSharedData::default()
-                    }
-                });
-            (*key, account)
-        })
-        .collect();
-
-    let sanitized_message = SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()));
-
-    Some((sanitized_message, transaction_accounts))
-}
 
 /// Execute a single instruction against the Solana VM.
 ///
@@ -98,7 +64,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     let loader_key = program_cache.find(program_id)?.account_owner();
 
     let (sanitized_message, transaction_accounts) =
-        compile_message(&input.instruction, &input.accounts, program_id, &loader_key)?;
+        mock_compile_message(&input.instruction, &input.accounts, program_id, &loader_key)?;
 
     let mut transaction_context = TransactionContext::new(
         transaction_accounts,
@@ -108,21 +74,16 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         sanitized_message.num_instructions(),
     );
 
-    let environments = ProgramRuntimeEnvironments {
-        program_runtime_v1: Arc::new(
-            create_program_runtime_environment_v1(
-                &input.feature_set,
-                &compute_budget.to_budget(),
-                false, /* deployment */
-                false, /* debugging_features */
-            )
-            .unwrap(),
-        ),
-        ..ProgramRuntimeEnvironments::default()
-    };
+    let program_runtime_environment = create_program_runtime_environment(
+        &input.feature_set,
+        &compute_budget.to_budget(),
+        false, /* deployment */
+        false, /* debugging_features */
+    )
+    .unwrap();
 
     let result = {
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         let (blockhash, blockhash_lamports_per_signature) = sysvar_cache
             .get_recent_blockhashes()
             .ok()
@@ -130,16 +91,20 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
             .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
             .unwrap_or_default();
 
+        let program_runtime_environments = ProgramRuntimeEnvironments::new(
+            ProgramRuntimeEnvironment::clone(&program_runtime_environment),
+            program_runtime_environment,
+        );
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             program_cache,
             EnvironmentConfig::new(
                 blockhash,
                 blockhash_lamports_per_signature,
+                false,
                 callback,
                 &feature_set,
-                &environments,
-                &environments,
+                &program_runtime_environments,
                 sysvar_cache,
             ),
             Some(log_collector.clone()),
@@ -147,17 +112,8 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
             compute_budget.to_cost(),
         );
 
-        let compiled_ix = sanitized_message.instructions().first()?;
-        let svm_instruction = SVMInstruction::from(compiled_ix);
-        let program_account_index = compiled_ix.program_id_index as u16;
-
         invoke_context
-            .prepare_next_top_level_instruction(
-                &sanitized_message,
-                &svm_instruction,
-                program_account_index,
-                svm_instruction.data,
-            )
+            .prepare_top_level_instructions(&sanitized_message)
             .ok()?;
 
         if invoke_context.is_precompile(&input.instruction.program_id) {
@@ -213,41 +169,13 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_account::Account, solana_instruction::AccountMeta, solana_pubkey::Pubkey,
-        solana_svm_feature_set::SVMFeatureSet, solana_sysvar_id::SysvarId,
+        super::*,
+        solana_account::Account,
+        solana_instruction::{AccountMeta, Instruction},
+        solana_pubkey::Pubkey,
+        solana_svm_feature_set::SVMFeatureSet,
+        solana_sysvar_id::SysvarId,
     };
-
-    #[test]
-    fn test_compile_message() {
-        let program_id = Pubkey::new_from_array([1u8; 32]);
-        let writable = Pubkey::new_from_array([2u8; 32]);
-        let loader_key = Pubkey::new_from_array([3u8; 32]);
-
-        let instruction = Instruction {
-            program_id,
-            accounts: vec![AccountMeta::new(writable, false)],
-            data: vec![1, 2, 3],
-        };
-
-        let accounts = vec![(
-            writable,
-            Account {
-                lamports: 100,
-                ..Account::default()
-            },
-        )];
-
-        let (message, tx_accounts) =
-            compile_message(&instruction, &accounts, &program_id, &loader_key).unwrap();
-
-        assert_eq!(message.instructions().len(), 1);
-        assert_eq!(tx_accounts.len(), 2);
-        assert_eq!(tx_accounts[0].0, writable);
-        assert_eq!(tx_accounts[1].0, program_id);
-
-        // Verify the writable account is NOT promoted to signer.
-        assert!(!message.is_signer(0));
-    }
 
     #[test]
     fn test_system_program_exec() {
@@ -352,7 +280,7 @@ mod tests {
 
         // Set up the Compute Budget.
         let compute_budget = {
-            let mut budget = ComputeBudget::new_with_defaults(false, false);
+            let mut budget = ComputeBudget::new_with_defaults(false);
             budget.compute_unit_limit = cu_avail;
             budget
         };
@@ -364,18 +292,13 @@ mod tests {
         // Create Program Cache
         let mut program_cache = crate::program_cache::new_with_builtins(slot);
 
-        let environments = ProgramRuntimeEnvironments {
-            program_runtime_v1: Arc::new(
-                create_program_runtime_environment_v1(
-                    &context.feature_set,
-                    &compute_budget.to_budget(),
-                    false, /* deployment */
-                    false, /* debugging_features */
-                )
-                .unwrap(),
-            ),
-            ..ProgramRuntimeEnvironments::default()
-        };
+        let environments = create_program_runtime_environment(
+            &context.feature_set,
+            &compute_budget.to_budget(),
+            false, /* deployment */
+            false, /* debugging_features */
+        )
+        .unwrap();
 
         crate::program_cache::fill_from_accounts(
             &mut program_cache,

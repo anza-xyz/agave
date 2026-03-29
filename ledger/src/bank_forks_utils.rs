@@ -22,7 +22,7 @@ use {
     solana_runtime::{bank_forks::BankForks, snapshot_bank_utils, snapshot_utils},
     std::{
         path::PathBuf,
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicBool},
     },
     thiserror::Error,
 };
@@ -60,33 +60,17 @@ pub enum BankForksUtilsError {
 
 pub type BankAndHashes = (Arc<RwLock<BankForks>>, Option<StartingSnapshotHashes>);
 
-/// Load the banks via genesis or a snapshot
-///
-/// If a snapshot config is given, and a snapshot is found, it will be loaded. Otherwise, load
-/// from genesis.
-#[allow(clippy::too_many_arguments)]
-pub fn load_bank_forks(
+/// Load the banks via genesis
+pub fn load_bank_forks_from_genesis(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
-    snapshot_config: &SnapshotConfig,
     process_options: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> Result<BankAndHashes, BankForksUtilsError> {
-    if let Some(result) = bank_forks_from_snapshot(
-        genesis_config,
-        &account_paths,
-        snapshot_config,
-        process_options,
-        accounts_update_notifier.clone(),
-        exit.clone(),
-    )? {
-        return Ok(result);
-    }
-
     info!("Processing ledger from genesis");
     let bank_forks = blockstore_processor::process_blockstore_for_bank_0(
         genesis_config,
@@ -139,7 +123,8 @@ fn get_snapshots_to_load(
     ))
 }
 
-fn bank_forks_from_snapshot(
+/// Load the banks via snapshot if snapshots are available, otherwise return `Ok(None)`
+pub fn try_load_bank_forks_from_snapshot(
     genesis_config: &GenesisConfig,
     account_paths: &[PathBuf],
     snapshot_config: &SnapshotConfig,
@@ -212,6 +197,7 @@ fn bank_forks_from_snapshot(
             genesis_config,
             &process_options.runtime_config,
             process_options.debug_keys.clone(),
+            None, // leader_for_tests
             process_options.limit_load_slot_count_from_snapshot,
             process_options.verify_index,
             process_options.accounts_db_config.clone(),
@@ -237,6 +223,7 @@ fn bank_forks_from_snapshot(
             genesis_config,
             &process_options.runtime_config,
             process_options.debug_keys.clone(),
+            None, // leader_for_tests
             process_options.limit_load_slot_count_from_snapshot,
             process_options.accounts_db_skip_shrink,
             process_options.accounts_db_force_initial_clean,
@@ -266,12 +253,13 @@ fn bank_forks_from_snapshot(
             .accounts_db
             .set_latest_full_snapshot_slot(full_snapshot_archive_info.slot());
     } else {
-        assert!(bank
-            .rc
-            .accounts
-            .accounts_db
-            .latest_full_snapshot_slot()
-            .is_none());
+        assert!(
+            bank.rc
+                .accounts
+                .accounts_db
+                .latest_full_snapshot_slot()
+                .is_none()
+        );
     }
 
     let full_snapshot_hash = FullSnapshotHash((

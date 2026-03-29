@@ -728,11 +728,7 @@ mod tests {
                             // reverse_slots = 1 means add slots in reverse order (max to min). This causes us to add second and later slots to excess.
                             for reverse_slots in [false, true].iter().cloned() {
                                 let maybe_reverse = |slot| {
-                                    if reverse_slots {
-                                        max - slot
-                                    } else {
-                                        slot
-                                    }
+                                    if reverse_slots { max - slot } else { slot }
                                 };
                                 if recreate {
                                     let recreated = setup_empty(width);

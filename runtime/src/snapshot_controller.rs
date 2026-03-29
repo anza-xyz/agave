@@ -5,14 +5,14 @@ use {
         },
         bank::{Bank, SquashTiming},
     },
-    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
+    agave_snapshots::{SnapshotInterval, snapshot_config::SnapshotConfig},
     log::*,
     solana_clock::Slot,
     solana_measure::measure::Measure,
     std::{
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         time::Instant,
     },
@@ -158,6 +158,14 @@ impl SnapshotController {
             }
         }
     }
+
+    // Returns true if either snapshot interval is enabled, indicating that the controller will
+    // generate snapshots at some slot intervals
+    pub fn is_generating_snapshots(&self) -> bool {
+        let intervals = self.snapshot_generation_intervals();
+        !(intervals.full_snapshot_interval == SnapshotInterval::Disabled
+            && intervals.incremental_snapshot_interval == SnapshotInterval::Disabled)
+    }
 }
 
 #[cfg(test)]
@@ -165,22 +173,26 @@ mod tests {
     use {
         super::*, crate::accounts_background_service::SnapshotRequestKind,
         agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::unbounded,
-        solana_genesis_config::create_genesis_config, solana_pubkey::Pubkey, std::sync::Arc,
-        test_case::test_case,
+        solana_genesis_config::create_genesis_config, solana_leader_schedule::SlotLeader,
+        std::sync::Arc, test_case::test_case,
     };
 
     fn create_banks(num_banks: u64) -> Vec<Arc<Bank>> {
         let mut banks = vec![];
         let (genesis_config, _) = create_genesis_config(1_000_000);
-        let mut parent_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let mut parent_bank = bank0;
         banks.push(parent_bank.clone());
 
         for _ in 1..=num_banks {
-            let new_bank = Arc::new(Bank::new_from_parent(
+            let slot = parent_bank.slot() + 1;
+            let new_bank = Bank::new_from_parent_with_bank_forks(
+                bank_forks.as_ref(),
                 parent_bank.clone(),
-                &Pubkey::default(),
-                parent_bank.slot() + 1,
-            ));
+                SlotLeader::default(),
+                slot,
+            );
             parent_bank = new_bank;
             banks.push(parent_bank.clone());
         }
@@ -255,6 +267,30 @@ mod tests {
                 "Expected no snapshot request to be sent"
             );
         }
+    }
+
+    #[test_case(SnapshotInterval::Disabled, SnapshotInterval::Disabled, false;
+        "both disabled")]
+    #[test_case(SnapshotInterval::Slots(10.try_into().unwrap()), SnapshotInterval::Disabled, true;
+        "full only")]
+    #[test_case(SnapshotInterval::Disabled, SnapshotInterval::Slots(5.try_into().unwrap()), true;
+        "incremental only")]
+    #[test_case(SnapshotInterval::Slots(10.try_into().unwrap()), SnapshotInterval::Slots(5.try_into().unwrap()), true;
+        "both enabled")]
+    fn test_is_generating_snapshots(
+        full_snapshot_archive_interval: SnapshotInterval,
+        incremental_snapshot_archive_interval: SnapshotInterval,
+        expected: bool,
+    ) {
+        let snapshot_config = SnapshotConfig {
+            full_snapshot_archive_interval,
+            incremental_snapshot_archive_interval,
+            ..Default::default()
+        };
+        let (snapshot_request_sender, _snapshot_request_receiver) = unbounded();
+        let snapshot_controller =
+            SnapshotController::new(snapshot_request_sender, snapshot_config, 0);
+        assert_eq!(snapshot_controller.is_generating_snapshots(), expected);
     }
 
     #[test_case(SnapshotInterval::Disabled, SnapshotInterval::Disabled,

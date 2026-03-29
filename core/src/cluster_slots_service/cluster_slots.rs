@@ -18,8 +18,8 @@ use {
         hash::RandomState,
         ops::Range,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
     },
 };

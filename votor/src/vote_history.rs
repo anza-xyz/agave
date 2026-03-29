@@ -8,7 +8,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
-    std::collections::{hash_map::Entry, HashMap, HashSet},
+    std::collections::{HashMap, HashSet, hash_map::Entry},
     thiserror::Error,
 };
 

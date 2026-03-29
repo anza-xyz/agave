@@ -7,6 +7,7 @@ use {
         result::{Result, TransactionViewError},
         signature_frame::SignatureFrame,
         static_account_keys_frame::StaticAccountKeysFrame,
+        transaction_config_frame::TransactionConfigFrame,
         transaction_version::TransactionVersion,
     },
     solana_hash::Hash,
@@ -28,6 +29,8 @@ pub(crate) struct TransactionFrame {
     instructions: InstructionsFrame,
     /// Address table lookup framing data.
     address_table_lookup: AddressTableLookupFrame,
+    /// Transaction config framing data
+    transaction_config_frame: TransactionConfigFrame,
 }
 
 impl TransactionFrame {
@@ -68,6 +71,7 @@ impl TransactionFrame {
             recent_blockhash_offset,
             instructions,
             address_table_lookup,
+            transaction_config_frame: TransactionConfigFrame::not_applicable(),
         })
     }
 
@@ -135,6 +139,12 @@ impl TransactionFrame {
     #[inline]
     pub(crate) fn message_offset(&self) -> u16 {
         self.message_header.offset
+    }
+
+    /// Return transaction_config_frame
+    #[inline]
+    pub(crate) fn transaction_config_frame(&self) -> &TransactionConfigFrame {
+        &self.transaction_config_frame
     }
 }
 

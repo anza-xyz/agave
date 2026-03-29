@@ -2,7 +2,7 @@
 
 //! File i/o helper functions.
 use {
-    crate::{io_setup::IoSetupState, FileInfo, FileSize},
+    crate::{FileInfo, FileSize, io_setup::IoSetupState},
     std::{
         fs::{self, File, OpenOptions},
         io::{self, BufWriter, Seek, Write},
@@ -152,11 +152,12 @@ pub fn file_creator<'a>(
 ) -> io::Result<Box<dyn FileCreator + 'a>> {
     #[cfg(target_os = "linux")]
     if agave_io_uring::io_uring_supported() {
-        use crate::io_uring::file_creator::{IoUringFileCreatorBuilder, DEFAULT_WRITE_SIZE};
+        use crate::io_uring::file_creator::{DEFAULT_WRITE_SIZE, IoUringFileCreatorBuilder};
 
         if buf_size >= DEFAULT_WRITE_SIZE as usize {
             let io_uring_creator = IoUringFileCreatorBuilder::new()
                 .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
+                .write_with_direct_io(io_setup.use_direct_io)
                 .shared_sqpoll(io_setup.shared_sqpoll_fd())
                 .build(buf_size, file_complete)?;
             return Ok(Box::new(io_uring_creator));

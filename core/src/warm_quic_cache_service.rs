@@ -2,7 +2,7 @@
 // by the time we need it.
 
 use {
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
@@ -11,10 +11,10 @@ use {
     std::{
         net::SocketAddr,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
-        thread::{self, sleep, Builder, JoinHandle},
+        thread::{self, Builder, JoinHandle, sleep},
         time::Duration,
     },
 };

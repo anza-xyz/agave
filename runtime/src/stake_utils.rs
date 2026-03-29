@@ -1,5 +1,5 @@
 use {
-    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount},
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_clock::Epoch,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
@@ -17,8 +17,8 @@ use {
 /// NOTE: This is also used to calculate the minimum balance of a delegated stake account,
 /// which is the rent exempt reserve _plus_ the minimum stake delegation.
 #[inline(always)]
-pub fn get_minimum_delegation(is_stake_raise_minimum_delegation_to_1_sol_active: bool) -> u64 {
-    if is_stake_raise_minimum_delegation_to_1_sol_active {
+pub fn get_minimum_delegation(upgrade_bpf_stake_program_to_v5_is_active: bool) -> u64 {
+    if upgrade_bpf_stake_program_to_v5_is_active {
         const MINIMUM_DELEGATION_SOL: u64 = 1;
         MINIMUM_DELEGATION_SOL * LAMPORTS_PER_SOL
     } else {

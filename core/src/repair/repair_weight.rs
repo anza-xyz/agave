@@ -208,6 +208,7 @@ impl RepairWeight {
         max_new_shreds: usize,
         max_unknown_last_index_repairs: usize,
         max_closest_completion_repairs: usize,
+        ticks_per_second: u64,
         repair_metrics: &mut RepairMetrics,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
@@ -239,6 +240,7 @@ impl RepairWeight {
             &mut slot_meta_cache,
             &mut best_shreds_repairs,
             max_new_shreds,
+            ticks_per_second,
             outstanding_repairs,
         );
         let num_best_shreds_repairs = best_shreds_repairs.len();
@@ -275,6 +277,7 @@ impl RepairWeight {
             &mut slot_meta_cache,
             &mut processed_slots,
             max_closest_completion_repairs,
+            ticks_per_second,
             outstanding_repairs,
         );
         let num_closest_completion_repairs = closest_completion_repairs.len();
@@ -502,6 +505,7 @@ impl RepairWeight {
         slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
         repairs: &mut Vec<ShredRepairType>,
         max_new_shreds: usize,
+        ticks_per_second: u64,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) {
         let root_tree = self.trees.get(&self.root).expect("Root tree must exist");
@@ -511,6 +515,7 @@ impl RepairWeight {
             slot_meta_cache,
             repairs,
             max_new_shreds,
+            ticks_per_second,
             outstanding_repairs,
         );
     }
@@ -628,6 +633,7 @@ impl RepairWeight {
         slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
         processed_slots: &mut HashSet<Slot>,
         max_new_repairs: usize,
+        ticks_per_second: u64,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> (Vec<ShredRepairType>, /* processed slots */ usize) {
         let mut repairs = Vec::default();
@@ -643,6 +649,7 @@ impl RepairWeight {
                 slot_meta_cache,
                 processed_slots,
                 max_new_repairs - repairs.len(),
+                ticks_per_second,
                 outstanding_repairs,
             );
             repairs.extend(new_repairs);
@@ -728,10 +735,11 @@ impl RepairWeight {
                             &orphan_tree,
                             TreeRoot::PrunedRoot(*next_earliest_ancestor),
                         );
-                        assert!(self
-                            .pruned_trees
-                            .insert(*next_earliest_ancestor, orphan_tree)
-                            .is_none());
+                        assert!(
+                            self.pruned_trees
+                                .insert(*next_earliest_ancestor, orphan_tree)
+                                .is_none()
+                        );
                         return None;
                     }
                 }
@@ -989,7 +997,7 @@ mod test {
         solana_accounts_db::contains::Contains,
         solana_hash::Hash,
         solana_ledger::{
-            blockstore::{make_chaining_slot_entries, Blockstore},
+            blockstore::{Blockstore, make_chaining_slot_entries},
             get_tmp_ledger_path,
         },
         solana_runtime::{bank::Bank, bank_utils},
@@ -1012,11 +1020,13 @@ mod test {
         // Try to add a vote for slot < root and a slot that is unrooted
         for old_slot in &[2, 4] {
             if *old_slot > root {
-                assert!(repair_weight
-                    .slot_to_tree
-                    .get(old_slot)
-                    .unwrap()
-                    .is_pruned());
+                assert!(
+                    repair_weight
+                        .slot_to_tree
+                        .get(old_slot)
+                        .unwrap()
+                        .is_pruned()
+                );
             } else {
                 assert!(!repair_weight.slot_to_tree.contains(old_slot));
             }
@@ -1029,11 +1039,13 @@ mod test {
             );
             if *old_slot > root {
                 assert!(repair_weight.pruned_trees.contains_key(old_slot));
-                assert!(repair_weight
-                    .slot_to_tree
-                    .get(old_slot)
-                    .unwrap()
-                    .is_pruned());
+                assert!(
+                    repair_weight
+                        .slot_to_tree
+                        .get(old_slot)
+                        .unwrap()
+                        .is_pruned()
+                );
             } else {
                 assert!(!repair_weight.trees.contains_key(old_slot));
                 assert!(!repair_weight.slot_to_tree.contains_key(old_slot));
@@ -1170,12 +1182,14 @@ mod test {
                 .ancestors((1, Hash::default())),
             vec![(0, Hash::default())]
         );
-        assert!(repair_weight
-            .trees
-            .get(&8)
-            .unwrap()
-            .ancestors((8, Hash::default()))
-            .is_empty());
+        assert!(
+            repair_weight
+                .trees
+                .get(&8)
+                .unwrap()
+                .ancestors((8, Hash::default()))
+                .is_empty()
+        );
 
         let votes = vec![(1, vote_pubkeys.clone()), (10, vote_pubkeys.clone())];
         let mut repair_weight = RepairWeight::new(0);
@@ -1801,11 +1815,13 @@ mod test {
             assert!(!repair_weight.trees.contains_key(&purged_slot));
         }
         for pruned_slot in &[4, 8, 10] {
-            assert!(repair_weight
-                .slot_to_tree
-                .get(pruned_slot)
-                .unwrap()
-                .is_pruned());
+            assert!(
+                repair_weight
+                    .slot_to_tree
+                    .get(pruned_slot)
+                    .unwrap()
+                    .is_pruned()
+            );
         }
         assert_eq!(
             repair_weight.pruned_trees.keys().copied().collect_vec(),
@@ -2050,11 +2066,13 @@ mod test {
             // Check
             assert_eq!(repair_weight.pruned_trees.len(), 1);
             if *old_parent > root {
-                assert!(repair_weight
-                    .slot_to_tree
-                    .get(old_parent)
-                    .unwrap()
-                    .is_pruned());
+                assert!(
+                    repair_weight
+                        .slot_to_tree
+                        .get(old_parent)
+                        .unwrap()
+                        .is_pruned()
+                );
                 assert_eq!(
                     repair_weight
                         .pruned_trees
@@ -2171,11 +2189,13 @@ mod test {
                 bank.epoch_schedule(),
             );
 
-            assert!(repair_weight
-                .slot_to_tree
-                .get(&new_vote_slot)
-                .unwrap()
-                .is_pruned());
+            assert!(
+                repair_weight
+                    .slot_to_tree
+                    .get(&new_vote_slot)
+                    .unwrap()
+                    .is_pruned()
+            );
             if *old_parent > root {
                 // Adds to new tree
                 assert_eq!(repair_weight.pruned_trees.len(), 1);
@@ -2478,18 +2498,21 @@ mod test {
         repair_weight.set_root(4);
         assert_eq!(repair_weight.trees.len(), 1);
         assert_eq!(repair_weight.pruned_trees.len(), 3);
-        assert!(repair_weight
-            .pruned_trees
-            .iter()
-            .all(
-                |(root, pruned_tree)| pruned_tree.stake_voted_subtree(&(*root, Hash::default()))
-                    == Some(stake)
-            ));
+        assert!(
+            repair_weight
+                .pruned_trees
+                .iter()
+                .all(|(root, pruned_tree)| pruned_tree
+                    .stake_voted_subtree(&(*root, Hash::default()))
+                    == Some(stake))
+        );
 
         // No fork has DUPLICATE_THRESHOLD, should not be any popular forks
-        assert!(repair_weight
-            .get_popular_pruned_forks(epoch_stakes, epoch_schedule)
-            .is_empty());
+        assert!(
+            repair_weight
+                .get_popular_pruned_forks(epoch_stakes, epoch_schedule)
+                .is_empty()
+        );
 
         // 500 stake, still less than DUPLICATE_THRESHOLD, should not be any popular forks
         let five_votes = vote_pubkeys.iter().copied().take(5).collect_vec();
@@ -2500,9 +2523,11 @@ mod test {
             bank.epoch_stakes_map(),
             bank.epoch_schedule(),
         );
-        assert!(repair_weight
-            .get_popular_pruned_forks(epoch_stakes, epoch_schedule)
-            .is_empty());
+        assert!(
+            repair_weight
+                .get_popular_pruned_forks(epoch_stakes, epoch_schedule)
+                .is_empty()
+        );
 
         // 600 stake, since we voted for leaf, leaf should be returned
         let votes = vec![(11, vec![vote_pubkeys[5]]), (6, vec![vote_pubkeys[6]])];
@@ -2655,18 +2680,21 @@ mod test {
         repair_weight.set_root(4);
         assert_eq!(repair_weight.trees.len(), 1);
         assert_eq!(repair_weight.pruned_trees.len(), 3);
-        assert!(repair_weight
-            .pruned_trees
-            .iter()
-            .all(
-                |(root, pruned_tree)| pruned_tree.stake_voted_subtree(&(*root, Hash::default()))
-                    == Some(stake)
-            ));
+        assert!(
+            repair_weight
+                .pruned_trees
+                .iter()
+                .all(|(root, pruned_tree)| pruned_tree
+                    .stake_voted_subtree(&(*root, Hash::default()))
+                    == Some(stake))
+        );
 
         // No fork hash `DUPLICATE_THRESHOLD`, should not be any popular forks
-        assert!(repair_weight
-            .get_popular_pruned_forks(&epoch_stakes, &epoch_schedule)
-            .is_empty());
+        assert!(
+            repair_weight
+                .get_popular_pruned_forks(&epoch_stakes, &epoch_schedule)
+                .is_empty()
+        );
 
         // 400 stake, For the 6 tree it will be less than `DUPLICATE_THRESHOLD`, however 11
         // has epoch modifications where at some point 400 stake is enough. For 22, although it

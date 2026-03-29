@@ -14,13 +14,13 @@ use {
         heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
         latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
         progress_map::{LockoutIntervals, ProgressMap},
-        tower1_14_11::Tower1_14_11,
-        tower1_7_14::Tower1_7_14,
         tower_storage::{SavedTower, SavedTowerVersions, TowerStorage},
         tower_vote_state::TowerVoteState,
+        tower1_7_14::Tower1_7_14,
+        tower1_14_11::Tower1_14_11,
     },
     crate::{consensus::progress_map::LockoutInterval, replay_stage::DUPLICATE_THRESHOLD},
-    agave_votor_messages::migration::GENESIS_VOTE_THRESHOLD,
+    agave_votor_messages::{fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD},
     chrono::prelude::*,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -42,6 +42,7 @@ use {
     std::{
         cmp::Ordering,
         collections::{HashMap, HashSet},
+        num::NonZeroU64,
         ops::Deref,
     },
     thiserror::Error,
@@ -542,7 +543,8 @@ impl Tower {
 
         debug_assert!(total_stake > 0);
         let parent_is_super_oc = bank_slot == parent_slot + 1
-            && super_oc_stake as f64 / total_stake as f64 > GENESIS_VOTE_THRESHOLD;
+            && Fraction::new(super_oc_stake, NonZeroU64::new(total_stake).unwrap())
+                > GENESIS_VOTE_THRESHOLD;
 
         // TODO: populate_ancestor_voted_stakes only adds zeros. Comment why
         // that is necessary (if so).
@@ -678,37 +680,18 @@ impl Tower {
             // here that this is our leader bank.
             Hash::default()
         });
-        self.record_bank_vote_and_update_lockouts(
-            bank.slot(),
-            bank.hash(),
-            bank.feature_set
-                .is_active(&agave_feature_set::enable_tower_sync_ix::id()),
-            block_id,
-        )
+        self.record_bank_vote_and_update_lockouts(bank.slot(), bank.hash(), block_id)
     }
 
     /// If we've recently updated the vote state by applying a new vote
     /// or syncing from a bank, generate the proper last_vote.
-    pub(crate) fn update_last_vote_from_vote_state(
-        &mut self,
-        vote_hash: Hash,
-        enable_tower_sync_ix: bool,
-        block_id: Hash,
-    ) {
-        let mut new_vote = if enable_tower_sync_ix {
-            VoteTransaction::from(TowerSync::new(
-                self.vote_state.votes.clone(),
-                self.vote_state.root_slot,
-                vote_hash,
-                block_id,
-            ))
-        } else {
-            VoteTransaction::from(VoteStateUpdate::new(
-                self.vote_state.votes.clone(),
-                self.vote_state.root_slot,
-                vote_hash,
-            ))
-        };
+    pub(crate) fn update_last_vote_from_vote_state(&mut self, vote_hash: Hash, block_id: Hash) {
+        let mut new_vote = VoteTransaction::from(TowerSync::new(
+            self.vote_state.votes.clone(),
+            self.vote_state.root_slot,
+            vote_hash,
+            block_id,
+        ));
 
         new_vote.set_timestamp(self.maybe_timestamp(self.last_voted_slot().unwrap_or_default()));
         self.last_vote = new_vote;
@@ -718,7 +701,6 @@ impl Tower {
         &mut self,
         vote_slot: Slot,
         vote_hash: Hash,
-        enable_tower_sync_ix: bool,
         block_id: Hash,
     ) -> Option<Slot> {
         if let Some(last_voted_slot) = self.vote_state.last_voted_slot() {
@@ -736,7 +718,7 @@ impl Tower {
         let old_root = self.root();
 
         self.vote_state.process_next_vote_slot(vote_slot);
-        self.update_last_vote_from_vote_state(vote_hash, enable_tower_sync_ix, block_id);
+        self.update_last_vote_from_vote_state(vote_hash, block_id);
 
         let new_root = self.root();
 
@@ -754,7 +736,7 @@ impl Tower {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn record_vote(&mut self, slot: Slot, hash: Hash) -> Option<Slot> {
-        self.record_bank_vote_and_update_lockouts(slot, hash, true, Hash::default())
+        self.record_bank_vote_and_update_lockouts(slot, hash, Hash::default())
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -1847,11 +1829,11 @@ pub mod test {
         solana_slot_history::SlotHistory,
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{
-            process_slot_vote_unchecked, Vote, VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            MAX_LOCKOUT_HISTORY, Vote, VoteStateV4, VoteStateVersions, process_slot_vote_unchecked,
         },
         std::{
             collections::{HashMap, VecDeque},
-            fs::{remove_file, OpenOptions},
+            fs::{OpenOptions, remove_file},
             io::{Read, Seek, SeekFrom, Write},
             path::PathBuf,
             sync::Arc,
@@ -1891,22 +1873,26 @@ pub mod test {
     fn test_to_vote_instruction() {
         let vote = Vote::default();
         let mut decision = SwitchForkDecision::FailedSwitchThreshold(0, 1);
-        assert!(decision
-            .to_vote_instruction(
-                VoteTransaction::from(vote.clone()),
-                &Pubkey::default(),
-                &Pubkey::default()
-            )
-            .is_none());
+        assert!(
+            decision
+                .to_vote_instruction(
+                    VoteTransaction::from(vote.clone()),
+                    &Pubkey::default(),
+                    &Pubkey::default()
+                )
+                .is_none()
+        );
 
         decision = SwitchForkDecision::FailedSwitchDuplicateRollback(0);
-        assert!(decision
-            .to_vote_instruction(
-                VoteTransaction::from(vote.clone()),
-                &Pubkey::default(),
-                &Pubkey::default()
-            )
-            .is_none());
+        assert!(
+            decision
+                .to_vote_instruction(
+                    VoteTransaction::from(vote.clone()),
+                    &Pubkey::default(),
+                    &Pubkey::default()
+                )
+                .is_none()
+        );
 
         decision = SwitchForkDecision::SameFork;
         assert_eq!(
@@ -1956,9 +1942,11 @@ pub mod test {
 
         // Simulate the votes
         for vote in votes {
-            assert!(vote_simulator
-                .simulate_vote(vote, &node_pubkey, &mut tower,)
-                .is_empty());
+            assert!(
+                vote_simulator
+                    .simulate_vote(vote, &node_pubkey, &mut tower,)
+                    .is_empty()
+            );
         }
 
         for i in 1..5 {
@@ -2408,9 +2396,11 @@ pub mod test {
         vote_simulator.fill_bank_forks(forks, &cluster_votes, true);
 
         // Vote on the first minor fork at slot 14, should succeed
-        assert!(vote_simulator
-            .simulate_vote(14, &node_pubkey, &mut tower,)
-            .is_empty());
+        assert!(
+            vote_simulator
+                .simulate_vote(14, &node_pubkey, &mut tower,)
+                .is_empty()
+        );
 
         // The other two validators voted at slots 46, 47, which
         // will only both show up in slot 48, at which point
@@ -2487,9 +2477,11 @@ pub mod test {
         // Simulate the votes.
         for vote in &my_votes {
             // All these votes should be ok
-            assert!(vote_simulator
-                .simulate_vote(*vote, &node_pubkey, &mut tower,)
-                .is_empty());
+            assert!(
+                vote_simulator
+                    .simulate_vote(*vote, &node_pubkey, &mut tower,)
+                    .is_empty()
+            );
         }
 
         info!("local tower: {:#?}", tower.vote_state.votes);
@@ -2630,9 +2622,11 @@ pub mod test {
             stakes.insert(i, 1);
             tower.record_vote(i, Hash::default());
         }
-        assert!(!tower
-            .check_vote_stake_thresholds(MAX_LOCKOUT_HISTORY as u64 + 1, &stakes, 2)
-            .is_empty());
+        assert!(
+            !tower
+                .check_vote_stake_thresholds(MAX_LOCKOUT_HISTORY as u64 + 1, &stakes, 2)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2791,9 +2785,11 @@ pub mod test {
         for slot in 0..VOTE_THRESHOLD_DEPTH {
             tower.record_vote(slot as Slot, Hash::default());
         }
-        assert!(tower
-            .check_vote_stake_thresholds(VOTE_THRESHOLD_DEPTH.try_into().unwrap(), &stakes, 4)
-            .is_empty());
+        assert!(
+            tower
+                .check_vote_stake_thresholds(VOTE_THRESHOLD_DEPTH.try_into().unwrap(), &stakes, 4)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2805,9 +2801,11 @@ pub mod test {
         for slot in 0..VOTE_THRESHOLD_DEPTH {
             tower.record_vote(slot as Slot, Hash::default());
         }
-        assert!(!tower
-            .check_vote_stake_thresholds(VOTE_THRESHOLD_DEPTH.try_into().unwrap(), &stakes, 10)
-            .is_empty());
+        assert!(
+            !tower
+                .check_vote_stake_thresholds(VOTE_THRESHOLD_DEPTH.try_into().unwrap(), &stakes, 10)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2819,9 +2817,11 @@ pub mod test {
         for slot in 0..VOTE_THRESHOLD_DEPTH {
             tower.record_vote(slot as Slot, Hash::default());
         }
-        assert!(!tower
-            .check_vote_stake_thresholds(VOTE_THRESHOLD_DEPTH.try_into().unwrap(), &stakes, 10)
-            .is_empty());
+        assert!(
+            !tower
+                .check_vote_stake_thresholds(VOTE_THRESHOLD_DEPTH.try_into().unwrap(), &stakes, 10)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2916,9 +2916,11 @@ pub mod test {
             &mut LatestValidatorVotesForFrozenBanks::default(),
             &mut vote_slots,
         );
-        assert!(tower
-            .check_vote_stake_thresholds(vote_to_evaluate, &voted_stakes, total_stake)
-            .is_empty());
+        assert!(
+            tower
+                .check_vote_stake_thresholds(vote_to_evaluate, &voted_stakes, total_stake)
+                .is_empty()
+        );
 
         // CASE 2: Now we want to evaluate a vote for slot VOTE_THRESHOLD_DEPTH + 1. This slot
         // will expire the vote in one of the vote accounts, so we should have insufficient
@@ -2939,9 +2941,11 @@ pub mod test {
             &mut LatestValidatorVotesForFrozenBanks::default(),
             &mut vote_slots,
         );
-        assert!(!tower
-            .check_vote_stake_thresholds(vote_to_evaluate, &voted_stakes, total_stake)
-            .is_empty());
+        assert!(
+            !tower
+                .check_vote_stake_thresholds(vote_to_evaluate, &voted_stakes, total_stake)
+                .is_empty()
+        );
     }
 
     fn vote_and_check_recent(num_votes: usize) {

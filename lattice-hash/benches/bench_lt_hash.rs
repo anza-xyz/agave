@@ -1,5 +1,5 @@
 use {
-    criterion::{criterion_group, criterion_main, Criterion},
+    criterion::{Criterion, criterion_group, criterion_main},
     rand::prelude::*,
     rand_chacha::ChaChaRng,
     solana_lattice_hash::lt_hash::LtHash,

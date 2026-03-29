@@ -4,7 +4,7 @@ use {
     rand::{Rng, SeedableRng},
     rand_chacha::ChaChaRng,
     rayon::prelude::*,
-    solana_keypair::{keypair_from_seed, Keypair},
+    solana_keypair::{Keypair, keypair_from_seed},
 };
 
 pub struct GenKeys {

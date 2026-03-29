@@ -1,7 +1,7 @@
 use {
     solana_core::validator::ValidatorConfig,
     solana_validator_exit::Exit,
-    std::sync::{atomic::AtomicBool, Arc, RwLock},
+    std::sync::{Arc, RwLock, atomic::AtomicBool},
 };
 
 pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
@@ -71,14 +71,13 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         enable_scheduler_bindings: config.enable_scheduler_bindings,
         generator_config: config.generator_config.clone(),
         use_snapshot_archives_at_startup: config.use_snapshot_archives_at_startup,
-        wen_restart_proto_path: config.wen_restart_proto_path.clone(),
-        wen_restart_coordinator: config.wen_restart_coordinator,
         unified_scheduler_handler_threads: config.unified_scheduler_handler_threads,
         ip_echo_server_threads: config.ip_echo_server_threads,
         rayon_global_threads: config.rayon_global_threads,
         replay_forks_threads: config.replay_forks_threads,
         replay_transactions_threads: config.replay_transactions_threads,
         tvu_shred_sigverify_threads: config.tvu_shred_sigverify_threads,
+        tvu_bls_sigverify_threads: config.tvu_bls_sigverify_threads,
         delay_leader_block_for_pending_fork: config.delay_leader_block_for_pending_fork,
         voting_service_test_override: config.voting_service_test_override.clone(),
         repair_handler_type: config.repair_handler_type.clone(),

@@ -36,14 +36,6 @@ threads-required = "num-cpus"
 filter = "package(solana-gossip) & test(/^cluster_info::tests::new_with_external_ip_test_random/)"
 threads-required = "num-cpus"
 
-[[profile.default.overrides]]
-filter = "package(solana-cargo-build-sbf)"
-test-group = "build-sbf"
-
-[[profile.ci.overrides]]
-filter = "package(solana-cargo-build-sbf)"
-test-group = "build-sbf"
-
 [[profile.ci.overrides]]
 filter = 'package(solana-local-cluster) & test(/^test_kill_partition_switch_threshold_progress$/)'
 slow-timeout = { period = "60s", terminate-after = 10 }
@@ -61,11 +53,7 @@ filter = 'package(solana-local-cluster) & test(/^test_fork_choice_refresh_old_vo
 slow-timeout = { period = "60s", terminate-after = 5 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-local-cluster) & test(/^test_cluster_partition_1_1_1$/)'
-slow-timeout = { period = "60s", terminate-after = 4 }
-
-[[profile.ci.overrides]]
-filter = 'package(solana-local-cluster) & test(/^test_wait_for_max_stake$/)'
+filter = 'package(solana-local-cluster) & test(/^test_cluster_partition$/)'
 slow-timeout = { period = "60s", terminate-after = 4 }
 
 [[profile.ci.overrides]]
@@ -89,10 +77,6 @@ filter = 'package(solana-local-cluster)'
 slow-timeout = { period = "60s", terminate-after = 2 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-cargo-build-sbf)'
-slow-timeout = { period = "60s", terminate-after = 5 }
-
-[[profile.ci.overrides]]
 filter = 'package(solana-ledger) & test(/^shred::merkle::test::test_merkle_tree_round_trip/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
 
@@ -114,14 +98,6 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 
 [[profile.ci.overrides]]
 filter = 'package(solana-client-test) & test(/^test_send_and_confirm_transactions_in_parallel_with_tpu_client/)'
-slow-timeout = { period = "60s", terminate-after = 3 }
-
-[[profile.ci.overrides]]
-filter = 'package(solana-runtime) & test(/^bank_forks::tests::test_bank_forks_new_rw_arc_memory_leak/)'
-slow-timeout = { period = "60s", terminate-after = 3 }
-
-[[profile.ci.overrides]]
-filter = 'package(solana-runtime) & test(/^bank::tests::test_race_register_tick_freeze/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 [[profile.ci.overrides]]

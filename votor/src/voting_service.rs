@@ -4,7 +4,6 @@ use {
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
     agave_votor_messages::consensus_message::{Certificate, ConsensusMessage},
-    bincode::serialize,
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -24,7 +23,10 @@ use {
 };
 
 const STAKED_VALIDATORS_CACHE_TTL_S: u64 = 5;
-const STAKED_VALIDATORS_CACHE_NUM_EPOCH_CAP: usize = 5;
+/// Target number of epochs to keep in the staked validators cache. Due to lazy-lru eviction
+/// semantics, the cache may hold up to `2 * STAKED_VALIDATORS_CACHE_NUM_EPOCH_TARGET` entries
+/// before evicting down to this target.
+const STAKED_VALIDATORS_CACHE_NUM_EPOCH_TARGET: usize = 3;
 
 #[derive(Debug)]
 pub enum BLSOp {
@@ -136,7 +138,7 @@ impl VotingService {
                 let mut staked_validators_cache = StakedValidatorsCache::new(
                     bank_forks.clone(),
                     Duration::from_secs(STAKED_VALIDATORS_CACHE_TTL_S),
-                    STAKED_VALIDATORS_CACHE_NUM_EPOCH_CAP,
+                    STAKED_VALIDATORS_CACHE_NUM_EPOCH_TARGET,
                     false,
                     alpenglow_port_override,
                 );
@@ -166,7 +168,7 @@ impl VotingService {
         additional_listeners: &[SocketAddr],
         staked_validators_cache: &mut StakedValidatorsCache,
     ) {
-        let buf = match serialize(message) {
+        let buf = match wincode::serialize(message) {
             Ok(buf) => buf,
             Err(err) => {
                 error!("Failed to serialize alpenglow message: {err:?}");
@@ -255,18 +257,18 @@ mod tests {
         solana_bls_signatures::Signature as BLSSignature,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
-        solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
+        solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
             genesis_utils::{
-                create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
+                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
         },
         solana_signer::Signer,
         solana_streamer::{
             nonblocking::swqos::SwQosConfig,
-            quic::{spawn_stake_wighted_qos_server, QuicStreamerConfig, SpawnServerResult},
+            quic::{QuicStreamerConfig, SpawnServerResult, spawn_stake_weighted_qos_server},
             streamer::StakedNodes,
         },
         std::{
@@ -309,7 +311,7 @@ mod tests {
                     "TestAlpenglowConnectionCache",
                     10,
                 )),
-                bank_forks.clone(),
+                bank_forks,
                 Some(VotingServiceOverride {
                     additional_listeners: vec![listener],
                     alpenglow_port_override: AlpenglowPortOverride::default(),
@@ -373,10 +375,10 @@ mod tests {
             endpoints: _,
             thread: quic_server_thread,
             key_updater: _,
-        } = spawn_stake_wighted_qos_server(
+        } = spawn_stake_weighted_qos_server(
             "AlpenglowLocalClusterTest",
             "voting_service_test",
-            [socket],
+            [socket.into()],
             &Keypair::new(),
             sender,
             staked_nodes,

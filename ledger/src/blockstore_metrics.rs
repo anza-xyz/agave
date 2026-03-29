@@ -1,8 +1,8 @@
 use {
     crate::blockstore_options::LedgerColumnOptions,
     rocksdb::{
-        perf::{set_perf_stats, PerfMetric, PerfStatsLevel},
         PerfContext,
+        perf::{PerfMetric, PerfStatsLevel, set_perf_stats},
     },
     solana_metrics::datapoint_info,
     solana_time_utils::timestamp,

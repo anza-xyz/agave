@@ -12,24 +12,24 @@ use {crate::spinner, solana_clock::MAX_HASH_AGE_IN_SECONDS, std::cmp::min};
 use {
     crate::{
         http_sender::HttpSender,
-        mock_sender::{mock_encoded_account, MockSender, MocksMap},
+        mock_sender::{MockSender, MocksMap, mock_encoded_account},
         rpc_client::{
             GetConfirmedSignaturesForAddress2Config, RpcClientConfig, SerializableMessage,
             SerializableTransaction,
         },
         rpc_sender::*,
     },
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     bincode::serialize,
     futures::join,
     log::*,
-    serde_json::{json, Value},
+    serde_json::{Value, json},
     solana_account::Account,
     solana_account_decoder_client_types::{
-        token::{TokenAccountType, UiTokenAccount, UiTokenAmount},
         UiAccount, UiAccountData, UiAccountEncoding,
+        token::{TokenAccountType, UiTokenAccount, UiTokenAmount},
     },
-    solana_clock::{Epoch, Slot, UnixTimestamp, DEFAULT_MS_PER_SLOT},
+    solana_clock::{DEFAULT_MS_PER_SLOT, Epoch, Slot, UnixTimestamp},
     solana_commitment_config::CommitmentConfig,
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
@@ -2273,74 +2273,6 @@ impl RpcClient {
     ) -> ClientResult<RpcVoteAccountStatus> {
         self.send(RpcRequest::GetVoteAccounts, json!([config]))
             .await
-    }
-
-    pub async fn wait_for_max_stake(
-        &self,
-        commitment: CommitmentConfig,
-        max_stake_percent: f32,
-    ) -> ClientResult<()> {
-        self.wait_for_max_stake_below_threshold_with_timeout_helper(
-            commitment,
-            max_stake_percent,
-            None,
-        )
-        .await
-    }
-
-    pub async fn wait_for_max_stake_below_threshold_with_timeout(
-        &self,
-        commitment: CommitmentConfig,
-        max_stake_percent: f32,
-        timeout: Duration,
-    ) -> ClientResult<()> {
-        self.wait_for_max_stake_below_threshold_with_timeout_helper(
-            commitment,
-            max_stake_percent,
-            Some(timeout),
-        )
-        .await
-    }
-
-    async fn wait_for_max_stake_below_threshold_with_timeout_helper(
-        &self,
-        commitment: CommitmentConfig,
-        max_stake_percent: f32,
-        timeout: Option<Duration>,
-    ) -> ClientResult<()> {
-        let mut current_percent;
-        let start = Instant::now();
-        loop {
-            let vote_accounts = self.get_vote_accounts_with_commitment(commitment).await?;
-
-            let mut max = 0;
-            let total_active_stake = vote_accounts
-                .current
-                .iter()
-                .chain(vote_accounts.delinquent.iter())
-                .map(|vote_account| {
-                    max = std::cmp::max(max, vote_account.activated_stake);
-                    vote_account.activated_stake
-                })
-                .sum::<u64>();
-            current_percent = 100f32 * max as f32 / total_active_stake as f32;
-            if current_percent < max_stake_percent {
-                break;
-            } else if let Some(timeout) = timeout {
-                if start.elapsed() > timeout {
-                    return Err(ClientErrorKind::Custom(
-                        "timed out waiting for max stake to drop".to_string(),
-                    )
-                    .into());
-                }
-            }
-
-            info!(
-                "Waiting for stake to drop below {max_stake_percent} current: {current_percent:.1}"
-            );
-            sleep(Duration::from_secs(5)).await;
-        }
-        Ok(())
     }
 
     /// Returns information about all the nodes participating in the cluster.
@@ -4805,7 +4737,7 @@ where
             return Err(ClientErrorKind::Custom(format!(
                 "unsupported encoding: {encoding}. Supported encodings: base58, base64"
             ))
-            .into())
+            .into());
         }
     };
     Ok(encoded)

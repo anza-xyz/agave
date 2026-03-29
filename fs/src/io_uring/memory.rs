@@ -2,7 +2,7 @@ use {
     crate::IoSize,
     agave_io_uring::{Ring, RingOp},
     std::{
-        alloc::{alloc, Layout, LayoutError},
+        alloc::{Layout, LayoutError, alloc},
         io,
         ops::{Deref, DerefMut},
         ptr::{self, NonNull},
@@ -238,6 +238,22 @@ impl IoBufferChunk {
     /// The index of the fixed buffer in the ring. See register_buffers().
     pub fn io_buf_index(&self) -> Option<u16> {
         self.registered_io_buf_index
+    }
+
+    /// Fill the buffer starting at offset 0 from the `reader`. Return number of bytes read.
+    pub fn fill_from_reader(&mut self, mut reader: impl io::Read) -> io::Result<IoSize> {
+        // Safety: caller owns the &mut buffer indicating that it is not used by io-uring op
+        let mut dst = unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.len() as usize) };
+        loop {
+            let len = reader.read(dst)?;
+            if len == dst.len() {
+                return Ok(self.len());
+            }
+            if len == 0 {
+                return Ok(self.len().wrapping_sub(dst.len() as IoSize));
+            }
+            dst = &mut dst[len..];
+        }
     }
 
     /// Register provided buffer as fixed buffer in `io_uring`.

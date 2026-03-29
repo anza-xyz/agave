@@ -226,9 +226,11 @@ mod tests {
         mocks.insert(RpcRequest::GetFeeForMessage, check_fee_response);
         mocks.insert(RpcRequest::GetBalance, account_balance_response.clone());
         let rpc_client = RpcClient::new_mock_with_mocks("".to_string(), mocks);
-        assert!(check_account_for_fee(&rpc_client, &pubkey, &message1)
-            .await
-            .is_err());
+        assert!(
+            check_account_for_fee(&rpc_client, &pubkey, &message1)
+                .await
+                .is_err()
+        );
 
         let check_fee_response = json!(Response {
             context: RpcResponseContext {
@@ -289,9 +291,11 @@ mod tests {
         mocks.insert(RpcRequest::GetBalance, account_balance_response);
         let rpc_client = RpcClient::new_mock_with_mocks("".to_string(), mocks);
 
-        assert!(check_account_for_balance(&rpc_client, &pubkey, 1)
-            .await
-            .unwrap());
+        assert!(
+            check_account_for_balance(&rpc_client, &pubkey, 1)
+                .await
+                .unwrap()
+        );
         assert!(
             check_account_for_balance(&rpc_client, &pubkey, account_balance)
                 .await
@@ -363,10 +367,12 @@ mod tests {
         check_unique_pubkeys((&pubkey0, "foo".to_string()), (&pubkey1, "foo".to_string()))
             .expect("unexpected result");
 
-        assert!(check_unique_pubkeys(
-            (&pubkey0, "foo".to_string()),
-            (&pubkey_clone, "bar".to_string())
-        )
-        .is_err());
+        assert!(
+            check_unique_pubkeys(
+                (&pubkey0, "foo".to_string()),
+                (&pubkey_clone, "bar".to_string())
+            )
+            .is_err()
+        );
     }
 }

@@ -2,21 +2,21 @@
 //! Core types for solana-transaction-status
 use {
     crate::option_serializer::OptionSerializer,
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     core::fmt,
     serde::{
+        Deserialize, Deserializer, Serialize,
         de::{self, Deserialize as DeserializeTrait, Error as DeserializeError},
         ser::{Serialize as SerializeTrait, SerializeTupleVariant},
-        Deserialize, Deserializer, Serialize,
     },
-    serde_json::{from_value, Value},
+    serde_json::{Value, from_value},
     solana_account_decoder_client_types::token::UiTokenAmount,
     solana_commitment_config::CommitmentConfig,
     solana_instruction::error::InstructionError,
     solana_message::{
+        MessageHeader,
         compiled_instruction::CompiledInstruction,
         v0::{LoadedAddresses, MessageAddressTableLookup},
-        MessageHeader,
     },
     solana_reward_info::RewardType,
     solana_signature::Signature,
@@ -131,6 +131,8 @@ pub struct UiParsedMessage {
     pub instructions: Vec<UiInstruction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address_table_lookups: Option<Vec<UiAddressTableLookup>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_config: Option<UiTransactionConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -206,7 +208,7 @@ pub struct Reward {
     pub reward_type: Option<RewardType>,
     pub commission: Option<u8>, // Vote account commission when the reward was credited, only present for voting and staking rewards
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub commission_bps: Option<u16>, // Vote account commission in basis points (SIMD-0232)
+    pub commission_bps: Option<u16>, // Vote account commission in basis points (SIMD-0291)
 }
 
 pub type Rewards = Vec<Reward>;
@@ -226,6 +228,27 @@ impl From<&MessageAddressTableLookup> for UiAddressTableLookup {
             account_key: lookup.account_key.to_string(),
             writable_indexes: lookup.writable_indexes.clone(),
             readonly_indexes: lookup.readonly_indexes.clone(),
+        }
+    }
+}
+
+/// A duplicate representation of a TransactionConfig, in raw format, for pretty JSON serialization.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiTransactionConfig {
+    pub priority_fee: Option<u64>,
+    pub compute_unit_limit: Option<u32>,
+    pub loaded_accounts_data_size_limit: Option<u32>,
+    pub heap_size: Option<u32>,
+}
+
+impl From<&solana_message::v1::TransactionConfig> for UiTransactionConfig {
+    fn from(config: &solana_message::v1::TransactionConfig) -> Self {
+        Self {
+            priority_fee: config.priority_fee,
+            compute_unit_limit: config.compute_unit_limit,
+            loaded_accounts_data_size_limit: config.loaded_accounts_data_size_limit,
+            heap_size: config.heap_size,
         }
     }
 }
@@ -531,6 +554,8 @@ pub struct UiRawMessage {
     pub instructions: Vec<UiCompiledInstruction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address_table_lookups: Option<Vec<UiAddressTableLookup>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_config: Option<UiTransactionConfig>,
 }
 
 /// A duplicate representation of a CompiledInstruction for pretty JSON serialization

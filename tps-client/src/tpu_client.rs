@@ -12,7 +12,7 @@ use {
     solana_rpc_client_api::config::RpcBlockConfig,
     solana_signature::Signature,
     solana_tpu_client::tpu_client::TpuClient,
-    solana_transaction::Transaction,
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionResult as Result,
     solana_transaction_status::UiConfirmedBlock,
 };
@@ -23,12 +23,12 @@ where
     M: ConnectionManager<ConnectionPool = P, NewConnectionConfig = C>,
     C: NewConnectionConfig,
 {
-    fn send_transaction(&self, transaction: Transaction) -> TpsClientResult<Signature> {
+    fn send_transaction(&self, transaction: VersionedTransaction) -> TpsClientResult<Signature> {
         let signature = transaction.signatures[0];
         self.try_send_transaction(&transaction)?;
         Ok(signature)
     }
-    fn send_batch(&self, transactions: Vec<Transaction>) -> TpsClientResult<()> {
+    fn send_batch(&self, transactions: Vec<VersionedTransaction>) -> TpsClientResult<()> {
         self.try_send_transaction_batch(&transactions)?;
         Ok(())
     }

@@ -5,11 +5,11 @@
 
 extern crate compiler_builtins;
 use {
-    solana_program_entrypoint::{custom_heap_default, custom_panic_default, SUCCESS},
-    solana_sbf_rust_mem_dep::{run_mem_tests, MemOps},
+    solana_program_entrypoint::{SUCCESS, custom_heap_default, custom_panic_default},
+    solana_sbf_rust_mem_dep::{MemOps, run_mem_tests},
 };
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     #[derive(Default)]
     struct MemOpSyscalls();
@@ -20,7 +20,9 @@ pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
             }
         }
         unsafe fn memmove(&self, dst: *mut u8, src: *mut u8, n: usize) {
-            compiler_builtins::mem::memmove(dst, src, n);
+            unsafe {
+                compiler_builtins::mem::memmove(dst, src, n);
+            }
         }
         unsafe fn memset(&self, s: &mut [u8], c: u8, n: usize) {
             unsafe {

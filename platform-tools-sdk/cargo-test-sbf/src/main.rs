@@ -1,5 +1,5 @@
 use {
-    clap::{crate_description, crate_name, crate_version, Arg},
+    clap::{Arg, crate_description, crate_name, crate_version},
     itertools::Itertools,
     log::*,
     regex::Regex,
@@ -7,9 +7,9 @@ use {
         env,
         ffi::OsStr,
         fs::File,
-        io::{prelude::*, BufWriter},
+        io::{BufWriter, prelude::*},
         path::{Path, PathBuf},
-        process::{exit, Command},
+        process::{Command, exit},
     },
 };
 
@@ -455,9 +455,6 @@ fn main() {
         ..Config::default()
     };
 
-    if let Ok(cargo_build_sbf) = env::var("CARGO_BUILD_SBF") {
-        config.cargo_build_sbf = PathBuf::from(cargo_build_sbf);
-    }
     if let Ok(cargo_build_sbf) = env::var("CARGO") {
         config.cargo = PathBuf::from(cargo_build_sbf);
     }

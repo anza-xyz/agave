@@ -17,19 +17,19 @@ use {
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
     solana_transaction_status::{
-        extract_and_fmt_memos, ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
+        ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta, EntrySummary, Reward, TransactionByAddrInfo,
         TransactionConfirmationStatus, TransactionStatus, TransactionStatusMeta,
         TransactionWithStatusMeta, VersionedConfirmedBlock, VersionedConfirmedBlockWithEntries,
-        VersionedTransactionWithStatusMeta,
+        VersionedTransactionWithStatusMeta, extract_and_fmt_memos,
     },
     std::{
         collections::{HashMap, HashSet},
         convert::TryInto,
         fmt::Debug,
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicUsize, Ordering},
         },
         time::Duration,
     },
@@ -60,7 +60,7 @@ pub enum Error {
     BlockNotFound(Slot),
 
     #[error("Signature not found")]
-    SignatureNotFound,
+    SignatureNotFound(Signature),
 
     #[error("tokio error")]
     TokioJoinError(JoinError),
@@ -633,7 +633,7 @@ impl LedgerStorage {
             .get_bincode_cell::<TransactionInfo>("tx", signature.to_string())
             .await
             .map_err(|err| match err {
-                bigtable::Error::RowNotFound => Error::SignatureNotFound,
+                bigtable::Error::RowNotFound => Error::SignatureNotFound(*signature),
                 _ => err.into(),
             })?;
         Ok(transaction_info.into())
@@ -713,7 +713,7 @@ impl LedgerStorage {
             .get_bincode_cell("tx", signature.to_string())
             .await
             .map_err(|err| match err {
-                bigtable::Error::RowNotFound => Error::SignatureNotFound,
+                bigtable::Error::RowNotFound => Error::SignatureNotFound(*signature),
                 _ => err.into(),
             })?;
 
@@ -772,7 +772,7 @@ impl LedgerStorage {
                     .get_bincode_cell("tx", before_signature.to_string())
                     .await
                     .map_err(|err| match err {
-                        bigtable::Error::RowNotFound => Error::SignatureNotFound,
+                        bigtable::Error::RowNotFound => Error::SignatureNotFound(*before_signature),
                         _ => err.into(),
                     })?;
 
@@ -788,7 +788,7 @@ impl LedgerStorage {
                     .get_bincode_cell("tx", until_signature.to_string())
                     .await
                     .map_err(|err| match err {
-                        bigtable::Error::RowNotFound => Error::SignatureNotFound,
+                        bigtable::Error::RowNotFound => Error::SignatureNotFound(*until_signature),
                         _ => err.into(),
                     })?;
 

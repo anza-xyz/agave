@@ -13,7 +13,7 @@ use {
     crossbeam_channel::bounded,
     log::{debug, info},
     solana_keypair::Keypair,
-    solana_net_utils::sockets::{bind_to_with_config, SocketConfiguration},
+    solana_net_utils::sockets::{SocketConfiguration, bind_to_with_config},
     solana_pubkey::Pubkey,
     solana_streamer::{
         nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
@@ -117,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
         max_concurrent_connections: _,
     } = solana_streamer::nonblocking::testing_utilities::spawn_stake_weighted_qos_server(
         "quic_streamer_test",
-        [socket.try_clone()?],
+        [socket.try_clone()?.into()],
         &keypair,
         sender,
         staked_nodes,

@@ -1,15 +1,16 @@
 use {
     crate::{commands, commands::run::args::pub_sub_config},
     agave_snapshots::{
+        DEFAULT_ARCHIVE_COMPRESSION, SnapshotVersion,
         snapshot_config::{
             DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
             DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
             DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
             DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
         },
-        SnapshotVersion, DEFAULT_ARCHIVE_COMPRESSION,
     },
-    clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
+    clap::{App, AppSettings, Arg, ArgMatches, SubCommand, crate_description, crate_name},
+    log::warn,
     solana_accounts_db::accounts_db::{
         DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE, DEFAULT_ACCOUNTS_SHRINK_RATIO,
     },
@@ -20,9 +21,7 @@ use {
         },
     },
     solana_clock::Slot,
-    solana_core::{
-        banking_trace::BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT, validator::TransactionStructure,
-    },
+    solana_core::banking_trace::BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_faucet::faucet::{self, FAUCET_PORT},
     solana_hash::Hash,
@@ -41,7 +40,7 @@ use {
 pub mod thread_args;
 use {
     solana_core::banking_stage::BankingStage,
-    thread_args::{thread_args, DefaultThreadArgs},
+    thread_args::{DefaultThreadArgs, thread_args},
 };
 
 // The default minimal snapshot download speed (bytes/second)
@@ -129,12 +128,13 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
     }
 
     add_arg!(
-        // deprecated in v3.1.1
-        Arg::with_name("cuda")
-            .long("cuda")
-            .takes_value(false)
-            .help("Use CUDA"),
-        usage_warning: "CUDA support will be dropped"
+        // deprecated in v4.1.0
+        Arg::with_name("account_shrink_path")
+            .long("account-shrink-path")
+            .value_name("PATH")
+            .takes_value(true)
+            .multiple(true)
+            .help("Path to accounts shrink path which can hold a compacted account set."),
     );
     add_arg!(
         // deprecated in v4.0.0
@@ -145,16 +145,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         replaced_by: "accounts-index-limit",
     );
     add_arg!(
-        // deprecated in v3.1.0
-        Arg::with_name("tpu_coalesce_ms")
-            .long("tpu-coalesce-ms")
-            .value_name("MILLISECS")
-            .takes_value(true)
-            .validator(is_parsable::<u64>)
-            .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
-            usage_warning:"tpu_coalesce will be dropped (currently ignored)",
-    );
-    add_arg!(
         // deprecated in v4.0.0
         Arg::with_name("tpu_connection_pool_size")
             .long("tpu-connection-pool-size")
@@ -162,16 +152,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .validator(is_parsable::<usize>)
             .help("Controls the TPU connection pool size per remote address"),
          usage_warning:"This parameter is misleading, avoid setting it",
-    );
-    add_arg!(
-        // deprecated in v3.1.0
-        Arg::with_name("transaction_struct")
-            .long("transaction-structure")
-            .value_name("STRUCT")
-            .takes_value(true)
-            .possible_values(TransactionStructure::cli_names())
-            .help(TransactionStructure::cli_message()),
-        usage_warning: "Transaction structure is no longer configurable"
     );
     res
 }
@@ -208,8 +188,7 @@ pub fn warn_for_deprecated_arguments(matches: &ArgMatches) {
                     msg.push('.');
                 }
             }
-            // this can not rely on logger since it is not initialized at the time of call
-            eprintln!("{msg}");
+            warn!("{msg}");
         }
     }
 }
@@ -254,8 +233,6 @@ pub struct DefaultArgs {
 
     pub banking_trace_dir_byte_limit: String,
     pub block_production_pacing_fill_time_millis: String,
-
-    pub wen_restart_path: String,
 
     pub thread_args: DefaultThreadArgs,
 }
@@ -308,7 +285,6 @@ impl DefaultArgs {
             banking_trace_dir_byte_limit: BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT.to_string(),
             block_production_pacing_fill_time_millis: BankingStage::default_fill_time_millis()
                 .to_string(),
-            wen_restart_path: "wen_restart_progress.proto".to_string(),
             thread_args: DefaultThreadArgs::default(),
         }
     }

@@ -1,12 +1,12 @@
 use {
     crate::keypair::{
-        keypair_from_seed_phrase, keypair_from_source, pubkey_from_path, pubkey_from_source,
-        resolve_signer_from_path, resolve_signer_from_source, signer_from_path, signer_from_source,
-        ASK_KEYWORD, SKIP_SEED_PHRASE_VALIDATION_ARG,
+        ASK_KEYWORD, SKIP_SEED_PHRASE_VALIDATION_ARG, keypair_from_seed_phrase,
+        keypair_from_source, pubkey_from_path, pubkey_from_source, resolve_signer_from_path,
+        resolve_signer_from_source, signer_from_path, signer_from_source,
     },
-    clap::{builder::ValueParser, ArgMatches},
+    clap::{ArgMatches, builder::ValueParser},
     solana_derivation_path::{DerivationPath, DerivationPathError},
-    solana_keypair::{read_keypair_file, Keypair},
+    solana_keypair::{Keypair, read_keypair_file},
     solana_pubkey::Pubkey,
     solana_remote_wallet::{
         locator::{Locator as RemoteWalletLocator, LocatorError as RemoteWalletLocatorError},
@@ -234,7 +234,9 @@ impl SignerSource {
         }
 
         match uriparse::URIReference::try_from(source.as_str()) {
-            Err(_) => Err(SignerSourceError::UnrecognizedSource),
+            Err(_) => std::fs::metadata(source.as_str())
+                .map(|_| SignerSource::new(SignerSourceKind::Filepath(source)))
+                .map_err(|_| SignerSourceError::UnrecognizedSource),
             Ok(uri) => {
                 if let Some(scheme) = uri.scheme() {
                     let scheme = scheme.as_str().to_ascii_lowercase();
@@ -563,7 +565,7 @@ mod tests {
         solana_keypair::write_keypair_file,
         solana_remote_wallet::locator::Manufacturer,
         std::fs,
-        tempfile::NamedTempFile,
+        tempfile::{NamedTempFile, TempDir},
     };
 
     #[test]
@@ -668,6 +670,20 @@ mod tests {
                 legacy: false,
             }
         );
+        let dir_with_spaces = TempDir::new().unwrap();
+        let spaced_dir = dir_with_spaces.path().join("my keys");
+        fs::create_dir_all(&spaced_dir).unwrap();
+        let spaced_file = NamedTempFile::new_in(&spaced_dir).unwrap();
+        let spaced_path_str = spaced_file.path().to_str().unwrap();
+        assert!(spaced_path_str.contains(' '));
+        assert!(
+            matches!(SignerSource::parse(spaced_path_str).unwrap(), SignerSource {
+                kind: SignerSourceKind::Filepath(p),
+                derivation_path: None,
+                legacy: false,
+            } if p == spaced_path_str)
+        );
+
         assert!(
             matches!(SignerSource::parse(format!("file:{absolute_path_str}")).unwrap(), SignerSource {
                 kind: SignerSourceKind::Filepath(p),
@@ -1113,7 +1129,7 @@ mod tests {
         assert!(matches!(
             signer_source,
             SignerSource {
-                kind: SignerSourceKind::Base58Keypair(ref s),
+                kind: SignerSourceKind::Base58Keypair(s),
                 derivation_path: None,
                 legacy: false,
             }

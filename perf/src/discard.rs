@@ -1,6 +1,6 @@
 use {
     crate::packet::PacketBatch,
-    rand::{rng, Rng},
+    rand::{Rng, rng},
 };
 
 pub fn discard_batches_randomly(

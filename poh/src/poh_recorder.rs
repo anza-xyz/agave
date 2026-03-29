@@ -19,14 +19,15 @@ use {
     },
     agave_votor_messages::migration::MigrationStatus,
     arc_swap::ArcSwap,
-    crossbeam_channel::{bounded, unbounded, Receiver, SendError, Sender, TrySendError},
+    crossbeam_channel::{Receiver, SendError, Sender, TrySendError, bounded, unbounded},
     log::*,
-    solana_clock::{BankId, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_clock::{BankId, Slot},
     solana_entry::{
         entry::Entry,
         poh::{Poh, PohEntry},
     },
     solana_hash::Hash,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_measure::measure_us,
     solana_poh_config::PohConfig,
@@ -36,8 +37,8 @@ use {
     std::{
         cmp,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         time::Instant,
     },
@@ -682,6 +683,19 @@ impl PohRecorder {
         self.ticks_per_slot
     }
 
+    // Derives the target tick duration in nanoseconds based on the Bank's
+    // `ns_per_slot` and `ticks_per_slot`
+    pub fn target_tick_ns(&self) -> u64 {
+        let ns_per_slot = self
+            .working_bank
+            .as_ref()
+            .map(|working_bank| working_bank.bank.ns_per_slot)
+            .unwrap_or(self.start_bank.ns_per_slot);
+        let ticks_per_slot = u128::from(self.ticks_per_slot.max(1));
+        let target_tick_ns = ns_per_slot.saturating_div(ticks_per_slot);
+        u64::try_from(target_tick_ns).unwrap_or(u64::MAX)
+    }
+
     pub fn start_slot(&self) -> Slot {
         self.start_bank.slot()
     }
@@ -782,15 +796,15 @@ impl PohRecorder {
     }
 
     fn start_slot_was_mine_or_previous_leader(&self, next_leader_slot: Slot) -> bool {
-        (next_leader_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..next_leader_slot).any(
-            |slot| {
+        (next_leader_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64)
+            ..next_leader_slot)
+            .any(|slot| {
                 // Check if the last slot PoH reset to was any of the
                 // previous leader's slots.
                 // If so, PoH is currently building on the previous leader's blocks
                 // If not, PoH is building on a different fork
                 slot == self.start_slot()
-            },
-        )
+            })
     }
 
     // Check if the last slot PoH reset onto was the previous leader's last slot.
@@ -800,8 +814,9 @@ impl PohRecorder {
         next_leader_slot: Slot,
     ) -> bool {
         // Walk backwards from the slot before our next leader slot.
-        for slot in
-            (next_leader_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..next_leader_slot).rev()
+        for slot in (next_leader_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64)
+            ..next_leader_slot)
+            .rev()
         {
             // Identify which leader is responsible for building this slot.
             let leader_for_slot = self.leader_schedule_cache.slot_leader_at(slot, None);
@@ -880,7 +895,7 @@ impl PohRecorder {
                 0,
                 cmp::min(
                     ticks_per_slot * MAX_GRACE_SLOTS,
-                    ticks_per_slot * NUM_CONSECUTIVE_LEADER_SLOTS / GRACE_TICKS_FACTOR,
+                    ticks_per_slot * NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64 / GRACE_TICKS_FACTOR,
                 ),
             ))
     }
@@ -1117,11 +1132,12 @@ mod tests {
         super::*,
         crossbeam_channel::bounded,
         solana_clock::DEFAULT_TICKS_PER_SLOT,
+        solana_entry::entry::{self, EntrySlice},
         solana_leader_schedule::SlotLeader,
         solana_ledger::{
             blockstore::Blockstore,
             blockstore_meta::SlotMeta,
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
         },
         solana_perf::test_tx::test_tx,
@@ -1233,7 +1249,8 @@ mod tests {
     }
 
     #[test]
-    fn test_poh_recorder_tick_sent_after_min() {
+    fn test_poh_recorder_tick_verifies() {
+        // Setup
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
@@ -1251,10 +1268,63 @@ mod tests {
             &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
+        poh_recorder.set_bank_for_test(bank0.clone());
+
+        // Tick through bank0.
+        let num_new_ticks = poh_recorder.tick_height() + bank0.ticks_per_slot();
+        for _ in 0..num_new_ticks {
+            poh_recorder.tick();
+        }
+
+        // Collect the tick entries produced.
+        let mut entries = vec![];
+        while let Ok((_bank, (entry, _tick_height))) = entry_receiver.try_recv() {
+            assert!(entry.is_tick());
+            entries.push(entry);
+        }
+
+        // Confirm correct number of entries received.
+        assert_eq!(entries.len(), num_new_ticks as usize);
+
+        // Confirm the entries verify properly.
+        assert!(
+            entries
+                .verify(&prev_hash, &entry::thread_pool_for_tests())
+                .status()
+        );
+
+        // Confirm entry hash and blockhash are in sync.
+        assert_eq!(entries[entries.len() - 1].hash, bank0.last_blockhash());
+    }
+
+    #[test]
+    fn test_poh_recorder_tick_sent_after_min() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path())
+            .expect("Expected to be able to open database ledger");
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let prev_hash = bank0.last_blockhash();
+        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+            0,
+            prev_hash,
+            bank0.clone(),
+            Some((4, 4)),
+            bank0.ticks_per_slot(),
+            Arc::new(blockstore),
+            &Arc::new(LeaderScheduleCache::new_from_bank(&bank0)),
+            &PohConfig::default(),
+            Arc::new(AtomicBool::default()),
+        );
 
         bank0.fill_bank_with_ticks_for_tests();
-        let bank1 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 1));
-
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0,
+            SlotLeader::default(),
+            1,
+        );
         // Set a working bank
         poh_recorder.set_bank_for_test(bank1.clone());
 
@@ -1342,7 +1412,8 @@ mod tests {
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
-        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let prev_hash = bank0.last_blockhash();
         let (mut poh_recorder, entry_receiver) = PohRecorder::new(
             0,
@@ -1357,7 +1428,12 @@ mod tests {
         );
 
         bank0.fill_bank_with_ticks_for_tests();
-        let bank1 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 1));
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0,
+            SlotLeader::default(),
+            1,
+        );
         poh_recorder.set_bank_for_test(bank1.clone());
         // Let poh_recorder tick up to bank1.tick_height() - 1
         for _ in 0..bank1.tick_height() - 1 {
@@ -1419,7 +1495,8 @@ mod tests {
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
-        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let prev_hash = bank0.last_blockhash();
         let (mut poh_recorder, entry_receiver) = PohRecorder::new(
             0,
@@ -1434,7 +1511,12 @@ mod tests {
         );
 
         bank0.fill_bank_with_ticks_for_tests();
-        let bank1 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 1));
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0,
+            SlotLeader::default(),
+            1,
+        );
         poh_recorder.set_bank_for_test(bank1.clone());
 
         // Record up to exactly min tick height
@@ -1450,9 +1532,11 @@ mod tests {
         assert_eq!(poh_recorder.tick_height(), min_tick_height);
         let tx = test_tx();
         let h1 = hash(b"hello world!");
-        assert!(poh_recorder
-            .record(bank1.slot(), vec![h1], vec![vec![tx.into()]])
-            .is_ok());
+        assert!(
+            poh_recorder
+                .record(bank1.slot(), vec![h1], vec![vec![tx.into()]])
+                .is_ok()
+        );
         assert_eq!(poh_recorder.tick_cache.len(), 0);
 
         //tick in the cache + entry
@@ -1492,9 +1576,11 @@ mod tests {
         }
         let tx = test_tx();
         let h1 = hash(b"hello world!");
-        assert!(poh_recorder
-            .record(bank.slot(), vec![h1], vec![vec![tx.into()]])
-            .is_err());
+        assert!(
+            poh_recorder
+                .record(bank.slot(), vec![h1], vec![vec![tx.into()]])
+                .is_err()
+        );
         for _ in 0..num_ticks_to_max {
             let (_bank, (entry, _tick_height)) = entry_receiver.recv().unwrap();
             assert!(entry.is_tick());
@@ -1507,7 +1593,8 @@ mod tests {
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
-        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let prev_hash = bank0.last_blockhash();
         let (mut poh_recorder, entry_receiver) = PohRecorder::new(
             0,
@@ -1522,7 +1609,12 @@ mod tests {
         );
 
         bank0.fill_bank_with_ticks_for_tests();
-        let bank1 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 1));
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0,
+            SlotLeader::default(),
+            1,
+        );
         poh_recorder.set_bank_for_test(bank1);
 
         // Check we can make two ticks without hitting min_tick_height
@@ -1722,9 +1814,11 @@ mod tests {
 
         let tx = test_tx();
         let h1 = hash(b"hello world!");
-        assert!(poh_recorder
-            .record(bank.slot(), vec![h1], vec![vec![tx.into()]])
-            .is_err());
+        assert!(
+            poh_recorder
+                .record(bank.slot(), vec![h1], vec![vec![tx.into()]])
+                .is_err()
+        );
         assert!(poh_recorder.working_bank.is_none());
 
         // Even thought we ticked much further than working_bank.max_tick_height,
@@ -1787,7 +1881,8 @@ mod tests {
         } = create_genesis_config(2);
 
         // Setup start bank.
-        let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (mut bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let prev_hash = bank.last_blockhash();
 
         // Setup leader schedule.
@@ -1798,16 +1893,12 @@ mod tests {
         let leader_b = SlotLeader::new_unique();
         let leader_c = SlotLeader::new_unique();
         let leader_d = SlotLeader::new_unique();
-        let consecutive_leader_slots = NUM_CONSECUTIVE_LEADER_SLOTS as usize;
-        let mut slot_leaders = Vec::with_capacity(consecutive_leader_slots * 3);
-        slot_leaders.extend(std::iter::repeat_n(leader_a, consecutive_leader_slots));
-        slot_leaders.extend(std::iter::repeat_n(leader_b, consecutive_leader_slots));
-        slot_leaders.extend(std::iter::repeat_n(leader_c, consecutive_leader_slots));
-        slot_leaders.extend(std::iter::repeat_n(leader_d, consecutive_leader_slots));
+        let slot_leaders = vec![leader_a, leader_b, leader_c, leader_d];
         let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
         let fixed_schedule = solana_leader_schedule::FixedSchedule {
             leader_schedule: Arc::new(solana_leader_schedule::LeaderSchedule::new_from_schedule(
                 slot_leaders,
+                NUM_CONSECUTIVE_LEADER_SLOTS,
             )),
         };
         leader_schedule_cache.set_fixed_leader_schedule(Some(fixed_schedule));
@@ -1831,15 +1922,17 @@ mod tests {
         let grace_ticks = ticks_per_slot * MAX_GRACE_SLOTS;
         poh_recorder.grace_ticks = grace_ticks;
 
+        let num_consecutive_leader_slots = NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64;
+
         // Setup leader slot ranges.
         let leader_a_start_slot = 0;
-        let leader_a_end_slot = leader_a_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
+        let leader_a_end_slot = leader_a_start_slot + num_consecutive_leader_slots - 1;
         let leader_b_start_slot = leader_a_end_slot + 1;
-        let leader_b_end_slot = leader_b_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
+        let leader_b_end_slot = leader_b_start_slot + num_consecutive_leader_slots - 1;
         let leader_c_start_slot = leader_b_end_slot + 1;
-        let leader_c_end_slot = leader_c_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
+        let leader_c_end_slot = leader_c_start_slot + num_consecutive_leader_slots - 1;
         let leader_d_start_slot = leader_c_end_slot + 1;
-        let leader_d_end_slot = leader_d_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
+        let leader_d_end_slot = leader_d_start_slot + num_consecutive_leader_slots - 1;
 
         // Reset onto Leader A's first slot 0.
         poh_recorder.reset(
@@ -1848,7 +1941,7 @@ mod tests {
         );
 
         // Setup leader start ticks.
-        let ticks_in_leader_slot_set = ticks_per_slot * NUM_CONSECUTIVE_LEADER_SLOTS;
+        let ticks_in_leader_slot_set = ticks_per_slot * num_consecutive_leader_slots;
         let leader_a_start_tick = 1;
         let leader_b_start_tick = leader_a_start_tick + ticks_in_leader_slot_set;
         let leader_c_start_tick = leader_b_start_tick + ticks_in_leader_slot_set;
@@ -1885,7 +1978,12 @@ mod tests {
         // Reset onto Leader A's last slot.
         for _ in leader_a_start_slot + 1..leader_b_start_slot {
             let child_slot = bank.slot() + 1;
-            bank = Arc::new(Bank::new_from_parent(bank, &leader_a.id, child_slot));
+            bank = Bank::new_from_parent_with_bank_forks(
+                bank_forks.as_ref(),
+                bank,
+                leader_a,
+                child_slot,
+            );
         }
         poh_recorder.reset(bank.clone(), Some((leader_b_start_slot, leader_b_end_slot)));
 
@@ -1907,7 +2005,8 @@ mod tests {
 
         // Simulate generating Leader B's second slot.
         let child_slot = bank.slot() + 1;
-        bank = Arc::new(Bank::new_from_parent(bank, &leader_b.id, child_slot));
+        bank =
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, leader_b, child_slot);
 
         // Reset PoH targeting Leader D's slots.
         poh_recorder.reset(bank, Some((leader_d_start_slot, leader_d_end_slot)));
@@ -1927,7 +2026,7 @@ mod tests {
         assert!(poh_recorder.reached_leader_tick(&leader_d.id, leader_d_start_tick));
 
         // Add some active (partially received) blocks to the active fork.
-        let active_descendants = vec![NUM_CONSECUTIVE_LEADER_SLOTS];
+        let active_descendants = vec![NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64];
         poh_recorder.update_start_bank_active_descendants(&active_descendants);
 
         // True, because Leader D observes pending blocks on the active fork,
@@ -1955,7 +2054,8 @@ mod tests {
             validator_pubkey,
             ..
         } = create_genesis_config(2);
-        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let prev_hash = bank0.last_blockhash();
         let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
             0,
@@ -2016,7 +2116,12 @@ mod tests {
         );
 
         // reset poh now. we should immediately be leader
-        let bank1 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 1));
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0.clone(),
+            SlotLeader::default(),
+            1,
+        );
         assert_eq!(bank1.slot(), 1);
         poh_recorder.reset(bank1.clone(), Some((2, 2)));
         assert_eq!(
@@ -2067,7 +2172,12 @@ mod tests {
 
         // Let's test that correct grace ticks are reported
         // Set the leader slot one slot down
-        let bank2 = Arc::new(Bank::new_from_parent(bank1.clone(), &Pubkey::default(), 2));
+        let bank2 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank1.clone(),
+            SlotLeader::default(),
+            2,
+        );
         poh_recorder.reset(bank2.clone(), Some((4, 4)));
 
         // send ticks for a slot
@@ -2080,7 +2190,12 @@ mod tests {
             poh_recorder.reached_leader_slot(&test_validator_pubkey),
             PohLeaderStatus::NotReached
         );
-        let bank3 = Arc::new(Bank::new_from_parent(bank2, &Pubkey::default(), 3));
+        let bank3 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank2.clone(),
+            SlotLeader::default(),
+            3,
+        );
         assert_eq!(bank3.slot(), 3);
         poh_recorder.reset(bank3.clone(), Some((4, 4)));
 
@@ -2096,7 +2211,12 @@ mod tests {
         // Let's test that if a node overshoots the ticks for its target
         // leader slot, reached_leader_slot() will return true, because it's overdue
         // Set the leader slot one slot down
-        let bank4 = Arc::new(Bank::new_from_parent(bank3, &Pubkey::default(), 4));
+        let bank4 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank3.clone(),
+            SlotLeader::default(),
+            4,
+        );
         poh_recorder.reset(bank4.clone(), Some((5, 5)));
 
         // Overshoot ticks for the slot
@@ -2176,7 +2296,8 @@ mod tests {
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
-        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let prev_hash = bank.last_blockhash();
         let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
             0,
@@ -2211,8 +2332,12 @@ mod tests {
         assert!(!poh_recorder.would_be_leader(2 * bank.ticks_per_slot()));
 
         // Move the bank up a slot (so that max_tick_height > slot 0's tick_height)
-        let bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), 1));
-        // If we set the working bank, the node should be leader within next 2 slots
+        let bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::default(),
+            1,
+        ); // If we set the working bank, the node should be leader within next 2 slots
         poh_recorder.set_bank_for_test(bank.clone());
         assert!(poh_recorder.would_be_leader(2 * bank.ticks_per_slot()));
     }
@@ -2224,7 +2349,8 @@ mod tests {
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
-        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let genesis_hash = bank.last_blockhash();
 
         let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
@@ -2239,8 +2365,12 @@ mod tests {
             Arc::new(AtomicBool::default()),
         );
         //create a new bank
-        let bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), 2));
-        // add virtual ticks into poh for slots 0, 1, and 2
+        let bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::default(),
+            2,
+        ); // add virtual ticks into poh for slots 0, 1, and 2
         for _ in 0..(bank.ticks_per_slot() * 3) {
             poh_recorder.tick();
         }

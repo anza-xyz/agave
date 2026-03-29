@@ -1,6 +1,7 @@
+use solana_program_runtime::solana_sbpf::program::BuiltinFunctionDefinition;
 #[allow(deprecated)]
 use {
-    criterion::{criterion_group, criterion_main, Criterion},
+    criterion::{Criterion, criterion_group, criterion_main},
     solana_account::{self as account, AccountSharedData, WritableAccount},
     solana_hash::Hash,
     solana_instruction::AccountMeta,
@@ -16,7 +17,7 @@ use {
         sysvar::{recent_blockhashes, rent},
     },
     solana_system_interface::instruction::SystemInstruction,
-    solana_sysvar::recent_blockhashes::{IterItem, RecentBlockhashes, MAX_ENTRIES},
+    solana_sysvar::recent_blockhashes::{IterItem, MAX_ENTRIES, RecentBlockhashes},
 };
 
 const SEED: &str = "bench test";
@@ -483,12 +484,11 @@ impl TestSetup {
     fn run(&self) {
         mock_process_instruction(
             &solana_system_program::id(),
-            None,
             &self.instruction_data,
             self.transaction_accounts.clone(),
             self.instruction_accounts.clone(),
             Ok(()), //expected_result,
-            solana_system_program::system_processor::Entrypoint::vm,
+            solana_system_program::system_processor::Entrypoint::register,
             |_invoke_context| {},
             |_invoke_context| {},
         );

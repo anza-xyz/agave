@@ -1,7 +1,7 @@
 use {
     crate::consensus::{
-        tower1_14_11::Tower1_14_11, tower1_7_14::SavedTower1_7_14, Result, Tower, TowerError,
-        TowerVersions,
+        Result, Tower, TowerError, TowerVersions, tower1_7_14::SavedTower1_7_14,
+        tower1_14_11::Tower1_14_11,
     },
     serde::{Deserialize, Serialize},
     solana_pubkey::Pubkey,
@@ -225,14 +225,14 @@ pub mod test {
     use {
         super::*,
         crate::consensus::{
-            tower1_7_14::{SavedTower1_7_14, Tower1_7_14},
             BlockhashStatus, Tower,
+            tower1_7_14::{SavedTower1_7_14, Tower1_7_14},
         },
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_vote::vote_transaction::VoteTransaction,
         solana_vote_program::vote_state::{
-            BlockTimestamp, Lockout, Vote, VoteState1_14_11, MAX_LOCKOUT_HISTORY,
+            BlockTimestamp, Lockout, MAX_LOCKOUT_HISTORY, Vote, VoteState1_14_11,
         },
         tempfile::TempDir,
     };

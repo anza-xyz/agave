@@ -1,6 +1,6 @@
 use crate::shred::{
-    traits::ShredCode as ShredCodeTrait, Error, ShredType, DATA_SHREDS_PER_FEC_BLOCK,
-    MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT,
+    DATA_SHREDS_PER_FEC_BLOCK, Error, MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT,
+    ShredType, traits::ShredCode as ShredCodeTrait,
 };
 
 #[inline]

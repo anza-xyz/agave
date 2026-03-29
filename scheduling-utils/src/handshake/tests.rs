@@ -1,9 +1,7 @@
 use {
     crate::handshake::{
-        client::{connect, ClientHandshakeError},
-        server::{AgaveHandshakeError, Server},
+        AgaveHandshakeError, ClientHandshakeError, ClientLogon, client::connect, server::Server,
         shared::MAX_WORKERS,
-        ClientLogon,
     },
     agave_scheduler_bindings::{
         PackToWorkerMessage, ProgressMessage, SharableTransactionBatchRegion,

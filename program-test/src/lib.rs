@@ -5,54 +5,54 @@
 // Export tokio for test clients
 pub use tokio;
 use {
-    agave_feature_set::{
-        increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES,
-    },
+    agave_feature_set::{FEATURE_NAMES, FeatureSet, raise_cpi_nesting_limit_to_8},
     async_trait::async_trait,
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     chrono_humanize::{Accuracy, HumanTime, Tense},
     log::*,
     solana_account::{
-        create_account_shared_data_for_test, state_traits::StateMut, Account, AccountSharedData,
-        ReadableAccount,
+        Account, AccountSharedData, ReadableAccount, create_account_shared_data_for_test,
+        state_traits::StateMut,
     },
     solana_account_info::AccountInfo,
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
-    solana_clock::{Epoch, Slot},
+    solana_clock::{Clock, Epoch, Slot},
     solana_cluster_type::ClusterType,
-    solana_compute_budget::compute_budget::ComputeBudget,
-    solana_fee_calculator::{FeeRateGovernor, DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE},
+    solana_compute_budget::compute_budget::{ComputeBudget, SVMTransactionExecutionCost},
+    solana_epoch_rewards::EpochRewards,
+    solana_epoch_schedule::EpochSchedule,
+    solana_fee_calculator::{DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE, FeeRateGovernor},
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
     solana_instruction::{
-        error::{InstructionError, UNSUPPORTED_SYSVAR},
         Instruction,
+        error::{InstructionError, UNSUPPORTED_SYSVAR},
     },
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_poh_config::PohConfig,
     solana_program_binaries as programs,
-    solana_program_entrypoint::{deserialize, SUCCESS},
+    solana_program_entrypoint::{SUCCESS, deserialize},
     solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
-        invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
-        serialization::serialize_parameters, stable_log,
+        invoke_context::BuiltinFunctionRegisterer, loaded_programs::ProgramCacheEntry,
+        serialization::serialize_parameters, stable_log, sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, SlotLeader},
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
-        genesis_utils::{create_genesis_config_with_leader_ex, GenesisConfigInfo},
+        genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader_ex},
         runtime_config::RuntimeConfig,
     },
     solana_signer::Signer,
     solana_svm_log_collector::ic_msg,
     solana_svm_timings::ExecuteTimings,
-    solana_sysvar::SysvarSerialize,
+    solana_sysvar::{SysvarSerialize, last_restart_slot::LastRestartSlot},
     solana_sysvar_id::SysvarId,
     solana_vote_program::vote_state::{VoteStateV4, VoteStateVersions},
     std::{
@@ -65,8 +65,8 @@ use {
         path::{Path, PathBuf},
         ptr,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         time::{Duration, Instant},
     },
@@ -80,7 +80,9 @@ pub use {
     solana_program_runtime::invoke_context::InvokeContext,
     solana_sbpf::{
         error::EbpfError,
-        vm::{get_runtime_environment_key, EbpfVm},
+        memory_region::MemoryMapping,
+        program::BuiltinFunctionDefinition,
+        vm::{EbpfVm, get_runtime_environment_key},
     },
     solana_transaction_context::IndexOfAccount,
 };
@@ -133,12 +135,17 @@ pub fn invoke_builtin_function(
     // Copy indices_in_instruction into a HashSet to ensure there are no duplicates
     let deduplicated_indices: HashSet<IndexOfAccount> = instruction_account_indices.collect();
 
+    let direct_account_pointers_in_program_input = invoke_context
+        .get_feature_set()
+        .direct_account_pointers_in_program_input;
+
     // Serialize entrypoint parameters with SBF ABI
     let (mut parameter_bytes, _regions, _account_lengths, _instruction_data_offset) =
         serialize_parameters(
             &instruction_context,
-            false, // There is no VM so stricter_abi_and_runtime_constraints can not be implemented here
+            false, // There is no VM so virtual_address_space_adjustments can not be implemented here
             false, // There is no VM so account_data_direct_mapping can not be implemented here
+            direct_account_pointers_in_program_input,
         )?;
 
     // Deserialize data back into instruction params
@@ -204,18 +211,42 @@ pub fn invoke_builtin_function(
 /// use with `ProgramTest::add_program`
 #[macro_export]
 macro_rules! processor {
-    ($builtin_function:expr) => {
-        Some(|vm, _arg0, _arg1, _arg2, _arg3, _arg4| {
-            let vm = unsafe {
-                &mut *((vm as *mut u64).offset(-($crate::get_runtime_environment_key() as isize))
-                    as *mut $crate::EbpfVm<$crate::InvokeContext>)
-            };
-            vm.program_result =
-                $crate::invoke_builtin_function($builtin_function, vm.context_object_pointer)
-                    .map_err(|err| $crate::EbpfError::SyscallError(err))
-                    .into();
-        })
-    };
+    ($builtin_function:expr) => {{
+        struct Converter;
+        impl $crate::BuiltinFunctionDefinition<$crate::InvokeContext<'_, '_>> for Converter {
+            type Error = Box<dyn std::error::Error>;
+            fn rust(
+                _: &mut $crate::InvokeContext<'_, '_>,
+                _: u64,
+                _: u64,
+                _: u64,
+                _: u64,
+                _: u64,
+                _: &mut $crate::MemoryMapping,
+            ) -> Result<u64, Box<dyn std::error::Error>> {
+                unreachable!()
+            }
+            fn vm(
+                vm: *mut $crate::EbpfVm<$crate::InvokeContext>,
+                _: u64,
+                _: u64,
+                _: u64,
+                _: u64,
+                _: u64,
+            ) {
+                let vm = unsafe {
+                    &mut *((vm as *mut u64)
+                        .offset(-($crate::get_runtime_environment_key() as isize))
+                        as *mut $crate::EbpfVm<$crate::InvokeContext>)
+                };
+                vm.program_result =
+                    $crate::invoke_builtin_function($builtin_function, vm.context_object_pointer)
+                        .map_err(|err| $crate::EbpfError::SyscallError(err))
+                        .into();
+            }
+        };
+        Some(<Converter as $crate::BuiltinFunctionDefinition<_>>::register)
+    }};
 }
 
 fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned + Clone>(
@@ -240,6 +271,68 @@ fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned
 }
 
 struct SyscallStubs {}
+
+impl SyscallStubs {
+    fn fetch_and_write_sysvar<T: SysvarSerialize>(
+        &self,
+        var_addr: *mut u8,
+        offset: u64,
+        length: u64,
+        fetch: impl FnOnce(&SysvarCache) -> Result<Arc<T>, InstructionError>,
+    ) -> u64 {
+        // Consume compute units for the syscall.
+        let invoke_context = get_invoke_context();
+        let SVMTransactionExecutionCost {
+            sysvar_base_cost,
+            cpi_bytes_per_unit,
+            mem_op_base_cost,
+            ..
+        } = *invoke_context.get_execution_cost();
+
+        let sysvar_id_cost = 32_u64.checked_div(cpi_bytes_per_unit).unwrap_or(0);
+        let sysvar_buf_cost = length.checked_div(cpi_bytes_per_unit).unwrap_or(0);
+
+        if invoke_context
+            .consume_checked(
+                sysvar_base_cost
+                    .saturating_add(sysvar_id_cost)
+                    .saturating_add(std::cmp::max(sysvar_buf_cost, mem_op_base_cost)),
+            )
+            .is_err()
+        {
+            panic!("Exceeded compute budget");
+        }
+
+        // Fetch the sysvar from the cache.
+        let Ok(sysvar) = fetch(get_invoke_context().get_sysvar_cache()) else {
+            return UNSUPPORTED_SYSVAR;
+        };
+
+        // Check that the requested length is not greater than
+        // the actual serialized length of the sysvar data.
+        let Ok(expected_length) = bincode::serialized_size(&sysvar) else {
+            return UNSUPPORTED_SYSVAR;
+        };
+
+        if offset.saturating_add(length) > expected_length {
+            return UNSUPPORTED_SYSVAR;
+        }
+
+        // Write only the requested slice [offset, offset + length).
+        if let Ok(serialized) = bincode::serialize(&sysvar) {
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    serialized[offset as usize..].as_ptr(),
+                    var_addr,
+                    length as usize,
+                )
+            };
+            SUCCESS
+        } else {
+            UNSUPPORTED_SYSVAR
+        }
+    }
+}
 impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
     fn sol_log(&self, message: &str) {
         let invoke_context = get_invoke_context();
@@ -272,7 +365,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             .collect::<Vec<_>>();
 
         invoke_context
-            .prepare_next_instruction(instruction.clone(), &signers)
+            .prepare_next_cpi_instruction(instruction.clone(), &signers)
             .unwrap();
 
         // Copy caller's account_info modifications into invoke_context accounts
@@ -432,6 +525,47 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         let invoke_context = get_invoke_context();
         invoke_context.get_stack_height().try_into().unwrap()
     }
+
+    fn sol_get_sysvar(
+        &self,
+        sysvar_id_addr: *const u8,
+        var_addr: *mut u8,
+        offset: u64,
+        length: u64,
+    ) -> u64 {
+        let sysvar_id = unsafe { &*(sysvar_id_addr as *const Pubkey) };
+
+        match *sysvar_id {
+            id if id == Clock::id() => self.fetch_and_write_sysvar::<Clock>(
+                var_addr,
+                offset,
+                length,
+                SysvarCache::get_clock,
+            ),
+            id if id == EpochRewards::id() => self.fetch_and_write_sysvar::<EpochRewards>(
+                var_addr,
+                offset,
+                length,
+                SysvarCache::get_epoch_rewards,
+            ),
+            id if id == EpochSchedule::id() => self.fetch_and_write_sysvar::<EpochSchedule>(
+                var_addr,
+                offset,
+                length,
+                SysvarCache::get_epoch_schedule,
+            ),
+            id if id == LastRestartSlot::id() => self.fetch_and_write_sysvar::<LastRestartSlot>(
+                var_addr,
+                offset,
+                length,
+                SysvarCache::get_last_restart_slot,
+            ),
+            id if id == Rent::id() => {
+                self.fetch_and_write_sysvar::<Rent>(var_addr, offset, length, SysvarCache::get_rent)
+            }
+            _ => UNSUPPORTED_SYSVAR,
+        }
+    }
 }
 
 pub fn find_file(filename: &str) -> Option<PathBuf> {
@@ -524,10 +658,10 @@ impl ProgramTest {
     pub fn new(
         program_name: &'static str,
         program_id: Pubkey,
-        builtin_function: Option<BuiltinFunctionWithContext>,
+        builtin: Option<BuiltinFunctionRegisterer>,
     ) -> Self {
         let mut me = Self::default();
-        me.add_program(program_name, program_id, builtin_function);
+        me.add_program(program_name, program_id, builtin);
         me
     }
 
@@ -651,7 +785,7 @@ impl ProgramTest {
         &mut self,
         program_name: &'static str,
         program_id: Pubkey,
-        builtin_function: Option<BuiltinFunctionWithContext>,
+        builtin_function: Option<BuiltinFunctionRegisterer>,
     ) {
         let add_bpf = |this: &mut ProgramTest, program_file: PathBuf| {
             let data = read_file(&program_file);
@@ -755,13 +889,13 @@ impl ProgramTest {
         &mut self,
         program_name: &'static str,
         program_id: Pubkey,
-        builtin_function: BuiltinFunctionWithContext,
+        builtin: BuiltinFunctionRegisterer,
     ) {
         info!("\"{program_name}\" builtin program");
         self.builtin_programs.push((
             program_id,
             program_name,
-            ProgramCacheEntry::new_builtin(0, program_name.len(), builtin_function),
+            ProgramCacheEntry::new_builtin(0, program_name.len(), builtin),
         ));
     }
 
@@ -845,9 +979,6 @@ impl ProgramTest {
                         genesis_config
                             .accounts
                             .contains_key(&raise_cpi_nesting_limit_to_8::id()),
-                        genesis_config
-                            .accounts
-                            .contains_key(&increase_cpi_account_info_limit::id()),
                     )
                 }),
                 transaction_account_lock_limit: self.transaction_account_lock_limit,
@@ -891,17 +1022,21 @@ impl ProgramTest {
             bank.store_account(address, account);
         }
         bank.set_capitalization_for_tests(bank.calculate_capitalization_for_tests());
-        // Advance beyond slot 0 for a slightly more realistic test environment
-        let bank = {
-            let bank = Arc::new(bank);
-            bank.fill_bank_with_ticks_for_tests();
-            let bank = Bank::new_from_parent(bank.clone(), bank.leader_id(), bank.slot() + 1);
-            debug!("Bank slot: {}", bank.slot());
-            bank
-        };
-        let slot = bank.slot();
-        let last_blockhash = bank.last_blockhash();
+        // Advance beyond slot 0 for a slightly more realistic test environment.
+        // Create BankForks from the genesis bank first so fork_graph is set before creating
+        // the child bank (required for ProgramCache::extract in new_from_parent).
+        bank.fill_bank_with_ticks_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
+        let bank0 = bank_forks.read().unwrap().root_bank();
+        let bank1 = Bank::new_from_parent(bank0.clone(), *bank0.leader(), bank0.slot() + 1);
+        let bank1 = {
+            let mut bf = bank_forks.write().unwrap();
+            bf.insert(bank1);
+            bf.working_bank()
+        };
+        debug!("Bank slot: {}", bank1.slot());
+        let slot = bank1.slot();
+        let last_blockhash = bank1.last_blockhash();
         let block_commitment_cache = Arc::new(RwLock::new(
             BlockCommitmentCache::new_for_tests_with_slots(slot, slot),
         ));
@@ -1167,8 +1302,7 @@ impl ProgramTestContext {
 
     /// Force the working bank ahead to a new slot
     pub fn warp_to_slot(&mut self, warp_slot: Slot) -> Result<(), ProgramTestError> {
-        let mut bank_forks = self.bank_forks.write().unwrap();
-        let bank = bank_forks.working_bank();
+        let bank = self.bank_forks.read().unwrap().working_bank();
 
         // Fill ticks until a new blockhash is recorded, otherwise retried transactions will have
         // the same signature
@@ -1188,27 +1322,23 @@ impl ProgramTestContext {
             bank.freeze();
             bank
         } else {
-            bank_forks
-                .insert(Bank::warp_from_parent(
-                    bank,
-                    &Pubkey::default(),
-                    pre_warp_slot,
-                ))
+            let warped = Bank::warp_from_parent(bank, SlotLeader::default(), pre_warp_slot);
+            self.bank_forks
+                .write()
+                .unwrap()
+                .insert(warped)
                 .clone_without_scheduler()
         };
 
-        bank_forks.set_root(
+        self.bank_forks.write().unwrap().set_root(
             pre_warp_slot,
             None, // snapshots are disabled
             Some(pre_warp_slot),
         );
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
-        bank_forks.insert(Bank::new_from_parent(
-            warp_bank,
-            &Pubkey::default(),
-            warp_slot,
-        ));
+        let bank_at_warp_slot = Bank::new_from_parent(warp_bank, SlotLeader::default(), warp_slot);
+        self.bank_forks.write().unwrap().insert(bank_at_warp_slot);
 
         // Update block commitment cache, otherwise banks server will poll at
         // the wrong slot
@@ -1219,7 +1349,7 @@ impl ProgramTestContext {
         // bank.
         w_block_commitment_cache.set_all_slots(warp_slot, warp_slot);
 
-        let bank = bank_forks.working_bank();
+        let bank = self.bank_forks.read().unwrap().working_bank();
         self.last_blockhash = bank.last_blockhash();
         Ok(())
     }
@@ -1234,15 +1364,14 @@ impl ProgramTestContext {
 
     /// warp forward one more slot and force reward interval end
     pub fn warp_forward_force_reward_interval_end(&mut self) -> Result<(), ProgramTestError> {
-        let mut bank_forks = self.bank_forks.write().unwrap();
-        let bank = bank_forks.working_bank();
+        let bank = self.bank_forks.read().unwrap().working_bank();
 
         // Fill ticks until a new blockhash is recorded, otherwise retried transactions will have
         // the same signature
         bank.fill_bank_with_ticks_for_tests();
         let pre_warp_slot = bank.slot();
 
-        bank_forks.set_root(
+        self.bank_forks.write().unwrap().set_root(
             pre_warp_slot,
             None, // snapshot_controller
             Some(pre_warp_slot),
@@ -1250,10 +1379,10 @@ impl ProgramTestContext {
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         let warp_slot = pre_warp_slot + 1;
-        let mut warp_bank = Bank::new_from_parent(bank, &Pubkey::default(), warp_slot);
+        let mut warp_bank = Bank::new_from_parent(bank, SlotLeader::default(), warp_slot);
 
         warp_bank.force_reward_interval_end_for_tests();
-        bank_forks.insert(warp_bank);
+        self.bank_forks.write().unwrap().insert(warp_bank);
 
         // Update block commitment cache, otherwise banks server will poll at
         // the wrong slot
@@ -1264,7 +1393,7 @@ impl ProgramTestContext {
         // bank.
         w_block_commitment_cache.set_all_slots(warp_slot, warp_slot);
 
-        let bank = bank_forks.working_bank();
+        let bank = self.bank_forks.read().unwrap().working_bank();
         self.last_blockhash = bank.last_blockhash();
         Ok(())
     }

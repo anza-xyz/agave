@@ -5,11 +5,11 @@ use {
         error::{LedgerToolError, Result},
         ledger_path::canonicalize_ledger_path,
         ledger_utils::get_program_ids,
-        output::{output_ledger, output_slot, CliDuplicateSlotProof, SlotBounds, SlotInfo},
+        output::{CliDuplicateSlotProof, SlotBounds, SlotInfo, output_ledger, output_slot},
     },
     chrono::{DateTime, Utc},
     clap::{
-        value_t, value_t_or_exit, values_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand,
+        App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit, values_t_or_exit,
     },
     itertools::Itertools,
     log::*,
@@ -22,8 +22,8 @@ use {
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::{
-            column::{Column, ColumnName},
             Blockstore, BlockstoreError, PurgeType,
+            column::{Column, ColumnName},
         },
         blockstore_options::AccessType,
         shred::Shred,
@@ -32,7 +32,7 @@ use {
         borrow::Cow,
         collections::{BTreeMap, BTreeSet, HashMap},
         fs::File,
-        io::{stdout, BufRead, BufReader, Write},
+        io::{BufRead, BufReader, Write, stdout},
         path::{Path, PathBuf},
         sync::atomic::AtomicBool,
         time::{Duration, UNIX_EPOCH},
@@ -125,7 +125,6 @@ fn analyze_storage(blockstore: &Blockstore) -> Result<()> {
     analyze_column(blockstore, TransactionStatus::NAME)?;
     analyze_column(blockstore, AddressSignatures::NAME)?;
     analyze_column(blockstore, TransactionMemos::NAME)?;
-    analyze_column(blockstore, TransactionStatusIndex::NAME)?;
     analyze_column(blockstore, Rewards::NAME)?;
     analyze_column(blockstore, Blocktime::NAME)?;
     analyze_column(blockstore, PerfSamples::NAME)?;
@@ -153,7 +152,6 @@ fn raw_key_to_slot(key: &[u8], column_name: &str) -> Option<Slot> {
             cf::AddressSignatures::index(key),
         )),
         cf::TransactionMemos::NAME => None, // does not implement slot()
-        cf::TransactionStatusIndex::NAME => None, // does not implement slot()
         cf::Rewards::NAME => Some(cf::Rewards::slot(cf::Rewards::index(key))),
         cf::Blocktime::NAME => Some(cf::Blocktime::slot(cf::Blocktime::index(key))),
         cf::PerfSamples::NAME => Some(cf::PerfSamples::slot(cf::PerfSamples::index(key))),

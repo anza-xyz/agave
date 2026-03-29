@@ -2,7 +2,7 @@
 use solana_hash::Hash;
 use {
     crate::bank::{Bank, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
-    agave_snapshots::{snapshot_hash::SnapshotHash, SnapshotArchiveKind, SnapshotKind},
+    agave_snapshots::{SnapshotArchiveKind, SnapshotKind, snapshot_hash::SnapshotHash},
     solana_accounts_db::account_storage_entry::AccountStorageEntry,
     solana_clock::Slot,
     std::{sync::Arc, time::Instant},

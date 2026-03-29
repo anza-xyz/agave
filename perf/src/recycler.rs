@@ -1,8 +1,8 @@
 use {
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     std::sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex, Weak,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 

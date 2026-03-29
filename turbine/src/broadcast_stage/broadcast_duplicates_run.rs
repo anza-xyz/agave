@@ -1,6 +1,8 @@
 use {
     super::*,
     crate::cluster_nodes::ClusterNodesCache,
+    agave_votor::event::VotorEventSender,
+    agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
     itertools::Itertools,
     solana_entry::entry::Entry,
@@ -49,10 +51,17 @@ pub(super) struct BroadcastDuplicatesRun {
     original_last_data_shreds: Arc<Mutex<HashSet<Signature>>>,
     partition_last_data_shreds: Arc<Mutex<HashSet<Signature>>>,
     reed_solomon_cache: Arc<ReedSolomonCache>,
+    migration_status: Arc<MigrationStatus>,
+    votor_event_sender: VotorEventSender,
 }
 
 impl BroadcastDuplicatesRun {
-    pub(super) fn new(shred_version: u16, config: BroadcastDuplicatesConfig) -> Self {
+    pub(super) fn new(
+        shred_version: u16,
+        config: BroadcastDuplicatesConfig,
+        migration_status: Arc<MigrationStatus>,
+        votor_event_sender: VotorEventSender,
+    ) -> Self {
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
             CLUSTER_NODES_CACHE_TTL,
@@ -72,6 +81,8 @@ impl BroadcastDuplicatesRun {
             original_last_data_shreds: Arc::<Mutex<HashSet<Signature>>>::default(),
             partition_last_data_shreds: Arc::<Mutex<HashSet<Signature>>>::default(),
             reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
+            migration_status,
+            votor_event_sender,
         }
     }
 }
@@ -171,7 +182,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         self.prev_entry_hash = last_entries
             .as_ref()
             .map(|(original_last_entry, _)| original_last_entry.hash)
-            .or_else(|| Some(receive_results.entries.last().unwrap().hash));
+            .or_else(|| receive_results.entries.last().map(|e| e.hash));
 
         let shredder = Shredder::new(
             bank.slot(),
@@ -181,16 +192,21 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         )
         .expect("Expected to create a new shredder");
 
-        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
-            keypair,
-            &receive_results.entries,
-            last_tick_height == bank.max_tick_height() && last_entries.is_none(),
-            self.chained_merkle_root,
-            self.next_shred_index,
-            self.next_code_index,
-            &self.reed_solomon_cache,
-            &mut stats,
-        );
+        // Avoid generating an empty FEC set
+        let (data_shreds, coding_shreds) = if !receive_results.entries.is_empty() {
+            shredder.entries_to_merkle_shreds_for_tests(
+                keypair,
+                &receive_results.entries,
+                last_tick_height == bank.max_tick_height() && last_entries.is_none(),
+                self.chained_merkle_root,
+                self.next_shred_index,
+                self.next_code_index,
+                &self.reed_solomon_cache,
+                &mut stats,
+            )
+        } else {
+            (vec![], vec![])
+        };
         if let Some(shred) = data_shreds.iter().max_by_key(|shred| shred.index()) {
             self.chained_merkle_root = shred.merkle_root().unwrap();
         }
@@ -238,20 +254,29 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     partition_last_data_shred.len()
                 );
                 self.next_shred_index += u32::try_from(original_last_data_shred.len()).unwrap();
+                // Update chained_merkle_root to the merkle root of the original last FEC set
+                if let Some(shred) = original_last_data_shred
+                    .iter()
+                    .max_by_key(|shred| shred.index())
+                {
+                    self.chained_merkle_root = shred.merkle_root().unwrap();
+                }
                 (original_last_data_shred, partition_last_data_shred)
             });
 
-        let data_shreds = Arc::new(data_shreds);
-        blockstore_sender.send((data_shreds.clone(), None))?;
+        if !data_shreds.is_empty() {
+            let data_shreds = Arc::new(data_shreds);
+            blockstore_sender.send((data_shreds.clone(), None))?;
 
-        // 3) Start broadcast step
-        info!(
-            "{} Sending good shreds for slot {} to network",
-            keypair.pubkey(),
-            data_shreds.first().unwrap().slot()
-        );
-        assert!(data_shreds.iter().all(|shred| shred.slot() == bank.slot()));
-        socket_sender.send((data_shreds, None))?;
+            // 3) Start broadcast step
+            info!(
+                "{} Sending good shreds for slot {} to network",
+                keypair.pubkey(),
+                data_shreds.first().unwrap().slot()
+            );
+            assert!(data_shreds.iter().all(|shred| shred.slot() == bank.slot()));
+            socket_sender.send((data_shreds, None))?;
+        }
 
         // Special handling of last shred to cause partition
         if let Some((original_last_data_shred, partition_last_data_shred)) = last_shreds {
@@ -291,6 +316,15 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             }
             socket_sender.send((original_last_data_shred, None))?;
             socket_sender.send((partition_last_data_shred, None))?;
+        }
+
+        if last_tick_height == bank.max_tick_height() {
+            broadcast_utils::set_block_id_and_send(
+                &self.migration_status,
+                &self.votor_event_sender,
+                bank,
+                self.chained_merkle_root,
+            )?;
         }
         Ok(())
     }

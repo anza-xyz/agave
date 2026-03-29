@@ -1,20 +1,25 @@
-#[allow(deprecated)]
+#[expect(deprecated)]
 use solana_stake_interface::config::Config as StakeConfig;
 use {
-    crate::stake_utils,
-    agave_feature_set::{vote_state_v4, FeatureSet, FEATURE_NAMES},
+    crate::{
+        bank::VAT_TO_BURN_PER_EPOCH,
+        block_component_processor::vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
+        stake_utils,
+    },
+    agave_feature_set::{FEATURE_NAMES, FeatureSet},
     agave_votor_messages::{
         self,
-        consensus_message::{Certificate, CertificateType, BLS_KEYPAIR_DERIVE_SEED},
+        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, Certificate, CertificateType},
         migration::GENESIS_CERTIFICATE_ACCOUNT,
     },
     bincode::serialize,
     log::*,
-    solana_account::{state_traits::StateMut, Account, AccountSharedData, ReadableAccount},
+    solana_account::{Account, AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_bls_signatures::{
-        keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
-        Pubkey as BLSPubkey, Signature as BLSSignature,
+        Pubkey as BLSPubkey, Signature as BLSSignature, keypair::Keypair as BLSKeypair,
+        pubkey::PubkeyCompressed as BLSPubkeyCompressed,
     },
+    solana_clock::Epoch,
     solana_cluster_type::ClusterType,
     solana_config_interface::state::ConfigKeys,
     solana_feature_gate_interface::{self as feature, Feature},
@@ -31,10 +36,10 @@ use {
     solana_stake_interface::state::{Authorized, Lockup, Meta, StakeStateV2},
     solana_system_interface::program as system_program,
     solana_sysvar::{
-        epoch_rewards::{self, EpochRewards},
         SysvarSerialize,
+        epoch_rewards::{self, EpochRewards},
     },
-    solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+    solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     solana_vote_program::vote_state,
     std::{borrow::Borrow, sync::Arc},
 };
@@ -42,26 +47,39 @@ use {
 // Default amount received by the validator
 const VALIDATOR_LAMPORTS: u64 = 890_880;
 
-// fun fact: rustc is very close to make this const fn.
+// Minimum vote account balance required for VAT (SIMD-0357).
+// Vote accounts need this minimum to pass VAT filtering.
+pub fn minimum_vote_account_balance_for_vat(num_epochs: Epoch) -> u64 {
+    VAT_TO_BURN_PER_EPOCH * num_epochs + Rent::default().minimum_balance(VoteStateV4::size_of())
+}
+
+// Minimum stake lamports required for a valid stake account with non-zero stake.
+// This is rent_exempt_reserve + 1 lamport of actual stake.
+pub fn minimum_stake_lamports_for_vat(rent: &Rent) -> u64 {
+    rent.minimum_balance(StakeStateV2::size_of()) + 1
+}
+
 pub fn bootstrap_validator_stake_lamports() -> u64 {
-    Rent::default().minimum_balance(StakeStateV2::size_of())
+    minimum_stake_lamports_for_vat(&Rent::default())
 }
 
 // Number of lamports automatically used for genesis accounts
 pub const fn genesis_sysvar_and_builtin_program_lamports() -> u64 {
     const NUM_BUILTIN_PROGRAMS: u64 = 6;
-    const NUM_PRECOMPILES: u64 = 2;
+    const NUM_PRECOMPILES: u64 = 3;
     const STAKE_HISTORY_MIN_BALANCE: u64 = 114_979_200;
     const CLOCK_SYSVAR_MIN_BALANCE: u64 = 1_169_280;
     const RENT_SYSVAR_MIN_BALANCE: u64 = 1_009_200;
     const EPOCH_SCHEDULE_SYSVAR_MIN_BALANCE: u64 = 1_120_560;
     const RECENT_BLOCKHASHES_SYSVAR_MIN_BALANCE: u64 = 42_706_560;
+    const LAST_RESTART_SLOT_SYSVAR_MIN_BALANCE: u64 = 946_560;
 
     STAKE_HISTORY_MIN_BALANCE
         + CLOCK_SYSVAR_MIN_BALANCE
         + RENT_SYSVAR_MIN_BALANCE
         + EPOCH_SCHEDULE_SYSVAR_MIN_BALANCE
         + RECENT_BLOCKHASHES_SYSVAR_MIN_BALANCE
+        + LAST_RESTART_SLOT_SYSVAR_MIN_BALANCE
         + NUM_BUILTIN_PROGRAMS
         + NUM_PRECOMPILES
 }
@@ -70,23 +88,26 @@ pub struct ValidatorVoteKeypairs {
     pub node_keypair: Keypair,
     pub vote_keypair: Keypair,
     pub stake_keypair: Keypair,
+    pub bls_keypair: BLSKeypair,
 }
 
 impl ValidatorVoteKeypairs {
     pub fn new(node_keypair: Keypair, vote_keypair: Keypair, stake_keypair: Keypair) -> Self {
+        let bls_keypair =
+            BLSKeypair::derive_from_signer(&vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
         Self {
             node_keypair,
             vote_keypair,
             stake_keypair,
+            bls_keypair,
         }
     }
 
     pub fn new_rand() -> Self {
-        Self {
-            node_keypair: Keypair::new(),
-            vote_keypair: Keypair::new(),
-            stake_keypair: Keypair::new(),
-        }
+        let node_keypair = Keypair::new();
+        let vote_keypair = Keypair::new();
+        let stake_keypair = Keypair::new();
+        Self::new(node_keypair, vote_keypair, stake_keypair)
     }
 }
 
@@ -124,6 +145,7 @@ pub fn create_genesis_config_with_vote_accounts(
     )
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn create_genesis_config_with_alpenglow_vote_accounts(
     mint_lamports: u64,
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
@@ -154,16 +176,13 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     let voting_keypair = voting_keypairs[0].borrow().vote_keypair.insecure_clone();
 
     let validator_pubkey = voting_keypairs[0].borrow().node_keypair.pubkey();
-    let validator_bls_pubkey = if is_alpenglow {
-        let bls_keypair = BLSKeypair::derive_from_signer(
-            &voting_keypairs[0].borrow().vote_keypair,
-            BLS_KEYPAIR_DERIVE_SEED,
-        )
-        .unwrap();
-        Some(bls_keypair.public.to_bytes_compressed())
-    } else {
-        None
-    };
+    let validator_bls_pubkey = Some(
+        voting_keypairs[0]
+            .borrow()
+            .bls_keypair
+            .public
+            .to_bytes_compressed(),
+    );
     let mut genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
@@ -196,19 +215,30 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         let vote_pubkey = validator_voting_keypairs.borrow().vote_keypair.pubkey();
         let stake_pubkey = validator_voting_keypairs.borrow().stake_keypair.pubkey();
 
+        // Ensure minimum lamports for VAT filtering, but only when stake > 0.
+        // When stake is explicitly 0, respect that (e.g., for testing unstaked validator filtering).
+        let rent = &genesis_config_info.genesis_config.rent;
+        let (vote_account_lamports, stake_lamports) = if *stake > 0 {
+            (
+                (*stake).max(minimum_vote_account_balance_for_vat(100)),
+                (*stake).max(minimum_stake_lamports_for_vat(rent)),
+            )
+        } else {
+            // Zero stake - just need rent exemption, no VAT minimums
+            (
+                rent.minimum_balance(VoteStateV4::size_of()),
+                rent.minimum_balance(StakeStateV2::size_of()),
+            )
+        };
+
         // Create accounts
         let node_account = Account::new(VALIDATOR_LAMPORTS, 0, &system_program::id());
-        let bls_pubkey_compressed = if is_alpenglow {
-            let bls_keypair = BLSKeypair::derive_from_signer(
-                &validator_voting_keypairs.borrow().vote_keypair,
-                BLS_KEYPAIR_DERIVE_SEED,
-            )
-            .unwrap();
-            bls_keypair.public.to_bytes_compressed()
-        } else {
-            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]
-        };
-        let vote_account = if feature_set.is_active(&vote_state_v4::id()) {
+        let bls_pubkey_compressed = validator_voting_keypairs
+            .borrow()
+            .bls_keypair
+            .public
+            .to_bytes_compressed();
+        let vote_account = if feature_set.snapshot().vote_state_v4 {
             // Vote state v4 feature active. Create a v4 account.
             vote_state::create_v4_account_with_authorized(
                 &node_pubkey,
@@ -219,7 +249,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
                 &vote_pubkey,
                 0,
                 &vote_pubkey,
-                *stake,
+                vote_account_lamports,
             )
         } else {
             vote_state::create_v3_account_with_authorized(
@@ -227,7 +257,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
                 &vote_pubkey,
                 &vote_pubkey,
                 0,
-                *stake,
+                vote_account_lamports,
             )
         };
         let stake_account = Account::from(stake_utils::create_stake_account(
@@ -235,7 +265,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
             &vote_pubkey,
             &vote_account,
             &genesis_config_info.genesis_config.rent,
-            *stake,
+            stake_lamports,
         ));
 
         let vote_account = Account::from(vote_account);
@@ -284,13 +314,17 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
     ])
     .unwrap();
 
+    let bls_keypair =
+        BLSKeypair::derive_from_signer(&voting_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
+    let validator_bls_pubkey = Some(bls_keypair.public.to_bytes_compressed());
+
     let genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
         validator_pubkey,
         &voting_keypair.pubkey(),
         &Pubkey::new_unique(),
-        None,
+        validator_bls_pubkey,
         validator_stake_lamports,
         VALIDATOR_LAMPORTS,
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
@@ -325,6 +359,7 @@ pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
     genesis_config
         .accounts
         .insert(*GENESIS_CERTIFICATE_ACCOUNT, certificate_account);
+    EpochInflationAccountState::insert_into_genesis_config(genesis_config);
 }
 
 pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
@@ -334,11 +369,7 @@ pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
 fn do_activate_all_features<const IS_ALPENGLOW: bool>(genesis_config: &mut GenesisConfig) {
     // Activate all features at genesis in development mode
     for feature_id in FeatureSet::default().inactive() {
-        if (IS_ALPENGLOW || *feature_id != agave_feature_set::alpenglow::id())
-            // Skip bls_pubkey_management_in_vote_account feature activation until cli change is in place
-            && *feature_id
-                != agave_feature_set::bls_pubkey_management_in_vote_account::id()
-        {
+        if IS_ALPENGLOW || *feature_id != agave_feature_set::alpenglow::id() {
             activate_feature(genesis_config, *feature_id);
         }
     }
@@ -380,7 +411,7 @@ pub fn bls_pubkey_to_compressed_bytes(
     bincode::serialize(&key).unwrap().try_into().unwrap()
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn create_genesis_config_with_leader_ex_no_features(
     mint_lamports: u64,
     mint_pubkey: &Pubkey,
@@ -396,7 +427,22 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     feature_set: &FeatureSet,
     mut initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
-    let validator_vote_account = if feature_set.is_active(&vote_state_v4::id()) {
+    // Ensure minimum lamports for VAT filtering, but only when stake > 0.
+    // VAT requires: non-zero stake, BLS pubkey, and lamports >= VAT_TO_BURN_PER_EPOCH + rent_exempt_minimum.
+    let (vote_account_lamports, stake_lamports) = if validator_stake_lamports > 0 {
+        (
+            validator_stake_lamports.max(minimum_vote_account_balance_for_vat(100)),
+            validator_stake_lamports.max(minimum_stake_lamports_for_vat(&rent)),
+        )
+    } else {
+        // Zero stake - just need rent exemption, no VAT minimums
+        (
+            rent.minimum_balance(VoteStateV4::size_of()),
+            rent.minimum_balance(StakeStateV2::size_of()),
+        )
+    };
+
+    let validator_vote_account = if feature_set.snapshot().vote_state_v4 {
         // Vote state v4 feature active. Create a v4 account.
         vote_state::create_v4_account_with_authorized(
             validator_pubkey,
@@ -407,7 +453,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
             validator_vote_account_pubkey,
             0,
             validator_vote_account_pubkey,
-            validator_stake_lamports,
+            vote_account_lamports,
         )
     } else {
         // Vote state v4 feature inactive. Create a v3 account.
@@ -422,7 +468,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
             validator_vote_account_pubkey,
             validator_vote_account_pubkey,
             0,
-            validator_stake_lamports,
+            vote_account_lamports,
         )
     };
 
@@ -431,7 +477,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
         validator_vote_account_pubkey,
         &validator_vote_account,
         &rent,
-        validator_stake_lamports,
+        stake_lamports,
     );
 
     initial_accounts.push((
@@ -475,7 +521,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     genesis_config
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn create_genesis_config_with_leader_ex(
     mint_lamports: u64,
     mint_pubkey: &Pubkey,
@@ -512,17 +558,13 @@ pub fn create_genesis_config_with_leader_ex(
         if *feature_id == agave_feature_set::alpenglow::id() {
             continue;
         }
-        // Skip bls_pubkey_management_in_vote_account feature activation until cli change is in place
-        if *feature_id == agave_feature_set::bls_pubkey_management_in_vote_account::id() {
-            continue;
-        }
         activate_feature(&mut genesis_config, *feature_id);
     }
 
     genesis_config
 }
 
-#[allow(deprecated)]
+#[expect(deprecated)]
 pub fn add_genesis_stake_config_account(genesis_config: &mut GenesisConfig) -> u64 {
     let mut data = serialize(&ConfigKeys { keys: vec![] }).unwrap();
     data.extend_from_slice(&serialize(&StakeConfig::default()).unwrap());

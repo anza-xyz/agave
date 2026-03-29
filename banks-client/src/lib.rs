@@ -13,7 +13,7 @@ pub use {
 use {
     borsh::BorshDeserialize,
     futures::future::join_all,
-    solana_account::{from_account, Account},
+    solana_account::{Account, from_account},
     solana_banks_interface::{
         BanksRequest, BanksResponse, BanksTransactionResultWithMetadata,
         BanksTransactionResultWithSimulation,
@@ -29,10 +29,10 @@ use {
     solana_sysvar::SysvarSerialize,
     solana_transaction::versioned::VersionedTransaction,
     tarpc::{
+        ClientMessage, Response, Transport,
         client::{self, NewClient, RequestDispatch},
         context::{self, Context},
         serde_transport::tcp,
-        ClientMessage, Response, Transport,
     },
     tokio::net::ToSocketAddrs,
     tokio_serde::formats::Bincode,
@@ -545,7 +545,7 @@ mod tests {
         tarpc::transport,
         tokio::{
             runtime::Runtime,
-            time::{sleep, Duration},
+            time::{Duration, sleep},
         },
     };
 

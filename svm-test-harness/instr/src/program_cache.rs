@@ -1,16 +1,16 @@
 use {
-    agave_syscalls::create_program_runtime_environment_v1,
     solana_account::{Account, AccountSharedData},
     solana_builtins::BUILTINS,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction_error::InstructionError,
     solana_program_runtime::loaded_programs::{
-        LoadProgramMetrics, ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
+        LoadProgramMetrics, ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironment,
     },
     solana_pubkey::Pubkey,
     solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
+    solana_syscalls::create_program_runtime_environment,
     std::{collections::HashSet, sync::Arc},
 };
 
@@ -25,7 +25,7 @@ pub fn new_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
             Arc::new(ProgramCacheEntry::new_builtin(
                 0u64,
                 builtin.name.len(),
-                builtin.entrypoint,
+                builtin.register_fn,
             )),
         );
     }
@@ -42,15 +42,13 @@ pub fn add_program(
     feature_set: &SVMFeatureSet,
     compute_budget: &ComputeBudget,
 ) {
-    let program_runtime_environment = Arc::new(
-        create_program_runtime_environment_v1(
-            feature_set,
-            &compute_budget.to_budget(),
-            false, /* reject_deployment_of_broken_elfs */
-            false, /* debugging_features */
-        )
-        .unwrap(),
-    );
+    let program_runtime_environment = create_program_runtime_environment(
+        feature_set,
+        &compute_budget.to_budget(),
+        false, /* reject_deployment_of_broken_elfs */
+        false, /* debugging_features */
+    )
+    .unwrap();
 
     let entry = ProgramCacheEntry::new(
         loader_key,
@@ -69,7 +67,7 @@ pub fn add_program(
 /// Populate a `ProgramCacheForTxBatch` via `load_program_with_pubkey` from any program accounts.
 pub fn fill_from_accounts(
     program_cache: &mut ProgramCacheForTxBatch,
-    environments: &ProgramRuntimeEnvironments,
+    program_runtime_environment: &ProgramRuntimeEnvironment,
     accounts: &[(Pubkey, Account)],
     slot: u64,
 ) -> Result<(), InstructionError> {
@@ -103,7 +101,7 @@ pub fn fill_from_accounts(
             if let Some((loaded_program, _last_modification_slot)) =
                 solana_svm::program_loader::load_program_with_pubkey(
                     &FillFromAccountsCallback(accounts),
-                    environments,
+                    program_runtime_environment,
                     &acc.0,
                     slot,
                     &mut ExecuteTimings::default(),

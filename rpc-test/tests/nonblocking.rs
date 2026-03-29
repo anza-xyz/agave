@@ -7,10 +7,10 @@ use {
     solana_test_validator::TestValidatorGenesis,
     solana_tpu_client::tpu_client::TpuClientConfig,
     std::sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
-    tokio::time::{sleep, Duration, Instant},
+    tokio::time::{Duration, Instant, sleep},
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

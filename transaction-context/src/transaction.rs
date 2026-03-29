@@ -40,10 +40,10 @@ struct TransactionFrame {
     cpi_scratchpad: VmSlice<u8>,
     /// Index of current executing instruction
     current_executing_instruction: u16,
-    /// Number of instructions in transaction
-    number_of_instructions: u16,
-    /// Number of executed CPIs
-    number_of_executed_cpis: u16,
+    /// Number of instructions in the instruction trace (including top level and CPIs)
+    total_number_of_instructions_in_trace: u16,
+    /// Number of CPIs in the instruction trace
+    number_of_cpis_in_trace: u16,
     /// Number of transaction accounts
     number_of_transaction_accounts: u16,
 }
@@ -61,7 +61,7 @@ pub struct TransactionContext<'ix_data> {
     instruction_trace: Vec<InstructionFrame>,
     transaction_frame: TransactionFrame,
     return_data_bytes: Vec<u8>,
-    top_level_instruction_index: usize,
+    next_top_level_instruction_index: usize,
     #[cfg(not(target_os = "solana"))]
     pub(crate) rent: Rent,
     /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
@@ -95,30 +95,33 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 0,
             ),
             current_executing_instruction: 0,
-            number_of_instructions: number_of_top_level_instructions as u16,
-            number_of_executed_cpis: 0,
+            total_number_of_instructions_in_trace: number_of_top_level_instructions as u16,
+            number_of_cpis_in_trace: 0,
             number_of_transaction_accounts: transaction_accounts.len() as u16,
         };
+
+        // We need an extra space for the placeholder, so we avoid relocations.
+        let mut instruction_trace =
+            Vec::with_capacity(instruction_trace_capacity.saturating_add(1));
+        instruction_trace.resize_with(
+            number_of_top_level_instructions.saturating_add(1),
+            InstructionFrame::default,
+        );
 
         Self {
             accounts: Rc::new(TransactionAccounts::new(transaction_accounts)),
             instruction_stack_capacity,
             instruction_trace_capacity,
             instruction_stack: Vec::with_capacity(instruction_stack_capacity),
-            instruction_trace: vec![InstructionFrame::default()],
+            instruction_trace,
             return_data_bytes: Vec::new(),
             transaction_frame,
-            top_level_instruction_index: 0,
+            next_top_level_instruction_index: 0,
             rent,
             instruction_accounts: Vec::with_capacity(instruction_trace_capacity),
             deduplication_maps: Vec::with_capacity(instruction_trace_capacity),
             instruction_data: Vec::with_capacity(instruction_trace_capacity),
         }
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn set_top_level_instruction_index(&mut self, top_level_instruction_index: usize) {
-        self.top_level_instruction_index = top_level_instruction_index;
     }
 
     /// Used in mock_process_instruction
@@ -169,7 +172,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
     /// Returns the instruction trace length.
     ///
     /// Not counting the last empty instruction which is always pre-reserved for the next instruction.
-    /// See also `get_next_instruction_context()`.
     pub fn get_instruction_trace_length(&self) -> usize {
         self.instruction_trace.len().saturating_sub(1)
     }
@@ -209,6 +211,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction_accounts,
             dedup_map,
             instruction_data,
+            index_of_caller_instruction: instruction.index_of_caller_instruction as usize,
         })
     }
 
@@ -259,19 +262,21 @@ impl<'ix_data> TransactionContext<'ix_data> {
     pub fn get_next_instruction_context(
         &self,
     ) -> Result<InstructionContext<'_, '_>, InstructionError> {
-        let index_in_trace = self
-            .instruction_trace
-            .len()
-            .checked_sub(1)
-            .ok_or(InstructionError::CallDepth)?;
+        let index_in_trace = if self.instruction_stack.is_empty() {
+            self.next_top_level_instruction_index
+        } else {
+            self.instruction_trace
+                .len()
+                .checked_sub(1)
+                .ok_or(InstructionError::CallDepth)?
+        };
         self.get_instruction_context_at_index_in_trace(index_in_trace)
     }
 
-    /// Configures the next instruction.
-    ///
-    /// The last InstructionContext is always empty and pre-reserved for the next instruction.
-    pub fn configure_next_instruction(
+    /// Configures an instruction at a specific index in trace.
+    pub fn configure_instruction_at_index(
         &mut self,
+        instruction_index: usize,
         program_index: IndexOfAccount,
         instruction_accounts: Vec<InstructionAccount>,
         deduplication_map: Vec<u16>,
@@ -279,30 +284,26 @@ impl<'ix_data> TransactionContext<'ix_data> {
         caller_index: Option<u16>,
     ) -> Result<(), InstructionError> {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
-        let trace_len = self.instruction_trace.len();
-        let instruction_index = trace_len.saturating_sub(1);
 
         let instruction = self
             .instruction_trace
-            .last_mut()
-            .ok_or(InstructionError::CallDepth)?;
+            .get_mut(instruction_index)
+            .ok_or(InstructionError::MaxInstructionTraceLengthExceeded)?;
 
         // If we have a parent index, then we are dealing with a CPI.
         if let Some(caller_index) = caller_index {
-            self.transaction_frame.number_of_instructions = self
+            self.transaction_frame.total_number_of_instructions_in_trace = self
                 .transaction_frame
-                .number_of_instructions
+                .total_number_of_instructions_in_trace
                 .saturating_add(1);
             instruction.index_of_caller_instruction = caller_index;
+            let next_ptr = self
+                .transaction_frame
+                .cpi_scratchpad
+                .ptr()
+                .saturating_add(GUEST_REGION_SIZE);
+            self.transaction_frame.cpi_scratchpad = VmSlice::new(next_ptr, 0);
         }
-
-        self.transaction_frame.cpi_scratchpad = VmSlice::new(
-            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(
-                GUEST_REGION_SIZE
-                    .saturating_mul(self.transaction_frame.number_of_instructions as u64),
-            ),
-            0,
-        );
 
         instruction.program_account_index_in_tx = program_index;
         instruction.configure_vm_slices(
@@ -318,14 +319,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
         Ok(())
     }
 
-    /// A version of `configure_next_instruction` to help creating the deduplication map in tests
-    pub fn configure_next_instruction_for_tests(
-        &mut self,
-        program_index: IndexOfAccount,
-        instruction_accounts: Vec<InstructionAccount>,
-        instruction_data: Vec<u8>,
-    ) -> Result<(), InstructionError> {
-        debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
+    /// For tests only
+    fn deduplicate_accounts_for_tests(instruction_accounts: &[InstructionAccount]) -> Vec<u16> {
         let mut dedup_map = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
         for (idx, account) in instruction_accounts.iter().enumerate() {
             let index_in_instruction = dedup_map
@@ -335,13 +330,50 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 *index_in_instruction = idx as u16;
             }
         }
-        self.configure_next_instruction(
+        dedup_map
+    }
+
+    /// A version of `configure_top_level_instruction` to help creating the deduplication map in tests
+    pub fn configure_top_level_instruction_for_tests(
+        &mut self,
+        program_index: IndexOfAccount,
+        instruction_accounts: Vec<InstructionAccount>,
+        instruction_data: Vec<u8>,
+    ) -> Result<(), InstructionError> {
+        debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
+        let dedup_map = Self::deduplicate_accounts_for_tests(&instruction_accounts);
+
+        self.configure_instruction_at_index(
+            self.next_top_level_instruction_index,
             program_index,
             instruction_accounts,
             dedup_map,
             Cow::Owned(instruction_data),
             None,
-        )
+        )?;
+        Ok(())
+    }
+
+    /// A helper function to facilitate creating a CPI in tests
+    pub fn configure_next_cpi_for_tests(
+        &mut self,
+        program_index: IndexOfAccount,
+        instruction_accounts: Vec<InstructionAccount>,
+        instruction_data: Vec<u8>,
+    ) -> Result<(), InstructionError> {
+        debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
+        let dedup_map = Self::deduplicate_accounts_for_tests(&instruction_accounts);
+        let caller_index = self.get_current_instruction_index()?;
+        let cpi_index = self.get_instruction_trace_length();
+        self.configure_instruction_at_index(
+            cpi_index,
+            program_index,
+            instruction_accounts,
+            dedup_map,
+            Cow::Owned(instruction_data),
+            Some(caller_index as u16),
+        )?;
+        Ok(())
     }
 
     /// Pushes the next instruction
@@ -357,11 +389,29 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 .ok_or(InstructionError::CallDepth)?;
             instruction.nesting_level = nesting_level as u16;
         }
-        let index_in_trace = self.get_instruction_trace_length();
-        if index_in_trace >= self.instruction_trace_capacity {
+
+        if self.number_of_called_instructions_in_trace() >= self.instruction_trace_capacity {
             return Err(InstructionError::MaxInstructionTraceLengthExceeded);
         }
-        self.instruction_trace.push(InstructionFrame::default());
+
+        let (index_in_trace, current_top_level_instruction) = if self.instruction_stack.is_empty() {
+            let index = self.next_top_level_instruction_index;
+            self.next_top_level_instruction_index =
+                self.next_top_level_instruction_index.saturating_add(1);
+            (index, index)
+        } else {
+            let index = self.get_instruction_trace_length();
+            self.transaction_frame.number_of_cpis_in_trace = self
+                .transaction_frame
+                .number_of_cpis_in_trace
+                .saturating_add(1);
+            self.instruction_trace.push(InstructionFrame::default());
+            (
+                index,
+                self.next_top_level_instruction_index.saturating_sub(1),
+            )
+        };
+
         if nesting_level >= self.instruction_stack_capacity {
             return Err(InstructionError::CallDepth);
         }
@@ -374,7 +424,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             }
             instructions::store_current_index_checked(
                 mut_account_ref.data_as_mut_slice(),
-                self.top_level_instruction_index as u16,
+                current_top_level_instruction as u16,
             )?;
         }
         Ok(())
@@ -406,13 +456,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         // Always pop, even if we `detected_an_unbalanced_instruction`
         self.instruction_stack.pop();
         if let Some(instr_idx) = self.instruction_stack.last() {
-            self.transaction_frame.number_of_executed_cpis = self
-                .transaction_frame
-                .number_of_executed_cpis
-                .saturating_add(1);
             self.transaction_frame.current_executing_instruction = *instr_idx as u16;
-        } else {
-            self.top_level_instruction_index = self.top_level_instruction_index.saturating_add(1);
         }
         if detected_an_unbalanced_instruction? {
             Err(InstructionError::UnbalancedInstruction)
@@ -451,7 +495,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
     /// Returns a new account data write access handler
     pub fn access_violation_handler(
         &self,
-        stricter_abi_and_runtime_constraints: bool,
+        virtual_address_space_adjustments: bool,
         account_data_direct_mapping: bool,
     ) -> AccessViolationHandler {
         let accounts = Rc::clone(&self.accounts);
@@ -512,7 +556,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 }
 
                 // Potentially unshare / make the account shared data unique (CoW logic).
-                if stricter_abi_and_runtime_constraints && account_data_direct_mapping {
+                if virtual_address_space_adjustments && account_data_direct_mapping {
                     region.host_addr = account.data_as_mut_slice().as_mut_ptr() as u64;
                     region.writable = true;
                 }
@@ -530,6 +574,26 @@ impl<'ix_data> TransactionContext<'ix_data> {
             std::mem::take(&mut self.instruction_accounts),
             std::mem::take(&mut self.instruction_data),
         )
+    }
+
+    /// Called instruction are those that the program runtime has already called into. It
+    /// encompasses instructions under execution (e.g. all nested CPIs are already called) and
+    /// finished ones.
+    ///
+    /// Top level instructions that have not yet been executed aren't considered called.
+    pub fn number_of_called_instructions_in_trace(&self) -> usize {
+        self.next_top_level_instruction_index
+            .saturating_add(self.transaction_frame.number_of_cpis_in_trace as usize)
+    }
+
+    /// Return next top level instruction to execute
+    pub fn next_top_level_instruction_index(&self) -> usize {
+        self.next_top_level_instruction_index
+    }
+
+    /// Return number of CPIs in instruction trace
+    pub fn number_of_cpis_in_trace(&self) -> usize {
+        self.transaction_frame.number_of_cpis_in_trace as usize
     }
 }
 
@@ -639,7 +703,7 @@ mod tests {
         );
 
         transaction_context
-            .configure_next_instruction_for_tests(
+            .configure_top_level_instruction_for_tests(
                 u16::MAX,
                 vec![InstructionAccount::new(0, false, false)],
                 vec![],
@@ -668,7 +732,7 @@ mod tests {
             InstructionAccount::new(3, true, false),
         ];
         transaction_context
-            .configure_next_instruction_for_tests(
+            .configure_top_level_instruction_for_tests(
                 1,
                 instruction_accounts_1.clone(),
                 vec![1, 2, 3, 4],
@@ -682,7 +746,7 @@ mod tests {
             InstructionAccount::new(5, false, false),
         ];
         transaction_context
-            .configure_next_instruction_for_tests(
+            .configure_top_level_instruction_for_tests(
                 1,
                 instruction_accounts_2.clone(),
                 vec![5, 6, 7, 8, 9],
@@ -698,7 +762,11 @@ mod tests {
             InstructionAccount::new(10, false, false),
         ];
         transaction_context
-            .configure_next_instruction_for_tests(1, instruction_accounts_3.clone(), vec![10, 11])
+            .configure_top_level_instruction_for_tests(
+                1,
+                instruction_accounts_3.clone(),
+                vec![10, 11],
+            )
             .unwrap();
         transaction_context.push().unwrap();
 
@@ -780,20 +848,18 @@ mod tests {
     fn test_number_of_instructions() {
         let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 3];
         let mut transaction_context =
-            TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 3);
-        assert_eq!(
-            transaction_context.transaction_frame.number_of_instructions,
-            3
-        );
+            TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 2);
         assert_eq!(
             transaction_context
                 .transaction_frame
-                .number_of_executed_cpis,
+                .number_of_cpis_in_trace,
             0
         );
 
+        // Instruction #0
         transaction_context
-            .configure_next_instruction(
+            .configure_instruction_at_index(
+                0,
                 0,
                 vec![InstructionAccount::new(1, false, false)],
                 vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
@@ -801,27 +867,11 @@ mod tests {
                 None,
             )
             .unwrap();
-        transaction_context.push().unwrap();
-        assert_eq!(
-            transaction_context
-                .transaction_frame
-                .current_executing_instruction,
-            0
-        );
-        transaction_context.pop().unwrap();
-        assert_eq!(
-            transaction_context.transaction_frame.number_of_instructions,
-            3
-        );
-        assert_eq!(
-            transaction_context
-                .transaction_frame
-                .number_of_executed_cpis,
-            0
-        );
 
+        // Instruction #1
         transaction_context
-            .configure_next_instruction(
+            .configure_instruction_at_index(
+                1,
                 0,
                 vec![InstructionAccount::new(1, false, false)],
                 vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
@@ -829,41 +879,56 @@ mod tests {
                 None,
             )
             .unwrap();
+
+        // Executing instruction #0
         transaction_context.push().unwrap();
         assert_eq!(
             transaction_context
                 .transaction_frame
                 .current_executing_instruction,
+            0
+        );
+        assert_eq!(
+            transaction_context.number_of_called_instructions_in_trace(),
             1
         );
+
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .total_number_of_instructions_in_trace,
+            2
+        );
+
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_cpis_in_trace,
+            0
+        );
+
         assert_eq!(
             transaction_context.transaction_frame.cpi_scratchpad.ptr(),
-            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(3))
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(2))
         );
         assert_eq!(
             transaction_context.transaction_frame.cpi_scratchpad.len(),
             0,
         );
+        assert_eq!(
+            transaction_context.number_of_called_instructions_in_trace(),
+            1
+        );
 
+        // Instruction #0 does a CPI.
         transaction_context
-            .configure_next_instruction(
+            .configure_next_cpi_for_tests(
                 0,
                 vec![InstructionAccount::new(2, false, true)],
-                vec![0; 256],
-                Vec::new().into(),
-                Some(2),
+                Vec::new(),
             )
             .unwrap();
-        assert_eq!(
-            transaction_context.transaction_frame.number_of_instructions,
-            4
-        );
-        assert_eq!(
-            transaction_context
-                .transaction_frame
-                .number_of_executed_cpis,
-            0
-        );
+
         transaction_context.push().unwrap();
         assert_eq!(
             transaction_context
@@ -871,55 +936,280 @@ mod tests {
                 .current_executing_instruction,
             2
         );
+
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .total_number_of_instructions_in_trace,
+            3
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_cpis_in_trace,
+            1
+        );
+        assert_eq!(
+            transaction_context.number_of_called_instructions_in_trace(),
+            2
+        );
+
+        assert_eq!(
+            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(3))
+        );
+
+        // A nested CPI
+        transaction_context
+            .configure_next_cpi_for_tests(
+                0,
+                vec![InstructionAccount::new(2, false, true)],
+                Vec::new(),
+            )
+            .unwrap();
+
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
+            3
+        );
+
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .total_number_of_instructions_in_trace,
+            4
+        );
+
         assert_eq!(
             transaction_context.transaction_frame.cpi_scratchpad.ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(4))
         );
+
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.len(),
-            0,
+            transaction_context
+                .transaction_frame
+                .number_of_cpis_in_trace,
+            2
         );
 
+        assert_eq!(
+            transaction_context.number_of_called_instructions_in_trace(),
+            3
+        );
+        // Return from nested CPI
         transaction_context.pop().unwrap();
         assert_eq!(
-            transaction_context.transaction_frame.number_of_instructions,
+            transaction_context.number_of_called_instructions_in_trace(),
+            3
+        );
+
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .total_number_of_instructions_in_trace,
             4
         );
         assert_eq!(
             transaction_context
                 .transaction_frame
-                .number_of_executed_cpis,
-            1
+                .number_of_cpis_in_trace,
+            2,
         );
         assert_eq!(
             transaction_context
                 .transaction_frame
                 .current_executing_instruction,
-            1
+            2
         );
+
+        // A second nested CPI
+        transaction_context
+            .configure_next_cpi_for_tests(
+                0,
+                vec![InstructionAccount::new(2, false, true)],
+                Vec::new(),
+            )
+            .unwrap();
+
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
+            4
+        );
+
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .total_number_of_instructions_in_trace,
+            5
+        );
+
+        assert_eq!(
+            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_cpis_in_trace,
+            3
+        );
+        assert_eq!(
+            transaction_context.number_of_called_instructions_in_trace(),
+            4
+        );
+
+        // Return from second nested CPI
         transaction_context.pop().unwrap();
 
         assert_eq!(
-            transaction_context.transaction_frame.number_of_instructions,
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
+            2
+        );
+
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .total_number_of_instructions_in_trace,
+            5
+        );
+
+        assert_eq!(
+            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
+        );
+
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_cpis_in_trace,
+            3
+        );
+
+        // Return from first CPI
+        transaction_context.pop().unwrap();
+        assert_eq!(
+            transaction_context.number_of_called_instructions_in_trace(),
+            4
+        );
+
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
+            0
+        );
+
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .total_number_of_instructions_in_trace,
+            5
+        );
+
+        assert_eq!(
+            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
+        );
+
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_cpis_in_trace,
+            3,
+        );
+
+        // Let's go to Instruction #1 (top level)
+        transaction_context.pop().unwrap();
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
+            1,
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_cpis_in_trace,
+            3
+        );
+
+        // Instruction #1 will do a CPI.
+        transaction_context
+            .configure_next_cpi_for_tests(
+                0,
+                vec![InstructionAccount::new(2, false, true)],
+                Vec::new(),
+            )
+            .unwrap();
+
+        transaction_context.push().unwrap();
+
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
+            5,
+        );
+
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .total_number_of_instructions_in_trace,
+            6
+        );
+
+        assert_eq!(
+            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(6))
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_cpis_in_trace,
+            4
+        );
+        assert_eq!(
+            transaction_context.number_of_called_instructions_in_trace(),
+            6
+        );
+
+        // Return from CPI
+        transaction_context.pop().unwrap();
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_cpis_in_trace,
             4
         );
         assert_eq!(
             transaction_context
                 .transaction_frame
-                .number_of_executed_cpis,
-            1
+                .current_executing_instruction,
+            1,
         );
+
+        transaction_context.pop().unwrap();
     }
 
     #[test]
     fn test_get_current_instruction_index() {
         let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 3];
         let mut transaction_context =
-            TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 3);
+            TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 2);
 
         // First top level instruction
         transaction_context
-            .configure_next_instruction(
+            .configure_instruction_at_index(
+                0,
                 1,
                 vec![
                     InstructionAccount::new(0, false, false),
@@ -930,16 +1220,11 @@ mod tests {
                 None,
             )
             .unwrap();
-        transaction_context.push().unwrap();
-        assert_eq!(
-            transaction_context.get_current_instruction_index().unwrap(),
-            0
-        );
-        transaction_context.pop().unwrap();
 
         // Second top-level instruction
         transaction_context
-            .configure_next_instruction(
+            .configure_instruction_at_index(
+                1,
                 1,
                 vec![
                     InstructionAccount::new(0, false, false),
@@ -950,6 +1235,15 @@ mod tests {
                 None,
             )
             .unwrap();
+
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context.get_current_instruction_index().unwrap(),
+            0
+        );
+
+        transaction_context.pop().unwrap();
+
         transaction_context.push().unwrap();
         assert_eq!(
             transaction_context.get_current_instruction_index().unwrap(),
@@ -958,15 +1252,13 @@ mod tests {
 
         // Simulating a CPI
         transaction_context
-            .configure_next_instruction(
+            .configure_next_cpi_for_tests(
                 1,
                 vec![
                     InstructionAccount::new(0, false, true),
                     InstructionAccount::new(1, false, false),
                 ],
-                vec![u16::MAX; 256],
-                Cow::Owned(Vec::new()),
-                Some(1),
+                Vec::new(),
             )
             .unwrap();
         transaction_context.push().unwrap();
@@ -977,15 +1269,13 @@ mod tests {
 
         // Yet another CPI
         transaction_context
-            .configure_next_instruction(
+            .configure_next_cpi_for_tests(
                 1,
                 vec![
                     InstructionAccount::new(0, false, true),
                     InstructionAccount::new(1, false, false),
                 ],
-                vec![u16::MAX; 256],
-                Cow::Owned(Vec::new()),
-                Some(2),
+                Vec::new(),
             )
             .unwrap();
         transaction_context.push().unwrap();

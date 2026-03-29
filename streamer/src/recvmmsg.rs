@@ -5,7 +5,7 @@ pub use solana_perf::packet::PACKETS_PER_BATCH;
 use {
     crate::msghdr::create_msghdr,
     itertools::izip,
-    libc::{iovec, mmsghdr, sockaddr_storage, socklen_t, AF_INET, AF_INET6, MSG_WAITFORONE},
+    libc::{AF_INET, AF_INET6, MSG_WAITFORONE, iovec, mmsghdr, sockaddr_storage, socklen_t},
     std::{
         mem::{self, MaybeUninit},
         net::{SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -183,8 +183,8 @@ mod tests {
     use {
         crate::{packet::PACKET_DATA_SIZE, recvmmsg::*},
         solana_net_utils::sockets::{
-            bind_in_range_with_config, localhost_port_range_for_tests, unique_port_range_for_tests,
-            SocketConfiguration as SocketConfig,
+            SocketConfiguration as SocketConfig, bind_in_range_with_config,
+            localhost_port_range_for_tests, unique_port_range_for_tests,
         },
         std::{
             net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},

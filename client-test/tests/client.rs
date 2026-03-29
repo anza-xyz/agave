@@ -1,6 +1,6 @@
 use {
     futures_util::StreamExt,
-    serde_json::{json, Value},
+    serde_json::{Value, json},
     solana_clock::Slot,
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_keypair::Keypair,
@@ -24,10 +24,10 @@ use {
         response::SlotInfo,
     },
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, SlotLeader},
         bank_forks::BankForks,
         commitment::{BlockCommitmentCache, CommitmentSlots},
-        genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        genesis_utils::{GenesisConfigInfo, create_genesis_config},
     },
     solana_signer::Signer,
     solana_system_interface::program as system_program,
@@ -40,8 +40,8 @@ use {
         collections::HashSet,
         net::{IpAddr, SocketAddr},
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         thread::sleep,
         time::{Duration, Instant},
@@ -131,7 +131,7 @@ fn test_account_subscription() {
     let blockhash = bank.last_blockhash();
     let bank_forks = BankForks::new_rw_arc(bank);
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-    let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+    let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
     bank_forks.write().unwrap().insert(bank1);
     let bob = Keypair::new();
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
@@ -333,7 +333,7 @@ fn test_program_subscription() {
     let blockhash = bank.last_blockhash();
     let bank_forks = BankForks::new_rw_arc(bank);
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-    let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+    let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
     bank_forks.write().unwrap().insert(bank1);
     let bob = Keypair::new();
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
@@ -418,7 +418,7 @@ fn test_root_subscription() {
     let bank = Bank::new_for_tests(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank);
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-    let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+    let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
     bank_forks.write().unwrap().insert(bank1);
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
     let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(

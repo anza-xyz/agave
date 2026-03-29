@@ -241,8 +241,6 @@ all_test_steps() {
              ^fetch-perf-libs.sh \
              ^platform-tools-sdk/ \
              ^programs/ \
-             cargo-build-sbf$ \
-             cargo-test-sbf$ \
       ; then
     cat >> "$output_file" <<"EOF"
   - command: "ci/docker-run-default-image.sh ci/test-stable-sbf.sh"
@@ -284,16 +282,22 @@ EOF
       - command: "ci/docker-run-default-image.sh ci/coverage/part-1.sh"
         name: "coverage-1"
         timeout_in_minutes: 60
+        env:
+          FETCH_CODECOV_ENVS: true
         agents:
           queue: "default"
       - command: "ci/docker-run-default-image.sh ci/coverage/part-2.sh"
         name: "coverage-2"
         timeout_in_minutes: 60
+        env:
+          FETCH_CODECOV_ENVS: true
         agents:
           queue: "default"
       - command: "ci/docker-run-default-image.sh ci/coverage/part-3.sh"
         name: "coverage-3"
         timeout_in_minutes: 60
+        env:
+          FETCH_CODECOV_ENVS: true
         agents:
           queue: "default"
 EOF
@@ -301,10 +305,15 @@ EOF
     annotate --style info --context test-coverage \
       "Coverage skipped as no .rs files were modified"
   fi
+
+  # crate publish test
+  if [[ -z $CI_PULL_REQUEST ]]; then
+    command_step crate-publish-test "cargo xtask publish test" 45 default
+  fi
 }
 
 pull_or_push_steps() {
-  command_step sanity "ci/test-sanity.sh" 5 default
+  command_step sanity "ci/docker-run-default-image.sh ci/test-sanity.sh" 5 default
   wait_step
 
   # Check for any .sh file changes

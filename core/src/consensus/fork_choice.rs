@@ -2,9 +2,9 @@ use {
     super::heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
     crate::{
         consensus::{
+            SWITCH_FORK_THRESHOLD, SwitchForkDecision, ThresholdDecision, Tower,
             latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
-            progress_map::ProgressMap, SwitchForkDecision, ThresholdDecision, Tower,
-            SWITCH_FORK_THRESHOLD,
+            progress_map::ProgressMap,
         },
         replay_stage::HeaviestForkFailures,
     },

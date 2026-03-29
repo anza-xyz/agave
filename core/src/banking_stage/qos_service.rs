@@ -5,8 +5,8 @@
 
 use {
     super::{
-        committer::CommitTransactionDetails, BatchedTransactionCostDetails,
-        BatchedTransactionDetails, BatchedTransactionErrorDetails,
+        BatchedTransactionCostDetails, BatchedTransactionDetails, BatchedTransactionErrorDetails,
+        committer::CommitTransactionDetails,
     },
     agave_feature_set::FeatureSet,
     solana_clock::Slot,
@@ -595,7 +595,7 @@ mod tests {
         solana_cost_model::transaction_cost::{UsageCostDetails, WritableKeysTransaction},
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_runtime::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_runtime::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
@@ -679,11 +679,12 @@ mod tests {
             std::iter::repeat(Ok(())),
         );
 
-        // set cost tracker limit to fit 1 transfer tx and 1 vote tx
+        // set cost tracker limit to bare minimum that will fit 1 transfer tx
+        // and 1 vote tx
         let cost_limit = transfer_tx_cost + vote_tx_cost;
         bank.write_cost_tracker()
             .unwrap()
-            .set_limits(cost_limit, cost_limit, cost_limit);
+            .set_limits(cost_limit, cost_limit, cost_limit, 0);
         let (results, num_selected) =
             qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
         assert_eq!(num_selected, 2);
@@ -714,7 +715,7 @@ mod tests {
             ],
             Some(&keypair.pubkey()),
         ));
-        let transfer_tx = RuntimeTransaction::from_transaction_for_tests(transaction.clone());
+        let transfer_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
         let txs: Vec<_> = (0..transaction_count)
             .map(|_| transfer_tx.clone())
             .collect();

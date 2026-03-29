@@ -15,7 +15,7 @@ use {
     dashmap::DashMap,
     jsonrpc_core::{Error, ErrorCode, Result},
     jsonrpc_derive::rpc,
-    jsonrpc_pubsub::{typed::Subscriber, SubscriptionId as PubSubSubscriptionId},
+    jsonrpc_pubsub::{SubscriptionId as PubSubSubscriptionId, typed::Subscriber},
     solana_account_decoder::{UiAccount, UiAccountEncoding},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
@@ -605,7 +605,7 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
         let version = solana_version::Version::default();
         Ok(RpcVersionInfo {
             solana_core: version.to_string(),
-            feature_set: Some(version.feature_set),
+            feature_set: Some(version.feature_set()),
         })
     }
 }
@@ -618,11 +618,11 @@ mod tests {
             optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank, rpc_pubsub_service,
             rpc_subscriptions::RpcSubscriptions,
         },
-        base64::{prelude::BASE64_STANDARD, Engine},
+        base64::{Engine, prelude::BASE64_STANDARD},
         jsonrpc_core::{IoHandler, Response},
         serial_test::serial,
         solana_account::ReadableAccount,
-        solana_account_decoder::{parse_account_data::parse_account_data_v3, UiAccountEncoding},
+        solana_account_decoder::{UiAccountEncoding, parse_account_data::parse_account_data_v3},
         solana_clock::Slot,
         solana_commitment_config::CommitmentConfig,
         solana_hash::Hash,
@@ -634,12 +634,12 @@ mod tests {
             ProcessedSignatureResult, ReceivedSignatureResult, RpcSignatureResult, SlotInfo,
         },
         solana_runtime::{
-            bank::Bank,
+            bank::{Bank, SlotLeader},
             bank_forks::BankForks,
             commitment::{BlockCommitmentCache, CommitmentSlots},
             genesis_utils::{
-                activate_all_features, create_genesis_config,
-                create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
+                GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
+                create_genesis_config, create_genesis_config_with_vote_accounts,
             },
         },
         solana_signer::Signer,
@@ -654,8 +654,8 @@ mod tests {
         },
         std::{
             sync::{
-                atomic::{AtomicBool, AtomicU64},
                 RwLock,
+                atomic::{AtomicBool, AtomicU64},
             },
             time::Duration,
         },
@@ -881,7 +881,7 @@ mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let rpc_subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
@@ -997,7 +997,7 @@ mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let rpc_subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
@@ -1180,7 +1180,7 @@ mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bob = Keypair::new();
 
@@ -1397,6 +1397,6 @@ mod tests {
         let version = rpc.get_version().unwrap();
         let expected_version = solana_version::Version::default();
         assert_eq!(version.to_string(), expected_version.to_string());
-        assert_eq!(version.feature_set.unwrap(), expected_version.feature_set);
+        assert_eq!(version.feature_set.unwrap(), expected_version.feature_set());
     }
 }

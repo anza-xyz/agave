@@ -2,9 +2,9 @@ use {
     super::*,
     solana_instruction::Instruction,
     solana_program_runtime::cpi::{
-        cpi_common, translate_accounts_c, translate_accounts_rust, translate_instruction_c,
-        translate_instruction_rust, translate_signers_c, translate_signers_rust,
-        SyscallInvokeSigned, TranslatedAccount,
+        SyscallInvokeSigned, TranslatedAccount, cpi_common, translate_accounts_c,
+        translate_accounts_rust, translate_instruction_c, translate_instruction_rust,
+        translate_signers_c, translate_signers_rust,
     },
 };
 
@@ -12,7 +12,7 @@ declare_builtin_function!(
     /// Cross-program invocation called from Rust
     SyscallInvokeSignedRust,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         instruction_addr: u64,
         account_infos_addr: u64,
         account_infos_len: u64,
@@ -79,7 +79,7 @@ declare_builtin_function!(
     /// Cross-program invocation called from C
     SyscallInvokeSignedC,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         instruction_addr: u64,
         account_infos_addr: u64,
         account_infos_len: u64,

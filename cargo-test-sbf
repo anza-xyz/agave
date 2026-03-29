@@ -2,6 +2,9 @@
 
 here=$(dirname "$0")
 
-export CARGO_BUILD_SBF="$here"/cargo-build-sbf
-set -x
-exec cargo run --manifest-path "$here"/platform-tools-sdk/cargo-test-sbf/Cargo.toml -- "$@"
+cargo --list | grep -q "^\s*test-sbf"
+found=$?
+if [[ $found -ne 0 ]]; then
+  cargo install cargo-test-sbf
+fi
+exec cargo test-sbf "$@"

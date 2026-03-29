@@ -14,4 +14,4 @@
 //! - RFC 2890: Key and Sequence Number Extensions to GRE
 pub mod packet;
 
-pub use packet::{construct_gre_packet, gre_packet_size, GreHeader, PacketError};
+pub use packet::{GreHeader, PacketError, construct_gre_packet, gre_packet_size};

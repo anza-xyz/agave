@@ -114,7 +114,7 @@ impl<Tx: SVMMessage> Drop for TransactionBatch<'_, '_, Tx> {
 mod tests {
     use {
         super::*,
-        crate::genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
+        crate::genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
         solana_keypair::Keypair,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_system_transaction as system_transaction,

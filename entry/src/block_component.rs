@@ -130,34 +130,36 @@
 /// └─────────────────────────────────────────┘
 /// ```
 use {
-    crate::entry::Entry,
-    agave_votor_messages::consensus_message::{Certificate, CertificateType},
+    crate::entry::{Entry, MaxDataShredsLen},
+    agave_votor_messages::{
+        consensus_message::{Certificate, CertificateType},
+        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
+    },
     solana_bls_signatures::{
-        Signature as BLSSignature, SignatureCompressed as BLSSignatureCompressed,
+        BlsError, Signature as BLSSignature, SignatureCompressed as BLSSignatureCompressed,
+        signature::AsSignatureAffine,
     },
     solana_clock::Slot,
     solana_hash::Hash,
     std::mem::MaybeUninit,
     wincode::{
+        ReadResult, SchemaRead, SchemaWrite, WriteResult,
         config::{Config, DefaultConfig},
-        containers::{Pod, Vec as WincodeVec},
+        containers::Vec as WincodeVec,
         error::write_length_encoding_overflow,
         io::{Reader, Writer},
         len::{BincodeLen, FixIntLen},
-        ReadResult, SchemaRead, SchemaWrite, WriteResult,
+        pod_wrapper,
     },
 };
 
-/// Placeholder for skip reward certificate.
-#[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
-pub struct SkipRewardCertificate {
-    pub data: Vec<u8>,
-}
-
-/// Placeholder for notar reward certificate.
-#[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
-pub struct NotarRewardCertificate {
-    pub data: Vec<u8>,
+pod_wrapper! {
+    // Use `BLSSignature` directly once `BLSSignature` wincode support
+    // is released in solana-sdk.
+    unsafe struct PodBLSSignature(BLSSignature);
+    // Use `BLSSignatureCompressed` directly once `BLSSignature` wincode support
+    // is released in solana-sdk.
+    unsafe struct PodBLSSignatureCompressed(BLSSignatureCompressed);
 }
 
 /// Wraps a value with a u16 length prefix for TLV-style serialization.
@@ -204,7 +206,6 @@ pub enum BlockComponentError {
 /// Block production metadata. User agent is capped at 255 bytes.
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct BlockFooterV1 {
-    #[wincode(with = "Pod<Hash>")]
     pub bank_hash: Hash,
     pub block_producer_time_nanos: u64,
     #[wincode(with = "WincodeVec<u8, FixIntLen<u8>>")]
@@ -217,14 +218,12 @@ pub struct BlockFooterV1 {
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct BlockHeaderV1 {
     pub parent_slot: Slot,
-    #[wincode(with = "Pod<Hash>")]
     pub parent_block_id: Hash,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct UpdateParentV1 {
     pub new_parent_slot: Slot,
-    #[wincode(with = "Pod<Hash>")]
     pub new_parent_block_id: Hash,
 }
 
@@ -232,9 +231,8 @@ pub struct UpdateParentV1 {
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct GenesisCertificate {
     pub slot: Slot,
-    #[wincode(with = "Pod<Hash>")]
     pub block_id: Hash,
-    #[wincode(with = "Pod<BLSSignature>")]
+    #[wincode(with = "PodBLSSignature")]
     pub bls_signature: BLSSignature,
     #[wincode(with = "WincodeVec<u8, BincodeLen>")]
     pub bitmap: Vec<u8>,
@@ -281,7 +279,6 @@ impl From<GenesisCertificate> for Certificate {
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct FinalCertificate {
     pub slot: Slot,
-    #[wincode(with = "Pod<Hash>")]
     pub block_id: Hash,
     pub final_aggregate: VotesAggregate,
     pub notar_aggregate: Option<VotesAggregate>,
@@ -304,10 +301,35 @@ impl FinalCertificate {
 
 #[derive(Clone, PartialEq, Eq, Debug, SchemaRead, SchemaWrite)]
 pub struct VotesAggregate {
-    #[wincode(with = "Pod<BLSSignatureCompressed>")]
+    #[wincode(with = "PodBLSSignatureCompressed")]
     signature: BLSSignatureCompressed,
     #[wincode(with = "WincodeVec<u8, FixIntLen<u16>>")]
     bitmap: Vec<u8>,
+}
+
+impl VotesAggregate {
+    /// Creates a VotesAggregate from a Certificate's signature and bitmap.
+    ///
+    /// # Panics
+    /// Panics if the signature cannot be converted to compressed format.
+    /// This should never happen for valid certificates from the consensus pool.
+    pub fn from_certificate(cert: &Certificate) -> Self {
+        Self {
+            signature: BLSSignatureCompressed::try_from(&cert.signature)
+                .expect("valid certificate signature should convert to compressed format"),
+            bitmap: cert.bitmap.clone(),
+        }
+    }
+
+    /// Uncompresses the signature.
+    pub fn uncompress_signature(&self) -> Result<BLSSignature, BlsError> {
+        Ok(BLSSignature::from(self.signature.try_as_affine()?))
+    }
+
+    /// Consumes self and returns the bitmap.
+    pub fn into_bitmap(self) -> Vec<u8> {
+        self.bitmap
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaWrite, SchemaRead)]
@@ -478,7 +500,9 @@ unsafe impl<C: Config> SchemaWrite<C> for BlockComponent {
 
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         match src {
-            Self::EntryBatch(entries) => <Vec<Entry> as SchemaWrite<C>>::size_of(entries),
+            Self::EntryBatch(entries) => {
+                <WincodeVec<Entry, MaxDataShredsLen> as SchemaWrite<C>>::size_of(entries)
+            }
             Self::BlockMarker(marker) => {
                 let marker_size = <VersionedBlockMarker as SchemaWrite<C>>::size_of(marker)?;
                 Ok(Self::ENTRY_COUNT_SIZE + marker_size)
@@ -488,7 +512,9 @@ unsafe impl<C: Config> SchemaWrite<C> for BlockComponent {
 
     fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         match src {
-            Self::EntryBatch(entries) => <Vec<Entry> as SchemaWrite<C>>::write(writer, entries),
+            Self::EntryBatch(entries) => {
+                <WincodeVec<Entry, MaxDataShredsLen> as SchemaWrite<C>>::write(writer, entries)
+            }
             Self::BlockMarker(marker) => {
                 writer.write(&0u64.to_le_bytes())?;
                 <VersionedBlockMarker as SchemaWrite<C>>::write(writer, marker)
@@ -501,24 +527,16 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for BlockComponent {
     type Dst = Self;
 
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        // Read the entry count (first 8 bytes) to determine variant
-        let count_bytes = reader.fill_array::<8>()?;
-        let entry_count = u64::from_le_bytes(*count_bytes);
+        let entries =
+            <WincodeVec<Entry, MaxDataShredsLen> as SchemaRead<'de, C>>::get(reader.by_ref())?;
 
-        if entry_count == 0 {
-            // This is a BlockMarker - consume the count bytes and read the marker
-            // SAFETY: fill_array::<8>() above guarantees at least 8 bytes are available
-            unsafe { reader.consume_unchecked(8) };
+        if entries.is_empty() {
             dst.write(Self::BlockMarker(<VersionedBlockMarker as SchemaRead<
                 C,
             >>::get(reader)?));
+        } else if entries.len() >= Self::MAX_ENTRIES {
+            return Err(wincode::ReadError::Custom("Too many entries"));
         } else {
-            let entries: Vec<Entry> = <Vec<Entry> as SchemaRead<C>>::get(reader)?;
-
-            if entries.len() >= Self::MAX_ENTRIES {
-                return Err(wincode::ReadError::Custom("Too many entries"));
-            }
-
             dst.write(Self::EntryBatch(entries));
         }
 
@@ -528,7 +546,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for BlockComponent {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::iter::repeat_n};
+    use {super::*, std::iter::repeat_n, wincode::config::DEFAULT_PREALLOCATION_SIZE_LIMIT};
 
     fn mock_entries(n: usize) -> Vec<Entry> {
         repeat_n(Entry::default(), n).collect()
@@ -589,6 +607,18 @@ mod tests {
         assert_eq!(comp, deser);
 
         let comp = BlockComponent::new_block_marker(marker);
+        let bytes = wincode::serialize(&comp).unwrap();
+        let deser: BlockComponent = wincode::deserialize(&bytes).unwrap();
+        assert_eq!(comp, deser);
+    }
+
+    #[test]
+    fn large_entry_batch_round_trips() {
+        // Ensure an EntryBatch that exceeds wincode's default 4 MiB prealloc
+        // limit can still round-trip.
+        let num_entries = DEFAULT_PREALLOCATION_SIZE_LIMIT / std::mem::size_of::<Entry>() + 1;
+
+        let comp = BlockComponent::new_entry_batch(mock_entries(num_entries)).unwrap();
         let bytes = wincode::serialize(&comp).unwrap();
         let deser: BlockComponent = wincode::deserialize(&bytes).unwrap();
         assert_eq!(comp, deser);

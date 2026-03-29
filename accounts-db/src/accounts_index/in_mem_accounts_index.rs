@@ -1,28 +1,27 @@
 use {
     super::{
+        DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, SlotListItem,
+        UpsertReclaim,
         account_map_entry::{
             AccountMapEntry, AccountMapEntryMeta, PreAllocatedAccountMapEntry, SlotListWriteGuard,
         },
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         stats::Stats,
-        DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, SlotListItem,
-        UpsertReclaim,
     },
-    crate::pubkey_bins::PubkeyBinCalculator24,
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     solana_bucket_map::bucket_api::BucketApi,
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     std::{
         cmp,
-        collections::{hash_map::Entry, HashMap, HashSet},
+        collections::{HashMap, HashSet, hash_map::Entry},
         fmt::Debug,
         mem,
         num::NonZeroUsize,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
 };
@@ -40,8 +39,6 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     map_internal: RwLock<HashMap<Pubkey, Box<AccountMapEntry<T>>, ahash::RandomState>>,
     storage: Arc<BucketMapHolder<T, U>>,
     _bin: usize,
-    pub(crate) lowest_pubkey: Pubkey,
-    pub(crate) highest_pubkey: Pubkey,
 
     bucket: Option<Arc<BucketApi<(Slot, U)>>>,
 
@@ -116,9 +113,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         num_initial_accounts: Option<usize>,
     ) -> Self {
         let num_ages_to_distribute_flushes = Age::MAX - storage.ages_to_stay_in_cache;
-        let bin_calc = PubkeyBinCalculator24::new(storage.bins);
-        let lowest_pubkey = bin_calc.lowest_pubkey_from_bin(bin);
-        let highest_pubkey = bin_calc.highest_pubkey_from_bin(bin);
 
         let map_internal = if let Some(num_initial_accounts) = num_initial_accounts {
             let capacity_per_bin = num_initial_accounts / storage.bins;
@@ -134,8 +128,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             map_internal,
             storage: Arc::clone(storage),
             _bin: bin,
-            lowest_pubkey,
-            highest_pubkey,
             bucket: storage
                 .disk
                 .as_ref()
@@ -1502,8 +1494,8 @@ mod tests {
     use {
         super::*,
         crate::accounts_index::{
-            bucket_map_holder::ThresholdEntriesPerBin, AccountsIndexConfig, IndexLimit,
-            IndexLimitThreshold, ACCOUNTS_INDEX_CONFIG_FOR_TESTING, BINS_FOR_TESTING,
+            ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountsIndexConfig, BINS_FOR_TESTING, IndexLimit,
+            IndexLimitThreshold, bucket_map_holder::ThresholdEntriesPerBin,
         },
         assert_matches::assert_matches,
         itertools::Itertools,
@@ -2627,10 +2619,12 @@ mod tests {
         // - duplicates do not end up in-mem
         index.write_startup_info();
         assert_eq!(index.map_internal.read().unwrap().len(), low_water_mark);
-        assert!(!index
-            .map_internal
-            .read()
-            .unwrap()
-            .contains_key(&duplicate_pubkey));
+        assert!(
+            !index
+                .map_internal
+                .read()
+                .unwrap()
+                .contains_key(&duplicate_pubkey)
+        );
     }
 }

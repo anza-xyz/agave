@@ -1,10 +1,10 @@
 use {
-    crate::consensus::{tower_vote_state::TowerVoteState, Stake},
+    crate::consensus::{Stake, tower_vote_state::TowerVoteState},
     agave_votor::commitment::{
         CommitmentAggregationData as AlpenglowCommitmentAggregationData,
         CommitmentType as AlpenglowCommitmentType,
     },
-    crossbeam_channel::{bounded, select, unbounded, Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, select, unbounded},
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_metrics::datapoint_info,
@@ -18,8 +18,8 @@ use {
         cmp::max,
         collections::HashMap,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::Duration,
@@ -95,19 +95,21 @@ impl AggregateCommitmentService {
             Self {
                 t_commitment: Builder::new()
                     .name("solAggCommitSvc".to_string())
-                    .spawn(move || loop {
-                        if exit.load(Ordering::Relaxed) {
-                            break;
-                        }
+                    .spawn(move || {
+                        loop {
+                            if exit.load(Ordering::Relaxed) {
+                                break;
+                            }
 
-                        if let Err(RecvTimeoutError::Disconnected) = Self::run(
-                            &receiver,
-                            &ag_receiver,
-                            &block_commitment_cache,
-                            subscriptions.as_deref(),
-                            &exit,
-                        ) {
-                            break;
+                            if let Err(RecvTimeoutError::Disconnected) = Self::run(
+                                &receiver,
+                                &ag_receiver,
+                                &block_commitment_cache,
+                                subscriptions.as_deref(),
+                                &exit,
+                            ) {
+                                break;
+                            }
                         }
                     })
                     .unwrap(),
@@ -325,18 +327,19 @@ impl AggregateCommitmentService {
 mod tests {
     use {
         super::*,
-        solana_account::{state_traits::StateMut, Account, ReadableAccount},
-        solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_account::{Account, ReadableAccount, state_traits::StateMut},
+        solana_leader_schedule::SlotLeader,
+        solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_pubkey::Pubkey,
         solana_runtime::{
-            genesis_utils::{create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs},
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
             stake_utils,
         },
         solana_signer::Signer,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{
-            self, process_slot_vote_unchecked, TowerSync, VoteStateV4, VoteStateVersions,
-            BLS_PUBLIC_KEY_COMPRESSED_SIZE, MAX_LOCKOUT_HISTORY,
+            self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4,
+            VoteStateVersions, process_slot_vote_unchecked,
         },
     };
 
@@ -650,7 +653,7 @@ mod tests {
             let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 x + 1,
             );
             let tower_sync = TowerSync::new_from_slot(x, previous_bank.hash());
@@ -679,7 +682,7 @@ mod tests {
         let bank34 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank33.clone(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             34,
         );
         let tower_sync = TowerSync::new_from_slot(33, bank33.hash());
@@ -725,7 +728,7 @@ mod tests {
         let _bank35 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank33,
-            &Pubkey::default(),
+            SlotLeader::default(),
             35,
         );
 
@@ -756,7 +759,7 @@ mod tests {
             let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 x + 1,
             );
             // Skip 34 as it is not part of this fork.

@@ -1,11 +1,11 @@
 use {
     crate::{
         bootstrap::RpcBootstrapConfig,
-        cli::{hash_validator, port_range_validator, port_validator, DefaultArgs},
+        cli::{DefaultArgs, hash_validator, port_range_validator, port_validator},
         commands::{FromClapArgMatches, Result},
     },
-    agave_snapshots::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
-    clap::{values_t, App, Arg, ArgMatches},
+    agave_snapshots::{SUPPORTED_ARCHIVE_COMPRESSION, SnapshotVersion},
+    clap::{App, Arg, ArgMatches, values_t},
     solana_accounts_db::utils::create_and_canonicalize_directory,
     solana_clap_utils::{
         hidden_unless_forced,
@@ -35,25 +35,6 @@ use {
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
-
-// Declared out of line to allow use of #[rustfmt::skip]
-#[rustfmt::skip]
-const WEN_RESTART_HELP: &str =
-    "Only used during coordinated cluster restarts.\n\n\
-     Need to also specify the leader's pubkey in --wen-restart-leader.\n\n\
-     When specified, the validator will enter Wen Restart mode which pauses normal activity. \
-     Validators in this mode will gossip their last vote to reach consensus on a safe restart \
-     slot and repair all blocks on the selected fork. The safe slot will be a descendant of the \
-     latest optimistically confirmed slot to ensure we do not roll back any optimistically \
-     confirmed slots.\n\n\
-     The progress in this mode will be saved in the file location provided. If consensus is \
-     reached, the validator will automatically exit with 200 status code. Then the operators are \
-     expected to restart the validator with --wait_for_supermajority and other arguments \
-     (including new shred_version, supermajority slot, and bankhash) given in the error log \
-     before the exit so the cluster will resume execution. The progress file will be kept around \
-     for future debugging.\n\n\
-     If wen_restart fails, refer to the progress file (in proto3 format) for further debugging and \
-     watch the discord channel for instructions.";
 
 pub mod account_secondary_indexes;
 pub mod blockstore_options;
@@ -271,14 +252,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "Comma separated persistent accounts location. May be specified multiple times. \
                  [default: <LEDGER>/accounts]",
             ),
-    )
-    .arg(
-        Arg::with_name("account_shrink_path")
-            .long("account-shrink-path")
-            .value_name("PATH")
-            .takes_value(true)
-            .multiple(true)
-            .help("Path to accounts shrink path which can hold a compacted account set."),
     )
     .arg(
         Arg::with_name("snapshots")
@@ -1034,17 +1007,15 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced()),
     )
     .arg(
-        Arg::with_name("accounts_db_mark_obsolete_accounts")
-            .long("accounts-db-mark-obsolete-accounts")
-            .help("Controls obsolete account tracking")
-            .takes_value(true)
-            .possible_values(&["enabled", "disabled"])
+        Arg::with_name("no_accounts_db_snapshots_direct_io")
+            .long("no-accounts-db-snapshots-direct-io")
+            .help("Disable direct I/O use for accounts-db snapshot operations")
             .long_help(
-                "Controls obsolete account tracking. This feature tracks obsolete accounts in the \
-                 account storage entry allowing for earlier cleaning of obsolete accounts in the \
-                 storages and index. This value is currently enabled by default.",
-            )
-            .hidden(hidden_unless_forced()),
+                "Do *not* use direct I/O for accounts-db file operations related to snapshot \
+                 processsing. Direct I/O can improve performance by bypassing OS page cache, but \
+                 requires the file systems hosting snapshots and accounts-db directories to \
+                 support files opened with the O_DIRECT flag.",
+            ),
     )
     .arg(
         Arg::with_name("accounts_index_scan_results_limit_mb")
@@ -1086,9 +1057,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "Sets the memory limit for the accounts index. The size options will limit the \
                  accounts index memory to the specified value. E.g. \"50GB\" means the accounts \
                  index may use up to 50 GB of memory. The \"unlimited\" option keeps the entire \
-                 accounts index in memory. The \"minimal\" option reduces memory usage as much as \
-                 possible. All index entries that are not in memory are kept in the disk-backed \
-                 index. The disk-backed index has lower performance; prefer higher limits here.",
+                 accounts index in memory. All index entries that are not in memory are kept in \
+                 the disk-backed index. The disk-backed index has lower performance; prefer \
+                 higher explicit limits here.",
             ),
     )
     .arg(
@@ -1236,30 +1207,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(DefaultSchedulerPool::cli_message()),
     )
     .arg(
-        Arg::with_name("wen_restart")
-            .long("wen-restart")
-            .hidden(hidden_unless_forced())
-            .value_name("FILE")
-            .takes_value(true)
-            .required(false)
-            .conflicts_with("wait_for_supermajority")
-            .requires("wen_restart_coordinator")
-            .help(WEN_RESTART_HELP),
-    )
-    .arg(
-        Arg::with_name("wen_restart_coordinator")
-            .long("wen-restart-coordinator")
-            .hidden(hidden_unless_forced())
-            .value_name("PUBKEY")
-            .takes_value(true)
-            .required(false)
-            .requires("wen_restart")
-            .help(
-                "Specifies the pubkey of the leader used in wen restart. May get stuck if the \
-                 leader used is different from others.",
-            ),
-    )
-    .arg(
         Arg::with_name("retransmit_xdp_interface")
             .hidden(hidden_unless_forced())
             .long("experimental-retransmit-xdp-interface")
@@ -1329,7 +1276,7 @@ mod tests {
         std::{
             fs,
             net::{IpAddr, Ipv4Addr},
-            path::{absolute, PathBuf},
+            path::{PathBuf, absolute},
         },
     };
 

@@ -1,5 +1,5 @@
 use {
-    solana_clock::{Epoch, DEFAULT_MS_PER_SLOT},
+    solana_clock::{DEFAULT_MS_PER_SLOT, Epoch},
     solana_commitment_config::CommitmentConfig,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     std::{thread::sleep, time::Duration},

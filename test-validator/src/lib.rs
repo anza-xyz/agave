@@ -1,23 +1,21 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_feature_set::{
-        alpenglow, increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8, FeatureSet,
-        FEATURE_NAMES,
-    },
+    agave_feature_set::{FEATURE_NAMES, FeatureSet, alpenglow, raise_cpi_nesting_limit_to_8},
     agave_snapshots::{
-        paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig, SnapshotInterval,
+        SnapshotInterval, paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig,
     },
-    agave_syscalls::create_program_runtime_environment_v1,
-    base64::{prelude::BASE64_STANDARD, Engine},
+    arc_swap::ArcSwap,
+    base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::Receiver,
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_accounts_db::{
-        accounts_db::AccountsDbConfig, accounts_index::AccountsIndexConfig,
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
+        accounts_index::{AccountsIndexConfig, ScanFilter},
         utils::create_accounts_run_and_snapshot_dirs,
     },
     solana_cli_output::CliAccount,
-    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
+    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_core::{
@@ -29,7 +27,7 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_geyser_plugin_manager::{
-        geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
+        GeyserPluginManagerRequest, geyser_plugin_manager::GeyserPluginManager,
     },
     solana_gossip::{
         cluster_info::{ClusterInfo, NodeConfig},
@@ -38,7 +36,7 @@ use {
     },
     solana_inflation::Inflation,
     solana_instruction::{AccountMeta, Instruction},
-    solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
+    solana_keypair::{Keypair, read_keypair_file, write_keypair_file},
     solana_ledger::{
         blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions,
         create_new_tmp_ledger,
@@ -47,7 +45,7 @@ use {
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::{
-        find_available_ports_in_range, multihomed_sockets::BindIpAddrs, PortRange, SocketAddrSpace,
+        PortRange, SocketAddrSpace, find_available_ports_in_range, multihomed_sockets::BindIpAddrs,
     },
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
@@ -67,13 +65,14 @@ use {
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
     solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
+    solana_syscalls::create_program_runtime_environment,
     solana_transaction::{Transaction, TransactionError},
     solana_validator_exit::Exit,
     std::{
         collections::{HashMap, HashSet},
         ffi::OsStr,
         fmt::Display,
-        fs::{self, remove_dir_all, File},
+        fs::{self, File, remove_dir_all},
         io::Read,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         num::{NonZero, NonZeroU64},
@@ -148,7 +147,7 @@ pub struct TestValidatorGenesis {
     compute_unit_limit: Option<u64>,
     pub log_messages_bytes_limit: Option<usize>,
     pub transaction_account_lock_limit: Option<usize>,
-    pub geyser_plugin_manager: Arc<RwLock<GeyserPluginManager>>,
+    pub geyser_plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
     admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
 }
 
@@ -183,7 +182,7 @@ impl Default for TestValidatorGenesis {
             compute_unit_limit: Option::<u64>::default(),
             log_messages_bytes_limit: Option::<usize>::default(),
             transaction_account_lock_limit: Option::<usize>::default(),
-            geyser_plugin_manager: Arc::new(RwLock::new(GeyserPluginManager::default())),
+            geyser_plugin_manager: Arc::new(ArcSwap::new(Arc::new(GeyserPluginManager::default()))),
             admin_rpc_service_post_init:
                 Arc::<RwLock<Option<AdminRpcRequestMetadataPostInit>>>::default(),
         }
@@ -819,8 +818,7 @@ impl TestValidator {
         let test_validator = TestValidatorGenesis::default()
             .fee_rate_governor(FeeRateGovernor::new(target_lamports_per_signature, 0))
             .rent(Rent {
-                lamports_per_byte_year: 1,
-                exemption_threshold: 1.0,
+                lamports_per_byte: 1,
                 ..Rent::default()
             })
             .faucet_addr(faucet_addr)
@@ -848,8 +846,7 @@ impl TestValidator {
         TestValidatorGenesis::default()
             .fee_rate_governor(FeeRateGovernor::new(target_lamports_per_signature, 0))
             .rent(Rent {
-                lamports_per_byte_year: 1,
-                exemption_threshold: 1.0,
+                lamports_per_byte: 1,
                 ..Rent::default()
             })
             .faucet_addr(faucet_addr)
@@ -949,7 +946,7 @@ impl TestValidator {
         }
 
         let runtime_features = feature_set.runtime_features();
-        let program_runtime_environment = create_program_runtime_environment_v1(
+        let program_runtime_environment = create_program_runtime_environment(
             &runtime_features,
             &SVMTransactionExecutionBudget::new_with_defaults(
                 runtime_features.raise_cpi_nesting_limit_to_8,
@@ -957,7 +954,6 @@ impl TestValidator {
             true,
             false,
         )?;
-        let program_runtime_environment = Arc::new(program_runtime_environment);
 
         let mut accounts = config.accounts.clone();
         for (address, account) in solana_program_binaries::spl_programs(&config.rent) {
@@ -972,9 +968,11 @@ impl TestValidator {
         }
         for upgradeable_program in &config.upgradeable_programs {
             let data = solana_program_test::read_file(&upgradeable_program.program_path);
-            let executable =
-                Executable::<InvokeContext>::from_elf(&data, program_runtime_environment.clone())
-                    .map_err(|err| format!("ELF error: {err}"))?;
+            let executable = Executable::<InvokeContext>::from_elf(
+                &data,
+                Arc::clone(&*program_runtime_environment),
+            )
+            .map_err(|err| format!("ELF error: {err}"))?;
             executable
                 .verify::<RequisiteVerifier>()
                 .map_err(|err| format!("ELF error: {err}"))?;
@@ -1166,7 +1164,10 @@ impl TestValidator {
         let accounts_db_config = AccountsDbConfig {
             index: Some(AccountsIndexConfig::default()),
             account_indexes: Some(config.rpc_config.account_indexes.clone()),
-            ..AccountsDbConfig::default()
+            scan_filter_for_shrinking: ScanFilter::All,
+            use_registered_io_uring_buffers: false,
+            snapshots_use_direct_io: false,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
 
         let runtime_config = RuntimeConfig {
@@ -1178,9 +1179,6 @@ impl TestValidator {
                         !config
                             .deactivate_feature_set
                             .contains(&raise_cpi_nesting_limit_to_8::id()),
-                        !config
-                            .deactivate_feature_set
-                            .contains(&increase_cpi_account_info_limit::id()),
                     )
                 }),
             log_messages_bytes_limit: config.log_messages_bytes_limit,
@@ -1496,9 +1494,11 @@ mod test {
             blockhash,
         );
 
-        assert!(rpc_client
-            .send_and_confirm_transaction(&transaction)
-            .is_ok());
+        assert!(
+            rpc_client
+                .send_and_confirm_transaction(&transaction)
+                .is_ok()
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1522,10 +1522,12 @@ mod test {
             blockhash,
         );
 
-        assert!(rpc_client
-            .send_and_confirm_transaction(&transaction)
-            .await
-            .is_ok());
+        assert!(
+            rpc_client
+                .send_and_confirm_transaction(&transaction)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1544,6 +1546,8 @@ mod test {
             agave_feature_set::disable_fees_sysvar::id(),
             alpenglow::id(),
             agave_feature_set::bls_pubkey_management_in_vote_account::id(),
+            agave_feature_set::vote_account_initialize_v2::id(),
+            agave_feature_set::validator_admission_ticket::id(),
         ]
         .into_iter()
         .for_each(|feature| {

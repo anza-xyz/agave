@@ -18,8 +18,8 @@ pub use solana_account_decoder_client_types::{
     UiAccount, UiAccountData, UiAccountEncoding, UiDataSliceConfig,
 };
 use {
-    crate::parse_account_data::{parse_account_data_v3, AccountAdditionalDataV3},
-    base64::{prelude::BASE64_STANDARD, Engine},
+    crate::parse_account_data::{AccountAdditionalDataV3, parse_account_data_v3},
+    base64::{Engine, prelude::BASE64_STANDARD},
     serde::{Deserialize, Serialize},
     solana_account::ReadableAccount,
     solana_fee_calculator::FeeCalculator,

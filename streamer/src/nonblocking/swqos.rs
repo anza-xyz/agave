@@ -3,20 +3,20 @@ use {
         nonblocking::{
             qos::{ConnectionContext, QosController},
             quic::{
-                get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
-                ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
-                ConnectionTableType, CONNECTION_CLOSE_CODE_DISALLOWED,
-                CONNECTION_CLOSE_REASON_DISALLOWED,
+                CONNECTION_CLOSE_CODE_DISALLOWED, CONNECTION_CLOSE_REASON_DISALLOWED,
+                ClientConnectionTracker, ConnectionHandlerError, ConnectionPeerType,
+                ConnectionTable, ConnectionTableKey, ConnectionTableType, get_connection_stake,
+                update_open_connections_stat,
             },
             stream_throttle::{
-                throttle_stream, ConnectionStreamCounter, StakedStreamLoadEMA,
-                STREAM_THROTTLING_INTERVAL_MS,
+                ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL_MS, StakedStreamLoadEMA,
+                throttle_stream,
             },
         },
         quic::{
-            StreamerStats, DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
+            DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
             DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS, StreamerStats,
         },
         streamer::StakedNodes,
     },
@@ -26,8 +26,8 @@ use {
     std::{
         future::Future,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
     },
     tokio::sync::{Mutex, MutexGuard},
@@ -201,7 +201,7 @@ impl SwQos {
             conn_context.peer_type(),
             conn_context.total_stake,
         ));
-        let remote_addr = connection.remote_address();
+        let remote_addr = conn_context.remote_address;
 
         let max_connections_per_peer = match conn_context.peer_type() {
             ConnectionPeerType::Unstaked => self.config.max_connections_per_unstaked_peer,
@@ -302,13 +302,14 @@ impl SwQos {
 
 impl QosController<SwQosConnectionContext> for SwQos {
     fn build_connection_context(&self, connection: &Connection) -> SwQosConnectionContext {
+        let remote_address = connection.remote_address();
         get_connection_stake(connection, &self.staked_nodes).map_or(
             SwQosConnectionContext {
                 peer_type: ConnectionPeerType::Unstaked,
                 total_stake: 0,
                 remote_pubkey: None,
                 in_staked_table: false,
-                remote_address: connection.remote_address(),
+                remote_address,
                 stream_counter: None,
                 last_update: Arc::new(AtomicU64::new(timing::timestamp())),
             },
@@ -334,7 +335,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                     total_stake,
                     remote_pubkey: Some(pubkey),
                     in_staked_table: false,
-                    remote_address: connection.remote_address(),
+                    remote_address,
                     last_update: Arc::new(AtomicU64::new(timing::timestamp())),
                     stream_counter: None,
                 }
@@ -476,7 +477,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
             };
 
             let stable_id = connection.stable_id();
-            let remote_addr = connection.remote_address();
+            let remote_addr = conn_context.remote_address;
 
             let removed_count = lock.remove_connection(
                 ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey()),

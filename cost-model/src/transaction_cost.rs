@@ -52,12 +52,10 @@ impl<Tx: StaticMeta> TransactionCost<'_, Tx> {
         }
     }
 
-    pub fn is_simple_vote(&self) -> bool {
+    pub fn should_track_as_simple_vote(&self) -> bool {
         match self {
             Self::SimpleVote { .. } => true,
-            Self::Transaction(usage_details) => {
-                usage_details.transaction.is_simple_vote_transaction()
-            }
+            Self::Transaction(_) => false,
         }
     }
 
@@ -327,7 +325,7 @@ mod tests {
     use {
         super::*,
         crate::cost_model::CostModel,
-        agave_feature_set::{bls_pubkey_management_in_vote_account, FeatureSet},
+        agave_feature_set::{FeatureSet, bls_pubkey_management_in_vote_account},
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -360,11 +358,11 @@ mod tests {
         [false, true]
     )]
     fn test_vote_transaction_cost(
-        stop_use_static_simple_vote_tx_cost: bool,
+        remove_simple_vote_from_cost_model: bool,
         simd_0387_enabled: bool,
     ) {
-        // SIMD-0387 requires `stop_use_static_simple_vote_tx_cost`.
-        if simd_0387_enabled && !stop_use_static_simple_vote_tx_cost {
+        // SIMD-0387 requires `remove_simple_vote_from_cost_model`.
+        if simd_0387_enabled && !remove_simple_vote_from_cost_model {
             return;
         }
 
@@ -386,20 +384,19 @@ mod tests {
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
             true,
-            true,
         )
         .unwrap();
 
         let mut feature_set = FeatureSet::all_enabled();
-        if !stop_use_static_simple_vote_tx_cost {
-            feature_set.deactivate(&agave_feature_set::stop_use_static_simple_vote_tx_cost::id());
+        if !remove_simple_vote_from_cost_model {
+            feature_set.deactivate(&agave_feature_set::remove_simple_vote_from_cost_model::id());
         }
         if !simd_0387_enabled {
             feature_set.deactivate(&bls_pubkey_management_in_vote_account::id());
         }
 
         // Verify actual cost matches expected.
-        let expected_cost = if !stop_use_static_simple_vote_tx_cost {
+        let expected_cost = if !remove_simple_vote_from_cost_model {
             SIMPLE_VOTE_USAGE_COST
         } else {
             // when feature `stop-use-static-simple-vote-tx-cost` is enabled, vote transaction
@@ -452,7 +449,6 @@ mod tests {
             Some(false),
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
-            true,
             true,
         )
         .unwrap();

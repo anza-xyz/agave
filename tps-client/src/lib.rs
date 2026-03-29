@@ -12,7 +12,7 @@ use {
     solana_rpc_client_api::{client_error::Error as ClientError, config::RpcBlockConfig},
     solana_signature::Signature,
     solana_tpu_client::tpu_client::TpuSenderError,
-    solana_transaction::Transaction,
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::{TransactionResult as Result, TransportError},
     solana_transaction_status::UiConfirmedBlock,
     std::{
@@ -42,10 +42,10 @@ pub type TpsClientResult<T> = std::result::Result<T, TpsClientError>;
 
 pub trait TpsClient {
     /// Send a signed transaction without confirmation
-    fn send_transaction(&self, transaction: Transaction) -> TpsClientResult<Signature>;
+    fn send_transaction(&self, transaction: VersionedTransaction) -> TpsClientResult<Signature>;
 
     /// Send a batch of signed transactions without confirmation.
-    fn send_batch(&self, transactions: Vec<Transaction>) -> TpsClientResult<()>;
+    fn send_batch(&self, transactions: Vec<VersionedTransaction>) -> TpsClientResult<()>;
 
     /// Get latest blockhash
     fn get_latest_blockhash(&self) -> TpsClientResult<Hash>;
@@ -126,7 +126,7 @@ pub trait TpsClient {
     fn get_multiple_accounts(&self, pubkeys: &[Pubkey]) -> TpsClientResult<Vec<Option<Account>>>;
 
     fn get_slot_with_commitment(&self, commitment_config: CommitmentConfig)
-        -> TpsClientResult<u64>;
+    -> TpsClientResult<u64>;
 
     fn get_blocks_with_commitment(
         &self,
@@ -146,4 +146,3 @@ pub trait TpsClient {
 mod bank_client;
 mod rpc_client;
 mod tpu_client;
-pub mod utils;

@@ -63,8 +63,8 @@ pub enum CrdsData {
     DuplicateShred(DuplicateShredIndex, DuplicateShred),
     SnapshotHashes(SnapshotHashes),
     ContactInfo(ContactInfo),
-    RestartLastVotedForkSlots(RestartLastVotedForkSlots),
-    RestartHeaviestFork(RestartHeaviestFork),
+    RestartLastVotedForkSlots(RestartLastVotedForkSlots), // Deprecated
+    RestartHeaviestFork(RestartHeaviestFork),             //Deprecated
 }
 
 impl Sanitize for CrdsData {
@@ -195,8 +195,8 @@ impl CrdsData {
             Self::DuplicateShred(..) => false,
             Self::SnapshotHashes(_) => false,
             Self::ContactInfo(_) => false,
-            Self::RestartLastVotedForkSlots(_) => false,
-            Self::RestartHeaviestFork(_) => false,
+            Self::RestartLastVotedForkSlots(_) => true,
+            Self::RestartHeaviestFork(_) => true,
         }
     }
 }

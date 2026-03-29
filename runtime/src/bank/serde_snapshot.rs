@@ -2,28 +2,31 @@
 mod tests {
     use {
         crate::{
-            bank::{test_utils as bank_test_utils, Bank},
+            bank::{Bank, test_utils as bank_test_utils},
             epoch_stakes::{EpochAuthorizedVoters, NodeIdToVoteAccounts, VersionedEpochStakes},
-            genesis_utils::activate_all_features,
+            genesis_utils::{
+                GenesisConfigInfo, activate_all_features, create_genesis_config_with_leader,
+            },
             runtime_config::RuntimeConfig,
             serde_snapshot::{self, ExtraFieldsToSerialize, SnapshotStreams},
             snapshot_bank_utils,
-            snapshot_utils::{create_tmp_accounts_dir_for_tests, StorageAndNextAccountsFileId},
+            snapshot_utils::{StorageAndNextAccountsFileId, create_tmp_accounts_dir_for_tests},
             stakes::{SerdeStakesToStakeFormat, Stakes},
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
         solana_accounts_db::{
+            ObsoleteAccounts,
             account_storage::AccountStorageMap,
             account_storage_entry::AccountStorageEntry,
             accounts_db::{
-                get_temp_accounts_paths, AccountsDb, AtomicAccountsFileId,
-                ACCOUNTS_DB_CONFIG_FOR_TESTING,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AtomicAccountsFileId,
+                get_temp_accounts_paths,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
-            ObsoleteAccounts,
         },
         solana_epoch_schedule::EpochSchedule,
-        solana_genesis_config::create_genesis_config,
+        solana_hash::Hash,
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         solana_stake_interface::state::Stake,
         std::{
@@ -80,18 +83,33 @@ mod tests {
         [#[allow(deprecated)] StorageAccess::Mmap, StorageAccess::File]
     )]
     fn test_serialize_bank_snapshot(storage_access: StorageAccess) {
-        let (mut genesis_config, _) = create_genesis_config(500);
+        let leader_id = Pubkey::new_unique();
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_leader(500, &leader_id, LAMPORTS_PER_SOL);
         genesis_config.epoch_schedule = EpochSchedule::custom(400, 400, false);
-        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let deposit_amount = bank0.get_minimum_balance_for_rent_exemption(0);
-        let bank1 = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0.clone(),
+            *bank0.leader(),
+            1,
+        );
 
         // Create an account on a non-root fork
         let key1 = Pubkey::new_unique();
         bank_test_utils::deposit(&bank1, &key1, deposit_amount).unwrap();
 
         let bank2_slot = 2;
-        let bank2 = Bank::new_from_parent(bank0, &Pubkey::default(), bank2_slot);
+        let bank0_leader = *bank0.leader();
+        let bank2 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0,
+            bank0_leader,
+            bank2_slot,
+        );
 
         // Test new account
         let key2 = Pubkey::new_unique();
@@ -103,6 +121,7 @@ mod tests {
 
         let accounts_db = &bank2.rc.accounts.accounts_db;
 
+        bank2.set_block_id(Some(Hash::default()));
         bank2.squash();
         bank2.force_flush_accounts_cache();
 
@@ -115,6 +134,7 @@ mod tests {
             let mut bank_fields = bank2.get_fields_to_serialize();
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
             let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
+            let block_id = Some(bank_fields.block_id);
             serde_snapshot::serialize_bank_snapshot_into(
                 &mut writer,
                 bank_fields,
@@ -122,10 +142,11 @@ mod tests {
                 &bank2.get_snapshot_storages(None),
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
-                    obsolete_incremental_snapshot_persistence: None,
-                    obsolete_epoch_accounts_hash: None,
+                    unused_incremental_snapshot_persistence: None,
+                    unused_epoch_accounts_hash: None,
                     versioned_epoch_stakes,
                     accounts_lt_hash,
+                    block_id,
                 },
             )
             .unwrap();
@@ -169,7 +190,7 @@ mod tests {
             expected_accounts_lt_hash,
         );
         assert_eq!(dbank.get_bank_hash_stats(), bank2.get_bank_hash_stats());
-        assert_eq!(dbank, bank2);
+        assert_eq!(&dbank, bank2.as_ref());
     }
 
     fn add_root_and_flush_write_cache(bank: &Bank) {
@@ -181,11 +202,15 @@ mod tests {
     #[test_case(StorageAccess::File)]
     fn test_extra_fields_eof(storage_access: StorageAccess) {
         agave_logger::setup();
-        let (genesis_config, _) = create_genesis_config(500);
+        let leader_id = Pubkey::new_unique();
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_with_leader(500, &leader_id, LAMPORTS_PER_SOL);
 
-        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank0, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         bank0.squash();
-        let mut bank = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
+        let mut bank = Bank::new_from_parent(bank0.clone(), *bank0.leader(), 1);
+        bank.set_block_id(Some(Hash::default()));
         bank.freeze();
         add_root_and_flush_write_cache(&bank0);
 
@@ -259,14 +284,20 @@ mod tests {
     fn test_extra_fields_full_snapshot_archive() {
         agave_logger::setup();
 
-        let (mut genesis_config, _) = create_genesis_config(500);
+        let leader_id = Pubkey::new_unique();
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_leader(500, &leader_id, LAMPORTS_PER_SOL);
         activate_all_features(&mut genesis_config);
 
-        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
-        let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let (bank0, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let bank0_leader = *bank0.leader();
+        let mut bank = Bank::new_from_parent(bank0, bank0_leader, 1);
         while !bank.is_complete() {
             bank.fill_bank_with_ticks_for_tests();
         }
+        bank.set_block_id(Some(Hash::default()));
 
         // Set extra field
         bank.fee_rate_governor.lamports_per_signature = 7000;
@@ -296,6 +327,7 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
+            None, // leader_for_tests
             None,
             false,
             false,
@@ -316,7 +348,7 @@ mod tests {
     mod test_bank_serialize {
         use {
             super::*,
-            crate::{bank::BankHashStats, serde_snapshot::ObsoleteIncrementalSnapshotPersistence},
+            crate::{bank::BankHashStats, serde_snapshot::UnusedIncrementalSnapshotPersistence},
             solana_accounts_db::accounts_hash::AccountsLtHash,
             solana_frozen_abi::abi_example::AbiExample,
             solana_hash::Hash,
@@ -345,7 +377,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "CJvggTJcQUhgDFwKf1yuHUiwUBrnu9LmByfprqbvnCmE")
+            frozen_abi(digest = "ELfWa1ABrJu9sQABjieyqnWioDaHNykbmYqsQr7yYYBb")
         )]
         #[derive(serde::Serialize)]
         pub struct BankAbiTestWrapper {
@@ -358,11 +390,12 @@ mod tests {
             S: serde::Serializer,
         {
             let bank = Bank::default_for_tests();
+            bank.set_block_id(Some(Hash::default()));
             let snapshot_storages = AccountsDb::example().get_storages(0..1).0;
             // ensure there is at least one snapshot storage example for ABI digesting
             assert!(!snapshot_storages.is_empty());
 
-            let incremental_snapshot_persistence = ObsoleteIncrementalSnapshotPersistence {
+            let incremental_snapshot_persistence = UnusedIncrementalSnapshotPersistence {
                 full_slot: u64::default(),
                 full_hash: [1; 32],
                 full_capitalization: u64::default(),
@@ -379,12 +412,11 @@ mod tests {
                 &snapshot_storages,
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank.fee_rate_governor.lamports_per_signature,
-                    obsolete_incremental_snapshot_persistence: Some(
-                        incremental_snapshot_persistence,
-                    ),
-                    obsolete_epoch_accounts_hash: Some(Hash::new_unique()),
+                    unused_incremental_snapshot_persistence: Some(incremental_snapshot_persistence),
+                    unused_epoch_accounts_hash: Some(Hash::new_unique()),
                     versioned_epoch_stakes,
                     accounts_lt_hash: Some(AccountsLtHash(LtHash::identity()).into()),
+                    block_id: Some(Hash::new_unique()),
                 },
             )
         }

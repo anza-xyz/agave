@@ -43,7 +43,10 @@
 //!   TowerBFT slots pre alpenglow genesis in order to help other cluster participants catchup.
 //! - When in `FullAlpenglowEpoch` we completely shutdown these TowerBFT threads (AncestorHashesService and ClusterSlotsService)
 use {
-    crate::consensus_message::{Block, Certificate, CertificateType},
+    crate::{
+        consensus_message::{Block, Certificate, CertificateType},
+        fraction::Fraction,
+    },
     log::*,
     solana_address::Address,
     solana_clock::{Epoch, Slot},
@@ -51,8 +54,8 @@ use {
     solana_pubkey::Pubkey,
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Condvar, LazyLock, Mutex, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         time::Duration,
     },
@@ -77,7 +80,7 @@ pub const MIGRATION_MALICIOUS_THRESHOLD: f64 = 20.0 / 100.0;
 /// `SWITCH_FORK_THRESHOLD` - (1 - `GENESIS_VOTE_THRESHOLD`) = `MIGRATION_MALICIOUS_THRESHOLD` malicious stake.
 ///
 /// Using 38% as the `SWITCH_FORK_THRESHOLD` gives us 82% for `GENESIS_VOTE_THRESHOLD`.
-pub const GENESIS_VOTE_THRESHOLD: f64 = 82.0 / 100.0;
+pub const GENESIS_VOTE_THRESHOLD: Fraction = Fraction::from_percentage(82);
 
 /// The interval at which we refresh our genesis vote
 pub const GENESIS_VOTE_REFRESH: Duration = Duration::from_millis(400);
@@ -273,6 +276,11 @@ impl MigrationPhase {
         // Only allow for alpenglow blocks, TowerBFT blocks should not have markers
         self.is_alpenglow_block(slot)
     }
+
+    /// Should this block allow the UpdateParent marker, i.e., support fast leader handover?
+    fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool {
+        self.is_alpenglow_block(slot)
+    }
 }
 
 /// Keeps track of the current migration status
@@ -410,6 +418,7 @@ impl MigrationStatus {
     dispatch!(pub fn should_respond_to_ancestor_hashes_requests(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_have_alpenglow_ticks(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_allow_block_markers(&self, slot: Slot) -> bool);
+    dispatch!(pub fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool);
 
     /// The alpenglow feature flag has been activated in slot `slot`.
     /// This should only be called using the feature account of a *rooted* slot,

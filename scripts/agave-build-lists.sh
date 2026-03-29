@@ -12,8 +12,6 @@
 
 # shellcheck disable=SC2034
 AGAVE_BINS_DEV=(
-  cargo-build-sbf
-  cargo-test-sbf
   solana-test-validator
 )
 
@@ -51,4 +49,7 @@ DCOU_TAINTED_PACKAGES=(
   solana-banking-bench
   solana-bench-tps
   solana-local-cluster
+  solana-svm-test-harness
+  solana-svm-test-harness-fixture
+  solana-svm-test-harness-instr
 )

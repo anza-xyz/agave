@@ -1,28 +1,30 @@
 use {
     crate::{
-        admin_rpc_service::{self, load_staked_nodes_overrides, StakedNodesOverrides},
+        admin_rpc_service::{self, StakedNodesOverrides, load_staked_nodes_overrides},
         bootstrap,
         cli::{self},
-        commands::{run::args::RunArgs, FromClapArgMatches},
+        commands::{FromClapArgMatches, run::args::RunArgs},
         ledger_lockfile, lock_ledger,
     },
     agave_snapshots::{
+        ArchiveFormat, SnapshotInterval, SnapshotVersion,
         paths::BANK_SNAPSHOTS_DIR,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
-        ArchiveFormat, SnapshotInterval, SnapshotVersion,
     },
     agave_votor::vote_history_storage,
-    clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
+    agave_xdp::{set_cpu_affinity, transmitter::XdpConfig},
+    clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
     rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
-        accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
+        accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
         accounts_file::StorageAccess,
         accounts_index::{
-            AccountSecondaryIndexes, AccountsIndexConfig, IndexLimit, IndexLimitThreshold,
-            ScanFilter, DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT,
+            AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
+            DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold, ScanFilter,
         },
+        partitioned_rewards::PartitionedEpochRewardsConfig,
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
@@ -31,7 +33,7 @@ use {
     solana_clap_utils::input_parsers::{
         keypair_of, keypairs_of, parse_cpu_ranges, pubkey_of, value_of, values_of,
     },
-    solana_clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
+    solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_core::{
         banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
         banking_trace::DISABLED_BAKING_TRACE_DIR,
@@ -42,14 +44,13 @@ use {
         system_monitor_service::SystemMonitorService,
         tpu::MAX_VOTES_PER_SECOND,
         validator::{
-            is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
-            SchedulerPacing, Validator, ValidatorConfig, ValidatorError, ValidatorStartProgress,
-            ValidatorTpuConfig,
+            BlockProductionMethod, BlockVerificationMethod, SchedulerPacing, Validator,
+            ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig, is_snapshot_config_valid,
         },
     },
     solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_gossip::{
-        cluster_info::{NodeConfig, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS},
+        cluster_info::{DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS, NodeConfig},
         contact_info::ContactInfo,
         node::Node,
     },
@@ -69,10 +70,7 @@ use {
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
     },
     solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
-    solana_turbine::{
-        broadcast_stage::BroadcastStageType,
-        xdp::{set_cpu_affinity, XdpConfig},
-    },
+    solana_turbine::broadcast_stage::BroadcastStageType,
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
@@ -82,7 +80,7 @@ use {
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         str::{self, FromStr},
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicBool},
     },
 };
 
@@ -114,12 +112,14 @@ pub fn execute(
         rayon_global_threads,
         replay_forks_threads,
         replay_transactions_threads,
+        tpu_sigverify_threads,
         tpu_transaction_forward_receive_threads,
         tpu_transaction_receive_threads,
         tpu_vote_transaction_receive_threads,
         tvu_receive_threads,
         tvu_retransmit_threads,
         tvu_sigverify_threads,
+        tvu_bls_sigverify_threads,
     } = cli::thread_args::parse_num_threads_args(matches);
 
     let identity_keypair = Arc::new(run_args.identity_keypair);
@@ -130,6 +130,7 @@ pub fn execute(
     }
     let use_progress_bar = logfile.is_none();
     agave_logger::initialize_logging(logfile.clone());
+    cli::warn_for_deprecated_arguments(matches);
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
@@ -262,13 +263,13 @@ pub fn execute(
     let exit = Arc::new(AtomicBool::new(false));
 
     #[cfg(target_os = "linux")]
-    let maybe_xdp_retransmit_builder = {
+    let xdp_builder_with_src_addr = {
         use {
+            agave_xdp::transmitter::TransmitterBuilder,
             caps::{
                 CapSet,
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
             },
-            solana_turbine::xdp::{master_ip_if_bonded, XdpRetransmitBuilder},
         };
 
         let mut required_caps = HashSet::new();
@@ -334,32 +335,47 @@ pub fn execute(
         // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
         // capabilities do not leak, leaving the process in a state where it could
         // potentially be used as a privilege escalation gadget
-        let maybe_xdp_retransmit_builder = retransmit_xdp.clone().map(|xdp_config| {
+        let xdp_builder_with_src_addr = retransmit_xdp.clone().map(|xdp_config| {
+            use {
+                agave_xdp::{default_device_ipv4, interface_ipv4},
+                std::net::SocketAddrV4,
+            };
+
             let src_port = node.sockets.retransmit_sockets[0]
                 .local_addr()
                 .expect("failed to get local address")
                 .port();
             let src_ip = match node.bind_ip_addrs.active() {
-                IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
-                IpAddr::V4(_unspecified) => xdp_config
-                    .interface
-                    .as_ref()
-                    .and_then(|iface| master_ip_if_bonded(iface)),
+                IpAddr::V4(ip) if !ip.is_unspecified() => ip,
+                IpAddr::V4(_unspecified) => {
+                    if let Some(interface) = xdp_config.interface.as_ref() {
+                        interface_ipv4(interface).expect(
+                            "configured interface should exist and have an IPv4 address assigned",
+                        )
+                    } else {
+                        default_device_ipv4().expect(
+                            "default route device should exist and have an IPv4 address assigned",
+                        )
+                    }
+                }
                 _ => panic!("IPv6 not supported"),
             };
-            XdpRetransmitBuilder::new(xdp_config, src_port, src_ip, exit.clone())
-                .expect("failed to create xdp retransmitter")
+            (
+                TransmitterBuilder::new(xdp_config, exit.clone())
+                    .expect("failed to create xdp transmitter"),
+                SocketAddrV4::new(src_ip, src_port),
+            )
         });
 
         // we're done with caps needed to init xdp now. remove them from our process
         caps::set(None, CapSet::Permitted, &retained_caps)
             .expect("linux allows permitted capset to be set");
 
-        maybe_xdp_retransmit_builder
+        xdp_builder_with_src_addr
     };
 
     #[cfg(not(target_os = "linux"))]
-    let maybe_xdp_retransmit_builder = None;
+    let xdp_builder_with_src_addr = None;
 
     let reserved = retransmit_xdp
         .map(|xdp| xdp.cpus.clone())
@@ -533,12 +549,16 @@ pub fn execute(
         value_t!(matches, "accounts_index_limit", String).unwrap_or_else(|err| err.exit());
     let index_limit = {
         enum CliIndexLimit {
+            // deprecated in v4.1.0
             Minimal,
             Unlimited,
             Threshold(u64),
         }
         let cli_index_limit = match accounts_index_limit.as_str() {
-            "minimal" => CliIndexLimit::Minimal,
+            "minimal" => {
+                warn!("Using `minimal` for `--accounts-index-limit` is deprecated.");
+                CliIndexLimit::Minimal
+            }
             "unlimited" => CliIndexLimit::Unlimited,
             "25GB" => CliIndexLimit::Threshold(25_000_000_000),
             "50GB" => CliIndexLimit::Threshold(50_000_000_000),
@@ -663,20 +683,6 @@ pub fn execute(
         })
         .unwrap_or_default();
 
-    let mark_obsolete_accounts = matches
-        .value_of("accounts_db_mark_obsolete_accounts")
-        .map(|mark_obsolete_accounts| {
-            match mark_obsolete_accounts {
-                "enabled" => MarkObsoleteAccounts::Enabled,
-                "disabled" => MarkObsoleteAccounts::Disabled,
-                _ => {
-                    // clap will enforce one of the above values is given
-                    unreachable!("invalid value given to accounts_db_mark_obsolete_accounts")
-                }
-            }
-        })
-        .unwrap_or_default();
-
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
         account_indexes: Some(account_indexes.clone()),
@@ -684,6 +690,7 @@ pub fn execute(
         shrink_paths: account_shrink_run_paths,
         shrink_ratio,
         read_cache_limit_bytes,
+        read_cache_evict_sample_size: None,
         write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
             .ok()
             .map(|mb| mb * MB as u64),
@@ -695,16 +702,17 @@ pub fn execute(
         )
         .ok(),
         max_ancient_storages: value_t!(matches, "accounts_db_max_ancient_storages", usize).ok(),
+        skip_initial_hash_calc: false,
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
+        partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         storage_access,
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
-        mark_obsolete_accounts,
         use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
             solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
         ),
-        ..AccountsDbConfig::default()
+        snapshots_use_direct_io: !matches.is_present("no_accounts_db_snapshots_direct_io"),
     };
 
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
@@ -838,10 +846,9 @@ pub fn execute(
         replay_forks_threads,
         replay_transactions_threads,
         tvu_shred_sigverify_threads: tvu_sigverify_threads,
+        tvu_bls_sigverify_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
-        wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
-        wen_restart_coordinator: value_t!(matches, "wen_restart_coordinator", Pubkey).ok(),
         turbine_disabled: Arc::<AtomicBool>::default(),
         broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
@@ -898,28 +905,6 @@ pub fn execute(
         value_t_or_exit!(matches, "minimal_snapshot_download_speed", f32);
     let maximum_snapshot_download_abort =
         value_t_or_exit!(matches, "maximum_snapshot_download_abort", u64);
-
-    match validator_config.block_verification_method {
-        BlockVerificationMethod::BlockstoreProcessor => {
-            warn!(
-                "The value \"blockstore-processor\" for --block-verification-method has been \
-                 deprecated. The value \"blockstore-processor\" is still allowed for now, but is \
-                 planned for removal in the near future. To update, either set the value \
-                 \"unified-scheduler\" or remove the --block-verification-method argument"
-            );
-        }
-        BlockVerificationMethod::UnifiedScheduler => {}
-    }
-    if matches!(
-        validator_config.block_production_method,
-        BlockProductionMethod::UnifiedScheduler
-    ) {
-        warn!(
-            "Currently, the unified-scheduler method is experimental for block-production. It has \
-             known security issues and should be used only for developing and benchmarking \
-             purposes"
-        );
-    }
 
     let public_rpc_addr = matches
         .value_of("public_rpc_addr")
@@ -993,10 +978,6 @@ pub fn execute(
         .collect::<Vec<_>>();
 
     if restricted_repair_only_mode {
-        if validator_config.wen_restart_proto_path.is_some() {
-            Err("--restricted-repair-only-mode is not compatible with --wen_restart".to_string())?;
-        }
-
         // When in --restricted_repair_only_mode is enabled only the gossip and repair ports
         // need to be reachable by the entrypoint to respond to gossip pull requests and repair
         // requests initiated by the node.  All other ports are unused.
@@ -1127,7 +1108,7 @@ pub fn execute(
         },
     };
 
-    let validator = match Validator::new_with_exit(
+    let validator = Validator::new_with_exit(
         node,
         identity_keypair,
         &ledger_path,
@@ -1145,28 +1126,13 @@ pub fn execute(
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
+            sigverify_threads: tpu_sigverify_threads,
         },
         admin_service_post_init,
-        maybe_xdp_retransmit_builder,
+        xdp_builder_with_src_addr,
         exit,
-    ) {
-        Ok(validator) => Ok(validator),
-        Err(err) => {
-            if matches!(
-                err.downcast_ref(),
-                Some(&ValidatorError::WenRestartFinished)
-            ) {
-                // 200 is a special error code, see
-                // https://github.com/solana-foundation/solana-improvement-documents/pull/46
-                error!(
-                    "Please remove --wen_restart and use --wait_for_supermajority as instructed \
-                     above"
-                );
-                std::process::exit(200);
-            }
-            Err(format!("{err:?}"))
-        }
-    }?;
+    )
+    .map_err(|err| format!("{err:?}"))?;
 
     if let Some(filename) = init_complete_file {
         File::create(filename).map_err(|err| format!("unable to create {filename}: {err}"))?;

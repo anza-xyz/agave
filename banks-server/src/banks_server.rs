@@ -1,6 +1,6 @@
 use {
     bincode::{deserialize, serialize},
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    crossbeam_channel::{Receiver, Sender, unbounded},
     futures::{future, prelude::stream::StreamExt},
     solana_account::Account,
     solana_banks_interface::{
@@ -34,18 +34,18 @@ use {
         io,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::Builder,
         time::Duration,
     },
     tarpc::{
+        ClientMessage, Response,
         context::Context,
         serde_transport::tcp,
-        server::{self, incoming::Incoming, Channel},
+        server::{self, Channel, incoming::Incoming},
         transport::{self, channel::UnboundedChannel},
-        ClientMessage, Response,
     },
     tokio::{runtime::Handle, time::sleep},
     tokio_serde::formats::Bincode,
@@ -178,10 +178,7 @@ fn simulate_transaction(
         Some(false), // is_simple_vote_tx
         bank,
         bank.get_reserved_account_keys(),
-        bank.feature_set
-            .is_active(&agave_feature_set::static_instruction_limit::id()),
-        bank.feature_set
-            .is_active(&agave_feature_set::limit_instruction_accounts::id()),
+        bank.feature_set.snapshot().limit_instruction_accounts,
     ) {
         Err(err) => {
             return BanksTransactionResultWithSimulation {

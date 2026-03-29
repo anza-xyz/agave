@@ -30,6 +30,7 @@ message Message {
     repeated CompiledInstruction instructions = 4;
     bool versioned = 5;
     repeated MessageAddressTableLookup address_table_lookups = 6;
+    TransactionConfig config = 7;
 }
 
 message MessageHeader {
@@ -42,6 +43,13 @@ message MessageAddressTableLookup {
     bytes account_key = 1;
     bytes writable_indexes = 2;
     bytes readonly_indexes = 3;
+}
+
+message TransactionConfig {
+    optional uint64 priority_fee = 1;
+    optional uint32 compute_unit_limit = 2;
+    optional uint32 loaded_accounts_data_size_limit = 3;
+    optional uint32 heap_size = 4;
 }
 
 message TransactionStatusMeta {

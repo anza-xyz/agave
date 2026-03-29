@@ -2,19 +2,20 @@
 extern crate test;
 
 use {
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     solana_compute_budget_interface::ComputeBudgetInstruction,
+    solana_leader_schedule::SlotLeader,
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_forks::BankForks,
-        genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        genesis_utils::{GenesisConfigInfo, create_genesis_config},
         prioritization_fee_cache::*,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_system_interface::instruction as system_instruction,
-    solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+    solana_transaction::{Transaction, sanitized::SanitizedTransaction},
     std::sync::Arc,
     test::Bencher,
 };
@@ -101,9 +102,9 @@ fn bench_process_transactions_multiple_slots(bencher: &mut Bencher) {
     let bank0 = Bank::new_for_benches(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank0);
     let bank = bank_forks.read().unwrap().working_bank();
-    let collector = solana_pubkey::new_rand();
+    let leader = SlotLeader::new_unique();
     let banks = (1..=NUM_SLOTS)
-        .map(|n| Arc::new(Bank::new_from_parent(bank.clone(), &collector, n as u64)))
+        .map(|n| Arc::new(Bank::new_from_parent(bank.clone(), leader, n as u64)))
         .collect::<Vec<_>>();
 
     bencher.iter(|| {

@@ -112,9 +112,9 @@ pub mod tests {
         bytemuck::bytes_of,
         ed25519_dalek::Signer as EdSigner,
         hex,
-        rand0_7::{thread_rng, Rng},
+        rand::Rng,
         solana_ed25519_program::{
-            new_ed25519_instruction_with_signature, offsets_to_ed25519_instruction, DATA_START,
+            DATA_START, new_ed25519_instruction_with_signature, offsets_to_ed25519_instruction,
         },
         solana_instruction::Instruction,
         std::vec,
@@ -332,7 +332,10 @@ pub mod tests {
     fn test_ed25519() {
         agave_logger::setup();
 
-        let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let secret_bytes: [u8; 32] = rand::random();
+        let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
+        let public: ed25519_dalek::PublicKey = (&secret).into();
+        let privkey = ed25519_dalek::Keypair { secret, public };
         let message_arr = b"hello";
         let signature = privkey.sign(message_arr).to_bytes();
         let pubkey = privkey.public.to_bytes();
@@ -340,16 +343,19 @@ pub mod tests {
             new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
         let feature_set = FeatureSet::all_enabled();
 
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_ok());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_ok()
+        );
 
+        let mut rng = rand::rng();
         let index = loop {
-            let index = thread_rng().gen_range(0, instruction.data.len());
+            let index = rng.random_range(0..instruction.data.len());
             // byte 1 is not used, so this would not cause the verify to fail
             if index != 1 {
                 break index;
@@ -357,20 +363,25 @@ pub mod tests {
         };
 
         instruction.data[index] = instruction.data[index].wrapping_add(12);
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_err());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_offsets_to_ed25519_instruction() {
         agave_logger::setup();
 
-        let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let secret_bytes: [u8; 32] = rand::random();
+        let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
+        let public: ed25519_dalek::PublicKey = (&secret).into();
+        let privkey = ed25519_dalek::Keypair { secret, public };
         let messages: [&[u8]; 3] = [b"hello", b"IBRL", b"goodbye"];
         let data_start =
             messages.len() * SIGNATURE_OFFSETS_SERIALIZED_SIZE + SIGNATURE_OFFSETS_START;
@@ -409,16 +420,19 @@ pub mod tests {
 
         let feature_set = FeatureSet::all_enabled();
 
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_ok());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_ok()
+        );
 
+        let mut rng = rand::rng();
         let index = loop {
-            let index = thread_rng().gen_range(0, instruction.data.len());
+            let index = rng.random_range(0..instruction.data.len());
             // byte 1 is not used, so this would not cause the verify to fail
             if index != 1 {
                 break index;
@@ -426,13 +440,15 @@ pub mod tests {
         };
 
         instruction.data[index] = instruction.data[index].wrapping_add(12);
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_err());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -440,29 +456,36 @@ pub mod tests {
         agave_logger::setup();
 
         // sig created via ed25519_dalek: both pass
-        let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let secret_bytes: [u8; 32] = rand::random();
+        let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
+        let public: ed25519_dalek::PublicKey = (&secret).into();
+        let privkey = ed25519_dalek::Keypair { secret, public };
         let message_arr = b"hello";
         let signature = privkey.sign(message_arr).to_bytes();
         let pubkey = privkey.public.to_bytes();
         let instruction = new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
 
         let feature_set = FeatureSet::default();
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_ok());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_ok()
+        );
 
         let feature_set = FeatureSet::all_enabled();
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_ok());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_ok()
+        );
 
         // malleable sig: verify_strict does NOT pass
         // for example, test number 5:
@@ -477,12 +500,14 @@ pub mod tests {
 
         // verify_strict does NOT pass for malleable signature
         let feature_set = FeatureSet::default();
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_err());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_err()
+        );
     }
 }

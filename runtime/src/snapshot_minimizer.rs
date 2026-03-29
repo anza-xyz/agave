@@ -10,12 +10,10 @@ use {
         iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
         prelude::ParallelSlice,
     },
-    solana_account::{state_traits::StateMut, ReadableAccount},
+    solana_account::{ReadableAccount, state_traits::StateMut},
     solana_accounts_db::{
         account_storage_entry::AccountStorageEntry,
-        accounts_db::{
-            stats::PurgeStats, AccountsDb, GetUniqueAccountsResult, UpdateIndexThreadSelection,
-        },
+        accounts_db::{AccountsDb, GetUniqueAccountsResult, UpdateIndexThreadSelection},
         storable_accounts::StorableAccountsBySlot,
     },
     solana_clock::Slot,
@@ -26,8 +24,8 @@ use {
     std::{
         collections::HashSet,
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
         },
     },
 };
@@ -286,7 +284,7 @@ impl<'a> SnapshotMinimizer<'a> {
                 if self.minimized_account_set.contains(account.pubkey()) {
                     chunk_bytes += account.stored_size();
                     keep_accounts.push(account);
-                } else if self.accounts_db().accounts_index.contains(account.pubkey()) {
+                } else if self.accounts_db().contains(account.pubkey()) {
                     purge_pubkeys.push(account.pubkey());
                 }
             });
@@ -344,9 +342,8 @@ impl<'a> SnapshotMinimizer<'a> {
 
     /// Purge dead slots from storage and cache
     fn purge_dead_slots(&self, dead_slots: Vec<Slot>) {
-        let stats = PurgeStats::default();
         self.accounts_db()
-            .purge_slots_from_cache_and_store(dead_slots.iter(), &stats);
+            .purge_slots_for_snapshot_minimizer(dead_slots.iter());
     }
 
     /// Convenience function for getting accounts_db
@@ -359,19 +356,18 @@ impl<'a> SnapshotMinimizer<'a> {
 mod tests {
     use {
         crate::{
-            bank::Bank,
-            genesis_utils::{self, create_genesis_config_with_leader},
-            runtime_config::RuntimeConfig,
-            snapshot_bank_utils,
-            snapshot_minimizer::SnapshotMinimizer,
-            snapshot_utils,
+            bank::Bank, genesis_utils::create_genesis_config_with_leader,
+            runtime_config::RuntimeConfig, snapshot_bank_utils,
+            snapshot_minimizer::SnapshotMinimizer, snapshot_utils,
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
         dashmap::DashSet,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-        solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+        solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_genesis_config::create_genesis_config,
+        solana_hash::Hash,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         solana_sdk_ids::bpf_loader_upgradeable,
         solana_signer::Signer,
@@ -402,12 +398,16 @@ mod tests {
         };
         minimizer.get_vote_accounts();
 
-        assert!(minimizer
-            .minimized_account_set
-            .contains(&genesis_config_info.voting_keypair.pubkey()));
-        assert!(minimizer
-            .minimized_account_set
-            .contains(&genesis_config_info.validator_pubkey));
+        assert!(
+            minimizer
+                .minimized_account_set
+                .contains(&genesis_config_info.voting_keypair.pubkey())
+        );
+        assert!(
+            minimizer
+                .minimized_account_set
+                .contains(&genesis_config_info.validator_pubkey)
+        );
     }
 
     #[test]
@@ -514,9 +514,11 @@ mod tests {
         assert_eq!(minimizer.minimized_account_set.len(), 3);
         assert!(minimizer.minimized_account_set.contains(&non_program_id));
         assert!(minimizer.minimized_account_set.contains(&program_id));
-        assert!(minimizer
-            .minimized_account_set
-            .contains(&programdata_address));
+        assert!(
+            minimizer
+                .minimized_account_set
+                .contains(&programdata_address)
+        );
     }
 
     #[test]
@@ -586,14 +588,21 @@ mod tests {
     #[test_case(false)]
     #[test_case(true)]
     fn test_minimize_and_recalculate_accounts_lt_hash(should_recalculate_accounts_lt_hash: bool) {
-        let genesis_config_info = genesis_utils::create_genesis_config(123_456_789_000_000_000);
+        let bootstrap_validator_pubkey = solana_pubkey::new_rand();
+        let bootstrap_validator_stake_lamports = LAMPORTS_PER_SOL;
+        let genesis_config_info = create_genesis_config_with_leader(
+            123_456_789_000_000_000,
+            &bootstrap_validator_pubkey,
+            bootstrap_validator_stake_lamports,
+        );
+
         let (bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config);
 
         // write to multiple accounts and keep track of one, for minimization later
         let pubkey_to_keep = Pubkey::new_unique();
         let slot = bank.slot() + 1;
-        let bank = Bank::new_from_parent(bank, &Pubkey::default(), slot);
+        let bank = Bank::new_from_parent(bank.clone(), *bank.leader(), slot);
         let bank = bank_forks
             .write()
             .unwrap()
@@ -613,6 +622,7 @@ mod tests {
         )
         .unwrap();
         bank.fill_bank_with_ticks_for_tests();
+        bank.set_block_id(Some(Hash::default()));
         bank.squash();
         bank.force_flush_accounts_cache();
 
@@ -651,6 +661,7 @@ mod tests {
             &genesis_config_info.genesis_config,
             &RuntimeConfig::default(),
             None,
+            None, // leader_for_tests
             None,
             false,
             false,

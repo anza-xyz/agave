@@ -88,20 +88,18 @@ impl ConnectionCacheStats {
             .successful_packets
             .swap(0, Ordering::Relaxed);
 
-        let (average_send_packet_us, average_prepare_connection_us) = if successful_packets > 0 {
-            (
-                self.total_client_stats
-                    .send_packets_us
-                    .swap(0, Ordering::Relaxed)
-                    / successful_packets,
-                self.total_client_stats
-                    .prepare_connection_us
-                    .swap(0, Ordering::Relaxed)
-                    / successful_packets,
-            )
-        } else {
-            (0, 0)
-        };
+        let average_send_packet_us = self
+            .total_client_stats
+            .send_packets_us
+            .swap(0, Ordering::Relaxed)
+            .checked_div(successful_packets)
+            .unwrap_or_default();
+        let average_prepare_connection_us = self
+            .total_client_stats
+            .prepare_connection_us
+            .swap(0, Ordering::Relaxed)
+            .checked_div(successful_packets)
+            .unwrap_or_default();
 
         datapoint_info!(
             name,

@@ -216,12 +216,6 @@ Labels make it easier to manage and track PRs / issues.  Below some common label
 that we use in Anza.  For the complete list of labels, please refer to the
 [label page](https://github.com/anza-xyz/agave/issues/labels):
 
-* "feature-gate": when you add a new feature gate or modify the behavior of
-an existing feature gate, please add the "feature-gate" label to your PR.
-New feature gates should also always have a corresponding tracking issue
-(go to "New Issue" -> "Feature Gate Tracker [Get Started](https://github.com/anza-xyz/agave/issues/new?template=2-feature-gate.yml)")
-and should be updated each time the feature is activated on a cluster.
-
 * "automerge": When a PR is labelled with "automerge", the PR will be
 automatically merged once CI passes.  In general, this label should only
 be used for small hot-fix (fewer than 100 lines) or automatic generated

@@ -3,31 +3,36 @@ use {
         nonblocking::{
             qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
             quic::{
-                get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
-                ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
-                ConnectionTableType, MAX_RTT, MIN_RTT,
+                CONNECTION_CLOSE_CODE_DISALLOWED, CONNECTION_CLOSE_REASON_DISALLOWED,
+                ClientConnectionTracker, ConnectionHandlerError, ConnectionPeerType,
+                ConnectionTable, ConnectionTableKey, ConnectionTableType, MAX_RTT, MIN_RTT,
+                get_connection_stake, update_open_connections_stat,
             },
         },
         quic::{
-            StreamerStats, DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
-            DEFAULT_MAX_STAKED_CONNECTIONS, DEFAULT_MAX_STREAMS_PER_MS,
+            DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS, StreamerStats,
         },
         streamer::StakedNodes,
     },
     quinn::{Connection, VarInt},
-    solana_net_utils::token_bucket::TokenBucket,
+    solana_net_utils::{banlist::Banlist, token_bucket::TokenBucket},
+    solana_pubkey::Pubkey,
     solana_time_utils as timing,
     std::{
         future::Future,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
         time::Duration,
     },
     tokio::{
-        sync::{Mutex, MutexGuard},
-        time::sleep,
+        sync::{
+            Mutex, MutexGuard,
+            mpsc::{Receiver, Sender, channel, error::TrySendError},
+        },
+        time::{MissedTickBehavior, interval, sleep},
     },
     tokio_util::sync::CancellationToken,
 };
@@ -35,6 +40,90 @@ use {
 /// Allow for extra streams "in flight" on top of the nominal
 /// send rate in case of bursty traffic from the sender side.
 const STREAMS_IN_FLIGHT_MARGIN: u32 = 2;
+const BANLIST_PRUNE_INTERVAL: Duration = Duration::from_hours(1);
+
+/// For simple QoS we only ban staked connections.
+/// Overprovision at 2000 which assumes we ban every validator
+const MAX_IN_FLIGHT_EVICTIONS: usize = 2_000;
+
+pub struct SimpleQosBanlist {
+    banlist: Arc<Banlist<Pubkey>>,
+    eviction_sender: Sender<Pubkey>,
+}
+
+impl SimpleQosBanlist {
+    pub fn new() -> (Self, Receiver<Pubkey>) {
+        let (eviction_sender, eviction_receiver) = channel(MAX_IN_FLIGHT_EVICTIONS);
+        (
+            Self {
+                banlist: Arc::new(Banlist::default()),
+                eviction_sender,
+            },
+            eviction_receiver,
+        )
+    }
+
+    pub fn ban(&self, pubkey: Pubkey, timeout: Duration) {
+        self.banlist.ban(pubkey, timeout);
+        match self.eviction_sender.try_send(pubkey) {
+            Ok(()) => {}
+            Err(TrySendError::Full(pubkey)) => {
+                error!(
+                    "Simple QoS banlist eviction queue full, dropping eviction request for \
+                     {pubkey}"
+                );
+            }
+            Err(TrySendError::Closed(pubkey)) => {
+                info!(
+                    "Simple QoS banlist eviction queue closed, dropping eviction request for \
+                     {pubkey}"
+                );
+            }
+        }
+    }
+
+    pub fn is_banned(&self, pubkey: &Pubkey) -> bool {
+        self.banlist.is_banned(pubkey)
+    }
+
+    fn spawn_connection_evictor(
+        &self,
+        mut eviction_receiver: Receiver<Pubkey>,
+        staked_connection_table: Arc<Mutex<ConnectionTable<TokenBucket>>>,
+        stats: Arc<StreamerStats>,
+    ) {
+        let banlist = self.banlist.clone();
+        let _eviction_task = tokio::spawn(async move {
+            let mut prune_interval = interval(BANLIST_PRUNE_INTERVAL);
+            prune_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            prune_interval.tick().await;
+            loop {
+                tokio::select! {
+                    maybe_pubkey = eviction_receiver.recv() => {
+                        let Some(pubkey) = maybe_pubkey else {
+                            break;
+                        };
+                        let mut connection_table = staked_connection_table.lock().await;
+                        let removed_connection_count = connection_table
+                            .remove_connections_by_key(ConnectionTableKey::Pubkey(pubkey));
+                        if removed_connection_count > 0 {
+                            update_open_connections_stat(&stats, &connection_table);
+                            stats
+                                .connection_removed
+                                .fetch_add(removed_connection_count, Ordering::Relaxed);
+                            stats
+                                .connection_removed_banned
+                                .fetch_add(removed_connection_count, Ordering::Relaxed);
+                        }
+                    }
+                    _ = prune_interval.tick() => {
+                        banlist.prune();
+                    }
+                }
+            }
+        });
+    }
+}
 
 #[derive(Clone)]
 pub struct SimpleQosConfig {
@@ -60,6 +149,8 @@ pub struct SimpleQos {
     stats: Arc<StreamerStats>,
     staked_connection_table: Arc<Mutex<ConnectionTable<TokenBucket>>>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
+    pub(crate) banlist: Arc<SimpleQosBanlist>,
+    banlist_eviction_receiver: Option<Receiver<Pubkey>>,
 }
 
 impl SimpleQos {
@@ -69,10 +160,14 @@ impl SimpleQos {
         staked_nodes: Arc<RwLock<StakedNodes>>,
         cancel: CancellationToken,
     ) -> Self {
+        let (banlist, banlist_eviction_receiver) = SimpleQosBanlist::new();
+        let banlist = Arc::new(banlist);
         Self {
             config,
             stats,
             staked_nodes,
+            banlist,
+            banlist_eviction_receiver: Some(banlist_eviction_receiver),
             staked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
                 ConnectionTableType::Staked,
                 cancel,
@@ -87,7 +182,7 @@ impl SimpleQos {
         mut connection_table_l: MutexGuard<ConnectionTable<TokenBucket>>,
         conn_context: &SimpleQosConnectionContext,
     ) -> Result<(Arc<AtomicU64>, CancellationToken, Arc<TokenBucket>), ConnectionHandlerError> {
-        let remote_addr = connection.remote_address();
+        let remote_addr = conn_context.remote_address;
 
         // this will never overflow u32 for reasonable MAX_RTT
         let rtt = connection.rtt().clamp(MIN_RTT, MAX_RTT).as_millis() as u32;
@@ -138,7 +233,7 @@ impl SimpleQos {
 #[derive(Clone)]
 pub struct SimpleQosConnectionContext {
     peer_type: ConnectionPeerType,
-    remote_pubkey: Option<solana_pubkey::Pubkey>,
+    remote_pubkey: Option<Pubkey>,
     remote_address: std::net::SocketAddr,
     last_update: Arc<AtomicU64>,
     stream_counter: Option<Arc<TokenBucket>>,
@@ -149,7 +244,7 @@ impl ConnectionContext for SimpleQosConnectionContext {
         self.peer_type
     }
 
-    fn remote_pubkey(&self) -> Option<solana_pubkey::Pubkey> {
+    fn remote_pubkey(&self) -> Option<Pubkey> {
         self.remote_pubkey
     }
 }
@@ -173,6 +268,18 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         }
     }
 
+    fn spawn_background_tasks(&mut self) {
+        let eviction_receiver = self
+            .banlist_eviction_receiver
+            .take()
+            .expect("Simple QoS banlist eviction task already spawned");
+        self.banlist.spawn_connection_evictor(
+            eviction_receiver,
+            self.staked_connection_table.clone(),
+            self.stats.clone(),
+        );
+    }
+
     #[allow(clippy::manual_async_fn)]
     fn try_add_connection(
         &self,
@@ -182,6 +289,20 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
     ) -> impl Future<Output = Option<CancellationToken>> + Send {
         async move {
             const PRUNE_RANDOM_SAMPLE_SIZE: usize = 2;
+            let remote_pubkey = conn_context.remote_pubkey()?;
+            if self.banlist.is_banned(&remote_pubkey) {
+                let remote_address = conn_context.remote_address;
+                info!("Rejecting banned pubkey {remote_pubkey} from {remote_address:?}");
+                self.stats
+                    .connection_add_failed_banned
+                    .fetch_add(1, Ordering::Relaxed);
+                connection.close(
+                    CONNECTION_CLOSE_CODE_DISALLOWED.into(),
+                    CONNECTION_CLOSE_REASON_DISALLOWED,
+                );
+                return None;
+            }
+
             match conn_context.peer_type() {
                 ConnectionPeerType::Staked(stake) => {
                     let mut connection_table_l = self.staked_connection_table.lock().await;
@@ -193,8 +314,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
                         debug!(
                             "Pruned {} staked connections to make room for new staked connection \
                              from {}",
-                            num_pruned,
-                            connection.remote_address(),
+                            num_pruned, conn_context.remote_address,
                         );
                         self.stats
                             .num_evictions_staked
@@ -240,7 +360,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
     ) -> impl Future<Output = usize> + Send {
         async move {
             let stable_id = connection.stable_id();
-            let remote_addr = connection.remote_address();
+            let remote_addr = conn_context.remote_address;
 
             let mut connection_table = self.staked_connection_table.lock().await;
             let removed_connection_count = connection_table.remove_connection(
@@ -311,7 +431,7 @@ mod tests {
                 quic::{ConnectionTable, ConnectionTableType},
                 testing_utilities::get_client_config,
             },
-            quic::{configure_server, StreamerStats},
+            quic::{StreamerStats, configure_server},
             streamer::StakedNodes,
         },
         quinn::Endpoint,
@@ -320,8 +440,8 @@ mod tests {
         std::{
             collections::HashMap,
             sync::{
-                atomic::{AtomicU64, Ordering},
                 Arc, RwLock,
+                atomic::{AtomicU64, Ordering},
             },
         },
         tokio_util::sync::CancellationToken,
@@ -389,7 +509,7 @@ mod tests {
         stakes.insert(server_keypair.pubkey(), stake_amount);
         stakes.insert(client_keypair.pubkey(), stake_amount);
 
-        let overrides: HashMap<solana_pubkey::Pubkey, u64> = HashMap::new();
+        let overrides: HashMap<Pubkey, u64> = HashMap::new();
 
         Arc::new(RwLock::new(StakedNodes::new(Arc::new(stakes), overrides)))
     }
@@ -424,7 +544,7 @@ mod tests {
         let remote_addr = server_connection.remote_address();
         let conn_context = SimpleQosConnectionContext {
             peer_type: ConnectionPeerType::Staked(1000),
-            remote_pubkey: Some(solana_pubkey::Pubkey::new_unique()),
+            remote_pubkey: Some(Pubkey::new_unique()),
             remote_address: remote_addr,
             last_update: Arc::new(AtomicU64::new(0)),
             stream_counter: None,
@@ -548,7 +668,7 @@ mod tests {
 
         let conn_context = SimpleQosConnectionContext {
             peer_type: ConnectionPeerType::Staked(1000),
-            remote_pubkey: Some(solana_pubkey::Pubkey::new_unique()),
+            remote_pubkey: Some(Pubkey::new_unique()),
             remote_address: remote_addr,
             last_update: Arc::new(AtomicU64::new(0)),
             stream_counter: None,
@@ -743,6 +863,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_try_add_connection_banned_pubkey_rejected() {
+        let cancel = CancellationToken::new();
+        let stats = Arc::new(StreamerStats::default());
+        let server_keypair = Keypair::new();
+        let client_keypair = Keypair::new();
+        let staked_nodes =
+            create_staked_nodes_with_keypairs(&server_keypair, &client_keypair, 50_000_000);
+
+        let simple_qos = SimpleQos::new(
+            SimpleQosConfig::default(),
+            stats.clone(),
+            staked_nodes,
+            cancel,
+        );
+
+        simple_qos
+            .banlist
+            .ban(client_keypair.pubkey(), Duration::from_secs(30));
+
+        let client_tracker = ClientConnectionTracker {
+            stats: stats.clone(),
+        };
+        let (server_connection, _client_endpoint, _server_endpoint) =
+            create_connection_with_keypairs(&server_keypair, &client_keypair).await;
+        let mut conn_context = simple_qos.build_connection_context(&server_connection);
+        let result = simple_qos
+            .try_add_connection(client_tracker, &server_connection, &mut conn_context)
+            .await;
+
+        assert!(result.is_none());
+        assert_eq!(
+            stats.connection_add_failed_banned.load(Ordering::Relaxed),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn test_try_add_connection_max_staked_connections_with_pruning() {
         // Setup with very low max connections to trigger pruning
         let cancel = CancellationToken::new();
@@ -762,7 +919,7 @@ mod tests {
         // client 2 has higher stake so that it can prune client 1
         stakes.insert(client_keypair2.pubkey(), stake_amount * 2);
 
-        let overrides: HashMap<solana_pubkey::Pubkey, u64> = HashMap::new();
+        let overrides: HashMap<Pubkey, u64> = HashMap::new();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(Arc::new(stakes), overrides)));
 
         let simple_qos = SimpleQos::new(
@@ -832,7 +989,7 @@ mod tests {
         stakes.insert(server_keypair2.pubkey(), low_stake);
         stakes.insert(client_keypair2.pubkey(), low_stake);
 
-        let overrides: HashMap<solana_pubkey::Pubkey, u64> = HashMap::new();
+        let overrides: HashMap<Pubkey, u64> = HashMap::new();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(Arc::new(stakes), overrides)));
 
         let simple_qos = SimpleQos::new(

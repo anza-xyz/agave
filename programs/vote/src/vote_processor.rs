@@ -1,7 +1,7 @@
 //! Vote program processor
 
 use {
-    crate::vote_state::{self, handler::VoteStateTargetVersion, NewCommissionCollector},
+    crate::vote_state::{self, NewCommissionCollector, handler::VoteStateTargetVersion},
     log::*,
     solana_bincode::limited_deserialize,
     solana_instruction::error::InstructionError,
@@ -73,6 +73,11 @@ fn is_init_account_v2_enabled(invoke_context: &InvokeContext) -> bool {
 fn is_vote_authorize_with_bls_enabled(invoke_context: &InvokeContext) -> bool {
     let feature_set = invoke_context.get_feature_set();
     feature_set.vote_state_v4 && feature_set.bls_pubkey_management_in_vote_account
+}
+
+fn should_reject_legacy_vote_instructions(invoke_context: &InvokeContext) -> bool {
+    invoke_context.is_deprecate_legacy_vote_ixs_active()
+        || invoke_context.is_alpenglow_migration_succeeded()
 }
 
 // Citing `runtime/src/block_cost_limit.rs`, vote has statically defined 2100
@@ -201,7 +206,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             )
         }
         VoteInstruction::Vote(vote) | VoteInstruction::VoteSwitch(vote, _) => {
-            if invoke_context.is_deprecate_legacy_vote_ixs_active() {
+            if should_reject_legacy_vote_instructions(invoke_context) {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let slot_hashes = get_sysvar_with_account_check::slot_hashes(
@@ -222,7 +227,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::UpdateVoteState(vote_state_update)
         | VoteInstruction::UpdateVoteStateSwitch(vote_state_update, _) => {
-            if invoke_context.is_deprecate_legacy_vote_ixs_active() {
+            if should_reject_legacy_vote_instructions(invoke_context) {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let sysvar_cache = invoke_context.get_sysvar_cache();
@@ -239,7 +244,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::CompactUpdateVoteState(vote_state_update)
         | VoteInstruction::CompactUpdateVoteStateSwitch(vote_state_update, _) => {
-            if invoke_context.is_deprecate_legacy_vote_ixs_active() {
+            if should_reject_legacy_vote_instructions(invoke_context) {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let sysvar_cache = invoke_context.get_sysvar_cache();
@@ -256,6 +261,9 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::TowerSync(tower_sync)
         | VoteInstruction::TowerSyncSwitch(tower_sync, _) => {
+            if invoke_context.is_alpenglow_migration_succeeded() {
+                return Err(InstructionError::InvalidInstructionData);
+            }
             let sysvar_cache = invoke_context.get_sysvar_cache();
             let slot_hashes = sysvar_cache.get_slot_hashes()?;
             let clock = sysvar_cache.get_clock()?;
@@ -404,23 +412,22 @@ mod tests {
         crate::{
             vote_error::VoteError,
             vote_instruction::{
-                authorize, authorize_checked, compact_update_vote_state,
-                compact_update_vote_state_switch, create_account_with_config, update_commission,
-                update_validator_identity, update_vote_state, update_vote_state_switch, vote,
-                vote_switch, withdraw, CreateVoteAccountConfig, VoteInstruction,
+                CreateVoteAccountConfig, VoteInstruction, authorize, authorize_checked,
+                compact_update_vote_state, compact_update_vote_state_switch,
+                create_account_with_config, update_commission, update_validator_identity,
+                update_vote_state, update_vote_state_switch, vote, vote_switch, withdraw,
             },
             vote_state::{
-                self, create_bls_pubkey_and_proof_of_possession,
-                handler::{VoteStateHandle, VoteStateHandler},
-                Lockout, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
+                self, Lockout, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
                 VoteAuthorizeWithSeedArgs, VoteInit, VoteInitV2, VoteStateUpdate, VoteStateV3,
-                VoteStateV4, VoteStateVersions,
+                VoteStateV4, VoteStateVersions, create_bls_pubkey_and_proof_of_possession,
+                handler::{VoteStateHandle, VoteStateHandler},
             },
         },
         bincode::serialize,
         solana_account::{
-            self as account, state_traits::StateMut, Account, AccountSharedData, ReadableAccount,
-            WritableAccount,
+            self as account, Account, AccountSharedData, ReadableAccount, WritableAccount,
+            state_traits::StateMut,
         },
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
@@ -428,7 +435,8 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_program_runtime::{
             invoke_context::mock_process_instruction_with_feature_set,
-            loaded_programs::ProgramCacheEntry, solana_sbpf::vm::ContextObject,
+            loaded_programs::ProgramCacheEntry,
+            solana_sbpf::{program::BuiltinFunctionDefinition, vm::ContextObject},
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
@@ -437,10 +445,10 @@ mod tests {
         solana_svm_feature_set::SVMFeatureSet,
         solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as SYSTEM_PROGRAM_COMPUTE_UNITS,
         solana_vote_interface::{
-            instruction::{tower_sync, tower_sync_switch, CommissionKind},
+            instruction::{CommissionKind, tower_sync, tower_sync_switch},
             state::{
-                VoterWithBLSArgs, BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE,
-                BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+                BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+                VoterWithBLSArgs,
             },
         },
         std::{cell::RefCell, collections::HashSet, str::FromStr, sync::Arc},
@@ -491,6 +499,7 @@ mod tests {
         custom_commission_collector: bool,
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
+        alpenglow_migration_succeeded: bool,
     }
 
     impl VoteProgramFeatures {
@@ -502,6 +511,7 @@ mod tests {
                 custom_commission_collector: true,
                 block_revenue_sharing: true,
                 vote_account_initialize_v2: true,
+                alpenglow_migration_succeeded: false,
             }
         }
     }
@@ -538,24 +548,26 @@ mod tests {
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
+            alpenglow_migration_succeeded,
         } = features;
         let cu_consumed = RefCell::new(0u64);
         let accounts = mock_process_instruction_with_feature_set(
             &id(),
-            None,
             instruction_data,
             transaction_accounts,
             instruction_accounts,
             expected_result,
-            Entrypoint::vm,
+            Entrypoint::register,
             |invoke_context| {
+                invoke_context
+                    .set_alpenglow_migration_succeeded_for_tests(alpenglow_migration_succeeded);
                 // Register system program for CPI support.
                 invoke_context.program_cache_for_tx_batch.replenish(
                     solana_sdk_ids::system_program::id(),
                     Arc::new(ProgramCacheEntry::new_builtin(
                         0,
                         0,
-                        solana_system_program::system_processor::Entrypoint::vm,
+                        solana_system_program::system_processor::Entrypoint::register,
                     )),
                 );
                 *cu_consumed.borrow_mut() = invoke_context.get_remaining();
@@ -944,6 +956,7 @@ mod tests {
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
+            alpenglow_migration_succeeded: false,
         };
 
         let accounts = process_instruction(
@@ -996,10 +1009,10 @@ mod tests {
             features,
             &instruction_data,
             vec![
-                (vote_pubkey, vote_account.clone()),
+                (vote_pubkey, vote_account),
                 (sysvar::rent::id(), create_default_rent_account()),
                 (sysvar::clock::id(), create_default_clock_account()),
-                (node_pubkey, node_account.clone()),
+                (node_pubkey, node_account),
             ],
             instruction_accounts.clone(),
             Err(InstructionError::MissingRequiredSignature),
@@ -1026,15 +1039,24 @@ mod tests {
         let vote_account = AccountSharedData::new(100, vote_state_size_of(vote_state_v4), &id());
         let node_pubkey = solana_pubkey::new_rand();
         let node_account = AccountSharedData::default();
+        let authorized_voter = solana_pubkey::new_rand();
+        let authorized_withdrawer = solana_pubkey::new_rand();
         let (bls_pubkey, bls_proof_of_possession) =
             create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+        let inflation_rewards_collector = solana_pubkey::new_rand();
+        let block_revenue_collector = solana_pubkey::new_rand();
+        let inflation_rewards_commission_bps = 1_234;
+        let block_revenue_commission_bps = 5_678;
         let instruction_data = serialize(&VoteInstruction::InitializeAccountV2(VoteInitV2 {
             node_pubkey,
-            authorized_voter: vote_pubkey,
-            authorized_withdrawer: vote_pubkey,
+            authorized_voter,
             authorized_voter_bls_pubkey: bls_pubkey,
             authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
-            ..Default::default()
+            authorized_withdrawer,
+            inflation_rewards_commission_bps,
+            inflation_rewards_collector,
+            block_revenue_commission_bps,
+            block_revenue_collector,
         }))
         .unwrap();
         let mut instruction_accounts = vec![
@@ -1067,6 +1089,7 @@ mod tests {
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
+            alpenglow_migration_succeeded: false,
         };
 
         let all_v2_features_enabled = vote_state_v4
@@ -1082,10 +1105,10 @@ mod tests {
                 features,
                 &instruction_data,
                 vec![
-                    (vote_pubkey, vote_account.clone()),
+                    (vote_pubkey, vote_account),
                     (sysvar::rent::id(), create_default_rent_account()),
                     (sysvar::clock::id(), create_default_clock_account()),
-                    (node_pubkey, node_account.clone()),
+                    (node_pubkey, node_account),
                 ],
                 instruction_accounts.clone(),
                 Err(InstructionError::InvalidInstructionData),
@@ -1106,6 +1129,27 @@ mod tests {
             Ok(()),
             DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
         );
+
+        // Verify every field in the V4 state matches VoteInitV2.
+        let v4 = deserialize_vote_state_for_test(true, accounts[0].data(), &vote_pubkey);
+        let v4 = v4.as_ref_v4();
+        assert_eq!(v4.node_pubkey, node_pubkey);
+        assert_eq!(v4.authorized_withdrawer, authorized_withdrawer);
+        assert_eq!(v4.bls_pubkey_compressed, Some(bls_pubkey));
+        assert_eq!(
+            v4.inflation_rewards_commission_bps,
+            inflation_rewards_commission_bps
+        );
+        assert_eq!(v4.inflation_rewards_collector, inflation_rewards_collector);
+        assert_eq!(
+            v4.block_revenue_commission_bps,
+            block_revenue_commission_bps
+        );
+        assert_eq!(v4.block_revenue_collector, block_revenue_collector);
+        assert_eq!(v4.pending_delegator_rewards, 0);
+        assert!(v4.votes.is_empty());
+        assert!(v4.epoch_credits.is_empty());
+        assert_eq!(v4.root_slot, None);
 
         // reinit should fail
         process_instruction(
@@ -1144,10 +1188,10 @@ mod tests {
             features,
             &instruction_data,
             vec![
-                (vote_pubkey, vote_account.clone()),
+                (vote_pubkey, vote_account),
                 (sysvar::rent::id(), create_default_rent_account()),
                 (sysvar::clock::id(), create_default_clock_account()),
-                (node_pubkey, node_account.clone()),
+                (node_pubkey, node_account),
             ],
             instruction_accounts.clone(),
             Err(InstructionError::MissingRequiredSignature),
@@ -1533,7 +1577,7 @@ mod tests {
         assert_ne!(stored_commission_bps, commission_bps); // New value not set
 
         // Should fail - authorized withdrawer didn't sign the transaction.
-        let mut unsigned_instruction_accounts = instruction_accounts.clone();
+        let mut unsigned_instruction_accounts = instruction_accounts;
         unsigned_instruction_accounts[1].is_signer = false;
         let accounts = process_instruction(
             features,
@@ -1549,7 +1593,7 @@ mod tests {
 
         // Should fail - wrong signature for authorized withdrawer.
         let wrong_signer = Pubkey::new_unique();
-        let mut wrong_signer_transaction_accounts = transaction_accounts.clone();
+        let mut wrong_signer_transaction_accounts = transaction_accounts;
         wrong_signer_transaction_accounts.push((wrong_signer, AccountSharedData::default()));
         let wrong_signer_instruction_accounts = vec![
             AccountMeta {
@@ -1596,7 +1640,7 @@ mod tests {
 
         let transaction_accounts = vec![
             (vote_pubkey, vote_account.clone()),
-            (new_collector_pubkey, new_collector_account.clone()),
+            (new_collector_pubkey, new_collector_account),
             (authorized_withdrawer, AccountSharedData::default()),
             (sysvar::rent::id(), rent_sysvar_account),
         ];
@@ -1928,12 +1972,12 @@ mod tests {
         );
 
         // Should fail - new collector not writable (reserved account check).
-        let mut not_writable_instruction_accounts = instruction_accounts.clone();
+        let mut not_writable_instruction_accounts = instruction_accounts;
         not_writable_instruction_accounts[1].is_writable = false;
         let accounts = process_instruction(
             features,
             &instruction_data,
-            transaction_accounts.clone(),
+            transaction_accounts,
             not_writable_instruction_accounts,
             Err(InstructionError::InvalidArgument),
         );
@@ -2135,8 +2179,8 @@ mod tests {
                 features,
                 &instruction_data,
                 vec![
-                    (vote_pubkey, vote_account.clone()),
-                    (sysvar::clock::id(), clock_account.clone()),
+                    (vote_pubkey, vote_account),
+                    (sysvar::clock::id(), clock_account),
                     (authorized_voter_pubkey, AccountSharedData::default()),
                 ],
                 instruction_accounts.clone(),
@@ -2159,8 +2203,8 @@ mod tests {
                 features,
                 &bad_instruction_data,
                 vec![
-                    (vote_pubkey, vote_account.clone()),
-                    (sysvar::clock::id(), clock_account.clone()),
+                    (vote_pubkey, vote_account),
+                    (sysvar::clock::id(), clock_account),
                     (authorized_voter_pubkey, AccountSharedData::default()),
                 ],
                 instruction_accounts.clone(),
@@ -2367,7 +2411,7 @@ mod tests {
                 &old_instruction_data,
                 vec![
                     (new_vote_pubkey, vote_account_with_bls_key),
-                    (sysvar::clock::id(), clock_account.clone()),
+                    (sysvar::clock::id(), clock_account),
                     (new_authorized_voter_pubkey, AccountSharedData::default()),
                 ],
                 vec![
@@ -2401,8 +2445,8 @@ mod tests {
                 features,
                 &bad_instruction_data,
                 vec![
-                    (vote_pubkey, vote_account.clone()),
-                    (sysvar::clock::id(), clock_account.clone()),
+                    (vote_pubkey, vote_account),
+                    (sysvar::clock::id(), clock_account),
                     (authorized_voter_pubkey, AccountSharedData::default()),
                 ],
                 instruction_accounts.clone(),
@@ -2530,8 +2574,8 @@ mod tests {
         };
         let clock_account = account::create_account_shared_data_for_test(&clock);
         let transaction_accounts = vec![
-            (vote_pubkey, vote_account.clone()),
-            (sysvar::clock::id(), clock_account.clone()),
+            (vote_pubkey, vote_account),
+            (sysvar::clock::id(), clock_account),
             (authorized_voter_pubkey, AccountSharedData::default()),
         ];
         let instruction_accounts = vec![
@@ -2563,8 +2607,8 @@ mod tests {
                 ..Default::default()
             },
             &instruction_data,
-            transaction_accounts.clone(),
-            instruction_accounts.clone(),
+            transaction_accounts,
+            instruction_accounts,
             Err(InstructionError::InvalidArgument),
             DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
         );
@@ -2845,6 +2889,289 @@ mod tests {
             instruction_accounts,
             Err(VoteError::ActiveVoteAccountClose.into()),
         );
+    }
+
+    #[test]
+    fn test_deinitialized_account_full_lifecycle_v4() {
+        // Full lifecycle: withdraw all lamports to deinitialize a V4
+        // account, verify instructions are rejected on the zeroed
+        // account, then re-initialize and confirm no residual state.
+        let vote_state_v4 = true;
+        let (vote_pubkey, _authorized_voter, authorized_withdrawer, vote_account) =
+            create_test_account_with_authorized(vote_state_v4);
+        let lamports = vote_account.lamports();
+
+        let features = VoteProgramFeatures {
+            vote_state_v4,
+            ..Default::default()
+        };
+
+        let recipient_pubkey = solana_pubkey::new_rand();
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account),
+            (recipient_pubkey, AccountSharedData::default()),
+            (authorized_withdrawer, AccountSharedData::default()),
+            (sysvar::rent::id(), create_default_rent_account()),
+            (sysvar::clock::id(), create_default_clock_account()),
+        ];
+        let instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: recipient_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: authorized_withdrawer,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+
+        // Withdraw all lamports to deinitialize.
+        let accounts = process_instruction(
+            features,
+            &serialize(&VoteInstruction::Withdraw(lamports)).unwrap(),
+            transaction_accounts,
+            instruction_accounts,
+            Ok(()),
+        );
+        let deinitialized_vote_account = &accounts[0];
+
+        // Account data should be all zeros.
+        assert!(deinitialized_vote_account.data().iter().all(|&b| b == 0));
+
+        // Authorize should fail on the deinitialized account.
+        let clock_account = account::create_account_shared_data_for_test(&Clock {
+            epoch: 100,
+            ..Clock::default()
+        });
+        process_instruction(
+            features,
+            &serialize(&VoteInstruction::Authorize(
+                solana_pubkey::new_rand(),
+                VoteAuthorize::Voter,
+            ))
+            .unwrap(),
+            vec![
+                (vote_pubkey, deinitialized_vote_account.clone()),
+                (sysvar::clock::id(), clock_account),
+                (authorized_withdrawer, AccountSharedData::default()),
+            ],
+            vec![
+                AccountMeta {
+                    pubkey: vote_pubkey,
+                    is_signer: true,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: sysvar::clock::id(),
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ],
+            Err(InstructionError::UninitializedAccount),
+        );
+
+        // Re-initialize with new fields.
+        let new_node_pubkey = solana_pubkey::new_rand();
+        let new_vote_init = VoteInit {
+            node_pubkey: new_node_pubkey,
+            authorized_voter: solana_pubkey::new_rand(),
+            authorized_withdrawer: solana_pubkey::new_rand(),
+            commission: 10,
+        };
+        // Fund the account for rent exemption.
+        let mut funded_account = deinitialized_vote_account.clone();
+        let rent = Rent::default();
+        funded_account.set_lamports(rent.minimum_balance(funded_account.data().len()));
+
+        let accounts = process_instruction(
+            features,
+            &serialize(&VoteInstruction::InitializeAccount(new_vote_init)).unwrap(),
+            vec![
+                (vote_pubkey, funded_account),
+                (sysvar::rent::id(), create_default_rent_account()),
+                (sysvar::clock::id(), create_default_clock_account()),
+                (new_node_pubkey, AccountSharedData::default()),
+            ],
+            vec![
+                AccountMeta {
+                    pubkey: vote_pubkey,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: sysvar::rent::id(),
+                    is_signer: false,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: sysvar::clock::id(),
+                    is_signer: false,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: new_node_pubkey,
+                    is_signer: true,
+                    is_writable: false,
+                },
+            ],
+            Ok(()),
+        );
+
+        // Verify the re-initialized account is a clean V4.
+        let vote_state =
+            deserialize_vote_state_for_test(vote_state_v4, accounts[0].data(), &vote_pubkey);
+        assert_eq!(*vote_state.node_pubkey(), new_node_pubkey);
+        assert_eq!(
+            *vote_state.authorized_withdrawer(),
+            new_vote_init.authorized_withdrawer
+        );
+        assert_eq!(vote_state.commission(), 10);
+        assert!(vote_state.votes().is_empty());
+        assert!(vote_state.epoch_credits().is_empty());
+    }
+
+    #[test]
+    fn test_uninitialized_v3_blocked_under_v4() {
+        // An uninitialized V3 account (empty authorized_voters, padded
+        // to V4 size) is rejected by all instructions under V4.
+        let vote_pubkey = solana_pubkey::new_rand();
+
+        // Create an uninitialized V3: discriminant 2, empty authorized_voters.
+        let uninitialized_v3 = VoteStateVersions::V3(Box::default());
+        let serialized = bincode::serialize(&uninitialized_v3).unwrap();
+        let target_len = vote_state_size_of(true);
+        let mut data = vec![0u8; target_len];
+        data[..serialized.len()].copy_from_slice(&serialized);
+
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(target_len);
+        let mut vote_account = AccountSharedData::new(lamports, target_len, &id());
+        vote_account.set_data_from_slice(&data);
+
+        let authorized_withdrawer = solana_pubkey::new_rand();
+        let features = VoteProgramFeatures {
+            vote_state_v4: true,
+            ..Default::default()
+        };
+
+        // Authorize should fail.
+        process_instruction(
+            features,
+            &serialize(&VoteInstruction::Authorize(
+                solana_pubkey::new_rand(),
+                VoteAuthorize::Voter,
+            ))
+            .unwrap(),
+            vec![
+                (vote_pubkey, vote_account.clone()),
+                (sysvar::clock::id(), create_default_clock_account()),
+                (authorized_withdrawer, AccountSharedData::default()),
+            ],
+            vec![
+                AccountMeta {
+                    pubkey: vote_pubkey,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: sysvar::clock::id(),
+                    is_signer: false,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: authorized_withdrawer,
+                    is_signer: true,
+                    is_writable: false,
+                },
+            ],
+            Err(InstructionError::UninitializedAccount),
+        );
+
+        // UpdateCommission should fail.
+        process_instruction(
+            features,
+            &serialize(&VoteInstruction::UpdateCommission(50)).unwrap(),
+            vec![
+                (vote_pubkey, vote_account.clone()),
+                (authorized_withdrawer, AccountSharedData::default()),
+                (sysvar::clock::id(), create_default_clock_account()),
+                (
+                    sysvar::epoch_schedule::id(),
+                    account::create_account_shared_data_for_test(
+                        &solana_epoch_schedule::EpochSchedule::without_warmup(),
+                    ),
+                ),
+            ],
+            vec![
+                AccountMeta {
+                    pubkey: vote_pubkey,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: authorized_withdrawer,
+                    is_signer: true,
+                    is_writable: false,
+                },
+            ],
+            Err(InstructionError::UninitializedAccount),
+        );
+
+        // Re-initialize escape hatch: InitializeAccount should succeed.
+        let new_node = solana_pubkey::new_rand();
+        let vote_init = VoteInit {
+            node_pubkey: new_node,
+            authorized_voter: solana_pubkey::new_rand(),
+            authorized_withdrawer: solana_pubkey::new_rand(),
+            commission: 5,
+        };
+        let accounts = process_instruction(
+            features,
+            &serialize(&VoteInstruction::InitializeAccount(vote_init)).unwrap(),
+            vec![
+                (vote_pubkey, vote_account),
+                (sysvar::rent::id(), create_default_rent_account()),
+                (sysvar::clock::id(), create_default_clock_account()),
+                (new_node, AccountSharedData::default()),
+            ],
+            vec![
+                AccountMeta {
+                    pubkey: vote_pubkey,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: sysvar::rent::id(),
+                    is_signer: false,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: sysvar::clock::id(),
+                    is_signer: false,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: new_node,
+                    is_signer: true,
+                    is_writable: false,
+                },
+            ],
+            Ok(()),
+        );
+
+        // Verify re-initialized as V4.
+        let versioned: VoteStateVersions = accounts[0].state().unwrap();
+        assert!(matches!(versioned, VoteStateVersions::V4(_)));
+        let vote_state = deserialize_vote_state_for_test(true, accounts[0].data(), &vote_pubkey);
+        assert_eq!(*vote_state.node_pubkey(), new_node);
+        assert_eq!(vote_state.commission(), 5);
     }
 
     fn perform_authorize_with_seed_test(
@@ -3716,6 +4043,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_tower_sync_rejected_after_alpenglow_migration_succeeds() {
+        let features = VoteProgramFeatures {
+            alpenglow_migration_succeeded: true,
+            ..Default::default()
+        };
+
+        process_instruction_as_one_arg(
+            features,
+            &tower_sync(&Pubkey::default(), &Pubkey::default(), TowerSync::default()),
+            Err(InstructionError::InvalidInstructionData),
+        );
+        process_instruction_as_one_arg(
+            features,
+            &tower_sync_switch(
+                &Pubkey::default(),
+                &Pubkey::default(),
+                TowerSync::default(),
+                Hash::default(),
+            ),
+            Err(InstructionError::InvalidInstructionData),
+        );
+    }
+
     #[test_matrix([false, true], [false, true])]
     fn test_vote_authorize_checked(
         vote_state_v4: bool,
@@ -4344,6 +4695,32 @@ mod tests {
             transaction_accounts.clone(),
             single_account_instruction_accounts,
             Err(InstructionError::MissingAccount),
+        );
+
+        // Fail - Source account is not a signer.
+        let non_signer_instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: source_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: solana_sdk_ids::system_program::id(),
+                is_signer: false,
+                is_writable: false,
+            },
+        ];
+        process_instruction(
+            VoteProgramFeatures::all_enabled(),
+            &instruction_data,
+            transaction_accounts.clone(),
+            non_signer_instruction_accounts,
+            Err(InstructionError::MissingRequiredSignature),
         );
 
         // Fail - Vote account fails to deserialize (zeroed/uninitialized data).

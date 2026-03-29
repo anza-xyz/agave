@@ -1,7 +1,7 @@
 use {
     agave_fs::file_io::{self, FileCreator},
     log::*,
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     solana_genesis_config::DEFAULT_GENESIS_FILE,
     std::{
         fs::{self, File},

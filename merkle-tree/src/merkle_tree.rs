@@ -52,11 +52,7 @@ impl<'a> Proof<'a> {
             let rsib = pe.2.unwrap_or(&candidate);
             let hash = hash_intermediate!(lsib, rsib);
 
-            if hash == *pe.0 {
-                Some(hash)
-            } else {
-                None
-            }
+            if hash == *pe.0 { Some(hash) } else { None }
         });
         result.is_some()
     }

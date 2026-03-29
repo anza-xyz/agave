@@ -6,16 +6,11 @@ use crate::{
 
 pub(crate) fn sanitize(
     view: &UnsanitizedTransactionView<impl TransactionData>,
-    enable_static_instruction_limit: bool,
     enable_instruction_accounts_limit: bool,
 ) -> Result<()> {
     sanitize_signatures(view)?;
     sanitize_account_access(view)?;
-    sanitize_instructions(
-        view,
-        enable_static_instruction_limit,
-        enable_instruction_accounts_limit,
-    )?;
+    sanitize_instructions(view, enable_instruction_accounts_limit)?;
     sanitize_address_table_lookups(view)
 }
 
@@ -61,13 +56,11 @@ fn sanitize_account_access(view: &UnsanitizedTransactionView<impl TransactionDat
 
 fn sanitize_instructions(
     view: &UnsanitizedTransactionView<impl TransactionData>,
-    enable_static_instruction_limit: bool,
     enable_instruction_accounts_limit: bool,
 ) -> Result<()> {
     // SIMD-160: transaction can not have more than 64 top level instructions
-    if enable_static_instruction_limit
-        && usize::from(view.num_instructions())
-            > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
+    if usize::from(view.num_instructions())
+        > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
     {
         return Err(TransactionViewError::SanitizeError);
     }
@@ -198,7 +191,7 @@ mod tests {
         let transaction = multiple_transfers();
         let data = bincode::serialize(&transaction).unwrap();
         let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
-        assert!(view.sanitize(true, true).is_ok());
+        assert!(view.sanitize(true).is_ok());
     }
 
     #[test]
@@ -405,7 +398,7 @@ mod tests {
             );
             let data = bincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
-            assert!(sanitize_instructions(&view, true, true).is_ok());
+            assert!(sanitize_instructions(&view, true).is_ok());
 
             let transaction = create_v0_transaction(
                 num_signatures,
@@ -416,7 +409,7 @@ mod tests {
             );
             let data = bincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
-            assert!(sanitize_instructions(&view, true, true).is_ok());
+            assert!(sanitize_instructions(&view, true).is_ok());
         }
 
         for instruction_index in 0..valid_instructions.len() {
@@ -433,7 +426,7 @@ mod tests {
                 let data = bincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
-                    sanitize_instructions(&view, true, true),
+                    sanitize_instructions(&view, true),
                     Err(TransactionViewError::SanitizeError)
                 );
             }
@@ -452,7 +445,7 @@ mod tests {
                 let data = bincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
-                    sanitize_instructions(&view, true, true),
+                    sanitize_instructions(&view, true),
                     Err(TransactionViewError::SanitizeError)
                 );
             }
@@ -470,7 +463,7 @@ mod tests {
                 let data = bincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
-                    sanitize_instructions(&view, true, true),
+                    sanitize_instructions(&view, true),
                     Err(TransactionViewError::SanitizeError)
                 );
             }
@@ -490,7 +483,7 @@ mod tests {
                 let data = bincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
-                    sanitize_instructions(&view, true, true),
+                    sanitize_instructions(&view, true),
                     Err(TransactionViewError::SanitizeError)
                 );
             }
@@ -514,7 +507,7 @@ mod tests {
                 let data = bincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
-                    sanitize_instructions(&view, true, true),
+                    sanitize_instructions(&view, true),
                     Err(TransactionViewError::SanitizeError)
                 );
             }
@@ -537,10 +530,9 @@ mod tests {
             let data = bincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
-                sanitize_instructions(&view, true, true),
+                sanitize_instructions(&view, true),
                 Err(TransactionViewError::SanitizeError)
             );
-            assert!(sanitize_instructions(&view, false, true).is_ok());
 
             let transaction = create_v0_transaction(
                 num_signatures,
@@ -552,10 +544,9 @@ mod tests {
             let data = bincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
-                sanitize_instructions(&view, true, true),
+                sanitize_instructions(&view, true),
                 Err(TransactionViewError::SanitizeError)
             );
-            assert!(sanitize_instructions(&view, false, true).is_ok());
         }
 
         // SIMD-406: Limit instruction accounts to 255
@@ -573,7 +564,7 @@ mod tests {
             let data = bincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
-                sanitize_instructions(&view, false, true),
+                sanitize_instructions(&view, true),
                 Err(TransactionViewError::SanitizeError)
             );
         }
@@ -592,7 +583,7 @@ mod tests {
             let data = bincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             // Exactly 255 accounts must pass sanitization.
-            assert!(sanitize_instructions(&view, false, true).is_ok());
+            assert!(sanitize_instructions(&view, true).is_ok());
         }
     }
 

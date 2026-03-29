@@ -5,8 +5,8 @@ pub use {
     crate::extract_memos::extract_and_fmt_memos,
     solana_reward_info::RewardType,
     solana_transaction_status_client_types::{
-        option_serializer, ConfirmedTransactionStatusWithSignature, EncodeError,
-        EncodedConfirmedBlock, EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
+        ConfirmedTransactionStatusWithSignature, EncodeError, EncodedConfirmedBlock,
+        EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
         EncodedTransactionWithStatusMeta, InnerInstruction, InnerInstructions, Reward, Rewards,
         TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionDetails,
         TransactionStatus, TransactionStatusMeta, TransactionTokenBalance, UiAccountsList,
@@ -14,33 +14,36 @@ pub use {
         UiInstruction, UiLoadedAddresses, UiMessage, UiParsedInstruction, UiParsedMessage,
         UiPartiallyDecodedInstruction, UiRawMessage, UiReturnDataEncoding, UiTransaction,
         UiTransactionEncoding, UiTransactionReturnData, UiTransactionStatusMeta,
-        UiTransactionTokenBalance,
+        UiTransactionTokenBalance, option_serializer,
     },
 };
 use {
     crate::{
         option_serializer::OptionSerializer,
-        parse_accounts::{parse_legacy_message_accounts, parse_v0_message_accounts},
+        parse_accounts::{
+            parse_legacy_message_accounts, parse_v0_message_accounts, parse_v1_message_accounts,
+        },
         parse_instruction::parse,
     },
     agave_reserved_account_keys::ReservedAccountKeys,
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     serde::{Deserialize, Serialize},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_message::{
+        AccountKeys, Message, VersionedMessage,
         compiled_instruction::CompiledInstruction,
         v0::{self, LoadedAddresses, LoadedMessage},
-        AccountKeys, Message, VersionedMessage,
     },
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_transaction::{
-        versioned::{TransactionVersion, VersionedTransaction},
         Transaction,
+        versioned::{TransactionVersion, VersionedTransaction},
     },
     solana_transaction_error::TransactionError,
+    solana_transaction_status_client_types::UiTransactionConfig,
     std::collections::HashSet,
     thiserror::Error,
 };
@@ -562,6 +565,7 @@ impl VersionedTransactionWithStatusMeta {
                 );
                 parse_v0_message_accounts(&loaded_message)
             }
+            VersionedMessage::V1(message) => parse_v1_message_accounts(message),
         };
 
         Ok(EncodedTransactionWithStatusMeta {
@@ -650,6 +654,9 @@ impl EncodableWithMeta for VersionedTransaction {
                     VersionedMessage::V0(message) => {
                         message.encode_with_meta(UiTransactionEncoding::JsonParsed, meta)
                     }
+                    VersionedMessage::V1(message) => {
+                        message.encode(UiTransactionEncoding::JsonParsed)
+                    }
                 },
             }),
         }
@@ -660,6 +667,7 @@ impl EncodableWithMeta for VersionedTransaction {
             message: match &self.message {
                 VersionedMessage::Legacy(message) => message.encode(UiTransactionEncoding::Json),
                 VersionedMessage::V0(message) => message.json_encode(),
+                VersionedMessage::V1(message) => message.encode(UiTransactionEncoding::Json),
             },
         })
     }
@@ -688,6 +696,9 @@ impl Encodable for VersionedTransaction {
                             message.encode(UiTransactionEncoding::JsonParsed)
                         }
                         VersionedMessage::V0(message) => {
+                            message.encode(UiTransactionEncoding::JsonParsed)
+                        }
+                        VersionedMessage::V1(message) => {
                             message.encode(UiTransactionEncoding::JsonParsed)
                         }
                     },
@@ -752,6 +763,7 @@ impl Encodable for Message {
                     })
                     .collect(),
                 address_table_lookups: None,
+                transaction_config: None,
             })
         } else {
             UiMessage::Raw(UiRawMessage {
@@ -766,6 +778,7 @@ impl Encodable for Message {
                     })
                     .collect(),
                 address_table_lookups: None,
+                transaction_config: None,
             })
         }
     }
@@ -794,6 +807,7 @@ impl Encodable for v0::Message {
                     })
                     .collect(),
                 address_table_lookups: None,
+                transaction_config: None,
             })
         } else {
             UiMessage::Raw(UiRawMessage {
@@ -808,6 +822,7 @@ impl Encodable for v0::Message {
                     })
                     .collect(),
                 address_table_lookups: None,
+                transaction_config: None,
             })
         }
     }
@@ -845,6 +860,7 @@ impl EncodableWithMeta for v0::Message {
                 address_table_lookups: Some(
                     self.address_table_lookups.iter().map(Into::into).collect(),
                 ),
+                transaction_config: None,
             })
         } else {
             self.json_encode()
@@ -865,7 +881,49 @@ impl EncodableWithMeta for v0::Message {
             address_table_lookups: Some(
                 self.address_table_lookups.iter().map(Into::into).collect(),
             ),
+            transaction_config: None,
         })
+    }
+}
+
+impl Encodable for solana_message::v1::Message {
+    type Encoded = UiMessage;
+    fn encode(&self, encoding: UiTransactionEncoding) -> Self::Encoded {
+        if encoding == UiTransactionEncoding::JsonParsed {
+            let account_keys = AccountKeys::new(&self.account_keys, None);
+            UiMessage::Parsed(UiParsedMessage {
+                account_keys: parse_v1_message_accounts(self),
+                recent_blockhash: self.lifetime_specifier.to_string(),
+                instructions: self
+                    .instructions
+                    .iter()
+                    .map(|instruction| {
+                        parse_ui_instruction(
+                            instruction,
+                            &account_keys,
+                            Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32),
+                        )
+                    })
+                    .collect(),
+                address_table_lookups: None,
+                transaction_config: Some(UiTransactionConfig::from(&self.config)),
+            })
+        } else {
+            UiMessage::Raw(UiRawMessage {
+                header: self.header,
+                account_keys: self.account_keys.iter().map(ToString::to_string).collect(),
+                recent_blockhash: self.lifetime_specifier.to_string(),
+                instructions: self
+                    .instructions
+                    .iter()
+                    .map(|ix| {
+                        UiCompiledInstruction::from(ix, Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32))
+                    })
+                    .collect(),
+                address_table_lookups: None,
+                transaction_config: Some(UiTransactionConfig::from(&self.config)),
+            })
+        }
     }
 }
 

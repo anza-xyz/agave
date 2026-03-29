@@ -1,7 +1,7 @@
 use {
     crate::execution_budget::{
-        MAX_CALL_DEPTH, MAX_HEAP_FRAME_BYTES, MAX_INSTRUCTION_STACK_DEPTH, MIN_HEAP_FRAME_BYTES,
-        STACK_FRAME_SIZE,
+        MAX_CALL_DEPTH, MAX_HEAP_FRAME_BYTES, MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268,
+        MIN_HEAP_FRAME_BYTES, STACK_FRAME_SIZE,
     },
     solana_sbpf::{aligned_memory::AlignedMemory, ebpf::HOST_ALIGN},
     std::array,
@@ -58,8 +58,8 @@ impl Reset for AlignedMemory<{ HOST_ALIGN }> {
 }
 
 pub struct VmMemoryPool {
-    stack: Pool<AlignedMemory<{ HOST_ALIGN }>, MAX_INSTRUCTION_STACK_DEPTH>,
-    heap: Pool<AlignedMemory<{ HOST_ALIGN }>, MAX_INSTRUCTION_STACK_DEPTH>,
+    stack: Pool<AlignedMemory<{ HOST_ALIGN }>, MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268>,
+    heap: Pool<AlignedMemory<{ HOST_ALIGN }>, MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268>,
 }
 
 impl VmMemoryPool {

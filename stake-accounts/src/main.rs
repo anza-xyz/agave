@@ -7,7 +7,7 @@ use {
     crate::{
         arg_parser::parse_args,
         args::{
-            resolve_command, AuthorizeArgs, Command, MoveArgs, NewArgs, RebaseArgs, SetLockupArgs,
+            AuthorizeArgs, Command, MoveArgs, NewArgs, RebaseArgs, SetLockupArgs, resolve_command,
         },
     },
     solana_cli_config::Config,
@@ -18,7 +18,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::client_error::Error as ClientError,
     solana_signature::Signature,
-    solana_signer::{signers::Signers, unique_signers, Signer},
+    solana_signer::{Signer, signers::Signers, unique_signers},
     solana_stake_interface::{instruction::LockupArgs, state::Lockup},
     solana_transaction::Transaction,
     std::{env, error::Error, str::FromStr},

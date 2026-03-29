@@ -1,9 +1,10 @@
 use {
     agave_votor_messages::migration::MigrationStatus,
-    criterion::{criterion_group, criterion_main, Criterion},
+    criterion::{Criterion, criterion_group, criterion_main},
     crossbeam_channel::bounded,
     solana_hash::Hash,
     solana_keypair::Keypair,
+    solana_leader_schedule::SlotLeader,
     solana_ledger::{
         blockstore::Blockstore, genesis_utils::create_genesis_config,
         get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
@@ -11,7 +12,7 @@ use {
     solana_poh::{
         poh_controller::PohController,
         poh_recorder::PohRecorder,
-        poh_service::{PohService, DEFAULT_HASHES_PER_BATCH, DEFAULT_PINNED_CPU_CORE},
+        poh_service::{DEFAULT_HASHES_PER_BATCH, DEFAULT_PINNED_CPU_CORE, PohService},
         record_channels::record_channels,
         transaction_recorder::TransactionRecorder,
     },
@@ -20,7 +21,7 @@ use {
     solana_runtime::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
     solana_transaction::versioned::VersionedTransaction,
     std::{
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicBool},
         time::{Duration, Instant},
     },
 };
@@ -45,7 +46,8 @@ fn bench_record_transactions(c: &mut Criterion) {
         hashes_per_tick: Some(solana_clock::DEFAULT_HASHES_PER_TICK),
     };
     let exit = Arc::new(AtomicBool::new(false));
-    let mut bank = Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config));
+    let bank = Bank::new_for_tests(&genesis_config_info.genesis_config);
+    let (mut bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Arc::new(
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
@@ -111,7 +113,7 @@ fn bench_record_transactions(c: &mut Criterion) {
                     .unwrap();
                 bank = Arc::new(Bank::new_from_parent(
                     bank.clone(),
-                    &Pubkey::default(),
+                    SlotLeader::default(),
                     next_slot,
                 ));
                 poh_controller

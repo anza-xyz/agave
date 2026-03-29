@@ -22,47 +22,41 @@ dev-context-only-utils = []
 
 [dependencies]
 agave-votor-messages = { workspace = true }
-bincode = { workspace = true }
 crossbeam-channel = { workspace = true }
 dlopen2 = { workspace = true }
 log = { workspace = true }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
-serde = { workspace = true }
+smallvec = { workspace = true }
 solana-address = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
-solana-hash = { workspace = true }
+solana-hash = { workspace = true, features = ["wincode"] }
 solana-measure = { workspace = true }
 solana-merkle-tree = { workspace = true }
 solana-message = { workspace = true }
-solana-metrics = { workspace = true }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sha256-hasher = { workspace = true }
-solana-short-vec = { workspace = true }
 solana-signature = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["wincode"] }
 solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
-agave-reserved-account-keys = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 proptest = { workspace = true }
 rand = { workspace = true }
 solana-entry = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-message = { workspace = true }
-solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
+solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["verify"] }
-
-[[bench]]
-name = "entry_sigverify"

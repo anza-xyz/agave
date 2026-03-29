@@ -16,15 +16,15 @@ use {
         local_cluster::{ClusterConfig, LocalCluster},
         validator_configs::*,
     },
-    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
+    agave_snapshots::{SnapshotInterval, snapshot_config::SnapshotConfig},
     log::*,
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
-    solana_clock::{self as clock, Slot, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
+    solana_clock::{self as clock, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT, Slot},
     solana_core::{
-        consensus::{tower_storage::FileTowerStorage, Tower, SWITCH_FORK_THRESHOLD},
+        consensus::{SWITCH_FORK_THRESHOLD, Tower, tower_storage::FileTowerStorage},
         snapshot_packager_service::SnapshotPackagerService,
-        validator::{is_snapshot_config_valid, ValidatorConfig},
+        validator::{ValidatorConfig, is_snapshot_config_valid},
     },
     solana_gossip::gossip_service::discover_validators,
     solana_hash::Hash,
@@ -49,8 +49,8 @@ use {
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread::sleep,
         time::Duration,
@@ -221,6 +221,11 @@ pub fn ms_for_n_slots(num_blocks: u64, ticks_per_slot: u64) -> u64 {
     (ticks_per_slot * DEFAULT_MS_PER_SLOT * num_blocks).div_ceil(DEFAULT_TICKS_PER_SLOT)
 }
 
+// Test runner that performs the following steps:
+// 1) Defines validator stake partitions based on input parameters
+// 2) Defines leader schedule based on input parameters
+// 3) Appends routine to kill specified validators on partition start
+// 4) Runs cluster partition
 pub fn run_kill_partition_switch_threshold<C>(
     stakes_to_kill: &[(usize, usize)],
     alive_stakes: &[(usize, usize)],
@@ -235,20 +240,14 @@ pub fn run_kill_partition_switch_threshold<C>(
     static_assertions::const_assert!(SWITCH_FORK_THRESHOLD >= 1f64 / 3f64);
     info!("stakes_to_kill: {stakes_to_kill:?}, alive_stakes: {alive_stakes:?}");
 
-    // This test:
-    // 1) Spins up three partitions
-    // 2) Kills the first partition with the stake `failures_stake`
-    // 5) runs `on_partition_resolved`
-    let partitions: Vec<(usize, usize)> = stakes_to_kill
-        .iter()
-        .cloned()
-        .chain(alive_stakes.iter().cloned())
-        .collect();
-
-    let stake_partitions: Vec<usize> = partitions.iter().map(|(stake, _)| *stake).collect();
-    let num_slots_per_validator: Vec<usize> =
-        partitions.iter().map(|(_, num_slots)| *num_slots).collect();
-
+    // Define validator stake partitions and leader schedule from input
+    // parameters.
+    let mut stake_partitions = Vec::with_capacity(stakes_to_kill.len() + alive_stakes.len());
+    let mut num_slots_per_validator = Vec::with_capacity(stakes_to_kill.len() + alive_stakes.len());
+    for (stake, num_slots) in stakes_to_kill.iter().chain(alive_stakes.iter()) {
+        stake_partitions.push(*stake);
+        num_slots_per_validator.push(*num_slots);
+    }
     let (leader_schedule, validator_keys) =
         create_custom_leader_schedule_with_random_keys(&num_slots_per_validator);
 
@@ -257,6 +256,8 @@ pub fn run_kill_partition_switch_threshold<C>(
         .map(|k| k.node_keypair.pubkey())
         .collect();
     info!("Validator ids: {validator_pubkeys:?}");
+
+    // Append routine to kill the specified validators on partition start.
     let on_partition_start = |cluster: &mut LocalCluster, partition_context: &mut C| {
         let dead_validator_infos: Vec<ClusterValidatorInfo> = validator_pubkeys
             [0..stakes_to_kill.len()]
@@ -273,6 +274,8 @@ pub fn run_kill_partition_switch_threshold<C>(
             partition_context,
         );
     };
+
+    // Spin up cluster and execute partition.
     run_cluster_partition(
         &stake_partitions,
         Some((leader_schedule, validator_keys)),
@@ -297,7 +300,7 @@ pub fn create_custom_leader_schedule(
     }
 
     info!("leader_schedule: {}", leader_schedule.len());
-    LeaderSchedule::new_from_schedule(leader_schedule)
+    LeaderSchedule::new_from_schedule(leader_schedule, NonZeroUsize::new(1).unwrap())
 }
 
 pub fn create_custom_leader_schedule_with_random_keys(
@@ -316,12 +319,12 @@ pub fn create_custom_leader_schedule_with_random_keys(
 }
 
 /// This function runs a network, initiates a partition based on a
-/// configuration, resolve the partition, then checks that the network continues
-/// to achieve consensus.
+/// configuration, resolves the partition, then checks that the network
+/// continues to achieve consensus.
 ///
 /// # Arguments:
 /// * `partitions` - A slice of partition configurations, where each partition
-///   configuration is a usize representing a node's stake
+///   configuration is a usize representing a node's relative stake
 /// * `leader_schedule` - An option that specifies whether the cluster should
 ///   run with a fixed, predetermined leader schedule
 /// * `no_wait_for_vote_to_start_leader` - provide option to only allow the
@@ -387,6 +390,7 @@ pub fn run_cluster_partition<C>(
                 iter::repeat_with(ValidatorKeys::new)
                     .take(partitions.len())
                     .collect(),
+                // Approximately enough time to run through a leader span for all nodes
                 Duration::from_secs(10),
             )
         }
@@ -442,7 +446,7 @@ pub fn run_cluster_partition<C>(
     )
     .unwrap();
 
-    // Check epochs have correct number of slots
+    // Check each node reports epochs that have correct number of slots
     info!("PARTITION_TEST sleeping until partition starting condition",);
     for node in &cluster_nodes {
         let node_client = RpcClient::new_socket(node.rpc().unwrap());
@@ -462,13 +466,7 @@ pub fn run_cluster_partition<C>(
 
     // Give partitions time to propagate their blocks from during the partition
     // after the partition resolves
-    let timeout_duration = Duration::from_secs(10);
-    let propagation_duration = partition_duration;
-    info!(
-        "PARTITION_TEST resolving partition. sleeping {} ms",
-        timeout_duration.as_millis()
-    );
-    sleep(timeout_duration);
+    let propagation_duration = partition_duration + Duration::from_secs(5);
     info!(
         "PARTITION_TEST waiting for blocks to propagate after partition {}ms",
         propagation_duration.as_millis()

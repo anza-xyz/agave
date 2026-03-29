@@ -183,12 +183,14 @@ mod tests {
                 .sum::<u64>(),
             total_lamports,
         );
-        assert!(genesis_config
-            .accounts
-            .iter()
-            .all(|(_pubkey, account)| account.lamports <= granularity
-                || account.lamports - granularity
-                    <= genesis_config.rent.minimum_balance(StakeStateV2::size_of())));
+        assert!(
+            genesis_config
+                .accounts
+                .iter()
+                .all(|(_pubkey, account)| account.lamports <= granularity
+                    || account.lamports - granularity
+                        <= genesis_config.rent.minimum_balance(StakeStateV2::size_of()))
+        );
     }
 
     //    #[ignore]
@@ -228,8 +230,7 @@ mod tests {
         // 2 unlocks
 
         let rent = Rent {
-            lamports_per_byte_year: 1,
-            exemption_threshold: 1.0,
+            lamports_per_byte: 1,
             ..Rent::default()
         };
 

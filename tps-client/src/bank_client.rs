@@ -10,17 +10,18 @@ use {
     solana_rpc_client_api::config::RpcBlockConfig,
     solana_runtime::bank_client::BankClient,
     solana_signature::Signature,
-    solana_transaction::Transaction,
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionResult as Result,
     solana_transaction_status::UiConfirmedBlock,
 };
 
 impl TpsClient for BankClient {
-    fn send_transaction(&self, transaction: Transaction) -> TpsClientResult<Signature> {
-        AsyncClient::async_send_transaction(self, transaction).map_err(|err| err.into())
+    fn send_transaction(&self, transaction: VersionedTransaction) -> TpsClientResult<Signature> {
+        AsyncClient::async_send_versioned_transaction(self, transaction).map_err(|err| err.into())
     }
-    fn send_batch(&self, transactions: Vec<Transaction>) -> TpsClientResult<()> {
-        AsyncClient::async_send_batch(self, transactions).map_err(|err| err.into())
+    fn send_batch(&self, transactions: Vec<VersionedTransaction>) -> TpsClientResult<()> {
+        AsyncClient::async_send_versioned_transaction_batch(self, transactions)
+            .map_err(|err| err.into())
     }
     fn get_latest_blockhash(&self) -> TpsClientResult<Hash> {
         SyncClient::get_latest_blockhash(self).map_err(|err| err.into())
@@ -113,8 +114,19 @@ impl TpsClient for BankClient {
             })
     }
 
-    fn get_multiple_accounts(&self, _pubkeys: &[Pubkey]) -> TpsClientResult<Vec<Option<Account>>> {
-        unimplemented!("BankClient doesn't support get_multiple_accounts");
+    fn get_multiple_accounts(&self, pubkeys: &[Pubkey]) -> TpsClientResult<Vec<Option<Account>>> {
+        let mut accounts = Vec::with_capacity(pubkeys.len());
+        for pubkey in pubkeys {
+            let account = SyncClient::get_account(self, pubkey)
+                .map_err(|err| TpsClientError::Custom(format!("{err:?}")))?;
+            if account.is_none() {
+                return Err(TpsClientError::Custom(format!(
+                    "AccountNotFound: pubkey={pubkey}"
+                )));
+            }
+            accounts.push(account);
+        }
+        Ok(accounts)
     }
 
     fn get_slot_with_commitment(

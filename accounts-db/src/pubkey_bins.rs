@@ -44,89 +44,34 @@ impl PubkeyBinCalculator24 {
         (((as_ref[0] as usize) << 16) | ((as_ref[1] as usize) << 8) | (as_ref[2] as usize))
             >> self.shift_bits
     }
-
-    pub(crate) fn lowest_pubkey_from_bin(&self, mut bin: usize) -> Pubkey {
-        assert!(bin < self.bins());
-        bin <<= self.shift_bits;
-        let mut pubkey = Pubkey::from([0; 32]);
-        pubkey.as_mut()[0] = ((bin / 256 / 256) & 0xff) as u8;
-        pubkey.as_mut()[1] = ((bin / 256) & 0xff) as u8;
-        pubkey.as_mut()[2] = (bin & 0xff) as u8;
-        pubkey
-    }
-
-    pub(crate) fn highest_pubkey_from_bin(&self, mut bin: usize) -> Pubkey {
-        assert!(bin < self.bins());
-        let mask = (1 << self.shift_bits) - 1;
-        bin <<= self.shift_bits;
-        bin |= mask;
-        let mut pubkey = Pubkey::from([0xff; 32]);
-        pubkey.as_mut()[0] = ((bin / 256 / 256) & 0xff) as u8;
-        pubkey.as_mut()[1] = ((bin / 256) & 0xff) as u8;
-        pubkey.as_mut()[2] = (bin & 0xff) as u8;
-        pubkey
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_pubkey_lowest_highest_bin4() {
-        let calc = PubkeyBinCalculator24::new(4);
+    impl PubkeyBinCalculator24 {
+        fn lowest_pubkey_from_bin(&self, mut bin: usize) -> Pubkey {
+            assert!(bin < self.bins());
+            bin <<= self.shift_bits;
+            let mut pubkey = Pubkey::from([0; 32]);
+            pubkey.as_mut()[0] = ((bin / 256 / 256) & 0xff) as u8;
+            pubkey.as_mut()[1] = ((bin / 256) & 0xff) as u8;
+            pubkey.as_mut()[2] = (bin & 0xff) as u8;
+            pubkey
+        }
 
-        // bin 0
-        let expected_lowest = Pubkey::from([
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0,
-        ]);
-        let expected_highest = Pubkey::from([
-            0x3F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF,
-        ]);
-        assert_eq!(calc.lowest_pubkey_from_bin(0), expected_lowest);
-        assert_eq!(calc.highest_pubkey_from_bin(0), expected_highest);
-
-        // bin 1
-        let expected_lowest = Pubkey::from([
-            0x40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0,
-        ]);
-        let expected_highest = Pubkey::from([
-            0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF,
-        ]);
-        assert_eq!(calc.lowest_pubkey_from_bin(1), expected_lowest,);
-        assert_eq!(calc.highest_pubkey_from_bin(1), expected_highest);
-
-        // bin 2
-        let expected_lowest = Pubkey::from([
-            0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0,
-        ]);
-        let expected_highest = Pubkey::from([
-            0xBF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF,
-        ]);
-        assert_eq!(calc.lowest_pubkey_from_bin(2), expected_lowest);
-        assert_eq!(calc.highest_pubkey_from_bin(2), expected_highest);
-
-        // bin 3
-        let expected_lowest = Pubkey::from([
-            0xC0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0,
-        ]);
-        let expected_highest = Pubkey::from([
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF,
-        ]);
-        assert_eq!(calc.lowest_pubkey_from_bin(3), expected_lowest);
-        assert_eq!(calc.highest_pubkey_from_bin(3), expected_highest);
+        fn highest_pubkey_from_bin(&self, mut bin: usize) -> Pubkey {
+            assert!(bin < self.bins());
+            let mask = (1 << self.shift_bits) - 1;
+            bin <<= self.shift_bits;
+            bin |= mask;
+            let mut pubkey = Pubkey::from([0xff; 32]);
+            pubkey.as_mut()[0] = ((bin / 256 / 256) & 0xff) as u8;
+            pubkey.as_mut()[1] = ((bin / 256) & 0xff) as u8;
+            pubkey.as_mut()[2] = (bin & 0xff) as u8;
+            pubkey
+        }
     }
 
     #[test]

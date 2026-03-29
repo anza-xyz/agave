@@ -8,10 +8,10 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, leader_schedule_utils},
     std::{
-        collections::{hash_map::Entry, HashMap, VecDeque},
+        collections::{HashMap, VecDeque, hash_map::Entry},
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
     },
 };
@@ -238,15 +238,15 @@ mod tests {
         crate::{
             blockstore::make_slot_entries,
             genesis_utils::{
-                bootstrap_validator_stake_lamports, create_genesis_config,
-                create_genesis_config_with_leader, GenesisConfigInfo,
+                GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
+                create_genesis_config_with_leader,
             },
             staking_utils::tests::setup_vote_and_stake_accounts,
         },
         crossbeam_channel::unbounded,
         solana_clock::{DEFAULT_SLOTS_PER_EPOCH, NUM_CONSECUTIVE_LEADER_SLOTS},
         solana_epoch_schedule::{
-            EpochSchedule, DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET, MINIMUM_SLOTS_PER_EPOCH,
+            DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET, EpochSchedule, MINIMUM_SLOTS_PER_EPOCH,
         },
         solana_keypair::Keypair,
         solana_leader_schedule::{LeaderSchedule, SlotLeader},
@@ -271,16 +271,22 @@ mod tests {
         for epoch in 0..=leader_schedule_epoch {
             let first_slot_in_leader_schedule_epoch = epoch_schedule.get_first_slot_in_epoch(epoch);
             let last_slot_in_leader_schedule_epoch = epoch_schedule.get_last_slot_in_epoch(epoch);
-            assert!(cache
-                .slot_leader_at(first_slot_in_leader_schedule_epoch, None)
-                .is_some());
-            assert!(cache
-                .slot_leader_at(last_slot_in_leader_schedule_epoch, None)
-                .is_some());
+            assert!(
+                cache
+                    .slot_leader_at(first_slot_in_leader_schedule_epoch, None)
+                    .is_some()
+            );
+            assert!(
+                cache
+                    .slot_leader_at(last_slot_in_leader_schedule_epoch, None)
+                    .is_some()
+            );
             if epoch == leader_schedule_epoch {
-                assert!(cache
-                    .slot_leader_at(last_slot_in_leader_schedule_epoch + 1, None)
-                    .is_none());
+                assert!(
+                    cache
+                        .slot_leader_at(last_slot_in_leader_schedule_epoch + 1, None)
+                        .is_none()
+                );
             }
         }
 
@@ -519,9 +525,7 @@ mod tests {
             &validator_identity,
             bootstrap_validator_stake_lamports()
                 + stake_utils::get_minimum_delegation(
-                    bank.feature_set.is_active(
-                        &agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id(),
-                    ),
+                    bank.feature_set.snapshot().upgrade_bpf_stake_program_to_v5,
                 ),
         );
         let node_pubkey = validator_identity.pubkey();
@@ -534,10 +538,11 @@ mod tests {
             target_slot += 1;
         }
 
+        let child_bank = Bank::new_from_parent(bank.clone(), SlotLeader::default(), target_slot);
         let bank = bank_forks
             .write()
             .unwrap()
-            .insert(Bank::new_from_parent(bank, &Pubkey::default(), target_slot))
+            .insert(child_bank)
             .clone_without_scheduler();
         let mut expected_slot = 0;
         let epoch = bank.get_leader_schedule_epoch(target_slot);
@@ -554,9 +559,11 @@ mod tests {
         expected_slot += index;
 
         // If the max root isn't set, we'll get None
-        assert!(cache
-            .next_leader_slot(&node_pubkey, 0, &bank, None, u64::MAX)
-            .is_none());
+        assert!(
+            cache
+                .next_leader_slot(&node_pubkey, 0, &bank, None, u64::MAX)
+                .is_none()
+        );
 
         cache.set_root(&bank);
         let res = cache
@@ -583,7 +590,7 @@ mod tests {
     #[test]
     fn test_schedule_for_unconfirmed_epoch() {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
-        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let cache = LeaderScheduleCache::new_from_bank(&bank);
 
         assert_eq!(cache.max_epoch.load(Ordering::Acquire), 1);
@@ -598,16 +605,21 @@ mod tests {
         assert_eq!(bank.get_epoch_and_slot_index(96).0, 2);
         assert!(cache.slot_leader_at(96, Some(&bank)).is_none());
 
-        let bank2 = Bank::new_from_parent(bank, &solana_pubkey::new_rand(), 95);
+        let bank2 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::new_unique(),
+            95,
+        );
         assert!(bank2.epoch_vote_accounts(2).is_some());
 
         // Set root for a slot in epoch 1, so that epoch 2 is now confirmed
-        cache.set_root(&bank2);
+        cache.set_root(bank2.as_ref());
         assert_eq!(cache.max_epoch.load(Ordering::Acquire), 2);
-        assert!(cache.slot_leader_at(96, Some(&bank2)).is_some());
+        assert!(cache.slot_leader_at(96, Some(bank2.as_ref())).is_some());
         assert_eq!(bank2.get_epoch_and_slot_index(223).0, 2);
-        assert!(cache.slot_leader_at(223, Some(&bank2)).is_some());
+        assert!(cache.slot_leader_at(223, Some(bank2.as_ref())).is_some());
         assert_eq!(bank2.get_epoch_and_slot_index(224).0, 3);
-        assert!(cache.slot_leader_at(224, Some(&bank2)).is_none());
+        assert!(cache.slot_leader_at(224, Some(bank2.as_ref())).is_none());
     }
 }

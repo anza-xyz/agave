@@ -1,5 +1,4 @@
 #![cfg(feature = "agave-unstable-api")]
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -84,7 +83,7 @@ static BUILTIN_INSTRUCTION_COSTS: std::sync::LazyLock<AHashMap<Pubkey, BuiltinCo
 /// it MUST be moved from NON_MIGRATING_BUILTINS_COSTS to MIGRATING_BUILTINS_COSTS, then
 /// correctly furnishing `core_bpf_migration_feature`.
 ///
-#[allow(dead_code)]
+#[cfg(test)]
 const TOTAL_COUNT_BUILTINS: usize = 9;
 #[cfg(test)]
 static_assertions::const_assert_eq!(
@@ -148,7 +147,6 @@ pub fn get_builtin_migration_feature_index(program_id: &Pubkey) -> BuiltinMigrat
 }
 
 /// const function validates `position` correctness at compile time.
-#[allow(dead_code)]
 const fn validate_position(migrating_builtins: &[(Pubkey, BuiltinCost)]) {
     let mut index = 0;
     while index < migrating_builtins.len() {
@@ -192,15 +190,19 @@ mod test {
     #[test]
     fn test_const_builtin_cost_arrays() {
         // sanity check to make sure built-ins are declared in the correct array
-        assert!(MIGRATING_BUILTINS_COSTS
-            .iter()
-            .enumerate()
-            .all(|(index, (_, c))| {
-                c.core_bpf_migration_feature().is_some() && c.position() == Some(index)
-            }));
-        assert!(NON_MIGRATING_BUILTINS_COSTS
-            .iter()
-            .all(|(_, c)| c.core_bpf_migration_feature().is_none()));
+        assert!(
+            MIGRATING_BUILTINS_COSTS
+                .iter()
+                .enumerate()
+                .all(|(index, (_, c))| {
+                    c.core_bpf_migration_feature().is_some() && c.position() == Some(index)
+                })
+        );
+        assert!(
+            NON_MIGRATING_BUILTINS_COSTS
+                .iter()
+                .all(|(_, c)| c.core_bpf_migration_feature().is_none())
+        );
     }
 
     #[test]

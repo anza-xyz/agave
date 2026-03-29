@@ -1,6 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    criterion::{criterion_group, criterion_main, Criterion},
+    criterion::{Criterion, criterion_group, criterion_main},
     curve25519_dalek::scalar::Scalar,
     solana_zk_sdk::{
         encryption::{
@@ -10,8 +10,8 @@ use {
         },
         zk_elgamal_proof_program::proof_data::{
             BatchedGroupedCiphertext2HandlesValidityProofData,
-            BatchedGroupedCiphertext3HandlesValidityProofData, BatchedRangeProofU128Data,
-            BatchedRangeProofU256Data, BatchedRangeProofU64Data,
+            BatchedGroupedCiphertext3HandlesValidityProofData, BatchedRangeProofU64Data,
+            BatchedRangeProofU128Data, BatchedRangeProofU256Data,
             CiphertextCiphertextEqualityProofData, CiphertextCommitmentEqualityProofData,
             GroupedCiphertext2HandlesValidityProofData, GroupedCiphertext3HandlesValidityProofData,
             PercentageWithCapProofData, PubkeyValidityProofData, ZeroCiphertextProofData,

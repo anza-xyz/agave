@@ -4,12 +4,12 @@
 use qualifier_attr::qualifiers;
 use {
     crate::{
-        execution_budget::MAX_INSTRUCTION_STACK_DEPTH,
+        execution_budget::MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268,
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
+        loaded_programs::ProgramCacheEntry,
         mem_pool::VmMemoryPool,
         serialization, stable_log,
     },
-    cfg_if::cfg_if,
     solana_instruction::error::InstructionError,
     solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_sbpf::{
@@ -17,13 +17,13 @@ use {
         elf::Executable,
         error::{EbpfError, ProgramResult},
         memory_region::{AccessType, MemoryMapping, MemoryRegion},
-        vm::{ContextObject, EbpfVm},
+        vm::{ContextObject, EbpfVm, ExecutionMode},
     },
     solana_sdk_ids::bpf_loader_deprecated,
     solana_svm_log_collector::ic_logger_msg,
     solana_svm_measure::measure::Measure,
     solana_transaction_context::{IndexOfAccount, transaction::TransactionContext},
-    std::{cell::RefCell, mem},
+    std::{cell::RefCell, mem, time::Duration},
 };
 
 thread_local! {
@@ -64,7 +64,7 @@ pub fn create_vm<'a, 'b>(
         invoke_context.transaction_context,
         invoke_context
             .get_feature_set()
-            .stricter_abi_and_runtime_constraints,
+            .virtual_address_space_adjustments,
         invoke_context.get_feature_set().account_data_direct_mapping,
     )?;
     invoke_context.set_syscall_context(SyscallContext {
@@ -86,7 +86,7 @@ fn create_memory_mapping<'a, C: ContextObject>(
     heap: &'a mut [u8],
     additional_regions: Vec<MemoryRegion>,
     transaction_context: &TransactionContext,
-    stricter_abi_and_runtime_constraints: bool,
+    virtual_address_space_adjustments: bool,
     account_data_direct_mapping: bool,
 ) -> Result<MemoryMapping, Box<dyn std::error::Error>> {
     let config = executable.get_config();
@@ -113,7 +113,7 @@ fn create_memory_mapping<'a, C: ContextObject>(
         config,
         sbpf_version,
         transaction_context.access_violation_handler(
-            stricter_abi_and_runtime_constraints,
+            virtual_address_space_adjustments,
             account_data_direct_mapping,
         ),
     )?)
@@ -156,6 +156,7 @@ macro_rules! create_vm {
 pub fn execute<'a, 'b: 'a>(
     executable: &'a Executable<InvokeContext<'static, 'static>>,
     invoke_context: &'a mut InvokeContext<'b, 'b>,
+    cache_entry: &ProgramCacheEntry,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // We dropped the lifetime tracking in the Executor by setting it to 'static,
     // thus we need to reintroduce the correct lifetime of InvokeContext here again.
@@ -171,33 +172,24 @@ pub fn execute<'a, 'b: 'a>(
     let program_id = *instruction_context.get_program_key()?;
     let is_loader_deprecated =
         instruction_context.get_program_owner()? == bpf_loader_deprecated::id();
-    cfg_if! {
-        if #[cfg(any(
-            target_os = "windows",
-            not(target_arch = "x86_64"),
-            feature = "sbpf-debugger"
-        ))] {
-            let use_jit = false;
-            #[cfg(feature = "sbpf-debugger")]
-            let debug_port = invoke_context.debug_port;
-        } else {
-            let use_jit = executable.get_compiled_program().is_some();
-        }
-    }
-    let stricter_abi_and_runtime_constraints = invoke_context
+    let virtual_address_space_adjustments = invoke_context
         .get_feature_set()
-        .stricter_abi_and_runtime_constraints;
+        .virtual_address_space_adjustments;
     let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
     let provide_instruction_data_offset_in_vm_r2 = invoke_context
         .get_feature_set()
         .provide_instruction_data_offset_in_vm_r2;
+    let direct_account_pointers_in_program_input = invoke_context
+        .get_feature_set()
+        .direct_account_pointers_in_program_input;
 
     let mut serialize_time = Measure::start("serialize");
     let (parameter_bytes, regions, accounts_metadata, instruction_data_offset) =
         serialization::serialize_parameters(
             &instruction_context,
-            stricter_abi_and_runtime_constraints,
+            virtual_address_space_adjustments,
             account_data_direct_mapping,
+            direct_account_pointers_in_program_input,
         )?;
     serialize_time.stop();
 
@@ -220,6 +212,32 @@ pub fn execute<'a, 'b: 'a>(
 
     let mut create_vm_time = Measure::start("create_vm");
     let execution_result = {
+        #[cfg_attr(feature = "sbpf-debugger", expect(unused_assignments))]
+        let mut execution_mode = ExecutionMode::PreferJit;
+        #[cfg(feature = "sbpf-debugger")]
+        let (debug_port, debug_metadata) = {
+            execution_mode = ExecutionMode::Interpreted;
+            (
+                invoke_context.debug_port,
+                format!(
+                    "program_id={};cpi_level={};caller={}",
+                    program_id,
+                    instruction_context.get_stack_height().saturating_sub(1),
+                    invoke_context
+                        .get_stack_height()
+                        .checked_sub(2)
+                        .and_then(|nesting_level| {
+                            transaction_context
+                                .get_instruction_context_at_nesting_level(nesting_level)
+                                .ok()
+                        })
+                        .and_then(|ctx| ctx.get_program_key().ok())
+                        .map(|key| key.to_string())
+                        .unwrap_or_else(|| "none".into())
+                ),
+            )
+        };
+
         let compute_meter_prev = invoke_context.get_remaining();
         create_vm!(vm, executable, regions, accounts_metadata, invoke_context);
         let (mut vm, stack, heap) = match vm {
@@ -230,31 +248,47 @@ pub fn execute<'a, 'b: 'a>(
             }
         };
         create_vm_time.stop();
-
         #[cfg(feature = "sbpf-debugger")]
         {
             vm.debug_port = debug_port;
+            vm.debug_metadata = Some(debug_metadata);
         }
-        vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
-        vm.registers[1] = ebpf::MM_INPUT_START;
 
+        let execute_time = Measure::start("execute");
+        let prev_nested_exec_time = vm.context_object_pointer.total_nested_exec_time;
+
+        vm.registers[1] = ebpf::MM_INPUT_START;
         // SIMD-0321: Provide offset to instruction data in VM register 2.
         if provide_instruction_data_offset_in_vm_r2 {
             vm.registers[2] = instruction_data_offset as u64;
         }
-        let (compute_units_consumed, result) = vm.execute_program(executable, !use_jit);
+        let (compute_units_consumed, result) = vm.execute_program(executable, &mut execution_mode);
         let register_trace = std::mem::take(&mut vm.register_trace);
         MEMORY_POOL.with_borrow_mut(|memory_pool| {
             memory_pool.put_stack(stack);
             memory_pool.put_heap(heap);
-            debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH);
-            debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH);
+            debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268);
+            debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268);
         });
         drop(vm);
         invoke_context.insert_register_trace(register_trace);
-        if let Some(execute_time) = invoke_context.execute_time.as_mut() {
-            execute_time.stop();
-            invoke_context.timings.execute_us += execute_time.as_us();
+
+        // This section is a little convoluted due to the nested and sibling (CPI) invocations.
+        let total_execute_ns = execute_time.end_as_ns();
+        let nested_execution_time_delta = invoke_context
+            .total_nested_exec_time
+            .saturating_sub(prev_nested_exec_time);
+        let this_call_ns =
+            total_execute_ns.saturating_sub(nested_execution_time_delta.as_nanos() as u64);
+        invoke_context.total_nested_exec_time = invoke_context
+            .total_nested_exec_time
+            .saturating_add(Duration::from_nanos(this_call_ns));
+        let this_call_us = this_call_ns / 1000;
+        invoke_context.timings.execute_us += this_call_us;
+        match execution_mode {
+            ExecutionMode::Interpreted => cache_entry.stats.interpreter_executed(this_call_us),
+            ExecutionMode::Jit => cache_entry.stats.jit_executed(this_call_us),
+            ExecutionMode::PreferJit => { /* not actually executed? */ }
         }
 
         ic_logger_msg!(
@@ -296,7 +330,7 @@ pub fn execute<'a, 'b: 'a>(
                     invoke_context.consume(invoke_context.get_remaining());
                 }
 
-                if stricter_abi_and_runtime_constraints {
+                if virtual_address_space_adjustments {
                     if let EbpfError::SyscallError(err) = error {
                         error = err
                             .downcast::<EbpfError>()
@@ -306,7 +340,7 @@ pub fn execute<'a, 'b: 'a>(
                     if let EbpfError::AccessViolation(access_type, vm_addr, len, _section_name) =
                         error
                     {
-                        // If stricter_abi_and_runtime_constraints is enabled and a program tries to write to a readonly
+                        // If virtual_address_space_adjustments is enabled and a program tries to write to a readonly
                         // region we'll get a memory access violation. Map it to a more specific
                         // error so it's easier for developers to see what happened.
                         if let Some((instruction_account_index, vm_addr_range)) =
@@ -329,33 +363,30 @@ pub fn execute<'a, 'b: 'a>(
                                     .saturating_sub(vm_addr_range.start)
                                     as usize
                                     > account.get_data().len();
-                                error = EbpfError::SyscallError(Box::new(
-                                    #[allow(deprecated)]
-                                    match access_type {
-                                        AccessType::Store => {
-                                            if let Err(err) = account.can_data_be_changed() {
-                                                err
-                                            } else {
-                                                // The store was allowed but failed,
-                                                // thus it must have been an attempt to grow the account.
-                                                debug_assert!(is_access_outside_of_data);
-                                                InstructionError::InvalidRealloc
-                                            }
-                                        }
-                                        AccessType::Load => {
-                                            // Loads should only fail when they are outside of the account data.
+                                error = EbpfError::SyscallError(Box::new(match access_type {
+                                    AccessType::Store => {
+                                        if let Err(err) = account.can_data_be_changed() {
+                                            err
+                                        } else {
+                                            // The store was allowed but failed,
+                                            // thus it must have been an attempt to grow the account.
                                             debug_assert!(is_access_outside_of_data);
-                                            if account.can_data_be_changed().is_err() {
-                                                // Load beyond readonly account data happened because the program
-                                                // expected more data than there actually is.
-                                                InstructionError::AccountDataTooSmall
-                                            } else {
-                                                // Load beyond writable account data also attempted to grow.
-                                                InstructionError::InvalidRealloc
-                                            }
+                                            InstructionError::InvalidRealloc
                                         }
-                                    },
-                                ));
+                                    }
+                                    AccessType::Load => {
+                                        // Loads should only fail when they are outside of the account data.
+                                        debug_assert!(is_access_outside_of_data);
+                                        if account.can_data_be_changed().is_err() {
+                                            // Load beyond readonly account data happened because the program
+                                            // expected more data than there actually is.
+                                            InstructionError::AccountDataTooSmall
+                                        } else {
+                                            // Load beyond writable account data also attempted to grow.
+                                            InstructionError::InvalidRealloc
+                                        }
+                                    }
+                                }));
                             }
                         }
                     }
@@ -373,14 +404,14 @@ pub fn execute<'a, 'b: 'a>(
     fn deserialize_parameters(
         invoke_context: &mut InvokeContext,
         parameter_bytes: &[u8],
-        stricter_abi_and_runtime_constraints: bool,
+        virtual_address_space_adjustments: bool,
         account_data_direct_mapping: bool,
     ) -> Result<(), InstructionError> {
         serialization::deserialize_parameters(
             &invoke_context
                 .transaction_context
                 .get_current_instruction_context()?,
-            stricter_abi_and_runtime_constraints,
+            virtual_address_space_adjustments,
             account_data_direct_mapping,
             parameter_bytes,
             &invoke_context.get_syscall_context()?.accounts_metadata,
@@ -392,7 +423,7 @@ pub fn execute<'a, 'b: 'a>(
         deserialize_parameters(
             invoke_context,
             parameter_bytes.as_slice(),
-            stricter_abi_and_runtime_constraints,
+            virtual_address_space_adjustments,
             account_data_direct_mapping,
         )
         .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)

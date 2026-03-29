@@ -2,7 +2,7 @@
 
 use {
     solana_msg::msg,
-    solana_poseidon::{hashv, Endianness, Parameters, PoseidonSyscallError},
+    solana_poseidon::{Endianness, Parameters, PoseidonSyscallError, hashv},
     solana_program_entrypoint::{custom_heap_default, custom_panic_default},
 };
 
@@ -213,7 +213,7 @@ fn test_poseidon_input_one() -> Result<(), PoseidonSyscallError> {
     Ok(())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     msg!("poseidon_hash");
 

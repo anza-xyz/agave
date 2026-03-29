@@ -1,10 +1,7 @@
 use {
     crate::handshake::{
-        shared::{GLOBAL_ALLOCATORS, LOGON_FAILURE, MAX_WORKERS, VERSION},
-        ClientLogon,
-    },
-    agave_scheduler_bindings::{
-        PackToWorkerMessage, ProgressMessage, TpuToPackMessage, WorkerToPackMessage,
+        ClientHandshakeError, ClientLogon, ClientSession, ClientWorkerSession,
+        shared::{LOGON_FAILURE, MAX_WORKERS, VERSION},
     },
     libc::CMSG_LEN,
     nix::sys::socket::{self, ControlMessageOwned, MsgFlags, UnixAddr},
@@ -19,11 +16,7 @@ use {
         path::Path,
         time::Duration,
     },
-    thiserror::Error,
 };
-
-type RtsError = rts_alloc::error::Error;
-type ShaqError = shaq::error::Error;
 
 /// Number of global shared memory objects (in addition to per worker objects).
 const GLOBAL_SHMEM: usize = 3;
@@ -72,11 +65,11 @@ fn connect_path(
     // Send the logon message to the server.
     send_logon(&mut stream, logon)?;
 
-    // Receive the server's response & on success the FDs for the newly allocated shared memory.
-    let fds = recv_response(&mut stream)?;
+    // Receive the server's response & on success the files for the newly allocated shared memory.
+    let files = recv_response(&mut stream)?;
 
     // Join the shared memory regions.
-    let session = setup_session(&logon, fds)?;
+    let session = setup_session(&logon, files)?;
 
     Ok(session)
 }
@@ -98,7 +91,7 @@ fn send_logon(stream: &mut UnixStream, logon: ClientLogon) -> Result<(), ClientH
     Ok(())
 }
 
-fn recv_response(stream: &mut UnixStream) -> Result<Vec<i32>, ClientHandshakeError> {
+fn recv_response(stream: &mut UnixStream) -> Result<Vec<File>, ClientHandshakeError> {
     // Receive the requested FDs.
     let mut buf = [0; 1024];
     let mut iov = [IoSliceMut::new(&mut buf)];
@@ -121,59 +114,54 @@ fn recv_response(stream: &mut UnixStream) -> Result<Vec<i32>, ClientHandshakeErr
         return Err(ClientHandshakeError::Rejected(reason.to_string()));
     }
 
-    // Extract FDs.
+    // Extract FDs and immediately wrap in `File` for RAII ownership.
     let mut cmsgs = msg.cmsgs().unwrap();
     let fds = match cmsgs.next() {
         Some(ControlMessageOwned::ScmRights(fds)) => fds,
         Some(msg) => panic!("Unexpected; msg={msg:?}"),
         None => panic!(),
     };
+    // SAFETY: FDs were just received via `ScmRights` and are valid.
+    let files = fds
+        .into_iter()
+        .map(|fd| unsafe { File::from_raw_fd(fd) })
+        .collect();
 
-    Ok(fds)
+    Ok(files)
 }
 
 pub fn setup_session(
     logon: &ClientLogon,
-    fds: Vec<i32>,
+    files: Vec<File>,
 ) -> Result<ClientSession, ClientHandshakeError> {
-    let [allocator_fd, tpu_to_pack_fd, progress_tracker_fd] = fds[..GLOBAL_SHMEM] else {
-        panic!();
+    if files.len() < GLOBAL_SHMEM {
+        return Err(ClientHandshakeError::ProtocolViolation);
+    }
+    let (global_files, worker_files) = files.split_at(GLOBAL_SHMEM);
+    let [allocator_file, tpu_to_pack_file, progress_tracker_file] = global_files else {
+        unreachable!();
     };
-    // SAFETY: `allocator_fd` represents a valid file descriptor that was just returned to us via
-    // `ScmRights`.
-    let allocator_file = unsafe { File::from_raw_fd(allocator_fd) };
-    let worker_fds = &fds[GLOBAL_SHMEM..];
 
     // Setup requested allocators.
     let allocators = (0..logon.allocator_handles)
-        .map(|offset| {
-            // NB: Server validates all requested counts are within expected bands so this should
-            // never panic.
-            let id = GLOBAL_ALLOCATORS
-                .checked_add(logon.worker_count)
-                .unwrap()
-                .checked_add(offset)
-                .unwrap();
-
-            unsafe { Allocator::join(&allocator_file, u32::try_from(id).unwrap()) }
-        })
+        .map(|_| Allocator::join(allocator_file))
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Ensure worker_fds length matches expectations.
-    if worker_fds.is_empty()
-        || !worker_fds.len().is_multiple_of(2)
-        || worker_fds.len() / 2 != logon.worker_count
+    // Ensure worker file count matches expectations.
+    if worker_files.is_empty()
+        || !worker_files.len().is_multiple_of(2)
+        || worker_files.len() / 2 != logon.worker_count
     {
         return Err(ClientHandshakeError::ProtocolViolation);
     }
 
-    // NB: After creating & mapping the queues we are fine to drop the FDs as mmap will keep the
+    // NB: After creating & mapping the queues we are fine to drop the files as mmap will keep the
     // underlying object alive until process exit or munmap.
     let session = ClientSession {
         allocators,
-        tpu_to_pack: unsafe { shaq::Consumer::join(&File::from_raw_fd(tpu_to_pack_fd))? },
-        progress_tracker: unsafe { shaq::Consumer::join(&File::from_raw_fd(progress_tracker_fd))? },
-        workers: worker_fds
+        tpu_to_pack: unsafe { shaq::spsc::Consumer::join(tpu_to_pack_file)? },
+        progress_tracker: unsafe { shaq::spsc::Consumer::join(progress_tracker_file)? },
+        workers: worker_files
             .chunks(2)
             .map(|window| {
                 let [pack_to_worker, worker_to_pack] = window else {
@@ -181,49 +169,17 @@ pub fn setup_session(
                 };
 
                 Ok(ClientWorkerSession {
-                    pack_to_worker: unsafe {
-                        shaq::Producer::join(&File::from_raw_fd(*pack_to_worker))?
-                    },
-                    worker_to_pack: unsafe {
-                        shaq::Consumer::join(&File::from_raw_fd(*worker_to_pack))?
-                    },
+                    pack_to_worker: unsafe { shaq::spsc::Producer::join(pack_to_worker)? },
+                    worker_to_pack: unsafe { shaq::spsc::Consumer::join(worker_to_pack)? },
                 })
             })
             .collect::<Result<_, ClientHandshakeError>>()?,
     };
 
+    // Drop the file handles now that mmaps are completed.
+    drop(files);
+
     Ok(session)
-}
-
-/// The complete initialized scheduling session.
-pub struct ClientSession {
-    pub allocators: Vec<Allocator>,
-    pub tpu_to_pack: shaq::Consumer<TpuToPackMessage>,
-    pub progress_tracker: shaq::Consumer<ProgressMessage>,
-    pub workers: Vec<ClientWorkerSession>,
-}
-
-/// An per worker scheduling session.
-pub struct ClientWorkerSession {
-    pub pack_to_worker: shaq::Producer<PackToWorkerMessage>,
-    pub worker_to_pack: shaq::Consumer<WorkerToPackMessage>,
-}
-
-/// Potential errors that can occur during the client's side of the handshake.
-#[derive(Debug, Error)]
-pub enum ClientHandshakeError {
-    #[error("Io; err={0}")]
-    Io(#[from] std::io::Error),
-    #[error("Timed out")]
-    TimedOut,
-    #[error("Protocol violation")]
-    ProtocolViolation,
-    #[error("Rejected; reason={0}")]
-    Rejected(String),
-    #[error("Rts alloc; err={0}")]
-    RtsAlloc(#[from] RtsError),
-    #[error("Shaq; err={0}")]
-    Shaq(#[from] ShaqError),
 }
 
 impl From<nix::Error> for ClientHandshakeError {
