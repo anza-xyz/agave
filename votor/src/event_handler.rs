@@ -183,10 +183,8 @@ impl EventHandler {
 
             for vote in votes {
                 local_context.stats.incr_vote(&vote);
-
-                let result = vctx.bls_sender.try_send(vote);
-
-                match result {
+                
+                match vctx.bls_sender.try_send(vote) {
                     Err(TrySendError::Full(_)) => {
                         error!("BLS Channel full, Vote dropped!");
                     }
