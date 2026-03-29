@@ -2,9 +2,8 @@
 
 extern crate test;
 use {
-    agave_feature_set::FeatureSet, agave_precompiles::ed25519::verify,
-    ed25519_dalek::ed25519::signature::Signer, rand::Rng,
-    solana_ed25519_program::new_ed25519_instruction_with_signature,
+    agave_feature_set::FeatureSet, agave_precompiles::ed25519::verify, ed25519_dalek::Signer,
+    rand::Rng, solana_ed25519_program::new_ed25519_instruction_with_signature,
     solana_instruction::Instruction, test::Bencher,
 };
 
@@ -17,14 +16,12 @@ fn create_test_instructions(message_length: u16) -> Vec<Instruction> {
     (0..IX_COUNT)
         .map(|_| {
             let secret_bytes: [u8; 32] = rand::random();
-            let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
-            let public: ed25519_dalek::PublicKey = (&secret).into();
-            let privkey = ed25519_dalek::Keypair { secret, public };
+            let privkey = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
             let message: Vec<u8> = (0..message_length)
                 .map(|_| rng.random_range(0..255))
                 .collect();
             let signature = privkey.sign(&message).to_bytes();
-            let pubkey = privkey.public.to_bytes();
+            let pubkey = privkey.verifying_key().to_bytes();
             new_ed25519_instruction_with_signature(&message, &signature, &pubkey)
         })
         .collect()

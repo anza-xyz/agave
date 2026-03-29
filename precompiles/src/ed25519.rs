@@ -1,6 +1,6 @@
 use {
     agave_feature_set::FeatureSet,
-    ed25519_dalek::ed25519::signature::Signature,
+    ed25519_dalek::{Signature, VerifyingKey},
     solana_ed25519_program::{
         Ed25519SignatureOffsets, PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
         SIGNATURE_OFFSETS_START, SIGNATURE_SERIALIZED_SIZE,
@@ -48,8 +48,11 @@ pub fn verify(
             SIGNATURE_SERIALIZED_SIZE,
         )?;
 
-        let signature =
-            Signature::from_bytes(signature).map_err(|_| PrecompileError::InvalidSignature)?;
+        let signature = signature
+            .try_into()
+            .map_err(|_| PrecompileError::InvalidSignature)?;
+
+        let signature = Signature::from_bytes(&signature);
 
         // Parse out pubkey
         let pubkey = get_data_slice(
@@ -60,8 +63,12 @@ pub fn verify(
             PUBKEY_SERIALIZED_SIZE,
         )?;
 
-        let publickey = ed25519_dalek::PublicKey::from_bytes(pubkey)
+        let pubkey = pubkey
+            .try_into()
             .map_err(|_| PrecompileError::InvalidPublicKey)?;
+
+        let publickey =
+            VerifyingKey::from_bytes(&pubkey).map_err(|_| PrecompileError::InvalidPublicKey)?;
 
         // Parse out message
         let message = get_data_slice(
@@ -333,12 +340,10 @@ pub mod tests {
         agave_logger::setup();
 
         let secret_bytes: [u8; 32] = rand::random();
-        let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
-        let public: ed25519_dalek::PublicKey = (&secret).into();
-        let privkey = ed25519_dalek::Keypair { secret, public };
+        let privkey = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
         let message_arr = b"hello";
         let signature = privkey.sign(message_arr).to_bytes();
-        let pubkey = privkey.public.to_bytes();
+        let pubkey = privkey.verifying_key().to_bytes();
         let mut instruction =
             new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
         let feature_set = FeatureSet::all_enabled();
@@ -379,9 +384,7 @@ pub mod tests {
         agave_logger::setup();
 
         let secret_bytes: [u8; 32] = rand::random();
-        let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
-        let public: ed25519_dalek::PublicKey = (&secret).into();
-        let privkey = ed25519_dalek::Keypair { secret, public };
+        let privkey = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
         let messages: [&[u8]; 3] = [b"hello", b"IBRL", b"goodbye"];
         let data_start =
             messages.len() * SIGNATURE_OFFSETS_SERIALIZED_SIZE + SIGNATURE_OFFSETS_START;
@@ -409,8 +412,8 @@ pub mod tests {
 
         let mut instruction = offsets_to_ed25519_instruction(&offsets);
 
-        let pubkey = privkey.public.as_ref();
-        instruction.data.extend_from_slice(pubkey);
+        let pubkey = privkey.verifying_key();
+        instruction.data.extend_from_slice(pubkey.as_ref());
 
         for message in messages {
             let signature = privkey.sign(message).to_bytes();
@@ -457,12 +460,10 @@ pub mod tests {
 
         // sig created via ed25519_dalek: both pass
         let secret_bytes: [u8; 32] = rand::random();
-        let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
-        let public: ed25519_dalek::PublicKey = (&secret).into();
-        let privkey = ed25519_dalek::Keypair { secret, public };
+        let privkey = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
         let message_arr = b"hello";
         let signature = privkey.sign(message_arr).to_bytes();
-        let pubkey = privkey.public.to_bytes();
+        let pubkey = privkey.verifying_key().to_bytes();
         let instruction = new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
 
         let feature_set = FeatureSet::default();
