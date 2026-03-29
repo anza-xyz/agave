@@ -4027,7 +4027,7 @@ impl Blockstore {
         let keys = self.data_shred_cf.multi_get_keys(keys);
         let mut shreds =
             self.data_shred_cf
-                .multi_get_bytes(&keys)
+                .multi_get_bytes(keys)
                 .zip(indices)
                 .map(|(shred, index)| {
                     shred?.ok_or_else(|| {
@@ -4170,7 +4170,7 @@ impl Blockstore {
 
         let deduped_shred_checks: Vec<(Hash, bool)> = self
             .data_shred_cf
-            .multi_get_bytes(&keys)
+            .multi_get_bytes(keys)
             .enumerate()
             .map(|(offset, shred_bytes)| {
                 let shred_bytes = shred_bytes.ok().flatten().ok_or_else(|| {
@@ -4212,7 +4212,7 @@ impl Blockstore {
     /// element's children slots.
     pub fn get_slots_since(&self, slots: &[Slot]) -> Result<HashMap<Slot, Vec<Slot>>> {
         let keys = self.meta_cf.multi_get_keys(slots.iter().copied());
-        let slot_metas = self.meta_cf.multi_get(&keys);
+        let slot_metas = self.meta_cf.multi_get(keys);
 
         let mut slots_since: HashMap<Slot, Vec<Slot>> = HashMap::with_capacity(slots.len());
         for meta in slot_metas.into_iter() {
@@ -5910,7 +5910,7 @@ pub mod tests {
         let keys = blockstore
             .meta_cf
             .multi_get_keys(0..TEST_PUT_ENTRY_COUNT as Slot);
-        let values = blockstore.meta_cf.multi_get(&keys);
+        let values = blockstore.meta_cf.multi_get(keys);
         for (i, value) in values.enumerate().take(TEST_PUT_ENTRY_COUNT) {
             let k = u64::try_from(i).unwrap();
             assert_eq!(
