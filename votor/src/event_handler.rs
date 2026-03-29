@@ -15,7 +15,7 @@ use {
         votor::SharedContext,
     },
     agave_votor_messages::{consensus_message::Block, migration::MigrationStatus, vote::Vote},
-    crossbeam_channel::{RecvError, SendError, select},
+    crossbeam_channel::{RecvError, SendError, TrySendError, select},
     parking_lot::RwLock,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -39,7 +39,6 @@ use {
     },
     thiserror::Error,
 };
-
 mod stats;
 
 /// Banks that have completed replay, but are yet to be voted on
@@ -181,9 +180,21 @@ impl EventHandler {
                 .incr_event_with_timing(stats_event, event_processing_time.as_us());
 
             let mut send_votes_batch_time = Measure::start("send_votes_batch");
+
             for vote in votes {
                 local_context.stats.incr_vote(&vote);
-                vctx.bls_sender.send(vote).map_err(|_| SendError(()))?;
+
+                let result = vctx.bls_sender.try_send(vote);
+
+                match result {
+                    Err(TrySendError::Full(_)) => {
+                        error!("BLS Channel full, Vote dropped!");
+                    }
+                    Err(TrySendError::Disconnected(_)) => {
+                        return Err(EventLoopError::SendError(()));
+                    }
+                    Ok(()) => (),
+                }
             }
             send_votes_batch_time.stop();
             local_context.stats.send_votes_batch_time_us = local_context
