@@ -183,13 +183,13 @@ impl EventHandler {
 
             for vote in votes {
                 local_context.stats.incr_vote(&vote);
-                
+
                 match vctx.bls_sender.try_send(vote) {
                     Err(TrySendError::Full(_)) => {
                         error!("BLS Channel full, Vote dropped!");
                     }
                     Err(TrySendError::Disconnected(_)) => {
-                        return Err(EventLoopError::SendError(()));
+                        return Err(EventLoopError::SenderDisconnected(SendError(())));
                     }
                     Ok(()) => (),
                 }
