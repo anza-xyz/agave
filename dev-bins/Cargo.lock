@@ -9106,8 +9106,6 @@ dependencies = [
  "solana-compute-budget-program",
  "solana-instruction",
  "solana-instruction-error",
- "solana-loader-v4-interface",
- "solana-loader-v4-program",
  "solana-precompile-error",
  "solana-program-runtime",
  "solana-pubkey 4.1.0",

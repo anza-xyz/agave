@@ -37,8 +37,6 @@ solana-compute-budget = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true, features = ["serde"] }
-solana-loader-v4-interface = { workspace = true }
-solana-loader-v4-program = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true }
