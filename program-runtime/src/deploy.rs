@@ -1,7 +1,7 @@
 //! Program deployment functionality.
 
 #[cfg(feature = "metrics")]
-use {crate::loaded_programs::LoadProgramMetrics, solana_svm_measure::measure::Measure};
+use {crate::program_metrics::LoadProgramMetrics, solana_svm_measure::measure::Measure};
 use {
     crate::{
         invoke_context::InvokeContext,
@@ -137,7 +137,7 @@ macro_rules! deploy_program {
             $invoke_context.program_cache_for_tx_batch.slot()
         );
         #[cfg(feature = "metrics")]
-        let mut load_program_metrics = $crate::loaded_programs::LoadProgramMetrics::default();
+        let mut load_program_metrics = $crate::program_metrics::LoadProgramMetrics::default();
         $crate::deploy::deploy_program(
             $invoke_context.get_log_collector(),
             #[cfg(feature = "metrics")]

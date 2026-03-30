@@ -15,9 +15,10 @@ use {
         create_vm,
         invoke_context::InvokeContext,
         loaded_programs::{
-            DELAY_VISIBILITY_SLOT_OFFSET, LoadProgramMetrics, ProgramCacheEntry,
-            ProgramCacheEntryType, ProgramRuntimeEnvironment,
+            DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryType,
+            ProgramRuntimeEnvironment,
         },
+        program_metrics::LoadProgramMetrics,
         serialization::serialize_parameters,
         with_mock_invoke_context,
     },

@@ -1,5 +1,5 @@
 #[cfg(feature = "metrics")]
-use solana_program_runtime::loaded_programs::LoadProgramMetrics;
+use solana_program_runtime::program_metrics::LoadProgramMetrics;
 use {
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_clock::Slot,
