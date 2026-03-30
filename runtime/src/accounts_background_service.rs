@@ -272,6 +272,12 @@ impl SnapshotRequestHandler {
         snapshot_root_bank.shrink_candidate_slots();
         shrink_time.stop();
 
+        // Backfill block id for legacy/replayed banks before snapshot packaging. This prevents
+        // snapshot panics when a rooted bank is missing block_id.
+        if snapshot_root_bank.block_id().is_none() {
+            Bank::calculate_and_set_block_id_for_dcou(&snapshot_root_bank);
+        }
+
         // Snapshot the bank and send over a snapshot package
         let mut snapshot_time = Measure::start("snapshot_time");
         let snapshot_package = SnapshotPackage::new(
@@ -903,6 +909,45 @@ mod test {
                 .get_next_snapshot_request()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn test_handle_snapshot_request_backfills_block_id_when_unset() {
+        let snapshot_config = SnapshotConfig::default();
+        let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
+        let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
+        let snapshot_controller = Arc::new(SnapshotController::new(
+            snapshot_request_sender.clone(),
+            snapshot_config,
+            0,
+        ));
+        let snapshot_request_handler = SnapshotRequestHandler {
+            snapshot_controller,
+            snapshot_request_receiver,
+            pending_snapshot_packages,
+        };
+
+        let genesis = create_genesis_config(10);
+        let bank = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
+        bank.squash();
+        let slot = bank.slot();
+        assert!(bank.block_id().is_none());
+
+        snapshot_request_sender
+            .send(SnapshotRequest {
+                snapshot_root_bank: Arc::clone(&bank),
+                status_cache_slot_deltas: Vec::default(),
+                request_kind: SnapshotRequestKind::FullSnapshot,
+                enqueued: Instant::now(),
+            })
+            .unwrap();
+
+        let handled_slot = snapshot_request_handler
+            .handle_snapshot_requests(0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(handled_slot, slot);
+        assert!(bank.block_id().is_some());
     }
 
     /// Ensure that we can prune banks with the same slot (if they were on different forks)
