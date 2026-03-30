@@ -290,6 +290,146 @@ impl ScanTracker {
     }
 }
 
+/// Guard that protects account state during an accounts scan.
+///
+/// Pins `max_root` in `ongoing_scan_roots` on creation and unpins it on drop,
+/// preventing clean from advancing past the pinned root while the scan is active.
+#[derive(Debug)]
+struct ScanGuard<'a> {
+    scan_tracker: &'a ScanTracker,
+    max_root: Slot,
+    scan_bank_id: BankId,
+}
+
+impl<'a> ScanGuard<'a> {
+    /// Begin a scan: checks the bank hasn't been removed and pins `max_root` in
+    /// `ongoing_scan_roots`.
+    ///
+    /// Returns `None` if the bank has already been removed.
+    ///
+    /// `max_root_inclusive_fn` is called while holding the `ongoing_scan_roots` write lock.
+    fn try_new(
+        scan_tracker: &'a ScanTracker,
+        scan_bank_id: BankId,
+        max_root_inclusive_fn: impl FnOnce() -> Slot,
+    ) -> Option<Self> {
+        {
+            let locked_removed_bank_ids = scan_tracker.removed_bank_ids.lock().unwrap();
+            if locked_removed_bank_ids.contains(&scan_bank_id) {
+                return None;
+            }
+        }
+
+        let max_root_inclusive = {
+            let mut w_ongoing_scan_roots = scan_tracker
+                // This lock is also grabbed by clean_accounts(), so clean
+                // has at most cleaned up to the current `max_root` (since
+                // clean only happens *after* BankForks::set_root() which sets
+                // the `max_root`)
+                .ongoing_scan_roots
+                .write()
+                .unwrap();
+            // `max_root()` grabs a lock while
+            // the `ongoing_scan_roots` lock is held,
+            // make sure inverse doesn't happen to avoid
+            // deadlock
+            let max_root_inclusive = max_root_inclusive_fn();
+            if let Some(min_ongoing_scan_root) =
+                ScanTracker::min_ongoing_scan_root_from_btree(&w_ongoing_scan_roots)
+            {
+                if min_ongoing_scan_root < max_root_inclusive {
+                    let current = max_root_inclusive - min_ongoing_scan_root;
+                    scan_tracker
+                        .max_distance_to_min_scan_slot
+                        .fetch_max(current, Ordering::Relaxed);
+                }
+            }
+            *w_ongoing_scan_roots.entry(max_root_inclusive).or_default() += 1;
+            max_root_inclusive
+        };
+
+        scan_tracker.active_scans.fetch_add(1, Ordering::Relaxed);
+        Some(Self {
+            scan_tracker,
+            max_root: max_root_inclusive,
+            scan_bank_id,
+        })
+    }
+
+    /// The inclusive max root pinned by this scan guard.
+    fn max_root(&self) -> Slot {
+        self.max_root
+    }
+
+    /// Returns true if ancestors should be used, or false if the scan's bank
+    /// is not descended from `max_root` (different fork or ancestor of
+    /// `max_root`).
+    ///
+    /// For any bank `B` descended from the current `max_root`, it must be true
+    /// that `B.ancestors.contains(max_root)`, regardless of squash behavior.
+    /// (Proof: at startup max_root is the greatest root from the snapshot, and
+    /// on each `set_root(R_new)` where `R_new > R`, every surviving descendant
+    /// of `R_new` was also a descendant of `R` and therefore has `R_new` in its
+    /// ancestors.)
+    ///
+    /// If `max_root` is **not** in `ancestors`, the bank is either:
+    /// 1. on a different fork, or
+    /// 2. an ancestor of `max_root`.
+    ///
+    /// In both cases the provided ancestors may reference slots that have
+    /// already been cleaned, so we fall back to an empty ancestor set and rely
+    /// only on roots (bounded by `max_root`).
+    ///
+    /// ```text
+    ///             slot 0
+    ///               |
+    ///             slot 1
+    ///           /        \
+    ///      slot 2         |
+    ///         |       slot 3 (max root)
+    ///     slot 4 (scan)
+    /// ```
+    ///
+    /// By the time the scan on slot 4 is called, slot 2 may already have been
+    /// cleaned by a clean on slot 3, but slot 4 may not have been cleaned.
+    /// The state in slot 2 would have been purged and is not saved in any roots.
+    /// In this case, a scan on slot 4 wouldn't accurately reflect the state
+    /// when bank 4 was frozen, so we default to a scan on the latest roots by
+    /// removing all `ancestors`.
+    ///
+    /// When ancestors **is** used:
+    /// - Ancestors <= `max_root` are all rooted, protected by `ongoing_scan_roots`.
+    /// - Ancestors > `max_root` are kept alive by the `Bank::parent` reference
+    ///   chain, so they cannot be cleaned mid-scan.
+    fn should_use_ancestors(&self, ancestors: &Ancestors) -> bool {
+        ancestors.contains_key(&self.max_root)
+    }
+
+    /// Finalize the scan: returns whether the bank was removed during the scan.
+    /// The `Drop` impl handles unpinning regardless of whether this is called.
+    fn was_scan_corrupted(self) -> bool {
+        self.scan_tracker
+            .removed_bank_ids
+            .lock()
+            .unwrap()
+            .contains(&self.scan_bank_id)
+    }
+}
+
+impl Drop for ScanGuard<'_> {
+    fn drop(&mut self) {
+        self.scan_tracker
+            .active_scans
+            .fetch_sub(1, Ordering::Relaxed);
+        let mut ongoing_scan_roots = self.scan_tracker.ongoing_scan_roots.write().unwrap();
+        let count = ongoing_scan_roots.get_mut(&self.max_root).unwrap();
+        *count -= 1;
+        if *count == 0 {
+            ongoing_scan_roots.remove(&self.max_root);
+        }
+    }
+}
+
 #[derive(Copy, Clone)]
 pub enum AccountsIndexScanResult {
     /// if the entry is not in the in-memory index, do not add it unless the entry becomes dirty
@@ -400,135 +540,33 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     where
         F: FnMut(&Pubkey, (&T, Slot)),
     {
-        {
-            let locked_removed_bank_ids = self.scan_tracker.removed_bank_ids.lock().unwrap();
-            if locked_removed_bank_ids.contains(&scan_bank_id) {
-                return Err(ScanError::SlotRemoved {
-                    slot: ancestors.max_slot(),
-                    bank_id: scan_bank_id,
-                });
-            }
-        }
-
-        self.scan_tracker
-            .active_scans
-            .fetch_add(1, Ordering::Relaxed);
-        let max_root = {
-            let mut w_ongoing_scan_roots = self
-                .scan_tracker
-                // This lock is also grabbed by clean_accounts(), so clean
-                // has at most cleaned up to the current `max_root` (since
-                // clean only happens *after* BankForks::set_root() which sets
-                // the `max_root`)
-                .ongoing_scan_roots
-                .write()
-                .unwrap();
-            // `max_root()` grabs a lock while
-            // the `ongoing_scan_roots` lock is held,
-            // make sure inverse doesn't happen to avoid
-            // deadlock
-            let max_root_inclusive = self.max_root_inclusive();
-            if let Some(min_ongoing_scan_root) =
-                ScanTracker::min_ongoing_scan_root_from_btree(&w_ongoing_scan_roots)
-            {
-                if min_ongoing_scan_root < max_root_inclusive {
-                    let current = max_root_inclusive - min_ongoing_scan_root;
-                    self.scan_tracker
-                        .max_distance_to_min_scan_slot
-                        .fetch_max(current, Ordering::Relaxed);
-                }
-            }
-            *w_ongoing_scan_roots.entry(max_root_inclusive).or_default() += 1;
-
-            max_root_inclusive
-        };
-
-        // First we show that for any bank `B` that is a descendant of
-        // the current `max_root`, it must be true that and `B.ancestors.contains(max_root)`,
-        // regardless of the pattern of `squash()` behavior, where `ancestors` is the set
-        // of ancestors that is tracked in each bank.
-        //
-        // Proof: At startup, if starting from a snapshot, generate_index() adds all banks
-        // in the snapshot to the index via `add_root()` and so `max_root` will be the
-        // greatest of these. Thus, so the claim holds at startup since there are no
-        // descendants of `max_root`.
-        //
-        // Now we proceed by induction on each `BankForks::set_root()`.
-        // Assume the claim holds when the `max_root` is `R`. Call the set of
-        // descendants of `R` present in BankForks `R_descendants`.
-        //
-        // Then for any banks `B` in `R_descendants`, it must be that `B.ancestors.contains(S)`,
-        // where `S` is any ancestor of `B` such that `S >= R`.
-        //
-        // For example:
-        //          `R` -> `A` -> `C` -> `B`
-        // Then `B.ancestors == {R, A, C}`
-        //
-        // Next we call `BankForks::set_root()` at some descendant of `R`, `R_new`,
-        // where `R_new > R`.
-        //
-        // When we squash `R_new`, `max_root` in the AccountsIndex here is now set to `R_new`,
-        // and all nondescendants of `R_new` are pruned.
-        //
-        // Now consider any outstanding references to banks in the system that are descended from
-        // `max_root == R_new`. Take any one of these references and call it `B`. Because `B` is
-        // a descendant of `R_new`, this means `B` was also a descendant of `R`. Thus `B`
-        // must be a member of `R_descendants` because `B` was constructed and added to
-        // BankForks before the `set_root`.
-        //
-        // This means by the guarantees of `R_descendants` described above, because
-        // `R_new` is an ancestor of `B`, and `R < R_new < B`, then `B.ancestors.contains(R_new)`.
-        //
-        // Now until the next `set_root`, any new banks constructed from `new_from_parent` will
-        // also have `max_root == R_new` in their ancestor set, so the claim holds for those descendants
-        // as well. Once the next `set_root` happens, we once again update `max_root` and the same
-        // inductive argument can be applied again to show the claim holds.
-
-        // Check that the `max_root` is present in `ancestors`. From the proof above, if
-        // `max_root` is not present in `ancestors`, this means the bank `B` with the
-        // given `ancestors` is not descended from `max_root, which means
-        // either:
-        // 1) `B` is on a different fork or
-        // 2) `B` is an ancestor of `max_root`.
-        // In both cases we can ignore the given ancestors and instead just rely on the roots
-        // present as `max_root` indicates the roots present in the index are more up to date
-        // than the ancestors given.
-        let empty = Ancestors::default();
-        let ancestors = if ancestors.contains_key(&max_root) {
+        let ancestors_max_slot = ancestors.max_slot();
+        let scan_guard = ScanGuard::try_new(&self.scan_tracker, scan_bank_id, || {
+            self.max_root_inclusive()
+        })
+        .ok_or(ScanError::SlotRemoved {
+            slot: ancestors_max_slot,
+            bank_id: scan_bank_id,
+        })?;
+        let max_root = scan_guard.max_root();
+        let use_ancestors = scan_guard.should_use_ancestors(ancestors);
+        let empty_ancestors = Ancestors::default();
+        let ancestors = if use_ancestors {
             ancestors
         } else {
-            /*
-            This takes of edge cases like:
-
-            Diagram 1:
-
-                        slot 0
-                          |
-                        slot 1
-                      /        \
-                 slot 2         |
-                    |       slot 3 (max root)
-            slot 4 (scan)
-
-            By the time the scan on slot 4 is called, slot 2 may already have been
-            cleaned by a clean on slot 3, but slot 4 may not have been cleaned.
-            The state in slot 2 would have been purged and is not saved in any roots.
-            In this case, a scan on slot 4 wouldn't accurately reflect the state when bank 4
-            was frozen. In cases like this, we default to a scan on the latest roots by
-            removing all `ancestors`.
-            */
-            &empty
+            &empty_ancestors
         };
 
         /*
-        Now there are two cases, either `ancestors` is empty or nonempty:
+        Now there are two cases, either `ancestors` is empty or nonempty
+        (see `ScanGuard::should_use_ancestors` for the proof and edge-case diagrams):
 
         1) If ancestors is empty, then this is the same as a scan on a rooted bank,
         and `ongoing_scan_roots` provides protection against cleanup of roots necessary
         for the scan, and  passing `Some(max_root)` to `do_scan_accounts()` ensures newer
         roots don't appear in the scan.
 
-        2) If ancestors is non-empty, then from the `ancestors_contains(&max_root)` above, we know
+        2) If ancestors is non-empty, then from `should_use_ancestors` we know
         that the fork structure must look something like:
 
         Diagram 2:
@@ -595,35 +633,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             }
         }
 
-        {
-            self.scan_tracker
-                .active_scans
-                .fetch_sub(1, Ordering::Relaxed);
-            let mut ongoing_scan_roots = self.scan_tracker.ongoing_scan_roots.write().unwrap();
-            let count = ongoing_scan_roots.get_mut(&max_root).unwrap();
-            *count -= 1;
-            if *count == 0 {
-                ongoing_scan_roots.remove(&max_root);
-            }
-        }
-
-        // If the fork with tip at bank `scan_bank_id` was removed during our scan, then the scan
-        // may have been corrupted, so abort the results.
-        let was_scan_corrupted = self
-            .scan_tracker
-            .removed_bank_ids
-            .lock()
-            .unwrap()
-            .contains(&scan_bank_id);
-
-        if was_scan_corrupted {
-            Err(ScanError::SlotRemoved {
+        if scan_guard.was_scan_corrupted() {
+            return Err(ScanError::SlotRemoved {
                 slot: ancestors.max_slot(),
                 bank_id: scan_bank_id,
-            })
-        } else {
-            Ok(())
+            });
         }
+        Ok(())
     }
 
     // Scan accounts and return latest version of each account that is either:
@@ -4083,5 +4099,104 @@ mod tests {
 
         let config = config.recreate_with_abort();
         assert!(config.is_aborted());
+    }
+
+    #[test]
+    fn test_scan_guard_pins_and_unpins_root() {
+        let tracker = ScanTracker::default();
+
+        assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 0);
+        assert!(tracker.min_ongoing_scan_root().is_none());
+
+        let guard = ScanGuard::try_new(&tracker, 0, || 42).unwrap();
+        assert_eq!(guard.max_root(), 42);
+        assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 1);
+        assert_eq!(tracker.min_ongoing_scan_root(), Some(42));
+
+        assert!(!guard.was_scan_corrupted());
+        assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 0);
+        assert!(tracker.min_ongoing_scan_root().is_none());
+    }
+
+    #[test]
+    fn test_scan_guard_refcounts_same_root() {
+        let tracker = ScanTracker::default();
+
+        let guard1 = ScanGuard::try_new(&tracker, 0, || 10).unwrap();
+        let guard2 = ScanGuard::try_new(&tracker, 0, || 10).unwrap();
+        assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            *tracker.ongoing_scan_roots.read().unwrap().get(&10).unwrap(),
+            2
+        );
+
+        drop(guard1);
+        assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 1);
+        assert_eq!(tracker.min_ongoing_scan_root(), Some(10));
+
+        drop(guard2);
+        assert!(tracker.min_ongoing_scan_root().is_none());
+    }
+
+    #[test]
+    fn test_scan_guard_multiple_different_roots() {
+        let tracker = ScanTracker::default();
+
+        let guard1 = ScanGuard::try_new(&tracker, 0, || 5).unwrap();
+        let guard2 = ScanGuard::try_new(&tracker, 0, || 15).unwrap();
+        assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 2);
+        assert_eq!(tracker.min_ongoing_scan_root(), Some(5));
+
+        drop(guard1);
+        assert_eq!(tracker.min_ongoing_scan_root(), Some(15));
+
+        drop(guard2);
+        assert!(tracker.min_ongoing_scan_root().is_none());
+    }
+
+    #[test]
+    fn test_scan_guard_rejected_for_removed_bank() {
+        let tracker = ScanTracker::default();
+        tracker.removed_bank_ids.lock().unwrap().insert(7);
+
+        let result = ScanGuard::try_new(&tracker, 7, || 100);
+        assert!(result.is_none());
+        // should not have incremented active_scans
+        assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_scan_guard_corrupted_when_bank_removed_during_scan() {
+        let tracker = ScanTracker::default();
+        let guard = ScanGuard::try_new(&tracker, 5, || 50).unwrap();
+
+        // simulate bank removal mid-scan
+        tracker.removed_bank_ids.lock().unwrap().insert(5);
+
+        assert!(guard.was_scan_corrupted());
+        // guard should still have cleaned up
+        assert_eq!(tracker.active_scans.load(Ordering::Relaxed), 0);
+        assert!(tracker.min_ongoing_scan_root().is_none());
+    }
+
+    #[test]
+    fn test_scan_guard_should_use_ancestors_when_max_root_in_ancestors() {
+        let tracker = ScanTracker::default();
+        let mut ancestors = Ancestors::default();
+        ancestors.insert(42);
+
+        let guard = ScanGuard::try_new(&tracker, 0, || 42).unwrap();
+        assert!(guard.should_use_ancestors(&ancestors));
+    }
+
+    #[test]
+    fn test_scan_guard_skip_ancestors_when_max_root_not_in_ancestors() {
+        let tracker = ScanTracker::default();
+        let mut ancestors = Ancestors::default();
+        ancestors.insert(10);
+
+        // max_root_inclusive = 42, which is NOT in ancestors
+        let guard = ScanGuard::try_new(&tracker, 0, || 42).unwrap();
+        assert!(!guard.should_use_ancestors(&ancestors));
     }
 }

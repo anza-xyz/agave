@@ -59,7 +59,7 @@ pub fn unique_port_range_for_tests_internal(size: u16) -> Range<u16> {
 static CREATION_MUTEX: Mutex<()> = Mutex::new(());
 
 const PORT_MIN: u16 = UNIQUE_ALLOC_BASE_PORT;
-const PORT_MAX: u16 = 65534; // 65535 excluded: range end would overflow u16
+const PORT_MAX: u16 = 32767; // Exclude ephemeral port range on Linux & MacOS
 const PORT_COUNT: usize = (PORT_MAX - PORT_MIN + 1) as usize;
 const SHM_SIZE: usize = std::mem::size_of::<SharedRegion>();
 const SHM_VERSION: i64 = 2; // bump whenever SharedRegion layout changes

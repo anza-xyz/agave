@@ -600,6 +600,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
 /// Return data at the end of a transaction
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "wincode", derive(wincode::SchemaRead, wincode::SchemaWrite))]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TransactionReturnData {
     pub program_id: Pubkey,
