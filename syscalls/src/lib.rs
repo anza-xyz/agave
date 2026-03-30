@@ -24,6 +24,7 @@ use {
         cpi::CpiError,
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
+        loaded_programs::ProgramRuntimeEnvironment,
         memory::{MemoryTranslationError, translate_vm_slice},
         stable_log, translate_inner, translate_slice_inner, translate_type_inner,
     },
@@ -288,12 +289,12 @@ macro_rules! register_feature_gated_function {
     };
 }
 
-pub fn create_program_runtime_environment<'a, 'ix_data>(
+pub fn create_program_runtime_environment(
     feature_set: &SVMFeatureSet,
     compute_budget: &SVMTransactionExecutionBudget,
     reject_deployment_of_broken_elfs: bool,
     debugging_features: bool,
-) -> Result<BuiltinProgram<InvokeContext<'a, 'ix_data>>, Error> {
+) -> Result<ProgramRuntimeEnvironment, Error> {
     let enable_alt_bn128_syscall = feature_set.enable_alt_bn128_syscall;
     let enable_alt_bn128_compression_syscall = feature_set.enable_alt_bn128_compression_syscall;
     let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall;
@@ -523,7 +524,7 @@ pub fn create_program_runtime_environment<'a, 'ix_data>(
     // Log data
     SyscallLogData::register(&mut result, "sol_log_data")?;
 
-    Ok(result)
+    Ok(ProgramRuntimeEnvironment::from(result))
 }
 
 fn translate_type<T>(
@@ -1008,20 +1009,20 @@ declare_builtin_function!(
                     .bls12_381_g1_validate_cost;
                 consume_compute_meter(invoke_context, cost)?;
 
-                let point = translate_type::<agave_bls12_381::PodG1Point>(
+                let point = translate_type::<solana_bls12_381_syscall::PodG1Point>(
                     memory_mapping,
                     point_addr,
                     invoke_context.get_check_aligned(),
                 )?;
 
                 let endianness = if curve_id == BLS12_381_G1_LE {
-                    agave_bls12_381::Endianness::LE
+                    solana_bls12_381_syscall::Endianness::LE
                 } else {
-                    agave_bls12_381::Endianness::BE
+                    solana_bls12_381_syscall::Endianness::BE
                 };
 
-                if agave_bls12_381::bls12_381_g1_point_validation(
-                    agave_bls12_381::Version::V0,
+                if solana_bls12_381_syscall::bls12_381_g1_point_validation(
+                    solana_bls12_381_syscall::Version::V0,
                     point,
                     endianness,
                 ) {
@@ -1036,20 +1037,20 @@ declare_builtin_function!(
                     .bls12_381_g2_validate_cost;
                 consume_compute_meter(invoke_context, cost)?;
 
-                let point = translate_type::<agave_bls12_381::PodG2Point>(
+                let point = translate_type::<solana_bls12_381_syscall::PodG2Point>(
                     memory_mapping,
                     point_addr,
                     invoke_context.get_check_aligned(),
                 )?;
 
                 let endianness = if curve_id == BLS12_381_G2_LE {
-                    agave_bls12_381::Endianness::LE
+                    solana_bls12_381_syscall::Endianness::LE
                 } else {
-                    agave_bls12_381::Endianness::BE
+                    solana_bls12_381_syscall::Endianness::BE
                 };
 
-                if agave_bls12_381::bls12_381_g2_point_validation(
-                    agave_bls12_381::Version::V0,
+                if solana_bls12_381_syscall::bls12_381_g2_point_validation(
+                    solana_bls12_381_syscall::Version::V0,
                     point,
                     endianness,
                 ) {
@@ -1086,7 +1087,7 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         use {
             crate::bls12_381_curve_id::*,
-            agave_bls12_381::{
+            solana_bls12_381_syscall::{
                 PodG1Compressed as PodBLSG1Compressed, PodG1Point as PodBLSG1Point,
                 PodG2Compressed as PodBLSG2Compressed, PodG2Point as PodBLSG2Point,
             },
@@ -1106,13 +1107,13 @@ declare_builtin_function!(
                 )?;
 
                 let endianness = if curve_id == BLS12_381_G1_LE {
-                    agave_bls12_381::Endianness::LE
+                    solana_bls12_381_syscall::Endianness::LE
                 } else {
-                    agave_bls12_381::Endianness::BE
+                    solana_bls12_381_syscall::Endianness::BE
                 };
 
-                if let Some(affine_point) = agave_bls12_381::bls12_381_g1_decompress(
-                    agave_bls12_381::Version::V0,
+                if let Some(affine_point) = solana_bls12_381_syscall::bls12_381_g1_decompress(
+                    solana_bls12_381_syscall::Version::V0,
                     compressed_point,
                     endianness,
                 ) {
@@ -1140,13 +1141,13 @@ declare_builtin_function!(
                 )?;
 
                 let endianness = if curve_id == BLS12_381_G2_LE {
-                    agave_bls12_381::Endianness::LE
+                    solana_bls12_381_syscall::Endianness::LE
                 } else {
-                    agave_bls12_381::Endianness::BE
+                    solana_bls12_381_syscall::Endianness::BE
                 };
 
-                if let Some(affine_point) = agave_bls12_381::bls12_381_g2_decompress(
-                    agave_bls12_381::Version::V0,
+                if let Some(affine_point) = solana_bls12_381_syscall::bls12_381_g2_decompress(
+                    solana_bls12_381_syscall::Version::V0,
                     compressed_point,
                     endianness,
                 ) {
@@ -1184,7 +1185,7 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         use {
             crate::bls12_381_curve_id::*,
-            agave_bls12_381::{
+            solana_bls12_381_syscall::{
                 PodG1Point as PodBLSG1Point, PodG2Point as PodBLSG2Point, PodScalar as PodBLSScalar,
             },
             solana_curve25519::{
@@ -1403,9 +1404,9 @@ declare_builtin_function!(
 
             BLS12_381_G1_LE | BLS12_381_G1_BE => {
                 let endianness = if curve_id == BLS12_381_G1_LE {
-                    agave_bls12_381::Endianness::LE
+                    solana_bls12_381_syscall::Endianness::LE
                 } else {
-                    agave_bls12_381::Endianness::BE
+                    solana_bls12_381_syscall::Endianness::BE
                 };
 
                 match group_op {
@@ -1424,8 +1425,8 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                         )?;
 
-                        if let Some(result_point) = agave_bls12_381::bls12_381_g1_addition(
-                            agave_bls12_381::Version::V0,
+                        if let Some(result_point) = solana_bls12_381_syscall::bls12_381_g1_addition(
+                            solana_bls12_381_syscall::Version::V0,
                             left_point,
                             right_point,
                             endianness,
@@ -1458,12 +1459,14 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                         )?;
 
-                        if let Some(result_point) = agave_bls12_381::bls12_381_g1_subtraction(
-                            agave_bls12_381::Version::V0,
-                            left_point,
-                            right_point,
-                            endianness,
-                        ) {
+                        if let Some(result_point) =
+                            solana_bls12_381_syscall::bls12_381_g1_subtraction(
+                                solana_bls12_381_syscall::Version::V0,
+                                left_point,
+                                right_point,
+                                endianness,
+                            )
+                        {
                             translate_mut!(
                                 memory_mapping,
                                 invoke_context.get_check_aligned(),
@@ -1492,12 +1495,14 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                         )?;
 
-                        if let Some(result_point) = agave_bls12_381::bls12_381_g1_multiplication(
-                            agave_bls12_381::Version::V0,
-                            point,
-                            scalar,
-                            endianness,
-                        ) {
+                        if let Some(result_point) =
+                            solana_bls12_381_syscall::bls12_381_g1_multiplication(
+                                solana_bls12_381_syscall::Version::V0,
+                                point,
+                                scalar,
+                                endianness,
+                            )
+                        {
                             translate_mut!(
                                 memory_mapping,
                                 invoke_context.get_check_aligned(),
@@ -1516,9 +1521,9 @@ declare_builtin_function!(
             // New BLS12-381 G2 Implementation
             BLS12_381_G2_LE | BLS12_381_G2_BE => {
                 let endianness = if curve_id == BLS12_381_G2_LE {
-                    agave_bls12_381::Endianness::LE
+                    solana_bls12_381_syscall::Endianness::LE
                 } else {
-                    agave_bls12_381::Endianness::BE
+                    solana_bls12_381_syscall::Endianness::BE
                 };
 
                 match group_op {
@@ -1537,8 +1542,8 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                         )?;
 
-                        if let Some(result_point) = agave_bls12_381::bls12_381_g2_addition(
-                            agave_bls12_381::Version::V0,
+                        if let Some(result_point) = solana_bls12_381_syscall::bls12_381_g2_addition(
+                            solana_bls12_381_syscall::Version::V0,
                             left_point,
                             right_point,
                             endianness,
@@ -1571,12 +1576,14 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                         )?;
 
-                        if let Some(result_point) = agave_bls12_381::bls12_381_g2_subtraction(
-                            agave_bls12_381::Version::V0,
-                            left_point,
-                            right_point,
-                            endianness,
-                        ) {
+                        if let Some(result_point) =
+                            solana_bls12_381_syscall::bls12_381_g2_subtraction(
+                                solana_bls12_381_syscall::Version::V0,
+                                left_point,
+                                right_point,
+                                endianness,
+                            )
+                        {
                             translate_mut!(
                                 memory_mapping,
                                 invoke_context.get_check_aligned(),
@@ -1605,12 +1612,14 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                         )?;
 
-                        if let Some(result_point) = agave_bls12_381::bls12_381_g2_multiplication(
-                            agave_bls12_381::Version::V0,
-                            point,
-                            scalar,
-                            endianness,
-                        ) {
+                        if let Some(result_point) =
+                            solana_bls12_381_syscall::bls12_381_g2_multiplication(
+                                solana_bls12_381_syscall::Version::V0,
+                                point,
+                                scalar,
+                                endianness,
+                            )
+                        {
                             translate_mut!(
                                 memory_mapping,
                                 invoke_context.get_check_aligned(),
@@ -1772,7 +1781,7 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         use {
             crate::bls12_381_curve_id::*,
-            agave_bls12_381::{
+            solana_bls12_381_syscall::{
                 PodG1Point as PodBLSG1Point, PodG2Point as PodBLSG2Point,
                 PodGtElement as PodBLSGtElement,
             },
@@ -1805,13 +1814,13 @@ declare_builtin_function!(
                 )?;
 
                 let endianness = if curve_id == BLS12_381_LE {
-                    agave_bls12_381::Endianness::LE
+                    solana_bls12_381_syscall::Endianness::LE
                 } else {
-                    agave_bls12_381::Endianness::BE
+                    solana_bls12_381_syscall::Endianness::BE
                 };
 
-                if let Some(gt_element) = agave_bls12_381::bls12_381_pairing_map(
-                    agave_bls12_381::Version::V0,
+                if let Some(gt_element) = solana_bls12_381_syscall::bls12_381_pairing_map(
+                    solana_bls12_381_syscall::Version::V0,
                     g1_points,
                     g2_points,
                     endianness,
@@ -2194,14 +2203,7 @@ declare_builtin_function!(
                 )
             }
             ALT_BN128_PAIRING_BE => {
-                let version = if invoke_context
-                    .get_feature_set()
-                    .fix_alt_bn128_pairing_length_check {
-                    VersionedPairing::V1
-                } else {
-                    VersionedPairing::V0
-                };
-                alt_bn128_versioned_pairing(version, input, Endianness::BE)
+                alt_bn128_versioned_pairing(VersionedPairing::V1, input, Endianness::BE)
             }
             ALT_BN128_PAIRING_LE => {
                 alt_bn128_versioned_pairing(VersionedPairing::V1, input, Endianness::LE)
@@ -6013,14 +6015,14 @@ mod tests {
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
         let feature_set = SVMFeatureSet::default();
-        let program_runtime_environment = get_mock_program_runtime_environment();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environment,
-            &program_runtime_environment,
+            &program_runtime_environments,
             &sysvar_cache,
         );
         invoke_context.mock_set_remaining(compute_budget.compute_unit_limit);
@@ -6079,14 +6081,14 @@ mod tests {
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
         let feature_set = SVMFeatureSet::default();
-        let program_runtime_environment = get_mock_program_runtime_environment();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environment,
-            &program_runtime_environment,
+            &program_runtime_environments,
             &sysvar_cache,
         );
 

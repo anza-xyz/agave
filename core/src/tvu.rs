@@ -27,13 +27,13 @@ use {
     agave_votor::{
         consensus_metrics::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
         event::{LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
+        generated_cert_types::GeneratedCertTypes,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
         voting_service::{VotingService as BLSVotingService, VotingServiceOverride},
         votor::{Votor, VotorConfig},
     },
     agave_votor_messages::reward_certificate::{BuildRewardCertsRequest, BuildRewardCertsResponse},
-    agave_xdp::xdp_retransmitter::XdpSender,
     bytes::Bytes,
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
@@ -67,7 +67,7 @@ use {
         quic::{QuicStreamerConfig, SpawnServerResult, spawn_simple_qos_server},
         streamer::StakedNodes,
     },
-    solana_turbine::retransmit_stage::RetransmitStage,
+    solana_turbine::{XdpSender, retransmit_stage::RetransmitStage},
     std::{
         collections::HashSet,
         net::{SocketAddr, UdpSocket},
@@ -139,7 +139,7 @@ pub struct TvuConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub shred_sigverify_threads: NonZeroUsize,
     pub bls_sigverify_threads: NonZeroUsize,
-    pub xdp_sender: Option<XdpSender>,
+    pub turbine_xdp_sender: Option<XdpSender>,
 }
 
 impl Default for TvuConfig {
@@ -154,7 +154,7 @@ impl Default for TvuConfig {
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             bls_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
-            xdp_sender: None,
+            turbine_xdp_sender: None,
         }
     }
 }
@@ -265,6 +265,7 @@ impl Tvu {
         let (reward_votes_sender, reward_votes_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
         let (consensus_metrics_sender, consensus_metrics_receiver) =
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
+        let generated_cert_types = Arc::new(GeneratedCertTypes::default());
 
         // The BLS socket is currently only available on Testnet and Development clusters.
         // Closer to release we will enable this for all clusters.
@@ -315,6 +316,7 @@ impl Tvu {
                     cluster_info: cluster_info.clone(),
                     leader_schedule: leader_schedule_cache.clone(),
                     num_threads: tvu_config.bls_sigverify_threads.get(),
+                    generated_cert_types: generated_cert_types.clone(),
                 },
                 SigVerifierChannels {
                     packet_receiver: bls_packet_receiver,
@@ -375,7 +377,7 @@ impl Tvu {
             max_slots.clone(),
             rpc_subscriptions.clone(),
             slot_status_notifier.clone(),
-            tvu_config.xdp_sender,
+            tvu_config.turbine_xdp_sender,
             votor_event_sender.clone(),
         );
 
@@ -485,6 +487,7 @@ impl Tvu {
             reward_votes_receiver,
             reward_certs_sender,
             build_reward_certs_receiver,
+            generated_cert_types,
         };
         let votor = Votor::new(votor_config);
 

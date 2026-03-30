@@ -132,6 +132,15 @@ fn main() {
         None
     };
     agave_logger::initialize_logging(logfile);
+    // NB: Align with agave to exit if any thread panics.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // Call the default hook.
+        default_hook(info);
+
+        // Force a process exit (no stack unwind).
+        std::process::exit(1);
+    }));
 
     info!("{} {}", crate_name!(), solana_version::version!());
     info!("Starting validator with: {:#?}", std::env::args_os());

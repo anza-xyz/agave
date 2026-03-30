@@ -2,6 +2,7 @@
 
 use {
     crate::{
+        XdpSender,
         addr_cache::AddrCache,
         cluster_nodes::{
             ClusterNodes, ClusterNodesCache, DATA_PLANE_FANOUT, Error, MAX_NUM_TURBINE_HOPS,
@@ -9,7 +10,6 @@ use {
     },
     agave_votor::event::VotorEvent,
     agave_votor_messages::migration::MigrationStatus,
-    agave_xdp::xdp_retransmitter::XdpSender,
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError},
     lru::LruCache,
     rand::Rng,
@@ -240,8 +240,8 @@ impl<'a> RetransmitSocket<'a> {
         xdp_sender: Option<&'a XdpSender>,
         cluster_info: &'a ClusterInfo,
     ) -> Self {
-        if let Some(xdp_sender) = xdp_sender {
-            RetransmitSocket::Xdp(xdp_sender)
+        if let Some(sender) = xdp_sender {
+            RetransmitSocket::Xdp(sender)
         } else if cluster_info.bind_ip_addrs().multihoming_enabled() {
             let sockets_per_interface =
                 retransmit_sockets.len() / cluster_info.bind_ip_addrs().len();

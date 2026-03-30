@@ -3,11 +3,6 @@
 #[allow(deprecated)]
 use solana_sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockhashes};
 use {
-    agave_syscalls::{
-        SyscallAbort, SyscallGetClockSysvar, SyscallGetEpochScheduleSysvar, SyscallGetRentSysvar,
-        SyscallInvokeSignedRust, SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove,
-        SyscallMemset, SyscallSetReturnData,
-    },
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Clock, Slot, UnixTimestamp},
     solana_epoch_schedule::EpochSchedule,
@@ -16,7 +11,7 @@ use {
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
-        loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
+        loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry, ProgramRuntimeEnvironment},
         solana_sbpf::{
             program::{BuiltinProgram, SBPFVersion},
             vm::Config,
@@ -31,6 +26,11 @@ use {
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_svm_type_overrides::sync::{Arc, RwLock},
+    solana_syscalls::{
+        SyscallAbort, SyscallGetClockSysvar, SyscallGetEpochScheduleSysvar, SyscallGetRentSysvar,
+        SyscallInvokeSignedRust, SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove,
+        SyscallMemset, SyscallSetReturnData,
+    },
     solana_sysvar_id::SysvarId,
     std::{
         cmp::Ordering,
@@ -356,7 +356,7 @@ pub fn register_builtins(
     );
 }
 
-pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a, 'a>> {
+pub fn create_custom_loader() -> ProgramRuntimeEnvironment {
     let compute_budget = SVMTransactionExecutionBudget::default();
     let vm_config = Config {
         max_call_depth: compute_budget.max_call_depth,
@@ -395,5 +395,5 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a, 'a>> {
         .expect("Registration failed");
     SyscallGetEpochScheduleSysvar::register(&mut loader, "sol_get_epoch_schedule_sysvar")
         .expect("Registration failed");
-    loader
+    ProgramRuntimeEnvironment::from(loader)
 }

@@ -23,7 +23,10 @@ use {
 };
 
 const STAKED_VALIDATORS_CACHE_TTL_S: u64 = 5;
-const STAKED_VALIDATORS_CACHE_NUM_EPOCH_CAP: usize = 5;
+/// Target number of epochs to keep in the staked validators cache. Due to lazy-lru eviction
+/// semantics, the cache may hold up to `2 * STAKED_VALIDATORS_CACHE_NUM_EPOCH_TARGET` entries
+/// before evicting down to this target.
+const STAKED_VALIDATORS_CACHE_NUM_EPOCH_TARGET: usize = 3;
 
 #[derive(Debug)]
 pub enum BLSOp {
@@ -135,7 +138,7 @@ impl VotingService {
                 let mut staked_validators_cache = StakedValidatorsCache::new(
                     bank_forks.clone(),
                     Duration::from_secs(STAKED_VALIDATORS_CACHE_TTL_S),
-                    STAKED_VALIDATORS_CACHE_NUM_EPOCH_CAP,
+                    STAKED_VALIDATORS_CACHE_NUM_EPOCH_TARGET,
                     false,
                     alpenglow_port_override,
                 );

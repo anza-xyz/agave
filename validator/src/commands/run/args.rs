@@ -254,14 +254,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("account_shrink_path")
-            .long("account-shrink-path")
-            .value_name("PATH")
-            .takes_value(true)
-            .multiple(true)
-            .help("Path to accounts shrink path which can hold a compacted account set."),
-    )
-    .arg(
         Arg::with_name("snapshots")
             .long("snapshots")
             .value_name("DIR")

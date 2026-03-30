@@ -485,7 +485,9 @@ fn process_instruction_inner<'a>(
                 ic_logger_msg!(log_collector, "Program is not deployed");
                 Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>)
             }
-            ProgramCacheEntryType::Loaded(executable) => execute(executable, invoke_context),
+            ProgramCacheEntryType::Loaded(executable) => {
+                execute(executable, invoke_context, &loaded_program)
+            }
             _ => {
                 Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>)
             }

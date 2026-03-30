@@ -1,3 +1,5 @@
+#[cfg(feature = "metrics")]
+use solana_svm_timings::ExecuteDetailsTimings;
 use {
     crate::invoke_context::{BuiltinFunctionRegisterer, InvokeContext},
     log::{debug, error, log_enabled, trace},
@@ -8,6 +10,7 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
+    solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::{
         rand::{Rng, rng},
         sync::{
@@ -18,20 +21,99 @@ use {
     },
     std::{
         collections::{HashMap, hash_map::Entry},
-        fmt::{Debug, Formatter},
+        fmt::{Debug, Formatter, Write},
         sync::Weak,
     },
 };
-#[cfg(feature = "metrics")]
-use {solana_svm_measure::measure::Measure, solana_svm_timings::ExecuteDetailsTimings};
 
-pub type ProgramRuntimeEnvironment = Arc<BuiltinProgram<InvokeContext<'static, 'static>>>;
+#[repr(transparent)]
+#[derive(Clone, Debug)]
+pub struct ProgramRuntimeEnvironment(Arc<BuiltinProgram<InvokeContext<'static, 'static>>>);
+impl std::hash::Hash for ProgramRuntimeEnvironment {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        Arc::<BuiltinProgram<InvokeContext<'static, 'static>>>::as_ptr(&self.0).hash(state);
+    }
+}
+impl PartialEq for ProgramRuntimeEnvironment {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for ProgramRuntimeEnvironment {}
+impl std::ops::Deref for ProgramRuntimeEnvironment {
+    type Target = Arc<BuiltinProgram<InvokeContext<'static, 'static>>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl ProgramRuntimeEnvironment {
+    pub fn from(inner: BuiltinProgram<InvokeContext<'static, 'static>>) -> Self {
+        Self(Arc::new(inner))
+    }
+
+    pub const fn from_ref<'a>(
+        inner: &'a Arc<BuiltinProgram<InvokeContext<'static, 'static>>>,
+    ) -> &'a Self {
+        // Safety: This wrapper type is transparent and shares the same representation as the underlying type
+        unsafe { std::mem::transmute(inner) }
+    }
+}
+
+/// Paired execution and deployment environments.
+///
+/// Registered functions within each program runtime environment (syscalls)
+/// depend on per-epoch feature gate statuses. In most cases, the list of
+/// registered functions in the two environments will be the same. However,
+/// it's possible that the effective epoch of deployment could be in the
+/// *next epoch*.
+pub struct ProgramRuntimeEnvironments {
+    /// Environment compiled for the current epoch in which programs are
+    /// executing.
+    execution: ProgramRuntimeEnvironment,
+    /// Environment compiled for the epoch of the next slot at which a program
+    /// deployed in the current slot will execute.
+    deployment: ProgramRuntimeEnvironment,
+}
+
+impl ProgramRuntimeEnvironments {
+    /// Create a new ProgramRuntimeEnvironments from an `execution` and
+    /// `deployment` environment.
+    pub fn new(
+        execution: ProgramRuntimeEnvironment,
+        deployment: ProgramRuntimeEnvironment,
+    ) -> Self {
+        Self {
+            execution,
+            deployment,
+        }
+    }
+
+    /// Get the program runtime environment for execution.
+    pub fn get_env_for_execution(&self) -> &ProgramRuntimeEnvironment {
+        &self.execution
+    }
+
+    /// Get the program runtime environment for deployment.
+    pub fn get_env_for_deployment(&self) -> &ProgramRuntimeEnvironment {
+        &self.deployment
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn mock() -> Self {
+        Self {
+            execution: get_mock_program_runtime_environment(),
+            deployment: get_mock_program_runtime_environment(),
+        }
+    }
+}
+
 #[cfg(feature = "dev-context-only-utils")]
 pub fn get_mock_program_runtime_environment() -> ProgramRuntimeEnvironment {
     static MOCK_ENVIRONMENT: std::sync::OnceLock<ProgramRuntimeEnvironment> =
         std::sync::OnceLock::<ProgramRuntimeEnvironment>::new();
     MOCK_ENVIRONMENT
-        .get_or_init(|| Arc::new(BuiltinProgram::new_mock()))
+        .get_or_init(|| ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock()))
         .clone()
 }
 
@@ -150,7 +232,9 @@ pub enum ProgramCacheEntryType {
     ///
     /// It continues to track usage statistics even when the compiled executable of the program is evicted from memory.
     Unloaded(ProgramRuntimeEnvironment),
-    /// Verified and compiled program
+    /// Verified program.
+    ///
+    /// It may or may not be JIT compiled.
     Loaded(Executable<InvokeContext<'static, 'static>>),
     /// A built-in program which is not stored on-chain but backed into and distributed with the validator
     Builtin(BuiltinProgram<InvokeContext<'static, 'static>>),
@@ -158,18 +242,17 @@ pub enum ProgramCacheEntryType {
 
 impl Debug for ProgramCacheEntryType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
+        f.debug_struct(match self {
             ProgramCacheEntryType::FailedVerification(_) => {
-                write!(f, "ProgramCacheEntryType::FailedVerification")
+                "ProgramCacheEntryType::FailedVerification"
             }
-            ProgramCacheEntryType::Closed => write!(f, "ProgramCacheEntryType::Closed"),
-            ProgramCacheEntryType::DelayVisibility => {
-                write!(f, "ProgramCacheEntryType::DelayVisibility")
-            }
-            ProgramCacheEntryType::Unloaded(_) => write!(f, "ProgramCacheEntryType::Unloaded"),
-            ProgramCacheEntryType::Loaded(_) => write!(f, "ProgramCacheEntryType::Loaded"),
-            ProgramCacheEntryType::Builtin(_) => write!(f, "ProgramCacheEntryType::Builtin"),
-        }
+            ProgramCacheEntryType::Closed => "ProgramCacheEntryType::Closed",
+            ProgramCacheEntryType::DelayVisibility => "ProgramCacheEntryType::DelayVisibility",
+            ProgramCacheEntryType::Unloaded(_) => "ProgramCacheEntryType::Unloaded",
+            ProgramCacheEntryType::Loaded(_) => "ProgramCacheEntryType::Loaded",
+            ProgramCacheEntryType::Builtin(_) => "ProgramCacheEntryType::Builtin",
+        })
+        .finish()
     }
 }
 
@@ -177,10 +260,151 @@ impl ProgramCacheEntryType {
     /// Returns a reference to its environment if it has one
     pub fn get_environment(&self) -> Option<&ProgramRuntimeEnvironment> {
         match self {
-            ProgramCacheEntryType::Loaded(program) => Some(program.get_loader()),
+            ProgramCacheEntryType::Loaded(program) => {
+                Some(ProgramRuntimeEnvironment::from_ref(program.get_loader()))
+            }
             ProgramCacheEntryType::FailedVerification(env)
             | ProgramCacheEntryType::Unloaded(env) => Some(env),
             _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ProgramStatistics {
+    pub uses: AtomicU64,
+
+    pub compilations: AtomicU64,
+    pub total_compilation_time_us: AtomicU64,
+    /// Exponential moving average of the compilation time.
+    pub compilation_time_ema: AtomicU64,
+
+    pub jit_invocations: AtomicU64,
+    pub total_jit_execution_time_us: AtomicU64,
+    /// Exponential moving average of the JIT execution time.
+    pub jit_execution_time_ema: AtomicU64,
+
+    pub interpreted_invocations: AtomicU64,
+    pub total_interpretation_time_us: AtomicU64,
+    /// Exponential moving average of the interpreted execution time.
+    pub interpretation_time_ema: AtomicU64,
+}
+
+/// Number of compilation observations contributing to the the [`Self::compilation_time_ema`].
+const COMPILATION_EMA_WINDOW_SIZE: u64 = 10;
+/// Number of execution observations contributing to the execution EMA stats.
+const EXECUTION_EMA_WINDOW_SIZE: u64 = 500;
+/// Track exponential moving average in scaled-up units.
+///
+/// Doing so allows to mitigate error from rounding-towards-zero we get when using integer math.
+const EMA_SCALE: u64 = 1_000;
+
+impl ProgramStatistics {
+    fn observe_ema<const WINDOW_SIZE: u64>(counter: &AtomicU64, duration_us: u64) {
+        let duration_ema = duration_us.saturating_mul(EMA_SCALE);
+        counter
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |ema| {
+                // Exponential moving average iteratively is computed as $ema' = alpha *
+                // observation + (1 - alpha) * ema$. This works great for floating point, but we
+                // want integers. For purposes of convenience we also want to really think in terms
+                // of simple moving average window sizes as that is easier to reason about.
+                //
+                // Exponential moving average and simple moving average of window N has a rough
+                // equivalence of `alpha ≈ 2 / (N + 1)`. Slotting this into our original iterative
+                // formula:
+                //
+                // $$ ema' = 2 / (N+1) * observation + (1 - 2/(N+1)) * ema $$
+                //
+                // we get
+                //
+                // $$ ema' = (2*observation)/(N+1) + (N+1-2)*ema/(N+1) $$
+                let (numer, denom) = const { (2, 1 + WINDOW_SIZE) };
+                Some(if ema == 0 {
+                    duration_ema
+                } else {
+                    let weighted_observation = duration_ema.saturating_mul(numer);
+                    let previous_observations = ema.saturating_mul(denom.saturating_sub(numer));
+                    weighted_observation
+                        .saturating_add(previous_observations)
+                        .checked_div(denom)
+                        .expect("unreachable: denom is >= 1")
+                })
+            })
+            .expect("unreachable: closure always returns a Some");
+    }
+
+    /// Record information about JIT compilation.
+    pub fn jit_compiled(&self, duration_us: u64) {
+        let ord = Ordering::Relaxed;
+        self.compilations.fetch_add(1, ord);
+        self.total_compilation_time_us.fetch_add(duration_us, ord);
+        Self::observe_ema::<COMPILATION_EMA_WINDOW_SIZE>(&self.compilation_time_ema, duration_us);
+    }
+
+    /// Record information about JIT-compiled program having been executed.
+    pub fn jit_executed(&self, duration_us: u64) {
+        let ord = Ordering::Relaxed;
+        self.jit_invocations.fetch_add(1, ord);
+        self.total_jit_execution_time_us.fetch_add(duration_us, ord);
+        Self::observe_ema::<EXECUTION_EMA_WINDOW_SIZE>(&self.jit_execution_time_ema, duration_us);
+    }
+
+    /// Record information about program executed with the interpreter.
+    pub fn interpreter_executed(&self, duration_us: u64) {
+        let ord = Ordering::Relaxed;
+        self.interpreted_invocations.fetch_add(1, ord);
+        self.total_interpretation_time_us
+            .fetch_add(duration_us, ord);
+        Self::observe_ema::<EXECUTION_EMA_WINDOW_SIZE>(&self.interpretation_time_ema, duration_us);
+    }
+
+    pub fn merge_from(&self, other: &ProgramStatistics) {
+        let ord = Ordering::Relaxed;
+        self.uses.fetch_add(other.uses.load(ord), ord);
+        let other_compilations = other.compilations.load(ord);
+        let this_compilations = self.compilations.fetch_add(other_compilations, ord);
+        self.total_compilation_time_us
+            .fetch_add(other.total_compilation_time_us.load(ord), ord);
+        let other_jit_invocations = other.jit_invocations.load(ord);
+        let this_jit_invocations = self.jit_invocations.fetch_add(other_jit_invocations, ord);
+        self.total_jit_execution_time_us
+            .fetch_add(other.total_jit_execution_time_us.load(ord), ord);
+        let other_interpretations = other.interpreted_invocations.load(ord);
+        let this_interpretations = self
+            .interpreted_invocations
+            .fetch_add(other.interpreted_invocations.load(ord), ord);
+        self.total_interpretation_time_us
+            .fetch_add(other.total_interpretation_time_us.load(ord), ord);
+        if let Some(comp_ema) = ProgramCacheStats::combined_ema::<
+            COMPILATION_EMA_WINDOW_SIZE,
+            COMPILATION_EMA_WINDOW_SIZE,
+        >(
+            &self.compilation_time_ema,
+            &other.compilation_time_ema,
+            this_compilations,
+            other_compilations,
+        ) {
+            self.compilation_time_ema.store(comp_ema, ord);
+        }
+        if let Some(exec_ema) =
+            ProgramCacheStats::combined_ema::<EXECUTION_EMA_WINDOW_SIZE, EXECUTION_EMA_WINDOW_SIZE>(
+                &self.jit_execution_time_ema,
+                &other.jit_execution_time_ema,
+                this_jit_invocations,
+                other_jit_invocations,
+            )
+        {
+            self.jit_execution_time_ema.store(exec_ema, ord);
+        }
+        if let Some(interp_ema) =
+            ProgramCacheStats::combined_ema::<EXECUTION_EMA_WINDOW_SIZE, EXECUTION_EMA_WINDOW_SIZE>(
+                &self.interpretation_time_ema,
+                &other.interpretation_time_ema,
+                this_interpretations,
+                other_interpretations,
+            )
+        {
+            self.interpretation_time_ema.store(interp_ema, ord);
         }
     }
 }
@@ -201,8 +425,7 @@ pub struct ProgramCacheEntry {
     /// Slot in which this entry will become active (can be in the future)
     pub effective_slot: Slot,
     /// How often this entry was used by a transaction
-    pub tx_usage_counter: Arc<AtomicU64>,
-    /// Latest slot in which the entry was used
+    pub stats: Arc<ProgramStatistics>,
     pub latest_access_slot: AtomicU64,
 }
 
@@ -259,6 +482,7 @@ impl ProgramCacheStats {
              Prunes-Orphan: {prunes_orphan}, Prunes-Environment: {prunes_environment}, Empty: \
              {empty_entries}, Water-Level: {water_level}"
         );
+
         if log_enabled!(log::Level::Trace) && !self.evictions.is_empty() {
             let mut evictions = self.evictions.iter().collect::<Vec<_>>();
             evictions.sort_by_key(|e| e.1);
@@ -275,6 +499,25 @@ impl ProgramCacheStats {
                 "Program", "Count", evictions
             );
         }
+    }
+
+    fn combined_ema<const WINDOW1: u64, const WINDOW2: u64>(
+        into_ema: &AtomicU64,
+        from_ema: &AtomicU64,
+        into_observations: u64,
+        from_observations: u64,
+    ) -> Option<u64> {
+        // This is a mild non-sense, but there is no good mathematically rigorous way to merge
+        // two independent EMA trackers AFAICT and this is the best I (nagisa) could come up
+        // with…
+        let other_ema_val = from_ema.load(Ordering::Relaxed);
+        let other_ema_weight = std::cmp::max(WINDOW1, from_observations);
+        let this_ema_val = into_ema.load(Ordering::Relaxed);
+        let this_ema_weight = std::cmp::max(WINDOW2, into_observations);
+        other_ema_val
+            .wrapping_mul(other_ema_weight)
+            .wrapping_add(this_ema_val.wrapping_mul(this_ema_weight))
+            .checked_div(other_ema_weight.wrapping_add(this_ema_weight))
     }
 }
 
@@ -346,7 +589,7 @@ impl ProgramCacheEntry {
     /// hasn't changed since it was unloaded.
     pub unsafe fn reload(
         loader_key: &Pubkey,
-        program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static, 'static>>>,
+        program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
         effective_slot: Slot,
         elf_bytes: &[u8],
@@ -368,7 +611,7 @@ impl ProgramCacheEntry {
 
     fn new_internal(
         loader_key: &Pubkey,
-        program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static, 'static>>>,
+        program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
         effective_slot: Slot,
         elf_bytes: &[u8],
@@ -376,9 +619,10 @@ impl ProgramCacheEntry {
         #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
         reloading: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        let entry_stats = ProgramStatistics::default();
         #[cfg(feature = "metrics")]
         let load_elf_time = Measure::start("load_elf_time");
-        let executable = Executable::load(elf_bytes, program_runtime_environment.clone())?;
+        let executable = Executable::load(elf_bytes, Arc::clone(&*program_runtime_environment))?;
 
         #[cfg(feature = "metrics")]
         {
@@ -397,12 +641,13 @@ impl ProgramCacheEntry {
 
         #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
         {
-            #[cfg(feature = "metrics")]
             let jit_compile_time = Measure::start("jit_compile_time");
             executable.jit_compile()?;
+            let jit_compile_time = jit_compile_time.end_as_us();
+            entry_stats.jit_compiled(jit_compile_time);
             #[cfg(feature = "metrics")]
             {
-                metrics.jit_compile_us = jit_compile_time.end_as_us();
+                metrics.jit_compile_us = jit_compile_time;
             }
         }
 
@@ -411,8 +656,8 @@ impl ProgramCacheEntry {
             account_owner: ProgramCacheEntryOwner::try_from(loader_key).unwrap(),
             account_size,
             effective_slot,
-            tx_usage_counter: Arc::<AtomicU64>::default(),
             program: ProgramCacheEntryType::Loaded(executable),
+            stats: entry_stats.into(),
             latest_access_slot: AtomicU64::new(0),
         })
     }
@@ -434,7 +679,7 @@ impl ProgramCacheEntry {
             account_size: self.account_size,
             deployment_slot: self.deployment_slot,
             effective_slot: self.effective_slot,
-            tx_usage_counter: self.tx_usage_counter.clone(),
+            stats: Arc::clone(&self.stats),
             latest_access_slot: AtomicU64::new(self.latest_access_slot.load(Ordering::Relaxed)),
         })
     }
@@ -452,8 +697,8 @@ impl ProgramCacheEntry {
             account_owner: ProgramCacheEntryOwner::NativeLoader,
             account_size,
             effective_slot: deployment_slot,
-            tx_usage_counter: Arc::<AtomicU64>::default(),
             program: ProgramCacheEntryType::Builtin(program),
+            stats: Arc::default(),
             latest_access_slot: AtomicU64::new(0),
         }
     }
@@ -463,19 +708,14 @@ impl ProgramCacheEntry {
         account_owner: ProgramCacheEntryOwner,
         reason: ProgramCacheEntryType,
     ) -> Self {
-        Self::new_tombstone_with_usage_counter(
-            slot,
-            account_owner,
-            reason,
-            Arc::<AtomicU64>::default(),
-        )
+        Self::new_tombstone_with_stats(slot, account_owner, reason, Arc::default())
     }
 
-    pub fn new_tombstone_with_usage_counter(
+    pub fn new_tombstone_with_stats(
         slot: Slot,
         account_owner: ProgramCacheEntryOwner,
         reason: ProgramCacheEntryType,
-        tx_usage_counter: Arc<AtomicU64>,
+        stats: Arc<ProgramStatistics>,
     ) -> Self {
         let tombstone = Self {
             program: reason,
@@ -483,7 +723,7 @@ impl ProgramCacheEntry {
             account_size: 0,
             deployment_slot: slot,
             effective_slot: slot,
-            tx_usage_counter,
+            stats,
             latest_access_slot: AtomicU64::new(0),
         };
         debug_assert!(tombstone.is_tombstone());
@@ -511,16 +751,55 @@ impl ProgramCacheEntry {
         let _ = self.latest_access_slot.fetch_max(slot, Ordering::Relaxed);
     }
 
-    pub fn decayed_usage_counter(&self, now: Slot) -> u64 {
+    /// Compute a retention score.
+    ///
+    /// Eviction uses an adapted GDSF scheme which incorporates frequency, recovery cost
+    /// (recompilation) and time-based decay.
+    ///
+    /// How hard should we try to retain this entry. Higher number -> retention more likely.
+    pub fn retention_score(&self) -> u64 {
         let last_access = self.latest_access_slot.load(Ordering::Relaxed);
-        // Shifting the u64 value for more than 63 will cause an overflow.
-        let decaying_for = std::cmp::min(63, now.saturating_sub(last_access));
-        self.tx_usage_counter.load(Ordering::Relaxed) >> decaying_for
+        let recovery_cost = self.stats.compilation_time_ema.load(Ordering::Relaxed);
+        let frequency = self.stats.uses.load(Ordering::Relaxed);
+        retention_score(last_access, recovery_cost, frequency)
     }
 
     pub fn account_owner(&self) -> Pubkey {
         self.account_owner.into()
     }
+}
+
+/// See [`ProgramCacheEntry::retention_score`].
+const fn retention_score(last_access: u64, recovery_cost: u64, frequency: u64) -> u64 {
+    // Traditionally GDSF uses the following logic:
+    //
+    // on_access:
+    //   entry.frequency += 1
+    //   entry.H := cache.L + (entry.cost * entry.frequency) / entry.size
+    //
+    // on_eviction:
+    //   victim = pick_victim_minimizing_H()
+    //   cache.L := victim.H
+    //
+    // It achieves decay by virtue of L increasing over time (and therefore the “value” of
+    // stored score of each entry decreasing over time.) Entry recovery and frequency, as well
+    // as size are otherwise also accounted for by them inflating the overall score by a bit.
+    //
+    // We adapt this algorithm slightly: we already have a kind of `L` – access slot. It does
+    // not include the weight of the evicted entry as the original algorithm does, that is
+    // *probably* fine (the author has not done any empirical experiments to verify it it
+    // actually matters.)
+    //
+    // Additionally we ignore the size component altogether as irrelevant and instead of
+    // applying entry weight linearly, we use a `log_2`. We can't use plain `weight*frequency`
+    // as the most heavily used entries would never ever get evicted after just some runtime,
+    // even if they're no longer used. With `log_2` weight and frequency can contribute to
+    // up-to 128 slots of "bonus" towards their retention compared to rarely used peers.
+    //
+    // Feel free to adjust the specific formulae used.
+    let weight = (recovery_cost as u128).wrapping_mul(frequency as u128);
+    let weight_log = u128::BITS.wrapping_sub(weight.leading_zeros());
+    last_access.saturating_add(weight_log as u64)
 }
 
 /// Globally manages the transition between environments at the epoch boundary
@@ -745,11 +1024,11 @@ impl ProgramCacheForTxBatch {
                     // Found a program entry on the current fork, but it's not effective
                     // yet. It indicates that the program has delayed visibility. Return
                     // the tombstone to reflect that.
-                    Arc::new(ProgramCacheEntry::new_tombstone_with_usage_counter(
+                    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
                         entry.deployment_slot,
                         entry.account_owner,
                         ProgramCacheEntryType::DelayVisibility,
-                        entry.tx_usage_counter.clone(),
+                        Arc::clone(&entry.stats),
                     ))
                 } else {
                     entry.clone()
@@ -822,7 +1101,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             env_opt: Option<&ProgramRuntimeEnvironment>,
         ) -> bool {
             env_opt
-                .map(|env| Arc::ptr_eq(env, program_runtime_environment))
+                .map(|env| env == program_runtime_environment)
                 .unwrap_or(true)
         }
         match &mut self.index {
@@ -871,11 +1150,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 return true;
                             }
                         }
-                        // Copy over the usage counter to the new entry
-                        entry.tx_usage_counter.fetch_add(
-                            existing.tx_usage_counter.load(Ordering::Relaxed),
-                            Ordering::Relaxed,
-                        );
+                        entry.stats.merge_from(&existing.stats);
                         *existing = Arc::clone(&entry);
                         self.stats.reloads.fetch_add(1, Ordering::Relaxed);
                     }
@@ -893,7 +1168,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             .program
                             .get_environment()
                             .zip(entry.program.get_environment())
-                            .map(|(a, b)| !Arc::ptr_eq(a, b))
+                            .map(|(a, b)| a != b)
                             .unwrap_or(false)
                         || existing == &entry
                 });
@@ -959,7 +1234,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 // getting used by an older slot.
                                 if let Some(entry_env) = entry.program.get_environment()
                                     && let Some(env) = first_ancestor_env
-                                    && !Arc::ptr_eq(entry_env, env)
+                                    && entry_env != env
                                 {
                                     return true;
                                 }
@@ -1000,7 +1275,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         let Some(environment) = entry.program.get_environment() else {
             return true;
         };
-        Arc::ptr_eq(environment, program_runtime_environment)
+        environment == program_runtime_environment
     }
 
     fn matches_criteria(
@@ -1088,11 +1363,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     // Found a program entry on the current fork, but it's not effective
                                     // yet. It indicates that the program has delayed visibility. Return
                                     // the tombstone to reflect that.
-                                    Arc::new(ProgramCacheEntry::new_tombstone_with_usage_counter(
+                                    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
                                         entry.deployment_slot,
                                         entry.account_owner,
                                         ProgramCacheEntryType::DelayVisibility,
-                                        entry.tx_usage_counter.clone(),
+                                        Arc::clone(&entry.stats),
                                     ))
                                 } else {
                                     continue;
@@ -1100,9 +1375,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 entry_to_return
                                     .update_access_slot(loaded_programs_for_tx_batch.slot);
                                 if increment_usage_counter {
-                                    entry_to_return
-                                        .tx_usage_counter
-                                        .fetch_add(1, Ordering::Relaxed);
+                                    entry_to_return.stats.uses.fetch_add(1, Ordering::Relaxed);
                                 }
                                 loaded_programs_for_tx_batch
                                     .entries
@@ -1241,7 +1514,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     pub fn sort_and_unload(&mut self, shrink_to: PercentageInteger) {
         let mut sorted_candidates = self.get_flattened_entries();
         sorted_candidates.sort_by_cached_key(|(_id, _last_modification_slot, program)| {
-            program.tx_usage_counter.load(Ordering::Relaxed)
+            program.stats.uses.load(Ordering::Relaxed)
         });
         let num_to_unload = sorted_candidates
             .len()
@@ -1252,21 +1525,21 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
     }
 
-    /// Evicts programs using 2's random selection, choosing the least used program out of the two entries.
-    /// The eviction is performed enough number of times to reduce the cache usage to the given percentage.
-    pub fn evict_using_2s_random_selection(&mut self, shrink_to: PercentageInteger, now: Slot) {
+    /// Evicts programs using random selection, choosing the worst scoring program out of the
+    /// entries sampled.
+    ///
+    /// The eviction is performed enough number of times to reduce the cache usage to the given
+    /// percentage.
+    pub fn evict_using_random_selection(&mut self, shrink_to: PercentageInteger, now: Slot) {
         let mut candidates = self.get_flattened_entries();
+        let mut rng = rng();
         self.stats
             .water_level
             .store(candidates.len() as u64, Ordering::Relaxed);
         let num_to_unload = candidates
             .len()
             .saturating_sub(shrink_to.apply_to(MAX_LOADED_ENTRY_COUNT));
-        fn random_index_and_usage_counter(
-            candidates: &[(Pubkey, Slot, Arc<ProgramCacheEntry>)],
-            now: Slot,
-        ) -> (usize, u64) {
-            let mut rng = rng();
+        let mut sample_entry = |candidates: &Vec<(Pubkey, u64, Arc<ProgramCacheEntry>)>| {
             // gen_range is deprecated in favor of random_range in rand>=0.9, but we also get
             // rnd() from shuttle, which doesn't yet support rand 0.9 APIs
             #[cfg(feature = "shuttle-test")]
@@ -1277,19 +1550,32 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 .get(index)
                 .expect("Failed to get cached entry")
                 .2
-                .decayed_usage_counter(now);
+                .retention_score();
             (index, usage_counter)
-        }
+        };
 
+        // Random sampling with just 2 choices can frequently lead to a situation where both
+        // entries chosen have relatively high retention scores, having us to pick one out of two
+        // poor options. We can tell what a relatively high retention score is, so we can make a
+        // few additional samples until we hit some other entry that isn't as highly scoring.
+        //
+        // Note that the "high enough" compilation time and use count numbers used here are
+        // relatively arbitrary.
+        const MAX_ADDITIONAL_SAMPLES: usize = 3;
+        let avoid_evicting_above_score = retention_score(now, 500 * EMA_SCALE, 500);
         for _ in 0..num_to_unload {
-            let (index1, usage_counter1) = random_index_and_usage_counter(&candidates, now);
-            let (index2, usage_counter2) = random_index_and_usage_counter(&candidates, now);
-
-            let (id, last_modification_slot, entry) = if usage_counter1 < usage_counter2 {
-                candidates.swap_remove(index1)
-            } else {
-                candidates.swap_remove(index2)
-            };
+            let (mut index, mut score) = sample_entry(&candidates);
+            for _ in 0..MAX_ADDITIONAL_SAMPLES {
+                let (sample_index, sample_score) = sample_entry(&candidates);
+                if score > sample_score {
+                    index = sample_index;
+                    score = sample_score;
+                }
+                if score < avoid_evicting_above_score {
+                    break;
+                }
+            }
+            let (id, last_modification_slot, entry) = candidates.swap_remove(index);
             self.unload_program_entry(id, last_modification_slot, &entry);
         }
     }
@@ -1325,7 +1611,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 // For such entries, `to_unloaded()` will return None.
                 // These entry types do not occupy much memory.
                 if let Some(unloaded) = candidate.to_unloaded() {
-                    if candidate.tx_usage_counter.load(Ordering::Relaxed) == 1 {
+                    if candidate.stats.uses.load(Ordering::Relaxed) == 1 {
                         self.stats.one_hit_wonders.fetch_add(1, Ordering::Relaxed);
                     }
                     self.stats
@@ -1353,6 +1639,68 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             }
         }
     }
+
+    /// Log per-entry statistics for each entry in the global cache.
+    pub fn output_entry_stats(&self) {
+        // The entry stats can become very verbose after some runtime. Rather than dumping them
+        // to the log, we'd rather maintain a continuously updated file instead...
+        static ENTRY_STAT_PATH: std::sync::LazyLock<Option<std::ffi::OsString>> =
+            std::sync::LazyLock::new(|| std::env::var_os("AGAVE_PROGRAM_CACHE_ENTRY_STATS_PATH"));
+        let Some(stat_path) = &*ENTRY_STAT_PATH else {
+            log::trace!("Set AGAVE_PROGRAM_CACHE_ENTRY_STATS_PATH to write per-entry stats");
+            return;
+        };
+        let mut output = String::new();
+        match &self.index {
+            IndexImplementation::V1 { entries, .. } => {
+                for (addr, entry_versions) in entries {
+                    for (idx, entry) in entry_versions.iter().enumerate() {
+                        let entry_ty = match &entry.program {
+                            ProgramCacheEntryType::FailedVerification(_) => "FailedVerification",
+                            ProgramCacheEntryType::Closed => "Closed",
+                            ProgramCacheEntryType::DelayVisibility => "DelayVisibility",
+                            ProgramCacheEntryType::Unloaded(_) => "Unloaded",
+                            ProgramCacheEntryType::Builtin(_) => "Builtin",
+                            #[cfg(not(all(not(target_os = "windows"), target_arch = "x86_64")))]
+                            ProgramCacheEntryType::Loaded(_) => "Loaded",
+                            #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
+                            ProgramCacheEntryType::Loaded(executable) => {
+                                if executable.get_compiled_program().is_some() {
+                                    "JitCompiled"
+                                } else {
+                                    "Loaded"
+                                }
+                            }
+                        };
+                        let stats = &entry.stats;
+                        let uses = stats.uses.load(Ordering::Relaxed);
+                        let compiles = stats.compilations.load(Ordering::Relaxed);
+                        let comptime = stats.total_compilation_time_us.load(Ordering::Relaxed);
+                        let comptime_ema =
+                            stats.compilation_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
+                        let invokes = stats.jit_invocations.load(Ordering::Relaxed);
+                        let jittime = stats.total_jit_execution_time_us.load(Ordering::Relaxed);
+                        let jittime_ema =
+                            stats.jit_execution_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
+                        let interps = stats.interpreted_invocations.load(Ordering::Relaxed);
+                        let interptime = stats.total_interpretation_time_us.load(Ordering::Relaxed);
+                        let interpema =
+                            stats.interpretation_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
+                        let _ = writeln!(
+                            &mut output,
+                            "{addr},{idx},{entry_ty},{uses},{compiles},{comptime},{comptime_ema},\
+                             {invokes},{jittime},{jittime_ema},{interps},{interptime},{interpema}"
+                        );
+                    }
+                }
+            }
+        }
+        if let Err(e) = std::fs::write(stat_path, output) {
+            log::info!("Writing entry stats to {stat_path:?} failed: {e:?}");
+        } else {
+            log::debug!("Entry stats written to {stat_path:?}");
+        }
+    }
 }
 
 #[cfg(feature = "frozen-abi")]
@@ -1378,7 +1726,7 @@ mod tests {
             BlockRelation, DELAY_VISIBILITY_SLOT_OFFSET, ForkGraph, ProgramCache,
             ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
             ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
-            get_mock_program_runtime_environment,
+            ProgramStatistics, get_mock_program_runtime_environment,
         },
         assert_matches::assert_matches,
         percentage::Percentage,
@@ -1398,7 +1746,11 @@ mod tests {
     };
 
     fn new_test_entry(deployment_slot: Slot, effective_slot: Slot) -> Arc<ProgramCacheEntry> {
-        new_test_entry_with_usage(deployment_slot, effective_slot, AtomicU64::default())
+        new_test_entry_with_usage(
+            deployment_slot,
+            effective_slot,
+            ProgramStatistics::default(),
+        )
     }
 
     fn new_loaded_entry(env: ProgramRuntimeEnvironment) -> ProgramCacheEntryType {
@@ -1407,14 +1759,14 @@ mod tests {
             .unwrap()
             .read_to_end(&mut elf)
             .unwrap();
-        let executable = Executable::load(&elf, env).unwrap();
+        let executable = Executable::load(&elf, Arc::clone(&*env)).unwrap();
         ProgramCacheEntryType::Loaded(executable)
     }
 
     fn new_test_entry_with_usage(
         deployment_slot: Slot,
         effective_slot: Slot,
-        usage_counter: AtomicU64,
+        stats: ProgramStatistics,
     ) -> Arc<ProgramCacheEntry> {
         Arc::new(ProgramCacheEntry {
             program: new_loaded_entry(get_mock_program_runtime_environment()),
@@ -1422,7 +1774,7 @@ mod tests {
             account_size: 0,
             deployment_slot,
             effective_slot,
-            tx_usage_counter: Arc::new(usage_counter),
+            stats: Arc::new(stats),
             latest_access_slot: AtomicU64::new(deployment_slot),
         })
     }
@@ -1437,7 +1789,7 @@ mod tests {
             account_size: 0,
             deployment_slot,
             effective_slot,
-            tx_usage_counter: Arc::default(),
+            stats: Arc::default(),
             latest_access_slot: AtomicU64::default(),
         })
     }
@@ -1467,7 +1819,7 @@ mod tests {
         let loaded = new_test_entry_with_usage(
             current_slot,
             current_slot.saturating_add(1),
-            AtomicU64::default(),
+            ProgramStatistics::default(),
         );
         let unloaded = Arc::new(loaded.to_unloaded().expect("Failed to unload the program"));
         cache.assign_program(&env, key, current_slot, unloaded.clone());
@@ -1487,31 +1839,90 @@ mod tests {
     }
 
     #[test]
-    fn test_usage_counter_decay() {
-        let program = new_test_entry_with_usage(10, 11, AtomicU64::new(32));
+    fn test_retention_score_decay_horizon() {
+        let stats = ProgramStatistics {
+            uses: AtomicU64::new(u64::MAX),
+            compilation_time_ema: AtomicU64::new(u64::MAX),
+            ..Default::default()
+        };
+        let program = new_test_entry_with_usage(0, 0, stats);
+        program.update_access_slot(1);
+        assert!(
+            dbg!(program.retention_score()) <= 129,
+            "retention score should remain within sensible boundaries even for very frequently \
+             used entries."
+        );
+    }
+
+    #[test]
+    fn test_retention_score_frequency_preference() {
+        let stats = ProgramStatistics {
+            uses: AtomicU64::new(16),
+            compilation_time_ema: AtomicU64::new(1),
+            ..Default::default()
+        };
+        let program = new_test_entry_with_usage(10, 11, stats);
         program.update_access_slot(15);
-        assert_eq!(program.decayed_usage_counter(15), 32);
-        assert_eq!(program.decayed_usage_counter(16), 16);
-        assert_eq!(program.decayed_usage_counter(17), 8);
-        assert_eq!(program.decayed_usage_counter(18), 4);
-        assert_eq!(program.decayed_usage_counter(19), 2);
-        assert_eq!(program.decayed_usage_counter(20), 1);
-        assert_eq!(program.decayed_usage_counter(21), 0);
-        assert_eq!(program.decayed_usage_counter(15), 32);
-        assert_eq!(program.decayed_usage_counter(14), 32);
+        let less_used_retention_score = program.retention_score();
+        program.stats.uses.fetch_max(1024, Ordering::Relaxed);
+        let more_used_retention_score = program.retention_score();
+        assert!(
+            less_used_retention_score > 15,
+            "frequency should count for entry retention score"
+        );
+        assert!(
+            dbg!(more_used_retention_score) > dbg!(less_used_retention_score),
+            "retention score should prefer evicting less used entry over the more used one if \
+             possible"
+        );
+    }
 
-        program.update_access_slot(18);
-        assert_eq!(program.decayed_usage_counter(15), 32);
-        assert_eq!(program.decayed_usage_counter(16), 32);
-        assert_eq!(program.decayed_usage_counter(17), 32);
-        assert_eq!(program.decayed_usage_counter(18), 32);
-        assert_eq!(program.decayed_usage_counter(19), 16);
-        assert_eq!(program.decayed_usage_counter(20), 8);
-        assert_eq!(program.decayed_usage_counter(21), 4);
+    #[test]
+    fn test_retention_score_recovery_time_preference() {
+        let stats = ProgramStatistics {
+            uses: AtomicU64::new(1),
+            compilation_time_ema: AtomicU64::new(1000),
+            ..Default::default()
+        };
+        let program = new_test_entry_with_usage(10, 11, stats);
+        program.update_access_slot(15);
+        let cheaper_to_compile_score = program.retention_score();
+        program
+            .stats
+            .compilation_time_ema
+            .fetch_max(2000, Ordering::Relaxed);
+        let more_expensive_to_compile_score = program.retention_score();
+        assert!(
+            cheaper_to_compile_score > 15,
+            "compile time should count for entry retention score"
+        );
+        assert!(
+            dbg!(more_expensive_to_compile_score) > dbg!(cheaper_to_compile_score),
+            "retention score should prefer evicting cheaper-to-compile entries"
+        );
+    }
 
-        // Decay for 63 or more slots
-        assert_eq!(program.decayed_usage_counter(18 + 63), 0);
-        assert_eq!(program.decayed_usage_counter(100), 0);
+    #[test]
+    fn test_retention_weight_metric_does_not_outweight_smaller_metric() {
+        // Compilation time generally stays in the scale of 4 digits, while the uses counter can
+        // become many millions. Neither should overshadow other too much.
+        let stats = ProgramStatistics {
+            uses: AtomicU64::new(100_000_000),
+            compilation_time_ema: AtomicU64::new(1000),
+            ..Default::default()
+        };
+        let program = new_test_entry_with_usage(10, 11, stats);
+        program.update_access_slot(15);
+        let previous_score = program.retention_score();
+        program
+            .stats
+            .compilation_time_ema
+            .fetch_max(2000, Ordering::Relaxed);
+        let new_score = program.retention_score();
+        assert!(
+            dbg!(previous_score) != dbg!(new_score),
+            "retention weight components shouldn't overshadow the other due to scale differences"
+        );
     }
 
     fn program_deploy_test_helper(
@@ -1528,6 +1939,10 @@ mod tests {
             .enumerate()
             .for_each(|(i, deployment_slot)| {
                 let usage_counter = *usage_counters.get(i).unwrap_or(&0);
+                let stats = ProgramStatistics {
+                    uses: usage_counter.into(),
+                    ..Default::default()
+                };
                 cache.assign_program(
                     &env,
                     program,
@@ -1535,14 +1950,14 @@ mod tests {
                     new_test_entry_with_usage(
                         *deployment_slot,
                         (*deployment_slot).saturating_add(2),
-                        AtomicU64::new(usage_counter),
+                        stats,
                     ),
                 );
                 programs.push((program, *deployment_slot, usage_counter));
             });
 
         // Add tombstones entries for program
-        let env = Arc::new(BuiltinProgram::new_mock());
+        let env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
         for slot in 21..31 {
             set_tombstone(
                 cache,
@@ -1629,7 +2044,7 @@ mod tests {
         let num_loaded_expected =
             Percentage::from(eviction_pct).apply_to(crate::loaded_programs::MAX_LOADED_ENTRY_COUNT);
         let num_unloaded_expected = num_unloaded_expected + num_loaded - num_loaded_expected;
-        cache.evict_using_2s_random_selection(Percentage::from(eviction_pct), 21);
+        cache.evict_using_random_selection(Percentage::from(eviction_pct), 21);
 
         // Count the number of loaded, unloaded and tombstone entries.
         let num_loaded = num_matching_entries(&cache, |program_type| {
@@ -1725,7 +2140,7 @@ mod tests {
             .iter()
             .filter_map(|(key, program)| {
                 matches!(program.program, ProgramCacheEntryType::Unloaded(_))
-                    .then_some((*key, program.tx_usage_counter.load(Ordering::Relaxed)))
+                    .then_some((*key, program.stats.uses.load(Ordering::Relaxed)))
             })
             .collect::<Vec<(Pubkey, u64)>>();
 
@@ -1770,12 +2185,12 @@ mod tests {
         // Add enough programs to the cache to trigger 1 eviction after shrinking.
         let num_total_programs = (cache_capacity_after_shrink + 1) as u64;
         (0..num_total_programs).for_each(|i| {
-            cache.assign_program(
-                &env,
-                program,
-                i,
-                new_test_entry_with_usage(i, i + 2, AtomicU64::new(i + 10)),
-            );
+            let stats = ProgramStatistics {
+                uses: (i + 10).into(),
+                ..Default::default()
+            };
+            let entry = new_test_entry_with_usage(i, i + 2, stats);
+            cache.assign_program(&env, program, i, entry);
         });
 
         cache.sort_and_unload(Percentage::from(evict_to_pct));
@@ -1791,7 +2206,7 @@ mod tests {
             .for_each(|(_key, program)| {
                 if matches!(program.program, ProgramCacheEntryType::Unloaded(_)) {
                     // Test that the usage counter is retained for the unloaded program
-                    assert_eq!(program.tx_usage_counter.load(Ordering::Relaxed), 10);
+                    assert_eq!(program.stats.uses.load(Ordering::Relaxed), 10);
                     assert_eq!(program.deployment_slot, 0);
                     assert_eq!(program.effective_slot, 2);
                 }
@@ -1803,7 +2218,7 @@ mod tests {
             &env,
             program,
             0,
-            new_test_entry_with_usage(0, 2, AtomicU64::new(0)),
+            new_test_entry_with_usage(0, 2, ProgramStatistics::default()),
         );
 
         cache
@@ -1815,7 +2230,7 @@ mod tests {
                     && program.effective_slot == 2
                 {
                     // Test that the usage counter was correctly updated.
-                    assert_eq!(program.tx_usage_counter.load(Ordering::Relaxed), 10);
+                    assert_eq!(program.stats.uses.load(Ordering::Relaxed), 10);
                 }
             });
     }
@@ -1834,12 +2249,14 @@ mod tests {
             let mut cache = ProgramCache::<TestForkGraph>::new(0);
             for (deployment_slot, effective_slot) in entries {
                 let entry = Arc::new(ProgramCacheEntry {
-                    program: new_loaded_entry(Arc::new(BuiltinProgram::new_mock())), // Assign them different environments
+                    program: new_loaded_entry(ProgramRuntimeEnvironment::from(
+                        BuiltinProgram::new_mock(),
+                    )), // Assign them different environments
                     account_owner: ProgramCacheEntryOwner::LoaderV2,
                     account_size: 0,
                     deployment_slot,
                     effective_slot,
-                    tx_usage_counter: Arc::new(AtomicU64::default()),
+                    stats: Arc::default(),
                     latest_access_slot: AtomicU64::new(deployment_slot),
                 });
                 assert!(!cache.assign_program(&env, program_id, deployment_slot, entry));
@@ -1903,7 +2320,7 @@ mod tests {
                 account_size: 0,
                 deployment_slot: 10,
                 effective_slot: 11,
-                tx_usage_counter: Arc::default(),
+                stats: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             }),
         ));
@@ -1917,14 +2334,16 @@ mod tests {
                 account_size: 0,
                 deployment_slot: 10,
                 effective_slot: 11,
-                tx_usage_counter: Arc::default(),
+                stats: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             }),
         );
     }
 
     #[test_case(
-        ProgramCacheEntryType::Unloaded(Arc::new(BuiltinProgram::new_mock())),
+        ProgramCacheEntryType::Unloaded(ProgramRuntimeEnvironment::from(
+            BuiltinProgram::new_mock()
+        )),
         new_loaded_entry(get_mock_program_runtime_environment())
     )]
     #[test_case(
@@ -1945,7 +2364,7 @@ mod tests {
                 account_size: 0,
                 deployment_slot: 10,
                 effective_slot: 11,
-                tx_usage_counter: Arc::default(),
+                stats: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             }),
         ));
@@ -1959,7 +2378,7 @@ mod tests {
                 account_size: 0,
                 deployment_slot: 10,
                 effective_slot: 11,
-                tx_usage_counter: Arc::default(),
+                stats: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             }),
         ));
@@ -1976,7 +2395,7 @@ mod tests {
             account_size: 0,
             deployment_slot: 9,
             effective_slot: 9,
-            tx_usage_counter: Arc::default(),
+            stats: Arc::default(),
             latest_access_slot: AtomicU64::default(),
         });
         let closed_current_slot = Arc::new(ProgramCacheEntry {
@@ -1985,7 +2404,7 @@ mod tests {
             account_size: 0,
             deployment_slot: 10,
             effective_slot: 10,
-            tx_usage_counter: Arc::default(),
+            stats: Arc::default(),
             latest_access_slot: AtomicU64::default(),
         });
         let loaded_entry_current_env = Arc::new(ProgramCacheEntry {
@@ -1994,16 +2413,18 @@ mod tests {
             account_size: 0,
             deployment_slot: 10,
             effective_slot: 11,
-            tx_usage_counter: Arc::default(),
+            stats: Arc::default(),
             latest_access_slot: AtomicU64::default(),
         });
         let loaded_entry_upcoming_env = Arc::new(ProgramCacheEntry {
-            program: ProgramCacheEntryType::Unloaded(Arc::new(BuiltinProgram::new_mock())),
+            program: ProgramCacheEntryType::Unloaded(ProgramRuntimeEnvironment::from(
+                BuiltinProgram::new_mock(),
+            )),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             account_size: 0,
             deployment_slot: 10,
             effective_slot: 11,
-            tx_usage_counter: Arc::default(),
+            stats: Arc::default(),
             latest_access_slot: AtomicU64::default(),
         });
         assert!(!cache.assign_program(&env, program_id, 9, closed_other_slot.clone()));
@@ -2159,16 +2580,13 @@ mod tests {
 
         let program1 = Pubkey::new_unique();
         cache.assign_program(&env, program1, 10, new_test_entry(10, 10));
-        let new_env = Arc::new(BuiltinProgram::new_mock());
+        let new_env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
         let upcoming_environment = Some(new_env.clone());
         let updated_program = Arc::new(ProgramCacheEntry {
             program: new_loaded_entry(new_env.clone()),
-            account_owner: ProgramCacheEntryOwner::LoaderV2,
-            account_size: 0,
             deployment_slot: 20,
             effective_slot: 20,
-            tx_usage_counter: Arc::default(),
-            latest_access_slot: AtomicU64::default(),
+            ..Default::default()
         });
         cache.assign_program(
             &env,
@@ -2634,7 +3052,7 @@ mod tests {
     fn test_extract_different_environment() {
         let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
         let env = get_mock_program_runtime_environment();
-        let other_env = Arc::new(BuiltinProgram::new_mock());
+        let other_env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
 
         // Fork graph created for the test
         //                0
@@ -2708,7 +3126,7 @@ mod tests {
                 account_size: 0,
                 deployment_slot: 0,
                 effective_slot: 0,
-                tx_usage_counter: Arc::default(),
+                stats: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             });
             assert!(entry.to_unloaded().is_none());
@@ -2721,12 +3139,16 @@ mod tests {
             assert!(cache.stats.evictions.is_empty());
         }
 
-        let entry = new_test_entry_with_usage(1, 2, AtomicU64::new(3));
+        let stats = ProgramStatistics {
+            uses: 3.into(),
+            ..Default::default()
+        };
+        let entry = new_test_entry_with_usage(1, 2, stats);
         let unloaded_entry = entry.to_unloaded().unwrap();
         assert_eq!(unloaded_entry.deployment_slot, 1);
         assert_eq!(unloaded_entry.effective_slot, 2);
         assert_eq!(unloaded_entry.latest_access_slot.load(Ordering::Relaxed), 1);
-        assert_eq!(unloaded_entry.tx_usage_counter.load(Ordering::Relaxed), 3);
+        assert_eq!(unloaded_entry.stats.uses.load(Ordering::Relaxed), 3);
 
         // Check that unload_program_entry() does its work
         let program_id = Pubkey::new_unique();
@@ -2894,7 +3316,11 @@ mod tests {
             &ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(1)
         ));
 
-        let program = Arc::new(new_test_entry_with_usage(0, 1, AtomicU64::default()));
+        let program = Arc::new(new_test_entry_with_usage(
+            0,
+            1,
+            ProgramStatistics::default(),
+        ));
 
         assert!(ProgramCache::<TestForkGraph>::matches_criteria(
             &program,

@@ -22,9 +22,10 @@ exclude_features=(
 	ebpf
 )
 
+export RUSTFLAGS="-D warnings"
+
 cargo +"$rust_nightly" hack check \
 	--each-feature \
 	--exclude-features "$(IFS=,; echo "${exclude_features[*]}")" \
 	--exclude-all-features \
-	--partition "$partition" \
-	--config build.rustflags='"--deny=warnings"'
+	--partition "$partition"

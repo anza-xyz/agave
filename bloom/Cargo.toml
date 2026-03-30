@@ -42,7 +42,7 @@ solana-time-utils = { workspace = true }
 bencher = { workspace = true }
 rayon = { workspace = true }
 solana-bloom = { path = ".", features = ["agave-unstable-api"] }
-solana-hash = { workspace = true }
+solana-hash = { workspace = true, features = ["atomic"] }
 solana-sha256-hasher = { workspace = true }
 solana-signature = { workspace = true, features = ["std"] }
 

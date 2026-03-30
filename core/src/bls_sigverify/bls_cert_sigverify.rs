@@ -112,11 +112,15 @@ fn verify_certs(
         .filter_map(|(cert_payload, res)| match res {
             Ok(()) => {
                 let cert = cert_payload.cert;
-                verified_certs_set.insert(cert.cert_type);
+                if !verified_certs_set.insert(cert.cert_type) {
+                    stats.unnecessary_certs_verified += 1;
+                }
                 Some(ConsensusMessage::Certificate(cert))
             }
             Err(e) => {
-                banlist.ban(cert_payload.remote_pubkey, BAN_TIMEOUT);
+                if banlist.ban(cert_payload.remote_pubkey, BAN_TIMEOUT) {
+                    stats.already_banned += 1;
+                }
 
                 match e {
                     CertVerifyError::NotEnoughStake { .. } => {

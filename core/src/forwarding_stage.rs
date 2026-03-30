@@ -264,9 +264,8 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         is_tpu_vote_batch: bool,
         bank: &Bank,
     ) {
-        let enable_instruction_accounts_limit = bank
-            .feature_set
-            .is_active(&agave_feature_set::limit_instruction_accounts::id());
+        let enable_instruction_accounts_limit =
+            bank.feature_set.snapshot().limit_instruction_accounts;
         for batch in packet_batches.iter() {
             for packet in batch
                 .iter()

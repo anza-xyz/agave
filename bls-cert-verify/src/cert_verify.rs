@@ -178,18 +178,21 @@ fn verify_base3(
             let primary_pubkeys = collect_pubkeys(&ranks, &mut rank_map)?;
             let fallback_pubkeys = collect_pubkeys(&fallback_ranks, rank_map)?;
 
-            let (primary_agg_res, fallback_agg_res) = join(
-                || PubkeyProjective::par_aggregate(primary_pubkeys.par_iter()),
-                || PubkeyProjective::par_aggregate(fallback_pubkeys.par_iter()),
-            );
-
-            let pubkeys = [primary_agg_res?, fallback_agg_res?];
-
-            Ok(SignatureProjective::par_verify_distinct_aggregated(
-                &pubkeys,
-                signature,
-                &[payload, fallback_payload],
-            )?)
+            if primary_pubkeys.is_empty() {
+                let agg_pubkey = aggregate_pubkeys(&fallback_pubkeys)?;
+                Ok(agg_pubkey.verify_signature(signature, fallback_payload)?)
+            } else {
+                let (primary_agg_res, fallback_agg_res) = join(
+                    || PubkeyProjective::par_aggregate(primary_pubkeys.par_iter()),
+                    || PubkeyProjective::par_aggregate(fallback_pubkeys.par_iter()),
+                );
+                let pubkeys = [primary_agg_res?, fallback_agg_res?];
+                Ok(SignatureProjective::par_verify_distinct_aggregated(
+                    &pubkeys,
+                    signature,
+                    &[payload, fallback_payload],
+                )?)
+            }
         }
     }
 }
@@ -342,6 +345,32 @@ mod test {
             })
             .unwrap_err(),
             Error::VerifySig(BlsError::PointConversion)
+        );
+    }
+
+    #[test]
+    fn base3_cert_with_no_primary_verifies() {
+        let max_validators = 10;
+        let bls_keypairs = create_bls_keypairs(max_validators);
+        let slot = 20;
+        let block_hash = Hash::new_unique();
+        let cert_type = CertificateType::NotarizeFallback(slot, block_hash);
+        let mut builder = CertificateBuilder::new(cert_type);
+        let vote = Vote::new_notarization_fallback_vote(slot, block_hash);
+        let vote_msgs = (0..max_validators)
+            .map(|i| create_signed_vote_message(&bls_keypairs, vote, i))
+            .collect::<Vec<_>>();
+        builder.aggregate(&vote_msgs).unwrap();
+        let cert = builder.build().unwrap();
+        let per_validator_stake = 100;
+        assert_eq!(
+            verify_certificate(&cert, 10, |rank| {
+                bls_keypairs
+                    .get(rank)
+                    .map(|kp| (per_validator_stake, kp.public))
+            })
+            .unwrap(),
+            per_validator_stake * max_validators as u64
         );
     }
 }

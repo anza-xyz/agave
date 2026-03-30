@@ -1,47 +1,21 @@
 #[cfg(feature = "dev-context-only-utils")]
 use tokio::net::UdpSocket as TokioUdpSocket;
 use {
-    crate::PortRange,
+    crate::{PortRange, test_port_allocator::unique_port_range_for_tests_internal},
     log::warn,
     socket2::{Domain, SockAddr, Socket, Type},
     std::{
         io,
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
         ops::Range,
-        sync::atomic::{AtomicU16, Ordering},
     },
 };
 // base port for deconflicted allocations
 pub(crate) const UNIQUE_ALLOC_BASE_PORT: u16 = 2000;
-// how much to allocate per individual process.
-// we expect to have at most 64 concurrent tests in CI at any moment on a given host.
-const SLICE_PER_PROCESS: u16 = (u16::MAX - UNIQUE_ALLOC_BASE_PORT) / 64;
-/// When running under nextest, this will try to provide
-/// a unique slice of port numbers (assuming no other nextest processes
-/// are running on the same host) based on NEXTEST_TEST_GLOBAL_SLOT variable
-/// The port ranges will be reused following nextest logic.
-///
-/// When running without nextest, this will only bump an atomic and eventually
-/// panic when it runs out of port numbers to assign.
-#[allow(clippy::arithmetic_side_effects)]
+
+/// Allocates a unique range of `size` ports for use in tests.
 pub fn unique_port_range_for_tests(size: u16) -> Range<u16> {
-    static SLICE: AtomicU16 = AtomicU16::new(0);
-    let offset = SLICE.fetch_add(size, Ordering::SeqCst);
-    let start = offset
-        + match std::env::var("NEXTEST_TEST_GLOBAL_SLOT") {
-            Ok(slot) => {
-                let slot: u16 = slot.parse().unwrap();
-                assert!(
-                    offset < SLICE_PER_PROCESS,
-                    "Overrunning into the port range of another test! Consider using fewer ports \
-                     per test."
-                );
-                UNIQUE_ALLOC_BASE_PORT + slot * SLICE_PER_PROCESS
-            }
-            Err(_) => UNIQUE_ALLOC_BASE_PORT,
-        };
-    assert!(start < u16::MAX - size, "Ran out of port numbers!");
-    start..start + size
+    unique_port_range_for_tests_internal(size)
 }
 
 /// Retrieve a free 25-port slice for unit tests
@@ -94,7 +68,6 @@ pub struct SocketConfiguration {
     recv_buffer_size: Option<usize>,
     send_buffer_size: Option<usize>,
     non_blocking: bool,
-    multicast_ttl: Option<u32>,
 }
 
 impl SocketConfiguration {
@@ -125,11 +98,6 @@ impl SocketConfiguration {
         self.non_blocking = non_blocking;
         self
     }
-
-    pub fn multicast_ttl(mut self, ttl: u32) -> Self {
-        self.multicast_ttl = Some(ttl);
-        self
-    }
 }
 
 #[cfg(any(windows, target_os = "ios"))]
@@ -153,7 +121,6 @@ pub(crate) fn udp_socket_with_config(config: SocketConfiguration) -> io::Result<
         recv_buffer_size,
         send_buffer_size,
         non_blocking,
-        multicast_ttl,
     } = config;
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
     if PLATFORM_SUPPORTS_SOCKET_CONFIGS {
@@ -163,9 +130,6 @@ pub(crate) fn udp_socket_with_config(config: SocketConfiguration) -> io::Result<
         }
         if let Some(send_buffer_size) = send_buffer_size {
             sock.set_send_buffer_size(send_buffer_size)?;
-        }
-        if let Some(multicast_ttl) = multicast_ttl {
-            sock.set_multicast_ttl_v4(multicast_ttl)?;
         }
 
         if reuseport {
@@ -636,17 +600,6 @@ mod tests {
             tcp_listeners,
         ));
         assert!(verify_all_reachable_udp(&ip_echo_server_addr, &socket_refs));
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn test_multicast_ttl() {
-        let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let port = unique_port_range_for_tests(1).start;
-        let config = SocketConfiguration::default().multicast_ttl(64);
-        let socket = bind_to_with_config(ip_addr, port, config).unwrap();
-        let sock2 = socket2::Socket::from(socket);
-        assert_eq!(sock2.multicast_ttl_v4().unwrap(), 64);
     }
 
     // This test is gated for non-macOS platforms because it requires binding to 127.0.0.2,

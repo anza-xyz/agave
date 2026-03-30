@@ -1,6 +1,5 @@
 use {
     crate::{args::*, canonicalize_ledger_path, ledger_utils::*},
-    agave_syscalls::create_program_runtime_environment,
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
     serde::{Deserialize, Serialize},
@@ -17,7 +16,7 @@ use {
         invoke_context::InvokeContext,
         loaded_programs::{
             DELAY_VISIBILITY_SLOT_OFFSET, LoadProgramMetrics, ProgramCacheEntry,
-            ProgramCacheEntryType,
+            ProgramCacheEntryType, ProgramRuntimeEnvironment,
         },
         serialization::serialize_parameters,
         with_mock_invoke_context,
@@ -29,6 +28,7 @@ use {
         verifier::RequisiteVerifier, vm::ExecutionMode,
     },
     solana_sdk_ids::{bpf_loader_upgradeable, sysvar},
+    solana_syscalls::create_program_runtime_environment,
     solana_transaction_context::{
         IndexOfAccount, instruction::InstructionContext, instruction_accounts::InstructionAccount,
     },
@@ -285,7 +285,7 @@ fn load_program<'a>(
     let mut verified_executable = if is_elf {
         let result = ProgramCacheEntry::new(
             &loader_key,
-            Arc::new(program_runtime_environment),
+            ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             slot,
             slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             &contents,
@@ -302,7 +302,7 @@ fn load_program<'a>(
     } else {
         assemble::<InvokeContext>(
             std::str::from_utf8(contents.as_slice()).unwrap(),
-            Arc::new(program_runtime_environment),
+            Arc::clone(&*program_runtime_environment),
         )
         .map_err(|err| format!("Assembling executable failed: {err:?}"))
         .and_then(|executable| {

@@ -127,32 +127,19 @@ Create a PR that makes the following updates to [CHANGELOG.md](https://github.co
 
 ### Create the Release Tag on GitHub
 
-1. Go to [GitHub Releases](https://github.com/anza-xyz/agave/releases) for tagging a release.
-1. Click "Draft new release".  The release tag must exactly match the `version`
-   field in `/Cargo.toml` prefixed by `v`.
-   1.  If the Cargo.toml version field is **0.12.3**, then the release tag must be **v0.12.3**
-1. Make sure the Target Branch field matches the branch you want to make a release on.
-   1.  If you want to release v0.12.0, the target branch must be v0.12
+1. Check out relevant branch, create release tag and push it. The release tag must exactly match the `version` field in `/Cargo.toml` prefixed by `v`.
+    ```
+    git checkout v4.0
+    git tag v4.0.1
+    git push upstream v4.0.1
+    ```
+1. [The automation](https://github.com/anza-xyz/agave/blob/master/.github/workflows/release.yml) will create the new draft release, start `agave-secondary` Buildkite pipeline and create a PR to bump the version in the branch.
+1. Go to [GitHub Releases](https://github.com/anza-xyz/agave/releases) and edit the draft release just made by the automation.
 1. Fill the release notes.
    1.  If this is the first release on the branch (e.g. v0.13.**0**), paste in [this
    template](https://raw.githubusercontent.com/anza-xyz/agave/master/.github/RELEASE_TEMPLATE.md).  Engineering Lead can provide summary contents for release notes if needed.
    1. If this is a patch release, review all the commits since the previous release on this branch and add details as needed.
-1. Click "Save Draft", then confirm the release notes look good and the tag name and branch are correct.
-1. Ensure all desired commits (usually backports) are landed on the branch by now.
 1. Ensure the release is marked **"This is a pre-release"**.  This flag will need to be removed manually after confirming the Linux binary artifacts appear at a later step.
-1. Go back into edit the release and click "Publish release" while being marked as a pre-release.
-1. Confirm there is new git tag with intended version number at the intended revision after running `git fetch` locally.
-
-
-### Update release branch with the next patch version
-
-[This action](https://github.com/anza-xyz/agave/blob/master/.github/workflows/increment-cargo-version-on-release.yml) ensures that publishing a release will trigger the creation of a PR to update the Cargo.toml files on **release branch** to the next semantic version (e.g. 0.9.0 -> 0.9.1). Ensure that the created PR makes it through CI and gets submitted.
-
-Note: As of 2024-03-26 the above action is failing so version bumps are done manually. The version bump script is incorrectly updating hashbrown and proc-macro2 versions which should be reverted.
-
-### Prepare for the next release
-1.  Go to [GitHub Releases](https://github.com/anza-xyz/agave/releases) and create a new draft release for `X.Y.Z+1` with empty release notes.  This allows people to incrementally add new release notes until it's time for the next release
-    1. Also, point the branch field to the same branch and mark the release as **"This is a pre-release"**.
 
 ### Verify release automation success
 Go to [Agave Releases](https://github.com/anza-xyz/agave/releases) and click on the latest release that you just published.
@@ -165,6 +152,3 @@ appearing.  To check for progress:
 
 [Crates.io agave-validator](https://crates.io/crates/agave-validator) should have an updated agave-validator version.  This can take 2-3 hours, and sometimes fails in the `agave-secondary` job.
 If this happens and the error is non-fatal, click "Retry" on the "publish crate" job
-
-### Update software on testnet.solana.com
-See the documentation at https://github.com/solana-labs/cluster-ops/. devnet.solana.com and mainnet-beta.solana.com run stable releases that have been tested on testnet. Do not update devnet or mainnet-beta with a beta release.

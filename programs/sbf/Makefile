@@ -1,4 +1,3 @@
-SBF_SDK_PATH := ../../platform-tools-sdk/sbf
 SRC_DIR := c/src
 OUT_DIR := target/deploy
 TOOLCHAIN := 1.89.0-sbpf-solana-v1.54
@@ -41,4 +40,4 @@ rust-new:
 
 .PHONY: test-v0
 
-include $(SBF_SDK_PATH)/c/sbf.mk
+include c/sbf.mk

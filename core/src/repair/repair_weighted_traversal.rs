@@ -79,6 +79,7 @@ pub fn get_best_repair_shreds(
     slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
     repairs: &mut Vec<ShredRepairType>,
     max_new_shreds: usize,
+    ticks_per_second: u64,
     outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
 ) {
     let initial_len = repairs.len();
@@ -104,6 +105,7 @@ pub fn get_best_repair_shreds(
                         blockstore,
                         slot,
                         slot_meta,
+                        ticks_per_second,
                         max_repairs - repairs.len(),
                         outstanding_repairs,
                     );
@@ -125,6 +127,7 @@ pub fn get_best_repair_shreds(
                                 repairs,
                                 max_repairs,
                                 *new_child_slot,
+                                ticks_per_second,
                                 outstanding_repairs,
                             );
                         }
@@ -141,6 +144,7 @@ pub mod test {
     use {
         super::*,
         crate::repair::repair_service::sleep_shred_deferment_period,
+        solana_clock::DEFAULT_TICKS_PER_SECOND,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
@@ -235,6 +239,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut repairs,
             6,
+            DEFAULT_TICKS_PER_SECOND,
             &mut outstanding_repairs,
         );
         assert_eq!(
@@ -267,6 +272,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut repairs,
             6,
+            DEFAULT_TICKS_PER_SECOND,
             &mut outstanding_repairs,
         );
         assert_eq!(
@@ -312,6 +318,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut repairs,
             4,
+            DEFAULT_TICKS_PER_SECOND,
             &mut outstanding_repairs,
         );
         assert_eq!(
@@ -336,6 +343,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut repairs,
             5,
+            DEFAULT_TICKS_PER_SECOND,
             &mut outstanding_repairs,
         );
         let expected_repairs = [1, 7, 8, 3, 5]
@@ -352,6 +360,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut repairs,
             1,
+            DEFAULT_TICKS_PER_SECOND,
             &mut outstanding_repairs,
         );
         assert_eq!(repairs, expected_repairs);
@@ -375,6 +384,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut repairs,
             usize::MAX,
+            DEFAULT_TICKS_PER_SECOND,
             &mut outstanding_repairs,
         );
         let last_shred = blockstore.meta(0).unwrap().unwrap().received;

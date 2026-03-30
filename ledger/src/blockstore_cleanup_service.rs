@@ -9,7 +9,7 @@ use {
         self, Blockstore, PurgeType,
         column::{ColumnName, columns},
     },
-    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
+    solana_clock::Slot,
     solana_measure::measure::Measure,
     std::{
         string::ToString,
@@ -38,14 +38,10 @@ pub const DEFAULT_MIN_MAX_LEDGER_SHREDS: u64 = 50_000_000;
 // Perform blockstore cleanup at this interval to limit the overhead of cleanup
 // Cleanup will be considered after the latest root has advanced by this value
 const DEFAULT_CLEANUP_SLOT_INTERVAL: u64 = 512;
-// The above slot interval can be roughly equated to a time interval. So, scale
-// how often we check for cleanup with the interval. Doing so will avoid wasted
-// checks when we know that the latest root could not have advanced far enough
-//
-// Given that the timing of new slots/roots is not exact, divide by 10 to avoid
-// a long wait incase a check occurs just before the interval has elapsed
-const LOOP_LIMITER: Duration =
-    Duration::from_millis(DEFAULT_CLEANUP_SLOT_INTERVAL * DEFAULT_MS_PER_SLOT / 10);
+// The above slot interval could be translated to a time interval by getting the
+// slot duration from a `Bank`. But, the timing for `Blockstore` cleanup doesn't
+// need to be that precise. Instead, just check every 10 seconds
+const CHECK_FOR_CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
 
 pub struct BlockstoreCleanupService {
     t_cleanup: JoinHandle<()>,
@@ -67,7 +63,8 @@ impl BlockstoreCleanupService {
                     if exit.load(Ordering::Relaxed) {
                         break;
                     }
-                    if last_check_time.elapsed() > LOOP_LIMITER {
+
+                    if last_check_time.elapsed() > CHECK_FOR_CLEANUP_INTERVAL {
                         Self::cleanup_ledger(
                             &blockstore,
                             max_ledger_shreds,
@@ -77,8 +74,10 @@ impl BlockstoreCleanupService {
 
                         last_check_time = Instant::now();
                     }
-                    // Only sleep for 1 second instead of LOOP_LIMITER so that this
-                    // thread can respond to the exit flag in a timely manner
+
+                    // Sleep for 1 second instead of CHECK_FOR_CLEANUP_INTERVAL
+                    // so that this thread can respond to the exit flag toggling
+                    // in a timely manner
                     thread::sleep(Duration::from_secs(1));
                 }
                 info!("BlockstoreCleanupService has stopped");

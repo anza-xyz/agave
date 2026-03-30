@@ -1,5 +1,5 @@
 use {
-    crate::blockstore_meta::SlotMeta,
+    crate::blockstore_meta::{BlockLocation, SlotMeta},
     bitflags::bitflags,
     lru::LruCache,
     solana_clock::Slot,
@@ -19,42 +19,85 @@ bitflags! {
     #[derive(Copy, Clone, Default)]
     struct SlotFlags: u8 {
         const DEAD   = 0b00000001;
-        const FULL   = 0b00000010;
-        const ROOTED = 0b00000100;
+        const ROOTED = 0b00000010;
     }
 }
 
 #[derive(Clone, Default)]
-pub struct SlotStats {
+struct LocationShredStats {
     turbine_fec_set_index_counts: HashMap</*fec_set_index*/ u32, /*count*/ usize>,
     num_repaired: usize,
     num_recovered: usize,
     last_index: u64,
+    is_full: bool,
+}
+
+#[derive(Clone, Default)]
+pub struct SlotStats {
+    original: LocationShredStats,
+    alternate: LocationShredStats,
     flags: SlotFlags,
 }
 
 impl SlotStats {
-    pub fn get_min_index_count(&self) -> usize {
-        self.turbine_fec_set_index_counts
+    fn min_index_count(stats: &LocationShredStats) -> usize {
+        stats
+            .turbine_fec_set_index_counts
             .values()
             .min()
             .copied()
             .unwrap_or_default()
     }
 
-    fn report(&self, slot: Slot) {
-        let min_fec_set_count = self.get_min_index_count();
+    fn location_stats(&self, location: BlockLocation) -> &LocationShredStats {
+        match location {
+            BlockLocation::Original => &self.original,
+            BlockLocation::Alternate { .. } => &self.alternate,
+        }
+    }
+
+    fn location_stats_mut(&mut self, location: BlockLocation) -> &mut LocationShredStats {
+        match location {
+            BlockLocation::Original => &mut self.original,
+            BlockLocation::Alternate { .. } => &mut self.alternate,
+        }
+    }
+
+    pub fn get_min_index_count(&self, location: BlockLocation) -> usize {
+        Self::min_index_count(self.location_stats(location))
+    }
+
+    fn report_location(&self, slot: Slot, name: &'static str, location_stats: &LocationShredStats) {
+        let min_fec_set_count = Self::min_index_count(location_stats);
         datapoint_info!(
-            "slot_stats_tracking_complete",
+            name,
             ("slot", slot, i64),
-            ("last_index", self.last_index, i64),
-            ("num_repaired", self.num_repaired, i64),
-            ("num_recovered", self.num_recovered, i64),
+            ("last_index", location_stats.last_index, i64),
+            ("num_repaired", location_stats.num_repaired, i64),
+            ("num_recovered", location_stats.num_recovered, i64),
             ("min_turbine_fec_set_count", min_fec_set_count, i64),
-            ("is_full", self.flags.contains(SlotFlags::FULL), bool),
+            ("is_full", location_stats.is_full, bool),
             ("is_rooted", self.flags.contains(SlotFlags::ROOTED), bool),
             ("is_dead", self.flags.contains(SlotFlags::DEAD), bool),
         );
+    }
+
+    fn should_report(location_stats: &LocationShredStats) -> bool {
+        location_stats.is_full
+            || location_stats.num_recovered > 0
+            || location_stats.num_repaired > 0
+            || !location_stats.turbine_fec_set_index_counts.is_empty()
+    }
+
+    fn report(&self, slot: Slot) {
+        self.report_location(slot, "slot_stats_tracking_complete", &self.original);
+        if Self::should_report(&self.alternate) {
+            self.report_location(
+                slot,
+                "slot_stats_tracking_complete_alternate",
+                &self.alternate,
+            );
+        }
     }
 }
 
@@ -96,6 +139,7 @@ impl SlotsStats {
     pub(crate) fn record_shred(
         &self,
         slot: Slot,
+        location: BlockLocation,
         fec_set_index: u32,
         source: ShredSource,
         slot_meta: Option<&SlotMeta>,
@@ -103,11 +147,12 @@ impl SlotsStats {
         let (slot_full_reporting_info, evicted) = {
             let mut stats = self.stats.lock().unwrap();
             let (slot_stats, evicted) = Self::get_or_default_with_eviction_check(&mut stats, slot);
+            let location_stats = slot_stats.location_stats_mut(location);
             match source {
-                ShredSource::Recovered => slot_stats.num_recovered += 1,
-                ShredSource::Repaired => slot_stats.num_repaired += 1,
+                ShredSource::Recovered => location_stats.num_recovered += 1,
+                ShredSource::Repaired => location_stats.num_repaired += 1,
                 ShredSource::Turbine => {
-                    *slot_stats
+                    *location_stats
                         .turbine_fec_set_index_counts
                         .entry(fec_set_index)
                         .or_default() += 1
@@ -116,17 +161,20 @@ impl SlotsStats {
             let mut slot_full_reporting_info = None;
             if let Some(meta) = slot_meta {
                 if meta.is_full() {
-                    slot_stats.last_index = meta.last_index.unwrap();
-                    if !slot_stats.flags.contains(SlotFlags::FULL) {
-                        slot_stats.flags |= SlotFlags::FULL;
-                        slot_full_reporting_info =
-                            Some((slot_stats.num_repaired, slot_stats.num_recovered));
+                    location_stats.last_index = meta.last_index.unwrap();
+                    if !location_stats.is_full {
+                        location_stats.is_full = true;
+                        slot_full_reporting_info = Some((
+                            location,
+                            location_stats.num_repaired,
+                            location_stats.num_recovered,
+                        ));
                     }
                 }
             }
             (slot_full_reporting_info, evicted)
         };
-        if let Some((num_repaired, num_recovered)) = slot_full_reporting_info {
+        if let Some((location, num_repaired, num_recovered)) = slot_full_reporting_info {
             let slot_meta = slot_meta.unwrap();
             let total_time_ms =
                 solana_time_utils::timestamp().saturating_sub(slot_meta.first_shred_timestamp);
@@ -134,14 +182,24 @@ impl SlotsStats {
                 .last_index
                 .and_then(|ix| i64::try_from(ix).ok())
                 .unwrap_or(-1);
-            datapoint_info!(
-                "shred_insert_is_full",
-                ("slot", slot, i64),
-                ("total_time_ms", total_time_ms, i64),
-                ("last_index", last_index, i64),
-                ("num_repaired", num_repaired, i64),
-                ("num_recovered", num_recovered, i64),
-            );
+            match location {
+                BlockLocation::Original => datapoint_info!(
+                    "shred_insert_is_full",
+                    ("slot", slot, i64),
+                    ("total_time_ms", total_time_ms, i64),
+                    ("last_index", last_index, i64),
+                    ("num_repaired", num_repaired, i64),
+                    ("num_recovered", num_recovered, i64),
+                ),
+                BlockLocation::Alternate { .. } => datapoint_info!(
+                    "shred_insert_is_full_alternate",
+                    ("slot", slot, i64),
+                    ("total_time_ms", total_time_ms, i64),
+                    ("last_index", last_index, i64),
+                    ("num_repaired", num_repaired, i64),
+                    ("num_recovered", num_recovered, i64),
+                ),
+            }
         }
         if let Some((evicted_slot, evicted_stats)) = evicted {
             evicted_stats.report(evicted_slot);
@@ -160,10 +218,16 @@ impl SlotsStats {
         }
     }
 
+    /// Marks the slot as dead.
+    /// Note this refers to the original column: the alternate column can never be dead
+    /// - shreds are pre-verified and we never replay out of the alternate column
     pub fn mark_dead(&self, slot: Slot) {
         self.add_flag(slot, SlotFlags::DEAD);
     }
 
+    /// Marks the original column as rooted.
+    /// Note this refers to the original column: the alternate column can never be rooted
+    /// - we never replay out of the alternate column and rooting requires replay.
     pub fn mark_rooted(&self, slot: Slot) {
         self.add_flag(slot, SlotFlags::ROOTED);
     }

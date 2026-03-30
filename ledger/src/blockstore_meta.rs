@@ -7,7 +7,11 @@ use {
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
-    std::ops::{Range, RangeBounds},
+    std::{
+        fmt::Display,
+        ops::{Range, RangeBounds},
+    },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 bitflags! {
@@ -129,6 +133,49 @@ pub struct SlotMetaBase<T> {
 
 pub type SlotMeta = SlotMetaBase<CompletedDataIndexes>;
 
+/// SlotMetaV3 extends SlotMeta with two additional fields: `parent_block_id`
+/// and `replay_fec_set_index`. The SlotMeta type will continue to be used
+/// (written) for now, but a SlotMetaV3 can be read from the Blockstore and
+/// converted into a SlotMeta. The logic to read and convert SlotMetaV3 to
+/// SlotMeta enables this software to read a Blockstore modified by a future
+/// version where the SlotMetaV3 format is persisted.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+pub(crate) struct SlotMetaV3 {
+    pub slot: Slot,
+    pub consumed: u64,
+    pub received: u64,
+    pub first_shred_timestamp: u64,
+    #[serde(with = "serde_compat")]
+    pub last_index: Option<u64>,
+    #[serde(with = "serde_compat")]
+    pub parent_slot: Option<Slot>,
+    pub next_slots: Vec<Slot>,
+    pub connected_flags: ConnectedFlags,
+    pub completed_data_indexes: CompletedDataIndexes,
+    /// The block id of the parent block.
+    /// Populated from the block header / update parent marker.
+    pub parent_block_id: Hash,
+    /// The FEC set index from which replay should start for this block.
+    /// Populated from the block header / update parent marker.
+    pub replay_fec_set_index: u32,
+}
+
+impl From<SlotMetaV3> for SlotMeta {
+    fn from(v3: SlotMetaV3) -> Self {
+        SlotMeta {
+            slot: v3.slot,
+            consumed: v3.consumed,
+            received: v3.received,
+            first_shred_timestamp: v3.first_shred_timestamp,
+            last_index: v3.last_index,
+            parent_slot: v3.parent_slot,
+            next_slots: v3.next_slots,
+            connected_flags: v3.connected_flags,
+            completed_data_indexes: v3.completed_data_indexes,
+        }
+    }
+}
+
 // Serde implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
 mod serde_compat {
@@ -229,12 +276,28 @@ pub struct MerkleRootMeta {
     first_received_shred_type: ShredType,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub struct DuplicateSlotProof {
     #[serde(with = "shred::serde_bytes_payload")]
     pub shred1: shred::Payload,
     #[serde(with = "shred::serde_bytes_payload")]
     pub shred2: shred::Payload,
+}
+
+/// Which column an associated block currently resides
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BlockLocation {
+    Original,
+    Alternate { block_id: Hash },
+}
+
+impl Display for BlockLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BlockLocation::Original => write!(f, "Original"),
+            BlockLocation::Alternate { block_id } => write!(f, "Alternate({block_id})"),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
@@ -315,7 +378,6 @@ impl ShredIndex {
         }
     }
 
-    #[allow(unused)]
     pub(crate) fn contains(&self, idx: u64) -> bool {
         self.index.contains(idx as usize)
     }
@@ -324,6 +386,15 @@ impl ShredIndex {
         if let Ok(true) = self.index.insert(idx as usize) {
             self.num_shreds += 1;
         }
+    }
+
+    pub(crate) fn count_range<R>(&self, bounds: R) -> usize
+    where
+        R: RangeBounds<u64>,
+    {
+        let start = bounds.start_bound().map(|&b| b as usize);
+        let end = bounds.end_bound().map(|&b| b as usize);
+        self.index.range((start, end)).count_ones()
     }
 
     pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = u64> + '_
@@ -577,12 +648,6 @@ impl DuplicateSlotProof {
             shred2: shred::Payload::from(shred2),
         }
     }
-}
-
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-pub struct TransactionStatusIndexMeta {
-    pub max_slot: Slot,
-    pub frozen: bool,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq)]

@@ -7,7 +7,6 @@
 use {
     crate::{
         cluster_info_metrics::GossipStats,
-        contact_info::ContactInfo,
         crds::{Crds, GossipRoute},
         crds_data::CrdsData,
         crds_gossip_error::CrdsGossipError,
@@ -19,18 +18,18 @@ use {
         duplicate_shred::{self, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         protocol::{Ping, PingCache},
     },
-    itertools::Itertools,
     rand::{CryptoRng, Rng},
     rayon::ThreadPool,
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_keypair::Keypair,
+    solana_keypair::{Address, Keypair},
     solana_ledger::shred::Shred,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_time_utils::timestamp,
     std::{
+        cmp,
         collections::{HashMap, HashSet},
         net::SocketAddr,
         sync::{Mutex, RwLock},
@@ -312,6 +311,12 @@ impl CrdsGossip {
     }
 }
 
+pub(crate) type GossipStakePubkey = (
+    /* gossip */ SocketAddr,
+    /* stake */ u64,
+    /* node pubkey */ Address,
+);
+
 // Returns active and valid cluster nodes to gossip with.
 pub(crate) fn get_gossip_nodes<R: Rng>(
     rng: &mut R,
@@ -324,57 +329,42 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
     gossip_validators: Option<&HashSet<Pubkey>>,
     stakes: &HashMap<Pubkey, u64>,
     socket_addr_space: &SocketAddrSpace,
-) -> Vec<ContactInfo> {
+) -> Vec<GossipStakePubkey> {
     // Exclude nodes which have not been active for this long.
     const ACTIVE_TIMEOUT: Duration = Duration::from_secs(60);
     let active_cutoff = now.saturating_sub(ACTIVE_TIMEOUT.as_millis() as u64);
     let crds = crds.read().unwrap();
     crds.get_nodes()
         .filter_map(|value| {
-            let node = value.value.contact_info().unwrap();
+            let node = value.value.contact_info()?;
+            let gossip = node.gossip().filter(|addr| socket_addr_space.check(addr))?;
+            let node_pubkey = node.pubkey();
+            if node_pubkey == pubkey
+                || !verify_shred_version(node.shred_version())
+                || gossip_validators.is_some_and(|nodes| !nodes.contains(node_pubkey))
+            {
+                return None;
+            }
+
+            let stake = stakes.get(node_pubkey).copied().unwrap_or_default();
             // Exclude nodes which have not been active recently.
             if value.local_timestamp < active_cutoff {
                 // In order to mitigate eclipse attack, for staked nodes
                 // continue retrying periodically.
-                let stake = stakes.get(node.pubkey()).copied().unwrap_or_default();
                 if stake == 0u64 || !rng.random_ratio(1, 16) {
                     return None;
                 }
             }
-            Some(node)
+            Some((gossip, stake, *node_pubkey))
         })
-        .filter(|node| {
-            node.pubkey() != pubkey
-                && verify_shred_version(node.shred_version())
-                && node
-                    .gossip()
-                    .map(|addr| socket_addr_space.check(&addr))
-                    .unwrap_or_default()
-                && match gossip_validators {
-                    Some(nodes) => nodes.contains(node.pubkey()),
-                    None => true,
-                }
-        })
-        .cloned()
         .collect()
 }
 
 // Dedups gossip addresses, keeping only the one with the highest stake.
-pub(crate) fn dedup_gossip_addresses(
-    nodes: impl IntoIterator<Item = ContactInfo>,
-    stakes: &HashMap<Pubkey, u64>,
-) -> HashMap</*gossip:*/ SocketAddr, (/*stake:*/ u64, ContactInfo)> {
+pub(crate) fn dedup_gossip_addresses(mut nodes: Vec<GossipStakePubkey>) -> Vec<GossipStakePubkey> {
+    nodes.sort_by_key(|(gossip, stake, _pubkey)| (*gossip, cmp::Reverse(*stake)));
+    nodes.dedup_by_key(|(gossip, _stake, _pubkey)| *gossip);
     nodes
-        .into_iter()
-        .filter_map(|node| Some((node.gossip()?, node)))
-        .into_grouping_map()
-        .aggregate(|acc, _node_gossip, node| {
-            let stake = stakes.get(node.pubkey()).copied().unwrap_or_default();
-            match acc {
-                Some((ref s, _)) if s >= &stake => acc,
-                Some(_) | None => Some((stake, node)),
-            }
-        })
 }
 
 // Pings gossip addresses if needed.
@@ -382,34 +372,29 @@ pub(crate) fn dedup_gossip_addresses(
 #[must_use]
 pub(crate) fn maybe_ping_gossip_addresses<R: Rng + CryptoRng>(
     rng: &mut R,
-    nodes: impl IntoIterator<Item = ContactInfo>,
+    mut nodes: Vec<GossipStakePubkey>,
     keypair: &Keypair,
     ping_cache: &Mutex<PingCache>,
     pings: &mut Vec<(SocketAddr, Ping)>,
-) -> Vec<ContactInfo> {
+) -> Vec<GossipStakePubkey> {
     let mut ping_cache = ping_cache.lock().unwrap();
     let now = Instant::now();
+    nodes.retain(|(gossip, _stake, pubkey)| {
+        let (check, ping) = ping_cache.check(rng, keypair, now, (*pubkey, *gossip));
+        if let Some(ping) = ping {
+            pings.push((*gossip, ping));
+        }
+        check
+    });
     nodes
-        .into_iter()
-        .filter(|node| {
-            let Some(node_gossip) = node.gossip() else {
-                return false;
-            };
-            let (check, ping) = {
-                let node = (*node.pubkey(), node_gossip);
-                ping_cache.check(rng, keypair, now, node)
-            };
-            if let Some(ping) = ping {
-                pings.push((node_gossip, ping));
-            }
-            check
-        })
-        .collect()
 }
 
 #[cfg(test)]
 mod test {
-    use {super::*, solana_sha256_hasher::hash, solana_time_utils::timestamp};
+    use {
+        super::*, crate::contact_info::ContactInfo, solana_sha256_hasher::hash,
+        solana_time_utils::timestamp,
+    };
 
     #[test]
     fn test_prune_errors() {

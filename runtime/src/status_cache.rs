@@ -7,7 +7,10 @@ use {
     solana_accounts_db::ancestors::Ancestors,
     solana_clock::{MAX_RECENT_BLOCKHASHES, Slot},
     solana_hash::Hash,
-    std::collections::{HashSet, hash_map::Entry},
+    std::{
+        collections::{HashSet, hash_map::Entry},
+        num::{NonZero, NonZeroUsize},
+    },
 };
 #[cfg(not(feature = "shuttle-test"))]
 use {
@@ -18,7 +21,7 @@ use {
 // The maximum number of entries to store in the cache. This is the same as the number of recent
 // blockhashes because we automatically reject txs that use older blockhashes so we don't need to
 // track those explicitly.
-pub const MAX_CACHE_ENTRIES: usize = MAX_RECENT_BLOCKHASHES;
+const MAX_ROOT_ENTRIES: usize = MAX_RECENT_BLOCKHASHES;
 
 // Only store 20 bytes of the tx keys processed to save some memory.
 const CACHED_KEY_SIZE: usize = 20;
@@ -52,6 +55,7 @@ pub struct StatusCache<T: Serialize + Clone> {
     // check if a tx_key was seen on a fork and for rpc to retrieve the tx_result
     cache: KeyStatusMap<T>,
     roots: HashSet<Slot>,
+    max_root_entries: NonZeroUsize,
     // slot_deltas[slot][blockhash] => [(tx_key, tx_result), ...] used to serialize for snapshots
     // and to rebuild cache[blockhash][tx_key] from a snapshot
     slot_deltas: SlotDeltaMap<T>,
@@ -63,6 +67,7 @@ impl<T: Serialize + Clone> Default for StatusCache<T> {
             cache: HashMap::default(),
             // 0 is always a root
             roots: HashSet::from([0]),
+            max_root_entries: NonZero::new(MAX_ROOT_ENTRIES).unwrap(),
             slot_deltas: HashMap::default(),
         }
     }
@@ -162,7 +167,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
 
     /// Add a known root fork.
     ///
-    /// Roots are always valid ancestors. After MAX_CACHE_ENTRIES, roots are removed, and any old
+    /// Roots are always valid ancestors. After `max_root_entries`, roots are removed, and any old
     /// keys are cleared.
     pub fn add_root(&mut self, fork: Slot) {
         self.roots.insert(fork);
@@ -171,6 +176,15 @@ impl<T: Serialize + Clone> StatusCache<T> {
 
     pub fn roots(&self) -> &HashSet<Slot> {
         &self.roots
+    }
+
+    pub fn max_root_entries(&self) -> usize {
+        self.max_root_entries.into()
+    }
+
+    pub fn set_max_root_entries(&mut self, max_root_entries: NonZeroUsize) {
+        self.max_root_entries = max_root_entries;
+        self.purge_roots();
     }
 
     /// Insert a new key using the given blockhash at the given slot.
@@ -211,7 +225,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
     }
 
     pub fn purge_roots(&mut self) {
-        if self.roots.len() > MAX_CACHE_ENTRIES {
+        while self.roots.len() > self.max_root_entries() {
             if let Some(min) = self.roots.iter().min().cloned() {
                 self.roots.remove(&min);
                 self.cache.retain(|_, (fork, _, _)| *fork > min);
@@ -414,7 +428,7 @@ mod tests {
         let ancestors = Ancestors::from(vec![0]);
         status_cache.insert(&blockhash, sig, 0, ());
         status_cache.insert(&blockhash, sig, 1, ());
-        for i in 0..(MAX_CACHE_ENTRIES + 1) {
+        for i in 0..=status_cache.max_root_entries() {
             status_cache.add_root(i as u64);
         }
         assert!(
@@ -431,10 +445,73 @@ mod tests {
         let blockhash = hash(Hash::default().as_ref());
         let ancestors = Ancestors::default();
         status_cache.insert(&blockhash, sig, 0, ());
-        for i in 0..(MAX_CACHE_ENTRIES + 1) {
+        for i in 0..=status_cache.max_root_entries() {
             status_cache.add_root(i as u64);
         }
         assert_eq!(status_cache.get_status(sig, &blockhash, &ancestors), None);
+    }
+
+    #[test]
+    fn test_max_root_entries() {
+        const INITIAL_MAX_ROOT_ENTRIES: usize = 4;
+        const GROWN_MAX_ROOT_ENTRIES: usize = 6;
+        const SHRUNK_MAX_ROOT_ENTRIES: usize = 3;
+
+        let mut status_cache = BankStatusCache::default();
+        let ancestors = Ancestors::default();
+        let oldest_sig = Signature::from([1_u8; 64]);
+        let oldest_blockhash = Hash::new_unique();
+        let newest_sig = Signature::from([2_u8; 64]);
+        let newest_blockhash = Hash::new_unique();
+
+        status_cache.set_max_root_entries(NonZeroUsize::new(INITIAL_MAX_ROOT_ENTRIES).unwrap());
+
+        status_cache.insert(&oldest_blockhash, oldest_sig, 0, ());
+        status_cache.insert(&newest_blockhash, newest_sig, 3, ());
+        for root in 1..INITIAL_MAX_ROOT_ENTRIES as Slot {
+            status_cache.add_root(root);
+        }
+
+        assert_eq!(status_cache.roots(), &HashSet::from([0_u64, 1, 2, 3]));
+        assert_eq!(
+            status_cache.get_status(oldest_sig, &oldest_blockhash, &ancestors),
+            Some((0, ()))
+        );
+        assert_eq!(
+            status_cache.get_status(newest_sig, &newest_blockhash, &ancestors),
+            Some((3, ()))
+        );
+
+        status_cache.set_max_root_entries(NonZeroUsize::new(GROWN_MAX_ROOT_ENTRIES).unwrap());
+        for root in INITIAL_MAX_ROOT_ENTRIES as Slot..GROWN_MAX_ROOT_ENTRIES as Slot {
+            status_cache.add_root(root);
+        }
+
+        assert_eq!(status_cache.roots(), &HashSet::from([0_u64, 1, 2, 3, 4, 5]));
+        assert_eq!(
+            status_cache.get_status(oldest_sig, &oldest_blockhash, &ancestors),
+            Some((0, ()))
+        );
+        assert_eq!(
+            status_cache.get_status(newest_sig, &newest_blockhash, &ancestors),
+            Some((3, ()))
+        );
+
+        status_cache.set_max_root_entries(NonZeroUsize::new(SHRUNK_MAX_ROOT_ENTRIES).unwrap());
+
+        assert_eq!(status_cache.roots(), &HashSet::from([3_u64, 4, 5]));
+        assert_eq!(
+            status_cache.get_status(oldest_sig, &oldest_blockhash, &ancestors),
+            None
+        );
+        assert_eq!(
+            status_cache.get_status(newest_sig, &newest_blockhash, &ancestors),
+            Some((3, ()))
+        );
+        assert!(!status_cache.cache.contains_key(&oldest_blockhash));
+        assert!(status_cache.cache.contains_key(&newest_blockhash));
+        assert!(!status_cache.slot_deltas.contains_key(&0));
+        assert!(status_cache.slot_deltas.contains_key(&3));
     }
 
     #[test]
@@ -503,7 +580,7 @@ mod tests {
         status_cache.insert(&blockhash, sig, 0, ());
         status_cache.insert(&blockhash, sig, 1, ());
         status_cache.insert(&blockhash2, sig, 1, ());
-        for i in 0..(MAX_CACHE_ENTRIES + 1) {
+        for i in 0..=status_cache.max_root_entries() {
             status_cache.add_root(i as u64);
         }
         assert_eq!(status_cache.slot_deltas.len(), 1);
@@ -678,7 +755,8 @@ mod shuttle_tests {
     fn do_test_shuttle_purge_nonce_overlap() {
         let status_cache = Arc::new(BankStatusCache::default());
         // fill the cache so that the next add_root() will purge the oldest root
-        for i in 0..MAX_CACHE_ENTRIES {
+        let max_root_entries = status_cache.read().unwrap().max_root_entries();
+        for i in 0..max_root_entries {
             status_cache.write().unwrap().add_root(i as u64);
         }
 
@@ -699,7 +777,7 @@ mod shuttle_tests {
                 status_cache
                     .write()
                     .unwrap()
-                    .add_root(MAX_CACHE_ENTRIES as Slot + 1);
+                    .add_root(max_root_entries as Slot + 1);
             }
         });
 
@@ -710,7 +788,7 @@ mod shuttle_tests {
                 status_cache.write().unwrap().insert(
                     &blockhash1,
                     key2,
-                    MAX_CACHE_ENTRIES as Slot + 2,
+                    max_root_entries as Slot + 2,
                     (),
                 );
             }
@@ -719,7 +797,7 @@ mod shuttle_tests {
         th_insert.join().unwrap();
 
         let mut ancestors2 = Ancestors::default();
-        ancestors2.insert(MAX_CACHE_ENTRIES as Slot + 2);
+        ancestors2.insert(max_root_entries as Slot + 2);
 
         assert!(
             status_cache

@@ -178,8 +178,7 @@ fn simulate_transaction(
         Some(false), // is_simple_vote_tx
         bank,
         bank.get_reserved_account_keys(),
-        bank.feature_set
-            .is_active(&agave_feature_set::limit_instruction_accounts::id()),
+        bank.feature_set.snapshot().limit_instruction_accounts,
     ) {
         Err(err) => {
             return BanksTransactionResultWithSimulation {

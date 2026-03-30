@@ -25,9 +25,7 @@ use {
     },
     solana_accounts_db::{
         accounts::AccountAddressFilter,
-        accounts_index::{
-            AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig, ScanOrder, ScanResult,
-        },
+        accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanResult},
     },
     solana_client::connection_cache::Protocol,
     solana_clock::{Slot, UnixTimestamp},
@@ -309,15 +307,11 @@ impl JsonRpcRequestProcessor {
         filters: Vec<RpcFilterType>,
         sort_results: bool,
     ) -> ScanResult<Vec<KeyedAccountSharedData>> {
-        let scan_order = if sort_results {
-            ScanOrder::Sorted
-        } else {
-            ScanOrder::Unsorted
-        };
         let bank = Arc::clone(bank);
         let index_key = index_key.to_owned();
         let program_id = program_id.to_owned();
-        self.runtime
+        let mut accounts = self
+            .runtime
             .spawn_blocking(move || {
                 bank.get_filtered_indexed_accounts(
                     &index_key,
@@ -332,12 +326,15 @@ impl JsonRpcRequestProcessor {
                                 .iter()
                                 .all(|filter_type| filter_allows(filter_type, account))
                     },
-                    &ScanConfig::new(scan_order),
                     bank.byte_limit_for_scans(),
                 )
             })
             .await
-            .expect("Failed to spawn blocking task")
+            .expect("Failed to spawn blocking task")?;
+        if sort_results {
+            accounts.sort_unstable_by(|(a_addr, _), (b_addr, _)| a_addr.cmp(b_addr));
+        }
+        Ok(accounts)
     }
 
     #[allow(deprecated)]
@@ -987,7 +984,6 @@ impl JsonRpcRequestProcessor {
                 slot_leaders.extend(
                     leader_schedule
                         .get_slot_leaders()
-                        .iter()
                         .map(|slot_leader| slot_leader.id)
                         .skip(slot_index as usize)
                         .take(limit.saturating_sub(slot_leaders.len())),
@@ -1047,7 +1043,6 @@ impl JsonRpcRequestProcessor {
     ) -> RpcCustomResult<RpcResponse<Vec<RpcAccountBalance>>> {
         let config = config.unwrap_or_default();
         let bank = self.bank(config.commitment);
-        let sort_results = config.sort_results.unwrap_or(true);
 
         if let Some((slot, accounts)) = self.get_cached_largest_accounts(&config.filter) {
             Ok(RpcResponse {
@@ -1076,12 +1071,7 @@ impl JsonRpcRequestProcessor {
                 .spawn_blocking({
                     let bank = Arc::clone(&bank);
                     move || {
-                        bank.get_largest_accounts(
-                            NUM_LARGEST_ACCOUNTS,
-                            &addresses,
-                            address_filter,
-                            sort_results,
-                        )
+                        bank.get_largest_accounts(NUM_LARGEST_ACCOUNTS, &addresses, address_filter)
                     }
                 })
                 .await
@@ -1148,6 +1138,9 @@ impl JsonRpcRequestProcessor {
         };
 
         let bank = self.bank(config.commitment);
+        let commission_rate_in_basis_points = bank
+            .feature_set
+            .is_active(&agave_feature_set::commission_rate_in_basis_points::id());
         let vote_accounts = bank.vote_accounts();
         let epoch_vote_accounts = bank
             .epoch_vote_accounts(bank.get_epoch_and_slot_index(bank.slot()).0)
@@ -1183,7 +1176,18 @@ impl JsonRpcRequestProcessor {
                     vote_pubkey: vote_pubkey.to_string(),
                     node_pubkey: vote_state_view.node_pubkey().to_string(),
                     activated_stake: *activated_stake,
-                    commission: vote_state_view.commission(),
+                    commission: if commission_rate_in_basis_points {
+                        // Derive percent from native bps, clamping to u8::MAX.
+                        let bps = vote_state_view.inflation_rewards_commission();
+                        bps.div_ceil(100).min(u8::MAX as u16) as u8
+                    } else {
+                        vote_state_view.commission()
+                    },
+                    inflation_rewards_commission_bps: Some(if commission_rate_in_basis_points {
+                        vote_state_view.inflation_rewards_commission()
+                    } else {
+                        vote_state_view.commission() as u16 * 100
+                    }),
                     root_slot: vote_state_view.root_slot().unwrap_or(0),
                     epoch_credits,
                     epoch_vote_account: epoch_vote_accounts.contains_key(vote_pubkey),
@@ -1281,6 +1285,7 @@ impl JsonRpcRequestProcessor {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     pub async fn get_block(
         &self,
         slot: Slot,
@@ -1847,6 +1852,7 @@ impl JsonRpcRequestProcessor {
         let SignatureInfosForAddress {
             infos: mut results,
             found_before,
+            found_until,
         } = self
             .blockstore
             .get_confirmed_signatures_for_address2(address, highest_slot, before, until, limit)
@@ -1873,7 +1879,7 @@ impl JsonRpcRequestProcessor {
                 .collect()
         };
 
-        if results.len() < limit {
+        if results.len() < limit || !found_until {
             if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
                 let mut bigtable_before = before;
                 if !results.is_empty() {
@@ -1889,7 +1895,7 @@ impl JsonRpcRequestProcessor {
                         .get_signature_status(&bigtable_before.unwrap())
                         .await
                     {
-                        Err(StorageError::SignatureNotFound) => {
+                        Err(StorageError::SignatureNotFound(_)) => {
                             bigtable_before = None;
                         }
                         Err(err) => {
@@ -1923,10 +1929,36 @@ impl JsonRpcRequestProcessor {
                             }
                         }
                     }
-                    Err(StorageError::SignatureNotFound) => {}
+                    Err(StorageError::SignatureNotFound(not_found_signature)) => {
+                        // bigtable_before is checked above
+                        // SignatureNotFound means the blockstore before was not found, or the until signature was never found.
+                        return Err(RpcCustomError::FilterTransactionNotFound {
+                            signature: not_found_signature.to_string(),
+                        }
+                        .into());
+                    }
                     Err(err) => {
                         warn!("Failed to query Bigtable: {err:?}");
                         return Err(RpcCustomError::LongTermStorageUnreachable.into());
+                    }
+                }
+            } else {
+                // Long-term storage is not enabled.
+                // Return an error to the user if either before/until were provided but not found.
+                if !found_before {
+                    if let Some(signature) = before {
+                        return Err(RpcCustomError::FilterTransactionNotFound {
+                            signature: signature.to_string(),
+                        }
+                        .into());
+                    }
+                }
+                if !found_until {
+                    if let Some(signature) = until {
+                        return Err(RpcCustomError::FilterTransactionNotFound {
+                            signature: signature.to_string(),
+                        }
+                        .into());
                     }
                 }
             }
@@ -2195,6 +2227,7 @@ impl JsonRpcRequestProcessor {
     }
 
     /// Use a set of filters to get an iterator of keyed program accounts from a bank
+    #[allow(clippy::result_large_err)]
     async fn get_filtered_program_accounts(
         &self,
         bank: Arc<Bank>,
@@ -2226,12 +2259,8 @@ impl JsonRpcRequestProcessor {
             })
         } else {
             // this path does not need to provide a mb limit because we only want to support secondary indexes
-            let scan_order = if sort_results {
-                ScanOrder::Sorted
-            } else {
-                ScanOrder::Unsorted
-            };
-            self.runtime
+            let mut accounts = self
+                .runtime
                 .spawn_blocking(move || {
                     bank.get_filtered_program_accounts(
                         &program_id,
@@ -2240,14 +2269,17 @@ impl JsonRpcRequestProcessor {
                                 .iter()
                                 .all(|filter_type| filter_allows(filter_type, account))
                         },
-                        &ScanConfig::new(scan_order),
                     )
                     .map_err(|e| RpcCustomError::ScanError {
                         message: e.to_string(),
                     })
                 })
                 .await
-                .expect("Failed to spawn blocking task")
+                .expect("Failed to spawn blocking task")?;
+            if sort_results {
+                accounts.sort_unstable_by(|(a_addr, _), (b_addr, _)| a_addr.cmp(b_addr));
+            }
+            Ok(accounts)
         }
     }
 
@@ -2376,8 +2408,7 @@ impl JsonRpcRequestProcessor {
     fn get_stake_minimum_delegation(&self, config: RpcContextConfig) -> Result<RpcResponse<u64>> {
         let bank = self.get_bank_with_config(config)?;
         let stake_minimum_delegation = stake_utils::get_minimum_delegation(
-            bank.feature_set
-                .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
+            bank.feature_set.snapshot().upgrade_bpf_stake_program_to_v5,
         );
         Ok(new_response(&bank, stake_minimum_delegation))
     }
@@ -2931,7 +2962,6 @@ pub mod rpc_minimal {
                         solana_runtime::leader_schedule_utils::leader_schedule_by_identity(
                             leader_schedule
                                 .get_slot_leaders()
-                                .iter()
                                 .map(|slot_leader| &slot_leader.id)
                                 .enumerate(),
                         );
@@ -3838,7 +3868,8 @@ pub mod rpc_full {
                 preflight_bank.get_reserved_account_keys(),
                 preflight_bank
                     .feature_set
-                    .is_active(&agave_feature_set::limit_instruction_accounts::id()),
+                    .snapshot()
+                    .limit_instruction_accounts,
             )?;
             let blockhash = *transaction.message().recent_blockhash();
             let message_hash = *transaction.message_hash();
@@ -4000,8 +4031,7 @@ pub mod rpc_full {
                 unsanitized_tx,
                 bank,
                 bank.get_reserved_account_keys(),
-                bank.feature_set
-                    .is_active(&agave_feature_set::limit_instruction_accounts::id()),
+                bank.feature_set.snapshot().limit_instruction_accounts,
             )?;
 
             let verification_error = if sig_verify {
@@ -4553,7 +4583,7 @@ pub mod tests {
             filter::MemcmpEncodedBytes,
         },
         solana_runtime::{
-            bank::BankTestConfig,
+            bank::{BankTestConfig, SlotLeader},
             commitment::{BlockCommitment, CommitmentSlots},
             non_circulating_supply::non_circulating_accounts,
         },
@@ -4972,7 +5002,7 @@ pub mod tests {
             let mut parent_bank = self.bank_forks.read().unwrap().working_bank();
             for (i, root) in roots.iter().enumerate() {
                 let new_bank =
-                    Bank::new_from_parent(parent_bank.clone(), parent_bank.leader_id(), *root);
+                    Bank::new_from_parent(parent_bank.clone(), *parent_bank.leader(), *root);
                 parent_bank = self
                     .bank_forks
                     .write()
@@ -4991,7 +5021,7 @@ pub mod tests {
             self.blockstore.set_roots(roots.iter()).unwrap();
             let new_bank = Bank::new_from_parent(
                 parent_bank.clone(),
-                parent_bank.leader_id(),
+                *parent_bank.leader(),
                 roots.iter().max().unwrap() + 1,
             );
             self.bank_forks.write().unwrap().insert(new_bank);
@@ -5015,11 +5045,12 @@ pub mod tests {
 
         fn advance_bank_to_confirmed_slot(&self, slot: Slot) -> Arc<Bank> {
             let parent_bank = self.working_bank();
+            let child_bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), slot);
             let bank = self
                 .bank_forks
                 .write()
                 .unwrap()
-                .insert(Bank::new_from_parent(parent_bank, &Pubkey::default(), slot))
+                .insert(child_bank)
                 .clone_without_scheduler();
 
             let new_block_commitment = BlockCommitmentCache::new(
@@ -8909,13 +8940,13 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get(1).unwrap();
-        let bank2 = Bank::new_from_parent(bank1, &Pubkey::default(), 2);
+        let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
-        let bank3 = Bank::new_from_parent(bank2, &Pubkey::default(), 3);
+        let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
         bank_forks.write().unwrap().insert(bank3);
 
         let prioritization_fee_cache_inner = None;
@@ -9233,8 +9264,7 @@ pub mod tests {
         let rpc = RpcHandler::start();
         let bank = rpc.working_bank();
         let expected_stake_minimum_delegation = stake_utils::get_minimum_delegation(
-            bank.feature_set
-                .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
+            bank.feature_set.snapshot().upgrade_bpf_stake_program_to_v5,
         );
 
         let request = create_test_request("getStakeMinimumDelegation", None);

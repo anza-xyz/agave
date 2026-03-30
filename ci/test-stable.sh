@@ -77,7 +77,7 @@ test-stable-sbf)
   "$cargo_build_sbf" --version
 
   # Install the platform tools
-  _ platform-tools-sdk/sbf/scripts/install.sh
+  _ programs/sbf/install.sh
 
   # SBPFv0 program tests
   _ make -C programs/sbf test-v0
