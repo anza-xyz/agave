@@ -77,28 +77,22 @@ struct WritableTransactionAccountStateInfo {
     data_size: usize,
 }
 
-// Returns account data size delta for a given transaction execution
-pub(crate) fn get_account_data_len_delta(
-    post: &[TransactionAccountStateInfo],
-    accounts_resize_delta: i64,
-) -> i64 {
-    // accounts_resize_delta accounts doesn't account for deleted accounts, so the overall
-    // state delta is computed by subtracting the data size of every deleted account.
+// Returns the cumulative size of all post-exec uninitialized accounts
+pub(crate) fn get_uninitialized_accounts_size(post: &[TransactionAccountStateInfo]) -> u64 {
     post.iter()
-        .fold(accounts_resize_delta, |data_size_delta, post_info| {
+        .map(|post_info| {
             if let Some(post) = &post_info.info {
                 match &post.rent_state {
-                    // deleted: post-exec data size is used because `post_size - pre_size` is already
-                    // accounted for in accounts_resize_delta.
-                    RentState::Uninitialized => data_size_delta - post.data_size as i64,
-                    // existing account or new account creation
-                    _ => data_size_delta,
+                    RentState::Uninitialized => post.data_size as u64,
+                    _ => 0,
                 }
             } else {
-                // None indicates non write-locked accounts -> no change
-                data_size_delta
+                // None indicates non write-locked account, which could not have
+                // become uninitialized during transaction execution
+                0
             }
         })
+        .sum()
 }
 
 #[cfg(test)]
@@ -289,7 +283,7 @@ mod test {
     }
 
     #[test]
-    fn test_get_account_data_len_delta_with_deleted_account() {
+    fn test_get_uninitialized_accounts_size_with_deleted_accounts() {
         let post_state_infos = vec![
             TransactionAccountStateInfo {
                 info: Some(WritableTransactionAccountStateInfo {
@@ -317,10 +311,7 @@ mod test {
             },
         ];
 
-        let accounts_resize_delta = 0;
-        let delta = get_account_data_len_delta(&post_state_infos, accounts_resize_delta);
-
-        // 3 deleted accounts should contribute 3 * (-50) = -150 to the delta
-        assert_eq!(delta, -150);
+        // 3 deleted accounts should contribute 3 * (50) = 150 to the count
+        assert_eq!(get_uninitialized_accounts_size(&post_state_infos), 150);
     }
 }

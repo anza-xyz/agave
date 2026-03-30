@@ -10,10 +10,14 @@ use {
         nonce_info::NonceInfo,
         program_loader::{get_program_deployment_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
-        transaction_account_state_info::{TransactionAccountStateInfo, get_account_data_len_delta},
+        transaction_account_state_info::{
+            TransactionAccountStateInfo, get_uninitialized_accounts_size,
+        },
         transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
+        transaction_execution_result::{
+            AccountsDeltas, ExecutedTransaction, TransactionExecutionDetails,
+        },
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
     log::debug,
@@ -1056,14 +1060,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             post_account_state_info_result = Err(TransactionError::UnbalancedTransaction);
         }
 
-        let (status, accounts_data_len_delta) = post_account_state_info_result
+        // accounts_resize_delta and accounts_uninitialized_size must be set to None
+        // in the result if status is an error
+        let (status, accounts_deltas) = post_account_state_info_result
             .map(|post_state_info| {
                 (
                     Ok(()),
-                    Some(get_account_data_len_delta(
-                        &post_state_info,
+                    Some(AccountsDeltas {
                         accounts_resize_delta,
-                    )),
+                        accounts_uninitialized_size: get_uninitialized_accounts_size(
+                            &post_state_info,
+                        ),
+                    }),
                 )
             })
             .unwrap_or_else(|err| (Err(err), None));
@@ -1087,7 +1095,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 inner_instructions,
                 return_data,
                 executed_units,
-                accounts_data_len_delta,
+                accounts_deltas,
             },
             loaded_transaction,
             programs_modified_by_tx: program_cache_for_tx_batch.drain_modified_entries(),

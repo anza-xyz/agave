@@ -164,7 +164,9 @@ mod tests {
         solana_signer::{Signer, signers::Signers},
         solana_svm::{
             account_loader::{FeesOnlyTransaction, LoadedTransaction},
-            transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
+            transaction_execution_result::{
+                AccountsDeltas, ExecutedTransaction, TransactionExecutionDetails,
+            },
         },
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
@@ -188,7 +190,10 @@ mod tests {
         status: Result<()>,
         loaded_transaction: LoadedTransaction,
     ) -> TransactionProcessingResult {
-        let accounts_data_len_delta = status.as_ref().is_ok().then_some(0);
+        let accounts_deltas = status.as_ref().is_ok().then_some(AccountsDeltas {
+            accounts_resize_delta: 0,
+            accounts_uninitialized_size: 0,
+        });
         Ok(ProcessedTransaction::Executed(Box::new(
             ExecutedTransaction {
                 execution_details: TransactionExecutionDetails {
@@ -197,7 +202,7 @@ mod tests {
                     inner_instructions: None,
                     return_data: None,
                     executed_units: 0,
-                    accounts_data_len_delta,
+                    accounts_deltas,
                 },
                 loaded_transaction,
                 programs_modified_by_tx: HashMap::new(),
