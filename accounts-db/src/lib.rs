@@ -13,6 +13,7 @@ pub mod accounts_db;
 pub mod accounts_file;
 pub mod accounts_hash;
 pub mod accounts_index;
+pub mod accounts_scan;
 pub mod accounts_update_notifier_interface;
 mod active_stats;
 pub mod ancestors;
