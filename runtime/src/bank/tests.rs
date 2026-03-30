@@ -12138,7 +12138,8 @@ fn test_temporary_account_recreated_execute_and_commit() {
 /// is set from the rent sysvar account, not from the serialized bank fields.
 #[test]
 fn test_new_from_snapshot_uses_rent_from_sysvar() {
-    let (genesis_config, _mint_keypair) = create_genesis_config(100_000);
+    let GenesisConfigInfo { genesis_config, .. } =
+        create_genesis_config_with_leader(100_000, &Pubkey::new_unique(), 3);
     let expected_rent = genesis_config.rent.clone();
     let wrong_rent = Rent {
         lamports_per_byte: expected_rent.lamports_per_byte + 999_999,
@@ -12167,7 +12168,9 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
         .map(|(epoch, stakes)| (epoch, stakes.into()))
         .collect();
 
-    // Reconstruct bank from corrupted fields
+    // Reconstruct bank from corrupted fields.
+    // Use `None` to ensure new_from_snapshot computes the leader, which
+    // exercises the slot 0 `highest_staked_node()` path.
     let new_bank = Bank::new_from_snapshot(
         BankRc {
             accounts: Arc::clone(&bank.rc.accounts),
@@ -12177,7 +12180,7 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
         &genesis_config,
         Arc::new(RuntimeConfig::default()),
         fields,
-        Some(bank.leader),
+        None,
         None,
         bank.load_accounts_data_size(),
         epoch_stakes,
