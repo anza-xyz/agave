@@ -1795,14 +1795,6 @@ impl Bank {
             .set_program_runtime_environment(program_runtime_environment);
     }
 
-    pub fn byte_limit_for_scans(&self) -> Option<usize> {
-        self.rc
-            .accounts
-            .accounts_db
-            .accounts_index
-            .scan_results_limit_bytes
-    }
-
     pub fn proper_ancestors_set(&self) -> HashSet<Slot> {
         HashSet::from_iter(self.proper_ancestors())
     }

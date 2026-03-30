@@ -18,9 +18,9 @@ use {
         deploy::deploy_program,
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
-            LoadProgramMetrics, ProgramCacheForTxBatch, ProgramRuntimeEnvironment,
-            ProgramRuntimeEnvironments,
+            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
         },
+        program_metrics::LoadProgramMetrics,
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,

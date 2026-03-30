@@ -171,6 +171,8 @@ pub struct JsonRpcConfig {
     pub full_api: bool,
     pub rpc_scan_and_fix_roots: bool,
     pub max_request_body_size: Option<usize>,
+    /// If set, abort index scans whose accumulated results exceed this many bytes.
+    pub scan_results_limit_bytes: Option<usize>,
     /// Disable the health check, used for tests and TestValidator
     pub disable_health_check: bool,
 }
@@ -192,6 +194,7 @@ impl Default for JsonRpcConfig {
             full_api: Default::default(),
             rpc_scan_and_fix_roots: Default::default(),
             max_request_body_size: Option::default(),
+            scan_results_limit_bytes: Option::default(),
             disable_health_check: Default::default(),
         }
     }
@@ -310,6 +313,7 @@ impl JsonRpcRequestProcessor {
         let bank = Arc::clone(bank);
         let index_key = index_key.to_owned();
         let program_id = program_id.to_owned();
+        let byte_limit_for_scans = self.config.scan_results_limit_bytes;
         let mut accounts = self
             .runtime
             .spawn_blocking(move || {
@@ -326,7 +330,7 @@ impl JsonRpcRequestProcessor {
                                 .iter()
                                 .all(|filter_type| filter_allows(filter_type, account))
                     },
-                    bank.byte_limit_for_scans(),
+                    byte_limit_for_scans,
                 )
             })
             .await

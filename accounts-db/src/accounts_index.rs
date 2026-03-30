@@ -59,7 +59,6 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_TESTING: AccountsIndexConfig = AccountsIndex
     drives: None,
     index_limit: IndexLimit::InMemOnly,
     ages_to_stay_in_cache: None,
-    scan_results_limit_bytes: None,
     num_initial_accounts: None,
 };
 pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIndexConfig {
@@ -68,7 +67,6 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
     drives: None,
     index_limit: IndexLimit::InMemOnly,
     ages_to_stay_in_cache: None,
-    scan_results_limit_bytes: None,
     num_initial_accounts: None,
 };
 pub type ScanResult<T> = Result<T, ScanError>;
@@ -225,7 +223,6 @@ pub struct AccountsIndexConfig {
     pub drives: Option<Vec<PathBuf>>,
     pub index_limit: IndexLimit,
     pub ages_to_stay_in_cache: Option<Age>,
-    pub scan_results_limit_bytes: Option<usize>,
     /// Initial number of accounts, used to pre-allocate HashMap capacity at startup.
     pub num_initial_accounts: Option<usize>,
 }
@@ -238,7 +235,6 @@ impl Default for AccountsIndexConfig {
             drives: None,
             index_limit: IndexLimit::InMemOnly,
             ages_to_stay_in_cache: None,
-            scan_results_limit_bytes: None,
             num_initial_accounts: None,
         }
     }
@@ -458,9 +454,6 @@ pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
 
     storage: AccountsIndexStorage<T, U>,
 
-    /// when a scan's accumulated data exceeds this limit, abort the scan
-    pub scan_results_limit_bytes: Option<usize>,
-
     pub purge_older_root_entries_one_slot_list: AtomicUsize,
 
     /// # roots added since last check
@@ -475,7 +468,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     }
 
     pub fn new(config: &AccountsIndexConfig, exit: Arc<AtomicBool>) -> Self {
-        let scan_results_limit_bytes = config.scan_results_limit_bytes;
         let (account_maps, bin_calculator, storage) = Self::allocate_accounts_index(config, exit);
         Self {
             purge_older_root_entries_one_slot_list: AtomicUsize::default(),
@@ -493,7 +485,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             roots_tracker: RwLock::<RootsTracker>::default(),
             scan_tracker: ScanTracker::default(),
             storage,
-            scan_results_limit_bytes,
             roots_added: AtomicUsize::default(),
             roots_removed: AtomicUsize::default(),
         }

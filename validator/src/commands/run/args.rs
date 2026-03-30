@@ -1018,17 +1018,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("accounts_index_scan_results_limit_mb")
-            .long("accounts-index-scan-results-limit-mb")
-            .value_name("MEGABYTES")
-            .validator(is_parsable::<usize>)
-            .takes_value(true)
-            .help(
-                "How large accumulated results from an accounts index scan can become. If this is \
-                 exceeded, the scan aborts.",
-            ),
-    )
-    .arg(
         Arg::with_name("accounts_index_bins")
             .long("accounts-index-bins")
             .value_name("BINS")
