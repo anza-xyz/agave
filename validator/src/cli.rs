@@ -304,7 +304,7 @@ pub fn port_validator(port: String) -> Result<(), String> {
 
 pub fn port_range_validator(port_range: String) -> Result<(), String> {
     if let Some((start, end)) = solana_net_utils::parse_port_range(&port_range) {
-        if end - start < MINIMUM_VALIDATOR_PORT_RANGE_WIDTH {
+        if end - start < MINIMUM_VALIDATOR_PORT_RANGE_WIDTH - 1 {
             Err(format!(
                 "Port range is too small.  Try --dynamic-port-range {}-{}",
                 start,
