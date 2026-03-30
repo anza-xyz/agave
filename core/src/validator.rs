@@ -1404,9 +1404,12 @@ impl Validator {
         let stats_reporter_service =
             StatsReporterService::new(stats_reporter_receiver, exit.clone());
 
+        let epoch_specs: Arc<dyn solana_gossip::epoch_specs::EpochSpecs> =
+            Arc::new(crate::epoch_specs::EpochSpecs::from(bank_forks.clone()));
+
         let gossip_service = GossipService::new(
             &cluster_info,
-            Some(bank_forks.clone()),
+            Some(epoch_specs),
             node.sockets.gossip.clone(),
             config.gossip_validators.clone(),
             should_check_duplicate_instance,

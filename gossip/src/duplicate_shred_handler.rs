@@ -2,18 +2,14 @@ use {
     crate::{
         duplicate_shred::{self, DuplicateShred, Error},
         duplicate_shred_listener::DuplicateShredHandlerTrait,
+        epoch_specs::EpochSpecs,
     },
     crossbeam_channel::Sender,
     log::error,
-    solana_clock::{Epoch, Slot},
+    solana_clock::Slot,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_pubkey::Pubkey,
-    solana_runtime::bank_forks::BankForks,
-    std::{
-        cmp::Reverse,
-        collections::HashMap,
-        sync::{Arc, RwLock},
-    },
+    std::{cmp::Reverse, collections::HashMap, sync::Arc},
 };
 
 // Normally num_chunks is 3, because there are two shreds (each is one packet)
@@ -38,9 +34,7 @@ pub struct DuplicateShredHandler {
     last_root: Slot,
     blockstore: Arc<Blockstore>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
-    bank_forks: Arc<RwLock<BankForks>>,
-    // Cache information from root bank so we could function correctly without reading roots.
-    cached_on_epoch: Epoch,
+    epoch_specs: Arc<dyn EpochSpecs>,
     cached_staked_nodes: Arc<HashMap<Pubkey, u64>>,
     cached_slots_in_epoch: u64,
     // Used to notify duplicate consensus state machine
@@ -76,7 +70,7 @@ impl DuplicateShredHandler {
     pub fn new(
         blockstore: Arc<Blockstore>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
-        bank_forks: Arc<RwLock<BankForks>>,
+        epoch_specs: Arc<dyn EpochSpecs>,
         duplicate_slots_sender: Sender<Slot>,
         shred_version: u16,
     ) -> Self {
@@ -84,12 +78,11 @@ impl DuplicateShredHandler {
             buffer: HashMap::<(Slot, Pubkey), BufferEntry>::default(),
             consumed: HashMap::<Slot, bool>::default(),
             last_root: 0,
-            cached_on_epoch: 0,
             cached_staked_nodes: Arc::new(HashMap::new()),
             cached_slots_in_epoch: 0,
             blockstore,
             leader_schedule_cache,
-            bank_forks,
+            epoch_specs,
             duplicate_slots_sender,
             shred_version,
         }
@@ -101,17 +94,8 @@ impl DuplicateShredHandler {
             return;
         }
         self.last_root = last_root;
-        if let Ok(bank_fork) = self.bank_forks.try_read() {
-            let root_bank = bank_fork.root_bank();
-            let epoch_info = root_bank.get_epoch_info();
-            if self.cached_staked_nodes.is_empty() || self.cached_on_epoch < epoch_info.epoch {
-                self.cached_on_epoch = epoch_info.epoch;
-                if let Some(cached_staked_nodes) = root_bank.epoch_staked_nodes(epoch_info.epoch) {
-                    self.cached_staked_nodes = cached_staked_nodes;
-                }
-                self.cached_slots_in_epoch = epoch_info.slots_in_epoch;
-            }
-        }
+        self.cached_slots_in_epoch = self.epoch_specs.epoch_slots();
+        self.cached_staked_nodes = self.epoch_specs.epoch_current_staked_nodes();
     }
 
     fn handle_shred_data(&mut self, chunk: DuplicateShred) -> Result<(), Error> {
@@ -242,10 +226,31 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
             shred::Shredder,
         },
-        solana_runtime::bank::{Bank, SlotLeader},
+        solana_runtime::{
+            bank::{Bank, SlotLeader},
+            bank_forks::BankForks,
+        },
         solana_signer::Signer,
         solana_time_utils::timestamp,
+        std::time::Duration,
     };
+
+    struct TestEpochSpecs {
+        epoch_duration: Duration,
+        slots_in_epoch: u64,
+    }
+
+    impl EpochSpecs for TestEpochSpecs {
+        fn epoch_current_staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+            Arc::new(HashMap::new())
+        }
+        fn epoch_duration(&self) -> Duration {
+            self.epoch_duration
+        }
+        fn epoch_slots(&self) -> u64 {
+            self.slots_in_epoch
+        }
+    }
 
     fn create_duplicate_proof(
         keypair: Arc<Keypair>,
@@ -307,6 +312,16 @@ mod tests {
             bank_forks.insert(bank9);
             bank_forks.set_root(9, None, None);
         }
+        let slots_in_epoch = bank_forks_arc
+            .read()
+            .unwrap()
+            .working_bank()
+            .get_slots_in_epoch(0);
+        let epoch_specs = TestEpochSpecs {
+            epoch_duration: Duration::from_millis(slots_in_epoch * 400),
+            slots_in_epoch,
+        };
+
         assert!(blockstore.set_roots([0, 9].iter()).is_ok());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
             &bank_forks_arc.read().unwrap().working_bank(),
@@ -317,7 +332,7 @@ mod tests {
         let mut duplicate_shred_handler = DuplicateShredHandler::new(
             blockstore.clone(),
             leader_schedule_cache,
-            bank_forks_arc,
+            Arc::new(epoch_specs),
             sender,
             shred_version,
         );
@@ -400,6 +415,16 @@ mod tests {
             bank_forks.insert(bank9);
             bank_forks.set_root(9, None, None);
         }
+        let slots_in_epoch = bank_forks_arc
+            .read()
+            .unwrap()
+            .working_bank()
+            .get_slots_in_epoch(0);
+        let epoch_specs = TestEpochSpecs {
+            epoch_duration: Duration::from_millis(slots_in_epoch * 400),
+            slots_in_epoch,
+        };
+
         blockstore.set_roots([0, 9].iter()).unwrap();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
             &bank_forks_arc.read().unwrap().working_bank(),
@@ -408,7 +433,7 @@ mod tests {
         let mut duplicate_shred_handler = DuplicateShredHandler::new(
             blockstore.clone(),
             leader_schedule_cache,
-            bank_forks_arc,
+            Arc::new(epoch_specs),
             sender,
             shred_version,
         );

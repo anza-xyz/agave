@@ -7008,7 +7008,6 @@ dependencies = [
  "solana-perf",
  "solana-pubkey 4.1.0",
  "solana-rayon-threadlimit",
- "solana-runtime",
  "solana-sanitize",
  "solana-serde-varint",
  "solana-sha256-hasher",

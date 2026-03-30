@@ -12,7 +12,6 @@ use {
     solana_net_utils::{DEFAULT_IP_ECHO_SERVER_THREADS, SocketAddrSpace},
     solana_perf::recycler::Recycler,
     solana_pubkey::Pubkey,
-    solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
     solana_streamer::{
         evicting_sender::EvictingSender,
@@ -22,7 +21,7 @@ use {
         collections::HashSet,
         net::{SocketAddr, TcpListener, UdpSocket},
         sync::{
-            Arc, RwLock,
+            Arc,
             atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle, sleep},
@@ -39,7 +38,7 @@ pub struct GossipService {
 impl GossipService {
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
-        bank_forks: Option<Arc<RwLock<BankForks>>>,
+        epoch_specs: Option<Arc<dyn EpochSpecs>>,
         gossip_sockets: Arc<[UdpSocket]>,
         gossip_validators: Option<HashSet<Pubkey>>,
         should_check_duplicate_instance: bool,
@@ -72,7 +71,7 @@ impl GossipService {
         let (consume_sender, listen_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
-            bank_forks.clone(),
+            epoch_specs.clone(),
             request_receiver,
             consume_sender,
             exit.clone(),
@@ -80,14 +79,14 @@ impl GossipService {
         let (response_sender, response_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_listen = cluster_info.clone().listen(
-            bank_forks.clone(),
+            epoch_specs.clone(),
             listen_receiver,
             response_sender.clone(),
             should_check_duplicate_instance,
             exit.clone(),
         );
         let t_gossip = cluster_info.clone().gossip(
-            bank_forks.clone(),
+            epoch_specs.clone(),
             response_sender,
             gossip_validators,
             exit.clone(),
@@ -104,14 +103,12 @@ impl GossipService {
             .name("solGossipMetr".to_string())
             .spawn({
                 let cluster_info = cluster_info.clone();
-                let mut epoch_specs = bank_forks.map(EpochSpecs::from);
                 move || {
                     while !exit.load(Ordering::Relaxed) {
                         sleep(SUBMIT_GOSSIP_STATS_INTERVAL);
                         let stakes = epoch_specs
-                            .as_mut()
-                            .map(|epoch_specs| epoch_specs.current_epoch_staked_nodes())
-                            .cloned()
+                            .as_ref()
+                            .map(|es| es.epoch_current_staked_nodes())
                             .unwrap_or_default();
 
                         submit_gossip_stats(&cluster_info.stats, &cluster_info.gossip, &stakes);

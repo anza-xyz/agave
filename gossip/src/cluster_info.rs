@@ -60,7 +60,6 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
-    solana_runtime::bank_forks::BankForks,
     solana_sanitize::Sanitize,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -1443,7 +1442,7 @@ impl ClusterInfo {
     /// randomly pick a node and ask them for updates asynchronously
     pub fn gossip(
         self: Arc<Self>,
-        bank_forks: Option<Arc<RwLock<BankForks>>>,
+        epoch_specs: Option<Arc<dyn EpochSpecs>>,
         sender: impl ChannelSend<PacketBatch>,
         gossip_validators: Option<HashSet<Pubkey>>,
         exit: Arc<AtomicBool>,
@@ -1453,7 +1452,6 @@ impl ClusterInfo {
             .thread_name(|i| format!("solGossipRun{i:02}"))
             .build()
             .unwrap();
-        let mut epoch_specs = bank_forks.map(EpochSpecs::from);
         Builder::new()
             .name("solGossip".to_string())
             .spawn(move || {
@@ -1487,9 +1485,8 @@ impl ClusterInfo {
                         last_contact_info_save = start;
                     }
                     let stakes = epoch_specs
-                        .as_mut()
-                        .map(EpochSpecs::current_epoch_staked_nodes)
-                        .cloned()
+                        .as_ref()
+                        .map(|es| es.epoch_current_staked_nodes())
                         .unwrap_or_default();
 
                     let _ = self.run_gossip(
@@ -1502,8 +1499,8 @@ impl ClusterInfo {
                         gossip_round % PULL_REQUEST_PERIOD == 0,
                     );
                     let epoch_duration = epoch_specs
-                        .as_mut()
-                        .map(EpochSpecs::epoch_duration)
+                        .as_ref()
+                        .map(|es| es.epoch_duration())
                         .unwrap_or(DEFAULT_EPOCH_DURATION);
                     self.handle_purge(&thread_pool, epoch_duration, &stakes);
                     entrypoints_processed = entrypoints_processed || self.process_entrypoints();
@@ -2087,7 +2084,7 @@ impl ClusterInfo {
     fn run_socket_consume(
         &self,
         thread_pool: &ThreadPool,
-        epoch_specs: Option<&mut EpochSpecs>,
+        epoch_specs: Option<Arc<dyn EpochSpecs>>,
         receiver: &PacketBatchReceiver,
         sender: &impl ChannelSend<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         packet_buf: &mut Vec<PacketBatch>,
@@ -2131,8 +2128,7 @@ impl ClusterInfo {
             })
         }
         let stakes = epoch_specs
-            .map(EpochSpecs::current_epoch_staked_nodes)
-            .cloned()
+            .map(|es| es.epoch_current_staked_nodes())
             .unwrap_or_default();
         let packets_verified: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
@@ -2166,7 +2162,7 @@ impl ClusterInfo {
     fn run_listen(
         &self,
         recycler: &PacketBatchRecycler,
-        mut epoch_specs: Option<&mut EpochSpecs>,
+        epoch_specs: Option<Arc<dyn EpochSpecs>>,
         receiver: &Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         response_sender: &impl ChannelSend<PacketBatch>,
         thread_pool: &ThreadPool,
@@ -2185,12 +2181,12 @@ impl ClusterInfo {
             }
         }
         let stakes = epoch_specs
-            .as_mut()
-            .map(|epoch_specs| epoch_specs.current_epoch_staked_nodes())
-            .cloned()
+            .as_ref()
+            .map(|es| es.epoch_current_staked_nodes())
             .unwrap_or_default();
         let epoch_duration = epoch_specs
-            .map(EpochSpecs::epoch_duration)
+            .as_ref()
+            .map(|es| es.epoch_duration())
             .unwrap_or(DEFAULT_EPOCH_DURATION);
         self.process_packets(
             packet_buf,
@@ -2210,7 +2206,7 @@ impl ClusterInfo {
 
     pub(crate) fn start_socket_consume_thread(
         self: Arc<Self>,
-        bank_forks: Option<Arc<RwLock<BankForks>>>,
+        epoch_specs: Option<Arc<dyn EpochSpecs>>,
         receiver: PacketBatchReceiver,
         sender: impl ChannelSend<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         exit: Arc<AtomicBool>,
@@ -2220,13 +2216,12 @@ impl ClusterInfo {
             .thread_name(|i| format!("solGossipCons{i:02}"))
             .build()
             .unwrap();
-        let mut epoch_specs = bank_forks.map(EpochSpecs::from);
         let mut packet_buf = Vec::with_capacity(CHANNEL_CONSUME_CAPACITY);
         let run_consume = move || {
             while !exit.load(Ordering::Relaxed) {
                 let result = self.run_socket_consume(
                     &thread_pool,
-                    epoch_specs.as_mut(),
+                    epoch_specs.clone(),
                     &receiver,
                     &sender,
                     &mut packet_buf,
@@ -2249,7 +2244,7 @@ impl ClusterInfo {
 
     pub(crate) fn listen(
         self: Arc<Self>,
-        bank_forks: Option<Arc<RwLock<BankForks>>>,
+        epoch_specs: Option<Arc<dyn EpochSpecs>>,
         requests_receiver: Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         response_sender: impl ChannelSend<PacketBatch>,
         should_check_duplicate_instance: bool,
@@ -2261,7 +2256,6 @@ impl ClusterInfo {
             .thread_name(|i| format!("solGossipWork{i:02}"))
             .build()
             .unwrap();
-        let mut epoch_specs = bank_forks.map(EpochSpecs::from);
         let mut packet_buf = Vec::with_capacity(CHANNEL_CONSUME_CAPACITY);
         Builder::new()
             .name("solGossipListen".to_string())
@@ -2269,7 +2263,7 @@ impl ClusterInfo {
                 while !exit.load(Ordering::Relaxed) {
                     let result = self.run_listen(
                         &recycler,
-                        epoch_specs.as_mut(),
+                        epoch_specs.clone(),
                         &requests_receiver,
                         &response_sender,
                         &thread_pool,

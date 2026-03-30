@@ -583,13 +583,16 @@ impl Tvu {
             BlockstoreCleanupService::new(blockstore.clone(), max_ledger_shreds, exit.clone())
         });
 
+        let epoch_specs: Arc<dyn solana_gossip::epoch_specs::EpochSpecs> =
+            Arc::new(crate::epoch_specs::EpochSpecs::from(bank_forks.clone()));
+
         let duplicate_shred_listener = DuplicateShredListener::new(
             exit,
             cluster_info.clone(),
             DuplicateShredHandler::new(
                 blockstore,
                 leader_schedule_cache.clone(),
-                bank_forks.clone(),
+                epoch_specs,
                 duplicate_slots_sender,
                 tvu_config.shred_version,
             ),

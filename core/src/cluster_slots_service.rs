@@ -82,7 +82,7 @@ impl ClusterSlotsService {
     ) {
         let mut cluster_slots_service_timing = ClusterSlotsServiceTiming::default();
         let mut last_stats = Instant::now();
-        let mut epoch_specs = EpochSpecs::from(bank_forks.clone());
+        let epoch_specs = crate::epoch_specs::EpochSpecs::from(bank_forks.clone());
         let migration_status = bank_forks.read().unwrap().migration_status();
 
         // initialize cluster slots with the current root bank
@@ -120,7 +120,7 @@ impl ClusterSlotsService {
             if let Some(slots) = slots {
                 let node_id = cluster_info.id();
                 let my_stake = epoch_specs
-                    .current_epoch_staked_nodes()
+                    .epoch_current_staked_nodes()
                     .get(&node_id)
                     .cloned()
                     .unwrap_or_default();

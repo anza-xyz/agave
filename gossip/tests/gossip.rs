@@ -8,6 +8,7 @@ use {
         cluster_info::ClusterInfo,
         contact_info::{ContactInfo, Protocol},
         crds::Cursor,
+        epoch_specs::EpochSpecs,
         gossip_service::GossipService,
         node::Node,
     },
@@ -16,22 +17,40 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_perf::packet::Packet,
     solana_pubkey::Pubkey,
-    solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
     solana_streamer::sendmmsg::{SendPktsError, multi_target_send},
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
     solana_vote_program::{vote_instruction, vote_state::Vote},
     std::{
+        collections::HashMap,
         net::UdpSocket,
         sync::{
-            Arc, RwLock,
+            Arc,
             atomic::{AtomicBool, Ordering},
         },
         thread::sleep,
         time::Duration,
     },
 };
+
+struct TestEpochSpecs {
+    staked_nodes: Arc<HashMap<Pubkey, u64>>,
+    slots_in_epoch: u64,
+    epoch_duration: Duration,
+}
+
+impl EpochSpecs for TestEpochSpecs {
+    fn epoch_current_staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+        Arc::clone(&self.staked_nodes)
+    }
+    fn epoch_duration(&self) -> Duration {
+        self.epoch_duration
+    }
+    fn epoch_slots(&self) -> u64 {
+        self.slots_in_epoch
+    }
+}
 
 fn test_node(exit: Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSocket) {
     let keypair = Arc::new(Keypair::new());
@@ -61,7 +80,7 @@ fn test_node(exit: Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSock
 fn test_node_with_bank(
     node_keypair: Arc<Keypair>,
     exit: Arc<AtomicBool>,
-    bank_forks: Arc<RwLock<BankForks>>,
+    epoch_specs: Arc<dyn EpochSpecs>,
 ) -> (Arc<ClusterInfo>, GossipService, UdpSocket) {
     let mut test_node = Node::new_localhost_with_pubkey(&node_keypair.pubkey());
     let cluster_info = Arc::new(ClusterInfo::new(
@@ -71,7 +90,7 @@ fn test_node_with_bank(
     ));
     let gossip_service = GossipService::new(
         &cluster_info,
-        Some(bank_forks),
+        Some(epoch_specs),
         test_node.sockets.gossip,
         None,
         true, // should_check_duplicate_instance
@@ -290,6 +309,7 @@ pub fn cluster_info_scale() {
         solana_perf::test_tx::test_tx,
         solana_runtime::{
             bank::Bank,
+            bank_forks::BankForks,
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
     };
@@ -310,6 +330,13 @@ pub fn cluster_info_scale() {
     );
     let bank0 = Bank::new_for_tests(&genesis_config_info.genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank0);
+    let root_bank = bank_forks.read().unwrap().root_bank();
+    let slots_in_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
+    let epoch_specs: Arc<dyn EpochSpecs> = Arc::new(TestEpochSpecs {
+        slots_in_epoch,
+        epoch_duration: Duration::from_millis(slots_in_epoch * 400),
+        staked_nodes: root_bank.current_epoch_staked_nodes(),
+    });
 
     let nodes: Vec<_> = vote_keypairs
         .into_iter()
@@ -317,7 +344,7 @@ pub fn cluster_info_scale() {
             test_node_with_bank(
                 Arc::new(keypairs.node_keypair),
                 exit.clone(),
-                bank_forks.clone(),
+                epoch_specs.clone(),
             )
         })
         .collect();
