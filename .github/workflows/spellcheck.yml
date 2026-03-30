@@ -1,0 +1,47 @@
+name: Spellcheck CI
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - '**.rs'
+      - '**.md'
+      - '**.toml'
+      - 'scripts/spellcheck_ci.py'
+  pull_request:
+    paths:
+      - '**.rs'
+      - '**.md'
+      - '**.toml'
+
+jobs:
+  spellcheck:
+    name: Check for spelling errors
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Run spellcheck
+        run: |
+          python3 scripts/spellcheck_ci.py --path . --report --json > spellcheck-report.json
+        continue-on-error: true
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spellcheck-report
+          path: spellcheck-report.json
+
+      - name: Display results
+        run: |
+          if [ -f spellcheck-report.json ]; then
+            echo "Spellcheck completed. See artifacts for details."
+            python3 -c "import json; r=json.load(open('spellcheck-report.json')); print(f'Errors found: {r[\"total_errors\"]}')" || true
+          fi
