@@ -12,12 +12,6 @@ pub(crate) struct TransactionAccountStateInfo {
     info: Option<WritableTransactionAccountStateInfo>, // None: readonly account
 }
 
-#[derive(PartialEq, Debug)]
-pub struct WritableTransactionAccountStateInfo {
-    rent_state: RentState,
-    data_size: usize,
-}
-
 impl TransactionAccountStateInfo {
     pub(crate) fn new(
         transaction_context: &TransactionContext,
@@ -75,6 +69,12 @@ impl TransactionAccountStateInfo {
         }
         Ok(())
     }
+}
+
+#[derive(PartialEq, Debug)]
+struct WritableTransactionAccountStateInfo {
+    rent_state: RentState,
+    data_size: usize,
 }
 
 // Returns account data size delta for a given transaction execution
