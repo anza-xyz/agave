@@ -213,7 +213,6 @@ mod tests {
             hash.hash(&compat.to_le_bytes());
         });
         assert_eq!(bs58::encode(hash.result()).into_string(), expected_hash);
-
     }
 
     #[test]
