@@ -442,7 +442,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
 
         let (mut load_us, mut execution_us): (u64, u64) = (0, 0);
-        let sysvar_cache = self.sysvar_cache.read().unwrap();
+        let sysvar_cache = self.sysvar_cache();
 
         // Validate, execute, and collect results from each transaction in order.
         // With SIMD83, transactions must be executed in order, because transactions
