@@ -1691,7 +1691,7 @@ impl Validator {
                 node_multihoming: node_multihoming.clone(),
             }
         };
-        let (banking_control_sender, banking_control_reciever) = mpsc::channel(1);
+        let (banking_control_sender, banking_control_receiver) = mpsc::channel(1);
         let tpu = Tpu::new_with_client(
             &cluster_info,
             &poh_recorder,
@@ -1740,7 +1740,7 @@ impl Validator {
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
             key_notifiers.clone(),
-            banking_control_reciever,
+            banking_control_receiver,
             config.enable_scheduler_bindings.then(|| {
                 (
                     ledger_path.join("scheduler_bindings.ipc"),
