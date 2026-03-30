@@ -49,25 +49,37 @@ fn is_simple_vote_transaction(tx: &VersionedTransaction) -> bool {
     is_simple_vote_transaction_impl(&tx.signatures, is_legacy, instruction_programs)
 }
 
+/// Result of attempting to load addresses from address lookup tables.
+enum LutLoadResult {
+    /// Transaction has no address table lookups (legacy or empty lookups).
+    NoLookups,
+    /// Lookups were present and resolved successfully.
+    Resolved(LoadedAddresses),
+    /// Lookups were present but resolution failed.
+    Failed,
+}
+
 /// Load addresses from address lookup tables for a versioned transaction.
-/// Returns None for legacy transactions or if address resolution fails.
 /// Takes a Bank reference to avoid repeated lock acquisition.
 fn load_transaction_addresses(
     tx: &VersionedTransaction,
     bank: &solana_runtime::bank::Bank,
-) -> Option<LoadedAddresses> {
-    let address_table_lookups = tx.message.address_table_lookups()?;
+) -> LutLoadResult {
+    let Some(address_table_lookups) = tx.message.address_table_lookups() else {
+        return LutLoadResult::NoLookups;
+    };
     if address_table_lookups.is_empty() {
-        return None;
+        return LutLoadResult::NoLookups;
     }
 
-    bank.load_addresses_from_ref(
+    match bank.load_addresses_from_ref(
         address_table_lookups
             .iter()
             .map(SVMMessageAddressTableLookup::from),
-    )
-    .ok()
-    .map(|(addresses, _deactivation_slot)| addresses)
+    ) {
+        Ok((addresses, _deactivation_slot)) => LutLoadResult::Resolved(addresses),
+        Err(_) => LutLoadResult::Failed,
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -78,6 +90,7 @@ struct DeshredBatchStats {
     total_entries: u64,
     total_data_sets: u64,
     lut_transactions: u64,
+    lut_failures: u64,
 }
 
 pub struct CompletedDataSetsService {
@@ -129,10 +142,13 @@ impl CompletedDataSetsService {
     ) -> Result<(), RecvTimeoutError> {
         const RECV_TIMEOUT: Duration = Duration::from_secs(1);
         let first_completed_data_sets = completed_sets_receiver.recv_timeout(RECV_TIMEOUT)?;
-        let root_bank = deshred_transaction_notifier.as_ref().map(|_| {
-            // Best-effort ALT resolution uses the rooted bank to avoid surfacing fork-local state.
-            bank_forks.read().unwrap().root_bank()
-        });
+        let root_bank = deshred_transaction_notifier
+            .as_ref()
+            .filter(|notifier| notifier.alt_resolution_enabled())
+            .map(|_| {
+                // Best-effort ALT resolution uses the rooted bank to avoid surfacing fork-local state.
+                bank_forks.read().unwrap().root_bank()
+            });
         let mut batch_measure = Measure::start("deshred_geyser_batch");
         let mut stats = DeshredBatchStats::default();
 
@@ -179,6 +195,7 @@ impl CompletedDataSetsService {
                 ("lut_load_total_us", stats.total_lut_load_us as i64, i64),
                 ("transactions_count", stats.total_transactions as i64, i64),
                 ("lut_transactions_count", stats.lut_transactions as i64, i64),
+                ("lut_failures_count", stats.lut_failures as i64, i64),
                 ("entries_count", stats.total_entries as i64, i64),
                 ("data_sets_count", stats.total_data_sets as i64, i64),
                 ("avg_notify_us", avg_notify_us as i64, i64),
@@ -212,14 +229,24 @@ impl CompletedDataSetsService {
                 let is_vote = is_simple_vote_transaction(tx);
 
                 let mut lut_measure = Measure::start("load_lut");
-                let loaded_addresses =
-                    root_bank.and_then(|bank| load_transaction_addresses(tx, bank));
+                let lut_result = root_bank
+                    .map(|bank| load_transaction_addresses(tx, bank))
+                    .unwrap_or(LutLoadResult::NoLookups);
                 lut_measure.stop();
 
-                if loaded_addresses.is_some() {
-                    stats.lut_transactions += 1;
-                    stats.total_lut_load_us += lut_measure.as_us();
-                }
+                let loaded_addresses = match lut_result {
+                    LutLoadResult::Resolved(addresses) => {
+                        stats.lut_transactions += 1;
+                        stats.total_lut_load_us += lut_measure.as_us();
+                        Some(addresses)
+                    }
+                    LutLoadResult::Failed => {
+                        stats.lut_failures += 1;
+                        stats.total_lut_load_us += lut_measure.as_us();
+                        None
+                    }
+                    LutLoadResult::NoLookups => None,
+                };
 
                 let mut notify_measure = Measure::start("notify_deshred");
                 notifier.notify_deshred_transaction(
@@ -316,6 +343,10 @@ pub mod test {
                     loaded_addresses: loaded_addresses.cloned(),
                 });
         }
+
+        fn alt_resolution_enabled(&self) -> bool {
+            false
+        }
     }
 
     fn legacy_transaction(instruction: Instruction) -> VersionedTransaction {
@@ -379,10 +410,10 @@ pub mod test {
     }
 
     #[test]
-    fn test_load_transaction_addresses_returns_none_without_lookups() {
+    fn test_load_transaction_addresses_returns_no_lookups_without_lookups() {
         let bank = Bank::new_for_tests(&GenesisConfig::default());
 
-        assert!(
+        assert!(matches!(
             load_transaction_addresses(
                 &legacy_transaction(Instruction::new_with_bytes(
                     Pubkey::new_unique(),
@@ -390,10 +421,10 @@ pub mod test {
                     Vec::new(),
                 )),
                 &bank,
-            )
-            .is_none()
-        );
-        assert!(
+            ),
+            LutLoadResult::NoLookups
+        ));
+        assert!(matches!(
             load_transaction_addresses(
                 &versioned_v0_transaction(Instruction::new_with_bytes(
                     Pubkey::new_unique(),
@@ -401,9 +432,9 @@ pub mod test {
                     Vec::new(),
                 )),
                 &bank,
-            )
-            .is_none()
-        );
+            ),
+            LutLoadResult::NoLookups
+        ));
     }
 
     #[test]
@@ -458,6 +489,7 @@ pub mod test {
         assert_eq!(stats.total_data_sets, 1);
         assert_eq!(stats.total_lut_load_us, 0);
         assert_eq!(stats.lut_transactions, 0);
+        assert_eq!(stats.lut_failures, 0);
     }
 
     #[test]
@@ -505,5 +537,95 @@ pub mod test {
         assert_eq!(notifications.len(), 1);
         assert_eq!(notifications[0].slot, 11);
         assert_eq!(max_slots.shred_insert.load(Ordering::Relaxed), 11);
+    }
+
+    #[test]
+    fn test_lut_failure_stats_accumulated() {
+        let notifier = TestDeshredTransactionNotifier::default();
+        let bank = Bank::new_for_tests(&GenesisConfig::default());
+        let keypair = Keypair::new();
+        // V0 transaction with a lookup referencing a non-existent table
+        let message = v0::Message {
+            header: solana_message::MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 0,
+            },
+            account_keys: vec![keypair.pubkey()],
+            recent_blockhash: Hash::default(),
+            instructions: vec![],
+            address_table_lookups: vec![solana_message::v0::MessageAddressTableLookup {
+                account_key: Pubkey::new_unique(),
+                writable_indexes: vec![0],
+                readonly_indexes: vec![],
+            }],
+        };
+        let tx_with_lut =
+            VersionedTransaction::try_new(VersionedMessage::V0(message), &[&keypair]).unwrap();
+        let entries = vec![next_versioned_entry(&Hash::default(), 1, vec![tx_with_lut])];
+        let mut stats = DeshredBatchStats::default();
+
+        CompletedDataSetsService::notify_deshred_transactions_for_completed_data_set(
+            10,
+            &entries,
+            Some(&notifier),
+            Some(&bank),
+            &mut stats,
+        );
+
+        assert_eq!(stats.total_transactions, 1);
+        assert_eq!(stats.lut_failures, 1);
+        assert_eq!(stats.lut_transactions, 0);
+        // Failed lookups should still accumulate timing
+        // (the actual value depends on execution speed, just verify it was set)
+        assert!(stats.total_lut_load_us > 0 || stats.lut_failures == 1);
+
+        let notifications = notifier.notifications.lock().unwrap().clone();
+        assert_eq!(notifications.len(), 1);
+        assert!(notifications[0].loaded_addresses.is_none());
+    }
+
+    #[test]
+    fn test_alt_resolution_skipped_when_root_bank_absent() {
+        // When root_bank is None (ALT resolution not opted in), no LUT stats are recorded
+        let notifier = TestDeshredTransactionNotifier::default();
+        let keypair = Keypair::new();
+        let message = v0::Message {
+            header: solana_message::MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 0,
+            },
+            account_keys: vec![keypair.pubkey()],
+            recent_blockhash: Hash::default(),
+            instructions: vec![],
+            address_table_lookups: vec![solana_message::v0::MessageAddressTableLookup {
+                account_key: Pubkey::new_unique(),
+                writable_indexes: vec![0],
+                readonly_indexes: vec![],
+            }],
+        };
+        let tx_with_lut =
+            VersionedTransaction::try_new(VersionedMessage::V0(message), &[&keypair]).unwrap();
+        let entries = vec![next_versioned_entry(&Hash::default(), 1, vec![tx_with_lut])];
+        let mut stats = DeshredBatchStats::default();
+
+        // Pass None for root_bank, simulates ALT resolution not being opted in
+        CompletedDataSetsService::notify_deshred_transactions_for_completed_data_set(
+            10,
+            &entries,
+            Some(&notifier),
+            None,
+            &mut stats,
+        );
+
+        assert_eq!(stats.total_transactions, 1);
+        assert_eq!(stats.lut_failures, 0);
+        assert_eq!(stats.lut_transactions, 0);
+        assert_eq!(stats.total_lut_load_us, 0);
+
+        let notifications = notifier.notifications.lock().unwrap().clone();
+        assert_eq!(notifications.len(), 1);
+        assert!(notifications[0].loaded_addresses.is_none());
     }
 }

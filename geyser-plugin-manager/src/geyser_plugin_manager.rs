@@ -123,6 +123,16 @@ impl GeyserPluginManager {
         false
     }
 
+    /// Check if there is any plugin interested in ALT resolution for deshred transactions
+    pub fn deshred_transaction_alt_resolution_enabled(&self) -> bool {
+        for plugin in &self.plugins {
+            if plugin.deshred_transaction_alt_resolution_enabled() {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Admin RPC request handler
     pub(crate) fn list_plugins(&self) -> JsonRpcResult<Vec<String>> {
         Ok(self.plugins.iter().map(|p| p.name().to_owned()).collect())
@@ -594,6 +604,7 @@ mod tests {
     struct DeshredTestPlugin {
         name: &'static str,
         enabled: bool,
+        alt_resolution_enabled: bool,
         notifications: Arc<Mutex<Vec<RecordedDeshredNotification>>>,
     }
 
@@ -623,6 +634,10 @@ mod tests {
 
         fn deshred_transaction_notifications_enabled(&self) -> bool {
             self.enabled
+        }
+
+        fn deshred_transaction_alt_resolution_enabled(&self) -> bool {
+            self.alt_resolution_enabled
         }
     }
 
@@ -740,6 +755,7 @@ mod tests {
                     DeshredTestPlugin {
                         name: DUMMY_NAME,
                         enabled: false,
+                        alt_resolution_enabled: false,
                         notifications: Arc::new(Mutex::new(Vec::new())),
                     },
                     DUMMY_CONFIG,
@@ -755,6 +771,7 @@ mod tests {
                     DeshredTestPlugin {
                         name: ANOTHER_DUMMY_NAME,
                         enabled: true,
+                        alt_resolution_enabled: false,
                         notifications: Arc::new(Mutex::new(Vec::new())),
                     },
                     DUMMY_CONFIG,
@@ -776,6 +793,7 @@ mod tests {
                         DeshredTestPlugin {
                             name: DUMMY_NAME,
                             enabled: true,
+                            alt_resolution_enabled: false,
                             notifications: enabled_notifications.clone(),
                         },
                         DUMMY_CONFIG,
@@ -787,6 +805,7 @@ mod tests {
                         DeshredTestPlugin {
                             name: ANOTHER_DUMMY_NAME,
                             enabled: false,
+                            alt_resolution_enabled: false,
                             notifications: disabled_notifications.clone(),
                         },
                         DUMMY_CONFIG,
@@ -821,6 +840,44 @@ mod tests {
             Some(loaded_addresses)
         );
         assert!(disabled_notifications.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_deshred_transaction_alt_resolution_enabled() {
+        let empty_manager = GeyserPluginManager::default();
+        assert!(!empty_manager.deshred_transaction_alt_resolution_enabled());
+
+        let disabled_manager = GeyserPluginManager {
+            plugins: vec![Arc::new(
+                dummy_plugin_and_library(
+                    DeshredTestPlugin {
+                        name: DUMMY_NAME,
+                        enabled: true,
+                        alt_resolution_enabled: false,
+                        notifications: Arc::new(Mutex::new(Vec::new())),
+                    },
+                    DUMMY_CONFIG,
+                )
+                .0,
+            )],
+        };
+        assert!(!disabled_manager.deshred_transaction_alt_resolution_enabled());
+
+        let enabled_manager = GeyserPluginManager {
+            plugins: vec![Arc::new(
+                dummy_plugin_and_library(
+                    DeshredTestPlugin {
+                        name: ANOTHER_DUMMY_NAME,
+                        enabled: true,
+                        alt_resolution_enabled: true,
+                        notifications: Arc::new(Mutex::new(Vec::new())),
+                    },
+                    DUMMY_CONFIG,
+                )
+                .0,
+            )],
+        };
+        assert!(enabled_manager.deshred_transaction_alt_resolution_enabled());
     }
 
     #[test]

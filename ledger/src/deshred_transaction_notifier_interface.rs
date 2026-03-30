@@ -14,6 +14,9 @@ pub trait DeshredTransactionNotifier {
         transaction: &VersionedTransaction,
         loaded_addresses: Option<&LoadedAddresses>,
     );
+
+    /// Whether any plugin has opted in to ALT resolution for deshred transactions.
+    fn alt_resolution_enabled(&self) -> bool;
 }
 
 pub type DeshredTransactionNotifierArc = Arc<dyn DeshredTransactionNotifier + Sync + Send>;

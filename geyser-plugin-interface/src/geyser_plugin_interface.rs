@@ -209,7 +209,11 @@ pub struct ReplicaDeshredTransactionInfo<'a> {
     pub transaction: &'a VersionedTransaction,
 
     /// Addresses loaded from address lookup tables for V0 transactions.
-    /// This is None for legacy transactions or if address resolution failed.
+    /// Resolution uses the rooted bank, so address lookup tables created between
+    /// the root slot and the current slot will not resolve. This field is `None`
+    /// for legacy transactions, when the transaction has no address table lookups,
+    /// when ALT resolution is not enabled by the plugin, or when resolution fails
+    /// (e.g. the lookup table account does not exist at the root slot).
     pub loaded_addresses: Option<&'a LoadedAddresses>,
 }
 
@@ -545,6 +549,16 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// Default is false -- if the plugin is interested in receiving
     /// transactions when they are deshredded, return true.
     fn deshred_transaction_notifications_enabled(&self) -> bool {
+        false
+    }
+
+    /// Check if the plugin wants address lookup table (ALT) resolution for
+    /// deshred transactions. Default is false. When true, the validator will
+    /// resolve V0 transaction address lookups using the rooted bank and
+    /// populate `loaded_addresses` in `ReplicaDeshredTransactionInfo`.
+    /// This adds accounts DB I/O on the shred insertion path, so plugins
+    /// that only need the raw transaction should leave this disabled.
+    fn deshred_transaction_alt_resolution_enabled(&self) -> bool {
         false
     }
 }

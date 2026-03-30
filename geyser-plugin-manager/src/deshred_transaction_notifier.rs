@@ -80,6 +80,12 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
             10000
         );
     }
+
+    fn alt_resolution_enabled(&self) -> bool {
+        self.plugin_manager
+            .load()
+            .deshred_transaction_alt_resolution_enabled()
+    }
 }
 
 impl DeshredTransactionNotifierImpl {
