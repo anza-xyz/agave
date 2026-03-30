@@ -41,15 +41,11 @@ pub type CompletedDataSetsSender = Sender<Vec<CompletedDataSetInfo>>;
 /// This avoids cloning by extracting the required data directly.
 fn is_simple_vote_transaction(tx: &VersionedTransaction) -> bool {
     let is_legacy = matches!(&tx.message, VersionedMessage::Legacy(_));
-    let instruction_programs = tx
-        .message
-        .instructions()
-        .iter()
-        .filter_map(|ix| {
-            tx.message
-                .static_account_keys()
-                .get(ix.program_id_index as usize)
-        });
+    let instruction_programs = tx.message.instructions().iter().filter_map(|ix| {
+        tx.message
+            .static_account_keys()
+            .get(ix.program_id_index as usize)
+    });
     is_simple_vote_transaction_impl(&tx.signatures, is_legacy, instruction_programs)
 }
 
