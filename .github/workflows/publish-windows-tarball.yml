@@ -18,7 +18,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
-          ref: master
+          ref: ${{ github.event.inputs.commit }}
           fetch-depth: 0
 
       # took the workaround from https://github.com/sfackler/rust-openssl/issues/2149
@@ -35,14 +35,6 @@ jobs:
         run: |
           # install all deps
           source .github/scripts/install-all-deps.sh ${{ runner.os }}
-
-          # checkout the commit
-          if [[ -z ${{ env.COMMIT }} ]]; then
-            echo "Required parameter env.COMMIT is empty."
-            exit 1
-          fi
-
-          git checkout ${{ env.COMMIT }}
 
           source ci/env.sh
           echo "tag=$CI_TAG" >> $GITHUB_OUTPUT
