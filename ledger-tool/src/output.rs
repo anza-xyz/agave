@@ -304,7 +304,7 @@ impl fmt::Display for CliBlockWithEntries {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliDuplicateSlotProof {
     shred1: CliDuplicateShred,
@@ -354,7 +354,7 @@ impl From<DuplicateSlotProof> for CliDuplicateSlotProof {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliDuplicateShred {
     fec_set_index: u32,
