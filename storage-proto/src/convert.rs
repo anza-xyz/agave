@@ -143,6 +143,7 @@ impl From<generated::Reward> for Reward {
                 2 => Some(RewardType::Rent),
                 3 => Some(RewardType::Staking),
                 4 => Some(RewardType::Voting),
+                5 => Some(RewardType::DeactivatedStake),
                 _ => None,
             },
             commission: reward.commission.parse::<u8>().ok(),
