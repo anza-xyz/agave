@@ -295,9 +295,12 @@ impl<'a> StorableAccountsBySlot<'a> {
     /// on the starting_offsets based on the assumption that the
     /// starting_offsets are always sorted.
     fn find_internal_index(&self, index: usize) -> (usize, usize) {
-        // special case for when there is only one slot - just return the first index without searching.
+        // special case for when there is only one entry - just return the first index without searching.
         // This happens when we are just shrinking a single slot storage, which happens very often.
-        if !self.contains_multiple_slots {
+        // Note: we check the actual number of entries, not just whether slots differ,
+        // because multiple entries can have the same slot value (e.g., when packing
+        // many_refs_newest and one_ref accounts from the same source slot).
+        if self.slots_and_accounts.len() <= 1 {
             return (0, index);
         }
         let upper_bound = self
