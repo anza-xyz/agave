@@ -1981,7 +1981,7 @@ mod tests {
         // Advance to the epoch boundary, which computes the original in-memory
         // reward list and updates EpochStakes for the new epoch.
         let new_slot = bank.slot() + 1;
-        let mut bank = Bank::new_from_parent(bank, SlotLeader::default(), new_slot);
+        let mut bank = Bank::new_from_parent(bank, &Pubkey::default(), new_slot);
 
         let leader_schedule_epoch = bank.epoch_schedule().get_leader_schedule_epoch(bank.slot());
         let filtered_epoch_vote_accounts = bank

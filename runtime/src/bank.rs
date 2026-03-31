@@ -6104,12 +6104,18 @@ impl Bank {
     }
 
     fn maybe_filter_vote_accounts_for_vat(&self, vote_accounts: &VoteAccounts) -> VoteAccounts {
-        if self.feature_set.snapshot().validator_admission_ticket {
+        if self
+            .feature_set
+            .is_active(&agave_feature_set::validator_admission_ticket::id())
+        {
             let vote_account_rent_exempt_minimum = self
                 .rent_collector
                 .rent
                 .minimum_balance(VoteStateV4::size_of());
-            let minimum_vote_account_balance = if self.feature_set.snapshot().alpenglow {
+            let minimum_vote_account_balance = if self
+                .feature_set
+                .is_active(&agave_feature_set::alpenglow::id())
+            {
                 // When alpenglow is active the minimum required balance is
                 // VAT + rent-exempt minimum for vote account.
                 vote_account_rent_exempt_minimum + VAT_TO_BURN_PER_EPOCH

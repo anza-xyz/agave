@@ -8057,7 +8057,7 @@ dependencies = [
  "solana-account",
  "solana-account-info",
  "solana-accounts-db",
- "solana-address 2.5.0",
+ "solana-address 2.2.0",
  "solana-banks-client",
  "solana-banks-interface",
  "solana-banks-server",
