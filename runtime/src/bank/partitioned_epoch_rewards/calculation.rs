@@ -32,6 +32,7 @@ use {
     solana_stake_interface::{stake_history::StakeHistory, state::Delegation},
     solana_sysvar::epoch_rewards::EpochRewards,
     std::sync::{Arc, atomic::Ordering::Relaxed},
+    thiserror::Error,
 };
 
 #[derive(Debug)]
@@ -46,6 +47,18 @@ struct RewardsAccumulator {
     reward_commissions: RewardCommissions,
     num_stake_rewards: usize,
     total_stake_rewards_lamports: u64,
+}
+
+#[derive(Error, Debug, PartialEq, Eq)]
+enum RefreshError {
+    #[error("Commission account {0} laports would overflow current = {1}, new commission = {2}")]
+    CommissionAccountOverflow(Pubkey, u64, u64),
+    #[error("Commission account is missing: {0}")]
+    MissingCommissionAccount(Pubkey),
+    #[error("Rewards lamports are negative: {0}")]
+    NegativeLamports(i64),
+    #[error("Total commission lamports would overflow current = {0}, new commission = {1}")]
+    TotalCommissionOverflow(u64, u64),
 }
 
 impl RewardsAccumulator {
@@ -217,8 +230,11 @@ impl Bank {
             ..
         } = rewards_calculation;
 
-        let reward_commission_accounts =
-            self.refresh_reward_commission_accounts(reward_commission_accounts);
+        let reward_commission_accounts = self
+            .refresh_reward_commission_accounts(reward_commission_accounts)
+            .unwrap_or_else(|error| {
+                panic!("failed to refresh reward commission accounts: {error}")
+            });
         let total_reward_commissions = reward_commission_accounts.total_reward_commission_lamports;
         self.store_commission_accounts_partitioned(&reward_commission_accounts, rewards_metrics);
         self.update_reward_commissions(&reward_commission_accounts);
@@ -274,7 +290,7 @@ impl Bank {
     fn refresh_reward_commission_accounts(
         &self,
         reward_commission_accounts: &RewardCommissionAccounts,
-    ) -> RewardCommissionAccounts {
+    ) -> Result<RewardCommissionAccounts, RefreshError> {
         let mut refreshed = RewardCommissionAccounts {
             accounts_with_rewards: Vec::with_capacity(
                 reward_commission_accounts.accounts_with_rewards.len(),
@@ -282,24 +298,22 @@ impl Bank {
             total_reward_commission_lamports: 0,
         };
 
-        for (commission_pubkey, reward_info, fallback_account) in
-            &reward_commission_accounts.accounts_with_rewards
+        for (commission_pubkey, reward_info, _) in &reward_commission_accounts.accounts_with_rewards
         {
-            let Ok(commission_lamports) = u64::try_from(reward_info.lamports) else {
-                debug!(
-                    "reward redemption failed for {commission_pubkey}: invalid negative reward \
-                     lamports {}",
-                    reward_info.lamports
-                );
-                continue;
-            };
+            let commission_lamports = u64::try_from(reward_info.lamports)
+                .map_err(|_| RefreshError::NegativeLamports(reward_info.lamports))?;
             let mut commission_account = self
                 .get_account(commission_pubkey)
-                .unwrap_or_else(|| fallback_account.clone());
-            if let Err(err) = commission_account.checked_add_lamports(commission_lamports) {
-                debug!("reward redemption failed for {commission_pubkey}: {err:?}");
-                continue;
-            }
+                .ok_or(RefreshError::MissingCommissionAccount(*commission_pubkey))?;
+            commission_account
+                .checked_add_lamports(commission_lamports)
+                .map_err(|_| {
+                    RefreshError::CommissionAccountOverflow(
+                        *commission_pubkey,
+                        commission_account.lamports(),
+                        commission_lamports,
+                    )
+                })?;
 
             let mut reward_info = *reward_info;
             reward_info.post_balance = commission_account.lamports();
@@ -310,10 +324,14 @@ impl Bank {
             ));
             refreshed.total_reward_commission_lamports = refreshed
                 .total_reward_commission_lamports
-                .saturating_add(commission_lamports);
+                .checked_add(commission_lamports)
+                .ok_or(RefreshError::TotalCommissionOverflow(
+                    refreshed.total_reward_commission_lamports,
+                    commission_lamports,
+                ))?;
         }
 
-        refreshed
+        Ok(refreshed)
     }
 
     fn store_commission_accounts_partitioned(
