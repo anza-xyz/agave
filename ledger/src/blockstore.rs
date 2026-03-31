@@ -290,6 +290,9 @@ pub struct Blockstore {
     new_shreds_signals: Mutex<Vec<Sender<bool>>>,
     completed_slots_senders: Mutex<Vec<CompletedSlotsSender>>,
     pub lowest_cleanup_slot: RwLock<Slot>,
+    // A sender that feeds into the BlockstoreCleanupService request channel
+    // to enable manual Blockstore purge requests to be issued
+    pub(crate) manual_purge_request_sender: Mutex<Option<Sender<Slot>>>,
     pub slots_stats: SlotsStats,
 }
 
@@ -479,6 +482,7 @@ impl Blockstore {
             insert_shreds_lock: Mutex::<()>::default(),
             max_root,
             lowest_cleanup_slot: RwLock::<Slot>::default(),
+            manual_purge_request_sender: Mutex::default(),
             slots_stats: SlotsStats::default(),
         };
         blockstore.cleanup_old_entries()?;
@@ -4719,10 +4723,6 @@ impl Blockstore {
 
     pub fn lowest_cleanup_slot(&self) -> Slot {
         *self.lowest_cleanup_slot.read().unwrap()
-    }
-
-    pub fn storage_size(&self) -> Result<u64> {
-        self.db.storage_size()
     }
 
     /// Returns the total physical storage size contributed by all data shreds.

@@ -97,6 +97,9 @@ pub fn main() {
         ("manage-block-production", Some(subcommand_matches)) => {
             commands::manage_block_production::execute(subcommand_matches, &ledger_path)
         }
+        ("blockstore", Some(subcommand_matches)) => {
+            commands::blockstore::execute(subcommand_matches, &ledger_path)
+        }
         _ => unreachable!(),
     }
     .unwrap_or_else(|err| {
