@@ -80,17 +80,9 @@ struct WritableTransactionAccountStateInfo {
 // Returns the cumulative size of all post-exec uninitialized accounts
 pub(crate) fn get_uninitialized_accounts_size(post: &[TransactionAccountStateInfo]) -> u64 {
     post.iter()
-        .map(|post_info| {
-            if let Some(post) = &post_info.info {
-                match &post.rent_state {
-                    RentState::Uninitialized => post.data_size as u64,
-                    _ => 0,
-                }
-            } else {
-                // None indicates non write-locked account, which could not have
-                // become uninitialized during transaction execution
-                0
-            }
+        .filter_map(|post_info| post_info.info.as_ref())
+        .filter_map(|post| {
+            matches!(&post.rent_state, RentState::Uninitialized).then_some(post.data_size as u64)
         })
         .sum()
 }

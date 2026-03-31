@@ -47,6 +47,8 @@ impl TransactionExecutionDetails {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccountsDeltas {
-    pub accounts_resize_delta: i64, // aggregate resize delta across all accounts touched by the transaction
-    pub accounts_uninitialized_size: u64, // aggregate size of all accounts that were uninitialized by this transaction
+    /// aggregate resize delta across all accounts touched by the transaction
+    pub accounts_resize_delta: i64,
+    /// aggregate size of all accounts that were uninitialized by this transaction
+    pub accounts_uninitialized_size: u64,
 }
