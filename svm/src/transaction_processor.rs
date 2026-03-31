@@ -1116,7 +1116,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 vec![Vec::new(); top_level_ixs_num];
             for (cpi_num, ((ix_in_trace, ix_data), ix_accounts)) in ix_trace
                 .into_iter()
-                .zip(ix_data_trace.into_iter())
+                .zip(ix_data_trace)
                 .zip(accounts)
                 .skip(top_level_ixs_num)
                 .enumerate()
