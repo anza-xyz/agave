@@ -455,7 +455,7 @@ impl Accounts {
             &ScanConfig::default(),
         )?;
         if sort_results {
-            collector.sort_unstable_by(|(a_addr, _, _), (b_addr, _, _)| a_addr.cmp(b_addr));
+            collector.sort_unstable_by_key(|(addr, _, _)| *addr);
         }
         Ok(collector)
     }
