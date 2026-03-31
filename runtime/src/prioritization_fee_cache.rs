@@ -255,12 +255,26 @@ impl PrioritizationFeeCache {
                         calculate_prioritization_fee_us,
                     );
 
+                // NOTE: Starting with tx-v1, transactions specify priority fees in lamports
+                // instead of compute-unit-price (micro-lamports). The prioritization_fee_cache
+                // and the GetRecentPrioritizationFees RPC may need to be updated to remove
+                // compute-unit-price.
+                // NOTE: fee_budget_limits.compute_unit_limit has been checked != 0 above, safe to
+                // use it as dividor here.
+                const MICRO_LAMPORTS_PER_LAMPORT: u64 = 1_000_000;
+                let compute_unit_price = (prioritization_fee as u128)
+                    .saturating_mul(MICRO_LAMPORTS_PER_LAMPORT as u128)
+                    .saturating_add(
+                        (fee_budget_limits.compute_unit_limit as u128).saturating_sub(1),
+                    )
+                    .checked_div(fee_budget_limits.compute_unit_limit as u128)
+                    .and_then(|price| u64::try_from(price).ok())
+                    .unwrap_or(u64::MAX);
                 self.sender
                     .send(CacheServiceUpdate::TransactionUpdate {
                         slot: bank.slot(),
                         bank_id: bank.bank_id(),
-                        compute_unit_price: 0, // TODO - start from V1, there will be no compute_budget_limits.compute_unit_price,
-                        //        remove this one from metric.
+                        compute_unit_price,
                         prioritization_fee,
                         writable_accounts,
                     })
@@ -478,6 +492,7 @@ mod tests {
             &[
                 system_instruction::transfer(signer_account, write_account, 1),
                 ComputeBudgetInstruction::set_compute_unit_price(compute_unit_price),
+                ComputeBudgetInstruction::set_compute_unit_limit(1_000_000),
             ],
             Some(signer_account),
         ));

@@ -9365,6 +9365,7 @@ pub mod tests {
                 &[
                     system_instruction::transfer(&account0, &account1, 1),
                     ComputeBudgetInstruction::set_compute_unit_price(price0),
+                    ComputeBudgetInstruction::set_compute_unit_limit(1_000_000),
                 ],
                 Some(&account0),
             )),
@@ -9426,6 +9427,7 @@ pub mod tests {
                 &[
                     system_instruction::transfer(&account0, &account2, 1),
                     ComputeBudgetInstruction::set_compute_unit_price(price1),
+                    ComputeBudgetInstruction::set_compute_unit_limit(1_000_000),
                 ],
                 Some(&account0),
             )),
