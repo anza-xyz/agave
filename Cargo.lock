@@ -8620,6 +8620,7 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-program-error",
+ "wincode",
 ]
 
 [[package]]
@@ -8779,7 +8780,6 @@ dependencies = [
  "rocksdb",
  "scopeguard",
  "serde",
- "serde_bytes",
  "solana-account 4.2.0",
  "solana-account-decoder",
  "solana-accounts-db",
@@ -9676,6 +9676,7 @@ checksum = "dc553b782111862cd6c56bdeba696dcba9722a42154ef1248c5a06ca1d983797"
 dependencies = [
  "serde",
  "serde_derive",
+ "wincode",
 ]
 
 [[package]]
@@ -10508,6 +10509,7 @@ dependencies = [
  "solana-transaction-status",
  "test-case",
  "tonic-prost-build",
+ "wincode",
 ]
 
 [[package]]
@@ -11129,6 +11131,7 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-instruction-error",
  "solana-sanitize",
+ "wincode",
 ]
 
 [[package]]

@@ -9,8 +9,8 @@ use {
 pub enum BlockstoreError {
     #[error("shred for index exists")]
     ShredForIndexExists,
-    #[error("invalid shred data")]
-    InvalidShredData(bincode::Error),
+    #[error("invalid shred data: {0}")]
+    InvalidShredData(String),
     #[error("RocksDB error: {0}")]
     RocksDb(#[from] rocksdb::Error),
     #[error("slot is not rooted")]
@@ -21,10 +21,10 @@ pub enum BlockstoreError {
     DeadSlot,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("deserialization error: {0}")]
-    Deserialize(#[from] wincode::ReadError),
-    #[error("serialization error: {0}")]
-    Serialize(#[from] bincode::Error),
+    #[error("deserialization wincode error: {0}")]
+    WincodeRead(#[from] wincode::ReadError),
+    #[error("serialization wincode error: {0}")]
+    WincodeWrite(#[from] wincode::WriteError),
     #[error("fs extra error: {0}")]
     FsExtraError(#[from] fs_extra::error::Error),
     #[error("slot cleaned up")]

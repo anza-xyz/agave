@@ -7172,6 +7172,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-program-error",
+ "wincode",
 ]
 
 [[package]]
@@ -7294,7 +7295,6 @@ dependencies = [
  "rocksdb",
  "scopeguard",
  "serde",
- "serde_bytes",
  "solana-account 4.2.0",
  "solana-account-decoder",
  "solana-accounts-db",
@@ -8007,6 +8007,7 @@ checksum = "dc553b782111862cd6c56bdeba696dcba9722a42154ef1248c5a06ca1d983797"
 dependencies = [
  "serde",
  "serde_derive",
+ "wincode",
 ]
 
 [[package]]
@@ -9394,6 +9395,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-transaction-status",
  "tonic-prost-build",
+ "wincode",
 ]
 
 [[package]]
@@ -9880,6 +9882,7 @@ dependencies = [
  "solana-rent",
  "solana-sbpf",
  "solana-sdk-ids",
+ "wincode",
 ]
 
 [[package]]
@@ -9892,6 +9895,7 @@ dependencies = [
  "serde_derive",
  "solana-instruction-error",
  "solana-sanitize",
+ "wincode",
 ]
 
 [[package]]
@@ -9953,6 +9957,7 @@ dependencies = [
  "solana-transaction-context",
  "solana-transaction-error",
  "thiserror 2.0.18",
+ "wincode",
 ]
 
 [[package]]
