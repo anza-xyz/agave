@@ -1482,8 +1482,8 @@ impl ReplayStage {
             .read()
             .unwrap()
             .banks()
-            .iter()
-            .filter_map(|(slot, _)| (*slot > genesis_slot).then_some(*slot))
+            .keys()
+            .filter_map(|slot| (*slot > genesis_slot).then_some(*slot))
             .collect();
         for slot in slots_to_purge.into_iter() {
             info!("{my_pubkey} Alpenglow migration: Purging poh block in slot {slot}");
@@ -2270,9 +2270,7 @@ impl ReplayStage {
 
             (r_bank_forks.root(), bank_hashes)
         };
-        for (duplicate_slot, bank_hash) in
-            new_duplicate_slots.into_iter().zip(bank_hashes.into_iter())
-        {
+        for (duplicate_slot, bank_hash) in new_duplicate_slots.into_iter().zip(bank_hashes) {
             // WindowService should only send the signal once per slot
             let duplicate_state = DuplicateState::new_from_state(
                 duplicate_slot,
