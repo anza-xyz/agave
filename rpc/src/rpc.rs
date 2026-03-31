@@ -336,7 +336,7 @@ impl JsonRpcRequestProcessor {
             .await
             .expect("Failed to spawn blocking task")?;
         if sort_results {
-            accounts.sort_unstable_by(|(a_addr, _), (b_addr, _)| a_addr.cmp(b_addr));
+            accounts.sort_unstable_by_key(|(addr, _)| *addr);
         }
         Ok(accounts)
     }
@@ -2281,7 +2281,7 @@ impl JsonRpcRequestProcessor {
                 .await
                 .expect("Failed to spawn blocking task")?;
             if sort_results {
-                accounts.sort_unstable_by(|(a_addr, _), (b_addr, _)| a_addr.cmp(b_addr));
+                accounts.sort_unstable_by_key(|(addr, _)| *addr);
             }
             Ok(accounts)
         }
