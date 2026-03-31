@@ -8,11 +8,8 @@ mod secondary;
 mod stats;
 use {
     crate::{
-        accounts_scan::{ScanConfig, ScanTracker},
-        ancestors::Ancestors,
-        contains::Contains,
-        is_zero_lamport::IsZeroLamport,
-        pubkey_bins::PubkeyBinCalculator24,
+        accounts_scan::ScanConfig, ancestors::Ancestors, contains::Contains,
+        is_zero_lamport::IsZeroLamport, pubkey_bins::PubkeyBinCalculator24,
         rolling_bit_field::RollingBitField,
     },
     account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry, SlotListWriteGuard},
@@ -239,7 +236,6 @@ pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     spl_token_mint_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     spl_token_owner_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     pub roots_tracker: RwLock<RootsTracker>,
-    pub scan_tracker: ScanTracker,
 
     storage: AccountsIndexStorage<T, U>,
 
@@ -272,7 +268,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 "spl_token_owner_index_stats",
             ),
             roots_tracker: RwLock::<RootsTracker>::default(),
-            scan_tracker: ScanTracker::default(),
             storage,
             roots_added: AtomicUsize::default(),
             roots_removed: AtomicUsize::default(),
@@ -618,10 +613,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             }) == 0
         })
         .unwrap_or(true)
-    }
-
-    pub fn min_ongoing_scan_root(&self) -> Option<Slot> {
-        self.scan_tracker.min_ongoing_scan_root()
     }
 
     // Given a SlotList `L`, a list of ancestors and a maximum slot, find the latest element

@@ -50,7 +50,7 @@ use {
             AccountsIndexScanResult, IndexKey, IsCached, ReclaimsSlotList, RefCount, ScanFilter,
             SlotList, Startup, UpsertReclaim, in_mem_accounts_index::StartupStats,
         },
-        accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult},
+        accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
@@ -931,6 +931,8 @@ pub struct AccountsDb {
 
     pub(crate) shrink_ancient_stats: ShrinkAncientStats,
 
+    pub scan_tracker: ScanTracker,
+
     pub account_indexes: AccountSecondaryIndexes,
 
     /// Set of unique keys per slot which is used
@@ -1100,6 +1102,7 @@ impl AccountsDb {
             max_ancient_storages: accounts_db_config
                 .max_ancient_storages
                 .unwrap_or(DEFAULT_MAX_ANCIENT_STORAGES),
+            scan_tracker: ScanTracker::default(),
             account_indexes: accounts_db_config.account_indexes.unwrap_or_default(),
             shrink_ratio: accounts_db_config.shrink_ratio,
             accounts_update_notifier,
@@ -1381,7 +1384,7 @@ impl AccountsDb {
 
     fn max_clean_root(&self, proposed_clean_root: Option<Slot>) -> Option<Slot> {
         match (
-            self.accounts_index.min_ongoing_scan_root(),
+            self.scan_tracker.min_ongoing_scan_root(),
             proposed_clean_root,
         ) {
             (None, None) => None,
@@ -2133,13 +2136,12 @@ impl AccountsDb {
             ),
             (
                 "active_scans",
-                self.accounts_index.scan_tracker.active_scans.load(Ordering::Relaxed),
+                self.scan_tracker.active_scans.load(Ordering::Relaxed),
                 i64
             ),
             (
                 "max_distance_to_min_scan_slot",
-                self.accounts_index
-                    .scan_tracker.max_distance_to_min_scan_slot
+                self.scan_tracker.max_distance_to_min_scan_slot
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -3352,7 +3354,7 @@ impl AccountsDb {
         F: FnMut(Option<(&Pubkey, AccountSharedData, Slot)>),
     {
         // Register this scan so that slots needed by the scan are not cleaned out from under us.
-        let scan_guard = ScanGuard::try_new(&self.accounts_index.scan_tracker, bank_id, || {
+        let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || {
             self.accounts_index.max_root_inclusive()
         })
         .ok_or(ScanError::SlotRemoved {
@@ -3420,7 +3422,7 @@ impl AccountsDb {
         }
 
         // Register this scan so that slots needed by the scan are not cleaned out from under us.
-        let scan_guard = ScanGuard::try_new(&self.accounts_index.scan_tracker, bank_id, || {
+        let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || {
             self.accounts_index.max_root_inclusive()
         })
         .ok_or(ScanError::SlotRemoved {
@@ -4112,7 +4114,6 @@ impl AccountsDb {
         // and hold a reference to the bank at the tip of the fork they're scanning. Hence it's
         // safe to remove this bank_id from the `removed_bank_ids` list at this point.
         if self
-            .accounts_index
             .scan_tracker
             .removed_bank_ids
             .lock()
@@ -4349,7 +4350,7 @@ impl AccountsDb {
             //
             // Also note roots are never removed via `remove_unrooted_slot()`, so
             // it's safe to filter them out here as they won't need deletion from
-            // self.accounts_index.scan_tracker.removed_bank_ids in
+            // self.scan_tracker.removed_bank_ids in
             // `purge_slots_from_cache_and_store()`.
             .filter(|slot| !self.accounts_index.is_alive_root(**slot));
         safety_checks_elapsed.stop();
@@ -4374,12 +4375,7 @@ impl AccountsDb {
         // banks fail, and any ongoing scans over these slots will detect that they should abort
         // their results
         {
-            let mut locked_removed_bank_ids = self
-                .accounts_index
-                .scan_tracker
-                .removed_bank_ids
-                .lock()
-                .unwrap();
+            let mut locked_removed_bank_ids = self.scan_tracker.removed_bank_ids.lock().unwrap();
             for (_slot, remove_bank_id) in remove_slots.iter() {
                 locked_removed_bank_ids.insert(*remove_bank_id);
             }

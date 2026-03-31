@@ -3227,7 +3227,7 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
 
     // Check that the scan is properly set up
     assert_eq!(
-        db.accounts_index.min_ongoing_scan_root().unwrap(),
+        db.scan_tracker.min_ongoing_scan_root().unwrap(),
         max_scan_root
     );
 
@@ -3458,7 +3458,7 @@ fn setup_accounts_db_cache_clean(
                 scan_stall_key,
             ));
             assert_eq!(
-                accounts_db.accounts_index.min_ongoing_scan_root().unwrap(),
+                accounts_db.scan_tracker.min_ongoing_scan_root().unwrap(),
                 *slot
             );
         }
