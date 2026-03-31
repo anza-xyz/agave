@@ -1,6 +1,6 @@
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    crate::loaded_programs::ProgramCacheEntry,
+    crate::program_cache_entry::ProgramCacheEntry,
     solana_account::{AccountSharedData, WritableAccount, create_account_shared_data_for_test},
     solana_epoch_schedule::EpochSchedule,
     solana_instruction::AccountMeta,
@@ -13,9 +13,9 @@ use {
     crate::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         loaded_programs::{
-            ProgramCacheEntryType, ProgramCacheForTxBatch, ProgramRuntimeEnvironment,
-            ProgramRuntimeEnvironments,
+            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
         },
+        program_cache_entry::ProgramCacheEntryType,
         stable_log,
         sysvar_cache::SysvarCache,
     },

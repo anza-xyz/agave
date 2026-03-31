@@ -5,9 +5,12 @@ use {
     solana_clock::Slot,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
-    solana_program_runtime::loaded_programs::{
-        DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryOwner,
-        ProgramCacheEntryType, ProgramRuntimeEnvironment,
+    solana_program_runtime::{
+        loaded_programs::ProgramRuntimeEnvironment,
+        program_cache_entry::{
+            DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryOwner,
+            ProgramCacheEntryType,
+        },
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},

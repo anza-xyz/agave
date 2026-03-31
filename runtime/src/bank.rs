@@ -128,9 +128,8 @@ use {
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
-        loaded_programs::{
-            ProgramCacheEntry, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
-        },
+        loaded_programs::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+        program_cache_entry::ProgramCacheEntry,
     },
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_rent::Rent,
@@ -3626,7 +3625,7 @@ impl Bank {
             self.last_blockhash_and_lamports_per_signature();
         let effective_epoch_of_deployments =
             self.epoch_schedule().get_epoch(self.slot.saturating_add(
-                solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
+                solana_program_runtime::program_cache_entry::DELAY_VISIBILITY_SLOT_OFFSET,
             ));
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,

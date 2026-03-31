@@ -11,7 +11,7 @@ use {
     solana_program_runtime::{
         deploy_program,
         invoke_context::InvokeContext,
-        loaded_programs::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
         vm::execute,
     },
     solana_pubkey::Pubkey,
