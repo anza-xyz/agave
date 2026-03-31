@@ -63,6 +63,8 @@ impl FromClapArgMatches for JsonRpcConfig {
             .ok()
             .map(|mb| mb * MB),
             disable_health_check: false,
+            rpc_read_only_accounts_cache_bypass: matches
+                .is_present("rpc_read_only_accounts_cache_bypass"),
         })
     }
 }
@@ -185,6 +187,13 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
                 "How large accumulated results from an accounts index scan can become. If this is \
                  exceeded, the scan aborts.",
             ),
+        Arg::with_name("rpc_read_only_accounts_cache_bypass")
+            .long("rpc-read-only-cache-bypass")
+            .takes_value(false)
+            .help(
+                "Do not populate the AccountsDb read-only cache for `getAccountInfo` and \
+                 `getMultipleAccounts` RPC requests",
+            ),
     ]
 }
 
@@ -215,6 +224,23 @@ pub(super) mod tests {
             max_request_body_size: Some(DEFAULT_RPC_MAX_REQUEST_BODY_SIZE.parse().unwrap()),
             ..JsonRpcConfig::default()
         }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_rpc_read_only_cache_bypass() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            json_rpc_config: JsonRpcConfig {
+                rpc_read_only_accounts_cache_bypass: true,
+                ..default_run_args.json_rpc_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--rpc-read-only-cache-bypass"],
+            expected_args,
+        );
     }
 
     #[test]

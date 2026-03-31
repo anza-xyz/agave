@@ -386,7 +386,7 @@ fn filter_account_result(
         if is_known_spl_token_id(account.owner())
             && params.encoding == UiAccountEncoding::JsonParsed
         {
-            get_parsed_token_account(&bank, &params.pubkey, account, None)
+            get_parsed_token_account(&bank, &params.pubkey, account, None, false)
         } else {
             encode_ui_account(&params.pubkey, &account, params.encoding, None, None)
         }
@@ -2738,7 +2738,9 @@ pub(crate) mod tests {
         let bank2 = Bank::new_from_parent(bank0, SlotLeader::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
 
-        let alice = Keypair::from_base58_string("sfLnS4rZ5a8gXke3aGxCgM6usFAVPxLUaBSRdssGY9uS5eoiEWQ41CqDcpXbcekpKsie8Lyy3LNFdhEvjUE1wd9");
+        let alice = Keypair::from_base58_string(
+            "sfLnS4rZ5a8gXke3aGxCgM6usFAVPxLUaBSRdssGY9uS5eoiEWQ41CqDcpXbcekpKsie8Lyy3LNFdhEvjUE1wd9",
+        );
 
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
