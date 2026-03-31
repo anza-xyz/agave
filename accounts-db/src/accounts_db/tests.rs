@@ -6314,3 +6314,37 @@ fn test_write_accounts_to_cache_scenarios(
         "Wrong number of duplicate skips"
     );
 }
+
+/// Regression test: loading an account through an older bank must not return
+/// data from a newer root that was added after the bank was created.
+/// This reproduces the race where `set_root(N+1)` adds a root to the accounts
+/// DB before the commitment cache is updated, causing RPC to return account
+/// data from slot N+1 while reporting `context.slot = N`.
+///
+/// The account is stored at rooted slots that are NOT in the ancestors set so
+/// that the ancestors loop in `load_latest` misses them, forcing the lookup
+/// through the roots fallback path where the bug occurs.
+#[test]
+fn test_load_does_not_return_data_from_newer_root() {
+    let db = AccountsDb::new_single_for_tests();
+    let pubkey = Pubkey::new_unique();
+
+    // Store account at slot 5 with balance 100 (root, but not an ancestor)
+    let account_v1 = AccountSharedData::new(100, 0, &Pubkey::default());
+    db.store_for_tests((5, &[(&pubkey, &account_v1)][..]));
+    db.add_root(5);
+
+    // Store updated account at slot 11 with balance 200 (root, beyond ancestors)
+    let account_v2 = AccountSharedData::new(200, 0, &Pubkey::default());
+    db.store_for_tests((11, &[(&pubkey, &account_v2)][..]));
+    db.add_root(11);
+
+    // Ancestors = {10}: simulates a bank at slot 10. Neither slot 5 nor 11
+    // is an ancestor, so the lookup must go through the roots fallback.
+    // It should find slot 5 (5 <= 10) but NOT slot 11 (11 > 10).
+    let ancestors = Ancestors::from(vec![10]);
+    let (account, slot) = db.load_without_fixed_root(&ancestors, &pubkey).unwrap();
+
+    assert_eq!(slot, 5, "must return data from slot 5, not the newer root 11");
+    assert_eq!(account.lamports(), 100);
+}

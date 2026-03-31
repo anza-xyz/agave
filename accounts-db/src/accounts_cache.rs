@@ -383,9 +383,18 @@ impl AccountsCache {
             drop(r_roots_being_flushed);
         }
 
-        // If the slot is not found in the ancestors fall back to searching roots
+        // If the slot is not found in the ancestors fall back to searching roots.
+        // Bound the search to ancestors.max_slot() so that roots from newer banks
+        // (added by squash before the commitment cache is updated) are not visible
+        // when querying through an older bank.
+        let max_root_slot = if ancestors.is_empty() {
+            index_max_slot
+        } else {
+            ancestors.max_slot().min(index_max_slot)
+        };
+
         let r_maybe_unflushed_roots = self.maybe_unflushed_roots.read().unwrap();
-        for &slot in r_maybe_unflushed_roots.range(..=index_max_slot).rev() {
+        for &slot in r_maybe_unflushed_roots.range(..=max_root_slot).rev() {
             if let Some(account) = self.load(slot, pubkey) {
                 return Some((account, slot, SlotStatus::UnflushedRoot));
             }
@@ -393,7 +402,7 @@ impl AccountsCache {
         drop(r_maybe_unflushed_roots);
 
         let r_roots_being_flushed = self.roots_being_flushed.read().unwrap();
-        for &slot in r_roots_being_flushed.range(..=index_max_slot).rev() {
+        for &slot in r_roots_being_flushed.range(..=max_root_slot).rev() {
             if let Some(account) = self.load(slot, pubkey) {
                 return Some((account, slot, SlotStatus::RootBeingFlushed));
             }
@@ -854,5 +863,88 @@ mod tests {
         assert_eq!(account.account.lamports(), 10);
 
         cache.end_flush_roots();
+    }
+
+    #[test]
+    fn test_load_latest_unflushed_root_beyond_ancestors_not_returned() {
+        // Regression test: unflushed roots from newer banks must not be visible
+        // when querying through an older bank's ancestors.
+        // Use roots that are NOT in the ancestors set so the roots fallback
+        // path is exercised (not the ancestors loop).
+        let cache = AccountsCache::default();
+        let pk = Pubkey::new_unique();
+
+        // Root at slot 5 (within ancestors.max_slot() range)
+        cache.store(5, &pk, AccountSharedData::new(100, 0, &Pubkey::default()));
+        cache.add_root(5);
+
+        // Root at slot 11 (beyond ancestors.max_slot() range)
+        cache.store(
+            11,
+            &pk,
+            AccountSharedData::new(200, 0, &Pubkey::default()),
+        );
+        cache.add_root(11);
+
+        // Ancestors = {10}: max_slot = 10. Neither 5 nor 11 is an ancestor,
+        // so the roots fallback runs. It should find slot 5 (5 <= 10) but
+        // NOT slot 11 (11 > 10).
+        let ancestors = Ancestors::from(vec![10]);
+        let (account, slot, status) = cache.load_latest(&pk, &ancestors).unwrap();
+
+        assert_eq!(slot, 5);
+        assert_eq!(status, SlotStatus::UnflushedRoot);
+        assert_eq!(account.account.lamports(), 100);
+    }
+
+    #[test]
+    fn test_load_latest_flushing_root_beyond_ancestors_not_returned() {
+        // Same as above but for roots in the being-flushed state.
+        let cache = AccountsCache::default();
+        let pk = Pubkey::new_unique();
+
+        cache.store(5, &pk, AccountSharedData::new(100, 0, &Pubkey::default()));
+        cache.add_root(5);
+
+        cache.store(
+            11,
+            &pk,
+            AccountSharedData::new(200, 0, &Pubkey::default()),
+        );
+        cache.add_root(11);
+
+        // Move both roots to flushing state
+        cache.begin_flush_roots(Some(11));
+
+        // Ancestors = {10}: should find slot 5 via roots_being_flushed, not slot 11.
+        let ancestors = Ancestors::from(vec![10]);
+        let (account, slot, status) = cache.load_latest(&pk, &ancestors).unwrap();
+
+        assert_eq!(slot, 5);
+        assert_eq!(status, SlotStatus::RootBeingFlushed);
+        assert_eq!(account.account.lamports(), 100);
+    }
+
+    #[test]
+    fn test_load_latest_root_within_ancestors_still_returned() {
+        // Verify that roots within the ancestors range are still returned
+        // (no regression from the bounding fix).
+        let cache = AccountsCache::default();
+        let pk = Pubkey::new_unique();
+
+        cache.store(
+            10,
+            &pk,
+            AccountSharedData::new(100, 0, &Pubkey::default()),
+        );
+        cache.add_root(10);
+
+        // Ancestors include slots up to 15, so root at 10 should be visible
+        let ancestors = Ancestors::from(vec![15]);
+        let (account, slot, status) = cache.load_latest(&pk, &ancestors).unwrap();
+
+        assert_eq!(slot, 10);
+        assert_eq!(status, SlotStatus::UnflushedRoot);
+        assert_eq!(account.account.lamports(), 100);
     }
 }
