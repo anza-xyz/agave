@@ -982,7 +982,6 @@ fn common_close_account(
 
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 mod test_utils {
-    use solana_program_runtime::program_cache_entry::DELAY_VISIBILITY_SLOT_OFFSET;
     #[cfg(all(feature = "svm-internal", feature = "metrics"))]
     use solana_program_runtime::program_metrics::LoadProgramMetrics;
     #[cfg(feature = "svm-internal")]
@@ -990,6 +989,7 @@ mod test_utils {
         super::*, solana_account::ReadableAccount,
         solana_loader_v4_interface::state::LoaderV4State,
         solana_program_runtime::loaded_programs::ProgramRuntimeEnvironment,
+        solana_program_runtime::program_cache_entry::DELAY_VISIBILITY_SLOT_OFFSET,
         solana_sdk_ids::loader_v4, solana_syscalls::create_program_runtime_environment,
     };
 

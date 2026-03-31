@@ -427,7 +427,12 @@ pub(crate) const fn retention_score(last_access: u64, recovery_cost: u64, freque
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicU64;
+    use {
+        crate::{
+            loaded_programs::tests::new_test_entry_with_usage, program_metrics::ProgramStatistics,
+        },
+        std::sync::atomic::{AtomicU64, Ordering},
+    };
 
     #[test]
     fn test_retention_score_decay_horizon() {

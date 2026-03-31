@@ -14,9 +14,9 @@ use {
     solana_program_runtime::{
         create_vm,
         invoke_context::InvokeContext,
-        loaded_programs::{
+        loaded_programs::ProgramRuntimeEnvironment,
+        program_cache_entry::{
             DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryType,
-            ProgramRuntimeEnvironment,
         },
         program_metrics::LoadProgramMetrics,
         serialization::serialize_parameters,

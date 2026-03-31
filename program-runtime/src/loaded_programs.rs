@@ -943,13 +943,19 @@ impl<FG: ForkGraph> solana_frozen_abi::abi_example::AbiExample for ProgramCache<
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use {
-        crate::loaded_programs::{
-            BlockRelation, DELAY_VISIBILITY_SLOT_OFFSET, ForkGraph, ProgramCache,
-            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
-            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
-            ProgramStatistics, get_mock_program_runtime_environment,
+        crate::{
+            loaded_programs::{
+                BlockRelation, ForkGraph, ProgramCache, ProgramCacheForTxBatch,
+                ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+                get_mock_program_runtime_environment,
+            },
+            program_cache_entry::{
+                DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryOwner,
+                ProgramCacheEntryType,
+            },
+            program_metrics::ProgramStatistics,
         },
         assert_matches::assert_matches,
         percentage::Percentage,
@@ -986,7 +992,7 @@ mod tests {
         ProgramCacheEntryType::Loaded(executable)
     }
 
-    fn new_test_entry_with_usage(
+    pub(crate) fn new_test_entry_with_usage(
         deployment_slot: Slot,
         effective_slot: Slot,
         stats: ProgramStatistics,
