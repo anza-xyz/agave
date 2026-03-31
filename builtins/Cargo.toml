@@ -15,10 +15,10 @@ dev-context-only-utils = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
-solana-bpf-loader-program = { workspace = true }
+solana-bpf-loader-program = { workspace = true, features = ["metrics"] }
 solana-compute-budget-program = { workspace = true }
 solana-hash = { workspace = true }
-solana-loader-v4-program = { workspace = true }
+solana-loader-v4-program = { workspace = true, features = ["metrics"] }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
