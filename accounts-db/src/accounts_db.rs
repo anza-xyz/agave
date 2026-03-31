@@ -3531,16 +3531,15 @@ impl AccountsDb {
     ) -> Option<(Slot, StorageLocation, Option<LoadedAccountAccessor<'a>>)> {
         // Bound the root search to ancestors.max_slot() so that roots from
         // newer banks are not visible when querying through an older bank.
-        let max_root = if ancestors.is_empty() {
+        let max_root_slot = if ancestors.is_empty() {
             None
         } else {
             Some(ancestors.max_slot())
         };
-        let max_root = None;
         self.accounts_index.get_with_and_then(
             pubkey,
             Some(ancestors),
-            max_root,
+            max_root_slot,
             true,
             |(slot, account_info)| {
                 let storage_location = account_info.storage_location();
