@@ -21,6 +21,20 @@ updates:
       timezone: Etc/UTC
     open-pull-requests-limit: 6
 
+  - package-ecosystem: "npm"
+    directory: "/docs"
+    schedule:
+      interval: weekly
+      time: "08:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    groups:
+      docs-dependencies:
+        patterns:
+          - "*"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
