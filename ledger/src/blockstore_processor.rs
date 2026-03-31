@@ -1648,10 +1648,8 @@ pub fn confirm_slot(
         .iter()
         .rposition(|bc| matches!(bc, BlockComponent::EntryBatch(_)));
 
-    for (ix, (completed_range, component)) in completed_ranges
-        .iter()
-        .zip(slot_components.into_iter())
-        .enumerate()
+    for (ix, (completed_range, component)) in
+        completed_ranges.iter().zip(slot_components).enumerate()
     {
         let num_shreds = completed_range.end - completed_range.start;
         let is_final = slot_full && ix == completed_ranges.len() - 1;
