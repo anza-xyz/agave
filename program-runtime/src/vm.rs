@@ -5,7 +5,7 @@ use qualifier_attr::qualifiers;
 use {
     crate::{
         execution_budget::MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268,
-        invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
+        invoke_context::{BpfAllocator, InvokeContext, MemoryContext, SerializedAccountMetadata},
         mem_pool::VmMemoryPool,
         program_cache_entry::ProgramCacheEntry,
         serialization, stable_log,
@@ -67,7 +67,7 @@ pub fn create_vm<'a, 'b>(
             .virtual_address_space_adjustments,
         invoke_context.get_feature_set().account_data_direct_mapping,
     )?;
-    invoke_context.set_syscall_context(SyscallContext {
+    invoke_context.set_syscall_context(MemoryContext {
         allocator: BpfAllocator::new(heap_size as u64),
         accounts_metadata,
     })?;

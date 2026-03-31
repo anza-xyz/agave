@@ -2670,7 +2670,7 @@ mod tests {
         solana_program::program::check_type_assumptions,
         solana_program_runtime::{
             execution_budget::MAX_HEAP_FRAME_BYTES,
-            invoke_context::{BpfAllocator, InvokeContext, SyscallContext},
+            invoke_context::{BpfAllocator, InvokeContext, MemoryContext},
             memory::address_is_aligned,
             with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
         },
@@ -3153,7 +3153,7 @@ mod tests {
         ($invoke_context:ident, $memory_mapping:ident, $heap:ident) => {
             prepare_mockup!($invoke_context, program_id, bpf_loader::id());
             $invoke_context
-                .set_syscall_context(SyscallContext {
+                .set_syscall_context(MemoryContext {
                     allocator: BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
                     accounts_metadata: Vec::new(),
                 })

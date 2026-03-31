@@ -1391,7 +1391,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            invoke_context::{BpfAllocator, SerializedAccountMetadata, SyscallContext},
+            invoke_context::{BpfAllocator, MemoryContext, SerializedAccountMetadata},
             memory::translate_type,
             with_mock_invoke_context_with_feature_set,
         },
@@ -1957,7 +1957,7 @@ mod tests {
         );
 
         invoke_context
-            .set_syscall_context(SyscallContext {
+            .set_syscall_context(MemoryContext {
                 allocator: BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
                 accounts_metadata: vec![account_metadata],
             })

@@ -177,7 +177,9 @@ impl<'a> EnvironmentConfig<'a> {
     }
 }
 
-pub struct SyscallContext {
+/// This structure contains metadata about the memory for each instruction under execution.
+/// The BpfAllcoation, accounts addresses in the guest and the memory mapping (future).
+pub struct MemoryContext {
     pub allocator: BpfAllocator,
     pub accounts_metadata: Vec<SerializedAccountMetadata>,
 }
@@ -210,7 +212,7 @@ pub struct InvokeContext<'a, 'ix_data> {
     /// Time spent so far executing nested program calls.
     pub total_nested_exec_time: Duration,
     pub timings: ExecuteDetailsTimings,
-    pub syscall_context: Vec<Option<SyscallContext>>,
+    pub syscall_context: Vec<Option<MemoryContext>>,
     /// Pairs of index in TX instruction trace and VM register trace
     register_traces: Vec<(usize, Vec<[u64; 12]>)>,
     /// Debug port to use for this executing transaction.
@@ -734,7 +736,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     // Set this instruction syscall context
     pub fn set_syscall_context(
         &mut self,
-        syscall_context: SyscallContext,
+        syscall_context: MemoryContext,
     ) -> Result<(), InstructionError> {
         *self
             .syscall_context
@@ -744,7 +746,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     // Get this instruction's SyscallContext
-    pub fn get_syscall_context(&self) -> Result<&SyscallContext, InstructionError> {
+    pub fn get_syscall_context(&self) -> Result<&MemoryContext, InstructionError> {
         self.syscall_context
             .last()
             .and_then(std::option::Option::as_ref)
@@ -752,7 +754,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     // Get this instruction's SyscallContext
-    pub fn get_syscall_context_mut(&mut self) -> Result<&mut SyscallContext, InstructionError> {
+    pub fn get_syscall_context_mut(&mut self) -> Result<&mut MemoryContext, InstructionError> {
         self.syscall_context
             .last_mut()
             .and_then(|syscall_context| syscall_context.as_mut())
