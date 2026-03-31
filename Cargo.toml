@@ -56,7 +56,6 @@ members = [
     "net-utils",
     "notifier",
     "perf",
-    "platform-tools-sdk/gen-headers",
     "poh",
     "poh-bench",
     "precompiles",
