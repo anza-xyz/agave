@@ -4677,7 +4677,8 @@ fn test_pre_post_transaction_balances() {
         None,
     );
 
-    let (native_pre, native_post, _, _) = balance_collector.unwrap().into_vecs();
+    let (native_pre, native_post, _acc_size_pre, _acc_size_post, _, _) =
+        balance_collector.unwrap().into_vecs();
     let transaction_balances_set = TransactionBalancesSet::new(native_pre, native_post);
 
     assert_eq!(transaction_balances_set.pre_balances.len(), 3);

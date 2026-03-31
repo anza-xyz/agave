@@ -13,19 +13,22 @@ use {
 
 // we use internal aliases for clarity, the external type aliases are often confusing
 type TxNativeBalances = Vec<u64>;
+type TxAccountSizes = Vec<usize>;
 type TxTokenBalances = Vec<SvmTokenInfo>;
 type BatchNativeBalances = Vec<TxNativeBalances>;
+type BatchAccountSizes = Vec<TxAccountSizes>;
 type BatchTokenBalances = Vec<TxTokenBalances>;
 
-// to operate cleanly over Option<BalanceCollector> we use a trait impled on the outer and inner type
-pub(crate) trait BalanceCollectionRoutines {
-    fn collect_pre_balances<CB: TransactionProcessingCallback>(
+// to operate cleanly over Option<TxStatusMetaCollector> we use a trait impled on the
+// outer and inner type
+pub(crate) trait TxStatusMetaCollectionRoutines {
+    fn collect_pre_status_meta<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
     );
 
-    fn collect_post_balances<CB: TransactionProcessingCallback>(
+    fn collect_post_status_meta<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
@@ -35,52 +38,68 @@ pub(crate) trait BalanceCollectionRoutines {
 #[derive(Debug, Default)]
 #[cfg_attr(
     feature = "dev-context-only-utils",
-    field_qualifiers(native_pre(pub), native_post(pub), token_pre(pub), token_post(pub),)
+    field_qualifiers(
+        native_pre(pub),
+        native_post(pub),
+        token_pre(pub),
+        token_post(pub),
+        acc_size_pre(pub),
+        acc_size_post(pub),
+    )
 )]
-pub struct BalanceCollector {
+pub struct TxStatusMetaCollector {
     native_pre: BatchNativeBalances,
     native_post: BatchNativeBalances,
     token_pre: BatchTokenBalances,
     token_post: BatchTokenBalances,
+    acc_size_pre: BatchAccountSizes,
+    acc_size_post: BatchAccountSizes,
 }
 
-impl BalanceCollector {
+impl TxStatusMetaCollector {
     // we always provide one vec for every transaction, even if the vecs are empty
     pub(crate) fn new_with_transaction_count(transaction_count: usize) -> Self {
         Self {
             native_pre: Vec::with_capacity(transaction_count),
             native_post: Vec::with_capacity(transaction_count),
+            acc_size_pre: Vec::with_capacity(transaction_count),
+            acc_size_post: Vec::with_capacity(transaction_count),
             token_pre: Vec::with_capacity(transaction_count),
             token_post: Vec::with_capacity(transaction_count),
         }
     }
 
-    // we use this pattern to prevent anything outside svm mutating BalanceCollector internals
+    // we use this pattern to prevent anything outside svm mutating collector internals
     // with no public constructor, and only private fields, non-svm code can only disassemble the struct
     pub fn into_vecs(
         self,
     ) -> (
         BatchNativeBalances,
         BatchNativeBalances,
+        BatchAccountSizes,
+        BatchAccountSizes,
         BatchTokenBalances,
         BatchTokenBalances,
     ) {
         (
             self.native_pre,
             self.native_post,
+            self.acc_size_pre,
+            self.acc_size_post,
             self.token_pre,
             self.token_post,
         )
     }
 
-    // gather native lamport balances for all accounts
-    // and token balances for valid, initialized token accounts with valid, initialized mints
-    fn collect_balances<CB: TransactionProcessingCallback>(
+    // Gather per-account metadata needed for transaction status: lamports, data sizes, and token
+    // balance info for valid token accounts when the transaction touches a token program.
+    fn collect_transaction_status_meta<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
-    ) -> (TxNativeBalances, TxTokenBalances) {
+    ) -> (TxNativeBalances, TxAccountSizes, TxTokenBalances) {
         let mut native_balances = Vec::with_capacity(transaction.account_keys().len());
+        let mut account_sizes = Vec::with_capacity(transaction.account_keys().len());
         let mut token_balances = vec![];
 
         let has_token_program = transaction.account_keys().iter().any(is_known_spl_token_id);
@@ -88,10 +107,12 @@ impl BalanceCollector {
         for (index, key) in transaction.account_keys().iter().enumerate() {
             let Some(account) = account_loader.load_account(key) else {
                 native_balances.push(0);
+                account_sizes.push(0);
                 continue;
             };
 
             native_balances.push(account.lamports());
+            account_sizes.push(account.data().len());
 
             if has_token_program
                 && !transaction.is_invoked(index)
@@ -104,57 +125,63 @@ impl BalanceCollector {
             }
         }
 
-        (native_balances, token_balances)
+        (native_balances, account_sizes, token_balances)
     }
 
     pub(crate) fn lengths_match_expected(&self, expected_len: usize) -> bool {
         self.native_pre.len() == expected_len
             && self.native_post.len() == expected_len
+            && self.acc_size_pre.len() == expected_len
+            && self.acc_size_post.len() == expected_len
             && self.token_pre.len() == expected_len
             && self.token_post.len() == expected_len
     }
 }
 
-impl BalanceCollectionRoutines for BalanceCollector {
-    fn collect_pre_balances<CB: TransactionProcessingCallback>(
+impl TxStatusMetaCollectionRoutines for TxStatusMetaCollector {
+    fn collect_pre_status_meta<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
     ) {
-        let (native_balances, token_balances) = self.collect_balances(account_loader, transaction);
+        let (native_balances, account_sizes, token_balances) =
+            self.collect_transaction_status_meta(account_loader, transaction);
         self.native_pre.push(native_balances);
+        self.acc_size_pre.push(account_sizes);
         self.token_pre.push(token_balances);
     }
 
-    fn collect_post_balances<CB: TransactionProcessingCallback>(
+    fn collect_post_status_meta<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
     ) {
-        let (native_balances, token_balances) = self.collect_balances(account_loader, transaction);
+        let (native_balances, account_sizes, token_balances) =
+            self.collect_transaction_status_meta(account_loader, transaction);
         self.native_post.push(native_balances);
+        self.acc_size_post.push(account_sizes);
         self.token_post.push(token_balances);
     }
 }
 
-impl BalanceCollectionRoutines for Option<BalanceCollector> {
-    fn collect_pre_balances<CB: TransactionProcessingCallback>(
+impl TxStatusMetaCollectionRoutines for Option<TxStatusMetaCollector> {
+    fn collect_pre_status_meta<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
     ) {
         if let Some(inner) = self {
-            inner.collect_pre_balances(account_loader, transaction)
+            inner.collect_pre_status_meta(account_loader, transaction)
         }
     }
 
-    fn collect_post_balances<CB: TransactionProcessingCallback>(
+    fn collect_post_status_meta<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
     ) {
         if let Some(inner) = self {
-            inner.collect_post_balances(account_loader, transaction)
+            inner.collect_post_status_meta(account_loader, transaction)
         }
     }
 }

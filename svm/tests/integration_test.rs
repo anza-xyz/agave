@@ -3454,7 +3454,7 @@ fn svm_metrics_accumulation() {
 }
 
 // NOTE this could be moved to its own file in the future, but it requires a total refactor of the test runner
-mod balance_collector {
+mod tx_status_meta_collector {
     use {
         super::*,
         rand::prelude::*,
@@ -3761,8 +3761,14 @@ mod balance_collector {
                 .enable_transaction_balance_recording = true;
 
             let batch_output = env.execute();
-            let (pre_lamport_vecs, post_lamport_vecs, pre_token_vecs, post_token_vecs) =
-                batch_output.balance_collector.unwrap().into_vecs();
+            let (
+                pre_lamport_vecs,
+                post_lamport_vecs,
+                pre_account_sizes,
+                post_account_sizes,
+                pre_token_vecs,
+                post_token_vecs,
+            ) = batch_output.tx_status_meta_collector.unwrap().into_vecs();
 
             // first test the fee-payer balances
             let mut running_fee_payer_balance = STARTING_BALANCE;
@@ -3785,6 +3791,28 @@ mod balance_collector {
                 assert_eq!(post_bal, expected_post_balance);
 
                 running_fee_payer_balance = expected_post_balance;
+            }
+
+            let expected_user_account_size = if use_tokens {
+                TokenAccount::get_packed_len()
+            } else {
+                0
+            };
+
+            for ((pre_balances, post_balances), (pre_sizes, post_sizes)) in pre_lamport_vecs
+                .iter()
+                .zip(post_lamport_vecs.iter())
+                .zip(pre_account_sizes.iter().zip(post_account_sizes.iter()))
+            {
+                assert_eq!(pre_sizes.len(), pre_balances.len());
+                assert_eq!(post_sizes.len(), post_balances.len());
+
+                assert_eq!(pre_sizes[0], 0);
+                assert_eq!(post_sizes[0], 0);
+                assert_eq!(pre_sizes[1], expected_user_account_size);
+                assert_eq!(post_sizes[1], expected_user_account_size);
+                assert_eq!(pre_sizes[2], expected_user_account_size);
+                assert_eq!(post_sizes[2], expected_user_account_size);
             }
 
             // thanks to execute() we know user_balances is correct

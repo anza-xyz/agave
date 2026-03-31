@@ -340,7 +340,7 @@ impl Consumer {
         let LoadAndExecuteTransactionsOutput {
             processing_results,
             processed_counts,
-            balance_collector,
+            tx_status_meta_collector,
         } = load_and_execute_transactions_output;
 
         let actual_execute_time = execute_and_commit_timings
@@ -434,7 +434,7 @@ impl Consumer {
                     processing_results,
                     starting_transaction_index,
                     bank,
-                    balance_collector,
+                    tx_status_meta_collector,
                     &mut execute_and_commit_timings,
                     &processed_counts,
                 )

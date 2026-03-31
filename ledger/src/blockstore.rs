@@ -8586,6 +8586,8 @@ pub mod tests {
                     return_data: Some(TransactionReturnData::default()),
                     compute_units_consumed,
                     cost_units,
+                    pre_acc_sizes: None,
+                    post_acc_sizes: None,
                 }
                 .into();
                 blockstore
@@ -8606,6 +8608,8 @@ pub mod tests {
                     return_data: Some(TransactionReturnData::default()),
                     compute_units_consumed,
                     cost_units,
+                    pre_acc_sizes: None,
+                    post_acc_sizes: None,
                 }
                 .into();
                 blockstore
@@ -8626,6 +8630,8 @@ pub mod tests {
                     return_data: Some(TransactionReturnData::default()),
                     compute_units_consumed,
                     cost_units,
+                    pre_acc_sizes: None,
+                    post_acc_sizes: None,
                 }
                 .into();
                 blockstore
@@ -8648,6 +8654,8 @@ pub mod tests {
                         return_data: Some(TransactionReturnData::default()),
                         compute_units_consumed,
                         cost_units,
+                        pre_acc_sizes: None,
+                        post_acc_sizes: None,
                     },
                 }
             })
@@ -8800,6 +8808,8 @@ pub mod tests {
             return_data: Some(test_return_data.clone()),
             compute_units_consumed: compute_units_consumed_1,
             cost_units: cost_units_1,
+            pre_acc_sizes: None,
+            post_acc_sizes: None,
         }
         .into();
         assert!(
@@ -8823,6 +8833,8 @@ pub mod tests {
             return_data,
             compute_units_consumed,
             cost_units,
+            pre_acc_sizes,
+            post_acc_sizes,
         } = transaction_status_cf
             .get_protobuf((Signature::default(), 0))
             .unwrap()
@@ -8842,6 +8854,8 @@ pub mod tests {
         assert_eq!(return_data.unwrap(), test_return_data);
         assert_eq!(compute_units_consumed, compute_units_consumed_1);
         assert_eq!(cost_units, cost_units_1);
+        assert_eq!(pre_acc_sizes, None);
+        assert_eq!(post_acc_sizes, None);
 
         // insert value
         let status = TransactionStatusMeta {
@@ -8858,6 +8872,8 @@ pub mod tests {
             return_data: Some(test_return_data.clone()),
             compute_units_consumed: compute_units_consumed_2,
             cost_units: cost_units_2,
+            pre_acc_sizes: None,
+            post_acc_sizes: None,
         }
         .into();
         assert!(
@@ -8881,6 +8897,8 @@ pub mod tests {
             return_data,
             compute_units_consumed,
             cost_units,
+            pre_acc_sizes,
+            post_acc_sizes,
         } = transaction_status_cf
             .get_protobuf((Signature::from([2u8; 64]), 9))
             .unwrap()
@@ -8902,6 +8920,8 @@ pub mod tests {
         assert_eq!(return_data.unwrap(), test_return_data);
         assert_eq!(compute_units_consumed, compute_units_consumed_2);
         assert_eq!(cost_units, cost_units_2);
+        assert_eq!(pre_acc_sizes, None);
+        assert_eq!(post_acc_sizes, None);
     }
 
     #[test]
@@ -8926,6 +8946,8 @@ pub mod tests {
             return_data: Some(TransactionReturnData::default()),
             compute_units_consumed: Some(42u64),
             cost_units: Some(1234),
+            pre_acc_sizes: None,
+            post_acc_sizes: None,
         }
         .into();
 
@@ -9103,6 +9125,8 @@ pub mod tests {
             return_data: Some(TransactionReturnData::default()),
             compute_units_consumed: Some(42u64),
             cost_units: Some(1234),
+            pre_acc_sizes: None,
+            post_acc_sizes: None,
         }
         .into();
 
@@ -9234,6 +9258,8 @@ pub mod tests {
             return_data: Some(TransactionReturnData::default()),
             compute_units_consumed: Some(42u64),
             cost_units: Some(1234),
+            pre_acc_sizes: None,
+            post_acc_sizes: None,
         }
         .into();
 
@@ -9405,6 +9431,8 @@ pub mod tests {
                     return_data: return_data.clone(),
                     compute_units_consumed: Some(42),
                     cost_units: Some(1234),
+                    pre_acc_sizes: None,
+                    post_acc_sizes: None,
                 }
                 .into();
                 blockstore
@@ -9427,6 +9455,8 @@ pub mod tests {
                         return_data,
                         compute_units_consumed: Some(42),
                         cost_units: Some(1234),
+                        pre_acc_sizes: None,
+                        post_acc_sizes: None,
                     },
                 }
             })
@@ -9530,6 +9560,8 @@ pub mod tests {
                     return_data: return_data.clone(),
                     compute_units_consumed: Some(42u64),
                     cost_units: Some(1234),
+                    pre_acc_sizes: None,
+                    post_acc_sizes: None,
                 }
                 .into();
                 blockstore
@@ -9552,6 +9584,8 @@ pub mod tests {
                         return_data,
                         compute_units_consumed: Some(42u64),
                         cost_units: Some(1234),
+                        pre_acc_sizes: None,
+                        post_acc_sizes: None,
                     },
                 }
             })
@@ -10202,6 +10236,8 @@ pub mod tests {
                 return_data: Some(TransactionReturnData::default()),
                 compute_units_consumed: None,
                 cost_units: None,
+                pre_acc_sizes: None,
+                post_acc_sizes: None,
             }
             .into();
             transaction_status_cf
@@ -10904,6 +10940,8 @@ pub mod tests {
             }),
             compute_units_consumed: Some(23456),
             cost_units: Some(5678),
+            pre_acc_sizes: None,
+            post_acc_sizes: None,
         };
         let deprecated_status: StoredTransactionStatusMeta = status.clone().try_into().unwrap();
         let protobuf_status: generated::TransactionStatusMeta = status.into();

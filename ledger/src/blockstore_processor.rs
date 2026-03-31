@@ -5,7 +5,7 @@ use {
         blockstore_meta::SlotMeta,
         entry_notifier_service::{EntryNotification, EntryNotifierSender},
         leader_schedule_cache::LeaderScheduleCache,
-        transaction_balances::compile_collected_balances,
+        transaction_balances::compile_collected_tx_status_meta,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
@@ -61,7 +61,9 @@ use {
         versioned::VersionedTransaction,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_transaction_status::token_balances::TransactionTokenBalancesSet,
+    solana_transaction_status::{
+        account_sizes::TransactionAccountSizesSet, token_balances::TransactionTokenBalancesSet,
+    },
     solana_vote::{vote_account::VoteAccountsHashMap, vote_parser::is_valid_vote_only_transaction},
     std::{
         borrow::Cow,
@@ -247,7 +249,7 @@ pub fn execute_batch<'a>(
         }
     };
 
-    let (commit_results, balance_collector) = batch
+    let (commit_results, tx_status_meta_collector) = batch
         .bank()
         .load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
@@ -304,16 +306,16 @@ pub fn execute_batch<'a>(
             .map(|tx| tx.as_sanitized_transaction().into_owned())
             .collect();
 
-        // There are two cases where balance_collector could be None:
+        // There are two cases where tx_status_meta_collector could be None:
         // * Balance recording is disabled. If that were the case, there would
         //   be no TransactionStatusSender, and we would not be in this branch.
         // * The batch was aborted in its entirety in SVM. In that case, nothing
         //   would have been committed.
         // Therefore this should always be true.
-        debug_assert!(balance_collector.is_some());
+        debug_assert!(tx_status_meta_collector.is_some());
 
-        let (balances, token_balances) =
-            compile_collected_balances(balance_collector.unwrap_or_default());
+        let (balances, account_sizes, token_balances) =
+            compile_collected_tx_status_meta(tx_status_meta_collector.unwrap_or_default());
 
         // The length of costs vector needs to be consistent with all other
         // vectors that are sent over (such as `transactions`). So, replace the
@@ -329,6 +331,7 @@ pub fn execute_batch<'a>(
             commit_results,
             balances,
             token_balances,
+            account_sizes,
             tx_costs,
             transaction_indexes.into_owned(),
         );
@@ -2613,6 +2616,7 @@ pub struct TransactionStatusBatch {
     pub commit_results: Vec<TransactionCommitResult>,
     pub balances: TransactionBalancesSet,
     pub token_balances: TransactionTokenBalancesSet,
+    pub account_sizes: TransactionAccountSizesSet,
     pub costs: Vec<Option<u64>>,
     pub transaction_indexes: Vec<usize>,
 }
@@ -2631,6 +2635,7 @@ impl TransactionStatusSender {
         commit_results: Vec<TransactionCommitResult>,
         balances: TransactionBalancesSet,
         token_balances: TransactionTokenBalancesSet,
+        account_sizes: TransactionAccountSizesSet,
         costs: Vec<Option<u64>>,
         transaction_indexes: Vec<usize>,
     ) {
@@ -2646,6 +2651,7 @@ impl TransactionStatusSender {
                 commit_results,
                 balances,
                 token_balances,
+                account_sizes,
                 costs,
                 transaction_indexes,
             },
