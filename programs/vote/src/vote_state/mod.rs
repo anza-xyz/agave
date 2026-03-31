@@ -473,10 +473,8 @@ pub fn process_new_vote_state(
     }
 
     match (new_root, vote_state.root_slot()) {
-        (Some(new_root), Some(current_root)) => {
-            if new_root < current_root {
-                return Err(VoteError::RootRollBack);
-            }
+        (Some(new_root), Some(current_root)) if new_root < current_root => {
+            return Err(VoteError::RootRollBack);
         }
         (None, Some(_)) => {
             return Err(VoteError::RootRollBack);
