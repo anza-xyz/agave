@@ -135,7 +135,7 @@ fn create_transaction_confirmation_task(
                 {
                     if let Ok(result) = rpc_client.get_signature_statuses(signatures).await {
                         let statuses = result.value;
-                        for (signature, status) in signatures.iter().zip(statuses.into_iter()) {
+                        for (signature, status) in signatures.iter().zip(statuses) {
                             if let Some((status, data)) = status
                                 .filter(|status| {
                                     status.satisfies_commitment(rpc_client.commitment())
