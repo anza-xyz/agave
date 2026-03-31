@@ -161,15 +161,29 @@ pub struct SlotMetaV3 {
     pub completed_data_indexes: CompletedDataIndexes,
     /// The block id of the parent block.
     /// Populated from the block header / update parent marker.
-    #[serde(deserialize_with = "solana_serde::default_on_eof")]
+    #[serde(deserialize_with = "default_on_err")]
     pub parent_block_id: Hash,
     /// The FEC set index from which replay should start for this block.
     /// Populated from the block header / update parent marker.
-    #[serde(deserialize_with = "solana_serde::default_on_eof")]
+    #[serde(deserialize_with = "default_on_err")]
     pub replay_fec_set_index: u32,
 }
 
 pub type SlotMeta = SlotMetaV3;
+
+/// Serde impleentation of deserialize for a field that's optional at the end of
+/// a struct. Useful when adding new fields to a column.
+///
+/// `default_on_eof` allocates and does a string compare, so this is preferable
+/// if the fields do not have any other validation or failure cases
+#[inline]
+fn default_on_err<'de, T, D>(d: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    T::deserialize(d).or_else(|_| Ok(T::default()))
+}
 
 // Serde implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.

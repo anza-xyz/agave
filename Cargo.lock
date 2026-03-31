@@ -8811,7 +8811,6 @@ dependencies = [
  "solana-rayon-threadlimit",
  "solana-runtime",
  "solana-runtime-transaction",
- "solana-serde",
  "solana-sha256-hasher",
  "solana-shred-version",
  "solana-signature",
