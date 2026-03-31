@@ -138,7 +138,7 @@ mod tests {
             let compat = sampler_compat.sample(&mut rng_compat);
             hash.hash(&compat.to_le_bytes());
         });
-        assert_eq!(bs58::encode(hash.result()).into_string(), expected_hash);
+        assert_eq!(hash.result().to_string(), expected_hash);
     }
 
     #[test]
@@ -169,7 +169,7 @@ mod tests {
             let compat = sampler_compat.sample(&mut rng_compat);
             hash.hash(&compat.to_le_bytes());
         });
-        assert_eq!(bs58::encode(hash.result()).into_string(), expected_hash);
+        assert_eq!(hash.result().to_string(), expected_hash);
     }
 
     #[test_case(0..100, &[95, 2, 28, 92, 17, 78, 72, 72, 21, 65])]
@@ -212,7 +212,7 @@ mod tests {
             let compat = random_u64_range(&mut rng_compat, range.clone());
             hash.hash(&compat.to_le_bytes());
         });
-        assert_eq!(bs58::encode(hash.result()).into_string(), expected_hash);
+        assert_eq!(hash.result().to_string(), expected_hash);
     }
 
     #[test]

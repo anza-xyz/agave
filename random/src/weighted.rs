@@ -90,7 +90,7 @@ mod tests {
             let compat = index_compat.sample(&mut rng_compat);
             hash.hash(&compat.to_le_bytes());
         });
-        assert_eq!(bs58::encode(hash.result()).into_string(), expected_hash);
+        assert_eq!(hash.result().to_string(), expected_hash);
     }
 
     #[test]
