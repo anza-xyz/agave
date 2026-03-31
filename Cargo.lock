@@ -10054,6 +10054,7 @@ dependencies = [
  "solana-keypair",
  "solana-message",
  "solana-program-entrypoint",
+ "solana-program-runtime",
  "solana-pubkey 4.1.0",
  "solana-runtime-transaction",
  "solana-sdk-ids",

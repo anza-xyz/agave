@@ -453,7 +453,7 @@ mod tests {
             .sanitize_and_convert_to_fee_budget_limits_and_requested_heap_size(&feature_set)
             .unwrap();
         assert_eq!(limits.compute_unit_limit, 300_000);
-        assert_eq!(limits.prioritization_fee, 42 * 300_000 / 1_000_000);
+        assert_eq!(limits.prioritization_fee, 42);
         assert_eq!(limits.loaded_accounts_data_size_limit.get(), 2048);
         assert_eq!(updated_heap_bytes, 65536);
     }

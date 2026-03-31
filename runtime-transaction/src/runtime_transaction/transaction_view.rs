@@ -93,11 +93,14 @@ where
             // NOTE: only txv1 has `transaction_config_view`, which must have been validated for
             // SanitizedTransactionView.
             TransactionConfigSource::V1(TransactionConfigValues {
-                priority_fee_lamports: transaction_config_view.priority_fee_lamports(),
-                compute_unit_limit: transaction_config_view.compute_unit_limit(),
+                priority_fee_lamports: transaction_config_view.priority_fee_lamports().unwrap_or(0),
+                compute_unit_limit: transaction_config_view.compute_unit_limit().unwrap_or(0),
                 loaded_accounts_data_size_limit: transaction_config_view
-                    .loaded_accounts_data_size_limit(),
-                requested_heap_size: transaction_config_view.requested_heap_size(),
+                    .loaded_accounts_data_size_limit()
+                    .unwrap_or(0),
+                requested_heap_size: transaction_config_view
+                    .requested_heap_size()
+                    .unwrap_or(solana_program_runtime::execution_budget::MIN_HEAP_FRAME_BYTES),
             })
         } else {
             TransactionConfigSource::LegacyAndV0(ComputeBudgetInstructionDetails::try_from(
