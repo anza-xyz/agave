@@ -1,15 +1,11 @@
 #[cfg(feature = "metrics")]
 use solana_svm_timings::ExecuteDetailsTimings;
 use {
-    crate::{
-        loaded_programs::{ForkGraph, IndexImplementation},
-        program_cache_entry::ProgramCacheEntryType,
-    },
+    crate::loaded_programs::ForkGraph,
     log::{debug, log_enabled, trace},
     solana_pubkey::Pubkey,
     std::{
         collections::HashMap,
-        fmt::Write,
         sync::atomic::{AtomicU64, Ordering},
     },
 };
@@ -273,7 +269,9 @@ impl LoadProgramMetrics {
 
 impl<FG: ForkGraph> crate::loaded_programs::ProgramCache<FG> {
     /// Log per-entry statistics for each entry in the global cache.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn output_entry_stats(&self) {
+        use {crate::program_cache_entry::ProgramCacheEntryType, std::fmt::Write};
         // The entry stats can become very verbose after some runtime. Rather than dumping them
         // to the log, we'd rather maintain a continuously updated file instead...
         static ENTRY_STAT_PATH: std::sync::LazyLock<Option<std::ffi::OsString>> =
@@ -283,49 +281,41 @@ impl<FG: ForkGraph> crate::loaded_programs::ProgramCache<FG> {
             return;
         };
         let mut output = String::new();
-        match &self.index {
-            IndexImplementation::V1 { entries, .. } => {
-                for (addr, entry_versions) in entries {
-                    for (idx, entry) in entry_versions.iter().enumerate() {
-                        let entry_ty = match &entry.program {
-                            ProgramCacheEntryType::FailedVerification(_) => "FailedVerification",
-                            ProgramCacheEntryType::Closed => "Closed",
-                            ProgramCacheEntryType::DelayVisibility => "DelayVisibility",
-                            ProgramCacheEntryType::Unloaded(_) => "Unloaded",
-                            ProgramCacheEntryType::Builtin(_) => "Builtin",
-                            #[cfg(not(all(not(target_os = "windows"), target_arch = "x86_64")))]
-                            ProgramCacheEntryType::Loaded(_) => "Loaded",
-                            #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
-                            ProgramCacheEntryType::Loaded(executable) => {
-                                if executable.get_compiled_program().is_some() {
-                                    "JitCompiled"
-                                } else {
-                                    "Loaded"
-                                }
-                            }
-                        };
-                        let stats = &entry.stats;
-                        let uses = stats.uses.load(Ordering::Relaxed);
-                        let compiles = stats.compilations.load(Ordering::Relaxed);
-                        let comptime = stats.total_compilation_time_us.load(Ordering::Relaxed);
-                        let comptime_ema =
-                            stats.compilation_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
-                        let invokes = stats.jit_invocations.load(Ordering::Relaxed);
-                        let jittime = stats.total_jit_execution_time_us.load(Ordering::Relaxed);
-                        let jittime_ema =
-                            stats.jit_execution_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
-                        let interps = stats.interpreted_invocations.load(Ordering::Relaxed);
-                        let interptime = stats.total_interpretation_time_us.load(Ordering::Relaxed);
-                        let interpema =
-                            stats.interpretation_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
-                        let _ = writeln!(
-                            &mut output,
-                            "{addr},{idx},{entry_ty},{uses},{compiles},{comptime},{comptime_ema},\
-                             {invokes},{jittime},{jittime_ema},{interps},{interptime},{interpema}"
-                        );
+        let entries = self.get_flattened_entries_for_tests();
+        for (addr, entry) in entries {
+            let entry_ty = match &entry.program {
+                ProgramCacheEntryType::FailedVerification(_) => "FailedVerification",
+                ProgramCacheEntryType::Closed => "Closed",
+                ProgramCacheEntryType::DelayVisibility => "DelayVisibility",
+                ProgramCacheEntryType::Unloaded(_) => "Unloaded",
+                ProgramCacheEntryType::Builtin(_) => "Builtin",
+                #[cfg(not(all(not(target_os = "windows"), target_arch = "x86_64")))]
+                ProgramCacheEntryType::Loaded(_) => "Loaded",
+                #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
+                ProgramCacheEntryType::Loaded(executable) => {
+                    if executable.get_compiled_program().is_some() {
+                        "JitCompiled"
+                    } else {
+                        "Loaded"
                     }
                 }
-            }
+            };
+            let stats = &entry.stats;
+            let uses = stats.uses.load(Ordering::Relaxed);
+            let compiles = stats.compilations.load(Ordering::Relaxed);
+            let comptime = stats.total_compilation_time_us.load(Ordering::Relaxed);
+            let comptime_ema = stats.compilation_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
+            let invokes = stats.jit_invocations.load(Ordering::Relaxed);
+            let jittime = stats.total_jit_execution_time_us.load(Ordering::Relaxed);
+            let jittime_ema = stats.jit_execution_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
+            let interps = stats.interpreted_invocations.load(Ordering::Relaxed);
+            let interptime = stats.total_interpretation_time_us.load(Ordering::Relaxed);
+            let interpema = stats.interpretation_time_ema.load(Ordering::Relaxed) / EMA_SCALE;
+            let _ = writeln!(
+                &mut output,
+                "{addr},{entry_ty},{uses},{compiles},{comptime},{comptime_ema},{invokes},\
+                 {jittime},{jittime_ema},{interps},{interptime},{interpema}"
+            );
         }
         if let Err(e) = std::fs::write(stat_path, output) {
             log::info!("Writing entry stats to {stat_path:?} failed: {e:?}");
