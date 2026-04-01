@@ -204,6 +204,19 @@ pub fn parse_port_range(port_range: &str) -> Option<PortRange> {
     Some((start_port, end_port))
 }
 
+fn select_ipv4(host: &str, mut ips: impl Iterator<Item = IpAddr>) -> Result<IpAddr, String> {
+    let Some(first_ip) = ips.next() else {
+        return Err(format!("Unable to resolve host: {host}"));
+    };
+
+    if first_ip.is_ipv4() {
+        return Ok(first_ip);
+    }
+
+    ips.find(IpAddr::is_ipv4)
+        .ok_or_else(|| format!("IPv6 addresses are not supported: {host}"))
+}
+
 pub fn parse_host(host: &str) -> Result<IpAddr, String> {
     if let Ok(IpAddr::V6(_)) = host.parse::<IpAddr>() {
         return Err(format!("IPv6 addresses are not supported: {host}"));
@@ -216,17 +229,13 @@ pub fn parse_host(host: &str) -> Result<IpAddr, String> {
         return Err(format!("Expected port in URL: {host}"));
     }
 
-    // Next, check to see if it resolves to an IP address
-    let ips: Vec<_> = (host, 0)
+    // Next, check to see if it resolves to an IPv4 address
+    let mut ips = (host, 0)
         .to_socket_addrs()
         .map_err(|err| err.to_string())?
-        .map(|socket_address| socket_address.ip())
-        .collect();
-    if ips.is_empty() {
-        Err(format!("Unable to resolve host: {host}"))
-    } else {
-        Ok(ips[0])
-    }
+        .map(|socket_address| socket_address.ip());
+
+    select_ipv4(host, &mut ips)
 }
 
 pub fn is_host(string: String) -> Result<(), String> {
@@ -391,6 +400,27 @@ mod tests {
         parse_host("127.0.0.0:1234").unwrap_err();
         parse_host("127.0.0.0").unwrap();
         parse_host("2001:db8:abcd:42::dead:beef").unwrap_err();
+
+        assert_eq!(
+            select_ipv4(
+                "ipv6-only.test",
+                [IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)].into_iter()
+            )
+            .unwrap_err(),
+            "IPv6 addresses are not supported: ipv6-only.test",
+        );
+        assert_eq!(
+            select_ipv4(
+                "dual-stack.test",
+                [
+                    IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+                    IpAddr::V4(Ipv4Addr::LOCALHOST),
+                ]
+                .into_iter(),
+            )
+            .unwrap(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+        );
     }
 
     #[test]

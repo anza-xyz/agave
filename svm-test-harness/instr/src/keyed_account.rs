@@ -1,8 +1,8 @@
 //! Keyed account helpers.
 
 use {
+    crate::builtins::SVM_BUILTINS,
     solana_account::Account,
-    solana_builtins::BUILTINS,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -22,15 +22,15 @@ fn create_keyed_account_for_builtin_program(program_id: &Pubkey, name: &str) -> 
 }
 
 pub fn keyed_account_for_system_program() -> (Pubkey, Account) {
-    create_keyed_account_for_builtin_program(&BUILTINS[0].program_id, BUILTINS[0].name)
+    create_keyed_account_for_builtin_program(&SVM_BUILTINS[0].program_id, SVM_BUILTINS[0].name)
 }
 
 pub fn keyed_account_for_compute_budget_program() -> (Pubkey, Account) {
-    create_keyed_account_for_builtin_program(&BUILTINS[5].program_id, BUILTINS[5].name)
+    create_keyed_account_for_builtin_program(&SVM_BUILTINS[4].program_id, SVM_BUILTINS[4].name)
 }
 
 pub fn keyed_account_for_loader_v4_program() -> (Pubkey, Account) {
-    create_keyed_account_for_builtin_program(&BUILTINS[7].program_id, BUILTINS[7].name)
+    create_keyed_account_for_builtin_program(&SVM_BUILTINS[5].program_id, SVM_BUILTINS[5].name)
 }
 
 pub fn create_program_account_loader_v4(

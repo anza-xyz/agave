@@ -237,6 +237,7 @@ impl SigVerifier {
                             bls_pubkey,
                             pubkey,
                             remote_pubkey,
+                            prepared_payload: None,
                         });
                     }
                 }
