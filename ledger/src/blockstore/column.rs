@@ -606,6 +606,7 @@ impl ColumnName for columns::Index {
 impl TypedColumn for columns::Index {
     type Type = blockstore_meta::Index;
 
+    #[inline]
     fn deserialize(data: &[u8]) -> Result<Self::Type> {
         deserialize_reject_trailing(data)
     }
