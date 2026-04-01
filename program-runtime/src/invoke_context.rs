@@ -49,6 +49,7 @@ use {
         borrow::Cow,
         cell::RefCell,
         fmt::{self, Debug},
+        ptr,
         rc::Rc,
         time::Duration,
     },
@@ -107,6 +108,13 @@ impl ContextObject for InvokeContext<'_, '_> {
 
     fn get_remaining(&self) -> u64 {
         *self.compute_meter.borrow()
+    }
+
+    fn active_mapping_ptr(&mut self) -> ptr::NonNull<MemoryMapping> {
+        let last_context = self
+            .get_memory_context_mut()
+            .expect("The memory context must have been set for the current instruction");
+        ptr::NonNull::from_mut(&mut last_context.memory_mapping)
     }
 }
 
@@ -178,10 +186,37 @@ impl<'a> EnvironmentConfig<'a> {
 }
 
 /// This structure contains metadata about the memory for each instruction under execution.
-/// The BpfAllocator, accounts addresses in the guest and the memory mapping (future).
+/// The BpfAllocator, accounts addresses in the guest and the memory mapping.
 pub struct MemoryContext {
     pub allocator: BpfAllocator,
     pub accounts_metadata: Vec<SerializedAccountMetadata>,
+    memory_mapping: Box<MemoryMapping>,
+}
+
+impl MemoryContext {
+    /// Creates a new memory context
+    pub fn new(
+        allocator: BpfAllocator,
+        accounts_metadata: Vec<SerializedAccountMetadata>,
+        memory_mapping: MemoryMapping,
+    ) -> Self {
+        Self {
+            allocator,
+            accounts_metadata,
+            memory_mapping: Box::new(memory_mapping),
+        }
+    }
+
+    /// Returns an empty dummy context used for builtin functions
+    pub(crate) fn empty() -> Self {
+        Self {
+            allocator: BpfAllocator::new(0),
+            accounts_metadata: Vec::new(),
+            memory_mapping: Box::new(
+                MemoryMapping::new(Vec::new(), &Config::default(), SBPFVersion::Reserved).unwrap(),
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -212,7 +247,7 @@ pub struct InvokeContext<'a, 'ix_data> {
     /// Time spent so far executing nested program calls.
     pub total_nested_exec_time: Duration,
     pub timings: ExecuteDetailsTimings,
-    pub memory_context: Vec<Option<MemoryContext>>,
+    pub memory_context: Vec<MemoryContext>,
     /// Pairs of index in TX instruction trace and VM register trace
     register_traces: Vec<(usize, Vec<[u64; 12]>)>,
     /// Debug port to use for this executing transaction.
@@ -273,7 +308,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             }
         }
 
-        self.memory_context.push(None);
+        self.memory_context.push(MemoryContext::empty());
         self.transaction_context.push()
     }
 
@@ -584,9 +619,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         stable_log::program_invoke(&logger, &program_id, self.get_stack_height());
         let pre_remaining_units = self.get_remaining();
         // For now, only built-ins are invoked from here, so the VM and its Config are irrelevant.
-        let mock_config = Config::default();
-        let empty_memory_mapping =
-            MemoryMapping::new(Vec::new(), &mock_config, SBPFVersion::V0).unwrap();
         let mut vm = EbpfVm::new(
             Arc::clone(
                 &**self
@@ -597,7 +629,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             SBPFVersion::V0,
             // Removes lifetime tracking
             unsafe { std::mem::transmute::<&mut InvokeContext, &mut InvokeContext>(self) },
-            empty_memory_mapping,
             0,
         );
         vm.invoke_function(function);
@@ -741,7 +772,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         *self
             .memory_context
             .last_mut()
-            .ok_or(InstructionError::CallDepth)? = Some(memory_context);
+            .ok_or(InstructionError::CallDepth)? = memory_context;
         Ok(())
     }
 
@@ -749,7 +780,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     pub fn get_memory_context(&self) -> Result<&MemoryContext, InstructionError> {
         self.memory_context
             .last()
-            .and_then(std::option::Option::as_ref)
             .ok_or(InstructionError::CallDepth)
     }
 
@@ -757,7 +787,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     pub fn get_memory_context_mut(&mut self) -> Result<&mut MemoryContext, InstructionError> {
         self.memory_context
             .last_mut()
-            .and_then(|memory_context| memory_context.as_mut())
             .ok_or(InstructionError::CallDepth)
     }
 

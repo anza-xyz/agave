@@ -566,7 +566,15 @@ pub(crate) mod tests {
             Ok(0)
         }
 
-        fn vm(_: *mut solana_sbpf::vm::EbpfVm<C>, _: u64, _: u64, _: u64, _: u64, _: u64) {}
+        fn vm(
+            _: solana_sbpf::vm::EncryptedHostAddressToEbpfVm<C>,
+            _: u64,
+            _: u64,
+            _: u64,
+            _: u64,
+            _: u64,
+        ) {
+        }
         fn codegen(_: &mut solana_sbpf::program::JitCompiler<C>) {}
     }
 
