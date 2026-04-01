@@ -178,7 +178,7 @@ impl<'a> EnvironmentConfig<'a> {
 }
 
 /// This structure contains metadata about the memory for each instruction under execution.
-/// The BpfAllcoation, accounts addresses in the guest and the memory mapping (future).
+/// The BpfAllocator, accounts addresses in the guest and the memory mapping (future).
 pub struct MemoryContext {
     pub allocator: BpfAllocator,
     pub accounts_metadata: Vec<SerializedAccountMetadata>,
