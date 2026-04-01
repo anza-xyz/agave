@@ -102,7 +102,7 @@ mod tests {
         super::*,
         rand::SeedableRng as _,
         rand_chacha::ChaChaRng,
-        sha2::{Digest, Sha256},
+        solana_sha256_hasher::Hasher,
         std::{array, ops::Range},
         test_case::test_case,
     };
@@ -133,12 +133,12 @@ mod tests {
         let sampler_compat =
             UniformU64Sampler::new_like_instance_sample(NonZero::new(range_end).unwrap());
 
-        let mut hash = Sha256::new();
+        let mut hash = Hasher::default();
         (0..600_000).for_each(|_| {
             let compat = sampler_compat.sample(&mut rng_compat);
-            hash.update(compat.to_le_bytes());
+            hash.hash(&compat.to_le_bytes());
         });
-        assert_eq!(bs58::encode(hash.finalize()).into_string(), expected_hash);
+        assert_eq!(hash.result().to_string(), expected_hash);
     }
 
     #[test]
@@ -164,12 +164,12 @@ mod tests {
         let sampler_compat =
             UniformU64Sampler::new_like_trait_sample(NonZero::new(range_end).unwrap());
 
-        let mut hash = Sha256::new();
+        let mut hash = Hasher::default();
         (0..1_000).for_each(|_| {
             let compat = sampler_compat.sample(&mut rng_compat);
-            hash.update(compat.to_le_bytes());
+            hash.hash(&compat.to_le_bytes());
         });
-        assert_eq!(bs58::encode(hash.finalize()).into_string(), expected_hash);
+        assert_eq!(hash.result().to_string(), expected_hash);
     }
 
     #[test_case(0..100, &[95, 2, 28, 92, 17, 78, 72, 72, 21, 65])]
@@ -207,12 +207,12 @@ mod tests {
     fn test_random_range_reproducibility(range: Range<u64>, expected_hash: &str) {
         let mut rng_compat = ChaChaRng::from_seed(CHACHA_SEED);
 
-        let mut hash = Sha256::new();
+        let mut hash = Hasher::default();
         (0..10_000).for_each(|_| {
             let compat = random_u64_range(&mut rng_compat, range.clone());
-            hash.update(compat.to_le_bytes());
+            hash.hash(&compat.to_le_bytes());
         });
-        assert_eq!(bs58::encode(hash.finalize()).into_string(), expected_hash);
+        assert_eq!(hash.result().to_string(), expected_hash);
     }
 
     #[test]

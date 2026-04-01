@@ -40,7 +40,7 @@ fn test_send_and_confirm_transactions_in_parallel_without_tpu_client() {
 
     let alice = Keypair::new();
     let test_validator =
-        TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
+        TestValidator::start_with_config(alice.pubkey(), None, SocketAddrSpace::Unspecified);
 
     let bob_pubkey = solana_pubkey::new_rand();
     let alice_pubkey = alice.pubkey();
@@ -54,6 +54,12 @@ fn test_send_and_confirm_transactions_in_parallel_without_tpu_client() {
 
     let original_alice_balance = rpc_client.get_balance(&alice.pubkey()).unwrap();
     let (messages, sum) = create_messages(alice_pubkey, bob_pubkey);
+    let mut fee_message = messages.first().unwrap().clone();
+    fee_message.recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let total_fees = rpc_client
+        .get_fee_for_message(&fee_message)
+        .unwrap()
+        .saturating_mul(messages.len() as u64);
 
     let txs_errors = send_and_confirm_transactions_in_parallel_blocking_v2(
         rpc_client.clone(),
@@ -87,7 +93,7 @@ fn test_send_and_confirm_transactions_in_parallel_without_tpu_client() {
             .get_balance_with_commitment(&alice_pubkey, CommitmentConfig::processed())
             .unwrap()
             .value,
-        original_alice_balance - sum
+        original_alice_balance - sum - total_fees
     );
 }
 
@@ -97,7 +103,7 @@ fn test_send_and_confirm_transactions_in_parallel_with_tpu_client() {
 
     let alice = Keypair::new();
     let test_validator =
-        TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
+        TestValidator::start_with_config(alice.pubkey(), None, SocketAddrSpace::Unspecified);
 
     let bob_pubkey = solana_pubkey::new_rand();
     let alice_pubkey = alice.pubkey();
@@ -111,6 +117,12 @@ fn test_send_and_confirm_transactions_in_parallel_with_tpu_client() {
 
     let original_alice_balance = rpc_client.get_balance(&alice.pubkey()).unwrap();
     let (messages, sum) = create_messages(alice_pubkey, bob_pubkey);
+    let mut fee_message = messages.first().unwrap().clone();
+    fee_message.recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let total_fees = rpc_client
+        .get_fee_for_message(&fee_message)
+        .unwrap()
+        .saturating_mul(messages.len() as u64);
     let ws_url = test_validator.rpc_pubsub_url();
     let tpu_client_fut = TpuClient::new(
         "temp",
@@ -152,6 +164,6 @@ fn test_send_and_confirm_transactions_in_parallel_with_tpu_client() {
             .get_balance_with_commitment(&alice_pubkey, CommitmentConfig::processed())
             .unwrap()
             .value,
-        original_alice_balance - sum
+        original_alice_balance - sum - total_fees
     );
 }

@@ -518,8 +518,8 @@ impl ConsensusPool {
     fn highest_notarized_slot(&self) -> Slot {
         // Return the max of CertificateType::Notarize and CertificateType::NotarizeFallback
         self.completed_certificates
-            .iter()
-            .filter_map(|(cert_type, _)| match cert_type {
+            .keys()
+            .filter_map(|cert_type| match cert_type {
                 CertificateType::Notarize(s, _) => Some(s),
                 CertificateType::NotarizeFallback(s, _) => Some(s),
                 _ => None,
@@ -532,8 +532,8 @@ impl ConsensusPool {
     #[cfg(test)]
     fn highest_skip_slot(&self) -> Slot {
         self.completed_certificates
-            .iter()
-            .filter_map(|(cert_type, _)| match cert_type {
+            .keys()
+            .filter_map(|cert_type| match cert_type {
                 CertificateType::Skip(s) => Some(s),
                 _ => None,
             })
@@ -544,8 +544,8 @@ impl ConsensusPool {
 
     pub(crate) fn highest_finalized_slot(&self) -> Slot {
         self.completed_certificates
-            .iter()
-            .filter_map(|(cert_type, _)| match cert_type {
+            .keys()
+            .filter_map(|cert_type| match cert_type {
                 CertificateType::Finalize(s) => Some(s),
                 CertificateType::FinalizeFast(s, _) => Some(s),
                 _ => None,
@@ -2056,11 +2056,10 @@ mod tests {
         let bls_pubkey: BLSPubkey = bls_keypair.public.into();
 
         let signed_message = bincode::serialize(&vote).unwrap();
-
         vote_message
             .signature
             .verify(&bls_pubkey, &signed_message)
-            .unwrap();
+            .expect("vote message signature should verify");
     }
 
     #[test]

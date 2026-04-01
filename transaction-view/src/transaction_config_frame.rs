@@ -1,9 +1,6 @@
-use {
-    crate::{
-        bytes::{advance_offset_for_array, unchecked_copy_value},
-        result::{Result, TransactionViewError},
-    },
-    solana_program_runtime::execution_budget::MIN_HEAP_FRAME_BYTES,
+use crate::{
+    bytes::{advance_offset_for_array, unchecked_copy_value},
+    result::{Result, TransactionViewError},
 };
 
 /// Metadata for accessing the tx-v1 transaction config section.
@@ -155,57 +152,44 @@ pub struct TransactionConfigView<'a> {
 
 impl<'a> TransactionConfigView<'a> {
     #[inline(always)]
-    pub fn priority_fee_lamports(&self) -> u64 {
+    pub fn priority_fee_lamports(&self) -> Option<u64> {
         // bit 0 and 1 have been sanitized to be in same state,
-        // return default if bits not set
-        if let Some(offset) = self.transaction_config_frame.word_offset(0) {
+        self.transaction_config_frame.word_offset(0).map(|offset| {
             // SAFETY:
             // - The offsets are checked to be valid in the byte slice.
             // - u64 is valid for any bytes
             u64::from_le(unsafe { unchecked_copy_value(self.bytes, offset) })
-        } else {
-            // return default
-            0
-        }
+        })
     }
 
     #[inline(always)]
-    pub fn compute_unit_limit(&self) -> u32 {
-        if let Some(offset) = self.transaction_config_frame.word_offset(2) {
+    pub fn compute_unit_limit(&self) -> Option<u32> {
+        self.transaction_config_frame.word_offset(2).map(|offset| {
             // SAFETY:
             // - The offsets are checked to be valid in the byte slice.
             // - u32 is valid for any bytes
             u32::from_le(unsafe { unchecked_copy_value(self.bytes, offset) })
-        } else {
-            // return default
-            0
-        }
+        })
     }
 
     #[inline(always)]
-    pub fn loaded_accounts_data_size_limit(&self) -> u32 {
-        if let Some(offset) = self.transaction_config_frame.word_offset(3) {
+    pub fn loaded_accounts_data_size_limit(&self) -> Option<u32> {
+        self.transaction_config_frame.word_offset(3).map(|offset| {
             // SAFETY:
             // - The offsets are checked to be valid in the byte slice.
             // - u32 is valid for any bytes
             u32::from_le(unsafe { unchecked_copy_value(self.bytes, offset) })
-        } else {
-            // return default
-            0
-        }
+        })
     }
 
     #[inline(always)]
-    pub fn requested_heap_size(&self) -> u32 {
-        if let Some(offset) = self.transaction_config_frame.word_offset(4) {
+    pub fn requested_heap_size(&self) -> Option<u32> {
+        self.transaction_config_frame.word_offset(4).map(|offset| {
             // SAFETY:
             // - The offsets are checked to be valid in the byte slice.
             // - u32 is valid for any bytes
             u32::from_le(unsafe { unchecked_copy_value(self.bytes, offset) })
-        } else {
-            // return default
-            MIN_HEAP_FRAME_BYTES
-        }
+        })
     }
 
     #[inline(always)]
@@ -319,10 +303,10 @@ mod tests {
             bytes: &bytes,
         };
 
-        assert_eq!(view.priority_fee_lamports(), 0);
-        assert_eq!(view.compute_unit_limit(), 0);
-        assert_eq!(view.loaded_accounts_data_size_limit(), 0);
-        assert_eq!(view.requested_heap_size(), MIN_HEAP_FRAME_BYTES);
+        assert!(view.priority_fee_lamports().is_none());
+        assert!(view.compute_unit_limit().is_none());
+        assert!(view.loaded_accounts_data_size_limit().is_none());
+        assert!(view.requested_heap_size().is_none());
     }
 
     #[test]
@@ -374,10 +358,10 @@ mod tests {
             transaction_config_frame: &frame,
             bytes: &bytes,
         };
-        assert_eq!(view.priority_fee_lamports(), fee);
-        assert_eq!(view.compute_unit_limit(), 0);
-        assert_eq!(view.loaded_accounts_data_size_limit(), 0);
-        assert_eq!(view.requested_heap_size(), MIN_HEAP_FRAME_BYTES);
+        assert_eq!(view.priority_fee_lamports().unwrap(), fee);
+        assert!(view.compute_unit_limit().is_none());
+        assert!(view.loaded_accounts_data_size_limit().is_none());
+        assert!(view.requested_heap_size().is_none());
     }
 
     #[test]
@@ -413,10 +397,10 @@ mod tests {
             transaction_config_frame: &frame,
             bytes: &bytes,
         };
-        assert_eq!(view.priority_fee_lamports(), fee);
-        assert_eq!(view.compute_unit_limit(), cu);
-        assert_eq!(view.loaded_accounts_data_size_limit(), loaded);
-        assert_eq!(view.requested_heap_size(), heap);
+        assert_eq!(view.priority_fee_lamports().unwrap(), fee);
+        assert_eq!(view.compute_unit_limit().unwrap(), cu);
+        assert_eq!(view.loaded_accounts_data_size_limit().unwrap(), loaded);
+        assert_eq!(view.requested_heap_size().unwrap(), heap);
     }
 
     #[test]
@@ -446,10 +430,10 @@ mod tests {
             transaction_config_frame: &frame,
             bytes: &bytes,
         };
-        assert_eq!(view.priority_fee_lamports(), 0);
-        assert_eq!(view.compute_unit_limit(), cu);
-        assert_eq!(view.loaded_accounts_data_size_limit(), 0);
-        assert_eq!(view.requested_heap_size(), heap);
+        assert!(view.priority_fee_lamports().is_none());
+        assert_eq!(view.compute_unit_limit().unwrap(), cu);
+        assert!(view.loaded_accounts_data_size_limit().is_none());
+        assert_eq!(view.requested_heap_size().unwrap(), heap);
     }
 
     #[test]

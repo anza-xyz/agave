@@ -1,14 +1,12 @@
 //! Program deployment functionality.
 
 #[cfg(feature = "metrics")]
-use {crate::loaded_programs::LoadProgramMetrics, solana_svm_measure::measure::Measure};
+use {crate::program_metrics::LoadProgramMetrics, solana_svm_measure::measure::Measure};
 use {
     crate::{
         invoke_context::InvokeContext,
-        loaded_programs::{
-            DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheForTxBatch,
-            ProgramRuntimeEnvironment,
-        },
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
+        program_cache_entry::{DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry},
     },
     solana_clock::Slot,
     solana_instruction::error::InstructionError,
@@ -137,7 +135,7 @@ macro_rules! deploy_program {
             $invoke_context.program_cache_for_tx_batch.slot()
         );
         #[cfg(feature = "metrics")]
-        let mut load_program_metrics = $crate::loaded_programs::LoadProgramMetrics::default();
+        let mut load_program_metrics = $crate::program_metrics::LoadProgramMetrics::default();
         $crate::deploy::deploy_program(
             $invoke_context.get_log_collector(),
             #[cfg(feature = "metrics")]

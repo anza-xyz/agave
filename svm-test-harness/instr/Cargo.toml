@@ -31,12 +31,14 @@ bincode = { workspace = true }
 env_logger = { workspace = true }
 prost = { workspace = true, optional = true }
 solana-account = { workspace = true }
-solana-builtins = { workspace = true }
+solana-bpf-loader-program = { workspace = true }
 solana-clock = { workspace = true, features = ["sysvar"] }
 solana-compute-budget = { workspace = true }
+solana-compute-budget-program = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true, features = ["serde"] }
 solana-loader-v4-interface = { workspace = true }
+solana-loader-v4-program = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true }
@@ -50,6 +52,7 @@ solana-svm-test-harness-fixture = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-syscalls = { workspace = true }
+solana-system-program = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
 

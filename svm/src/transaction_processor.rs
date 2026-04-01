@@ -38,10 +38,10 @@ use {
         },
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
-            EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheEntry,
-            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
-            ProgramRuntimeEnvironments,
+            EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheForTxBatch,
+            ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
         },
+        program_cache_entry::ProgramCacheEntry,
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
     },
@@ -1116,7 +1116,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 vec![Vec::new(); top_level_ixs_num];
             for (cpi_num, ((ix_in_trace, ix_data), ix_accounts)) in ix_trace
                 .into_iter()
-                .zip(ix_data_trace.into_iter())
+                .zip(ix_data_trace)
                 .zip(accounts)
                 .skip(top_level_ixs_num)
                 .enumerate()
@@ -1253,11 +1253,12 @@ mod tests {
                 SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
             },
             invoke_context::BuiltinFunctionRegisterer,
-            loaded_programs::{BlockRelation, ProgramCacheEntryType},
+            loaded_programs::BlockRelation,
+            program_cache_entry::ProgramCacheEntryType,
         },
         solana_rent::Rent,
         solana_sbpf::vm,
-        solana_sdk_ids::{bpf_loader, loader_v4, system_program, sysvar},
+        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, system_program, sysvar},
         solana_signature::Signature,
         solana_svm_callback::{AccountState, InvokeContextCallback},
         solana_system_interface::instruction as system_instruction,
@@ -1770,7 +1771,7 @@ mod tests {
         let key1 = Pubkey::new_unique();
         let owner1 = bpf_loader::id();
         let key2 = Pubkey::new_unique();
-        let owner2 = loader_v4::id();
+        let owner2 = bpf_loader_upgradeable::id();
 
         let mut data1 = AccountSharedData::default();
         data1.set_owner(owner1);
@@ -1830,7 +1831,7 @@ mod tests {
         let non_program_pubkey1 = Pubkey::new_unique();
         let non_program_pubkey2 = Pubkey::new_unique();
         let program1_pubkey = bpf_loader::id();
-        let program2_pubkey = loader_v4::id();
+        let program2_pubkey = bpf_loader_upgradeable::id();
         let account1_pubkey = Pubkey::new_unique();
         let account2_pubkey = Pubkey::new_unique();
         let account3_pubkey = Pubkey::new_unique();

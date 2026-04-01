@@ -28,9 +28,8 @@ solana-pubkey = { workspace = true, features = ["rand"] }
 solana-vote = { workspace = true }
 
 [dev-dependencies]
-bs58 = { workspace = true, features = ["alloc"] }
 rand = { workspace = true }
-sha2 = { workspace = true }
+solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
 

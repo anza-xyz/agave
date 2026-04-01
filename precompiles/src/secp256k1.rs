@@ -1,6 +1,5 @@
 use {
     agave_feature_set::FeatureSet,
-    digest::Digest,
     solana_precompile_error::PrecompileError,
     solana_secp256k1_program::{
         HASHED_PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
@@ -87,10 +86,7 @@ pub fn verify(
             offsets.message_data_size as usize,
         )?;
 
-        let mut hasher = sha3::Keccak256::new();
-        hasher.update(message_slice);
-        let message_hash = hasher.finalize();
-
+        let message_hash: [u8; 32] = solana_keccak_hasher::hash(message_slice).to_bytes();
         let pubkey = libsecp256k1::recover(
             &libsecp256k1::Message::parse_slice(&message_hash).unwrap(),
             &signature,
