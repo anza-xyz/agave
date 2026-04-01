@@ -40,16 +40,16 @@ semver = { workspace = true }
 serde = { workspace = true }
 serde_yaml = { workspace = true }
 solana-clap-utils = { workspace = true }
-solana-config-interface = { version = "=2.0.0", features = ["bincode"] }
-solana-hash = "=4.2.0"
-solana-keypair = "=3.1.2"
-solana-message = "=4.0.0"
-solana-pubkey = { version = "=4.1.0", default-features = false }
+solana-config-interface = { workspace = true, features = ["bincode"] }
+solana-hash = { workspace = true }
+solana-keypair = { workspace = true }
+solana-message = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-sha256-hasher = { workspace = true }
-solana-signature = { version = "=3.3.0", default-features = false }
-solana-signer = "=3.0.0"
-solana-transaction = { version = "=4.0.0", features = ["wincode"] }
+solana-signature = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true, features = ["wincode"] }
 solana-version = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
