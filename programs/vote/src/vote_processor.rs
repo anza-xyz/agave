@@ -435,7 +435,7 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_program_runtime::{
             invoke_context::mock_process_instruction_with_feature_set,
-            loaded_programs::ProgramCacheEntry,
+            program_cache_entry::ProgramCacheEntry,
             solana_sbpf::{program::BuiltinFunctionDefinition, vm::ContextObject},
         },
         solana_pubkey::Pubkey,

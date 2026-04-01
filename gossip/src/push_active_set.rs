@@ -63,38 +63,34 @@ impl PushActiveSet {
         size: usize, // Number of nodes to retain in each active-set entry.
         cluster_size: usize,
         // Gossip nodes to be sampled for each push active set.
-        nodes: &[Pubkey],
-        stakes: &HashMap<Pubkey, u64>,
+        nodes: impl IntoIterator<Item = (u64 /* stake */, Pubkey)>,
     ) {
         let num_bloom_filter_items = cluster_size.max(Self::MIN_NUM_BLOOM_ITEMS);
         // Active set of nodes to push to are sampled from these gossip nodes,
         // using sampling probabilities obtained from the stake bucket of each
         // node.
-        let buckets: Vec<_> = nodes
-            .iter()
-            .map(|node| get_stake_bucket(stakes.get(node)))
-            .collect();
+        let (pubkeys, buckets): (Vec<_>, Vec<_>) = nodes
+            .into_iter()
+            .map(|(stake, pubkey)| (pubkey, get_stake_bucket(Some(&stake))))
+            .unzip();
         // (k, entry) represents push active set where the stake bucket of
         //     min stake of {this node, crds value owner}
         // is equal to `k`. The `entry` maintains set of gossip nodes to
         // actively push to for crds values belonging to this bucket.
         for (k, entry) in self.0.iter_mut().enumerate() {
-            let weights: Vec<u64> = buckets
-                .iter()
-                .map(|&bucket| {
-                    // bucket <- get_stake_bucket(min stake of {
-                    //  this node, crds value owner and gossip peer
-                    // })
-                    // weight <- (bucket + 1)^2
-                    // min stake of {...} is a proxy for how much we care about
-                    // the link, and tries to mirror similar logic on the
-                    // receiving end when pruning incoming links:
-                    // https://github.com/solana-labs/solana/blob/81394cf92/gossip/src/received_cache.rs#L100-L105
-                    let bucket = bucket.min(k) as u64;
-                    bucket.saturating_add(1).saturating_pow(2)
-                })
-                .collect();
-            entry.rotate(rng, size, num_bloom_filter_items, nodes, &weights);
+            let weights = buckets.iter().map(|&bucket| {
+                // bucket <- get_stake_bucket(min stake of {
+                //  this node, crds value owner and gossip peer
+                // })
+                // weight <- (bucket + 1)^2
+                // min stake of {...} is a proxy for how much we care about
+                // the link, and tries to mirror similar logic on the
+                // receiving end when pruning incoming links:
+                // https://github.com/solana-labs/solana/blob/81394cf92/gossip/src/received_cache.rs#L100-L105
+                let bucket = bucket.min(k) as u64;
+                bucket.saturating_add(1).saturating_pow(2)
+            });
+            entry.rotate(rng, size, num_bloom_filter_items, &pubkeys, weights);
         }
     }
 
@@ -139,10 +135,10 @@ impl PushActiveSetEntry {
         size: usize, // Number of nodes to retain.
         num_bloom_filter_items: usize,
         nodes: &[Pubkey],
-        weights: &[u64],
+        weights: impl ExactSizeIterator<Item = u64> + Clone,
     ) {
         debug_assert_eq!(nodes.len(), weights.len());
-        debug_assert!(weights.iter().all(|&weight| weight != 0u64));
+        debug_assert!(weights.clone().all(|weight| weight != 0u64));
         let mut weighted_shuffle = WeightedShuffle::new("rotate-active-set", weights);
         for node in weighted_shuffle.shuffle(rng).map(|k| &nodes[k]) {
             // We intend to discard the oldest/first entry in the index-map.
@@ -210,13 +206,16 @@ mod tests {
         const MAX_STAKE: u64 = (1 << 20) * LAMPORTS_PER_SOL;
         let mut rng = ChaChaRng::from_seed([189u8; 32]);
         let pubkey = Pubkey::new_unique();
-        let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(20).collect();
-        let stakes = repeat_with(|| random_u64_range(&mut rng, 1..MAX_STAKE));
-        let mut stakes: HashMap<_, _> = nodes.iter().copied().zip(stakes).collect();
+        let addrs: Vec<_> = repeat_with(Pubkey::new_unique).take(20).collect();
+        let nodes: Vec<(u64, Pubkey)> = repeat_with(|| random_u64_range(&mut rng, 1..MAX_STAKE))
+            .take(20)
+            .zip(addrs.iter().copied())
+            .collect();
+        let mut stakes: HashMap<_, _> = nodes.iter().map(|&(stake, addr)| (addr, stake)).collect();
         stakes.insert(pubkey, random_u64_range(&mut rng, 1..MAX_STAKE));
         let mut active_set = PushActiveSet::default();
         assert!(active_set.0.iter().all(|entry| entry.0.is_empty()));
-        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes);
+        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, nodes.iter().copied());
         assert!(active_set.0.iter().all(|entry| entry.0.len() == 5));
         // Assert that for all entries, each filter already prunes the key.
         for entry in &active_set.0 {
@@ -224,56 +223,56 @@ mod tests {
                 assert!(filter.contains(node));
             }
         }
-        let other = &nodes[5];
-        let origin = &nodes[17];
+        let other = &addrs[5];
+        let origin = &addrs[17];
         assert!(
             active_set
                 .get_nodes(&pubkey, origin, &stakes)
-                .eq([13, 5, 18, 16, 0].into_iter().map(|k| &nodes[k]))
+                .eq([13, 5, 18, 16, 0].into_iter().map(|k| &addrs[k]))
         );
         assert!(
             active_set
                 .get_nodes(&pubkey, other, &stakes)
-                .eq([13, 18, 16, 0].into_iter().map(|k| &nodes[k]))
+                .eq([13, 18, 16, 0].into_iter().map(|k| &addrs[k]))
         );
-        active_set.prune(&pubkey, &nodes[5], &[*origin], &stakes);
-        active_set.prune(&pubkey, &nodes[3], &[*origin], &stakes);
-        active_set.prune(&pubkey, &nodes[16], &[*origin], &stakes);
+        active_set.prune(&pubkey, &addrs[5], &[*origin], &stakes);
+        active_set.prune(&pubkey, &addrs[3], &[*origin], &stakes);
+        active_set.prune(&pubkey, &addrs[16], &[*origin], &stakes);
         assert!(
             active_set
                 .get_nodes(&pubkey, origin, &stakes)
-                .eq([13, 18, 0].into_iter().map(|k| &nodes[k]))
+                .eq([13, 18, 0].into_iter().map(|k| &addrs[k]))
         );
         assert!(
             active_set
                 .get_nodes(&pubkey, other, &stakes)
-                .eq([13, 18, 16, 0].into_iter().map(|k| &nodes[k]))
+                .eq([13, 18, 16, 0].into_iter().map(|k| &addrs[k]))
         );
-        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes);
+        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, nodes.iter().copied());
         assert!(active_set.0.iter().all(|entry| entry.0.len() == 7));
         assert!(
             active_set
                 .get_nodes(&pubkey, origin, &stakes)
-                .eq([18, 0, 7, 15, 11].into_iter().map(|k| &nodes[k]))
+                .eq([18, 0, 7, 15, 11].into_iter().map(|k| &addrs[k]))
         );
         assert!(
             active_set
                 .get_nodes(&pubkey, other, &stakes)
-                .eq([18, 16, 0, 7, 15, 11].into_iter().map(|k| &nodes[k]))
+                .eq([18, 16, 0, 7, 15, 11].into_iter().map(|k| &addrs[k]))
         );
         let origins = [*origin, *other];
-        active_set.prune(&pubkey, &nodes[18], &origins, &stakes);
-        active_set.prune(&pubkey, &nodes[0], &origins, &stakes);
-        active_set.prune(&pubkey, &nodes[15], &origins, &stakes);
+        active_set.prune(&pubkey, &addrs[18], &origins, &stakes);
+        active_set.prune(&pubkey, &addrs[0], &origins, &stakes);
+        active_set.prune(&pubkey, &addrs[15], &origins, &stakes);
         assert!(
             active_set
                 .get_nodes(&pubkey, origin, &stakes)
-                .eq([7, 11].into_iter().map(|k| &nodes[k]))
+                .eq([7, 11].into_iter().map(|k| &addrs[k]))
         );
         assert!(
             active_set
                 .get_nodes(&pubkey, other, &stakes)
-                .eq([16, 7, 11].into_iter().map(|k| &nodes[k]))
+                .eq([16, 7, 11].into_iter().map(|k| &addrs[k]))
         );
     }
 
@@ -291,7 +290,7 @@ mod tests {
             5, // size
             NUM_BLOOM_FILTER_ITEMS,
             &nodes,
-            &weights,
+            weights.iter().copied(),
         );
         assert_eq!(entry.0.len(), 5);
         let keys = [&nodes[16], &nodes[11], &nodes[17], &nodes[14], &nodes[5]];
@@ -331,15 +330,33 @@ mod tests {
             );
         }
         // Assert that rotate adds new nodes.
-        entry.rotate(&mut rng, 5, NUM_BLOOM_FILTER_ITEMS, &nodes, &weights);
+        entry.rotate(
+            &mut rng,
+            5,
+            NUM_BLOOM_FILTER_ITEMS,
+            &nodes,
+            weights.iter().copied(),
+        );
         let keys = [&nodes[11], &nodes[17], &nodes[14], &nodes[5], &nodes[7]];
         assert!(entry.0.keys().eq(keys));
-        entry.rotate(&mut rng, 6, NUM_BLOOM_FILTER_ITEMS, &nodes, &weights);
+        entry.rotate(
+            &mut rng,
+            6,
+            NUM_BLOOM_FILTER_ITEMS,
+            &nodes,
+            weights.iter().copied(),
+        );
         let keys = [
             &nodes[17], &nodes[14], &nodes[5], &nodes[7], &nodes[1], &nodes[13],
         ];
         assert!(entry.0.keys().eq(keys));
-        entry.rotate(&mut rng, 4, NUM_BLOOM_FILTER_ITEMS, &nodes, &weights);
+        entry.rotate(
+            &mut rng,
+            4,
+            NUM_BLOOM_FILTER_ITEMS,
+            &nodes,
+            weights.iter().copied(),
+        );
         let keys = [&nodes[5], &nodes[7], &nodes[1], &nodes[13]];
         assert!(entry.0.keys().eq(keys));
     }

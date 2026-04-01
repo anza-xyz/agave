@@ -8,43 +8,27 @@ use {
 fn test_sha256_hasher() {
     use solana_sha256_hasher::hashv;
     let vals = &["Gaggablaghblagh!".as_ref(), "flurbos".as_ref()];
-    #[cfg(target_os = "solana")]
-    let hash = {
-        use sha2::Digest;
-        let mut hasher = sha2::Sha256::default();
-        for val in vals {
-            hasher.update(val);
-        }
-        solana_hash::Hash::new_from_array(hasher.finalize().into())
-    };
-    #[cfg(not(target_os = "solana"))]
-    let hash = {
-        let mut hasher = solana_sha256_hasher::Hasher::default();
-        hasher.hashv(vals);
-        hasher.result()
-    };
-    assert_eq!(hashv(vals), hash);
+
+    let expected = solana_hash::Hash::new_from_array([
+        0x9f, 0xa2, 0x7e, 0x8f, 0x7b, 0xc1, 0xec, 0xe8, 0xae, 0x7b, 0x9a, 0x91, 0x46, 0x53, 0x20,
+        0x0f, 0x1c, 0x22, 0x8e, 0x56, 0x10, 0x30, 0x59, 0xfd, 0x35, 0x8d, 0x57, 0x54, 0x96, 0x47,
+        0x2c, 0xc9,
+    ]);
+
+    assert_eq!(hashv(vals), expected);
 }
 
 fn test_keccak256_hasher() {
     use solana_keccak_hasher::hashv;
     let vals = &["Gaggablaghblagh!".as_ref(), "flurbos".as_ref()];
-    #[cfg(target_os = "solana")]
-    let hash = {
-        use sha3::Digest;
-        let mut hasher = sha3::Keccak256::default();
-        for val in vals {
-            hasher.update(val);
-        }
-        solana_hash::Hash::new_from_array(hasher.finalize().into())
-    };
-    #[cfg(not(target_os = "solana"))]
-    let hash = {
-        let mut hasher = solana_keccak_hasher::Hasher::default();
-        hasher.hashv(vals);
-        hasher.result()
-    };
-    assert_eq!(hashv(vals), hash);
+
+    let expected = solana_hash::Hash::new_from_array([
+        0xd1, 0x9a, 0x9d, 0xe2, 0x89, 0x7f, 0x7c, 0x9e, 0x5, 0x32, 0x32, 0x22, 0xe8, 0xc6, 0xb4,
+        0x88, 0x6b, 0x5b, 0xbb, 0xec, 0xd4, 0x42, 0xfd, 0x10, 0x7d, 0xd5, 0x9a, 0x6f, 0x21, 0xd3,
+        0xb8, 0xa7,
+    ]);
+
+    assert_eq!(hashv(vals), expected);
 }
 
 fn test_blake3_hasher() {

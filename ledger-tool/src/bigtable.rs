@@ -351,7 +351,7 @@ async fn shreds(
                     let parent_blockhash = Hash::from_str(&block.previous_blockhash)?;
                     let virtual_ticks_entries =
                         create_ticks(num_virtual_ticks, num_hashes_per_tick, parent_blockhash);
-                    entries.extend(virtual_ticks_entries.into_iter());
+                    entries.extend(virtual_ticks_entries);
                 }
 
                 // Create transaction entries
@@ -362,7 +362,7 @@ async fn shreds(
                     hash: Hash::default(),
                     transactions: vec![tx_with_meta.get_transaction()],
                 });
-                entries.extend(transaction_entries.into_iter());
+                entries.extend(transaction_entries);
 
                 // Create the tick entries for this slot
                 //
@@ -383,7 +383,7 @@ async fn shreds(
                         transactions: vec![],
                     }
                 });
-                entries.extend(tick_entries.into_iter());
+                entries.extend(tick_entries);
 
                 entries
             }

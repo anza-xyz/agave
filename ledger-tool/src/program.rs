@@ -14,10 +14,11 @@ use {
     solana_program_runtime::{
         create_vm,
         invoke_context::InvokeContext,
-        loaded_programs::{
-            DELAY_VISIBILITY_SLOT_OFFSET, LoadProgramMetrics, ProgramCacheEntry,
-            ProgramCacheEntryType, ProgramRuntimeEnvironment,
+        loaded_programs::ProgramRuntimeEnvironment,
+        program_cache_entry::{
+            DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryType,
         },
+        program_metrics::LoadProgramMetrics,
         serialization::serialize_parameters,
         with_mock_invoke_context,
     },

@@ -5132,7 +5132,7 @@ fn send_signals(
 
         slots.push(newly_completed_slots);
 
-        for (signal, slots) in completed_slots_senders.iter().zip(slots.into_iter()) {
+        for (signal, slots) in completed_slots_senders.iter().zip(slots) {
             let res = signal.try_send(slots);
             if let Err(TrySendError::Full(_)) = res {
                 datapoint_error!(

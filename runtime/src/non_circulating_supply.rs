@@ -2,7 +2,10 @@ use {
     crate::bank::Bank,
     log::*,
     solana_account::ReadableAccount,
-    solana_accounts_db::accounts_index::{AccountIndex, IndexKey, ScanResult},
+    solana_accounts_db::{
+        accounts_index::{AccountIndex, IndexKey},
+        accounts_scan::ScanResult,
+    },
     solana_pubkey::Pubkey,
     solana_stake_interface::{self as stake, state::StakeStateV2},
     std::collections::HashSet,
@@ -48,19 +51,17 @@ pub fn calculate_non_circulating_supply(bank: &Bank) -> ScanResult<NonCirculatin
             .deserialize_data::<StakeStateV2>()
             .unwrap_or_default();
         match stake_account {
-            StakeStateV2::Initialized(meta) => {
-                if meta.lockup.is_in_force(&clock, None)
-                    || withdraw_authority_list.contains(&meta.authorized.withdrawer)
-                {
-                    non_circulating_accounts_set.insert(*pubkey);
-                }
+            StakeStateV2::Initialized(meta)
+                if (meta.lockup.is_in_force(&clock, None)
+                    || withdraw_authority_list.contains(&meta.authorized.withdrawer)) =>
+            {
+                non_circulating_accounts_set.insert(*pubkey);
             }
-            StakeStateV2::Stake(meta, _stake, _stake_flags) => {
-                if meta.lockup.is_in_force(&clock, None)
-                    || withdraw_authority_list.contains(&meta.authorized.withdrawer)
-                {
-                    non_circulating_accounts_set.insert(*pubkey);
-                }
+            StakeStateV2::Stake(meta, _stake, _stake_flags)
+                if (meta.lockup.is_in_force(&clock, None)
+                    || withdraw_authority_list.contains(&meta.authorized.withdrawer)) =>
+            {
+                non_circulating_accounts_set.insert(*pubkey);
             }
             _ => {}
         }

@@ -18,9 +18,9 @@ use {
         deploy::deploy_program,
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
-            LoadProgramMetrics, ProgramCacheForTxBatch, ProgramRuntimeEnvironment,
-            ProgramRuntimeEnvironments,
+            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
         },
+        program_metrics::LoadProgramMetrics,
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -537,7 +537,7 @@ pub(crate) mod tests {
         solana_message::Message,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
-            loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType},
+            program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
             solana_sbpf::{
                 self, memory_region::MemoryMapping, program::BuiltinFunctionDefinition,
                 vm::ContextObject,

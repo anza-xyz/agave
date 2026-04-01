@@ -13,7 +13,7 @@ use {
     solana_program_runtime::{
         deploy_program,
         invoke_context::InvokeContext,
-        loaded_programs::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
         sysvar_cache::get_sysvar_with_account_check,
         vm::execute,
     },
@@ -983,17 +983,14 @@ fn common_close_account(
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 mod test_utils {
     #[cfg(all(feature = "svm-internal", feature = "metrics"))]
-    use solana_program_runtime::loaded_programs::LoadProgramMetrics;
+    use solana_program_runtime::program_metrics::LoadProgramMetrics;
     #[cfg(feature = "svm-internal")]
     use {
-        super::*,
-        solana_account::ReadableAccount,
+        super::*, solana_account::ReadableAccount,
         solana_loader_v4_interface::state::LoaderV4State,
-        solana_program_runtime::loaded_programs::{
-            DELAY_VISIBILITY_SLOT_OFFSET, ProgramRuntimeEnvironment,
-        },
-        solana_sdk_ids::loader_v4,
-        solana_syscalls::create_program_runtime_environment,
+        solana_program_runtime::loaded_programs::ProgramRuntimeEnvironment,
+        solana_program_runtime::program_cache_entry::DELAY_VISIBILITY_SLOT_OFFSET,
+        solana_sdk_ids::loader_v4, solana_syscalls::create_program_runtime_environment,
     };
 
     #[cfg(feature = "svm-internal")]
@@ -1074,10 +1071,8 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_instruction::{AccountMeta, error::InstructionError},
         solana_program_runtime::{
-            invoke_context::mock_process_instruction,
-            loaded_programs::{ProgramRuntimeEnvironment, ProgramStatistics},
-            vm::calculate_heap_cost,
-            with_mock_invoke_context,
+            invoke_context::mock_process_instruction, loaded_programs::ProgramRuntimeEnvironment,
+            program_metrics::ProgramStatistics, vm::calculate_heap_cost, with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,

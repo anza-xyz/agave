@@ -1,13 +1,16 @@
 #[cfg(feature = "metrics")]
-use solana_program_runtime::loaded_programs::LoadProgramMetrics;
+use solana_program_runtime::program_metrics::LoadProgramMetrics;
 use {
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_clock::Slot,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
-    solana_program_runtime::loaded_programs::{
-        DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryOwner,
-        ProgramCacheEntryType, ProgramRuntimeEnvironment,
+    solana_program_runtime::{
+        loaded_programs::ProgramRuntimeEnvironment,
+        program_cache_entry::{
+            DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryOwner,
+            ProgramCacheEntryType,
+        },
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
@@ -314,66 +317,6 @@ mod tests {
     }
 
     #[test]
-    fn test_load_program_accounts_loader_v4() {
-        let key = Pubkey::new_unique();
-        let mock_bank = MockBankCallback::default();
-        let mut account_data = AccountSharedData::default();
-        account_data.set_owner(loader_v4::id());
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key, (account_data.clone(), 0));
-
-        let result = load_program_accounts(&mock_bank, &key);
-        assert!(matches!(
-            result,
-            Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
-        ));
-
-        account_data.set_data(vec![0; 64]);
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key, (account_data.clone(), 0));
-        let result = load_program_accounts(&mock_bank, &key);
-        assert!(matches!(
-            result,
-            Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
-        ));
-
-        let loader_data = LoaderV4State {
-            slot: 25,
-            authority_address_or_next_version: Pubkey::new_unique(),
-            status: LoaderV4Status::Deployed,
-        };
-        let encoded = unsafe {
-            std::mem::transmute::<&LoaderV4State, &[u8; LoaderV4State::program_data_offset()]>(
-                &loader_data,
-            )
-        };
-        account_data.set_data(encoded.to_vec());
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key, (account_data.clone(), 25));
-
-        let result = load_program_accounts(&mock_bank, &key);
-
-        match result {
-            Some((
-                ProgramAccountLoadResult::ProgramOfLoaderV4(data, deployment_slot),
-                last_modification_slot,
-            )) => {
-                assert_eq!(data, account_data);
-                assert_eq!(deployment_slot, 25);
-                assert_eq!(last_modification_slot, 25);
-            }
-
-            _ => panic!("Invalid result"),
-        }
-    }
-
-    #[test]
     fn test_load_program_accounts_loader_v1_or_v2() {
         let key = Pubkey::new_unique();
         let mock_bank = MockBankCallback::default();
@@ -500,7 +443,7 @@ mod tests {
         let key = Pubkey::new_unique();
         let mock_bank = MockBankCallback::default();
         let mut account_data = AccountSharedData::default();
-        account_data.set_owner(loader_v4::id());
+        account_data.set_owner(bpf_loader_upgradeable::id());
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         mock_bank
             .account_shared_data
@@ -517,7 +460,7 @@ mod tests {
 
         let loaded_program = ProgramCacheEntry::new_tombstone(
             0, // Slot 0
-            ProgramCacheEntryOwner::LoaderV4,
+            ProgramCacheEntryOwner::LoaderV3,
             ProgramCacheEntryType::FailedVerification(
                 batch_processor.program_runtime_environment_for_epoch(20),
             ),
@@ -677,89 +620,6 @@ mod tests {
     }
 
     #[test]
-    fn test_load_program_of_loader_v4() {
-        let key = Pubkey::new_unique();
-        let mock_bank = MockBankCallback::default();
-        let mut account_data = AccountSharedData::default();
-        account_data.set_owner(loader_v4::id());
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-
-        let loader_data = LoaderV4State {
-            slot: 0,
-            authority_address_or_next_version: Pubkey::new_unique(),
-            status: LoaderV4Status::Deployed,
-        };
-        let encoded = unsafe {
-            std::mem::transmute::<&LoaderV4State, &[u8; LoaderV4State::program_data_offset()]>(
-                &loader_data,
-            )
-        };
-        account_data.set_data(encoded.to_vec());
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key, (account_data.clone(), 0));
-
-        let result = load_program_with_pubkey(
-            &mock_bank,
-            &batch_processor.program_runtime_environment_for_epoch(0),
-            &key,
-            0,
-            &mut ExecuteTimings::default(),
-        );
-        let loaded_program = ProgramCacheEntry::new_tombstone(
-            0,
-            ProgramCacheEntryOwner::LoaderV4,
-            ProgramCacheEntryType::FailedVerification(
-                batch_processor.program_runtime_environment_for_epoch(0),
-            ),
-        );
-        assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
-
-        let mut header = account_data.data().to_vec();
-        let mut complement =
-            vec![0; std::cmp::max(0, LoaderV4State::program_data_offset() - header.len())];
-        header.append(&mut complement);
-
-        let mut buffer = load_test_program();
-        header.append(&mut buffer);
-
-        account_data.set_data(header);
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key, (account_data.clone(), 0));
-
-        let result = load_program_with_pubkey(
-            &mock_bank,
-            &batch_processor.program_runtime_environment_for_epoch(20),
-            &key,
-            200,
-            &mut ExecuteTimings::default(),
-        );
-
-        let data = account_data.data()[LoaderV4State::program_data_offset()..].to_vec();
-        account_data.set_data(data);
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key, (account_data.clone(), 0));
-
-        let program_runtime_environment = get_mock_program_runtime_environment();
-        let expected = ProgramCacheEntry::new(
-            account_data.owner(),
-            ProgramRuntimeEnvironment::clone(&program_runtime_environment),
-            0,
-            DELAY_VISIBILITY_SLOT_OFFSET,
-            account_data.data(),
-            account_data.data().len(),
-            #[cfg(feature = "metrics")]
-            &mut LoadProgramMetrics::default(),
-        );
-        assert_eq!(result.unwrap(), (Arc::new(expected.unwrap()), 0));
-    }
-
-    #[test]
     fn test_load_program_environment() {
         let key = Pubkey::new_unique();
         let mock_bank = MockBankCallback::default();
@@ -829,15 +689,6 @@ mod tests {
 
         let result = get_program_deployment_slot(&mock_bank, &key);
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
-
-        account_data.set_owner(loader_v4::id());
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key, (account_data, 0));
-
-        let result = get_program_deployment_slot(&mock_bank, &key);
-        assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
     }
 
     #[test]
@@ -860,7 +711,7 @@ mod tests {
             .borrow_mut()
             .insert(key1, (account_data, 0));
 
-        let account_data = AccountSharedData::new_data(
+        let mut account_data = AccountSharedData::new_data(
             100,
             &UpgradeableLoaderState::ProgramData {
                 slot: 77,
@@ -872,30 +723,10 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key2, (account_data, 0));
+            .insert(key2, (account_data.clone(), 0));
 
         let result = get_program_deployment_slot(&mock_bank, &key1);
         assert_eq!(result.unwrap(), 77);
-
-        let state = LoaderV4State {
-            slot: 58,
-            authority_address_or_next_version: Pubkey::new_unique(),
-            status: LoaderV4Status::Deployed,
-        };
-        let encoded = unsafe {
-            std::mem::transmute::<&LoaderV4State, &[u8; LoaderV4State::program_data_offset()]>(
-                &state,
-            )
-        };
-        let mut account_data = AccountSharedData::new(100, encoded.len(), &loader_v4::id());
-        account_data.set_data(encoded.to_vec());
-        mock_bank
-            .account_shared_data
-            .borrow_mut()
-            .insert(key1, (account_data.clone(), 0));
-
-        let result = get_program_deployment_slot(&mock_bank, &key1);
-        assert_eq!(result.unwrap(), 58);
 
         account_data.set_owner(Pubkey::new_unique());
         mock_bank

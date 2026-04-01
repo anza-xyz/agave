@@ -7,7 +7,9 @@ use {
     agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
     criterion::{BatchSize, Criterion, criterion_group, criterion_main},
     rayon::{ThreadPool, ThreadPoolBuilder},
-    solana_bls_signatures::{Keypair as BLSKeypair, Pubkey as BLSPubkey, VerifiablePubkey},
+    solana_bls_signatures::{
+        Keypair as BLSKeypair, PreparedHashedMessage, Pubkey as BLSPubkey, VerifiablePubkey,
+    },
     solana_core::bls_sigverify::{
         bls_vote_sigverify::{
             VotePayload, aggregate_pubkeys_by_payload, aggregate_signatures,
@@ -80,6 +82,7 @@ fn generate_test_data(num_distinct_messages: usize, batch_size: usize) -> Vec<Vo
             bls_pubkey: bls_keypair.public,
             pubkey: Keypair::new().pubkey(),
             remote_pubkey: Keypair::new().pubkey(),
+            prepared_payload: None,
         });
     }
 
@@ -101,6 +104,24 @@ fn bench_verify_single_signature(c: &mut Criterion) {
             // We use the raw verify method from the underlying library
             // to establish the cryptographic floor.
             let res = pubkey.verify_signature(black_box(&sig), black_box(msg));
+            black_box(res).unwrap();
+        })
+    });
+    group.finish();
+}
+
+fn bench_verify_single_signature_with_prepared_message(c: &mut Criterion) {
+    let mut group = c.benchmark_group("verify_single_signature_with_prepared_message");
+
+    let keypair = BLSKeypair::new();
+    let msg = b"benchmark_message_payload";
+    let sig = keypair.sign(msg);
+    let pubkey: BLSPubkey = keypair.public.into();
+    let prepared_msg = PreparedHashedMessage::new(msg);
+
+    group.bench_function("1_item", |b| {
+        b.iter(|| {
+            let res = pubkey.verify_signature_prepared(black_box(&sig), black_box(&prepared_msg));
             black_box(res).unwrap();
         })
     });
@@ -142,7 +163,7 @@ fn bench_aggregate_pubkeys(c: &mut Criterion) {
         group.bench_function(&label, |b| {
             b.iter(|| {
                 let res = aggregate_pubkeys_by_payload(black_box(&votes), &mut stats);
-                black_box(res).1.unwrap();
+                black_box(res).2.unwrap();
             })
         });
     }
@@ -186,7 +207,8 @@ fn bench_verify_individual_votes(c: &mut Criterion) {
             b.iter_batched(
                 || votes.clone(),
                 |votes| {
-                    let res = verify_individual_votes(black_box(votes), &thread_pool);
+                    let res =
+                        verify_individual_votes(black_box(votes), vec![], vec![], &thread_pool);
                     black_box(res);
                 },
                 BatchSize::SmallInput,
@@ -199,6 +221,7 @@ fn bench_verify_individual_votes(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_verify_single_signature,
+    bench_verify_single_signature_with_prepared_message,
     bench_verify_votes_optimistic,
     bench_aggregate_pubkeys,
     bench_aggregate_signatures,
