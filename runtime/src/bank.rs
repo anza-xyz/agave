@@ -1684,8 +1684,12 @@ impl Bank {
                 &stake_delegations
             ));
 
-        // Apply stake rewards and commission using new snapshots.
-        let cached_vote_accounts = self.get_cached_vote_accounts(rewarded_epoch, &vote_accounts);
+        // Apply stake rewards and commission using the distribution vote-account
+        // snapshot that matches VAT admission filtering when enabled.
+        let distribution_epoch_vote_accounts =
+            self.maybe_filter_vote_accounts_for_vat(&vote_accounts);
+        let cached_vote_accounts =
+            self.get_cached_vote_accounts(rewarded_epoch, &distribution_epoch_vote_accounts);
         let (rewards_calculation, update_rewards_with_thread_pool_time_us) =
             measure_us!(self.calculate_rewards(
                 &stake_history,
@@ -6097,6 +6101,28 @@ impl Bank {
     /// Return total transaction fee collected
     pub fn get_collector_fee_details(&self) -> CollectorFeeDetails {
         self.collector_fee_details.read().unwrap().clone()
+    }
+
+    fn maybe_filter_vote_accounts_for_vat(&self, vote_accounts: &VoteAccounts) -> VoteAccounts {
+        if self.feature_set.snapshot().validator_admission_ticket {
+            let vote_account_rent_exempt_minimum = self
+                .rent_collector
+                .rent
+                .minimum_balance(VoteStateV4::size_of());
+            let minimum_vote_account_balance = if self.feature_set.snapshot().alpenglow {
+                // When alpenglow is active the minimum required balance is
+                // VAT + rent-exempt minimum for vote account.
+                vote_account_rent_exempt_minimum + VAT_TO_BURN_PER_EPOCH
+            } else {
+                // If alpenglow is not active, the minimum required balance is
+                // rent-exempt minimum.
+                vote_account_rent_exempt_minimum
+            };
+            vote_accounts
+                .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, minimum_vote_account_balance)
+        } else {
+            vote_accounts.clone()
+        }
     }
 
     /// If the VAT feature is active, returns the `Stakes` as filtered by SIMD-0357

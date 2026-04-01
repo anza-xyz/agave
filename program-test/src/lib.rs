@@ -18,6 +18,7 @@ use {
     },
     solana_account_info::AccountInfo,
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
+    solana_address::Address,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
     solana_clock::{Clock, Epoch, Slot},
@@ -1193,6 +1194,15 @@ impl ProgramTestContext {
 
     pub fn genesis_config(&self) -> &GenesisConfig {
         &self.genesis_config
+    }
+
+    pub fn is_active(&self, feature: &Address) -> bool {
+        self.bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .feature_set
+            .is_active(feature)
     }
 
     /// Manually increment vote credits for the current epoch in the specified vote account to simulate validator voting activity

@@ -1312,7 +1312,7 @@ pub mod validate_chained_block_id {
 }
 
 pub mod validator_admission_ticket {
-    solana_pubkey::declare_id!("VATtb1DepUwdPh5bFVasdtkbeDNsftZSRzr2aKpKWJA");
+    solana_pubkey::declare_id!("VAT9huvhPjRN9cyrPytq9rwvEJ3J4ADtjdncgZRyANJ");
 }
 
 pub mod direct_account_pointers_in_program_input {

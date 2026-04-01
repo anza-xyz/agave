@@ -235,9 +235,11 @@ impl Bank {
 
         let (num_stake_accounts, num_vote_accounts) = {
             let stakes = self.stakes_cache.stakes();
+            let filtered_vote_accounts =
+                self.maybe_filter_vote_accounts_for_vat(stakes.vote_accounts());
             (
                 stakes.stake_delegations().len(),
-                stakes.vote_accounts().len(),
+                filtered_vote_accounts.len(),
             )
         };
         self.capitalization
@@ -409,8 +411,9 @@ impl Bank {
         let stake_delegations = stakes.stake_delegations_vec();
         let stake_delegations = self.filter_stake_delegations(stake_delegations);
 
-        // Vote account state from the end of the rewarded epoch / beginning of the
-        // distribution epoch.
+        // Use the vote-account snapshot from epoch_stakes, which is VAT-filtered
+        // when admission filtering is enabled. Recalculation should match the
+        // vote-account admission policy used for distribution.
         let leader_schedule_epoch = self.epoch_schedule().get_leader_schedule_epoch(self.slot());
         let distribution_epoch_vote_accounts = self
             .epoch_stakes(leader_schedule_epoch)
@@ -1948,6 +1951,105 @@ mod tests {
             calculation_status.all_stake_rewards.num_rewards(),
             expected_num_stake_rewards
         );
+    }
+
+    #[test]
+    fn test_initialize_after_snapshot_restore_preserves_vat_filtered_rewards() {
+        let num_validators = crate::bank::MAX_ALPENGLOW_VOTE_ACCOUNTS + 1;
+        let num_rewards_per_block = 64;
+        // Use unique stakes so VAT filtering deterministically excludes exactly
+        // the lowest-staked validator instead of dropping an entire tie group.
+        let stakes = (0..num_validators)
+            .map(|index| 2_000_000_000 + (num_validators - index) as u64)
+            .collect::<Vec<_>>();
+        let (
+            RewardBank {
+                bank,
+                voters,
+                stakers,
+            },
+            bank_forks,
+        ) = create_reward_bank_with_specific_stakes(
+            stakes,
+            num_rewards_per_block,
+            SLOTS_PER_EPOCH - 1,
+        );
+
+        let filtered_vote_pubkey = *voters.last().unwrap();
+        let filtered_stake_pubkey = *stakers.last().unwrap();
+
+        // Advance to the epoch boundary, which computes the original in-memory
+        // reward list and updates EpochStakes for the new epoch.
+        let new_slot = bank.slot() + 1;
+        let mut bank = Bank::new_from_parent(bank, SlotLeader::default(), new_slot);
+
+        let leader_schedule_epoch = bank.epoch_schedule().get_leader_schedule_epoch(bank.slot());
+        let filtered_epoch_vote_accounts = bank
+            .epoch_stakes(leader_schedule_epoch)
+            .unwrap()
+            .stakes()
+            .vote_accounts();
+        assert_eq!(
+            bank.stakes_cache.stakes().vote_accounts().len(),
+            num_validators
+        );
+        assert_eq!(
+            filtered_epoch_vote_accounts.len(),
+            crate::bank::MAX_ALPENGLOW_VOTE_ACCOUNTS
+        );
+        assert!(
+            filtered_epoch_vote_accounts
+                .get(&filtered_vote_pubkey)
+                .is_none()
+        );
+
+        let EpochRewardStatus::Active(EpochRewardPhase::Calculation(calculation_status)) =
+            bank.epoch_reward_status.clone()
+        else {
+            panic!("{:?} not active calculation", bank.epoch_reward_status);
+        };
+        assert_eq!(
+            calculation_status.all_stake_rewards.num_rewards(),
+            crate::bank::MAX_ALPENGLOW_VOTE_ACCOUNTS
+        );
+        assert!(
+            calculation_status
+                .all_stake_rewards
+                .enumerated_rewards_iter()
+                .all(|(_, reward)| reward.stake_pubkey != filtered_stake_pubkey)
+        );
+
+        // Simulate snapshot restore: re-apply features from accounts and
+        // rebuild epoch_reward_status from snapshot-stable state.
+        bank.feature_set = Arc::new(FeatureSet::default());
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        bank.initialize_after_snapshot_restore(|| &thread_pool);
+
+        let EpochRewardStatus::Active(EpochRewardPhase::Distribution(distribution_status)) =
+            bank.epoch_reward_status.clone()
+        else {
+            panic!("{:?} not active distribution", bank.epoch_reward_status);
+        };
+        assert_eq!(
+            distribution_status.all_stake_rewards.num_rewards(),
+            crate::bank::MAX_ALPENGLOW_VOTE_ACCOUNTS
+        );
+        assert!(
+            distribution_status
+                .all_stake_rewards
+                .enumerated_rewards_iter()
+                .all(|(_, reward)| reward.stake_pubkey != filtered_stake_pubkey)
+        );
+
+        assert_eq!(
+            calculation_status.distribution_starting_block_height,
+            distribution_status.distribution_starting_block_height
+        );
+        assert_eq!(
+            calculation_status.all_stake_rewards,
+            distribution_status.all_stake_rewards
+        );
+        let _ = &bank_forks; // Keep in scope so parent banks retain fork_graph
     }
 
     #[test]
