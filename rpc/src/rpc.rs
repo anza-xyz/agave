@@ -336,7 +336,8 @@ impl JsonRpcRequestProcessor {
             .await
             .expect("Failed to spawn blocking task")?;
         if sort_results {
-            accounts.sort_unstable_by_key(|(addr, _)| *addr);
+            // Avoid copying pubkeys (using Ord::cmp(a, b) silences clippy::unnecessary_sort_by).
+            accounts.sort_unstable_by(|(addr_a, _), (addr_b, _)| Ord::cmp(addr_a, addr_b));
         }
         Ok(accounts)
     }
@@ -2281,7 +2282,8 @@ impl JsonRpcRequestProcessor {
                 .await
                 .expect("Failed to spawn blocking task")?;
             if sort_results {
-                accounts.sort_unstable_by_key(|(addr, _)| *addr);
+                // Avoid copying pubkeys (using Ord::cmp(a, b) silences clippy::unnecessary_sort_by).
+                accounts.sort_unstable_by(|(addr_a, _), (addr_b, _)| Ord::cmp(addr_a, addr_b));
             }
             Ok(accounts)
         }
