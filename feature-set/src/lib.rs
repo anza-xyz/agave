@@ -1311,7 +1311,7 @@ pub mod enshrine_slashing_program {
 }
 
 pub mod enable_extend_program_checked {
-    solana_pubkey::declare_id!("2oMRZEDWT2tqtYMofhmmfQ8SsjqUFzT6sYXppQDavxwz");
+    solana_pubkey::declare_id!("ExtendProgCheckedWi11BeDe1eted11111111111111");
 }
 
 pub mod formalize_loaded_transaction_data_size {
