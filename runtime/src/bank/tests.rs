@@ -5827,7 +5827,9 @@ fn test_bank_load_program() {
 fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
     let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.feature_set = Arc::new(FeatureSet::all_enabled());
+    let mut feature_set = FeatureSet::all_enabled();
+    feature_set.deactivate(&agave_feature_set::disable_sbpf_v0_v1_v2_deployment::id());
+    bank.feature_set = Arc::new(feature_set);
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let mut bank_client = BankClient::new_shared(bank.clone());
 
