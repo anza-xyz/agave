@@ -5,10 +5,8 @@ use {crate::program_metrics::LoadProgramMetrics, solana_svm_measure::measure::Me
 use {
     crate::{
         invoke_context::InvokeContext,
-        loaded_programs::{
-            DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheForTxBatch,
-            ProgramRuntimeEnvironment,
-        },
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
+        program_cache_entry::{DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry},
     },
     solana_clock::Slot,
     solana_instruction::error::InstructionError,

@@ -537,7 +537,7 @@ pub(crate) mod tests {
         solana_message::Message,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
-            loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType},
+            program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
             solana_sbpf::{
                 self, memory_region::MemoryMapping, program::BuiltinFunctionDefinition,
                 vm::ContextObject,

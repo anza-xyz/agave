@@ -2643,7 +2643,7 @@ fn test_oc_bad_signatures() {
 
     let our_id = validator_keys.last().unwrap().0.node_keypair.pubkey();
     let mut config = ClusterConfig {
-        mint_lamports: total_stake,
+        mint_lamports: DEFAULT_MINT_LAMPORTS + node_stakes.iter().sum::<u64>(),
         node_stakes,
         validator_configs: make_identical_validator_configs(&validator_config, 2),
         validator_keys: Some(validator_keys),
@@ -5974,7 +5974,7 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
 
     // Cluster config
     let mut cluster_config = ClusterConfig {
-        mint_lamports: total_stake,
+        mint_lamports: DEFAULT_MINT_LAMPORTS + node_stakes.iter().sum::<u64>(),
         node_stakes: node_stakes.clone(),
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
         validator_keys: Some(

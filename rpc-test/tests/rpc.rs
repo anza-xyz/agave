@@ -69,7 +69,7 @@ fn test_rpc_send_tx() {
 
     let alice = Keypair::new();
     let test_validator =
-        TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
+        TestValidator::start_with_config(alice.pubkey(), None, SocketAddrSpace::Unspecified);
     let rpc_url = test_validator.rpc_url();
 
     let bob_pubkey = solana_pubkey::new_rand();
@@ -141,7 +141,8 @@ fn test_simulation_replaced_blockhash() -> ClientResult<()> {
     agave_logger::setup();
 
     let alice = Keypair::new();
-    let validator = TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
+    let validator =
+        TestValidator::start_with_config(alice.pubkey(), None, SocketAddrSpace::Unspecified);
     let rpc_client = RpcClient::new(validator.rpc_url());
 
     let bob = Keypair::new();
@@ -187,7 +188,7 @@ fn test_rpc_invalid_requests() {
 
     let alice = Keypair::new();
     let test_validator =
-        TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
+        TestValidator::start_with_config(alice.pubkey(), None, SocketAddrSpace::Unspecified);
     let rpc_url = test_validator.rpc_url();
 
     let bob_pubkey = solana_pubkey::new_rand();
@@ -219,7 +220,7 @@ fn test_rpc_slot_updates() {
     agave_logger::setup();
 
     let test_validator =
-        TestValidator::with_no_fees(Pubkey::new_unique(), None, SocketAddrSpace::Unspecified);
+        TestValidator::start_with_config(Pubkey::new_unique(), None, SocketAddrSpace::Unspecified);
 
     // Track when slot updates are ready
     let (update_sender, update_receiver) = unbounded::<SlotUpdate>();
@@ -302,7 +303,7 @@ fn test_rpc_subscriptions() {
 
     let alice = Keypair::new();
     let test_validator =
-        TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
+        TestValidator::start_with_config(alice.pubkey(), None, SocketAddrSpace::Unspecified);
 
     let rpc_client = Arc::new(RpcClient::new(test_validator.rpc_url()));
     let recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
@@ -521,7 +522,7 @@ fn test_run_tpu_send_transaction() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, None, SocketAddrSpace::Unspecified);
+        TestValidator::start_with_config(mint_pubkey, None, SocketAddrSpace::Unspecified);
     let rpc_client = Arc::new(RpcClient::new_with_commitment(
         test_validator.rpc_url(),
         CommitmentConfig::processed(),
@@ -572,7 +573,8 @@ fn deserialize_rpc_error() -> ClientResult<()> {
     agave_logger::setup();
 
     let alice = Keypair::new();
-    let validator = TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
+    let validator =
+        TestValidator::start_with_config(alice.pubkey(), None, SocketAddrSpace::Unspecified);
     let rpc_client = RpcClient::new(validator.rpc_url());
 
     let bob = Keypair::new();
