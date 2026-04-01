@@ -733,19 +733,19 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .unwrap_or(true)
     }
 
-    // Set this instruction syscall context
+    // Set this instruction memory context
     pub fn set_memory_context(
         &mut self,
-        syscall_context: MemoryContext,
+        memory_context: MemoryContext,
     ) -> Result<(), InstructionError> {
         *self
             .memory_context
             .last_mut()
-            .ok_or(InstructionError::CallDepth)? = Some(syscall_context);
+            .ok_or(InstructionError::CallDepth)? = Some(memory_context);
         Ok(())
     }
 
-    // Get this instruction's SyscallContext
+    // Get this instruction's MemoryContext
     pub fn get_memory_context(&self) -> Result<&MemoryContext, InstructionError> {
         self.memory_context
             .last()
@@ -753,11 +753,11 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .ok_or(InstructionError::CallDepth)
     }
 
-    // Get this instruction's SyscallContext
+    // Get this instruction's MemoryContext
     pub fn get_memory_context_mut(&mut self) -> Result<&mut MemoryContext, InstructionError> {
         self.memory_context
             .last_mut()
-            .and_then(|syscall_context| syscall_context.as_mut())
+            .and_then(|memory_context| memory_context.as_mut())
             .ok_or(InstructionError::CallDepth)
     }
 
