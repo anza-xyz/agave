@@ -887,6 +887,7 @@ impl ReplayStage {
                     (r_bank_forks.ancestors(), r_bank_forks.descendants())
                 };
                 let new_frozen_slots = Self::process_active_banks(
+                    &blockstore,
                     &process_active_banks_context,
                     &mut progress,
                     &mut latest_validator_votes_for_frozen_banks,
@@ -896,6 +897,11 @@ impl ReplayStage {
                     &my_pubkey,
                     &vote_account,
                     &mut replay_timing,
+                    &migration_status,
+                    rpc_subscriptions.as_deref(),
+                    slot_status_notifier.as_ref(),
+                    &ancestor_hashes_replay_update_sender,
+                    &replay_vote_sender,
                 );
                 let did_complete_bank = !new_frozen_slots.is_empty();
                 if migration_status.is_alpenglow_enabled() {
@@ -3396,7 +3402,9 @@ impl ReplayStage {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_replay_results(
+        blockstore: &Blockstore,
         process_active_banks_context: &ProcessActiveBanksContext,
         progress: &mut ProgressMap,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
@@ -3405,6 +3413,11 @@ impl ReplayStage {
         mut tbft_structs: Option<&mut TowerBFTStructures>,
         replay_result_vec: &[ReplaySlotFromBlockstore],
         my_pubkey: &Pubkey,
+        migration_status: &MigrationStatus,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
+        slot_status_notifier: Option<&SlotStatusNotifier>,
+        ancestor_hashes_replay_update_sender: &AncestorHashesReplayUpdateSender,
+        replay_vote_sender: &ReplayVoteSender,
     ) -> Vec<Slot> {
         let bank_forks = &process_active_banks_context.bank_forks;
 
@@ -3560,14 +3573,64 @@ impl ReplayStage {
                     bank.set_block_id(block_id);
                 }
 
-                // Freeze the bank before sending to any auxiliary threads
-                // that may expect to be operating on a frozen bank
-                bank.freeze();
+                // Freeze the bank before sending to any auxiliary threads that may expect to be
+                // operating on a frozen bank.
+                // Also if we are not the leader, ensure that our computed hash matches the hash in
+                // the block footer.
+                let verify_result = if migration_status.should_allow_block_markers(bank.slot())
+                    && bank.leader_id() != my_pubkey
+                {
+                    bank.freeze_and_verify_bank_hash()
+                } else {
+                    bank.freeze();
+                    Ok(())
+                };
+
                 datapoint_info!(
                     "bank_frozen",
                     ("slot", bank_slot, i64),
                     ("hash", bank.hash().to_string(), String),
                 );
+
+                if let Err((expected_hash, computed_hash)) = verify_result {
+                    error!(
+                        "Bank hash mismatch for slot {bank_slot} expected: {expected_hash} \
+                         computed: {computed_hash}",
+                    );
+
+                    datapoint_error!(
+                        "bank_hash_mismatch",
+                        ("slot", bank_slot, i64),
+                        ("expected", expected_hash.to_string(), String),
+                        ("computed", computed_hash.to_string(), String),
+                    );
+
+                    if let Err(err) = bank_hash_details::write_bank_hash_details_file(bank) {
+                        warn!("Unable to write bank hash details file: {err}");
+                    }
+
+                    let root = bank_forks.read().unwrap().root();
+                    Self::mark_dead_slot(
+                        blockstore,
+                        bank,
+                        root,
+                        &BlockstoreProcessorError::BankHashMismatch(
+                            bank_slot,
+                            expected_hash,
+                            computed_hash,
+                        ),
+                        rpc_subscriptions,
+                        slot_status_notifier,
+                        progress,
+                        duplicate_slots_to_repair,
+                        ancestor_hashes_replay_update_sender,
+                        purge_repair_slot_counter,
+                        &mut tbft_structs,
+                        replay_vote_sender,
+                    );
+
+                    continue;
+                }
 
                 let r_replay_stats = replay_stats.read().unwrap();
                 let replay_progress = bank_progress.replay_progress.clone();
@@ -3773,7 +3836,9 @@ impl ReplayStage {
         new_frozen_slots
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_active_banks(
+        blockstore: &Blockstore,
         process_active_banks_context: &ProcessActiveBanksContext,
         progress: &mut ProgressMap,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
@@ -3783,6 +3848,11 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
         replay_timing: &mut ReplayLoopTiming,
+        migration_status: &MigrationStatus,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
+        slot_status_notifier: Option<&SlotStatusNotifier>,
+        ancestor_hashes_replay_update_sender: &AncestorHashesReplayUpdateSender,
+        replay_vote_sender: &ReplayVoteSender,
     ) -> Vec<Slot> /* completed slots */ {
         let bank_replay_result_trackers = Self::prepare_active_banks_for_replay(
             process_active_banks_context,
@@ -3804,6 +3874,7 @@ impl ReplayStage {
 
         // Process replay results.
         Self::process_replay_results(
+            blockstore,
             process_active_banks_context,
             progress,
             latest_validator_votes_for_frozen_banks,
@@ -3812,6 +3883,11 @@ impl ReplayStage {
             tbft_structs,
             &replay_result_vec,
             my_pubkey,
+            migration_status,
+            rpc_subscriptions,
+            slot_status_notifier,
+            ancestor_hashes_replay_update_sender,
+            replay_vote_sender,
         )
     }
 
@@ -4533,7 +4609,7 @@ impl ReplayStage {
         let frozen_bank_slots: Vec<_> = frozen_banks
             .keys()
             .cloned()
-            .filter(|slot| *slot >= forks.root())
+            .filter(|slot| *slot >= forks.root() && !progress.get(slot).unwrap().is_dead)
             .collect();
 
         let mut generate_new_bank_forks_get_slots_since =
@@ -5566,7 +5642,10 @@ pub(crate) mod tests {
 
         let mut duplicate_slots_to_repair = DuplicateSlotsToRepair::default();
         let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
+        let (s0, _r0) = unbounded();
+        let (s1, _r1) = unbounded();
         ReplayStage::process_replay_results(
+            &blockstore,
             &process_active_banks_context,
             &mut progress,
             &mut latest_validator_votes_for_frozen_banks,
@@ -5575,6 +5654,11 @@ pub(crate) mod tests {
             None,
             &[replay_result],
             &my_pubkey,
+            &MigrationStatus::post_migration_status(),
+            None,
+            None,
+            &s0,
+            &s1,
         );
 
         assert!(progress.get(&slot).unwrap().is_dead);
