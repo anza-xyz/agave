@@ -22,31 +22,31 @@ mod wincode_compat {
     use {
         std::{marker::PhantomData, mem::MaybeUninit},
         wincode::{
-            ReadError, SchemaRead, SchemaWrite,
+            ReadError, ReadResult, SchemaRead, SchemaWrite, WriteResult,
             config::Config,
             io::{ReadError as IoReadError, Reader, Writer},
         },
     };
 
-    /// Deserializes `T` normally, but returns `T::default()` if the reader is
+    /// Deserializes using `T` normally, but returns `T::Dst::default()` if the reader is
     /// exhausted (EOF), for backward compatibility when new fields are appended
     /// to a struct. Equivalent to `#[serde(deserialize_with = "default_on_eof")]`.
     pub(super) struct DefaultOnEmptyRead<T>(PhantomData<T>);
 
+    // Note: TYPE_META is left dynamic, since during reading both 0-size or non-0-size reads are
+    // allowed, so trusted readers can't rely on encoding to be static sized.
     unsafe impl<'de, C: Config, T> SchemaRead<'de, C> for DefaultOnEmptyRead<T>
     where
-        T: SchemaRead<'de, C, Dst = T> + Default,
+        T: SchemaRead<'de, C>,
+        T::Dst: Default,
     {
-        type Dst = T;
+        type Dst = T::Dst;
 
-        fn read(
-            reader: impl Reader<'de>,
-            dst: &mut MaybeUninit<Self::Dst>,
-        ) -> wincode::ReadResult<()> {
+        fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             match <T as SchemaRead<'de, C>>::read(reader, dst) {
                 Ok(()) => Ok(()),
                 Err(ReadError::Io(IoReadError::ReadSizeLimit(_))) => {
-                    dst.write(T::default());
+                    dst.write(Self::Dst::default());
                     Ok(())
                 }
                 Err(e) => Err(e),
@@ -56,15 +56,17 @@ mod wincode_compat {
 
     unsafe impl<C: Config, T> SchemaWrite<C> for DefaultOnEmptyRead<T>
     where
-        T: SchemaWrite<C, Src = T>,
+        T: SchemaWrite<C>,
     {
-        type Src = T;
+        type Src = T::Src;
 
-        fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
+        const TYPE_META: wincode::TypeMeta = T::TYPE_META;
+
+        fn size_of(src: &Self::Src) -> WriteResult<usize> {
             <T as SchemaWrite<C>>::size_of(src)
         }
 
-        fn write(writer: impl Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
             <T as SchemaWrite<C>>::write(writer, src)
         }
     }
