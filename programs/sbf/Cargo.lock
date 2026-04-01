@@ -8860,7 +8860,6 @@ name = "solana-sbf-rust-secp256k1-recover"
 version = "4.1.0-alpha.0"
 dependencies = [
  "libsecp256k1",
- "sha3",
  "solana-hash 4.2.0",
  "solana-keccak-hasher",
  "solana-msg",
@@ -8873,8 +8872,6 @@ name = "solana-sbf-rust-sha"
 version = "4.1.0-alpha.0"
 dependencies = [
  "blake3",
- "sha2 0.10.9",
- "sha3",
  "solana-blake3-hasher",
  "solana-hash 4.2.0",
  "solana-keccak-hasher",
