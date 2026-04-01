@@ -17,6 +17,7 @@ use {
         v0::{LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
         v1,
     },
+    solana_program_entrypoint::HEAP_LENGTH,
     solana_pubkey::Pubkey,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::{
@@ -100,7 +101,7 @@ where
                     .unwrap_or(0),
                 requested_heap_size: transaction_config_view
                     .requested_heap_size()
-                    .unwrap_or(solana_program_runtime::execution_budget::MIN_HEAP_FRAME_BYTES),
+                    .unwrap_or(HEAP_LENGTH as u32),
             })
         } else {
             TransactionConfigSource::LegacyAndV0(ComputeBudgetInstructionDetails::try_from(
