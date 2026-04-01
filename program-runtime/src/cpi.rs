@@ -1045,7 +1045,7 @@ where
     // unwrapping here is fine: we're in a syscall and the method below fails
     // only outside syscalls
     let accounts_metadata = &invoke_context
-        .get_syscall_context()
+        .get_memory_context()
         .unwrap()
         .accounts_metadata;
 
@@ -1957,7 +1957,7 @@ mod tests {
         );
 
         invoke_context
-            .set_syscall_context(MemoryContext {
+            .set_memory_context(MemoryContext {
                 allocator: BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
                 accounts_metadata: vec![account_metadata],
             })

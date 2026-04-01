@@ -212,7 +212,7 @@ pub struct InvokeContext<'a, 'ix_data> {
     /// Time spent so far executing nested program calls.
     pub total_nested_exec_time: Duration,
     pub timings: ExecuteDetailsTimings,
-    pub syscall_context: Vec<Option<MemoryContext>>,
+    pub memory_context: Vec<Option<MemoryContext>>,
     /// Pairs of index in TX instruction trace and VM register trace
     register_traces: Vec<(usize, Vec<[u64; 12]>)>,
     /// Debug port to use for this executing transaction.
@@ -239,7 +239,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             compute_meter: RefCell::new(compute_budget.compute_unit_limit),
             total_nested_exec_time: Duration::ZERO,
             timings: ExecuteDetailsTimings::default(),
-            syscall_context: Vec::new(),
+            memory_context: Vec::new(),
             register_traces: Vec::new(),
             #[cfg(feature = "sbpf-debugger")]
             debug_port: None,
@@ -273,13 +273,13 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             }
         }
 
-        self.syscall_context.push(None);
+        self.memory_context.push(None);
         self.transaction_context.push()
     }
 
     /// Pop a stack frame from the invocation stack
     pub(crate) fn pop(&mut self) -> Result<(), InstructionError> {
-        self.syscall_context.pop();
+        self.memory_context.pop();
         self.transaction_context.pop()
     }
 
@@ -734,28 +734,28 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     // Set this instruction syscall context
-    pub fn set_syscall_context(
+    pub fn set_memory_context(
         &mut self,
         syscall_context: MemoryContext,
     ) -> Result<(), InstructionError> {
         *self
-            .syscall_context
+            .memory_context
             .last_mut()
             .ok_or(InstructionError::CallDepth)? = Some(syscall_context);
         Ok(())
     }
 
     // Get this instruction's SyscallContext
-    pub fn get_syscall_context(&self) -> Result<&MemoryContext, InstructionError> {
-        self.syscall_context
+    pub fn get_memory_context(&self) -> Result<&MemoryContext, InstructionError> {
+        self.memory_context
             .last()
             .and_then(std::option::Option::as_ref)
             .ok_or(InstructionError::CallDepth)
     }
 
     // Get this instruction's SyscallContext
-    pub fn get_syscall_context_mut(&mut self) -> Result<&mut MemoryContext, InstructionError> {
-        self.syscall_context
+    pub fn get_memory_context_mut(&mut self) -> Result<&mut MemoryContext, InstructionError> {
+        self.memory_context
             .last_mut()
             .and_then(|syscall_context| syscall_context.as_mut())
             .ok_or(InstructionError::CallDepth)

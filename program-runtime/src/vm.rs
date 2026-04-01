@@ -67,7 +67,7 @@ pub fn create_vm<'a, 'b>(
             .virtual_address_space_adjustments,
         invoke_context.get_feature_set().account_data_direct_mapping,
     )?;
-    invoke_context.set_syscall_context(MemoryContext {
+    invoke_context.set_memory_context(MemoryContext {
         allocator: BpfAllocator::new(heap_size as u64),
         accounts_metadata,
     })?;
@@ -414,7 +414,7 @@ pub fn execute<'a, 'b: 'a>(
             virtual_address_space_adjustments,
             account_data_direct_mapping,
             parameter_bytes,
-            &invoke_context.get_syscall_context()?.accounts_metadata,
+            &invoke_context.get_memory_context()?.accounts_metadata,
         )
     }
 
