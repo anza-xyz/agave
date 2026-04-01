@@ -51,7 +51,7 @@ struct RewardsAccumulator {
 
 #[derive(Error, Debug, PartialEq, Eq)]
 enum RefreshError {
-    #[error("Commission account {0} laports would overflow current = {1}, new commission = {2}")]
+    #[error("Commission account {0} lamports would overflow current = {1}, new commission = {2}")]
     CommissionAccountOverflow(Pubkey, u64, u64),
     #[error("Commission account is missing: {0}")]
     MissingCommissionAccount(Pubkey),
