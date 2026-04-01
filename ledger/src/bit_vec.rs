@@ -6,10 +6,7 @@ use {
         slice::Iter,
     },
     thiserror::Error,
-    wincode::{
-        ReadError, ReadResult, SchemaRead, SchemaWrite, config::Config, io::Reader,
-        len::SeqLen as _,
-    },
+    wincode::{ReadResult, SchemaRead, SchemaWrite, config::Config, io::Reader},
 };
 
 type Word = u8;
@@ -47,25 +44,17 @@ impl<const NUM_BITS: usize> Default for BitVec<NUM_BITS> {
 //
 // `BitVec` is normally constructed via `Default`, which initializes with
 // `vec![0; Self::NUM_WORDS]`. This custom `SchemaRead` preserves the invariant by
-// allocating exactly `NUM_WORDS` and populating from the serialized data, zero-filling
-// any missing words. This is required for the `SlotMetaV1` -> `SlotMetaV2` migration,
-// where `completed_data_indexes` was encoded as a variable-length `BTreeSet<u32>`.
+// forcing returned instance to have exactly `NUM_WORDS` - populating from the serialized data
+// and zero-filling any missing words or truncating any excess words.
 unsafe impl<'de, const NUM_BITS: usize, C: Config> SchemaRead<'de, C> for BitVec<NUM_BITS> {
     type Dst = Self;
 
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let bytes_len = C::LengthEncoding::read(reader.by_ref())?;
-        if bytes_len > Self::NUM_WORDS {
-            return Err(ReadError::LengthEncodingOverflow("bit_vec len too large"));
-        }
-        let mut words = Box::new_uninit_slice(Self::NUM_WORDS);
-        let (to_read, to_zero) = words.split_at_mut(bytes_len);
-        reader.copy_into_slice(&mut to_read[..bytes_len])?;
-        to_zero.fill(MaybeUninit::zeroed());
-        // Safety: copy_into_slice ensures that the slice of `bytes_len` length is initialized,
-        // other are zeroed out.
-        let words = unsafe { words.assume_init() };
-        dst.write(Self { words });
+        let mut vec = <Vec<u8> as SchemaRead<C>>::get(reader.by_ref())?;
+        vec.resize(Self::NUM_WORDS, 0);
+        dst.write(Self {
+            words: vec.into_boxed_slice(),
+        });
         Ok(())
     }
 }
