@@ -28,14 +28,6 @@ pub enum TransactionConfigSource {
 
 impl TransactionConfigValues {
     fn sanitize_and_convert_to_fee_budget_limits(&self) -> Result<FeeBudgetLimits> {
-        if self.compute_unit_limit > MAX_COMPUTE_UNIT_LIMIT {
-            return Err(TransactionError::SanitizeFailure);
-        }
-
-        if self.loaded_accounts_data_size_limit > MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.into() {
-            return Err(TransactionError::SanitizeFailure);
-        }
-
         if !(MIN_HEAP_FRAME_BYTES..=MAX_HEAP_FRAME_BYTES).contains(&self.requested_heap_size)
             || !self.requested_heap_size.is_multiple_of(1024)
         {
@@ -44,9 +36,10 @@ impl TransactionConfigValues {
 
         Ok(FeeBudgetLimits {
             loaded_accounts_data_size_limit: NonZeroU32::new(self.loaded_accounts_data_size_limit)
-                .ok_or(TransactionError::InvalidLoadedAccountsDataSizeLimit)?,
+                .ok_or(TransactionError::InvalidLoadedAccountsDataSizeLimit)?
+                .min(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES),
             heap_cost: DEFAULT_HEAP_COST,
-            compute_unit_limit: u64::from(self.compute_unit_limit),
+            compute_unit_limit: u64::from(self.compute_unit_limit.min(MAX_COMPUTE_UNIT_LIMIT)),
             prioritization_fee: self.priority_fee_lamports,
         })
     }
@@ -124,29 +117,6 @@ mod tests {
     }
 
     #[test]
-    fn test_v1_rejects_compute_unit_limit_too_large() {
-        let mut config = valid_v1_config();
-        config.compute_unit_limit = MAX_COMPUTE_UNIT_LIMIT.saturating_add(1);
-
-        assert!(matches!(
-            config.sanitize_and_convert_to_fee_budget_limits(),
-            Err(TransactionError::SanitizeFailure)
-        ));
-    }
-
-    #[test]
-    fn test_v1_rejects_loaded_accounts_data_size_limit_too_large() {
-        let mut config = valid_v1_config();
-        config.loaded_accounts_data_size_limit =
-            u32::from(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES).saturating_add(1);
-
-        assert!(matches!(
-            config.sanitize_and_convert_to_fee_budget_limits(),
-            Err(TransactionError::SanitizeFailure)
-        ));
-    }
-
-    #[test]
     fn test_v1_rejects_heap_size_below_min() {
         let mut config = valid_v1_config();
         config.requested_heap_size = MIN_HEAP_FRAME_BYTES.saturating_sub(1024);
@@ -209,17 +179,30 @@ mod tests {
     }
 
     #[test]
-    fn test_source_v1_delegates_error() {
+    fn test_v1_sliently_cap_compute_unit_limit() {
         let feature_set = FeatureSet::all_enabled();
         let mut config = valid_v1_config();
         config.compute_unit_limit = MAX_COMPUTE_UNIT_LIMIT.saturating_add(1);
 
         let source = TransactionConfigSource::V1(config);
 
-        assert!(
-            source
-                .sanitize_and_convert_to_fee_budget_limits(&feature_set)
-                .is_err()
+        let limits = source
+            .sanitize_and_convert_to_fee_budget_limits(&feature_set)
+            .unwrap();
+        assert_eq!(MAX_COMPUTE_UNIT_LIMIT as u64, limits.compute_unit_limit);
+    }
+
+    #[test]
+    fn test_v1_slsiently_cap_loaded_accounts_data_size_limit() {
+        let mut config = valid_v1_config();
+        config.loaded_accounts_data_size_limit =
+            u32::from(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES).saturating_add(1);
+
+        let limits = config.sanitize_and_convert_to_fee_budget_limits().unwrap();
+
+        assert_eq!(
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            limits.loaded_accounts_data_size_limit
         );
     }
 
