@@ -2505,11 +2505,7 @@ declare_builtin_function!(
             .map(|input| translate_vm_slice(input, memory_mapping, check_aligned))
             .collect::<Result<Vec<_>, Error>>()?;
 
-        let result = if poseidon_enforce_padding {
-            poseidon::hashv(parameters, endianness, inputs.as_slice())
-        } else {
-            poseidon::legacy::hashv(parameters, endianness, inputs.as_slice())
-        };
+        let result = poseidon::hashv(parameters, endianness, inputs.as_slice());
         let Ok(hash) = result else {
             return Ok(1);
         };
