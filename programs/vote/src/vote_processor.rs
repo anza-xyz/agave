@@ -187,13 +187,23 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             )
         }
         VoteInstruction::UpdateCommission(commission) => {
+            // After VoteStateV4 activation with basis-point commission
+            // (SIMD-0291), reject the legacy UpdateCommission instruction to
+            // prevent silent precision loss on inflation_rewards_commission_bps.
+            // Validators must use UpdateCommissionBps instead.
+            let feature_set = invoke_context.get_feature_set();
+            if feature_set.commission_rate_in_basis_points
+                && matches!(target_version, VoteStateTargetVersion::V4)
+            {
+                return Err(InstructionError::InvalidInstructionData);
+            }
+
             let sysvar_cache = invoke_context.get_sysvar_cache();
 
             // Disable the commission update rule after the "delay commission
             // update" feature is activated because it imposes a minimum delay
             // of one full epoch before the new commission rate takes effect.
-            let disable_commission_update_rule =
-                invoke_context.get_feature_set().delay_commission_updates;
+            let disable_commission_update_rule = feature_set.delay_commission_updates;
 
             vote_state::update_commission(
                 &mut me,
@@ -1432,6 +1442,57 @@ mod tests {
         let vote_state =
             deserialize_vote_state_for_test(vote_state_v4, accounts[0].data(), &vote_pubkey);
         assert_eq!(vote_state.commission(), 0);
+    }
+
+    #[test]
+    fn test_vote_update_commission_rejected_with_bps_enabled() {
+        // After VoteStateV4 + commission_rate_in_basis_points activation,
+        // the legacy UpdateCommission instruction must be rejected to
+        // prevent silent precision loss on inflation_rewards_commission_bps.
+        let vote_state_v4 = true;
+        let (vote_pubkey, _authorized_voter, authorized_withdrawer, vote_account) =
+            create_test_account_with_authorized(vote_state_v4);
+
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account),
+            (authorized_withdrawer, AccountSharedData::default()),
+            (
+                sysvar::clock::id(),
+                account::create_account_shared_data_for_test(&Clock::default()),
+            ),
+            (
+                sysvar::epoch_schedule::id(),
+                account::create_account_shared_data_for_test(&EpochSchedule::without_warmup()),
+            ),
+        ];
+
+        let instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: authorized_withdrawer,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+
+        let features = VoteProgramFeatures {
+            vote_state_v4: true,
+            commission_rate_in_basis_points: true,
+            ..Default::default()
+        };
+
+        // Legacy UpdateCommission should be rejected
+        process_instruction(
+            features,
+            &serialize(&VoteInstruction::UpdateCommission(42)).unwrap(),
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::InvalidInstructionData),
+        );
     }
 
     #[test]
