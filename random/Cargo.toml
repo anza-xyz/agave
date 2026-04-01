@@ -24,7 +24,7 @@ rand = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-bs58 = { workspace = true, features = ["alloc"] }
 rand_chacha = { workspace = true }
-sha2 = { workspace = true }
+solana-hash = { workspace = true, features = ["decode"] }
+solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 test-case = { workspace = true }

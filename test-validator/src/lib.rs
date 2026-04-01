@@ -35,14 +35,13 @@ use {
         node::Node,
     },
     solana_inflation::Inflation,
-    solana_instruction::{AccountMeta, Instruction},
+    solana_instruction::Instruction,
     solana_keypair::{Keypair, read_keypair_file, write_keypair_file},
     solana_ledger::{
         blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions,
         create_new_tmp_ledger,
     },
     solana_loader_v3_interface::state::UpgradeableLoaderState,
-    solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::{
         PortRange, SocketAddrSpace, find_available_ports_in_range, multihomed_sockets::BindIpAddrs,
@@ -701,7 +700,7 @@ impl TestValidatorGenesis {
                 .enable_time()
                 .build()
                 .unwrap();
-            runtime.block_on(test_validator.wait_for_nonzero_fees());
+            runtime.block_on(test_validator.wait_for_first_slot());
         })
     }
 
@@ -761,7 +760,7 @@ impl TestValidatorGenesis {
     ) -> Result<TestValidator, Box<dyn std::error::Error>> {
         let test_validator =
             TestValidator::start(mint_keypair.pubkey(), self, socket_addr_space, None)?;
-        test_validator.wait_for_nonzero_fees().await;
+        test_validator.wait_for_first_slot().await;
         let upgradeable_program_ids: Vec<&Pubkey> = self
             .upgradeable_programs
             .iter()
@@ -808,15 +807,12 @@ pub struct TestValidator {
 impl TestValidator {
     /// Create a configured genesis and start validator
     /// Sync only; calling from a tokio runtime will panic due to nested runtimes.
-    fn start_with_config(
+    pub fn start_with_config(
         mint_address: Pubkey,
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
-        target_lamports_per_signature: u64,
-        wait_for_fees: bool,
     ) -> Self {
         let test_validator = TestValidatorGenesis::default()
-            .fee_rate_governor(FeeRateGovernor::new(target_lamports_per_signature, 0))
             .rent(Rent {
                 lamports_per_byte: 1,
                 ..Rent::default()
@@ -824,27 +820,16 @@ impl TestValidator {
             .faucet_addr(faucet_addr)
             .start_with_mint_address(mint_address, socket_addr_space)
             .expect("validator start failed");
-
-        if wait_for_fees {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_io()
-                .enable_time()
-                .build()
-                .unwrap();
-            runtime.block_on(test_validator.wait_for_nonzero_fees());
-        }
         test_validator
     }
 
     /// Create a configured genesis and start validator (async version)
-    async fn async_start_with_config(
+    pub async fn async_start_with_config(
         mint_keypair: &Keypair,
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
-        target_lamports_per_signature: u64,
     ) -> Self {
         TestValidatorGenesis::default()
-            .fee_rate_governor(FeeRateGovernor::new(target_lamports_per_signature, 0))
             .rent(Rent {
                 lamports_per_byte: 1,
                 ..Rent::default()
@@ -853,68 +838,6 @@ impl TestValidator {
             .start_async_with_mint_address(mint_keypair, socket_addr_space)
             .await
             .expect("validator start failed")
-    }
-
-    /// Create and start a `TestValidator` with no transaction fees and minimal rent.
-    /// Faucet optional.
-    ///
-    /// This function panics on initialization failure.
-    pub fn with_no_fees(
-        mint_address: Pubkey,
-        faucet_addr: Option<SocketAddr>,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self::start_with_config(mint_address, faucet_addr, socket_addr_space, 0, false)
-    }
-
-    /// Create and start a `TestValidator` with custom transaction fees and minimal rent.
-    /// Faucet optional.
-    ///
-    /// This function panics on initialization failure.
-    pub fn with_custom_fees(
-        mint_address: Pubkey,
-        target_lamports_per_signature: u64,
-        faucet_addr: Option<SocketAddr>,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self::start_with_config(
-            mint_address,
-            faucet_addr,
-            socket_addr_space,
-            target_lamports_per_signature,
-            true,
-        )
-    }
-
-    /// Create and start a `TestValidator` with no transaction fees and minimal rent (async version).
-    /// Faucet optional.
-    ///
-    /// This function panics on initialization failure.
-    pub async fn async_with_no_fees(
-        mint_keypair: &Keypair,
-        faucet_addr: Option<SocketAddr>,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self::async_start_with_config(mint_keypair, faucet_addr, socket_addr_space, 0).await
-    }
-
-    /// Create and start a `TestValidator` with custom transaction fees and minimal rent (async version).
-    /// Faucet optional.
-    ///
-    /// This function panics on initialization failure.
-    pub async fn async_with_custom_fees(
-        mint_keypair: &Keypair,
-        target_lamports_per_signature: u64,
-        faucet_addr: Option<SocketAddr>,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self::async_start_with_config(
-            mint_keypair,
-            faucet_addr,
-            socket_addr_space,
-            target_lamports_per_signature,
-        )
-        .await
     }
 
     /// Initialize the ledger directory
@@ -1259,21 +1182,11 @@ impl TestValidator {
         Ok(test_validator)
     }
 
-    /// This is a hack to delay until the fees are non-zero for test consistency
-    /// (fees from genesis are zero until the first block with a transaction in it is completed
-    ///  due to a bug in the Bank)
-    async fn wait_for_nonzero_fees(&self) {
+    /// Delay until the validator has produced its first slot after startup.
+    async fn wait_for_first_slot(&self) {
         let rpc_client = nonblocking::rpc_client::RpcClient::new_with_commitment(
             self.rpc_url.clone(),
             CommitmentConfig::processed(),
-        );
-        let mut message = Message::new(
-            &[Instruction::new_with_bytes(
-                Pubkey::new_unique(),
-                &[],
-                vec![AccountMeta::new(Pubkey::new_unique(), true)],
-            )],
-            None,
         );
         const MAX_TRIES: u64 = 10;
         let mut num_tries = 0;
@@ -1282,24 +1195,15 @@ impl TestValidator {
             if num_tries > MAX_TRIES {
                 break;
             }
-            println!("Waiting for fees to stabilize {num_tries:?}...");
-            match rpc_client.get_latest_blockhash().await {
-                Ok(blockhash) => {
-                    message.recent_blockhash = blockhash;
-                    match rpc_client.get_fee_for_message(&message).await {
-                        Ok(fee) => {
-                            if fee != 0 {
-                                break;
-                            }
-                        }
-                        Err(err) => {
-                            warn!("get_fee_for_message() failed: {err:?}");
-                            break;
-                        }
+            println!("Waiting for first slot {num_tries:?}...");
+            match rpc_client.get_slot().await {
+                Ok(slot) => {
+                    if slot > 0 {
+                        break;
                     }
                 }
                 Err(err) => {
-                    warn!("get_latest_blockhash() failed: {err:?}");
+                    warn!("get_slot() failed: {err:?}");
                     break;
                 }
             }

@@ -4,7 +4,8 @@ use {
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction_error::InstructionError,
     solana_program_runtime::{
-        loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
+        program_cache_entry::ProgramCacheEntry,
         program_metrics::LoadProgramMetrics,
     },
     solana_pubkey::Pubkey,

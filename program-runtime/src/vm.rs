@@ -6,8 +6,8 @@ use {
     crate::{
         execution_budget::MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268,
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
-        loaded_programs::ProgramCacheEntry,
         mem_pool::VmMemoryPool,
+        program_cache_entry::ProgramCacheEntry,
         serialization, stable_log,
     },
     solana_instruction::error::InstructionError,

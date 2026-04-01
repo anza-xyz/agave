@@ -25,7 +25,8 @@ use {
     },
     solana_accounts_db::{
         accounts::AccountAddressFilter,
-        accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanResult},
+        accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey},
+        accounts_scan::ScanResult,
     },
     solana_client::connection_cache::Protocol,
     solana_clock::{Slot, UnixTimestamp},
@@ -4575,7 +4576,7 @@ pub mod tests {
         solana_program_option::COption,
         solana_program_runtime::{
             invoke_context::InvokeContext,
-            loaded_programs::ProgramCacheEntry,
+            program_cache_entry::ProgramCacheEntry,
             solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
         },
         solana_rpc_client_api::{
