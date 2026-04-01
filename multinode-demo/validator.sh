@@ -95,6 +95,9 @@ while [[ -n $1 ]]; do
       gossip_entrypoint=$2
       args+=("$1" "$2")
       shift 2
+    elif [[ $1 = --advertised-ip ]]; then
+      args+=("$1" "$2")
+      shift 2
     elif [[ $1 = --no-snapshot-fetch ]]; then
       args+=("$1")
       shift

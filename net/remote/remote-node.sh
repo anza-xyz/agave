@@ -29,6 +29,7 @@ extraPrimordialStakes="${20:=0}"
 tmpfsAccounts="${21:false}"
 disableQuic="${22}"
 enableUdp="${23}"
+nodeIp="${24}"
 
 set +x
 
@@ -43,6 +44,7 @@ missing() {
 [[ -n $numNodes ]]      || missing numNodes
 [[ -n $skipSetup ]]     || missing skipSetup
 [[ -n $failOnValidatorBootupFailure ]] || missing failOnValidatorBootupFailure
+[[ -n $nodeIp ]]        || missing nodeIp
 
 airdropsEnabled=true
 if [[ -n $maybeDisableAirdrops ]]; then
@@ -241,6 +243,7 @@ EOF
     fi
     args=(
       --bind-address "$entrypointIp"
+      --advertised-ip "$nodeIp"
       --gossip-port 8001
       --init-complete-file "$initCompleteFile"
     )
@@ -316,6 +319,7 @@ EOF
 
     args=(
       --entrypoint "$entrypointIp:8001"
+      --advertised-ip "$nodeIp"
       --gossip-port 8001
       --rpc-port 8899
       --expected-shred-version "$(cat "$SOLANA_CONFIG_DIR"/shred-version)"
