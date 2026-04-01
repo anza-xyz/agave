@@ -79,6 +79,7 @@ security advisory with one of the following, depending on the severity:
 - [Bounty Category: Critical: DoS Attacks]
 - [Bounty Category: Supply Chain Attacks]
 - [Bounty Category: RPC]
+- [Bounty Category: Other]
 
 Confirm with the reporter that they agree with the severity assessment, and discuss as required to reach a conclusion.
 
@@ -135,6 +136,14 @@ _Max: 1,250 SOL tokens. Min: 315 SOL tokens_
 _Max: 65 SOL tokens. Min: 20 SOL tokens_
 
 * RPC attacks
+
+#### Other:
+_Max: None. Min: None_
+
+This category may be assigned at the sole discretion of the Solana Foundation for
+reports that fall outside the explicitly declared categories, but are deemed
+worthy of a reward nonetheless. Attempting to self-assign this category will
+almost certainly disqualify the report
 
 ### Out of Scope:
 The following components are out of scope for the bounty program
