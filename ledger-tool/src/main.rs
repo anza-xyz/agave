@@ -81,7 +81,7 @@ use {
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::{
         self,
-        vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV3, VoteStateV4},
+        vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     },
     std::{
         collections::{HashMap, HashSet},
@@ -2386,27 +2386,17 @@ fn main() {
                                 ),
                             );
 
-                            let vote_account = if bank.feature_set.snapshot().vote_state_v4 {
-                                vote_state::create_v4_account_with_authorized(
-                                    identity_pubkey,
-                                    identity_pubkey,
-                                    [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-                                    identity_pubkey,
-                                    10000,
-                                    identity_pubkey,
-                                    0,
-                                    identity_pubkey,
-                                    rent.minimum_balance(VoteStateV4::size_of()).max(1),
-                                )
-                            } else {
-                                vote_state::create_v3_account_with_authorized(
-                                    identity_pubkey,
-                                    identity_pubkey,
-                                    identity_pubkey,
-                                    100,
-                                    rent.minimum_balance(VoteStateV3::size_of()).max(1),
-                                )
-                            };
+                            let vote_account = vote_state::create_v4_account_with_authorized(
+                                identity_pubkey,
+                                identity_pubkey,
+                                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                                identity_pubkey,
+                                10000,
+                                identity_pubkey,
+                                0,
+                                identity_pubkey,
+                                rent.minimum_balance(VoteStateV4::size_of()).max(1),
+                            );
 
                             bank.store_account(
                                 stake_pubkey,

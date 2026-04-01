@@ -238,28 +238,17 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
             .bls_keypair
             .public
             .to_bytes_compressed();
-        let vote_account = if feature_set.snapshot().vote_state_v4 {
-            // Vote state v4 feature active. Create a v4 account.
-            vote_state::create_v4_account_with_authorized(
-                &node_pubkey,
-                &vote_pubkey,
-                bls_pubkey_compressed,
-                &vote_pubkey,
-                0,
-                &vote_pubkey,
-                0,
-                &vote_pubkey,
-                vote_account_lamports,
-            )
-        } else {
-            vote_state::create_v3_account_with_authorized(
-                &node_pubkey,
-                &vote_pubkey,
-                &vote_pubkey,
-                0,
-                vote_account_lamports,
-            )
-        };
+        let vote_account = vote_state::create_v4_account_with_authorized(
+            &node_pubkey,
+            &vote_pubkey,
+            bls_pubkey_compressed,
+            &vote_pubkey,
+            0,
+            &vote_pubkey,
+            0,
+            &vote_pubkey,
+            vote_account_lamports,
+        );
         let stake_account = Account::from(stake_utils::create_stake_account(
             &stake_pubkey,
             &vote_pubkey,
@@ -424,7 +413,6 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     fee_rate_governor: FeeRateGovernor,
     rent: Rent,
     cluster_type: ClusterType,
-    feature_set: &FeatureSet,
     mut initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
     // Ensure minimum lamports for VAT filtering, but only when stake > 0.
@@ -442,35 +430,17 @@ pub fn create_genesis_config_with_leader_ex_no_features(
         )
     };
 
-    let validator_vote_account = if feature_set.snapshot().vote_state_v4 {
-        // Vote state v4 feature active. Create a v4 account.
-        vote_state::create_v4_account_with_authorized(
-            validator_pubkey,
-            validator_vote_account_pubkey,
-            validator_bls_pubkey.unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
-            validator_vote_account_pubkey,
-            0,
-            validator_vote_account_pubkey,
-            0,
-            validator_vote_account_pubkey,
-            vote_account_lamports,
-        )
-    } else {
-        // Vote state v4 feature inactive. Create a v3 account.
-        if validator_bls_pubkey.is_some() {
-            warn!(
-                "BLS pubkey provided but vote_state_v4 feature is not active. BLS pubkey will be \
-                 ignored."
-            );
-        }
-        vote_state::create_v3_account_with_authorized(
-            validator_pubkey,
-            validator_vote_account_pubkey,
-            validator_vote_account_pubkey,
-            0,
-            vote_account_lamports,
-        )
-    };
+    let validator_vote_account = vote_state::create_v4_account_with_authorized(
+        validator_pubkey,
+        validator_vote_account_pubkey,
+        validator_bls_pubkey.unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
+        validator_vote_account_pubkey,
+        0,
+        validator_vote_account_pubkey,
+        0,
+        validator_vote_account_pubkey,
+        vote_account_lamports,
+    );
 
     let validator_stake_account = stake_utils::create_stake_account(
         validator_stake_account_pubkey,
@@ -549,7 +519,6 @@ pub fn create_genesis_config_with_leader_ex(
         fee_rate_governor,
         rent,
         cluster_type,
-        feature_set,
         initial_accounts,
     );
 
