@@ -34,6 +34,7 @@ use {
     },
 };
 
+#[derive(Clone)]
 struct TestEpochSpecs {
     staked_nodes: Arc<HashMap<Pubkey, u64>>,
     slots_in_epoch: u64,
@@ -41,14 +42,17 @@ struct TestEpochSpecs {
 }
 
 impl EpochSpecs for TestEpochSpecs {
-    fn epoch_current_staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+    fn epoch_current_staked_nodes(&mut self) -> Arc<HashMap<Pubkey, u64>> {
         Arc::clone(&self.staked_nodes)
     }
-    fn epoch_duration(&self) -> Duration {
+    fn epoch_duration(&mut self) -> Duration {
         self.epoch_duration
     }
-    fn epoch_slots(&self) -> u64 {
+    fn epoch_slots(&mut self) -> u64 {
         self.slots_in_epoch
+    }
+    fn clone_box(&self) -> Box<dyn EpochSpecs> {
+        Box::new(self.clone())
     }
 }
 

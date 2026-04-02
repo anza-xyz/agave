@@ -34,7 +34,7 @@ pub struct DuplicateShredHandler {
     last_root: Slot,
     blockstore: Arc<Blockstore>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
-    epoch_specs: Arc<dyn EpochSpecs>,
+    epoch_specs: Box<dyn EpochSpecs>,
     cached_staked_nodes: Arc<HashMap<Pubkey, u64>>,
     cached_slots_in_epoch: u64,
     // Used to notify duplicate consensus state machine
@@ -70,7 +70,7 @@ impl DuplicateShredHandler {
     pub fn new(
         blockstore: Arc<Blockstore>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
-        epoch_specs: Arc<dyn EpochSpecs>,
+        epoch_specs: Box<dyn EpochSpecs>,
         duplicate_slots_sender: Sender<Slot>,
         shred_version: u16,
     ) -> Self {
@@ -235,20 +235,24 @@ mod tests {
         std::time::Duration,
     };
 
+    #[derive(Clone)]
     struct TestEpochSpecs {
         epoch_duration: Duration,
         slots_in_epoch: u64,
     }
 
     impl EpochSpecs for TestEpochSpecs {
-        fn epoch_current_staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+        fn epoch_current_staked_nodes(&mut self) -> Arc<HashMap<Pubkey, u64>> {
             Arc::new(HashMap::new())
         }
-        fn epoch_duration(&self) -> Duration {
+        fn epoch_duration(&mut self) -> Duration {
             self.epoch_duration
         }
-        fn epoch_slots(&self) -> u64 {
+        fn epoch_slots(&mut self) -> u64 {
             self.slots_in_epoch
+        }
+        fn clone_box(&self) -> Box<dyn EpochSpecs> {
+            Box::new(self.clone())
         }
     }
 
@@ -332,7 +336,7 @@ mod tests {
         let mut duplicate_shred_handler = DuplicateShredHandler::new(
             blockstore.clone(),
             leader_schedule_cache,
-            Arc::new(epoch_specs),
+            epoch_specs.clone_box(),
             sender,
             shred_version,
         );
@@ -433,7 +437,7 @@ mod tests {
         let mut duplicate_shred_handler = DuplicateShredHandler::new(
             blockstore.clone(),
             leader_schedule_cache,
-            Arc::new(epoch_specs),
+            epoch_specs.clone_box(),
             sender,
             shred_version,
         );

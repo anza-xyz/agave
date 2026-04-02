@@ -9,11 +9,12 @@ use {
     },
     std::{
         collections::HashMap,
-        sync::{Arc, Mutex, RwLock},
+        sync::{Arc, RwLock},
         time::Duration,
     },
 };
 
+#[derive(Clone)]
 struct EpochSpecsCache {
     epoch: Epoch,
     epoch_schedule: EpochSchedule,
@@ -22,27 +23,32 @@ struct EpochSpecsCache {
     slots_in_epoch: u64,
 }
 
+#[derive(Clone)]
 pub struct EpochSpecs {
     sharable_banks: SharableBanks,
-    cache: Mutex<EpochSpecsCache>,
+    cache: EpochSpecsCache,
 }
 impl EpochSpecsTrait for EpochSpecs {
-    fn epoch_current_staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
-        let mut cache = self.cache.lock().unwrap();
-        Self::refresh_cache(&mut cache, &self.sharable_banks);
+    fn epoch_current_staked_nodes(&mut self) -> Arc<HashMap<Pubkey, u64>> {
+        let cache = &mut self.cache;
+        Self::refresh_cache(cache, &self.sharable_banks);
         Arc::clone(&cache.current_epoch_staked_nodes)
     }
 
-    fn epoch_duration(&self) -> Duration {
-        let mut cache = self.cache.lock().unwrap();
-        Self::refresh_cache(&mut cache, &self.sharable_banks);
+    fn epoch_duration(&mut self) -> Duration {
+        let cache = &mut self.cache;
+        Self::refresh_cache(cache, &self.sharable_banks);
         cache.epoch_duration
     }
 
-    fn epoch_slots(&self) -> u64 {
-        let mut cache = self.cache.lock().unwrap();
-        Self::refresh_cache(&mut cache, &self.sharable_banks);
+    fn epoch_slots(&mut self) -> u64 {
+        let cache = &mut self.cache;
+        Self::refresh_cache(cache, &self.sharable_banks);
         cache.slots_in_epoch
+    }
+
+    fn clone_box(&self) -> Box<dyn EpochSpecsTrait> {
+        Box::new(self.clone())
     }
 }
 
@@ -73,13 +79,13 @@ impl From<Arc<RwLock<BankForks>>> for EpochSpecs {
         };
         Self {
             sharable_banks,
-            cache: Mutex::new(EpochSpecsCache {
+            cache: EpochSpecsCache {
                 epoch: root_bank.epoch(),
                 epoch_schedule: root_bank.epoch_schedule().clone(),
                 current_epoch_staked_nodes: root_bank.current_epoch_staked_nodes(),
                 epoch_duration: get_epoch_duration(&root_bank),
                 slots_in_epoch: root_bank.get_slots_in_epoch(root_bank.epoch()),
-            }),
+            },
         }
     }
 }

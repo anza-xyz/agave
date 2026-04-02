@@ -17,6 +17,7 @@ use {
         consensus::{Tower, tower_storage::TowerStorage},
         cost_update_service::CostUpdateService,
         drop_bank_service::DropBankService,
+        epoch_specs::EpochSpecs,
         repair::repair_service::{OutstandingShredRepairs, RepairInfo, RepairServiceChannels},
         replay_stage::{ReplayReceivers, ReplaySenders, ReplayStage, ReplayStageConfig},
         shred_fetch_stage::{SHRED_FETCH_CHANNEL_SIZE, ShredFetchStage},
@@ -583,8 +584,8 @@ impl Tvu {
             BlockstoreCleanupService::new(blockstore.clone(), max_ledger_shreds, exit.clone())
         });
 
-        let epoch_specs: Arc<dyn solana_gossip::epoch_specs::EpochSpecs> =
-            Arc::new(crate::epoch_specs::EpochSpecs::from(bank_forks.clone()));
+        let epoch_specs: Box<dyn solana_gossip::epoch_specs::EpochSpecs> =
+            Box::new(EpochSpecs::from(bank_forks.clone()));
 
         let duplicate_shred_listener = DuplicateShredListener::new(
             exit,

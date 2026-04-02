@@ -1442,7 +1442,7 @@ impl ClusterInfo {
     /// randomly pick a node and ask them for updates asynchronously
     pub fn gossip(
         self: Arc<Self>,
-        epoch_specs: Option<Arc<dyn EpochSpecs>>,
+        mut epoch_specs: Option<Box<dyn EpochSpecs>>,
         sender: impl ChannelSend<PacketBatch>,
         gossip_validators: Option<HashSet<Pubkey>>,
         exit: Arc<AtomicBool>,
@@ -1485,7 +1485,7 @@ impl ClusterInfo {
                         last_contact_info_save = start;
                     }
                     let stakes = epoch_specs
-                        .as_ref()
+                        .as_mut()
                         .map(|es| es.epoch_current_staked_nodes())
                         .unwrap_or_default();
 
@@ -1499,7 +1499,7 @@ impl ClusterInfo {
                         gossip_round % PULL_REQUEST_PERIOD == 0,
                     );
                     let epoch_duration = epoch_specs
-                        .as_ref()
+                        .as_mut()
                         .map(|es| es.epoch_duration())
                         .unwrap_or(DEFAULT_EPOCH_DURATION);
                     self.handle_purge(&thread_pool, epoch_duration, &stakes);
@@ -2084,7 +2084,7 @@ impl ClusterInfo {
     fn run_socket_consume(
         &self,
         thread_pool: &ThreadPool,
-        epoch_specs: Option<Arc<dyn EpochSpecs>>,
+        epoch_specs: &mut Option<Box<dyn EpochSpecs>>,
         receiver: &PacketBatchReceiver,
         sender: &impl ChannelSend<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         packet_buf: &mut Vec<PacketBatch>,
@@ -2128,6 +2128,7 @@ impl ClusterInfo {
             })
         }
         let stakes = epoch_specs
+            .as_deref_mut()
             .map(|es| es.epoch_current_staked_nodes())
             .unwrap_or_default();
         let packets_verified: Vec<_> = {
@@ -2162,7 +2163,7 @@ impl ClusterInfo {
     fn run_listen(
         &self,
         recycler: &PacketBatchRecycler,
-        epoch_specs: Option<Arc<dyn EpochSpecs>>,
+        epoch_specs: &mut Option<Box<dyn EpochSpecs>>,
         receiver: &Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         response_sender: &impl ChannelSend<PacketBatch>,
         thread_pool: &ThreadPool,
@@ -2181,11 +2182,11 @@ impl ClusterInfo {
             }
         }
         let stakes = epoch_specs
-            .as_ref()
+            .as_deref_mut()
             .map(|es| es.epoch_current_staked_nodes())
             .unwrap_or_default();
         let epoch_duration = epoch_specs
-            .as_ref()
+            .as_deref_mut()
             .map(|es| es.epoch_duration())
             .unwrap_or(DEFAULT_EPOCH_DURATION);
         self.process_packets(
@@ -2206,7 +2207,7 @@ impl ClusterInfo {
 
     pub(crate) fn start_socket_consume_thread(
         self: Arc<Self>,
-        epoch_specs: Option<Arc<dyn EpochSpecs>>,
+        mut epoch_specs: Option<Box<dyn EpochSpecs>>,
         receiver: PacketBatchReceiver,
         sender: impl ChannelSend<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         exit: Arc<AtomicBool>,
@@ -2221,7 +2222,7 @@ impl ClusterInfo {
             while !exit.load(Ordering::Relaxed) {
                 let result = self.run_socket_consume(
                     &thread_pool,
-                    epoch_specs.clone(),
+                    &mut epoch_specs,
                     &receiver,
                     &sender,
                     &mut packet_buf,
@@ -2244,7 +2245,7 @@ impl ClusterInfo {
 
     pub(crate) fn listen(
         self: Arc<Self>,
-        epoch_specs: Option<Arc<dyn EpochSpecs>>,
+        mut epoch_specs: Option<Box<dyn EpochSpecs>>,
         requests_receiver: Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         response_sender: impl ChannelSend<PacketBatch>,
         should_check_duplicate_instance: bool,
@@ -2263,7 +2264,7 @@ impl ClusterInfo {
                 while !exit.load(Ordering::Relaxed) {
                     let result = self.run_listen(
                         &recycler,
-                        epoch_specs.clone(),
+                        &mut epoch_specs,
                         &requests_receiver,
                         &response_sender,
                         &thread_pool,

@@ -38,7 +38,7 @@ pub struct GossipService {
 impl GossipService {
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
-        epoch_specs: Option<Arc<dyn EpochSpecs>>,
+        mut epoch_specs: Option<Box<dyn EpochSpecs>>,
         gossip_sockets: Arc<[UdpSocket]>,
         gossip_validators: Option<HashSet<Pubkey>>,
         should_check_duplicate_instance: bool,
@@ -71,7 +71,7 @@ impl GossipService {
         let (consume_sender, listen_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
-            epoch_specs.clone(),
+            epoch_specs.as_ref().map(|es| es.clone_box()),
             request_receiver,
             consume_sender,
             exit.clone(),
@@ -79,14 +79,14 @@ impl GossipService {
         let (response_sender, response_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_listen = cluster_info.clone().listen(
-            epoch_specs.clone(),
+            epoch_specs.as_ref().map(|es| es.clone_box()),
             listen_receiver,
             response_sender.clone(),
             should_check_duplicate_instance,
             exit.clone(),
         );
         let t_gossip = cluster_info.clone().gossip(
-            epoch_specs.clone(),
+            epoch_specs.as_ref().map(|es| es.clone_box()),
             response_sender,
             gossip_validators,
             exit.clone(),
@@ -107,7 +107,7 @@ impl GossipService {
                     while !exit.load(Ordering::Relaxed) {
                         sleep(SUBMIT_GOSSIP_STATS_INTERVAL);
                         let stakes = epoch_specs
-                            .as_ref()
+                            .as_mut()
                             .map(|es| es.epoch_current_staked_nodes())
                             .unwrap_or_default();
 
