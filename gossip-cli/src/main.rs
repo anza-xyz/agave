@@ -37,12 +37,12 @@ fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'
         .validator(is_port)
         .help("Gossip port number for the node");
 
-    let bind_address_arg = clap::Arg::with_name("bind_address")
-        .long("bind-address")
+    let advertised_ip_arg = clap::Arg::with_name("advertised_ip")
+        .long("advertised-ip")
         .value_name("HOST")
         .takes_value(true)
         .validator(solana_net_utils::is_host)
-        .help("IP address to bind the node to for gossip");
+        .help("IP address the gossip node advertises [default: 127.0.0.1]");
 
     App::new(name)
         .about(about)
@@ -91,7 +91,7 @@ fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'
                 )
                 .arg(&shred_version_arg)
                 .arg(&gossip_port_arg)
-                .arg(&bind_address_arg)
+                .arg(&advertised_ip_arg)
                 .setting(AppSettings::DisableVersion),
         )
         .subcommand(
@@ -146,7 +146,7 @@ fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'
                 )
                 .arg(&shred_version_arg)
                 .arg(&gossip_port_arg)
-                .arg(&bind_address_arg)
+                .arg(&advertised_ip_arg)
                 .arg(
                     Arg::with_name("timeout")
                         .long("timeout")
@@ -166,35 +166,16 @@ fn parse_matches() -> ArgMatches<'static> {
     .get_matches()
 }
 
-/// Determine bind address by checking these sources in order:
-/// 1. --bind-address cli arg
-/// 2. connect to entrypoints to determine my public IP address
-fn parse_bind_address(matches: &ArgMatches, entrypoint_addrs: &[SocketAddr]) -> IpAddr {
-    if let Some(bind_address) = matches.value_of("bind_address") {
-        solana_net_utils::parse_host(bind_address).unwrap_or_else(|e| {
-            eprintln!("failed to parse bind-address: {e}");
-            exit(1);
+fn parse_advertised_ip(matches: &ArgMatches) -> IpAddr {
+    matches
+        .value_of("advertised_ip")
+        .map(|advertised_ip| {
+            solana_net_utils::parse_host(advertised_ip).unwrap_or_else(|e| {
+                eprintln!("failed to parse advertised-ip: {e}");
+                exit(1);
+            })
         })
-    } else if let Some(bind_addr) = get_bind_address_from_entrypoints(entrypoint_addrs) {
-        bind_addr
-    } else {
-        eprintln!(
-            "Failed to find a valid bind address. Bind address can be provided directly with \
-             --bind-address or by the entrypoint functioning as an ip echo server."
-        );
-        exit(1);
-    }
-}
-
-/// Find my public IP address by attempting connections to entrypoints until one succeeds.
-fn get_bind_address_from_entrypoints(entrypoint_addrs: &[SocketAddr]) -> Option<IpAddr> {
-    entrypoint_addrs.iter().find_map(|entrypoint_addr| {
-        solana_net_utils::get_public_ip_addr_with_binding(
-            entrypoint_addr,
-            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        )
-        .ok()
-    })
+        .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
 }
 
 // allow deprecations here to workaround limitations with dependency specification in
@@ -281,7 +262,7 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
     let pubkeys = pubkeys_of(matches, "node_pubkey");
     let identity_keypair = keypair_of(matches, "identity");
     let entrypoint_addrs = parse_entrypoints(matches);
-    let gossip_addr = get_gossip_address(matches, &entrypoint_addrs);
+    let gossip_addr = get_gossip_address(matches);
 
     let mut shred_version = value_t_or_exit!(matches, "shred_version", u16);
     if shred_version == 0 {
@@ -331,7 +312,7 @@ fn process_rpc_url(
     let all = matches.is_present("all");
     let timeout = value_t_or_exit!(matches, "timeout", u64);
     let entrypoint_addrs = parse_entrypoints(matches);
-    let gossip_addr = get_gossip_address(matches, &entrypoint_addrs);
+    let gossip_addr = get_gossip_address(matches);
 
     let mut shred_version = value_t_or_exit!(matches, "shred_version", u16);
     if shred_version == 0 {
@@ -385,10 +366,10 @@ fn process_rpc_url(
     Ok(())
 }
 
-fn get_gossip_address(matches: &ArgMatches, entrypoint_addrs: &[SocketAddr]) -> SocketAddr {
-    let bind_address = parse_bind_address(matches, entrypoint_addrs);
+fn get_gossip_address(matches: &ArgMatches) -> SocketAddr {
+    let advertised_ip = parse_advertised_ip(matches);
     SocketAddr::new(
-        bind_address,
+        advertised_ip,
         value_t!(matches, "gossip_port", u16).unwrap_or_else(|_| {
             solana_net_utils::find_available_port_in_range(
                 IpAddr::V4(Ipv4Addr::UNSPECIFIED),
