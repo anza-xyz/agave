@@ -48,7 +48,7 @@ impl TransactionFrame {
         let recent_blockhash_offset = offset as u16;
         advance_offset_for_type::<Hash>(bytes, &mut offset)?;
 
-        let instructions = InstructionsFrame::try_new(bytes, &mut offset)?;
+        let instructions = InstructionsFrame::try_new_for_legacy_and_v0(bytes, &mut offset)?;
         let address_table_lookup = match message_header.version {
             TransactionVersion::Legacy => AddressTableLookupFrame {
                 num_address_table_lookups: 0,

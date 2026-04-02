@@ -52,7 +52,7 @@ impl InstructionsFrame {
     /// instruction data is well-formed, but will not cache data related to
     /// these instructions.
     #[inline(always)]
-    pub(crate) fn try_new(bytes: &[u8], offset: &mut usize) -> Result<Self> {
+    pub(crate) fn try_new_for_legacy_and_v0(bytes: &[u8], offset: &mut usize) -> Result<Self> {
         // Read the number of instructions at the current offset.
         // Each instruction needs at least 3 bytes, so do a sanity check here to
         // ensure we have enough bytes to read the number of instructions.
@@ -450,7 +450,7 @@ mod tests {
     fn test_zero_instructions() {
         let bytes = bincode::serialize(&ShortVec(Vec::<CompiledInstruction>::new())).unwrap();
         let mut offset = 0;
-        let instructions_frame = InstructionsFrame::try_new(&bytes, &mut offset).unwrap();
+        let instructions_frame = InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).unwrap();
 
         assert_eq!(instructions_frame.num_instructions(), 0);
         assert_eq!(instructions_frame.offset(), 1);
@@ -468,7 +468,7 @@ mod tests {
         // modify the number of instructions to be too high
         bytes[0] = 0x02;
         let mut offset = 0;
-        assert!(InstructionsFrame::try_new(&bytes, &mut offset).is_err());
+        assert!(InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).is_err());
     }
 
     #[test]
@@ -480,7 +480,7 @@ mod tests {
         }]))
         .unwrap();
         let mut offset = 0;
-        let instructions_frame = InstructionsFrame::try_new(&bytes, &mut offset).unwrap();
+        let instructions_frame = InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).unwrap();
         assert_eq!(instructions_frame.num_instructions(), 1);
         assert_eq!(instructions_frame.offset(), 1);
         assert_eq!(offset, bytes.len());
@@ -502,7 +502,7 @@ mod tests {
         ]))
         .unwrap();
         let mut offset = 0;
-        let instructions_frame = InstructionsFrame::try_new(&bytes, &mut offset).unwrap();
+        let instructions_frame = InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).unwrap();
         assert_eq!(instructions_frame.num_instructions(), 2);
         assert_eq!(instructions_frame.offset(), 1);
         assert_eq!(offset, bytes.len());
@@ -521,7 +521,7 @@ mod tests {
         bytes[2] = 127;
 
         let mut offset = 0;
-        assert!(InstructionsFrame::try_new(&bytes, &mut offset).is_err());
+        assert!(InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).is_err());
     }
 
     #[test]
@@ -537,6 +537,6 @@ mod tests {
         bytes[6] = 127;
 
         let mut offset = 0;
-        assert!(InstructionsFrame::try_new(&bytes, &mut offset).is_err());
+        assert!(InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).is_err());
     }
 }
