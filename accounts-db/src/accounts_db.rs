@@ -3529,13 +3529,11 @@ impl AccountsDb {
         pubkey: &'a Pubkey,
         clone_in_lock: bool,
     ) -> Option<(Slot, StorageLocation, Option<LoadedAccountAccessor<'a>>)> {
-        // Bound the root search to ancestors.max_slot() so that roots from
-        // newer banks are not visible when querying through an older bank.
-        let max_root_slot = if ancestors.is_empty() {
-            None
-        } else {
-            Some(ancestors.max_slot())
-        };
+        // Bound the root search to ancestors.min_slot() so that roots from
+        // slots beyond the querying bank's ancestor chain are not visible.
+        // min_slot is more correct than max_slot because a root between min
+        // and max that is not an ancestor belongs to a different fork.
+        let max_root_slot = ancestors.min_slot();
         self.accounts_index.get_with_and_then(
             pubkey,
             Some(ancestors),
