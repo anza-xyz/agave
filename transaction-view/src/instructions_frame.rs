@@ -444,13 +444,21 @@ mod tests {
                 Self::V1 { headers_offset, .. } => *headers_offset,
             }
         }
+
+        fn frames(&self) -> Option<&Vec<LegacyAndV0InstructionFrame>> {
+            match self {
+                Self::LegacyAndV0 { frames, .. } => Some(frames),
+                Self::V1 { .. } => None,
+            }
+        }
     }
 
     #[test]
     fn test_zero_instructions() {
         let bytes = bincode::serialize(&ShortVec(Vec::<CompiledInstruction>::new())).unwrap();
         let mut offset = 0;
-        let instructions_frame = InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).unwrap();
+        let instructions_frame =
+            InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).unwrap();
 
         assert_eq!(instructions_frame.num_instructions(), 0);
         assert_eq!(instructions_frame.offset(), 1);
@@ -480,7 +488,8 @@ mod tests {
         }]))
         .unwrap();
         let mut offset = 0;
-        let instructions_frame = InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).unwrap();
+        let instructions_frame =
+            InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).unwrap();
         assert_eq!(instructions_frame.num_instructions(), 1);
         assert_eq!(instructions_frame.offset(), 1);
         assert_eq!(offset, bytes.len());
@@ -502,7 +511,8 @@ mod tests {
         ]))
         .unwrap();
         let mut offset = 0;
-        let instructions_frame = InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).unwrap();
+        let instructions_frame =
+            InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).unwrap();
         assert_eq!(instructions_frame.num_instructions(), 2);
         assert_eq!(instructions_frame.offset(), 1);
         assert_eq!(offset, bytes.len());
@@ -538,5 +548,310 @@ mod tests {
 
         let mut offset = 0;
         assert!(InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).is_err());
+    }
+
+    #[test]
+    fn test_txv1_instructions_iterator() {
+        let message = solana_message::v1::Message {
+            instructions: vec![
+                CompiledInstruction {
+                    program_id_index: 0,
+                    accounts: vec![1, 2, 3],
+                    data: vec![4, 5, 6, 7, 8, 9, 10],
+                },
+                CompiledInstruction {
+                    program_id_index: 10,
+                    accounts: vec![11, 12],
+                    data: vec![13, 14, 15, 16, 17, 18, 19, 20],
+                },
+            ],
+            ..solana_message::v1::Message::default()
+        };
+
+        let serialized = solana_message::v1::serialize(&message);
+
+        let mut offset = 41; // instruction headers starts at offset 41 for no config, 0 addresses, per spec
+        let instructions_frame =
+            InstructionsFrame::try_new_for_v1(&serialized, &mut offset, 2).unwrap();
+
+        let mut iter = instructions_frame.iter(&serialized);
+        assert_eq!(
+            iter.next(),
+            Some(SVMInstruction {
+                program_id_index: 0,
+                accounts: &[1, 2, 3],
+                data: &[4, 5, 6, 7, 8, 9, 10]
+            })
+        );
+        assert_eq!(
+            iter.next(),
+            Some(SVMInstruction {
+                program_id_index: 10,
+                accounts: &[11, 12],
+                data: &[13, 14, 15, 16, 17, 18, 19, 20]
+            })
+        );
+        assert_eq!(iter.next(), None);
+    }
+
+    fn short_u16_1(x: u8) -> Vec<u8> {
+        vec![x]
+    }
+
+    // short_vec / compact-u16 encoding for 128..=16383 style values
+    fn short_u16_2(x: u16) -> Vec<u8> {
+        assert!(x >= 128);
+        vec![((x & 0x7f) as u8) | 0x80, (x >> 7) as u8]
+    }
+
+    #[test]
+    fn test_try_new_legacy_single_instruction() {
+        // num_instructions = 1
+        // instruction:
+        //   program_id_index = 7
+        //   num_accounts = 2
+        //   accounts = [3, 4]
+        //   data_len = 3
+        //   data = [9, 8, 7]
+        let bytes = vec![
+            1, // num_instructions
+            7, // program_id_index
+            2, // num_accounts
+            3, 4, // account indexes
+            3, // data_len
+            9, 8, 7, // data
+        ];
+
+        let mut offset = 0;
+        let frame = InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).unwrap();
+
+        assert_eq!(offset, bytes.len());
+
+        match frame {
+            InstructionsFrame::LegacyAndV0 {
+                num_instructions,
+                offset,
+                frames,
+            } => {
+                assert_eq!(num_instructions, 1);
+                assert_eq!(offset, 1);
+                assert_eq!(frames.len(), 1);
+                let ix = &frames[0];
+                assert_eq!(ix.num_accounts, 2);
+                assert_eq!(ix.data_len, 3);
+                assert_eq!(ix.num_accounts_len, 1);
+                assert_eq!(ix.data_len_len, 1);
+            }
+            _ => panic!("expected legacy/v0 repr"),
+        }
+    }
+
+    #[test]
+    fn test_try_new_legacy_two_byte_lengths() {
+        let num_accounts = 128u16;
+        let data_len = 130u16;
+
+        let mut bytes = Vec::new();
+        bytes.push(1); // num_instructions
+        bytes.push(42); // program_id_index
+        bytes.extend_from_slice(&short_u16_2(num_accounts));
+        bytes.extend(std::iter::repeat_n(5u8, num_accounts as usize));
+        bytes.extend_from_slice(&short_u16_2(data_len));
+        bytes.extend(std::iter::repeat_n(9u8, data_len as usize));
+
+        let mut offset = 0;
+        let frame = InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).unwrap();
+
+        assert_eq!(offset, bytes.len());
+
+        match frame {
+            InstructionsFrame::LegacyAndV0 {
+                num_instructions,
+                offset,
+                frames,
+            } => {
+                assert_eq!(num_instructions, 1);
+                assert_eq!(offset, 1);
+                assert_eq!(frames.len(), 1);
+                let ix = &frames[0];
+                assert_eq!(ix.num_accounts, num_accounts);
+                assert_eq!(ix.data_len, data_len);
+
+                assert_eq!(ix.num_accounts_len, 2);
+                assert_eq!(ix.data_len_len, 2);
+            }
+            _ => panic!("expected legacy/v0 repr"),
+        }
+    }
+
+    #[test]
+    fn test_try_new_for_v1_single_instruction() {
+        // one v1 instruction
+        // header:
+        //   program_id_index = 9
+        //   num_accounts = 2
+        //   data_len = 3
+        // payload:
+        //   accounts = [10, 11]
+        //   data = [1, 2, 3]
+        let bytes = vec![
+            9, // program_id_index
+            2, // num_accounts
+            3, 0, // data_len (u16 LE)
+            10, 11, // payload accounts
+            1, 2, 3, // payload data
+        ];
+
+        let mut offset = 0;
+        let frame = InstructionsFrame::try_new_for_v1(&bytes, &mut offset, 1).unwrap();
+
+        assert_eq!(offset, bytes.len());
+
+        match frame {
+            InstructionsFrame::V1 {
+                num_instructions,
+                headers_offset,
+                payloads_offset,
+            } => {
+                assert_eq!(num_instructions, 1);
+                assert_eq!(headers_offset, 0);
+                assert_eq!(payloads_offset, 4);
+                let hdr = unsafe { InstructionsFrame::read_v1_header(&bytes, &mut 0) };
+                assert_eq!(hdr.program_id_index, 9);
+                assert_eq!(hdr.num_accounts, 2);
+                assert_eq!(hdr.data_len, 3);
+            }
+            _ => panic!("expected v1 repr"),
+        }
+    }
+
+    #[test]
+    fn test_try_new_for_v1_two_instructions() {
+        // headers:
+        //   ix0: pid=1, accounts=2, data_len=1
+        //   ix1: pid=7, accounts=1, data_len=2
+        //
+        // payloads:
+        //   ix0: [20, 21] [99]
+        //   ix1: [42] [5, 6]
+        let bytes = vec![
+            // header 0
+            1, 2, 1, 0, // header 1
+            7, 1, 2, 0, // payload 0
+            20, 21, 99, // payload 1
+            42, 5, 6,
+        ];
+
+        let mut offset = 0;
+        let frame = InstructionsFrame::try_new_for_v1(&bytes, &mut offset, 2).unwrap();
+
+        assert_eq!(offset, bytes.len());
+        match frame {
+            InstructionsFrame::V1 {
+                num_instructions,
+                headers_offset,
+                payloads_offset,
+            } => {
+                assert_eq!(num_instructions, 2);
+                assert_eq!(headers_offset, 0);
+                assert_eq!(payloads_offset, 8);
+                let hdr = unsafe { InstructionsFrame::read_v1_header(&bytes, &mut 0) };
+                assert_eq!(hdr.program_id_index, 1);
+                assert_eq!(hdr.num_accounts, 2);
+                assert_eq!(hdr.data_len, 1);
+                let hdr = unsafe { InstructionsFrame::read_v1_header(&bytes, &mut 4) };
+                assert_eq!(hdr.program_id_index, 7);
+                assert_eq!(hdr.num_accounts, 1);
+                assert_eq!(hdr.data_len, 2);
+            }
+            _ => panic!("expected v1 repr"),
+        }
+    }
+
+    #[test]
+    fn test_try_new_for_v1_truncated_header_fails() {
+        // num_instructions = 1, but only 3 header bytes instead of 4
+        let bytes = vec![
+            9, // program_id_index
+            2, // num_accounts
+            3, // incomplete data_len
+        ];
+
+        let mut offset = 0;
+        assert!(InstructionsFrame::try_new_for_v1(&bytes, &mut offset, 1).is_err());
+    }
+
+    #[test]
+    fn test_try_new_for_v1_truncated_payload_fails() {
+        // header says payload len = 2 + 3 = 5, but only 4 bytes provided
+        let bytes = vec![
+            9, 2, 3, 0, // header
+            10, 11, 1, 2, // truncated payload
+        ];
+
+        let mut offset = 0;
+        assert!(InstructionsFrame::try_new_for_v1(&bytes, &mut offset, 1).is_err());
+    }
+
+    #[test]
+    fn test_try_new_legacy_truncated_payload_fails() {
+        // data_len says 3, only 2 bytes provided
+        let bytes = vec![
+            1, // num_instructions
+            7, // program_id_index
+            1, // num_accounts
+            9, // account idx
+            3, // data_len
+            1, 2, // truncated data
+        ];
+
+        let mut offset = 0;
+        assert!(InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).is_err());
+    }
+
+    #[test]
+    fn test_try_new_for_v1_zero_instructions() {
+        let bytes = vec![];
+        let mut offset = 0;
+
+        let frame = InstructionsFrame::try_new_for_v1(&bytes, &mut offset, 0).unwrap();
+        assert_eq!(offset, 0);
+        match frame {
+            InstructionsFrame::V1 {
+                num_instructions,
+                headers_offset,
+                payloads_offset,
+            } => {
+                assert_eq!(num_instructions, 0);
+                assert_eq!(headers_offset, 0);
+                assert_eq!(payloads_offset, 0);
+            }
+            _ => panic!("expected v1 repr"),
+        }
+    }
+
+    #[test]
+    fn data_len_max_header_fails_parse() {
+        // header: pid=1, accounts=1, data_len=65535
+        let bytes = vec![1, 1, 0xff, 0xff];
+        let mut offset = 0;
+        assert_eq!(
+            InstructionsFrame::try_new_for_v1(&bytes, &mut offset, 1)
+                .err()
+                .unwrap(),
+            TransactionViewError::ParseError
+        );
+    }
+
+    #[test]
+    fn test_try_new_legacy_zero_instructions() {
+        let bytes = short_u16_1(0);
+        let mut offset = 0;
+
+        let frame = InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).unwrap();
+        assert_eq!(frame.num_instructions(), 0);
+        assert_eq!(frame.offset(), 1);
+        assert!(frame.frames().unwrap().is_empty());
+        assert_eq!(offset, 1);
     }
 }
