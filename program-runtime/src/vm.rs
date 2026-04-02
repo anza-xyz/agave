@@ -212,7 +212,6 @@ pub fn execute<'a, 'b: 'a>(
 
     let mut create_vm_time = Measure::start("create_vm");
     let execution_result = {
-        #[cfg_attr(feature = "sbpf-debugger", allow(unused_assignments))]
         let mut execution_mode = ExecutionMode::PreferJit;
         #[cfg(feature = "sbpf-debugger")]
         let (debug_port, debug_metadata) = if invoke_context.debug_port.is_some() {
