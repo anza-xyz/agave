@@ -135,6 +135,7 @@ impl InstructionsFrame {
         // instead of one bounds check per instruction.
         let mut total_payload_len: usize = 0;
         for _ in 0..num_instructions {
+            // SAFETY: we have already verified bytes contains enough space for `num_instruction` headers.
             let header = unsafe { Self::read_v1_header(bytes, &mut header_offset) };
 
             let payload_len = usize::from(header.num_accounts)
