@@ -1139,17 +1139,6 @@ impl Validator {
         }
         *start_progress.write().unwrap() = ValidatorStartProgress::StartingServices;
 
-        let sample_performance_service =
-            if config.rpc_addrs.is_some() && config.rpc_config.enable_rpc_transaction_history {
-                Some(SamplePerformanceService::new(
-                    &bank_forks,
-                    blockstore.clone(),
-                    exit.clone(),
-                ))
-            } else {
-                None
-            };
-
         let mut block_commitment_cache = BlockCommitmentCache::default();
         let bank_forks_guard = bank_forks.read().unwrap();
         block_commitment_cache.initialize_slots(
@@ -1242,6 +1231,7 @@ impl Validator {
             completed_data_sets_sender,
             completed_data_sets_service,
             rpc_completed_slots_service,
+            sample_performance_service,
             optimistically_confirmed_bank_tracker,
             bank_notification_sender,
         ) = if let Some((rpc_addr, rpc_pubsub_addr)) = config.rpc_addrs {
@@ -1357,6 +1347,16 @@ impl Validator {
                     None
                 };
 
+            let sample_performance_service = if config.rpc_config.enable_rpc_transaction_history {
+                Some(SamplePerformanceService::new(
+                    &bank_forks,
+                    blockstore.clone(),
+                    exit.clone(),
+                ))
+            } else {
+                None
+            };
+
             let dependency_tracker = transaction_status_sender
                 .is_some()
                 .then_some(dependency_tracker);
@@ -1383,11 +1383,12 @@ impl Validator {
                 completed_data_sets_sender,
                 completed_data_sets_service,
                 rpc_completed_slots_service,
+                sample_performance_service,
                 optimistically_confirmed_bank_tracker,
                 bank_notification_sender_config,
             )
         } else {
-            (None, None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None, None, None)
         };
 
         let ip_echo_server = match node.sockets.ip_echo {
