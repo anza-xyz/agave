@@ -84,7 +84,7 @@ fn test_node(exit: Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSock
 fn test_node_with_bank(
     node_keypair: Arc<Keypair>,
     exit: Arc<AtomicBool>,
-    epoch_specs: Arc<dyn EpochSpecs>,
+    epoch_specs: Box<dyn EpochSpecs>,
 ) -> (Arc<ClusterInfo>, GossipService, UdpSocket) {
     let mut test_node = Node::new_localhost_with_pubkey(&node_keypair.pubkey());
     let cluster_info = Arc::new(ClusterInfo::new(
@@ -336,7 +336,7 @@ pub fn cluster_info_scale() {
     let bank_forks = BankForks::new_rw_arc(bank0);
     let root_bank = bank_forks.read().unwrap().root_bank();
     let slots_in_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
-    let epoch_specs: Arc<dyn EpochSpecs> = Arc::new(TestEpochSpecs {
+    let epoch_specs: Box<dyn EpochSpecs> = Box::new(TestEpochSpecs {
         slots_in_epoch,
         epoch_duration: Duration::from_millis(slots_in_epoch * 400),
         staked_nodes: root_bank.current_epoch_staked_nodes(),
@@ -348,7 +348,7 @@ pub fn cluster_info_scale() {
             test_node_with_bank(
                 Arc::new(keypairs.node_keypair),
                 exit.clone(),
-                epoch_specs.clone(),
+                epoch_specs.clone_box(),
             )
         })
         .collect();
