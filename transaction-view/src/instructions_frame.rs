@@ -4,28 +4,43 @@ use {
             advance_offset_for_array, check_remaining, optimized_read_compressed_u16, read_byte,
             unchecked_read_byte, unchecked_read_slice_data,
         },
-        result::Result,
+        result::{Result, TransactionViewError},
     },
     core::fmt::{Debug, Formatter},
     solana_svm_transaction::instruction::SVMInstruction,
 };
 
 /// Contains metadata about the instructions in a transaction packet.
-#[derive(Debug, Default)]
-pub(crate) struct InstructionsFrame {
-    /// The number of instructions in the transaction.
-    pub(crate) num_instructions: u16,
-    /// The offset to the first instruction in the transaction.
-    pub(crate) offset: u16,
-    pub(crate) frames: Vec<InstructionFrame>,
+#[derive(Debug)]
+pub(crate) enum InstructionsFrame {
+    LegacyAndV0 {
+        /// The number of instructions in the transaction.
+        num_instructions: u16,
+        /// The offset to the first instruction in the transaction.
+        offset: u16,
+        frames: Vec<LegacyAndV0InstructionFrame>,
+    },
+    V1 {
+        num_instructions: u16,
+        headers_offset: u16,
+        payloads_offset: u16,
+    },
 }
 
 #[derive(Debug)]
-pub(crate) struct InstructionFrame {
+pub struct LegacyAndV0InstructionFrame {
     num_accounts: u16,
     data_len: u16,
     num_accounts_len: u8, // either 1 or 2
     data_len_len: u8,     // either 1 or 2
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+struct V1InstructionHeader {
+    program_id_index: u8,
+    num_accounts: u8,
+    data_len: u16,
 }
 
 impl InstructionsFrame {
@@ -80,7 +95,7 @@ impl InstructionsFrame {
             let data_len_len = offset.wrapping_sub(data_len_offset) as u8;
             advance_offset_for_array::<u8>(bytes, offset, data_len)?;
 
-            frames.push(InstructionFrame {
+            frames.push(LegacyAndV0InstructionFrame {
                 num_accounts,
                 num_accounts_len,
                 data_len,
@@ -88,21 +103,128 @@ impl InstructionsFrame {
             });
         }
 
-        Ok(Self {
+        Ok(Self::LegacyAndV0 {
             num_instructions,
             offset: instructions_offset,
             frames,
         })
     }
+
+    #[allow(dead_code)]
+    #[inline(always)]
+    pub(crate) fn try_new_for_v1(
+        bytes: &[u8],
+        offset: &mut usize,
+        num_instructions: u8,
+    ) -> Result<Self> {
+        let headers_offset = *offset as u16;
+        let headers_len = 4usize.wrapping_mul(num_instructions as usize);
+
+        check_remaining(bytes, *offset, headers_len)?;
+
+        let mut header_offset = *offset;
+        *offset = offset.wrapping_add(headers_len);
+
+        let payloads_offset = *offset as u16;
+
+        // Validate the entire payload region without allocating.
+        for _ in 0..num_instructions {
+            let header = Self::read_v1_header(bytes, &mut header_offset)?;
+
+            let payload_len = u16::from(header.num_accounts)
+                .checked_add(header.data_len)
+                .ok_or(TransactionViewError::ParseError)?;
+
+            advance_offset_for_array::<u8>(bytes, offset, payload_len)?;
+        }
+
+        Ok(Self::V1 {
+            num_instructions: num_instructions as u16,
+            headers_offset,
+            payloads_offset,
+        })
+    }
+
+    #[inline(always)]
+    fn read_v1_header(bytes: &[u8], offset: &mut usize) -> Result<V1InstructionHeader> {
+        let program_id_index = read_byte(bytes, offset)?;
+        let num_accounts = read_byte(bytes, offset)?;
+        let data_len_lo = read_byte(bytes, offset)?;
+        let data_len_hi = read_byte(bytes, offset)?;
+
+        Ok(V1InstructionHeader {
+            program_id_index,
+            num_accounts,
+            data_len: u16::from_le_bytes([data_len_lo, data_len_hi]),
+        })
+    }
+
+    #[inline(always)]
+    pub(crate) fn num_instructions(&self) -> u16 {
+        match self {
+            Self::LegacyAndV0 {
+                num_instructions, ..
+            } => *num_instructions,
+            Self::V1 {
+                num_instructions, ..
+            } => *num_instructions,
+        }
+    }
+
+    #[allow(dead_code)]
+    #[inline(always)]
+    pub(crate) fn offset(&self) -> u16 {
+        match self {
+            Self::LegacyAndV0 { offset, .. } => *offset,
+            Self::V1 { headers_offset, .. } => *headers_offset,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn iter<'a>(&'a self, bytes: &'a [u8]) -> InstructionsIterator<'a> {
+        match self {
+            Self::LegacyAndV0 {
+                num_instructions,
+                offset,
+                frames,
+            } => InstructionsIterator::LegacyAndV0 {
+                bytes,
+                offset: *offset as usize,
+                index: 0,
+                num_instructions: *num_instructions,
+                frames,
+            },
+            Self::V1 {
+                num_instructions,
+                headers_offset,
+                payloads_offset,
+            } => InstructionsIterator::V1 {
+                bytes,
+                index: 0,
+                num_instructions: *num_instructions,
+                headers_offset: *headers_offset as usize,
+                payloads_offset: *payloads_offset as usize,
+            },
+        }
+    }
 }
 
 #[derive(Clone)]
-pub struct InstructionsIterator<'a> {
-    pub(crate) bytes: &'a [u8],
-    pub(crate) offset: usize,
-    pub(crate) num_instructions: u16,
-    pub(crate) index: u16,
-    pub(crate) frames: &'a [InstructionFrame],
+pub enum InstructionsIterator<'a> {
+    LegacyAndV0 {
+        bytes: &'a [u8],
+        offset: usize,
+        num_instructions: u16,
+        index: u16,
+        frames: &'a [LegacyAndV0InstructionFrame],
+    },
+    V1 {
+        bytes: &'a [u8],
+        index: u16,
+        num_instructions: u16,
+        headers_offset: usize,
+        payloads_offset: usize,
+    },
 }
 
 impl<'a> Iterator for InstructionsIterator<'a> {
@@ -110,64 +232,132 @@ impl<'a> Iterator for InstructionsIterator<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.num_instructions {
-            let InstructionFrame {
-                num_accounts,
-                num_accounts_len,
-                data_len,
-                data_len_len,
-            } = self.frames[usize::from(self.index)];
+        match self {
+            Self::LegacyAndV0 {
+                bytes,
+                offset,
+                index,
+                num_instructions,
+                frames,
+            } => {
+                if *index >= *num_instructions {
+                    return None;
+                }
 
-            self.index = self.index.wrapping_add(1);
+                let LegacyAndV0InstructionFrame {
+                    num_accounts,
+                    num_accounts_len,
+                    data_len,
+                    data_len_len,
+                } = frames[usize::from(*index)];
 
-            // Each instruction has 3 pieces:
-            // 1. Program ID index (u8)
-            // 2. Accounts indexes ([u8])
-            // 3. Data ([u8])
+                *index = index.wrapping_add(1);
 
-            // Read the program ID index.
-            // SAFETY: Offset and length checks have been done in the initial parsing.
-            let program_id_index = unsafe { unchecked_read_byte(self.bytes, &mut self.offset) };
+                // Each instruction has 3 pieces:
+                // 1. Program ID index (u8)
+                // 2. Accounts indexes ([u8])
+                // 3. Data ([u8])
 
-            // Move offset to accounts offset - do not re-parse u16.
-            self.offset = self.offset.wrapping_add(usize::from(num_accounts_len));
-            const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
-            // SAFETY:
-            // - The offset is checked to be valid in the byte slice.
-            // - The alignment of u8 is 1.
-            // - The slice length is checked to be valid.
-            // - `u8` cannot be improperly initialized.
-            // - Offset and length checks have been done in the initial parsing.
-            let accounts = unsafe {
-                unchecked_read_slice_data::<u8>(self.bytes, &mut self.offset, num_accounts)
-            };
+                // Read the program ID index.
+                // SAFETY: Offset and length checks have been done in the initial parsing.
+                let program_id_index = unsafe { unchecked_read_byte(bytes, offset) };
 
-            // Move offset to accounts offset - do not re-parse u16.
-            self.offset = self.offset.wrapping_add(usize::from(data_len_len));
-            const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
-            // SAFETY:
-            // - The offset is checked to be valid in the byte slice.
-            // - The alignment of u8 is 1.
-            // - The slice length is checked to be valid.
-            // - `u8` cannot be improperly initialized.
-            // - Offset and length checks have been done in the initial parsing.
-            let data =
-                unsafe { unchecked_read_slice_data::<u8>(self.bytes, &mut self.offset, data_len) };
+                // Move offset to accounts offset - do not re-parse u16.
+                *offset = offset.wrapping_add(usize::from(num_accounts_len));
+                const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
+                // SAFETY:
+                // - The offset is checked to be valid in the byte slice.
+                // - The alignment of u8 is 1.
+                // - The slice length is checked to be valid.
+                // - `u8` cannot be improperly initialized.
+                // - Offset and length checks have been done in the initial parsing.
+                let accounts =
+                    unsafe { unchecked_read_slice_data::<u8>(bytes, offset, num_accounts) };
 
-            Some(SVMInstruction {
-                program_id_index,
-                accounts,
-                data,
-            })
-        } else {
-            None
+                // Move offset to accounts offset - do not re-parse u16.
+                *offset = offset.wrapping_add(usize::from(data_len_len));
+                const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
+                // SAFETY:
+                // - The offset is checked to be valid in the byte slice.
+                // - The alignment of u8 is 1.
+                // - The slice length is checked to be valid.
+                // - `u8` cannot be improperly initialized.
+                // - Offset and length checks have been done in the initial parsing.
+                let data = unsafe { unchecked_read_slice_data::<u8>(bytes, offset, data_len) };
+
+                Some(SVMInstruction {
+                    program_id_index,
+                    accounts,
+                    data,
+                })
+            }
+            Self::V1 {
+                bytes,
+                index,
+                num_instructions,
+                headers_offset,
+                payloads_offset,
+            } => {
+                if *index >= *num_instructions {
+                    return None;
+                }
+
+                let mut header_cursor = *headers_offset;
+                let program_id_index = unsafe { unchecked_read_byte(bytes, &mut header_cursor) };
+                let num_accounts = unsafe { unchecked_read_byte(bytes, &mut header_cursor) };
+                let data_len_lo = unsafe { unchecked_read_byte(bytes, &mut header_cursor) };
+                let data_len_hi = unsafe { unchecked_read_byte(bytes, &mut header_cursor) };
+                let data_len = u16::from_le_bytes([data_len_lo, data_len_hi]);
+
+                *headers_offset = header_cursor;
+                *index = index.wrapping_add(1);
+
+                Some(unsafe {
+                    for_v1(
+                        bytes,
+                        payloads_offset,
+                        program_id_index,
+                        num_accounts as u16,
+                        data_len,
+                    )
+                })
+            }
         }
+    }
+}
+
+#[inline(always)]
+unsafe fn for_v1<'a>(
+    bytes: &'a [u8],
+    payloads_offset: &mut usize,
+    program_id_index: u8,
+    num_accounts: u16,
+    data_len: u16,
+) -> SVMInstruction<'a> {
+    let accounts = unsafe { unchecked_read_slice_data::<u8>(bytes, payloads_offset, num_accounts) };
+    let data = unsafe { unchecked_read_slice_data::<u8>(bytes, payloads_offset, data_len) };
+
+    SVMInstruction {
+        program_id_index,
+        accounts,
+        data,
     }
 }
 
 impl ExactSizeIterator for InstructionsIterator<'_> {
     fn len(&self) -> usize {
-        usize::from(self.num_instructions.wrapping_sub(self.index))
+        match self {
+            Self::LegacyAndV0 {
+                num_instructions,
+                index,
+                ..
+            } => usize::from(num_instructions.wrapping_sub(*index)),
+            Self::V1 {
+                num_instructions,
+                index,
+                ..
+            } => usize::from(num_instructions.wrapping_sub(*index)),
+        }
     }
 }
 
@@ -190,8 +380,8 @@ mod tests {
         let mut offset = 0;
         let instructions_frame = InstructionsFrame::try_new(&bytes, &mut offset).unwrap();
 
-        assert_eq!(instructions_frame.num_instructions, 0);
-        assert_eq!(instructions_frame.offset, 1);
+        assert_eq!(instructions_frame.num_instructions(), 0);
+        assert_eq!(instructions_frame.offset(), 1);
         assert_eq!(offset, bytes.len());
     }
 
@@ -219,8 +409,8 @@ mod tests {
         .unwrap();
         let mut offset = 0;
         let instructions_frame = InstructionsFrame::try_new(&bytes, &mut offset).unwrap();
-        assert_eq!(instructions_frame.num_instructions, 1);
-        assert_eq!(instructions_frame.offset, 1);
+        assert_eq!(instructions_frame.num_instructions(), 1);
+        assert_eq!(instructions_frame.offset(), 1);
         assert_eq!(offset, bytes.len());
     }
 
@@ -241,8 +431,8 @@ mod tests {
         .unwrap();
         let mut offset = 0;
         let instructions_frame = InstructionsFrame::try_new(&bytes, &mut offset).unwrap();
-        assert_eq!(instructions_frame.num_instructions, 2);
-        assert_eq!(instructions_frame.offset, 1);
+        assert_eq!(instructions_frame.num_instructions(), 2);
+        assert_eq!(instructions_frame.offset(), 1);
         assert_eq!(offset, bytes.len());
     }
 
