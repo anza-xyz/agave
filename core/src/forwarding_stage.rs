@@ -9,7 +9,7 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
     packet_container::PacketContainer,
     solana_cost_model::cost_model::CostModel,
-    solana_fee_structure::{FeeBudgetLimits, FeeDetails},
+    solana_fee_structure::FeeDetails,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, node::NodeMultihoming},
     solana_keypair::Keypair,
     solana_net_utils::{multihomed_sockets::BindIpAddrs, token_bucket::TokenBucket},
@@ -593,12 +593,13 @@ fn calculate_priority(
     transaction: &RuntimeTransaction<SanitizedTransactionView<&[u8]>>,
     bank: &Bank,
 ) -> Option<u64> {
-    let compute_budget_limits = transaction.compute_budget_limits(&bank.feature_set).ok()?;
-    let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
+    let transaction_configuration = transaction
+        .transaction_configuration(&bank.feature_set)
+        .ok()?;
 
     // Manually estimate fee here since currently interface doesn't allow a on SVM type.
     // Doesn't need to be 100% accurate so long as close and consistent.
-    let prioritization_fee = fee_budget_limits.prioritization_fee;
+    let prioritization_fee = transaction_configuration.prioritization_fee;
     let signature_details = transaction.signature_details();
     let signature_fee = signature_details
         .total_signatures()

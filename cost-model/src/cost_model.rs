@@ -181,11 +181,11 @@ impl CostModel {
         // if failed to process compute_budget instructions, the transaction will not be executed
         // by `bank`, therefore it should be considered as no execution cost by cost model.
         let (programs_execution_costs, loaded_accounts_data_size_cost) =
-            match transaction.compute_budget_limits(feature_set) {
+            match transaction.transaction_configuration(feature_set) {
                 Ok(compute_budget_limits) => (
                     u64::from(compute_budget_limits.compute_unit_limit),
                     Self::calculate_loaded_accounts_data_size_cost(
-                        compute_budget_limits.loaded_accounts_bytes.get(),
+                        compute_budget_limits.loaded_accounts_data_size_limit.get(),
                         feature_set,
                     ),
                 ),

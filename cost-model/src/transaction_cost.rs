@@ -293,14 +293,14 @@ impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTr
         &DUMMY
     }
 
-    fn compute_budget_limits(
+    fn transaction_configuration(
         &self,
         _feature_set: &agave_feature_set::FeatureSet,
     ) -> Result<
-        solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
+        solana_runtime_transaction::transaction_meta::TransactionConfiguration,
         solana_transaction::TransactionError,
     > {
-        unimplemented!("WritableKeysTransaction::compute_budget_limits")
+        unimplemented!("WritableKeysTransaction::transaction_configuration")
     }
 
     fn instruction_data_len(&self) -> u16 {

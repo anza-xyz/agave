@@ -353,13 +353,16 @@ mod tests {
 
         for feature_set in [FeatureSet::default(), FeatureSet::all_enabled()] {
             let compute_budget_limits = runtime_transaction_static
-                .compute_budget_limits(&feature_set)
+                .transaction_configuration(&feature_set)
                 .unwrap();
             assert_eq!(compute_unit_limit, compute_budget_limits.compute_unit_limit);
-            assert_eq!(compute_unit_price, compute_budget_limits.compute_unit_price);
+            assert_eq!(
+                compute_unit_price * u64::from(compute_unit_limit) / 1_000_000,
+                compute_budget_limits.prioritization_fee
+            );
             assert_eq!(
                 loaded_accounts_bytes,
-                compute_budget_limits.loaded_accounts_bytes.get()
+                compute_budget_limits.loaded_accounts_data_size_limit.get()
             );
         }
     }

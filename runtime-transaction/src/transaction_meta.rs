@@ -25,10 +25,10 @@ pub trait StaticMeta {
     fn message_hash(&self) -> &Hash;
     fn is_simple_vote_transaction(&self) -> bool;
     fn signature_details(&self) -> &TransactionSignatureDetails;
-    fn compute_budget_limits(
+    fn transaction_configuration(
         &self,
         feature_set: &FeatureSet,
-    ) -> Result<ComputeBudgetLimits, TransactionError>;
+    ) -> Result<TransactionConfiguration, TransactionError>;
     fn instruction_data_len(&self) -> u16;
 }
 
@@ -53,7 +53,7 @@ pub struct TransactionConfiguration {
     pub updated_heap_bytes: u32,
     pub compute_unit_limit: u32,
     pub prioritization_fee: u64,
-    pub loaded_accounts_bytes: NonZeroU32,
+    pub loaded_accounts_data_size_limit: NonZeroU32,
 }
 
 impl From<ComputeBudgetLimits> for TransactionConfiguration {
@@ -63,7 +63,7 @@ impl From<ComputeBudgetLimits> for TransactionConfiguration {
             updated_heap_bytes: compute_budget_limits.updated_heap_bytes,
             compute_unit_limit: compute_budget_limits.compute_unit_limit,
             prioritization_fee,
-            loaded_accounts_bytes: compute_budget_limits.loaded_accounts_bytes,
+            loaded_accounts_data_size_limit: compute_budget_limits.loaded_accounts_bytes,
         }
     }
 }

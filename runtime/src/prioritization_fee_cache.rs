@@ -220,21 +220,21 @@ impl PrioritizationFeeCache {
                     continue;
                 }
 
-                let compute_budget_limits =
-                    sanitized_transaction.compute_budget_limits(&bank.feature_set);
+                let transaction_configuration =
+                    sanitized_transaction.transaction_configuration(&bank.feature_set);
                 let lock_result = validate_account_locks(
                     sanitized_transaction.account_keys(),
                     bank.get_transaction_account_lock_limit(),
                 );
 
-                if compute_budget_limits.is_err() || lock_result.is_err() {
+                if transaction_configuration.is_err() || lock_result.is_err() {
                     continue;
                 }
-                let compute_budget_limits = compute_budget_limits.unwrap();
+                let transaction_configuration = transaction_configuration.unwrap();
 
                 // filter out any transaction that requests zero compute_unit_limit
                 // since its priority fee amount is not instructive
-                if compute_budget_limits.compute_unit_limit == 0 {
+                if transaction_configuration.compute_unit_limit == 0 {
                     continue;
                 }
 
@@ -247,17 +247,23 @@ impl PrioritizationFeeCache {
                     .collect();
 
                 let (prioritization_fee, calculate_prioritization_fee_us) =
-                    measure_us!(compute_budget_limits.get_prioritization_fee());
+                    measure_us!(transaction_configuration.prioritization_fee);
                 self.metrics
                     .accumulate_total_calculate_prioritization_fee_elapsed_us(
                         calculate_prioritization_fee_us,
                     );
 
+                let compute_unit_price = transaction_configuration
+                    .prioritization_fee
+                    .checked_div(u64::from(transaction_configuration.compute_unit_limit))
+                    .unwrap_or(0)
+                    .saturating_mul(1_000_000);
+
                 self.sender
                     .send(CacheServiceUpdate::TransactionUpdate {
                         slot: bank.slot(),
                         bank_id: bank.bank_id(),
-                        compute_unit_price: compute_budget_limits.compute_unit_price,
+                        compute_unit_price,
                         prioritization_fee,
                         writable_accounts,
                     })
