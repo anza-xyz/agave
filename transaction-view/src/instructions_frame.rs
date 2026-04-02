@@ -2,7 +2,7 @@ use {
     crate::{
         bytes::{
             advance_offset_for_array, check_remaining, optimized_read_compressed_u16, read_byte,
-            unchecked_read_byte, unchecked_read_slice_data,
+            unchecked_copy_value, unchecked_read_byte, unchecked_read_slice_data,
         },
         result::{Result, TransactionViewError},
     },
@@ -36,6 +36,7 @@ pub struct LegacyAndV0InstructionFrame {
 }
 
 #[allow(dead_code)]
+#[repr(C)]
 #[derive(Debug)]
 struct V1InstructionHeader {
     program_id_index: u8,
@@ -118,7 +119,8 @@ impl InstructionsFrame {
         num_instructions: u8,
     ) -> Result<Self> {
         let headers_offset = *offset as u16;
-        let headers_len = 4usize.wrapping_mul(num_instructions as usize);
+        let headers_len =
+            core::mem::size_of::<V1InstructionHeader>().wrapping_mul(num_instructions as usize);
 
         check_remaining(bytes, *offset, headers_len)?;
 
@@ -127,36 +129,41 @@ impl InstructionsFrame {
 
         let payloads_offset = *offset as u16;
 
-        // Validate the entire payload region without allocating.
+        // Tx v1 stores all instruction payloads contiguously after the header block.
+        // We validate headers first, accumulate the total payload size across all
+        // instructions, and then do a single bounds check for the whole payload region
+        // instead of one bounds check per instruction.
+        let mut total_payload_len: usize = 0;
         for _ in 0..num_instructions {
-            let header = Self::read_v1_header(bytes, &mut header_offset)?;
+            let header = unsafe { Self::read_v1_header(bytes, &mut header_offset) };
 
-            let payload_len = u16::from(header.num_accounts)
-                .checked_add(header.data_len)
+            let payload_len = usize::from(header.num_accounts)
+                .checked_add(usize::from(header.data_len))
                 .ok_or(TransactionViewError::ParseError)?;
 
-            advance_offset_for_array::<u8>(bytes, offset, payload_len)?;
+            total_payload_len = total_payload_len
+                .checked_add(payload_len)
+                .ok_or(TransactionViewError::ParseError)?;
         }
 
+        check_remaining(bytes, *offset, total_payload_len)?;
+        *offset = offset.wrapping_add(total_payload_len);
+
         Ok(Self::V1 {
-            num_instructions: num_instructions as u16,
+            num_instructions: u16::from(num_instructions),
             headers_offset,
             payloads_offset,
         })
     }
 
+    /// # Safety
+    /// `bytes[*offset..*offset + size_of::<V1InstructionHeader>()]` must be valid.
     #[inline(always)]
-    fn read_v1_header(bytes: &[u8], offset: &mut usize) -> Result<V1InstructionHeader> {
-        let program_id_index = read_byte(bytes, offset)?;
-        let num_accounts = read_byte(bytes, offset)?;
-        let data_len_lo = read_byte(bytes, offset)?;
-        let data_len_hi = read_byte(bytes, offset)?;
-
-        Ok(V1InstructionHeader {
-            program_id_index,
-            num_accounts,
-            data_len: u16::from_le_bytes([data_len_lo, data_len_hi]),
-        })
+    unsafe fn read_v1_header(bytes: &[u8], offset: &mut usize) -> V1InstructionHeader {
+        let mut header: V1InstructionHeader = unsafe { unchecked_copy_value(bytes, *offset) };
+        *offset = offset.wrapping_add(core::mem::size_of::<V1InstructionHeader>());
+        header.data_len = u16::from_le(header.data_len);
+        header
     }
 
     #[inline(always)]
@@ -168,15 +175,6 @@ impl InstructionsFrame {
             Self::V1 {
                 num_instructions, ..
             } => *num_instructions,
-        }
-    }
-
-    #[allow(dead_code)]
-    #[inline(always)]
-    pub(crate) fn offset(&self) -> u16 {
-        match self {
-            Self::LegacyAndV0 { offset, .. } => *offset,
-            Self::V1 { headers_offset, .. } => *headers_offset,
         }
     }
 
@@ -441,6 +439,15 @@ mod tests {
         super::*, solana_message::compiled_instruction::CompiledInstruction,
         solana_short_vec::ShortVec,
     };
+
+    impl InstructionsFrame {
+        fn offset(&self) -> u16 {
+            match self {
+                Self::LegacyAndV0 { offset, .. } => *offset,
+                Self::V1 { headers_offset, .. } => *headers_offset,
+            }
+        }
+    }
 
     #[test]
     fn test_zero_instructions() {
