@@ -31,19 +31,19 @@ pub struct EpochSpecs {
 impl EpochSpecsTrait for EpochSpecs {
     fn epoch_current_staked_nodes(&mut self) -> Arc<HashMap<Pubkey, u64>> {
         let cache = &mut self.cache;
-        Self::refresh_cache(cache, &self.sharable_banks);
+        Self::maybe_refresh_cache(cache, &self.sharable_banks);
         Arc::clone(&cache.current_epoch_staked_nodes)
     }
 
     fn epoch_duration(&mut self) -> Duration {
         let cache = &mut self.cache;
-        Self::refresh_cache(cache, &self.sharable_banks);
+        Self::maybe_refresh_cache(cache, &self.sharable_banks);
         cache.epoch_duration
     }
 
     fn epoch_slots(&mut self) -> u64 {
         let cache = &mut self.cache;
-        Self::refresh_cache(cache, &self.sharable_banks);
+        Self::maybe_refresh_cache(cache, &self.sharable_banks);
         cache.slots_in_epoch
     }
 
@@ -53,7 +53,7 @@ impl EpochSpecsTrait for EpochSpecs {
 }
 
 impl EpochSpecs {
-    fn refresh_cache(cache: &mut EpochSpecsCache, shareable_banks: &SharableBanks) {
+    fn maybe_refresh_cache(cache: &mut EpochSpecsCache, shareable_banks: &SharableBanks) {
         let root_bank = shareable_banks.root();
         if root_bank.epoch() == cache.epoch {
             return; // still the same epoch. nothing to update.
