@@ -65,18 +65,6 @@ pub struct IpEchoServerResponse {
     pub(crate) shred_version: Option<u16>,
 }
 
-impl IpEchoServerMessage {
-    pub fn new(tcp_ports: &[u16], udp_ports: &[u16]) -> Self {
-        let mut msg = Self::default();
-        assert!(tcp_ports.len() <= msg.tcp_ports.len());
-        assert!(udp_ports.len() <= msg.udp_ports.len());
-
-        msg.tcp_ports[..tcp_ports.len()].copy_from_slice(tcp_ports);
-        msg.udp_ports[..udp_ports.len()].copy_from_slice(udp_ports);
-        msg
-    }
-}
-
 pub(crate) fn ip_echo_server_request_length() -> usize {
     const REQUEST_TERMINUS_LENGTH: usize = 1;
     (HEADER_LENGTH + REQUEST_TERMINUS_LENGTH)

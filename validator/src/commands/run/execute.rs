@@ -16,7 +16,7 @@ use {
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
-    rand::{rng, seq::SliceRandom},
+    rand::seq::SliceRandom,
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
         accounts_file::StorageAccess,
@@ -177,7 +177,7 @@ pub fn execute(
         })
         .transpose()?;
 
-    let advertised_ip = resolve_advertised_ip(&bind_addresses, advertised_ip, &entrypoint_addrs)?;
+    let advertised_ip = resolve_advertised_ip(&bind_addresses, advertised_ip)?;
     let gossip_port = value_t!(matches, "gossip_port", u16).or_else(|_| {
         solana_net_utils::find_available_port_in_range(bind_addresses.active(), (0, 1))
             .map_err(|err| format!("unable to find an available gossip port: {err}"))
@@ -396,7 +396,6 @@ pub fn execute(
     let init_complete_file = matches.value_of("init_complete_file");
 
     let private_rpc = matches.is_present("private_rpc");
-    let do_port_check = !matches.is_present("no_port_check");
 
     let ledger_path = run_args.ledger_path;
 
@@ -986,7 +985,6 @@ pub fn execute(
             &cluster_entrypoints,
             &mut validator_config,
             run_args.rpc_bootstrap_config,
-            do_port_check,
             use_progress_bar,
             maximum_local_snapshot_age,
             should_check_duplicate_instance,
@@ -1149,36 +1147,11 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -
 fn resolve_advertised_ip(
     bind_addresses: &BindIpAddrs,
     cli_advertised_ip: Option<IpAddr>,
-    entrypoint_addrs: &[SocketAddr],
 ) -> Result<IpAddr, String> {
     if bind_addresses.multihoming_enabled() {
         Ok(bind_addresses.active())
     } else if let Some(cli_ip) = cli_advertised_ip {
         Ok(cli_ip)
-    } else if !entrypoint_addrs.is_empty() {
-        let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
-        order.shuffle(&mut rng());
-
-        order
-            .into_iter()
-            .find_map(|i| {
-                let entrypoint_addr = &entrypoint_addrs[i];
-                info!(
-                    "Contacting {entrypoint_addr} to determine the validator's public IP address"
-                );
-                solana_net_utils::get_public_ip_addr_with_binding(
-                    entrypoint_addr,
-                    bind_addresses.active(),
-                )
-                .map_or_else(
-                    |err| {
-                        warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
-                        None
-                    },
-                    Some,
-                )
-            })
-            .ok_or_else(|| "unable to determine the validator's public IP address".to_string())
     } else {
         Ok(IpAddr::V4(Ipv4Addr::LOCALHOST))
     }
@@ -1418,7 +1391,7 @@ mod tests {
 
         let single_bind = BindIpAddrs::new(vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
         assert_eq!(
-            resolve_advertised_ip(&single_bind, Some(cli_ip), &[]).unwrap(),
+            resolve_advertised_ip(&single_bind, Some(cli_ip)).unwrap(),
             cli_ip,
         );
 
@@ -1428,7 +1401,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            resolve_advertised_ip(&multihomed, Some(cli_ip), &[]).unwrap(),
+            resolve_advertised_ip(&multihomed, Some(cli_ip)).unwrap(),
             multihomed.active(),
         );
     }
@@ -1441,7 +1414,7 @@ mod tests {
 
         assert_eq!(bind_addresses.active(), IpAddr::V4(Ipv4Addr::UNSPECIFIED));
         assert_eq!(
-            resolve_advertised_ip(&bind_addresses, cli_advertised_ip, &[]).unwrap(),
+            resolve_advertised_ip(&bind_addresses, cli_advertised_ip).unwrap(),
             IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10)),
         );
     }
@@ -1460,12 +1433,7 @@ mod tests {
 
         assert_eq!(bind_addresses.active(), IpAddr::V4(Ipv4Addr::UNSPECIFIED));
         assert_eq!(
-            resolve_advertised_ip(
-                &bind_addresses,
-                cli_advertised_ip,
-                &[SocketAddr::from((Ipv4Addr::new(203, 0, 113, 20), 8001))],
-            )
-            .unwrap(),
+            resolve_advertised_ip(&bind_addresses, cli_advertised_ip).unwrap(),
             IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10)),
         );
     }
@@ -1487,7 +1455,7 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(198, 51, 100, 10)),
         );
         assert_eq!(
-            resolve_advertised_ip(&bind_addresses, cli_advertised_ip, &[]).unwrap(),
+            resolve_advertised_ip(&bind_addresses, cli_advertised_ip).unwrap(),
             IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10)),
         );
     }

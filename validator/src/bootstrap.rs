@@ -5,7 +5,7 @@ use {
     },
     itertools::Itertools,
     log::*,
-    rand::{Rng, rng, seq::SliceRandom},
+    rand::{Rng, rng},
     rayon::prelude::*,
     solana_account::ReadableAccount,
     solana_clock::Slot,
@@ -14,11 +14,8 @@ use {
     solana_download_utils::{DownloadProgressRecord, download_snapshot_archive},
     solana_genesis_utils::download_then_check_genesis_hash,
     solana_gossip::{
-        cluster_info::ClusterInfo,
-        contact_info::{ContactInfo, Protocol},
-        crds_data,
-        gossip_service::GossipService,
-        node::Node,
+        cluster_info::ClusterInfo, contact_info::ContactInfo, crds_data,
+        gossip_service::GossipService, node::Node,
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -30,7 +27,7 @@ use {
     solana_vote_program::vote_state::VoteStateV4,
     std::{
         collections::{HashMap, HashSet, hash_map::RandomState},
-        net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
+        net::{SocketAddr, TcpStream, UdpSocket},
         path::Path,
         process::exit,
         sync::{
@@ -67,62 +64,6 @@ pub struct RpcBootstrapConfig {
     pub max_genesis_archive_unpacked_size: u64,
     pub check_vote_account: Option<String>,
     pub incremental_snapshot_fetch: bool,
-}
-
-fn verify_reachable_ports(
-    node: &Node,
-    cluster_entrypoint: &ContactInfo,
-    validator_config: &ValidatorConfig,
-    socket_addr_space: &SocketAddrSpace,
-) -> bool {
-    let verify_address = |addr: &Option<SocketAddr>| -> bool {
-        addr.as_ref()
-            .map(|addr| socket_addr_space.check(addr))
-            .unwrap_or_default()
-    };
-
-    let mut udp_sockets = vec![&node.sockets.repair];
-    udp_sockets.extend(node.sockets.gossip.iter());
-
-    if verify_address(&node.info.serve_repair(Protocol::UDP)) {
-        udp_sockets.push(&node.sockets.serve_repair);
-    }
-    if verify_address(&node.info.tpu_vote(Protocol::UDP)) {
-        udp_sockets.extend(node.sockets.tpu_vote.iter());
-    }
-    if verify_address(&node.info.tvu(Protocol::UDP)) {
-        udp_sockets.extend(node.sockets.tvu.iter());
-        udp_sockets.extend(node.sockets.broadcast.iter());
-        udp_sockets.extend(node.sockets.retransmit_sockets.iter());
-    }
-    if !solana_net_utils::verify_all_reachable_udp(
-        &cluster_entrypoint.gossip().unwrap(),
-        &udp_sockets,
-    ) {
-        return false;
-    }
-
-    let mut tcp_listeners = vec![];
-    if let Some((rpc_addr, rpc_pubsub_addr)) = validator_config.rpc_addrs {
-        for (purpose, bind_addr, public_addr) in &[
-            ("RPC", rpc_addr, node.info.rpc()),
-            ("RPC pubsub", rpc_pubsub_addr, node.info.rpc_pubsub()),
-        ] {
-            if verify_address(public_addr) {
-                tcp_listeners.push(TcpListener::bind(bind_addr).unwrap_or_else(|err| {
-                    error!("Unable to bind to tcp {bind_addr:?} for {purpose}: {err}");
-                    exit(1);
-                }));
-            }
-        }
-    }
-
-    if let Some(ip_echo) = &node.sockets.ip_echo {
-        let ip_echo = ip_echo.try_clone().expect("unable to clone tcp_listener");
-        tcp_listeners.push(ip_echo);
-    }
-
-    solana_net_utils::verify_all_reachable_tcp(&cluster_entrypoint.gossip().unwrap(), tcp_listeners)
 }
 
 fn is_known_validator(id: &Pubkey, known_validators: &Option<HashSet<Pubkey>>) -> bool {
@@ -465,9 +406,8 @@ fn get_vetted_rpc_nodes(
             Ok(rpc_node_details) => rpc_node_details,
             Err(err) => {
                 error!(
-                    "Failed to get RPC nodes: {err}. Consider checking system clock, removing \
-                     `--no-port-check`, or adjusting `--known-validator ...` arguments as \
-                     applicable"
+                    "Failed to get RPC nodes: {err}. Consider checking system clock or adjusting \
+                     `--known-validator ...` arguments as applicable"
                 );
                 exit(1);
             }
@@ -557,7 +497,6 @@ pub fn rpc_bootstrap(
     cluster_entrypoints: &[ContactInfo],
     validator_config: &mut ValidatorConfig,
     bootstrap_config: RpcBootstrapConfig,
-    do_port_check: bool,
     use_progress_bar: bool,
     maximum_local_snapshot_age: Slot,
     should_check_duplicate_instance: bool,
@@ -566,21 +505,6 @@ pub fn rpc_bootstrap(
     maximum_snapshot_download_abort: u64,
     socket_addr_space: SocketAddrSpace,
 ) {
-    if do_port_check {
-        let mut order: Vec<_> = (0..cluster_entrypoints.len()).collect();
-        order.shuffle(&mut rng());
-        if order.into_iter().all(|i| {
-            !verify_reachable_ports(
-                node,
-                &cluster_entrypoints[i],
-                validator_config,
-                &socket_addr_space,
-            )
-        }) {
-            exit(1);
-        }
-    }
-
     if bootstrap_config.no_genesis_fetch && bootstrap_config.no_snapshot_fetch {
         return;
     }

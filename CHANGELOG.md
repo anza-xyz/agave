@@ -19,7 +19,7 @@ Release channels have their own copy of this changelog:
 #### Changes
 ### Validator
 #### Breaking
-* `--bind-address` no longer determines the validator's advertised gossip IP. Use `--advertised-ip` to explicitly set the advertised public IP; otherwise the validator resolves it via the entrypoint IP echo server, or falls back to `127.0.0.1` when no entrypoint is configured. Bootstrap validators that do not pass `--entrypoint` must now also pass `--advertised-ip`.
+* `--bind-address` no longer determines the validator's advertised gossip IP. Use `--advertised-ip` to explicitly set the advertised public IP; otherwise the validator falls back to `127.0.0.1`. Bootstrap validators that do not pass `--entrypoint` must now also pass `--advertised-ip`.
 * `solana-gossip spy` can no longer derive its public IP from entrypoint IP echo, so public-network spies must now also pass `--advertised-ip`.
 #### Deprecations
 * Using `minimal` for `--accounts-index-limit` is now deprecated.

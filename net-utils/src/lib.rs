@@ -38,7 +38,7 @@ use {
     rand::{Rng, rng},
     std::{
         io::{self},
-        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket},
     },
     url::Url,
 };
@@ -68,24 +68,6 @@ pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 25; // VALIDATOR_PORT_RANGE 
 
 pub(crate) const HEADER_LENGTH: usize = 4;
 pub(crate) const IP_ECHO_SERVER_RESPONSE_LENGTH: usize = HEADER_LENGTH + 23;
-
-/// Determine the public IP address of this machine by asking an ip_echo_server at the given
-/// address. This function will bind to the provided bind_addreess.
-pub fn get_public_ip_addr_with_binding(
-    ip_echo_server_addr: &SocketAddr,
-    bind_address: IpAddr,
-) -> Result<IpAddr, IpEchoClientError> {
-    let fut = ip_echo_server_request_with_binding(
-        *ip_echo_server_addr,
-        IpEchoServerMessage::default(),
-        bind_address,
-    );
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-    let resp = rt.block_on(fut)?;
-    Ok(resp.address)
-}
 
 /// Retrieves cluster shred version from Entrypoint address provided.
 pub fn get_cluster_shred_version(ip_echo_server_addr: &SocketAddr) -> Result<u16, String> {
@@ -119,53 +101,6 @@ pub fn get_cluster_shred_version_with_binding(
             "IP echo server does not return a shred-version".to_owned(),
         )
     })
-}
-
-// Limit the maximum number of port verify threads to something reasonable
-// in case the port ranges provided are very large.
-const MAX_PORT_VERIFY_THREADS: usize = 64;
-
-/// Checks if all of the provided UDP ports are reachable by the machine at
-/// `ip_echo_server_addr`. Tests must complete within timeout provided.
-/// Tests will run concurrently when possible, using up to 64 threads for IO.
-/// This function assumes that all sockets are bound to the same IP, and will panic otherwise
-pub fn verify_all_reachable_udp(
-    ip_echo_server_addr: &SocketAddr,
-    udp_sockets: &[&UdpSocket],
-) -> bool {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .max_blocking_threads(MAX_PORT_VERIFY_THREADS)
-        .build()
-        .expect("Tokio builder should be able to reliably create a current thread runtime");
-    let fut = ip_echo_client::verify_all_reachable_udp(
-        *ip_echo_server_addr,
-        udp_sockets,
-        ip_echo_client::TIMEOUT,
-        ip_echo_client::DEFAULT_RETRY_COUNT,
-    );
-    rt.block_on(fut)
-}
-
-/// Checks if all of the provided TCP ports are reachable by the machine at
-/// `ip_echo_server_addr`. Tests must complete within timeout provided.
-/// Tests will run concurrently when possible, using up to 64 threads for IO.
-/// This function assumes that all sockets are bound to the same IP, and will panic otherwise.
-pub fn verify_all_reachable_tcp(
-    ip_echo_server_addr: &SocketAddr,
-    tcp_listeners: Vec<TcpListener>,
-) -> bool {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .max_blocking_threads(MAX_PORT_VERIFY_THREADS)
-        .build()
-        .expect("Tokio builder should be able to reliably create a current thread runtime");
-    let fut = ip_echo_client::verify_all_reachable_tcp(
-        *ip_echo_server_addr,
-        tcp_listeners,
-        ip_echo_client::TIMEOUT,
-    );
-    rt.block_on(fut)
 }
 
 pub fn parse_port_or_addr(optstr: Option<&str>, default_addr: SocketAddr) -> SocketAddr {

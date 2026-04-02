@@ -635,9 +635,8 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
                 .help(
-                    "Public IP address for this validator to advertise in gossip. [default: ask \
-                     --entrypoint via its IP echo server, or 127.0.0.1 when --entrypoint is not \
-                     provided]. In a multihoming context (> 1 --bind-address), this flag is \
+                    "Public IP address for this validator to advertise in gossip. [default: \
+                     127.0.0.1]. In a multihoming context (> 1 --bind-address), this flag is \
                      ignored and the active --bind-address is advertised instead.",
                 ),
         )
