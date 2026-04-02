@@ -1,12 +1,12 @@
 use {
-    crate::{HEADER_LENGTH, IP_ECHO_SERVER_RESPONSE_LENGTH, bind_to_unspecified},
+    crate::{HEADER_LENGTH, IP_ECHO_SERVER_RESPONSE_LENGTH},
     log::*,
     serde::{Deserialize, Serialize},
     solana_serde::default_on_eof,
     std::{
         collections::HashSet,
         io,
-        net::{IpAddr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         num::NonZeroUsize,
         sync::{Arc, Mutex},
         time::Duration,
@@ -52,13 +52,14 @@ impl Drop for ConnectionCleanup {
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub(crate) struct IpEchoServerMessage {
+    // Legacy request fields retained for wire compatibility with old clients.
     tcp_ports: [u16; MAX_PORT_COUNT_PER_MESSAGE], // Fixed size list of ports to avoid vec serde
     udp_ports: [u16; MAX_PORT_COUNT_PER_MESSAGE], // Fixed size list of ports to avoid vec serde
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IpEchoServerResponse {
-    // Public IP address of request echoed back to the node.
+    // Legacy response field retained for wire compatibility with old clients.
     pub(crate) address: IpAddr,
     // Cluster shred-version of the node running the server.
     #[serde(deserialize_with = "default_on_eof")]
@@ -108,51 +109,16 @@ async fn process_connection(
         )));
     }
 
-    let msg =
+    let _msg: IpEchoServerMessage =
         bincode::deserialize::<IpEchoServerMessage>(&data[HEADER_LENGTH..]).map_err(|err| {
             io::Error::other(format!(
                 "Failed to deserialize IpEchoServerMessage: {err:?}"
             ))
         })?;
 
-    trace!("request: {msg:?}");
-
-    // Fire a datagram at each non-zero UDP port
-    match bind_to_unspecified() {
-        Ok(udp_socket) => {
-            for udp_port in &msg.udp_ports {
-                if *udp_port != 0 {
-                    let result =
-                        udp_socket.send_to(&[0], SocketAddr::from((peer_addr.ip(), *udp_port)));
-                    match result {
-                        Ok(_) => debug!("Successful send_to udp/{udp_port}"),
-                        Err(err) => info!("Failed to send_to udp/{udp_port}: {err}"),
-                    }
-                }
-            }
-        }
-        Err(err) => {
-            warn!("Failed to bind local udp socket: {err}");
-        }
-    }
-
-    // Try to connect to each non-zero TCP port
-    for tcp_port in &msg.tcp_ports {
-        if *tcp_port != 0 {
-            debug!("Connecting to tcp/{tcp_port}");
-
-            let mut tcp_stream = timeout_at(
-                deadline,
-                TcpStream::connect(&SocketAddr::new(peer_addr.ip(), *tcp_port)),
-            )
-            .await??;
-
-            debug!("Connection established to tcp/{}", *tcp_port);
-            tcp_stream.shutdown().await?;
-        }
-    }
     let response = IpEchoServerResponse {
-        address: peer_addr.ip(),
+        // Preserve the legacy response layout without disclosing the caller's address.
+        address: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         shred_version,
     };
     // "\0\0\0\0" header is added to ensure a valid response will never
@@ -213,8 +179,8 @@ async fn run_echo_server(tcp_listener: std::net::TcpListener, shred_version: Opt
     }
 }
 
-/// Starts a simple TCP server that echos the IP address of any peer that connects
-/// Used by functions like |get_public_ip_addr| and |get_cluster_shred_version|
+/// Starts a simple TCP server used to serve cluster shred version information.
+/// Legacy request and response fields are retained for wire compatibility.
 pub fn ip_echo_server(
     tcp_listener: std::net::TcpListener,
     num_server_threads: NonZeroUsize,

@@ -315,10 +315,14 @@ mod tests {
         super::*,
         crate::{
             DEFAULT_IP_ECHO_SERVER_THREADS, bind_in_range, get_cluster_shred_version,
-            ip_echo_server,
+            ip_echo_client::ip_echo_server_request,
+            ip_echo_server::{IpEchoServerMessage, ip_echo_server},
             sockets::{localhost_port_range_for_tests, unique_port_range_for_tests},
         },
-        std::net::Ipv4Addr,
+        std::{
+            io,
+            net::{Ipv4Addr, SocketAddr},
+        },
     };
 
     #[test]
@@ -440,5 +444,59 @@ mod tests {
 
         let server_ip_echo_addr = server_udp_socket.local_addr().unwrap();
         assert_eq!(get_cluster_shred_version(&server_ip_echo_addr).unwrap(), 42);
+    }
+
+    #[test]
+    fn test_ip_echo_server_ignores_legacy_request_fields() {
+        agave_logger::setup();
+        let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let config = SocketConfiguration::default();
+
+        let (server_port, (_server_udp_socket, server_tcp_listener)) =
+            bind_common_in_range_with_config(ip_addr, localhost_port_range_for_tests(), config)
+                .unwrap();
+        let server_addr = SocketAddr::new(ip_addr, server_port);
+
+        let requested_udp_port = unique_port_range_for_tests(1).start;
+        let udp_probe_socket = bind_to(ip_addr, requested_udp_port).unwrap();
+        udp_probe_socket
+            .set_read_timeout(Some(std::time::Duration::from_millis(200)))
+            .unwrap();
+
+        let requested_tcp_port = unique_port_range_for_tests(1).start;
+        let tcp_probe_listener = bind_common_with_config(ip_addr, requested_tcp_port, config)
+            .unwrap()
+            .1;
+        tcp_probe_listener.set_nonblocking(true).unwrap();
+
+        let _runtime = ip_echo_server(
+            server_tcp_listener,
+            DEFAULT_IP_ECHO_SERVER_THREADS,
+            /*shred_version=*/ Some(42),
+        );
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let response = rt
+            .block_on(ip_echo_server_request(
+                server_addr,
+                IpEchoServerMessage::default(),
+            ))
+            .unwrap();
+
+        assert_eq!(response.address, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+        assert_eq!(response.shred_version, Some(42));
+        match udp_probe_socket.recv_from(&mut [0u8; 1]) {
+            Err(err)
+                if err.kind() == io::ErrorKind::WouldBlock
+                    || err.kind() == io::ErrorKind::TimedOut => {}
+            result => panic!("expected no UDP probe traffic, got {result:?}"),
+        }
+        match tcp_probe_listener.accept() {
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {}
+            result => panic!("expected no TCP probe connection, got {result:?}"),
+        }
     }
 }
