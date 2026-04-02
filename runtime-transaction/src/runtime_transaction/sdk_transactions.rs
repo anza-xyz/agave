@@ -2,7 +2,7 @@ use {
     super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
     crate::{
         instruction_meta::InstructionMeta,
-        transaction_meta::{StaticMeta, TransactionMeta},
+        transaction_meta::{CachedTransactionMeta, StaticMeta},
         transaction_with_meta::TransactionWithMeta,
     },
     solana_message::{AddressLoader, TransactionSignatureDetails},
@@ -60,7 +60,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
 
         Ok(Self {
             transaction: sanitized_versioned_tx,
-            meta: TransactionMeta {
+            meta: CachedTransactionMeta {
                 message_hash,
                 is_simple_vote_transaction: is_simple_vote_tx,
                 signature_details,

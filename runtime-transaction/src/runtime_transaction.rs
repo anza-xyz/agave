@@ -10,7 +10,9 @@
 //!    ALT, RuntimeTransaction<SanitizedMessage> transits into Dynamically Loaded state,
 //!    with its dynamic metadata loaded.
 use {
-    crate::transaction_meta::{DynamicMeta, StaticMeta, TransactionConfiguration, TransactionMeta},
+    crate::transaction_meta::{
+        CachedTransactionMeta, DynamicMeta, StaticMeta, TransactionConfiguration,
+    },
     agave_feature_set::FeatureSet,
     core::ops::Deref,
     solana_compute_budget_instruction::compute_budget_instruction_details::*,
@@ -36,7 +38,7 @@ pub struct RuntimeTransaction<T> {
     transaction: T,
     // transaction meta is a collection of fields, it is updated
     // during message state transition
-    meta: TransactionMeta,
+    meta: CachedTransactionMeta,
 }
 
 impl<T> RuntimeTransaction<T> {
