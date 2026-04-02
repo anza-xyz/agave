@@ -253,42 +253,15 @@ impl<'a> Iterator for InstructionsIterator<'a> {
 
                 *index = index.wrapping_add(1);
 
-                // Each instruction has 3 pieces:
-                // 1. Program ID index (u8)
-                // 2. Accounts indexes ([u8])
-                // 3. Data ([u8])
-
-                // Read the program ID index.
-                // SAFETY: Offset and length checks have been done in the initial parsing.
-                let program_id_index = unsafe { unchecked_read_byte(bytes, offset) };
-
-                // Move offset to accounts offset - do not re-parse u16.
-                *offset = offset.wrapping_add(usize::from(num_accounts_len));
-                const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
-                // SAFETY:
-                // - The offset is checked to be valid in the byte slice.
-                // - The alignment of u8 is 1.
-                // - The slice length is checked to be valid.
-                // - `u8` cannot be improperly initialized.
-                // - Offset and length checks have been done in the initial parsing.
-                let accounts =
-                    unsafe { unchecked_read_slice_data::<u8>(bytes, offset, num_accounts) };
-
-                // Move offset to accounts offset - do not re-parse u16.
-                *offset = offset.wrapping_add(usize::from(data_len_len));
-                const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
-                // SAFETY:
-                // - The offset is checked to be valid in the byte slice.
-                // - The alignment of u8 is 1.
-                // - The slice length is checked to be valid.
-                // - `u8` cannot be improperly initialized.
-                // - Offset and length checks have been done in the initial parsing.
-                let data = unsafe { unchecked_read_slice_data::<u8>(bytes, offset, data_len) };
-
-                Some(SVMInstruction {
-                    program_id_index,
-                    accounts,
-                    data,
+                Some(unsafe {
+                    for_legacy_and_v0(
+                        bytes,
+                        offset,
+                        num_accounts,
+                        num_accounts_len,
+                        data_len,
+                        data_len_len,
+                    )
                 })
             }
             Self::V1 {
@@ -323,6 +296,53 @@ impl<'a> Iterator for InstructionsIterator<'a> {
                 })
             }
         }
+    }
+}
+
+#[inline(always)]
+unsafe fn for_legacy_and_v0<'a>(
+    bytes: &'a [u8],
+    offset: &mut usize,
+    num_accounts: u16,
+    num_accounts_len: u8,
+    data_len: u16,
+    data_len_len: u8,
+) -> SVMInstruction<'a> {
+    // Each instruction has 3 pieces:
+    // 1. Program ID index (u8)
+    // 2. Accounts indexes ([u8])
+    // 3. Data ([u8])
+
+    // Read the program ID index.
+    // SAFETY: Offset and length checks have been done in the initial parsing.
+    let program_id_index = unsafe { unchecked_read_byte(bytes, offset) };
+
+    // Move offset to accounts offset - do not re-parse u16.
+    *offset = offset.wrapping_add(usize::from(num_accounts_len));
+    const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
+    // SAFETY:
+    // - The offset is checked to be valid in the byte slice.
+    // - The alignment of u8 is 1.
+    // - The slice length is checked to be valid.
+    // - `u8` cannot be improperly initialized.
+    // - Offset and length checks have been done in the initial parsing.
+    let accounts = unsafe { unchecked_read_slice_data::<u8>(bytes, offset, num_accounts) };
+
+    // Move offset to accounts offset - do not re-parse u16.
+    *offset = offset.wrapping_add(usize::from(data_len_len));
+    const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
+    // SAFETY:
+    // - The offset is checked to be valid in the byte slice.
+    // - The alignment of u8 is 1.
+    // - The slice length is checked to be valid.
+    // - `u8` cannot be improperly initialized.
+    // - Offset and length checks have been done in the initial parsing.
+    let data = unsafe { unchecked_read_slice_data::<u8>(bytes, offset, data_len) };
+
+    SVMInstruction {
+        program_id_index,
+        accounts,
+        data,
     }
 }
 
