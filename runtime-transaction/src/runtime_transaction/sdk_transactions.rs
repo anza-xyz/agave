@@ -352,17 +352,22 @@ mod tests {
         assert_eq!(0, signature_details.num_ed25519_instruction_signatures());
 
         for feature_set in [FeatureSet::default(), FeatureSet::all_enabled()] {
-            let compute_budget_limits = runtime_transaction_static
+            let transaction_configuration = runtime_transaction_static
                 .transaction_configuration(&feature_set)
                 .unwrap();
-            assert_eq!(compute_unit_limit, compute_budget_limits.compute_unit_limit);
             assert_eq!(
-                compute_unit_price * u64::from(compute_unit_limit) / 1_000_000,
-                compute_budget_limits.prioritization_fee
+                compute_unit_limit,
+                transaction_configuration.compute_unit_limit
+            );
+            assert_eq!(
+                compute_unit_price,
+                transaction_configuration.compute_unit_price_in_microlamports()
             );
             assert_eq!(
                 loaded_accounts_bytes,
-                compute_budget_limits.loaded_accounts_data_size_limit.get()
+                transaction_configuration
+                    .loaded_accounts_data_size_limit
+                    .get()
             );
         }
     }

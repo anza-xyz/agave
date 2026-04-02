@@ -58,3 +58,14 @@ impl From<ComputeBudgetLimits> for TransactionConfiguration {
         }
     }
 }
+
+impl TransactionConfiguration {
+    /// Compute the compute unit price in micro-lamports per compute unit.
+    /// Only used for legacy operations.
+    pub fn compute_unit_price_in_microlamports(&self) -> u64 {
+        self.prioritization_fee
+            .saturating_mul(1_000_000)
+            .checked_div(self.compute_unit_limit as u64)
+            .unwrap_or(0)
+    }
+}

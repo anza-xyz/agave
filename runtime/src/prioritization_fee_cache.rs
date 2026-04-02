@@ -253,12 +253,8 @@ impl PrioritizationFeeCache {
                         calculate_prioritization_fee_us,
                     );
 
-                let compute_unit_price = transaction_configuration
-                    .prioritization_fee
-                    .checked_div(u64::from(transaction_configuration.compute_unit_limit))
-                    .unwrap_or(0)
-                    .saturating_mul(1_000_000);
-
+                let compute_unit_price =
+                    transaction_configuration.compute_unit_price_in_microlamports();
                 self.sender
                     .send(CacheServiceUpdate::TransactionUpdate {
                         slot: bank.slot(),
