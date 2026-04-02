@@ -2350,7 +2350,8 @@ fn test_program_sbf_invoke_in_same_tx_as_undeployment() {
         Some(&program_id),
     );
 
-    // Undeployment is unavailable to both top-level-instructions and CPI instructions
+    // Undeployment causes the program to become unavailable to both top-level
+    // instructions and CPI instructions
     for invoke_instruction in [invoke_instruction, indirect_invoke_instruction] {
         // Call upgradeable program
         let result =
