@@ -274,11 +274,7 @@ impl<'a> Iterator for InstructionsIterator<'a> {
                     return None;
                 }
 
-                let mut header: V1InstructionHeader =
-                    unsafe { unchecked_copy_value(bytes, *headers_offset) };
-                *headers_offset =
-                    headers_offset.wrapping_add(core::mem::size_of::<V1InstructionHeader>());
-                header.data_len = u16::from_le(header.data_len);
+                let header = unsafe { InstructionsFrame::read_v1_header(bytes, headers_offset) };
                 *index = index.wrapping_add(1);
 
                 Some(unsafe {
