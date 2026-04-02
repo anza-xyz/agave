@@ -12,8 +12,11 @@
 //! RuntimeTransaction types, not the TransactionMeta itself.
 //!
 use {
+    agave_feature_set::FeatureSet,
+    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
     solana_hash::Hash, solana_message::TransactionSignatureDetails,
+    solana_transaction::TransactionError,
 };
 
 /// metadata can be extracted statically from sanitized transaction,
@@ -22,7 +25,10 @@ pub trait StaticMeta {
     fn message_hash(&self) -> &Hash;
     fn is_simple_vote_transaction(&self) -> bool;
     fn signature_details(&self) -> &TransactionSignatureDetails;
-    fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails;
+    fn compute_budget_limits(
+        &self,
+        feature_set: &FeatureSet,
+    ) -> Result<ComputeBudgetLimits, TransactionError>;
     fn instruction_data_len(&self) -> u16;
 }
 

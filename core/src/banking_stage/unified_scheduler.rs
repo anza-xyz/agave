@@ -130,10 +130,7 @@ pub(crate) fn ensure_banking_stage_setup(
                     .ok()?;
 
                     // Determine priority.
-                    let compute_budget_limits = tx
-                        .compute_budget_instruction_details()
-                        .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)
-                        .ok()?;
+                    let compute_budget_limits = tx.compute_budget_limits(&bank.feature_set).ok()?;
                     let (priority, _cost) =
                         calculate_priority_and_cost(&tx, &compute_budget_limits.into(), &bank);
                     let task_id = BankingStageHelper::new_task_id(task_id_base + i, priority);

@@ -11,7 +11,9 @@
 //!    with its dynamic metadata loaded.
 use {
     crate::transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
+    agave_feature_set::FeatureSet,
     core::ops::Deref,
+    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_instruction::compute_budget_instruction_details::*,
     solana_hash::Hash,
     solana_message::{AccountKeys, TransactionSignatureDetails},
@@ -23,6 +25,7 @@ use {
         svm_message::{SVMMessage, SVMStaticMessage},
         svm_transaction::SVMTransaction,
     },
+    solana_transaction::TransactionError,
 };
 
 mod sdk_transactions;
@@ -53,8 +56,13 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
     fn signature_details(&self) -> &TransactionSignatureDetails {
         &self.meta.signature_details
     }
-    fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails {
-        &self.meta.compute_budget_instruction_details
+    fn compute_budget_limits(
+        &self,
+        feature_set: &FeatureSet,
+    ) -> Result<ComputeBudgetLimits, TransactionError> {
+        self.meta
+            .compute_budget_instruction_details
+            .sanitize_and_convert_to_compute_budget_limits(feature_set)
     }
     fn instruction_data_len(&self) -> u16 {
         self.meta.instruction_data_len

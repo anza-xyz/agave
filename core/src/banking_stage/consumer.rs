@@ -487,11 +487,8 @@ impl Consumer {
         error_counters: &mut TransactionErrorMetrics,
     ) -> Result<(), TransactionError> {
         let fee_payer = transaction.fee_payer();
-        let fee_budget_limits = FeeBudgetLimits::from(
-            transaction
-                .compute_budget_instruction_details()
-                .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)?,
-        );
+        let fee_budget_limits =
+            FeeBudgetLimits::from(transaction.compute_budget_limits(&bank.feature_set)?);
         let fee = solana_fee::calculate_fee(
             transaction,
             bank.fee_structure().lamports_per_signature,
