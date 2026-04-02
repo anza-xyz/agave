@@ -301,6 +301,19 @@ impl Blockstore {
                 .delete_range_in_batch(write_batch, from_slot, to_slot);
             self.alt_merkle_root_meta_cf
                 .delete_range_in_batch(write_batch, from_slot, to_slot);
+            // This column stores information for both the original and alternate
+            // columns. When `purge_alt_columns` is specified we delete the
+            // entire column.
+            self.double_merkle_meta_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot);
+        } else {
+            // This column stores information for both the original and alternate
+            // locations. When `purge_alt_columns` is not specified we only delete the
+            // data associated with the original column.
+            for slot in from_slot..=to_slot {
+                self.double_merkle_meta_cf
+                    .delete_in_batch(write_batch, (slot, BlockLocation::Original));
+            }
         }
 
         match purge_type {
@@ -346,6 +359,8 @@ impl Blockstore {
         self.alt_data_shred_cf
             .delete_file_in_range(from_slot, to_slot)?;
         self.alt_merkle_root_meta_cf
+            .delete_file_in_range(from_slot, to_slot)?;
+        self.double_merkle_meta_cf
             .delete_file_in_range(from_slot, to_slot)
     }
 

@@ -194,6 +194,7 @@ impl Rocks {
             new_cf_descriptor::<columns::AlternateIndex>(options, oldest_slot),
             new_cf_descriptor::<columns::AlternateShredData>(options, oldest_slot),
             new_cf_descriptor::<columns::AlternateMerkleRootMeta>(options, oldest_slot),
+            new_cf_descriptor::<columns::DoubleMerkleMeta>(options, oldest_slot),
         ];
 
         // When remaining columns are optional we can just return immediately here.
@@ -238,7 +239,7 @@ impl Rocks {
         cf_descriptors
     }
 
-    const fn columns() -> [&'static str; 23] {
+    const fn columns() -> [&'static str; 24] {
         [
             columns::ErasureMeta::NAME,
             columns::DeadSlots::NAME,
@@ -263,6 +264,7 @@ impl Rocks {
             columns::AlternateIndex::NAME,
             columns::AlternateShredData::NAME,
             columns::AlternateMerkleRootMeta::NAME,
+            columns::DoubleMerkleMeta::NAME,
         ]
     }
 
@@ -583,6 +585,26 @@ where
 
         let key = <C as Column>::key(&index);
         let result = self.backend.get_cf(self.handle(), key);
+
+        if let Some(op_start_instant) = is_perf_enabled {
+            report_rocksdb_read_perf(
+                C::NAME,
+                PERF_METRIC_OP_NAME_GET,
+                &op_start_instant.elapsed(),
+                &self.column_options,
+            );
+        }
+        result
+    }
+
+    pub fn get_slice(&self, index: C::Index) -> Result<Option<DBPinnableSlice<'_>>> {
+        let is_perf_enabled = maybe_enable_rocksdb_perf(
+            self.column_options.rocks_perf_sample_interval,
+            &self.read_perf_status,
+        );
+
+        let key = <C as Column>::key(&index);
+        let result = self.backend.get_pinned_cf(self.handle(), key);
 
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_read_perf(

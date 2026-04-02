@@ -236,5 +236,6 @@ pub(crate) fn report_loaded_programs_stats<T: ForkGraph>(cache: &ProgramCache<T>
         ("water_level", water_level, i64),
     );
     stats.log();
+    #[cfg(feature = "dev-context-only-utils")]
     cache.output_entry_stats();
 }

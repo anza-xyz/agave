@@ -1045,7 +1045,7 @@ where
     // unwrapping here is fine: we're in a syscall and the method below fails
     // only outside syscalls
     let accounts_metadata = &invoke_context
-        .get_syscall_context()
+        .get_memory_context()
         .unwrap()
         .accounts_metadata;
 
@@ -1391,7 +1391,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            invoke_context::{BpfAllocator, SerializedAccountMetadata, SyscallContext},
+            invoke_context::{BpfAllocator, MemoryContext, SerializedAccountMetadata},
             memory::translate_type,
             with_mock_invoke_context_with_feature_set,
         },
@@ -1399,7 +1399,10 @@ mod tests {
         solana_account::{Account, AccountSharedData, ReadableAccount},
         solana_account_info::AccountInfo,
         solana_sbpf::{
-            ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
+            ebpf::MM_INPUT_START,
+            memory_region::MemoryRegion,
+            program::SBPFVersion,
+            vm::{Config, ContextObject},
         },
         solana_sdk_ids::{bpf_loader, system_program},
         solana_svm_feature_set::SVMFeatureSet,
@@ -1957,10 +1960,11 @@ mod tests {
         );
 
         invoke_context
-            .set_syscall_context(SyscallContext {
-                allocator: BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
-                accounts_metadata: vec![account_metadata],
-            })
+            .set_memory_context(MemoryContext::new(
+                BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
+                vec![account_metadata],
+                memory_mapping,
+            ))
             .unwrap();
 
         invoke_context
@@ -1974,10 +1978,12 @@ mod tests {
                 vec![],
             )
             .unwrap();
+
+        let mapping_ptr = invoke_context.active_mapping_ptr();
         let accounts = translate_accounts_rust(
             vm_addr,
             1,
-            &memory_mapping,
+            unsafe { mapping_ptr.as_ref() },
             &mut invoke_context,
             true, // check_aligned
         )
