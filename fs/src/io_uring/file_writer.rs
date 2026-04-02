@@ -24,7 +24,7 @@ pub struct IoUringFileWriter<'a> {
     current_buffer_offset: IoSize,
     file_offset: FileSize,
     file_key: usize,
-    flushed: bool,
+    finalized: bool,
 }
 
 impl<'a> IoUringFileWriter<'a> {
@@ -41,14 +41,14 @@ impl<'a> IoUringFileWriter<'a> {
             current_buffer_offset: 0,
             file_key,
             file_offset: 0,
-            flushed: false,
+            finalized: false,
         })
     }
 
     /// Writes the current buffer and sets `self.current_buffer` to `None`
     fn write_current_buffer(&mut self, is_final_write: bool) -> Result<()> {
         debug_assert!(self.current_buffer.is_some());
-        debug_assert!(!self.flushed);
+        debug_assert!(!self.finalized);
 
         if let Some(current_buffer) = self.current_buffer.take() {
             self.inner.schedule_write(
@@ -71,10 +71,10 @@ impl Write for IoUringFileWriter<'_> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         // @TODO -- once file creator supports multiple partial writes we
         // can support multiple flushes
-        if self.flushed {
+        if self.finalized {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "file writer has already been flushed",
+                "file writer has already been finalized by flush",
             ));
         }
 
@@ -105,10 +105,10 @@ impl Write for IoUringFileWriter<'_> {
     fn flush(&mut self) -> Result<()> {
         // @TODO -- once file creator supports multiple partial writes we
         // can support multiple flushes
-        if self.flushed {
+        if self.finalized {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "file writer has already been flushed",
+                "file writer has already been finalized by flush",
             ));
         }
 
@@ -121,7 +121,7 @@ impl Write for IoUringFileWriter<'_> {
         }
 
         // Flush the current buffer
-        self.flushed = true;
+        self.finalized = true;
         self.write_current_buffer(true)?;
 
         // Wait for all the fs ops to drain and then return
@@ -131,7 +131,7 @@ impl Write for IoUringFileWriter<'_> {
 
 impl Drop for IoUringFileWriter<'_> {
     fn drop(&mut self) {
-        if !self.flushed {
+        if !self.finalized {
             let flush_res = self.flush();
             debug_assert!(flush_res.is_ok());
         }
