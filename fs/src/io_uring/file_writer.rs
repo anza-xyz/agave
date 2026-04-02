@@ -48,6 +48,8 @@ impl<'a> IoUringFileWriter<'a> {
     /// Writes the current buffer and sets `self.current_buffer` to `None`
     fn write_current_buffer(&mut self, is_final_write: bool) -> Result<()> {
         debug_assert!(self.current_buffer.is_some());
+        debug_assert!(!self.flushed);
+
         if let Some(current_buffer) = self.current_buffer.take() {
             self.inner.schedule_write(
                 self.file_key,
@@ -67,6 +69,15 @@ impl<'a> IoUringFileWriter<'a> {
 
 impl Write for IoUringFileWriter<'_> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        // @TODO -- once file creator supports multiple partial writes we
+        // can support multiple flushes
+        if self.flushed {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "file writer has already been flushed",
+            ));
+        }
+
         // Get a new buffer if we need to
         let current_buffer = if let Some(buf) = self.current_buffer.as_mut() {
             buf
@@ -121,7 +132,8 @@ impl Write for IoUringFileWriter<'_> {
 impl Drop for IoUringFileWriter<'_> {
     fn drop(&mut self) {
         if !self.flushed {
-            debug_assert!(self.flush().is_ok());
+            let flush_res = self.flush();
+            debug_assert!(flush_res.is_ok());
         }
     }
 }
@@ -206,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn test_double_flush() {
+    fn test_allow_only_one_flush() {
         let temp_dir = tempfile::tempdir().unwrap();
         let dir = Arc::new(File::open(temp_dir.path()).unwrap());
         let file_path = temp_dir.path().join("test.txt");
@@ -217,6 +229,7 @@ mod tests {
         let mut io_uring_file_writer =
             IoUringFileWriter::new(io_uring_file_creator, file_path.clone(), 0o666, dir).unwrap();
         io_uring_file_writer.flush().unwrap();
+        assert!(io_uring_file_writer.write(&[0]).is_err());
         assert!(io_uring_file_writer.flush().is_err());
     }
 }
