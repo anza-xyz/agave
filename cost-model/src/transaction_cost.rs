@@ -1,6 +1,6 @@
 use {
     crate::block_cost_limits, solana_pubkey::Pubkey,
-    solana_runtime_transaction::transaction_meta::StaticMeta,
+    solana_runtime_transaction::transaction_meta::TransactionMeta,
     solana_svm_transaction::svm_message::SVMMessage,
 };
 
@@ -24,7 +24,7 @@ pub enum TransactionCost<'a, Tx> {
     Transaction(UsageCostDetails<'a, Tx>),
 }
 
-impl<Tx: StaticMeta> TransactionCost<'_, Tx> {
+impl<Tx: TransactionMeta> TransactionCost<'_, Tx> {
     pub fn sum(&self) -> u64 {
         #![allow(clippy::assertions_on_constants)]
         match self {
@@ -108,7 +108,7 @@ impl<Tx: SVMMessage> TransactionCost<'_, Tx> {
     }
 }
 
-impl<Tx: StaticMeta> TransactionCost<'_, Tx> {
+impl<Tx: TransactionMeta> TransactionCost<'_, Tx> {
     pub fn num_transaction_signatures(&self) -> u64 {
         match self {
             Self::SimpleVote { .. } => 1,
@@ -278,7 +278,7 @@ impl solana_svm_transaction::svm_transaction::SVMTransaction for WritableKeysTra
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTransaction {
+impl solana_runtime_transaction::transaction_meta::TransactionMeta for WritableKeysTransaction {
     fn message_hash(&self) -> &solana_hash::Hash {
         unimplemented!("WritableKeysTransaction::message_hash")
     }

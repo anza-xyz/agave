@@ -2,7 +2,7 @@ use {
     super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
     crate::{
         instruction_meta::InstructionMeta,
-        transaction_meta::{CachedTransactionMeta, StaticMeta},
+        transaction_meta::{CachedTransactionMeta, TransactionMeta},
         transaction_with_meta::TransactionWithMeta,
     },
     solana_message::{AddressLoader, TransactionSignatureDetails},

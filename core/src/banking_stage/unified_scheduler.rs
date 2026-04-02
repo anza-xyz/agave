@@ -42,7 +42,7 @@ use {
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
     },
     solana_svm_transaction::{
         message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,

@@ -20,7 +20,7 @@ use {
         bank_forks::SharableBanks,
     },
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
     },
     solana_streamer::sendmmsg::{SendPktsError, batch_send},
     solana_tls_utils::NotifyKeyUpdate,

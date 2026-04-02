@@ -31,7 +31,7 @@ use {
     },
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction,
-        transaction_meta::{StaticMeta, TransactionConfiguration},
+        transaction_meta::{TransactionConfiguration, TransactionMeta},
         transaction_with_meta::TransactionWithMeta,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,

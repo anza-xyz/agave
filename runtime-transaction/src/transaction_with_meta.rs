@@ -1,11 +1,11 @@
 use {
-    crate::transaction_meta::StaticMeta,
+    crate::transaction_meta::TransactionMeta,
     solana_svm_transaction::svm_transaction::SVMTransaction,
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     std::borrow::Cow,
 };
 
-pub trait TransactionWithMeta: StaticMeta + SVMTransaction {
+pub trait TransactionWithMeta: TransactionMeta + SVMTransaction {
     /// Required to interact with geyser plugins.
     /// This function should not be used except for interacting with geyser.
     /// It may do numerous allocations that negatively impact performance.

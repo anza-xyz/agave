@@ -19,9 +19,7 @@ use {
     solana_transaction::TransactionError, std::num::NonZeroU32,
 };
 
-/// metadata can be extracted statically from sanitized transaction,
-/// for example: message hash, simple-vote-tx flag, limits set by instructions
-pub trait StaticMeta {
+pub trait TransactionMeta {
     fn message_hash(&self) -> &Hash;
     fn is_simple_vote_transaction(&self) -> bool;
     fn signature_details(&self) -> &TransactionSignatureDetails;
@@ -31,13 +29,6 @@ pub trait StaticMeta {
     ) -> Result<TransactionConfiguration, TransactionError>;
     fn instruction_data_len(&self) -> u16;
 }
-
-/// Statically loaded meta is a supertrait of Dynamically loaded meta, when
-/// transaction transited successfully into dynamically loaded, it should
-/// have both meta data populated and available.
-/// Dynamic metadata available after accounts addresses are loaded from
-/// on-chain ALT, examples are: transaction usage costs, nonce account.
-pub trait DynamicMeta: StaticMeta {}
 
 #[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
 #[derive(Debug)]
