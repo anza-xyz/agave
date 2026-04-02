@@ -61,7 +61,11 @@ impl From<ComputeBudgetLimits> for TransactionConfiguration {
 
 impl TransactionConfiguration {
     /// Compute the compute unit price in micro-lamports per compute unit.
-    /// Only used for legacy operations.
+    ///
+    /// Note: that this will return an effective price according to the actual
+    /// fee paid - i.e. legacy/v0 transactions that have fees rounded up will
+    /// return a higher value here than their specified cu_price in the
+    /// compute budget instruction.
     pub fn compute_unit_price_in_microlamports(&self) -> u64 {
         self.prioritization_fee
             .saturating_mul(1_000_000)
