@@ -16,7 +16,7 @@ use {
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
     solana_hash::Hash, solana_message::TransactionSignatureDetails,
-    solana_transaction::TransactionError,
+    solana_transaction::TransactionError, std::num::NonZeroU32,
 };
 
 /// metadata can be extracted statically from sanitized transaction,
@@ -47,4 +47,23 @@ pub struct TransactionMeta {
     pub(crate) signature_details: TransactionSignatureDetails,
     pub(crate) compute_budget_instruction_details: ComputeBudgetInstructionDetails,
     pub(crate) instruction_data_len: u16,
+}
+
+pub struct TransactionConfiguration {
+    pub updated_heap_bytes: u32,
+    pub compute_unit_limit: u32,
+    pub prioritization_fee: u64,
+    pub loaded_accounts_bytes: NonZeroU32,
+}
+
+impl From<ComputeBudgetLimits> for TransactionConfiguration {
+    fn from(compute_budget_limits: ComputeBudgetLimits) -> Self {
+        let prioritization_fee = compute_budget_limits.get_prioritization_fee();
+        TransactionConfiguration {
+            updated_heap_bytes: compute_budget_limits.updated_heap_bytes,
+            compute_unit_limit: compute_budget_limits.compute_unit_limit,
+            prioritization_fee,
+            loaded_accounts_bytes: compute_budget_limits.loaded_accounts_bytes,
+        }
+    }
 }
