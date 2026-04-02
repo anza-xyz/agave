@@ -299,6 +299,21 @@ impl<'a> Iterator for InstructionsIterator<'a> {
     }
 }
 
+/// Builds SNVInstruction from legacy/v0 pre-validated frame metadata.
+///
+/// # Safety
+/// The caller must ensure that:
+/// - `offset` points to the beginning of a serialized legacy/v0 instruction
+///   in `bytes`.
+/// - `num_accounts_len` and `data_len_len` are the exact encoded lengths of the
+///   compact-u16 account-count and data-length fields for that instruction.
+/// - `num_accounts` and `data_len` exactly match the serialized instruction at
+///   `offset`.
+/// - The byte ranges implied by those values are fully in bounds of `bytes`.
+///
+/// These invariants are expected to have been established by the initial
+/// instruction frame parsing. Violating them may cause out-of-bounds unchecked
+/// reads and undefined behavior.
 #[inline(always)]
 unsafe fn for_legacy_and_v0<'a>(
     bytes: &'a [u8],
@@ -346,6 +361,27 @@ unsafe fn for_legacy_and_v0<'a>(
     }
 }
 
+/// Builds SMVInstruction from v1 pre-validated frame metadata.
+///
+/// # Safety
+/// The caller must ensure that:
+///
+/// - `payload_offset` points to the beginning of this instruction’s payload
+///   (i.e. the first account index byte) within `bytes`.
+/// - `num_accounts` and `data_len` exactly match the instruction header that
+///   was previously parsed for this instruction.
+/// - The byte range
+///   `payload_offset .. payload_offset + num_accounts + data_len`
+///   lies entirely within `bytes`.
+/// - `bytes` has not been mutated since the initial parsing that produced
+///   the instruction frames.
+///
+/// These invariants are expected to have been established during the initial
+/// tx-v1 instruction parsing phase, where header and payload bounds were
+/// validated together.
+///
+/// Violating any of these conditions may result in out-of-bounds unchecked
+/// reads and thus undefined behavior.
 #[inline(always)]
 unsafe fn for_v1<'a>(
     bytes: &'a [u8],
@@ -354,7 +390,19 @@ unsafe fn for_v1<'a>(
     num_accounts: u16,
     data_len: u16,
 ) -> SVMInstruction<'a> {
+    // SAFETY:
+    // - The offset is checked to be valid in the byte slice.
+    // - The alignment of u8 is 1.
+    // - The slice length is checked to be valid.
+    // - `u8` cannot be improperly initialized.
+    // - Offset and length checks have been done in the initial parsing.
     let accounts = unsafe { unchecked_read_slice_data::<u8>(bytes, payloads_offset, num_accounts) };
+    // SAFETY:
+    // - The offset is checked to be valid in the byte slice.
+    // - The alignment of u8 is 1.
+    // - The slice length is checked to be valid.
+    // - `u8` cannot be improperly initialized.
+    // - Offset and length checks have been done in the initial parsing.
     let data = unsafe { unchecked_read_slice_data::<u8>(bytes, payloads_offset, data_len) };
 
     SVMInstruction {
