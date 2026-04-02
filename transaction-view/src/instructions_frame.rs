@@ -273,23 +273,20 @@ impl<'a> Iterator for InstructionsIterator<'a> {
                     return None;
                 }
 
-                let mut header_cursor = *headers_offset;
-                let program_id_index = unsafe { unchecked_read_byte(bytes, &mut header_cursor) };
-                let num_accounts = unsafe { unchecked_read_byte(bytes, &mut header_cursor) };
-                let data_len_lo = unsafe { unchecked_read_byte(bytes, &mut header_cursor) };
-                let data_len_hi = unsafe { unchecked_read_byte(bytes, &mut header_cursor) };
-                let data_len = u16::from_le_bytes([data_len_lo, data_len_hi]);
-
-                *headers_offset = header_cursor;
+                let mut header: V1InstructionHeader =
+                    unsafe { unchecked_copy_value(bytes, *headers_offset) };
+                *headers_offset =
+                    headers_offset.wrapping_add(core::mem::size_of::<V1InstructionHeader>());
+                header.data_len = u16::from_le(header.data_len);
                 *index = index.wrapping_add(1);
 
                 Some(unsafe {
                     for_v1(
                         bytes,
                         payloads_offset,
-                        program_id_index,
-                        num_accounts as u16,
-                        data_len,
+                        header.program_id_index,
+                        u16::from(header.num_accounts),
+                        header.data_len,
                     )
                 })
             }
