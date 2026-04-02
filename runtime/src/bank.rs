@@ -1689,8 +1689,12 @@ impl Bank {
                 &stake_delegations
             ));
 
-        // Apply stake rewards and commission using new snapshots.
-        let cached_vote_accounts = self.get_cached_vote_accounts(rewarded_epoch, &vote_accounts);
+        // Apply stake rewards and commission using the distribution vote-account
+        // snapshot that matches VAT admission filtering when enabled.
+        let distribution_epoch_vote_accounts =
+            self.maybe_filter_vote_accounts_for_vat(&vote_accounts);
+        let cached_vote_accounts =
+            self.get_cached_vote_accounts(rewarded_epoch, &distribution_epoch_vote_accounts);
         let (rewards_calculation, update_rewards_with_thread_pool_time_us) =
             measure_us!(self.calculate_rewards(
                 &stake_history,
@@ -4003,11 +4007,11 @@ impl Bank {
             .iter()
             .filter_map(|processing_result| processing_result.processed_transaction())
             .filter_map(|processed_tx| processed_tx.execution_details())
-            .filter_map(|details| {
-                details
-                    .status
-                    .is_ok()
-                    .then_some(details.accounts_data_len_delta)
+            .filter_map(|details| details.accounts_deltas.as_ref())
+            .map(|deltas| {
+                deltas
+                    .accounts_resize_delta
+                    .saturating_sub_unsigned(deltas.accounts_uninitialized_size)
             })
             .sum();
         self.update_accounts_data_size_delta_on_chain(accounts_data_len_delta);
@@ -6070,6 +6074,28 @@ impl Bank {
     /// Return total transaction fee collected
     pub fn get_collector_fee_details(&self) -> CollectorFeeDetails {
         self.collector_fee_details.read().unwrap().clone()
+    }
+
+    fn maybe_filter_vote_accounts_for_vat(&self, vote_accounts: &VoteAccounts) -> VoteAccounts {
+        if self.feature_set.snapshot().validator_admission_ticket {
+            let vote_account_rent_exempt_minimum = self
+                .rent_collector
+                .rent
+                .minimum_balance(VoteStateV4::size_of());
+            let minimum_vote_account_balance = if self.feature_set.snapshot().alpenglow {
+                // When alpenglow is active the minimum required balance is
+                // VAT + rent-exempt minimum for vote account.
+                vote_account_rent_exempt_minimum + VAT_TO_BURN_PER_EPOCH
+            } else {
+                // If alpenglow is not active, the minimum required balance is
+                // rent-exempt minimum.
+                vote_account_rent_exempt_minimum
+            };
+            vote_accounts
+                .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, minimum_vote_account_balance)
+        } else {
+            vote_accounts.clone()
+        }
     }
 
     /// If the VAT feature is active, returns the `Stakes` as filtered by SIMD-0357

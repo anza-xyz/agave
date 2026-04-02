@@ -36,20 +36,12 @@ fn test_secp256k1_recover() {
 
 /// secp256k1_recover allows malleable signatures
 fn test_secp256k1_recover_malleability() {
-    let message = b"hello world";
-    #[cfg(target_os = "solana")]
-    let message_hash = {
-        use sha3::Digest;
-        let mut hasher = sha3::Keccak256::default();
-        hasher.update(message);
-        solana_hash::Hash::new_from_array(hasher.finalize().into())
-    };
-    #[cfg(not(target_os = "solana"))]
-    let message_hash = {
-        let mut hasher = solana_keccak_hasher::Hasher::default();
-        hasher.hash(message);
-        hasher.result()
-    };
+    // hash of the string "hello world"
+    let message_hash = solana_hash::Hash::new_from_array([
+        0x47, 0x17, 0x32, 0x85, 0xa8, 0xd7, 0x34, 0x1e, 0x5e, 0x97, 0x2f, 0xc6, 0x77, 0x28, 0x63,
+        0x84, 0xf8, 0x02, 0xf8, 0xef, 0x42, 0xa5, 0xec, 0x5f, 0x03, 0xbb, 0xfa, 0x25, 0x4c, 0xb0,
+        0x1f, 0xad,
+    ]);
 
     let pubkey_bytes: [u8; 64] = [
         0x9B, 0xEE, 0x7C, 0x18, 0x34, 0xE0, 0x18, 0x21, 0x7B, 0x40, 0x14, 0x9B, 0x84, 0x2E, 0xFA,

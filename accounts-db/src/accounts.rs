@@ -456,7 +456,8 @@ impl Accounts {
             &ScanConfig::default(),
         )?;
         if sort_results {
-            collector.sort_unstable_by(|(a_addr, _, _), (b_addr, _, _)| a_addr.cmp(b_addr));
+            // Avoid copying pubkeys (using Ord::cmp(a, b) silences clippy::unnecessary_sort_by).
+            collector.sort_unstable_by(|(addr_a, _, _), (addr_b, _, _)| Ord::cmp(addr_a, addr_b));
         }
         Ok(collector)
     }

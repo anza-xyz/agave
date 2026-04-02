@@ -9,7 +9,7 @@ use {
 
 #[derive(PartialEq, Debug)]
 pub(crate) struct TransactionAccountStateInfo {
-    rent_state: Option<RentState>, // None: readonly account
+    info: Option<WritableTransactionAccountStateInfo>, // None: readonly account
 }
 
 impl TransactionAccountStateInfo {
@@ -20,16 +20,18 @@ impl TransactionAccountStateInfo {
     ) -> Vec<Self> {
         (0..message.account_keys().len())
             .map(|i| {
-                let rent_state = if message.is_writable(i) {
+                let info = if message.is_writable(i) {
                     let state = if let Ok(account) = transaction_context
                         .accounts()
                         .try_borrow(i as IndexOfAccount)
                     {
-                        Some(get_account_rent_state(
-                            rent,
-                            account.lamports(),
-                            account.data().len(),
-                        ))
+                        let balance = account.lamports();
+                        let data_size = account.data().len();
+                        let rent_state = get_account_rent_state(rent, balance, data_size);
+                        Some(WritableTransactionAccountStateInfo {
+                            rent_state,
+                            data_size,
+                        })
                     } else {
                         None
                     };
@@ -41,7 +43,7 @@ impl TransactionAccountStateInfo {
                 } else {
                     None
                 };
-                Self { rent_state }
+                Self { info }
             })
             .collect()
     }
@@ -54,15 +56,35 @@ impl TransactionAccountStateInfo {
         for (i, (pre_state_info, post_state_info)) in
             pre_state_infos.iter().zip(post_state_infos).enumerate()
         {
-            check_rent_state(
-                pre_state_info.rent_state.as_ref(),
-                post_state_info.rent_state.as_ref(),
-                transaction_context,
-                i as IndexOfAccount,
-            )?;
+            if let (Some(pre_state_info), Some(post_state_info)) =
+                (pre_state_info.info.as_ref(), post_state_info.info.as_ref())
+            {
+                check_rent_state(
+                    &pre_state_info.rent_state,
+                    &post_state_info.rent_state,
+                    transaction_context,
+                    i as IndexOfAccount,
+                )?;
+            }
         }
         Ok(())
     }
+}
+
+#[derive(PartialEq, Debug)]
+struct WritableTransactionAccountStateInfo {
+    rent_state: RentState,
+    data_size: usize,
+}
+
+// Returns the cumulative size of all post-exec uninitialized accounts
+pub(crate) fn get_uninitialized_accounts_size(post: &[TransactionAccountStateInfo]) -> u64 {
+    post.iter()
+        .filter_map(|post_info| post_info.info.as_ref())
+        .filter_map(|post| {
+            matches!(&post.rent_state, RentState::Uninitialized).then_some(post.data_size as u64)
+        })
+        .sum()
 }
 
 #[cfg(test)]
@@ -124,11 +146,17 @@ mod test {
             result,
             vec![
                 TransactionAccountStateInfo {
-                    rent_state: Some(RentState::Uninitialized)
+                    info: Some(WritableTransactionAccountStateInfo {
+                        rent_state: RentState::Uninitialized,
+                        data_size: 0,
+                    })
                 },
-                TransactionAccountStateInfo { rent_state: None },
+                TransactionAccountStateInfo { info: None },
                 TransactionAccountStateInfo {
-                    rent_state: Some(RentState::Uninitialized)
+                    info: Some(WritableTransactionAccountStateInfo {
+                        rent_state: RentState::Uninitialized,
+                        data_size: 0,
+                    })
                 }
             ]
         );
@@ -180,14 +208,23 @@ mod test {
         let key2 = Keypair::new();
         let pre_rent_state = vec![
             TransactionAccountStateInfo {
-                rent_state: Some(RentState::Uninitialized),
+                info: Some(WritableTransactionAccountStateInfo {
+                    rent_state: RentState::Uninitialized,
+                    data_size: 0,
+                }),
             },
             TransactionAccountStateInfo {
-                rent_state: Some(RentState::Uninitialized),
+                info: Some(WritableTransactionAccountStateInfo {
+                    rent_state: RentState::Uninitialized,
+                    data_size: 0,
+                }),
             },
         ];
         let post_rent_state = vec![TransactionAccountStateInfo {
-            rent_state: Some(RentState::Uninitialized),
+            info: Some(WritableTransactionAccountStateInfo {
+                rent_state: RentState::Uninitialized,
+                data_size: 0,
+            }),
         }];
 
         let transaction_accounts = vec![
@@ -205,12 +242,18 @@ mod test {
         assert!(result.is_ok());
 
         let pre_rent_state = vec![TransactionAccountStateInfo {
-            rent_state: Some(RentState::Uninitialized),
+            info: Some(WritableTransactionAccountStateInfo {
+                rent_state: RentState::Uninitialized,
+                data_size: 0,
+            }),
         }];
         let post_rent_state = vec![TransactionAccountStateInfo {
-            rent_state: Some(RentState::RentPaying {
+            info: Some(WritableTransactionAccountStateInfo {
+                rent_state: RentState::RentPaying {
+                    data_size: 2,
+                    lamports: 5,
+                },
                 data_size: 2,
-                lamports: 5,
             }),
         }];
 
@@ -229,5 +272,38 @@ mod test {
             result.err(),
             Some(TransactionError::InsufficientFundsForRent { account_index: 0 })
         );
+    }
+
+    #[test]
+    fn test_get_uninitialized_accounts_size_with_deleted_accounts() {
+        let post_state_infos = vec![
+            TransactionAccountStateInfo {
+                info: Some(WritableTransactionAccountStateInfo {
+                    rent_state: RentState::Uninitialized,
+                    data_size: 50,
+                }),
+            },
+            TransactionAccountStateInfo {
+                info: Some(WritableTransactionAccountStateInfo {
+                    rent_state: RentState::Uninitialized,
+                    data_size: 50,
+                }),
+            },
+            TransactionAccountStateInfo {
+                info: Some(WritableTransactionAccountStateInfo {
+                    rent_state: RentState::Uninitialized,
+                    data_size: 50,
+                }),
+            },
+            TransactionAccountStateInfo {
+                info: Some(WritableTransactionAccountStateInfo {
+                    rent_state: RentState::RentExempt,
+                    data_size: 50,
+                }),
+            },
+        ];
+
+        // 3 deleted accounts should contribute 3 * (50) = 150 to the count
+        assert_eq!(get_uninitialized_accounts_size(&post_state_infos), 150);
     }
 }

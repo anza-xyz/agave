@@ -406,8 +406,8 @@ pub(crate) mod tests {
             new_vote_accounts(num_nodes, num_vote_accounts_per_node, is_alpenglow);
 
         let expected_authorized_voters: HashMap<_, _> = vote_accounts_map
-            .iter()
-            .flat_map(|(_, vote_accounts)| {
+            .values()
+            .flat_map(|vote_accounts| {
                 vote_accounts
                     .iter()
                     .map(|v| (v.vote_account, v.authorized_voter))

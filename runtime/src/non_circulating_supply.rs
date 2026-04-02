@@ -51,19 +51,17 @@ pub fn calculate_non_circulating_supply(bank: &Bank) -> ScanResult<NonCirculatin
             .deserialize_data::<StakeStateV2>()
             .unwrap_or_default();
         match stake_account {
-            StakeStateV2::Initialized(meta) => {
-                if meta.lockup.is_in_force(&clock, None)
-                    || withdraw_authority_list.contains(&meta.authorized.withdrawer)
-                {
-                    non_circulating_accounts_set.insert(*pubkey);
-                }
+            StakeStateV2::Initialized(meta)
+                if (meta.lockup.is_in_force(&clock, None)
+                    || withdraw_authority_list.contains(&meta.authorized.withdrawer)) =>
+            {
+                non_circulating_accounts_set.insert(*pubkey);
             }
-            StakeStateV2::Stake(meta, _stake, _stake_flags) => {
-                if meta.lockup.is_in_force(&clock, None)
-                    || withdraw_authority_list.contains(&meta.authorized.withdrawer)
-                {
-                    non_circulating_accounts_set.insert(*pubkey);
-                }
+            StakeStateV2::Stake(meta, _stake, _stake_flags)
+                if (meta.lockup.is_in_force(&clock, None)
+                    || withdraw_authority_list.contains(&meta.authorized.withdrawer)) =>
+            {
+                non_circulating_accounts_set.insert(*pubkey);
             }
             _ => {}
         }

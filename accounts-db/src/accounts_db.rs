@@ -3438,20 +3438,26 @@ impl AccountsDb {
             &empty_ancestors
         };
 
-        self.accounts_index.index_scan_accounts(
-            ancestors,
-            scan_guard.max_root(),
-            index_key,
-            |pubkey, (account_info, slot)| {
-                let account_slot = self
-                    .get_account_accessor(slot, pubkey, &account_info.storage_location())
-                    .get_loaded_account(|loaded_account| {
-                        (pubkey, loaded_account.take_account(), slot)
-                    });
-                scan_func(account_slot)
-            },
-            config,
-        );
+        let max_root = scan_guard.max_root();
+        for pubkey in self.accounts_index.get_index_key_pubkeys(&index_key) {
+            if config.is_aborted() {
+                break;
+            }
+            self.accounts_index.get_with_and_then(
+                &pubkey,
+                Some(ancestors),
+                Some(max_root),
+                true,
+                |(slot, account_info)| {
+                    let account_slot = self
+                        .get_account_accessor(slot, &pubkey, &account_info.storage_location())
+                        .get_loaded_account(|loaded_account| {
+                            (&pubkey, loaded_account.take_account(), slot)
+                        });
+                    scan_func(account_slot)
+                },
+            );
+        }
 
         // Check whether the bank was removed while the scan was in progress.
         if scan_guard.was_scan_corrupted() {
