@@ -445,11 +445,12 @@ impl SchedulingDetails {
         let now = Instant::now();
         if now.duration_since(self.last_report) > REPORT_INTERVAL {
             self.last_report = now;
-            if self.num_schedule_calls > 0 {
-                let avg_starting_queue_size =
-                    self.sum_starting_queue_size / self.num_schedule_calls;
-                let avg_starting_buffer_size =
-                    self.sum_starting_buffer_size / self.num_schedule_calls;
+            if let (Some(avg_starting_queue_size), Some(avg_starting_buffer_size)) = (
+                self.sum_starting_queue_size
+                    .checked_div(self.num_schedule_calls),
+                self.sum_starting_buffer_size
+                    .checked_div(self.num_schedule_calls),
+            ) {
                 let datapoint = create_datapoint!(
                     @point "scheduling_details",
                     ("num_schedule_calls", self.num_schedule_calls, i64),

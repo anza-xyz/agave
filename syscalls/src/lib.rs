@@ -749,7 +749,7 @@ declare_builtin_function!(
         let Ok(layout) = Layout::from_size_align(size as usize, align) else {
             return Ok(0);
         };
-        let allocator = &mut invoke_context.get_syscall_context_mut()?.allocator;
+        let allocator = &mut invoke_context.get_memory_context_mut()?.allocator;
         if free_addr == 0 {
             match allocator.alloc(layout) {
                 Ok(addr) => Ok(addr),
@@ -2670,7 +2670,7 @@ mod tests {
         solana_program::program::check_type_assumptions,
         solana_program_runtime::{
             execution_budget::MAX_HEAP_FRAME_BYTES,
-            invoke_context::{BpfAllocator, InvokeContext, SyscallContext},
+            invoke_context::{BpfAllocator, InvokeContext, MemoryContext},
             memory::address_is_aligned,
             with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
         },
@@ -3152,12 +3152,7 @@ mod tests {
     macro_rules! setup_alloc_test {
         ($invoke_context:ident, $memory_mapping:ident, $heap:ident) => {
             prepare_mockup!($invoke_context, program_id, bpf_loader::id());
-            $invoke_context
-                .set_syscall_context(SyscallContext {
-                    allocator: BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
-                    accounts_metadata: Vec::new(),
-                })
-                .unwrap();
+            use solana_sbpf::vm::ContextObject;
             let config = Config {
                 aligned_memory_mapping: false,
                 ..Config::default()
@@ -3168,8 +3163,15 @@ mod tests {
                 $heap.as_slice_mut(),
                 ebpf::MM_HEAP_START,
             )];
-            let mut $memory_mapping =
-                MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap();
+            let mapping = MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap();
+            $invoke_context
+                .set_memory_context(MemoryContext::new(
+                    BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
+                    Vec::new(),
+                    mapping,
+                ))
+                .unwrap();
+            let $memory_mapping = unsafe { $invoke_context.active_mapping_ptr().as_mut() };
         };
     }
 
@@ -3185,7 +3187,7 @@ mod tests {
                 0,
                 0,
                 0,
-                &mut memory_mapping,
+                memory_mapping,
             );
             assert_ne!(result.unwrap(), 0);
             let result = SyscallAllocFree::rust(
@@ -3195,18 +3197,11 @@ mod tests {
                 0,
                 0,
                 0,
-                &mut memory_mapping,
+                memory_mapping,
             );
             assert_eq!(result.unwrap(), 0);
-            let result = SyscallAllocFree::rust(
-                &mut invoke_context,
-                u64::MAX,
-                0,
-                0,
-                0,
-                0,
-                &mut memory_mapping,
-            );
+            let result =
+                SyscallAllocFree::rust(&mut invoke_context, u64::MAX, 0, 0, 0, 0, memory_mapping);
             assert_eq!(result.unwrap(), 0);
         }
 
@@ -3215,7 +3210,7 @@ mod tests {
             setup_alloc_test!(invoke_context, memory_mapping, heap);
             for _ in 0..100 {
                 let result =
-                    SyscallAllocFree::rust(&mut invoke_context, 1, 0, 0, 0, 0, &mut memory_mapping);
+                    SyscallAllocFree::rust(&mut invoke_context, 1, 0, 0, 0, 0, memory_mapping);
                 assert_ne!(result.unwrap(), 0);
             }
             let result = SyscallAllocFree::rust(
@@ -3225,7 +3220,7 @@ mod tests {
                 0,
                 0,
                 0,
-                &mut memory_mapping,
+                memory_mapping,
             );
             assert_eq!(result.unwrap(), 0);
         }
@@ -3235,7 +3230,7 @@ mod tests {
             setup_alloc_test!(invoke_context, memory_mapping, heap);
             for _ in 0..12 {
                 let result =
-                    SyscallAllocFree::rust(&mut invoke_context, 1, 0, 0, 0, 0, &mut memory_mapping);
+                    SyscallAllocFree::rust(&mut invoke_context, 1, 0, 0, 0, 0, memory_mapping);
                 assert_ne!(result.unwrap(), 0);
             }
             let result = SyscallAllocFree::rust(
@@ -3245,7 +3240,7 @@ mod tests {
                 0,
                 0,
                 0,
-                &mut memory_mapping,
+                memory_mapping,
             );
             assert_eq!(result.unwrap(), 0);
         }
@@ -3261,7 +3256,7 @@ mod tests {
                 0,
                 0,
                 0,
-                &mut memory_mapping,
+                memory_mapping,
             );
             let address = result.unwrap();
             assert_ne!(address, 0);

@@ -203,8 +203,7 @@ pub async fn upload_confirmed_blocks(
     let mut failures = 0;
     use futures::stream::StreamExt;
 
-    let mut stream =
-        tokio_stream::iter(receiver.into_iter()).chunks(config.num_blocks_to_upload_in_parallel);
+    let mut stream = tokio_stream::iter(receiver).chunks(config.num_blocks_to_upload_in_parallel);
 
     while let Some(blocks) = stream.next().await {
         if exit.load(Ordering::Relaxed) {

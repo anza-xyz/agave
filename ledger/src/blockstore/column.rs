@@ -2,7 +2,7 @@
 use {
     crate::{
         blockstore::error::Result,
-        blockstore_meta::{self, PerfSample},
+        blockstore_meta::{self, BlockLocation, PerfSample},
     },
     bincode::Options as BincodeOptions,
     serde::{Serialize, de::DeserializeOwned},
@@ -243,6 +243,16 @@ pub mod columns {
     /// * index type: `(slot: u64, fec_set_index: u32, block_id: Hash)`
     /// * value type: [`blockstore_meta::MerkleRootMeta`]
     pub struct AlternateMerkleRootMeta;
+
+    #[derive(Debug)]
+    /// The double merkle root metadata column
+    ///
+    /// This column stores details about the double merkle root of a block.
+    /// We update this column when we finish ingesting all the shreds of the block.
+    ///
+    /// * index type: `(Slot, BlockLocation)`
+    /// * value type: [`blockstore_meta::DoubleMerkleMeta`]
+    pub struct DoubleMerkleMeta;
 }
 
 macro_rules! convert_column_index_to_key_bytes {
@@ -820,6 +830,45 @@ impl ColumnName for columns::AlternateMerkleRootMeta {
 }
 impl TypedColumn for columns::AlternateMerkleRootMeta {
     type Type = blockstore_meta::MerkleRootMeta;
+}
+
+impl Column for columns::DoubleMerkleMeta {
+    type Index = (Slot, BlockLocation);
+    // Key size: Slot (8 bytes) + Hash (32 bytes)
+    // When BlockLocation::Original, the hash is Hash::default().
+    type Key = [u8; std::mem::size_of::<Slot>() + HASH_BYTES];
+
+    #[inline]
+    fn key((slot, location): &Self::Index) -> Self::Key {
+        debug_assert_eq!(std::mem::size_of::<Slot>(), 8);
+        convert_column_index_to_key_bytes!(Key,
+            ..8 => &slot.to_be_bytes(),
+            8.. => &location.as_bytes()
+        )
+    }
+
+    fn index(key: &[u8]) -> Self::Index {
+        convert_column_key_bytes_to_index!(key,
+            0..8 => Slot::from_be_bytes,
+            8..40 => BlockLocation::from_bytes,
+        )
+    }
+
+    fn as_index(slot: Slot) -> Self::Index {
+        (slot, BlockLocation::Original)
+    }
+
+    fn slot((slot, _location): Self::Index) -> Slot {
+        slot
+    }
+}
+
+impl ColumnName for columns::DoubleMerkleMeta {
+    const NAME: &'static str = "double_merkle_meta";
+}
+
+impl TypedColumn for columns::DoubleMerkleMeta {
+    type Type = blockstore_meta::DoubleMerkleMeta;
 }
 
 #[cfg(test)]

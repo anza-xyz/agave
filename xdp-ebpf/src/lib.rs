@@ -8,7 +8,7 @@
 #![warn(unsafe_op_in_unsafe_fn)]
 #![no_std]
 
-#[repr(C, align(4))]
+#[repr(C, align(8))]
 pub struct Aligned<Bytes: ?Sized>(Bytes);
 
 impl<Bytes: ?Sized> core::ops::Deref for Aligned<Bytes> {
