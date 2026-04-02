@@ -145,10 +145,6 @@ pub trait DiskIndexValue:
 {
 }
 
-enum ScanTypes {
-    Unindexed,
-}
-
 /// specification of how much memory the in-mem portion of account index can hold
 #[derive(Debug, Clone)]
 pub enum IndexLimit {
@@ -302,93 +298,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         self.storage.storage.is_disk_index_enabled()
     }
 
-    fn do_checked_scan_accounts<F>(
-        &self,
-        metric_name: &'static str,
-        ancestors: &Ancestors,
-        max_root: Slot,
-        func: F,
-        scan_type: ScanTypes,
-        config: &ScanConfig,
-    ) where
-        F: FnMut(&Pubkey, (&T, Slot)),
-    {
-        match scan_type {
-            ScanTypes::Unindexed => {
-                // Pass "" not to log metrics, so RPC doesn't get spammy
-                self.do_scan_accounts(metric_name, ancestors, func, Some(max_root), config);
-            }
-        }
-    }
-
-    // Scan accounts and return latest version of each account that is either:
-    // 1) rooted or
-    // 2) present in ancestors
-    fn do_scan_accounts<F>(
-        &self,
-        metric_name: &'static str,
-        ancestors: &Ancestors,
-        mut func: F,
-        max_root: Option<Slot>,
-        config: &ScanConfig,
-    ) where
-        F: FnMut(&Pubkey, (&T, Slot)),
-    {
-        // TODO: expand to use mint index to find the `pubkey_list` below more efficiently
-        // instead of scanning the entire range
-        let mut total_elapsed_timer = Measure::start("total");
-        let mut num_keys_iterated = 0;
-        let mut latest_slot_elapsed = 0;
-        let mut load_account_elapsed = 0;
-        let mut read_lock_elapsed = 0;
-        let mut iterator_elapsed = 0;
-        let mut iterator_timer = Measure::start("iterator_elapsed");
-
-        for pubkeys in self.iter() {
-            iterator_timer.stop();
-            iterator_elapsed += iterator_timer.as_us();
-            for pubkey in pubkeys {
-                num_keys_iterated += 1;
-                self.get_and_then(&pubkey, |entry| {
-                    if let Some(list) = entry {
-                        let mut read_lock_timer = Measure::start("read_lock");
-                        let list_r = &list.slot_list_read_lock();
-                        read_lock_timer.stop();
-                        read_lock_elapsed += read_lock_timer.as_us();
-                        let mut latest_slot_timer = Measure::start("latest_slot");
-                        if let Some(index) = self.latest_slot(Some(ancestors), list_r, max_root) {
-                            latest_slot_timer.stop();
-                            latest_slot_elapsed += latest_slot_timer.as_us();
-                            let mut load_account_timer = Measure::start("load_account");
-                            func(&pubkey, (&list_r[index].1, list_r[index].0));
-                            load_account_timer.stop();
-                            load_account_elapsed += load_account_timer.as_us();
-                        }
-                    }
-                    let add_to_in_mem_cache = false;
-                    (add_to_in_mem_cache, ())
-                });
-                if config.is_aborted() {
-                    return;
-                }
-            }
-            iterator_timer = Measure::start("iterator_elapsed");
-        }
-
-        total_elapsed_timer.stop();
-        if !metric_name.is_empty() {
-            datapoint_info!(
-                metric_name,
-                ("total_elapsed", total_elapsed_timer.as_us(), i64),
-                ("latest_slot_elapsed", latest_slot_elapsed, i64),
-                ("read_lock_elapsed", read_lock_elapsed, i64),
-                ("load_account_elapsed", load_account_elapsed, i64),
-                ("iterator_elapsed", iterator_elapsed, i64),
-                ("num_keys_iterated", num_keys_iterated, i64),
-            )
-        }
-    }
-
     /// Gets the index's entry for `pubkey` and applies `callback` to it
     ///
     /// If `callback`'s boolean return value is true, add this entry to the in-mem cache.
@@ -488,13 +397,65 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         &self,
         ancestors: &Ancestors,
         max_root: Slot,
-        func: F,
+        mut func: F,
         config: &ScanConfig,
     ) where
         F: FnMut(&Pubkey, (&T, Slot)),
     {
-        // Pass "" not to log metrics, so RPC doesn't get spammy
-        self.do_checked_scan_accounts("", ancestors, max_root, func, ScanTypes::Unindexed, config)
+        let metric_name = "";
+        let mut total_elapsed_timer = Measure::start("total");
+        let mut num_keys_iterated = 0;
+        let mut latest_slot_elapsed = 0;
+        let mut load_account_elapsed = 0;
+        let mut read_lock_elapsed = 0;
+        let mut iterator_elapsed = 0;
+        let mut iterator_timer = Measure::start("iterator_elapsed");
+
+        for pubkeys in self.iter() {
+            iterator_timer.stop();
+            iterator_elapsed += iterator_timer.as_us();
+            for pubkey in pubkeys {
+                num_keys_iterated += 1;
+                self.get_and_then(&pubkey, |entry| {
+                    if let Some(list) = entry {
+                        let mut read_lock_timer = Measure::start("read_lock");
+                        let list_r = &list.slot_list_read_lock();
+                        read_lock_timer.stop();
+                        read_lock_elapsed += read_lock_timer.as_us();
+                        let mut latest_slot_timer = Measure::start("latest_slot");
+                        if let Some(index) =
+                            self.latest_slot(Some(ancestors), list_r, Some(max_root))
+                        {
+                            latest_slot_timer.stop();
+                            latest_slot_elapsed += latest_slot_timer.as_us();
+                            let mut load_account_timer = Measure::start("load_account");
+                            func(&pubkey, (&list_r[index].1, list_r[index].0));
+                            load_account_timer.stop();
+                            load_account_elapsed += load_account_timer.as_us();
+                        }
+                    }
+                    let add_to_in_mem_cache = false;
+                    (add_to_in_mem_cache, ())
+                });
+                if config.is_aborted() {
+                    return;
+                }
+            }
+            iterator_timer = Measure::start("iterator_elapsed");
+        }
+
+        total_elapsed_timer.stop();
+        if !metric_name.is_empty() {
+            datapoint_info!(
+                metric_name,
+                ("total_elapsed", total_elapsed_timer.as_us(), i64),
+                ("latest_slot_elapsed", latest_slot_elapsed, i64),
+                ("read_lock_elapsed", read_lock_elapsed, i64),
+                ("load_account_elapsed", load_account_elapsed, i64),
+                ("iterator_elapsed", iterator_elapsed, i64),
+                ("num_keys_iterated", num_keys_iterated, i64),
+            )
+        }
     }
 
     /// Returns the list of pubkeys from the secondary index for the given key.
