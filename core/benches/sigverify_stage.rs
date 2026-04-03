@@ -56,6 +56,7 @@ impl SigVerifier for BenchSigVerifier {
         &mut self,
         mut batches: Vec<PacketBatch>,
         valid_packets: usize,
+        _in_flight_count: Arc<AtomicUsize>,
         total_valid_packets: Arc<AtomicUsize>,
         total_verify_time_us: Arc<AtomicUsize>,
     ) -> Result<(), SigVerifyServiceError<Self::SendType>> {

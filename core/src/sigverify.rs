@@ -62,6 +62,7 @@ impl SigVerifier for TransactionSigVerifier {
         &mut self,
         batches: Vec<PacketBatch>,
         valid_packets: usize,
+        in_flight_count: Arc<AtomicUsize>,
         total_valid_packets: Arc<AtomicUsize>,
         total_verify_time_us: Arc<AtomicUsize>,
     ) -> Result<(), SigVerifyServiceError<Self::SendType>> {
@@ -69,6 +70,8 @@ impl SigVerifier for TransactionSigVerifier {
         let banking_stage_sender = self.banking_stage_sender.clone();
         let forward_stage_sender = self.forward_stage_sender.clone();
         let reject_non_vote = self.reject_non_vote;
+
+        in_flight_count.fetch_add(valid_packets, Ordering::Release);
 
         self.thread_pool.spawn(move || {
             let mut verify_time = Measure::start("sigverify_batch_time");
@@ -95,6 +98,7 @@ impl SigVerifier for TransactionSigVerifier {
 
             total_valid_packets.fetch_add(num_valid_packets, Ordering::Relaxed);
             total_verify_time_us.fetch_add(verify_time.as_us() as usize, Ordering::Relaxed);
+            in_flight_count.fetch_sub(valid_packets, Ordering::Release);
         });
 
         Ok(())

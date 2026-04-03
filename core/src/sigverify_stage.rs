@@ -50,6 +50,7 @@ pub trait SigVerifier {
         &mut self,
         batches: Vec<PacketBatch>,
         valid_packets: usize,
+        in_flight_count: Arc<AtomicUsize>,
         total_valid_packets: Arc<AtomicUsize>,
         total_verify_time_us: Arc<AtomicUsize>,
     ) -> Result<(), Self::SendType>;
@@ -168,6 +169,7 @@ impl SigVerifier for DisabledSigVerifier {
         &mut self,
         mut batches: Vec<PacketBatch>,
         _valid_packets: usize,
+        _in_flight_count: Arc<AtomicUsize>,
         total_valid_packets: Arc<AtomicUsize>,
         total_verify_time_us: Arc<AtomicUsize>,
     ) -> Result<(), Self::SendType> {
@@ -226,10 +228,16 @@ impl SigVerifyStage {
         recvr: &Receiver<PacketBatch>,
         verifier: &mut T,
         stats: &mut SigVerifierStats,
+        in_flight_count: &Arc<AtomicUsize>,
     ) -> Result<(), T::SendType> {
         const SOFT_RECEIVE_CAP: usize = 5_000;
         let (mut batches, num_packets, recv_duration) =
             streamer::recv_packet_batches(recvr, SOFT_RECEIVE_CAP)?;
+
+        // If we're already at capacity immediately drop the packets
+        if in_flight_count.load(Ordering::Acquire) >= verifier.capacity() {
+            return Ok(());
+        }
 
         let batches_len = batches.len();
         debug!(
@@ -248,6 +256,7 @@ impl SigVerifyStage {
         verifier.verify_and_send_packets(
             batches,
             num_packets_to_verify,
+            in_flight_count.clone(),
             stats.total_valid_packets.clone(),
             stats.total_verify_time_us.clone(),
         )?;
@@ -293,13 +302,18 @@ impl SigVerifyStage {
             .spawn(move || {
                 let mut rng = rand::rng();
                 let mut deduper = Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS);
+                let in_flight_count = Arc::new(AtomicUsize::new(0));
                 loop {
                     if deduper.maybe_reset(&mut rng, DEDUPER_FALSE_POSITIVE_RATE, MAX_DEDUPER_AGE) {
                         stats.num_deduper_saturations += 1;
                     }
-                    if let Err(e) =
-                        Self::verifier(&deduper, &packet_receiver, &mut verifier, &mut stats)
-                    {
+                    if let Err(e) = Self::verifier(
+                        &deduper,
+                        &packet_receiver,
+                        &mut verifier,
+                        &mut stats,
+                        &in_flight_count,
+                    ) {
                         match e {
                             SigVerifyServiceError::Streamer(StreamerError::RecvTimeout(
                                 RecvTimeoutError::Disconnected,
