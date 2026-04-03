@@ -23,7 +23,7 @@ Release channels have their own copy of this changelog:
 * Using `minimal` for `--accounts-index-limit` is now deprecated.
 * `--account-shrink-path` is now deprecated.
 * `sbf-sdk.tar.bz2` is not included anymore in the Agave release tarball. The file will be made available in the new
-  `cargo-build-sbf` repository.
+  [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
 #### Changes
 
 ## 4.0.0
