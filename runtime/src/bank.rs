@@ -92,7 +92,8 @@ use {
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
         accounts_db::{AccountsDb, AccountsDbConfig},
         accounts_hash::AccountsLtHash,
-        accounts_index::{IndexKey, ScanResult},
+        accounts_index::IndexKey,
+        accounts_scan::ScanResult,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::Ancestors,
         blockhash_queue::BlockhashQueue,
@@ -128,9 +129,8 @@ use {
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
-        loaded_programs::{
-            ProgramCacheEntry, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
-        },
+        loaded_programs::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+        program_cache_entry::ProgramCacheEntry,
     },
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_rent::Rent,
@@ -1689,8 +1689,12 @@ impl Bank {
                 &stake_delegations
             ));
 
-        // Apply stake rewards and commission using new snapshots.
-        let cached_vote_accounts = self.get_cached_vote_accounts(rewarded_epoch, &vote_accounts);
+        // Apply stake rewards and commission using the distribution vote-account
+        // snapshot that matches VAT admission filtering when enabled.
+        let distribution_epoch_vote_accounts =
+            self.maybe_filter_vote_accounts_for_vat(&vote_accounts);
+        let cached_vote_accounts =
+            self.get_cached_vote_accounts(rewarded_epoch, &distribution_epoch_vote_accounts);
         let (rewards_calculation, update_rewards_with_thread_pool_time_us) =
             measure_us!(self.calculate_rewards(
                 &stake_history,
@@ -2959,7 +2963,7 @@ impl Bank {
     }
 
     pub fn get_fee_for_message(&self, message: &SanitizedMessage) -> Option<u64> {
-        let lamports_per_signature = {
+        {
             let blockhash_queue = self.blockhash_queue.read().unwrap();
             blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
         }
@@ -2967,13 +2971,12 @@ impl Bank {
             self.load_message_nonce_data(message)
                 .map(|(_nonce_address, nonce_data)| nonce_data.get_lamports_per_signature())
         })?;
-        Some(self.get_fee_for_message_with_lamports_per_signature(message, lamports_per_signature))
+        Some(self.get_fee_for_message_with_lamports_per_signature(message))
     }
 
     pub fn get_fee_for_message_with_lamports_per_signature(
         &self,
         message: &impl SVMMessage,
-        lamports_per_signature: u64,
     ) -> u64 {
         let fee_budget_limits = FeeBudgetLimits::from(
             process_compute_budget_instructions(
@@ -2984,7 +2987,6 @@ impl Bank {
         );
         solana_fee::calculate_fee(
             message,
-            lamports_per_signature == 0,
             self.fee_structure().lamports_per_signature,
             fee_budget_limits.prioritization_fee,
             FeeFeatures::from(self.feature_set.as_ref()),
@@ -3626,7 +3628,7 @@ impl Bank {
             self.last_blockhash_and_lamports_per_signature();
         let effective_epoch_of_deployments =
             self.epoch_schedule().get_epoch(self.slot.saturating_add(
-                solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
+                solana_program_runtime::program_cache_entry::DELAY_VISIBILITY_SLOT_OFFSET,
             ));
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
@@ -4005,11 +4007,11 @@ impl Bank {
             .iter()
             .filter_map(|processing_result| processing_result.processed_transaction())
             .filter_map(|processed_tx| processed_tx.execution_details())
-            .filter_map(|details| {
-                details
-                    .status
-                    .is_ok()
-                    .then_some(details.accounts_data_len_delta)
+            .filter_map(|details| details.accounts_deltas.as_ref())
+            .map(|deltas| {
+                deltas
+                    .accounts_resize_delta
+                    .saturating_sub_unsigned(deltas.accounts_uninitialized_size)
             })
             .sum();
         self.update_accounts_data_size_delta_on_chain(accounts_data_len_delta);
@@ -6074,6 +6076,28 @@ impl Bank {
         self.collector_fee_details.read().unwrap().clone()
     }
 
+    fn maybe_filter_vote_accounts_for_vat(&self, vote_accounts: &VoteAccounts) -> VoteAccounts {
+        if self.feature_set.snapshot().validator_admission_ticket {
+            let vote_account_rent_exempt_minimum = self
+                .rent_collector
+                .rent
+                .minimum_balance(VoteStateV4::size_of());
+            let minimum_vote_account_balance = if self.feature_set.snapshot().alpenglow {
+                // When alpenglow is active the minimum required balance is
+                // VAT + rent-exempt minimum for vote account.
+                vote_account_rent_exempt_minimum + VAT_TO_BURN_PER_EPOCH
+            } else {
+                // If alpenglow is not active, the minimum required balance is
+                // rent-exempt minimum.
+                vote_account_rent_exempt_minimum
+            };
+            vote_accounts
+                .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, minimum_vote_account_balance)
+        } else {
+            vote_accounts.clone()
+        }
+    }
+
     /// If the VAT feature is active, returns the `Stakes` as filtered by SIMD-0357
     /// See `VoteAccounts::clone_and_filter_for_vat` for the full criteria
     ///
@@ -6253,7 +6277,7 @@ impl Bank {
         test_config: BankTestConfig,
         paths: Vec<PathBuf>,
     ) -> Self {
-        Self::new_from_genesis(
+        let mut bank = Self::new_from_genesis(
             genesis_config,
             runtime_config,
             paths,
@@ -6264,7 +6288,13 @@ impl Bank {
             Arc::default(),
             None,
             None,
-        )
+        );
+        // Keep test-bank fee structure aligned with the genesis fee configuration.
+        bank.set_fee_structure(&FeeStructure {
+            lamports_per_signature: genesis_config.fee_rate_governor.lamports_per_signature,
+            ..FeeStructure::default()
+        });
+        bank
     }
 
     pub fn new_for_benches(genesis_config: &GenesisConfig) -> Self {

@@ -416,9 +416,8 @@ fn deserialize_parameters_for_abiv0<I: IntoIterator<Item = usize>>(
     account_lengths: I,
 ) -> Result<(), InstructionError> {
     let mut start = size_of::<u64>(); // number of accounts
-    for (instruction_account_index, pre_len) in (0..instruction_context
-        .get_number_of_instruction_accounts())
-        .zip(account_lengths.into_iter())
+    for (instruction_account_index, pre_len) in
+        (0..instruction_context.get_number_of_instruction_accounts()).zip(account_lengths)
     {
         let duplicate =
             instruction_context.is_instruction_account_duplicate(instruction_account_index)?;
@@ -599,9 +598,8 @@ fn deserialize_parameters_for_abiv1<I: IntoIterator<Item = usize>>(
     account_lengths: I,
 ) -> Result<(), InstructionError> {
     let mut start = size_of::<u64>(); // number of accounts
-    for (instruction_account_index, pre_len) in (0..instruction_context
-        .get_number_of_instruction_accounts())
-        .zip(account_lengths.into_iter())
+    for (instruction_account_index, pre_len) in
+        (0..instruction_context.get_number_of_instruction_accounts()).zip(account_lengths)
     {
         let duplicate =
             instruction_context.is_instruction_account_duplicate(instruction_account_index)?;

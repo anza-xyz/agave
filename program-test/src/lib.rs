@@ -16,6 +16,7 @@ use {
     },
     solana_account_info::AccountInfo,
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
+    solana_address::Address,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
     solana_clock::{Clock, Epoch, Slot},
@@ -37,7 +38,7 @@ use {
     solana_program_entrypoint::{SUCCESS, deserialize},
     solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
-        invoke_context::BuiltinFunctionRegisterer, loaded_programs::ProgramCacheEntry,
+        invoke_context::BuiltinFunctionRegisterer, program_cache_entry::ProgramCacheEntry,
         serialization::serialize_parameters, stable_log, sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -82,7 +83,7 @@ pub use {
         error::EbpfError,
         memory_region::MemoryMapping,
         program::BuiltinFunctionDefinition,
-        vm::{EbpfVm, get_runtime_environment_key},
+        vm::{EbpfVm, EncryptedHostAddressToEbpfVm, get_runtime_environment_key},
     },
     solana_transaction_context::IndexOfAccount,
 };
@@ -227,22 +228,23 @@ macro_rules! processor {
                 unreachable!()
             }
             fn vm(
-                vm: *mut $crate::EbpfVm<$crate::InvokeContext>,
+                mut vm: $crate::EncryptedHostAddressToEbpfVm<$crate::InvokeContext>,
                 _: u64,
                 _: u64,
                 _: u64,
                 _: u64,
                 _: u64,
             ) {
-                let vm = unsafe {
-                    &mut *((vm as *mut u64)
-                        .offset(-($crate::get_runtime_environment_key() as isize))
-                        as *mut $crate::EbpfVm<$crate::InvokeContext>)
-                };
-                vm.program_result =
-                    $crate::invoke_builtin_function($builtin_function, vm.context_object_pointer)
+                unsafe {
+                    vm.with_vm(|vm| {
+                        vm.program_result = $crate::invoke_builtin_function(
+                            $builtin_function,
+                            vm.context_object_pointer.as_mut(),
+                        )
                         .map_err(|err| $crate::EbpfError::SyscallError(err))
                         .into();
+                    });
+                }
             }
         };
         Some(<Converter as $crate::BuiltinFunctionDefinition<_>>::register)
@@ -1218,6 +1220,15 @@ impl ProgramTestContext {
 
     pub fn genesis_config(&self) -> &GenesisConfig {
         &self.genesis_config
+    }
+
+    pub fn is_active(&self, feature: &Address) -> bool {
+        self.bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .feature_set
+            .is_active(feature)
     }
 
     /// Manually increment vote credits for the current epoch in the specified vote account to simulate validator voting activity

@@ -5,9 +5,9 @@ use qualifier_attr::qualifiers;
 use {
     crate::{
         execution_budget::MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268,
-        invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
-        loaded_programs::ProgramCacheEntry,
+        invoke_context::{BpfAllocator, InvokeContext, MemoryContext, SerializedAccountMetadata},
         mem_pool::VmMemoryPool,
+        program_cache_entry::ProgramCacheEntry,
         serialization, stable_log,
     },
     solana_instruction::error::InstructionError,
@@ -67,15 +67,15 @@ pub fn create_vm<'a, 'b>(
             .virtual_address_space_adjustments,
         invoke_context.get_feature_set().account_data_direct_mapping,
     )?;
-    invoke_context.set_syscall_context(SyscallContext {
-        allocator: BpfAllocator::new(heap_size as u64),
+    invoke_context.set_memory_context(MemoryContext::new(
+        BpfAllocator::new(heap_size as u64),
         accounts_metadata,
-    })?;
+        memory_mapping,
+    ))?;
     Ok(EbpfVm::new(
         program.get_loader().clone(),
         program.get_sbpf_version(),
         invoke_context,
-        memory_mapping,
         stack_size,
     ))
 }
@@ -176,9 +176,6 @@ pub fn execute<'a, 'b: 'a>(
         .get_feature_set()
         .virtual_address_space_adjustments;
     let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
-    let provide_instruction_data_offset_in_vm_r2 = invoke_context
-        .get_feature_set()
-        .provide_instruction_data_offset_in_vm_r2;
     let direct_account_pointers_in_program_input = invoke_context
         .get_feature_set()
         .direct_account_pointers_in_program_input;
@@ -212,14 +209,13 @@ pub fn execute<'a, 'b: 'a>(
 
     let mut create_vm_time = Measure::start("create_vm");
     let execution_result = {
-        #[cfg_attr(feature = "sbpf-debugger", expect(unused_assignments))]
         let mut execution_mode = ExecutionMode::PreferJit;
         #[cfg(feature = "sbpf-debugger")]
-        let (debug_port, debug_metadata) = {
+        let (debug_port, debug_metadata) = if invoke_context.debug_port.is_some() {
             execution_mode = ExecutionMode::Interpreted;
             (
                 invoke_context.debug_port,
-                format!(
+                Some(format!(
                     "program_id={};cpi_level={};caller={}",
                     program_id,
                     instruction_context.get_stack_height().saturating_sub(1),
@@ -234,8 +230,10 @@ pub fn execute<'a, 'b: 'a>(
                         .and_then(|ctx| ctx.get_program_key().ok())
                         .map(|key| key.to_string())
                         .unwrap_or_else(|| "none".into())
-                ),
+                )),
             )
+        } else {
+            (None, None)
         };
 
         let compute_meter_prev = invoke_context.get_remaining();
@@ -251,17 +249,17 @@ pub fn execute<'a, 'b: 'a>(
         #[cfg(feature = "sbpf-debugger")]
         {
             vm.debug_port = debug_port;
-            vm.debug_metadata = Some(debug_metadata);
+            vm.debug_metadata = debug_metadata;
         }
 
         let execute_time = Measure::start("execute");
-        let prev_nested_exec_time = vm.context_object_pointer.total_nested_exec_time;
+
+        // SAFETY: VM is the only holder of the InvokeContext reference, as it carries its lifetime.
+        let prev_nested_exec_time =
+            unsafe { vm.context_object_pointer.as_ref().total_nested_exec_time };
 
         vm.registers[1] = ebpf::MM_INPUT_START;
-        // SIMD-0321: Provide offset to instruction data in VM register 2.
-        if provide_instruction_data_offset_in_vm_r2 {
-            vm.registers[2] = instruction_data_offset as u64;
-        }
+        vm.registers[2] = instruction_data_offset as u64;
         let (compute_units_consumed, result) = vm.execute_program(executable, &mut execution_mode);
         let register_trace = std::mem::take(&mut vm.register_trace);
         MEMORY_POOL.with_borrow_mut(|memory_pool| {
@@ -414,7 +412,7 @@ pub fn execute<'a, 'b: 'a>(
             virtual_address_space_adjustments,
             account_data_direct_mapping,
             parameter_bytes,
-            &invoke_context.get_syscall_context()?.accounts_metadata,
+            &invoke_context.get_memory_context()?.accounts_metadata,
         )
     }
 

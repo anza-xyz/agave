@@ -87,9 +87,8 @@ mod tests {
             declare_process_instruction,
             execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
             invoke_context::EnvironmentConfig,
-            loaded_programs::{
-                ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
-            },
+            loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+            program_cache_entry::ProgramCacheEntry,
             sysvar_cache::SysvarCache,
         },
         solana_pubkey::Pubkey,

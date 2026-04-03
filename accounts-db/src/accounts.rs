@@ -6,7 +6,8 @@ use {
             AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, PopulateReadCache,
             ScanAccountStorageData, ScanStorageResult, UpdateIndexThreadSelection,
         },
-        accounts_index::{IndexKey, ScanConfig, ScanError, ScanResult},
+        accounts_index::IndexKey,
+        accounts_scan::{ScanConfig, ScanError, ScanResult},
         ancestors::Ancestors,
         is_loadable::IsLoadable as _,
         storable_accounts::StorableAccounts,
@@ -455,7 +456,8 @@ impl Accounts {
             &ScanConfig::default(),
         )?;
         if sort_results {
-            collector.sort_unstable_by(|(a_addr, _, _), (b_addr, _, _)| a_addr.cmp(b_addr));
+            // Avoid copying pubkeys (using Ord::cmp(a, b) silences clippy::unnecessary_sort_by).
+            collector.sort_unstable_by(|(addr_a, _, _), (addr_b, _, _)| Ord::cmp(addr_a, addr_b));
         }
         Ok(collector)
     }

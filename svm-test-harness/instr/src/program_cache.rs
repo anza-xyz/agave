@@ -1,10 +1,11 @@
 use {
+    crate::builtins::SVM_BUILTINS,
     solana_account::{Account, AccountSharedData},
-    solana_builtins::BUILTINS,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction_error::InstructionError,
     solana_program_runtime::{
-        loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
+        program_cache_entry::ProgramCacheEntry,
         program_metrics::LoadProgramMetrics,
     },
     solana_pubkey::Pubkey,
@@ -15,12 +16,12 @@ use {
     std::{collections::HashSet, sync::Arc},
 };
 
-/// Create a new `ProgramCacheForTxBatch` instance with all builtins from `solana-builtins`.
+/// Create a new `ProgramCacheForTxBatch` instance populated with builtins.
 pub fn new_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
     let mut cache = ProgramCacheForTxBatch::default();
     cache.set_slot_for_tests(slot);
 
-    for builtin in BUILTINS {
+    for builtin in SVM_BUILTINS {
         cache.replenish(
             builtin.program_id,
             Arc::new(ProgramCacheEntry::new_builtin(
@@ -82,8 +83,7 @@ pub fn fill_from_accounts(
 
         if program_cache.find(&acc.0).is_none() {
             // load_program_with_pubkey expects the owner to be one of the bpf loader
-            if !solana_sdk_ids::loader_v4::check_id(&acc.1.owner)
-                && !solana_sdk_ids::bpf_loader_deprecated::check_id(&acc.1.owner)
+            if !solana_sdk_ids::bpf_loader_deprecated::check_id(&acc.1.owner)
                 && !solana_sdk_ids::bpf_loader::check_id(&acc.1.owner)
                 && !solana_sdk_ids::bpf_loader_upgradeable::check_id(&acc.1.owner)
             {

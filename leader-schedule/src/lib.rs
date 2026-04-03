@@ -225,12 +225,15 @@ mod tests {
         expected_hash: &str,
     ) {
         fn hash_slot_leader_vote_addresses(v: &[SlotLeader]) -> String {
-            use sha2::{Digest, Sha256};
+            use solana_sha256_hasher::Hasher;
 
-            let hasher = v.iter().fold(Sha256::new(), |hasher, slot_leader| {
-                hasher.chain_update(slot_leader.vote_address.to_bytes())
-            });
-            bs58::encode(hasher.finalize()).into_string()
+            let mut hasher = Hasher::default();
+
+            for slot_leader in v {
+                hasher.hash(&slot_leader.vote_address.to_bytes());
+            }
+
+            hasher.result().to_string()
         }
         let slot_leaders: Vec<_> = (0..=u16::MAX)
             .map(|seed| SlotLeader {

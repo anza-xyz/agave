@@ -351,8 +351,6 @@ impl FeatureSet {
             reenable_zk_elgamal_proof_program: snapshot.reenable_zk_elgamal_proof_program,
             delay_commission_updates: snapshot.delay_commission_updates,
             raise_cpi_nesting_limit_to_8: snapshot.raise_cpi_nesting_limit_to_8,
-            provide_instruction_data_offset_in_vm_r2: snapshot
-                .provide_instruction_data_offset_in_vm_r2,
             increase_cpi_account_info_limit: snapshot.increase_cpi_account_info_limit,
             vote_state_v4: snapshot.vote_state_v4,
             poseidon_enforce_padding: snapshot.poseidon_enforce_padding,
@@ -1443,7 +1441,7 @@ pub mod enable_alt_bn128_g2_syscalls {
 }
 
 pub mod commission_rate_in_basis_points {
-    solana_pubkey::declare_id!("CommissionRate1nBasisPoints1111111111111111");
+    solana_pubkey::declare_id!("Eg7tXEwMZzS98xaZ1YHUbdRHsaYZiCsSaR6sKgxreoaj");
 }
 
 pub mod custom_commission_collector {
@@ -1506,7 +1504,7 @@ pub mod validate_chained_block_id {
 }
 
 pub mod validator_admission_ticket {
-    solana_pubkey::declare_id!("VATtb1DepUwdPh5bFVasdtkbeDNsftZSRzr2aKpKWJA");
+    solana_pubkey::declare_id!("VAT9huvhPjRN9cyrPytq9rwvEJ3J4ADtjdncgZRyANJ");
 }
 
 pub mod direct_account_pointers_in_program_input {

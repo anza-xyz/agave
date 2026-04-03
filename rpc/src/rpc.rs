@@ -25,7 +25,8 @@ use {
     },
     solana_accounts_db::{
         accounts::AccountAddressFilter,
-        accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanResult},
+        accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey},
+        accounts_scan::ScanResult,
     },
     solana_client::connection_cache::Protocol,
     solana_clock::{Slot, UnixTimestamp},
@@ -336,7 +337,8 @@ impl JsonRpcRequestProcessor {
             .await
             .expect("Failed to spawn blocking task")?;
         if sort_results {
-            accounts.sort_unstable_by(|(a_addr, _), (b_addr, _)| a_addr.cmp(b_addr));
+            // Avoid copying pubkeys (using Ord::cmp(a, b) silences clippy::unnecessary_sort_by).
+            accounts.sort_unstable_by(|(addr_a, _), (addr_b, _)| Ord::cmp(addr_a, addr_b));
         }
         Ok(accounts)
     }
@@ -2281,7 +2283,8 @@ impl JsonRpcRequestProcessor {
                 .await
                 .expect("Failed to spawn blocking task")?;
             if sort_results {
-                accounts.sort_unstable_by(|(a_addr, _), (b_addr, _)| a_addr.cmp(b_addr));
+                // Avoid copying pubkeys (using Ord::cmp(a, b) silences clippy::unnecessary_sort_by).
+                accounts.sort_unstable_by(|(addr_a, _), (addr_b, _)| Ord::cmp(addr_a, addr_b));
             }
             Ok(accounts)
         }
@@ -4575,7 +4578,7 @@ pub mod tests {
         solana_program_option::COption,
         solana_program_runtime::{
             invoke_context::InvokeContext,
-            loaded_programs::ProgramCacheEntry,
+            program_cache_entry::ProgramCacheEntry,
             solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
         },
         solana_rpc_client_api::{

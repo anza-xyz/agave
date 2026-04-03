@@ -47,10 +47,10 @@ use {
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndex, AccountsIndexRootsStats,
-            AccountsIndexScanResult, IndexKey, IsCached, ReclaimsSlotList, RefCount, ScanConfig,
-            ScanFilter, ScanResult, SlotList, Startup, UpsertReclaim,
-            in_mem_accounts_index::StartupStats,
+            AccountsIndexScanResult, IndexKey, IsCached, ReclaimsSlotList, RefCount, ScanFilter,
+            SlotList, Startup, UpsertReclaim, in_mem_accounts_index::StartupStats,
         },
+        accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
@@ -931,6 +931,8 @@ pub struct AccountsDb {
 
     pub(crate) shrink_ancient_stats: ShrinkAncientStats,
 
+    pub scan_tracker: ScanTracker,
+
     pub account_indexes: AccountSecondaryIndexes,
 
     /// Set of unique keys per slot which is used
@@ -1100,6 +1102,7 @@ impl AccountsDb {
             max_ancient_storages: accounts_db_config
                 .max_ancient_storages
                 .unwrap_or(DEFAULT_MAX_ANCIENT_STORAGES),
+            scan_tracker: ScanTracker::default(),
             account_indexes: accounts_db_config.account_indexes.unwrap_or_default(),
             shrink_ratio: accounts_db_config.shrink_ratio,
             accounts_update_notifier,
@@ -1381,7 +1384,7 @@ impl AccountsDb {
 
     fn max_clean_root(&self, proposed_clean_root: Option<Slot>) -> Option<Slot> {
         match (
-            self.accounts_index.min_ongoing_scan_root(),
+            self.scan_tracker.min_ongoing_scan_root(),
             proposed_clean_root,
         ) {
             (None, None) => None,
@@ -2133,13 +2136,12 @@ impl AccountsDb {
             ),
             (
                 "active_scans",
-                self.accounts_index.scan_tracker.active_scans.load(Ordering::Relaxed),
+                self.scan_tracker.active_scans.load(Ordering::Relaxed),
                 i64
             ),
             (
                 "max_distance_to_min_scan_slot",
-                self.accounts_index
-                    .scan_tracker.max_distance_to_min_scan_slot
+                self.scan_tracker.max_distance_to_min_scan_slot
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -3351,10 +3353,32 @@ impl AccountsDb {
     where
         F: FnMut(Option<(&Pubkey, AccountSharedData, Slot)>),
     {
-        // This can error out if the slots being scanned over are aborted
+        // Register this scan so that slots needed by the scan are not cleaned out from under us.
+        let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || {
+            self.accounts_index.max_root_inclusive()
+        })
+        .ok_or(ScanError::SlotRemoved {
+            slot: ancestors.max_slot(),
+            bank_id,
+        })?;
+
+        // If the scan's ancestors are all rooted, drop them and scan roots only
+        let empty_ancestors = Ancestors::default();
+        let ancestors = if scan_guard.should_use_ancestors(ancestors) {
+            ancestors
+        } else {
+            &empty_ancestors
+        };
+
+        // Bound max_root by ancestors.min_slot() so that roots from slots
+        // beyond the querying bank's ancestor chain are not visible.
+        let mut max_root = scan_guard.max_root();
+        if let Some(min) = ancestors.min_slot() {
+            max_root = max_root.min(min);
+        }
         self.accounts_index.scan_accounts(
             ancestors,
-            bank_id,
+            max_root,
             |pubkey, (account_info, slot)| {
                 let mut account_accessor =
                     self.get_account_accessor(slot, pubkey, &account_info.storage_location());
@@ -3368,8 +3392,15 @@ impl AccountsDb {
                 scan_func(account_slot)
             },
             config,
-        )?;
+        );
 
+        // Check whether the bank was removed while the scan was in progress.
+        if scan_guard.was_scan_corrupted() {
+            return Err(ScanError::SlotRemoved {
+                slot: ancestors.max_slot(),
+                bank_id,
+            });
+        }
         Ok(())
     }
 
@@ -3396,20 +3427,58 @@ impl AccountsDb {
             return Ok(used_index);
         }
 
-        self.accounts_index.index_scan_accounts(
-            ancestors,
+        // Register this scan so that slots needed by the scan are not cleaned out from under us.
+        let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || {
+            self.accounts_index.max_root_inclusive()
+        })
+        .ok_or(ScanError::SlotRemoved {
+            slot: ancestors.max_slot(),
             bank_id,
-            index_key,
-            |pubkey, (account_info, slot)| {
-                let account_slot = self
-                    .get_account_accessor(slot, pubkey, &account_info.storage_location())
-                    .get_loaded_account(|loaded_account| {
-                        (pubkey, loaded_account.take_account(), slot)
-                    });
-                scan_func(account_slot)
-            },
-            config,
-        )?;
+        })?;
+
+        // If the scan's ancestors are all rooted, drop them and scan roots only
+        let empty_ancestors = Ancestors::default();
+        let ancestors = if scan_guard.should_use_ancestors(ancestors) {
+            ancestors
+        } else {
+            &empty_ancestors
+        };
+
+        // Bound max_root by ancestors.min_slot() so that roots from slots
+        // beyond the querying bank's ancestor chain are not visible. A root
+        // between min_slot and max_slot that is not an ancestor belongs to a
+        // different fork and should not appear in scan results.
+        let mut max_root = scan_guard.max_root();
+        if let Some(min) = ancestors.min_slot() {
+            max_root = max_root.min(min);
+        }
+        for pubkey in self.accounts_index.get_index_key_pubkeys(&index_key) {
+            if config.is_aborted() {
+                break;
+            }
+            self.accounts_index.get_with_and_then(
+                &pubkey,
+                Some(ancestors),
+                Some(max_root),
+                true,
+                |(slot, account_info)| {
+                    let account_slot = self
+                        .get_account_accessor(slot, &pubkey, &account_info.storage_location())
+                        .get_loaded_account(|loaded_account| {
+                            (&pubkey, loaded_account.take_account(), slot)
+                        });
+                    scan_func(account_slot)
+                },
+            );
+        }
+
+        // Check whether the bank was removed while the scan was in progress.
+        if scan_guard.was_scan_corrupted() {
+            return Err(ScanError::SlotRemoved {
+                slot: ancestors.max_slot(),
+                bank_id,
+            });
+        }
         let used_index = true;
         Ok(used_index)
     }
@@ -3848,7 +3917,7 @@ impl AccountsDb {
                             // retry_to_get_account_accessor() must outlive the Arc<Bank> (and its all
                             // ancestors) over this fn invocation, guaranteeing the prevention of being purged,
                             // first of all.
-                            // For details, see the comment in AccountIndex::do_checked_scan_accounts(),
+                            // For details, see the comment in ScanGuard::should_use_ancestors(),
                             // which is referring back here.
                             panic!("{message}");
                         });
@@ -4069,7 +4138,6 @@ impl AccountsDb {
         // and hold a reference to the bank at the tip of the fork they're scanning. Hence it's
         // safe to remove this bank_id from the `removed_bank_ids` list at this point.
         if self
-            .accounts_index
             .scan_tracker
             .removed_bank_ids
             .lock()
@@ -4306,7 +4374,7 @@ impl AccountsDb {
             //
             // Also note roots are never removed via `remove_unrooted_slot()`, so
             // it's safe to filter them out here as they won't need deletion from
-            // self.accounts_index.scan_tracker.removed_bank_ids in
+            // self.scan_tracker.removed_bank_ids in
             // `purge_slots_from_cache_and_store()`.
             .filter(|slot| !self.accounts_index.is_alive_root(**slot));
         safety_checks_elapsed.stop();
@@ -4331,12 +4399,7 @@ impl AccountsDb {
         // banks fail, and any ongoing scans over these slots will detect that they should abort
         // their results
         {
-            let mut locked_removed_bank_ids = self
-                .accounts_index
-                .scan_tracker
-                .removed_bank_ids
-                .lock()
-                .unwrap();
+            let mut locked_removed_bank_ids = self.scan_tracker.removed_bank_ids.lock().unwrap();
             for (_slot, remove_bank_id) in remove_slots.iter() {
                 locked_removed_bank_ids.insert(*remove_bank_id);
             }

@@ -1358,13 +1358,12 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
     let index_key = IndexKey::SplTokenMint(mint_key);
     let bank_id = 0;
     accounts
-        .accounts_index
         .index_scan_accounts(
             &Ancestors::default(),
             bank_id,
             index_key,
-            |key, _| {
-                found_accounts.insert(*key);
+            |account| {
+                found_accounts.insert(*account.unwrap().0);
             },
             &ScanConfig::default(),
         )
@@ -1436,12 +1435,13 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
     // Secondary index should have purged `pubkey1` as well
     let mut found_accounts = vec![];
     accounts
-        .accounts_index
         .index_scan_accounts(
             &Ancestors::default(),
             bank_id,
             IndexKey::SplTokenMint(mint_key),
-            |key, _| found_accounts.push(*key),
+            |account| {
+                found_accounts.push(*account.unwrap().0);
+            },
             &ScanConfig::default(),
         )
         .unwrap();
@@ -2403,7 +2403,8 @@ fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess
 #[test]
 fn test_delete_dependencies() {
     agave_logger::setup();
-    let accounts_index = AccountsIndex::<AccountInfo, AccountInfo>::default_for_tests();
+    let accounts = AccountsDb::new_single_for_tests();
+    let accounts_index = &accounts.accounts_index;
     let key0 = Pubkey::new_from_array([0u8; 32]);
     let key1 = Pubkey::new_from_array([1u8; 32]);
     let key2 = Pubkey::new_from_array([2u8; 32]);
@@ -2519,7 +2520,6 @@ fn test_delete_dependencies() {
     store_counts.insert(1, (0, HashSet::from_iter(vec![key0, key1])));
     store_counts.insert(2, (0, HashSet::from_iter(vec![key1, key2])));
     store_counts.insert(3, (1, HashSet::from_iter(vec![key2])));
-    let accounts = AccountsDb::new_single_for_tests();
     accounts.calc_delete_dependencies(&candidates, &mut store_counts, None);
     let mut stores: Vec<_> = store_counts.keys().cloned().collect();
     stores.sort_unstable();
@@ -3227,7 +3227,7 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
 
     // Check that the scan is properly set up
     assert_eq!(
-        db.accounts_index.min_ongoing_scan_root().unwrap(),
+        db.scan_tracker.min_ongoing_scan_root().unwrap(),
         max_scan_root
     );
 
@@ -3458,7 +3458,7 @@ fn setup_accounts_db_cache_clean(
                 scan_stall_key,
             ));
             assert_eq!(
-                accounts_db.accounts_index.min_ongoing_scan_root().unwrap(),
+                accounts_db.scan_tracker.min_ongoing_scan_root().unwrap(),
                 *slot
             );
         }

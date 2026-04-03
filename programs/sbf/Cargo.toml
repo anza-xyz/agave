@@ -120,8 +120,6 @@ num-derive = "0.4.2"
 num-traits = "0.2"
 serde = { version = "1.0.112", features = ["derive"] }
 serde_json = "1.0.149"
-sha2 = "0.10.8"
-sha3 = "0.10.8"
 solana-account-info = "=3.1.1"
 solana-account-view = "=2.0.0"
 solana-address = "=2.5.0"
@@ -208,7 +206,6 @@ solana-hash = "4.2.0"
 solana-instruction = { workspace = true }
 solana-keypair = "3.0.0"
 solana-loader-v3-interface = "6.1.0"
-solana-loader-v4-interface = "3.1.0"
 solana-message = "4.0.0"
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = "4.1.0"

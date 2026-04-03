@@ -101,7 +101,7 @@ pub struct Tvu {
     window_service: WindowService,
     cluster_slots_service: ClusterSlotsService,
     replay_stage: ReplayStage,
-    blockstore_cleanup_service: Option<BlockstoreCleanupService>,
+    blockstore_cleanup_service: BlockstoreCleanupService,
     cost_update_service: CostUpdateService,
     voting_service: VotingService,
     bls_voting_service: BLSVotingService,
@@ -579,9 +579,11 @@ impl Tvu {
 
         let replay_stage = ReplayStage::new(replay_stage_config, replay_senders, replay_receivers)?;
 
-        let blockstore_cleanup_service = tvu_config.max_ledger_shreds.map(|max_ledger_shreds| {
-            BlockstoreCleanupService::new(blockstore.clone(), max_ledger_shreds, exit.clone())
-        });
+        let blockstore_cleanup_service = BlockstoreCleanupService::new(
+            blockstore.clone(),
+            tvu_config.max_ledger_shreds,
+            exit.clone(),
+        );
 
         let duplicate_shred_listener = DuplicateShredListener::new(
             exit,
@@ -628,9 +630,7 @@ impl Tvu {
         self.cluster_slots_service.join()?;
         self.fetch_stage.join()?;
         self.shred_sigverify.join()?;
-        if let Some(cleanup_service) = self.blockstore_cleanup_service {
-            cleanup_service.join()?;
-        }
+        self.blockstore_cleanup_service.join()?;
         self.replay_stage.join()?;
         self.cost_update_service.join()?;
         self.voting_service.join()?;

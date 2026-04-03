@@ -5,6 +5,7 @@
 use {
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
+    solana_message::v0::LoadedAddresses,
     solana_signature::Signature,
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     solana_transaction_status::{Reward, RewardsAndNumPartitions, TransactionStatusMeta},
@@ -189,6 +190,37 @@ pub enum ReplicaTransactionInfoVersions<'a> {
     V0_0_1(&'a ReplicaTransactionInfo<'a>),
     V0_0_2(&'a ReplicaTransactionInfoV2<'a>),
     V0_0_3(&'a ReplicaTransactionInfoV3<'a>),
+}
+
+/// Information about a transaction after deshredding (when entries are formed from shreds).
+/// This is sent before any execution occurs.
+/// Unlike ReplicaTransactionInfo, this does not include TransactionStatusMeta
+/// since execution has not happened yet.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaDeshredTransactionInfo<'a> {
+    /// The transaction signature, used for identifying the transaction.
+    pub signature: &'a Signature,
+
+    /// Indicates if the transaction is a simple vote transaction.
+    pub is_vote: bool,
+
+    /// The versioned transaction.
+    pub transaction: &'a VersionedTransaction,
+
+    /// Addresses loaded from address lookup tables for V0 transactions.
+    /// Resolution uses the rooted bank, so address lookup tables created between
+    /// the root slot and the current slot will not resolve. This field is `None`
+    /// for legacy transactions, when the transaction has no address table lookups,
+    /// when ALT resolution is not enabled by the plugin, or when resolution fails
+    /// (e.g. the lookup table account does not exist at the root slot).
+    pub loaded_addresses: Option<&'a LoadedAddresses>,
+}
+
+/// A wrapper to future-proof ReplicaDeshredTransactionInfo handling.
+#[repr(u32)]
+pub enum ReplicaDeshredTransactionInfoVersions<'a> {
+    V0_0_1(&'a ReplicaDeshredTransactionInfo<'a>),
 }
 
 #[derive(Clone, Debug)]
@@ -498,6 +530,35 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// Default is false -- if the plugin is interested in
     /// entry data, return true.
     fn entry_notifications_enabled(&self) -> bool {
+        false
+    }
+
+    /// Called when a transaction is deshredded (entries formed from shreds).
+    /// This is triggered before any execution occurs. Unlike notify_transaction,
+    /// this does not include execution metadata (TransactionStatusMeta).
+    #[allow(unused_variables)]
+    fn notify_deshred_transaction(
+        &self,
+        transaction: ReplicaDeshredTransactionInfoVersions,
+        slot: Slot,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Check if the plugin is interested in deshred transaction data.
+    /// Default is false -- if the plugin is interested in receiving
+    /// transactions when they are deshredded, return true.
+    fn deshred_transaction_notifications_enabled(&self) -> bool {
+        false
+    }
+
+    /// Check if the plugin wants address lookup table (ALT) resolution for
+    /// deshred transactions. Default is false. When true, the validator will
+    /// resolve V0 transaction address lookups using the rooted bank and
+    /// populate `loaded_addresses` in `ReplicaDeshredTransactionInfo`.
+    /// This adds accounts DB I/O on the shred insertion path, so plugins
+    /// that only need the raw transaction should leave this disabled.
+    fn deshred_transaction_alt_resolution_enabled(&self) -> bool {
         false
     }
 }

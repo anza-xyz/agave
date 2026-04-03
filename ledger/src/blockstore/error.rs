@@ -1,8 +1,8 @@
 //! The error that can be produced from Blockstore operations.
 
 use {
-    super::PurgeType, agave_snapshots::hardened_unpack::UnpackError, solana_clock::Slot,
-    thiserror::Error,
+    super::PurgeType, crate::blockstore_meta::BlockLocation,
+    agave_snapshots::hardened_unpack::UnpackError, solana_clock::Slot, thiserror::Error,
 };
 
 #[derive(Error, Debug)]
@@ -19,6 +19,8 @@ pub enum BlockstoreError {
     DeadSlot,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("deserialization error: {0}")]
+    Deserialize(#[from] wincode::ReadError),
     #[error("serialization error: {0}")]
     Serialize(#[from] bincode::Error),
     #[error("fs extra error: {0}")]
@@ -39,6 +41,12 @@ pub enum BlockstoreError {
     ProtobufDecodeError(#[from] prost::DecodeError),
     #[error("parent entries unavailable")]
     ParentEntriesUnavailable,
+    #[error("parent info unavailable: slot {0} location {1}")]
+    ParentInfoUnavailable(Slot, BlockLocation),
+    #[error("merkle tree construction failure: slot {0} location {1}")]
+    MerkleTreeConstructionFailure(Slot, BlockLocation),
+    #[error("merkle proof construction failure: slot {0} location {1}")]
+    MerkleProofConstructionFailure(Slot, BlockLocation),
     #[error("slot unavailable")]
     SlotUnavailable,
     #[error("unsupported transaction version")]
@@ -65,5 +73,25 @@ pub enum BlockstoreError {
         #[source]
         inner: Box<BlockstoreError>,
     },
+    #[error(transparent)]
+    ManualPurge(#[from] BlockstoreManualPurgeError),
 }
 pub type Result<T> = std::result::Result<T, BlockstoreError>;
+
+#[derive(Error, Debug)]
+pub enum BlockstoreManualPurgeError {
+    #[error("purge request sender is unavailable")]
+    SenderUnavailable,
+
+    #[error("purge request for slot {request_slot} is newer than the latest root {max_root}")]
+    SlotNewerThanRoot { request_slot: Slot, max_root: Slot },
+
+    #[error("purge request try send error")]
+    TrySend,
+}
+
+impl<T> std::convert::From<crossbeam_channel::TrySendError<T>> for BlockstoreManualPurgeError {
+    fn from(_e: crossbeam_channel::TrySendError<T>) -> BlockstoreManualPurgeError {
+        BlockstoreManualPurgeError::TrySend
+    }
+}
