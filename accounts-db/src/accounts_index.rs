@@ -539,10 +539,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             slot: ancestors_max_slot,
             bank_id: scan_bank_id,
         })?;
-        let max_root = scan_guard.max_root();
+        let mut max_root = scan_guard.max_root();
         let use_ancestors = scan_guard.should_use_ancestors(ancestors);
         let empty_ancestors = Ancestors::default();
         let ancestors = if use_ancestors {
+            // Bound max_root by ancestors.min_slot() so that roots from slots
+            // beyond the querying bank's ancestor chain are not visible. A root
+            // between min_slot and max_slot that is not an ancestor belongs to a
+            // different fork and should not appear in scan results.
+            if let Some(min) = ancestors.min_slot() {
+                max_root = max_root.min(min);
+            }
             ancestors
         } else {
             &empty_ancestors
