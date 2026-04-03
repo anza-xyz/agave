@@ -5028,6 +5028,8 @@ impl Bank {
         let enable_instruction_account_limit =
             self.feature_set.snapshot().limit_instruction_accounts;
 
+        // WARNING: Any pending features added here most likely must also be checked in
+        //          `Bank::resanitize_transaction_minimally`.
         let sanitized_tx = {
             let size =
                 wincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
