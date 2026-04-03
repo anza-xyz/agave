@@ -70,7 +70,7 @@ impl Bank {
         let fee_details = solana_fee::calculate_fee_details(
             transaction,
             self.fee_structure().lamports_per_signature,
-            transaction_configuration.prioritization_fee,
+            transaction_configuration.priority_fee_lamports,
             FeeFeatures::from(self.feature_set.as_ref()),
         );
         let FeeDistribution {

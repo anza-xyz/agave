@@ -490,7 +490,7 @@ impl Consumer {
         let fee = solana_fee::calculate_fee(
             transaction,
             bank.fee_structure().lamports_per_signature,
-            transaction_configuration.prioritization_fee,
+            transaction_configuration.priority_fee_lamports,
             FeeFeatures::from(bank.feature_set.as_ref()),
         );
         let (mut fee_payer_account, _slot) = bank

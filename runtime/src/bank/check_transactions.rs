@@ -112,7 +112,7 @@ impl Bank {
                             let fee_details = calculate_fee_details(
                                 tx.borrow(),
                                 self.fee_structure.lamports_per_signature,
-                                config.prioritization_fee,
+                                config.priority_fee_lamports,
                                 fee_features,
                             );
                             if let Some(compute_budget) = self.compute_budget {

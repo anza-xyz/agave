@@ -42,7 +42,7 @@ pub struct CachedTransactionMeta {
 pub struct TransactionConfiguration {
     pub updated_heap_bytes: u32,
     pub compute_unit_limit: u32,
-    pub prioritization_fee: u64,
+    pub priority_fee_lamports: u64,
     pub loaded_accounts_data_size_limit: NonZeroU32,
 }
 
@@ -54,7 +54,7 @@ impl TransactionConfiguration {
     /// return a higher value here than their specified cu_price in the
     /// compute budget instruction.
     pub fn compute_unit_price_in_microlamports(&self) -> u64 {
-        self.prioritization_fee
+        self.priority_fee_lamports
             .saturating_mul(1_000_000)
             .checked_div(self.compute_unit_limit as u64)
             .unwrap_or(0)

@@ -247,7 +247,7 @@ impl PrioritizationFeeCache {
                     .collect();
 
                 let (prioritization_fee, calculate_prioritization_fee_us) =
-                    measure_us!(transaction_configuration.prioritization_fee);
+                    measure_us!(transaction_configuration.priority_fee_lamports);
                 self.metrics
                     .accumulate_total_calculate_prioritization_fee_elapsed_us(
                         calculate_prioritization_fee_us,

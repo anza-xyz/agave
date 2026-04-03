@@ -599,7 +599,7 @@ fn calculate_priority(
 
     // Manually estimate fee here since currently interface doesn't allow a on SVM type.
     // Doesn't need to be 100% accurate so long as close and consistent.
-    let prioritization_fee = transaction_configuration.prioritization_fee;
+    let prioritization_fee = transaction_configuration.priority_fee_lamports;
     let signature_details = transaction.signature_details();
     let signature_fee = signature_details
         .total_signatures()
