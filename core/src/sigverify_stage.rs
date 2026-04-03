@@ -77,6 +77,7 @@ struct SigVerifierStats {
     total_valid_packets: Arc<AtomicUsize>,
     total_dedup_time_us: usize,
     total_verify_time_us: Arc<AtomicUsize>,
+    total_dropped_on_capacity: usize,
 }
 
 impl SigVerifierStats {
@@ -149,6 +150,11 @@ impl SigVerifierStats {
             ("total_packets", self.total_packets, i64),
             ("total_dedup", self.total_dedup, i64),
             ("total_dedup_time_us", self.total_dedup_time_us, i64),
+            (
+                "total_dropped_on_capacity",
+                self.total_dropped_on_capacity,
+                i64
+            ),
             (
                 "total_valid_packets",
                 self.total_valid_packets.load(Ordering::Relaxed) as i64,
@@ -236,6 +242,7 @@ impl SigVerifyStage {
 
         // If we're already at capacity immediately drop the packets
         if in_flight_count.load(Ordering::Acquire) >= verifier.capacity() {
+            stats.total_dropped_on_capacity += num_packets;
             return Ok(());
         }
 
