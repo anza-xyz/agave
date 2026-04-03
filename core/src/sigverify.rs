@@ -99,4 +99,14 @@ impl SigVerifier for TransactionSigVerifier {
 
         Ok(())
     }
+
+    fn capacity(&self) -> usize {
+        const CAPACITY_PER_THREAD: usize = {
+            15_000 // ~15k packets per second throughput
+            * 2 // 2 seconds worth
+        };
+        self.thread_pool
+            .current_num_threads()
+            .saturating_mul(CAPACITY_PER_THREAD)
+    }
 }

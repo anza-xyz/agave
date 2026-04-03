@@ -69,6 +69,10 @@ impl SigVerifier for BenchSigVerifier {
             .fetch_add(num_valid_packets, Ordering::Relaxed);
         Ok(())
     }
+
+    fn capacity(&self) -> usize {
+        usize::MAX
+    }
 }
 
 fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {

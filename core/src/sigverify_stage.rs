@@ -53,6 +53,9 @@ pub trait SigVerifier {
         total_valid_packets: Arc<AtomicUsize>,
         total_verify_time_us: Arc<AtomicUsize>,
     ) -> Result<(), Self::SendType>;
+
+    /// Return maximum number of packets that are allowed to be in the verification pool.
+    fn capacity(&self) -> usize;
 }
 
 #[derive(Clone)]
@@ -174,6 +177,10 @@ impl SigVerifier for DisabledSigVerifier {
         total_valid_packets.fetch_add(count_valid_packets(&batches), Ordering::Relaxed);
         total_verify_time_us.fetch_add(verify_time.as_us() as usize, Ordering::Relaxed);
         Ok(())
+    }
+
+    fn capacity(&self) -> usize {
+        usize::MAX
     }
 }
 
