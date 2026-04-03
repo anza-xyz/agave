@@ -206,18 +206,17 @@ impl<T: Clone> Stakes<T> {
     pub(crate) fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
         self.vote_accounts.staked_nodes()
     }
-}
 
-impl<T: Clone> Stakes<T> {
-    /// Convert deserialized stakes into runtime stakes representation
-    pub(crate) fn from_deserialized(stakes: DeserializableStakes<T>) -> Self {
-        Self {
-            vote_accounts: stakes.vote_accounts,
-            stake_delegations: ImHashMap::from_iter(stakes.stake_delegations),
-            unused: stakes.unused,
-            epoch: stakes.epoch,
-            stake_history: stakes.stake_history,
-        }
+    /// Destructure self and return the fields needed by EpochStakes
+    pub(crate) fn into_epoch_stakes_fields(self) -> (Epoch, VoteAccounts, StakeHistory) {
+        let Self {
+            vote_accounts,
+            stake_delegations: _,
+            unused: _,
+            epoch,
+            stake_history,
+        } = self;
+        (epoch, vote_accounts, stake_history)
     }
 }
 
@@ -606,6 +605,19 @@ pub(crate) mod tests {
         solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
         solana_vote_program::vote_state,
     };
+
+    impl<T: Clone> Stakes<T> {
+        /// Convert deserialized stakes into runtime stakes representation
+        pub(crate) fn from_deserialized(stakes: DeserializableStakes<T>) -> Self {
+            Self {
+                vote_accounts: stakes.vote_accounts,
+                stake_delegations: ImHashMap::from_iter(stakes.stake_delegations),
+                unused: stakes.unused,
+                epoch: stakes.epoch,
+                stake_history: stakes.stake_history,
+            }
+        }
+    }
 
     //  set up some dummies for a staked node     ((     vote      )  (     stake     ))
     pub(crate) fn create_staked_node_accounts(
