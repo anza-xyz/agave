@@ -217,10 +217,40 @@ pub struct ReplicaDeshredTransactionInfo<'a> {
     pub loaded_addresses: Option<&'a LoadedAddresses>,
 }
 
+/// Extends ReplicaDeshredTransactionInfo with metadata about the completed data set that
+/// produced the transaction.
+///
+/// A completed data set is a contiguous range of data shreds whose combined payload deserializes
+/// to a single `Vec<Entry>`. Multiple transactions can share the same completed-data-set range,
+/// and completed data sets for the same slot may be observed out of order. These fields describe
+/// the data-set container; they are not a block-wide transaction index.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaDeshredTransactionInfoV2<'a> {
+    /// The transaction signature, used for identifying the transaction.
+    pub signature: &'a Signature,
+
+    /// Indicates if the transaction is a simple vote transaction.
+    pub is_vote: bool,
+
+    /// The versioned transaction.
+    pub transaction: &'a VersionedTransaction,
+
+    /// Addresses loaded from address lookup tables for V0 transactions.
+    pub loaded_addresses: Option<&'a LoadedAddresses>,
+
+    /// The inclusive starting shred index of the completed data set containing this transaction.
+    pub completed_data_set_starting_shred_index: u32,
+
+    /// The exclusive ending shred index of the completed data set containing this transaction.
+    pub completed_data_set_ending_shred_index_exclusive: u32,
+}
+
 /// A wrapper to future-proof ReplicaDeshredTransactionInfo handling.
 #[repr(u32)]
 pub enum ReplicaDeshredTransactionInfoVersions<'a> {
     V0_0_1(&'a ReplicaDeshredTransactionInfo<'a>),
+    V0_0_2(&'a ReplicaDeshredTransactionInfoV2<'a>),
 }
 
 #[derive(Clone, Debug)]
