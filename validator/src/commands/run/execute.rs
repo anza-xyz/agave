@@ -94,6 +94,7 @@ pub fn execute(
     matches: &ArgMatches,
     solana_version: &str,
     operation: Operation,
+    config: super::Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Debugging panics is easier with a backtrace
     if env::var_os("RUST_BACKTRACE").is_none() {
@@ -261,6 +262,9 @@ pub fn execute(
 
     let exit = Arc::new(AtomicBool::new(false));
 
+    #[cfg(not(target_os = "linux"))]
+    let _ = config;
+
     #[cfg(target_os = "linux")]
     let maybe_xdp_retransmit_builder = {
         use {
@@ -271,15 +275,22 @@ pub fn execute(
             },
         };
 
+        let super::Config { primordial_caps } = config;
+
         let mut required_caps = HashSet::new();
         let mut retained_caps = HashSet::new();
-        let supported_caps = HashSet::from_iter([
+        let mut supported_caps = HashSet::from_iter([
             CAP_BPF,
             CAP_NET_ADMIN,
             CAP_NET_RAW,
             CAP_PERFMON,
             CAP_SYS_NICE,
         ]);
+
+        // make sure we keep any primordial caps
+        supported_caps.extend(primordial_caps.clone());
+        required_caps.extend(primordial_caps.clone());
+        retained_caps.extend(primordial_caps.clone());
 
         if let Some(xdp_config) = retransmit_xdp.as_ref() {
             required_caps.insert(CAP_NET_ADMIN);
@@ -327,9 +338,12 @@ pub fn execute(
                  consider removing them from your operational configuration.",
             );
         }
+
         // drop all caps that the current configuration does not require
+        caps::set(None, CapSet::Effective, &required_caps)
+            .expect("linux allows effective capset to be set");
         caps::set(None, CapSet::Permitted, &required_caps)
-            .expect("permitted capset to be writable");
+            .expect("linux allows permitted capset to be set");
 
         // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
         // capabilities do not leak, leaving the process in a state where it could
@@ -352,6 +366,8 @@ pub fn execute(
         });
 
         // we're done with caps needed to init xdp now. remove them from our process
+        caps::set(None, CapSet::Effective, &retained_caps)
+            .expect("linux allows effective capset to be set");
         caps::set(None, CapSet::Permitted, &retained_caps)
             .expect("linux allows permitted capset to be set");
 

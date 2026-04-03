@@ -25,8 +25,9 @@ pub fn main() {
     let (subcommand, maybe_subcommand_matches) = matches.subcommand();
 
     #[cfg(target_os = "linux")]
-    {
-        use caps::CapSet;
+    let run_config = {
+        use caps::{CapSet, Capability::CAP_DAC_OVERRIDE, CapsHashSet};
+
         // we don't aim to execve from the validator, so we can clear most of the
         // capability sets. clear the ambient set explicitly even though it is
         // implicitly cleared by clearing the inheritable set
@@ -35,21 +36,48 @@ pub fn main() {
             .expect("linux allows inheritable capset to be cleared");
 
         // we'll raise caps when and where we need them
-        caps::clear(None, CapSet::Effective).expect("linux allows effective capset to be cleared");
+        let primordial_caps = if subcommand.is_empty() || subcommand == "run" {
+            // the CAP_DAC_OVERRIDE (file permissions bypass) cap isn't typically needed.
+            // however if it is already in our effective set, likely due to the operator
+            // foolishly running the node as root, either via sudo or suid, we need to
+            // retain it to ensure expected filesystem accessibility
+            let retain_if_set = CapsHashSet::from([CAP_DAC_OVERRIDE]);
+            let permitted = caps::read(None, CapSet::Permitted)
+                .expect("linux allows permitted capset to be read");
+            let effective = caps::read(None, CapSet::Effective)
+                .expect("linux allows effective capset to be read");
+            let primordial_caps =
+                CapsHashSet::from_iter(retain_if_set.intersection(&permitted).copied());
+            let primordial_caps =
+                CapsHashSet::from_iter(primordial_caps.intersection(&effective).copied());
 
-        if !(subcommand.is_empty() || subcommand == "run") {
+            caps::set(None, CapSet::Effective, &primordial_caps)
+                .expect("linux allows effective capset to be set");
+
+            primordial_caps
+        } else {
+            caps::clear(None, CapSet::Effective)
+                .expect("linux allows effective capset to be cleared");
             // we only need caps to run the actual valididator. clear them here
             // for all other subcommands
             caps::clear(None, CapSet::Permitted)
-                .expect("linux allows permitted capset to be cleared")
-        }
-    }
+                .expect("linux allows permitted capset to be cleared");
+
+            CapsHashSet::new()
+        };
+
+        commands::run::Config { primordial_caps }
+    };
+
+    #[cfg(not(target_os = "linux"))]
+    let run_config = commands::run::Config {};
 
     match (subcommand, maybe_subcommand_matches) {
         ("init", _) => commands::run::execute(
             &matches,
             solana_version,
             commands::run::execute::Operation::Initialize,
+            run_config,
         )
         .inspect_err(|err| error!("Failed to initialize validator: {err}"))
         .map_err(commands::Error::Dynamic),
@@ -57,6 +85,7 @@ pub fn main() {
             &matches,
             solana_version,
             commands::run::execute::Operation::Run,
+            run_config,
         )
         .inspect_err(|err| error!("Failed to start validator: {err}"))
         .map_err(commands::Error::Dynamic),
