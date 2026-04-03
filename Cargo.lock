@@ -10046,7 +10046,6 @@ dependencies = [
  "bincode",
  "criterion",
  "rand 0.9.2",
- "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-compute-budget-interface",
  "solana-hash 4.2.0",

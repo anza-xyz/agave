@@ -8612,7 +8612,6 @@ version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-transaction-view",
- "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-hash 4.2.0",
  "solana-message",

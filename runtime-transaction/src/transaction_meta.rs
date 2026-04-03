@@ -13,7 +13,6 @@
 //!
 use {
     agave_feature_set::FeatureSet,
-    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
     solana_hash::Hash, solana_message::TransactionSignatureDetails,
     solana_transaction::TransactionError, std::num::NonZeroU32,
@@ -45,18 +44,6 @@ pub struct TransactionConfiguration {
     pub compute_unit_limit: u32,
     pub prioritization_fee: u64,
     pub loaded_accounts_data_size_limit: NonZeroU32,
-}
-
-impl From<ComputeBudgetLimits> for TransactionConfiguration {
-    fn from(compute_budget_limits: ComputeBudgetLimits) -> Self {
-        let prioritization_fee = compute_budget_limits.get_prioritization_fee();
-        TransactionConfiguration {
-            updated_heap_bytes: compute_budget_limits.updated_heap_bytes,
-            compute_unit_limit: compute_budget_limits.compute_unit_limit,
-            prioritization_fee,
-            loaded_accounts_data_size_limit: compute_budget_limits.loaded_accounts_bytes,
-        }
-    }
 }
 
 impl TransactionConfiguration {
