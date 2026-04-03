@@ -41,19 +41,12 @@ impl MerkleTree {
             return Err(Error::EmptyIterator);
         }
         let num_shreds = shreds.len();
-        Self::try_new_with_len(shreds, num_shreds)
-    }
-
-    pub(crate) fn try_new_with_len(
-        shreds: impl Iterator<Item = Result<Hash, Error>>,
-        len: usize,
-    ) -> Result<MerkleTree, Error> {
-        let capacity = get_merkle_tree_size(len);
+        let capacity = get_merkle_tree_size(num_shreds);
         let mut nodes = Vec::with_capacity(capacity);
         for shred in shreds {
             nodes.push(shred?);
         }
-        let init = (len > 1).then_some(len);
+        let init = (num_shreds > 1).then_some(num_shreds);
         for size in successors(init, |&k| (k > 2).then_some((k + 1) >> 1)) {
             let offset = nodes.len() - size;
             for index in (offset..offset + size).step_by(2) {
@@ -137,6 +130,7 @@ pub fn get_merkle_tree_size(num_shreds: usize) -> usize {
 }
 
 // Maps number of (code + data) shreds to merkle_proof.len().
+#[cfg(test)]
 pub(crate) const fn get_proof_size(num_shreds: usize) -> u8 {
     let bits = usize::BITS - num_shreds.leading_zeros();
     let proof_size = if num_shreds.is_power_of_two() {
