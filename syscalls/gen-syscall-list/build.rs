@@ -15,7 +15,7 @@ use {
  */
 fn main() {
     let syscalls_rs_name = "../src/lib.rs";
-    let syscalls_txt_name = "src/syscalls.txt";
+    let syscalls_txt_name = "syscalls.txt";
     println!("cargo::rerun-if-changed={syscalls_rs_name}");
     println!("cargo::rerun-if-changed=build.rs");
 
