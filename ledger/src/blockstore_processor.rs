@@ -1495,7 +1495,7 @@ pub struct ConfirmationProgress {
     pub num_shreds: u64,
     pub num_entries: usize,
     pub num_txs: usize,
-    async_verification: AsyncVerificationProgress,
+    async_verification: Option<AsyncVerificationProgress>,
 }
 
 impl ConfirmationProgress {
@@ -1506,13 +1506,39 @@ impl ConfirmationProgress {
         }
     }
 
+    pub fn new_with_async_verification(
+        last_entry: Hash,
+        async_verification: Option<AsyncVerificationProgress>,
+    ) -> Self {
+        debug_assert!(
+            async_verification
+                .as_ref()
+                .map(|av| av.pending_jobs == 0 && av.first_error.is_none())
+                .unwrap_or(true)
+        );
+        Self {
+            last_entry,
+            async_verification,
+            ..Self::default()
+        }
+    }
+
+    fn async_verification(&mut self) -> &mut AsyncVerificationProgress {
+        self.async_verification
+            .get_or_insert_with(AsyncVerificationProgress::new)
+    }
+
     fn collect_available_verification_results(
         &mut self,
         poh_verify_elapsed: &mut u64,
         transaction_verify_elapsed: &mut u64,
     ) -> result::Result<(), BlockstoreProcessorError> {
         self.async_verification
-            .collect_available_results(poh_verify_elapsed, transaction_verify_elapsed)
+            .as_mut()
+            .map_or(Ok(()), |async_verification| {
+                async_verification
+                    .collect_available_results(poh_verify_elapsed, transaction_verify_elapsed)
+            })
     }
 
     pub fn wait_for_all_verification_results(
@@ -1521,7 +1547,21 @@ impl ConfirmationProgress {
         transaction_verify_elapsed: &mut u64,
     ) -> result::Result<(), BlockstoreProcessorError> {
         self.async_verification
-            .wait_for_all_results(poh_verify_elapsed, transaction_verify_elapsed)
+            .as_mut()
+            .map_or(Ok(()), |async_verification| {
+                async_verification
+                    .wait_for_all_results(poh_verify_elapsed, transaction_verify_elapsed)
+            })
+    }
+
+    pub fn take_async_verification(&mut self) -> Option<AsyncVerificationProgress> {
+        debug_assert!(
+            self.async_verification
+                .as_ref()
+                .map(|av| av.pending_jobs == 0 && av.first_error.is_none())
+                .unwrap_or(true)
+        );
+        self.async_verification.take()
     }
 }
 
@@ -1531,7 +1571,7 @@ struct AsyncVerificationResult {
     error: Option<BlockstoreProcessorError>,
 }
 
-struct AsyncVerificationProgress {
+pub struct AsyncVerificationProgress {
     sender: Sender<AsyncVerificationResult>,
     receiver: Receiver<AsyncVerificationResult>,
     pending_jobs: usize,
@@ -1550,7 +1590,7 @@ impl AsyncVerificationProgress {
     // it does, that condition is handled gracefully in spawn().
     const RESULT_CHANNEL_CAPACITY: usize = 100000;
 
-    fn new() -> Self {
+    pub fn new() -> Self {
         let (sender, receiver) = crossbeam_channel::bounded(Self::RESULT_CHANNEL_CAPACITY);
         Self {
             sender,
@@ -1779,7 +1819,7 @@ fn confirm_slot_entries(
     if !skip_verification {
         let start_hash = progress.last_entry;
         let verify_entries = entry::entries_to_verification_data(&entries);
-        progress.async_verification.spawn(
+        progress.async_verification().spawn(
             replay_tx_thread_pool,
             poh_verify_elapsed,
             transaction_verify_elapsed,
@@ -1849,7 +1889,7 @@ fn confirm_slot_entries(
         }
     } else {
         let replay_vote_sender = replay_vote_sender.cloned();
-        progress.async_verification.spawn(
+        progress.async_verification().spawn(
             replay_tx_thread_pool,
             poh_verify_elapsed,
             transaction_verify_elapsed,
@@ -2127,6 +2167,7 @@ fn load_frozen_forks(
         let mut process_single_slot_us = 0;
         let mut voting_us = 0;
 
+        let mut async_verification = None;
         while !pending_slots.is_empty() {
             timing.details.per_program_timings.clear();
             let (meta, bank, last_entry_hash) = pending_slots.pop().unwrap();
@@ -2154,7 +2195,10 @@ fn load_frozen_forks(
                 voting_us = 0;
             }
 
-            let mut progress = ConfirmationProgress::new(last_entry_hash);
+            let mut progress = ConfirmationProgress::new_with_async_verification(
+                last_entry_hash,
+                async_verification.take(),
+            );
             let mut m = Measure::start("process_single_slot");
             let bank = bank_forks.write().unwrap().insert_from_ledger(bank);
             if let Err(error) = process_single_slot(
@@ -2175,6 +2219,7 @@ fn load_frozen_forks(
                 }
                 continue;
             }
+            async_verification = progress.take_async_verification();
             txs += progress.num_txs;
 
             // Block must be frozen by this point; otherwise,

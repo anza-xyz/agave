@@ -104,7 +104,7 @@ impl VoteSimulator {
                 .clone_without_scheduler();
             self.progress
                 .entry(slot)
-                .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0));
+                .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0, None));
             for (pubkey, vote) in cluster_votes.iter() {
                 if vote.contains(&parent) {
                     let keypairs = self.validator_keypairs.get(pubkey).unwrap();
@@ -287,7 +287,7 @@ impl VoteSimulator {
     ) {
         self.progress
             .entry(slot)
-            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0))
+            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0, None))
             .fork_stats
             .lockout_intervals
             .push(LockoutInterval {
@@ -300,7 +300,7 @@ impl VoteSimulator {
     pub fn clear_lockout_intervals(&mut self, slot: Slot) {
         self.progress
             .entry(slot)
-            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0))
+            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0, None))
             .fork_stats
             .lockout_intervals
             .clear()
@@ -414,7 +414,15 @@ pub fn initialize_state(
     let mut progress = ProgressMap::default();
     progress.insert(
         0,
-        ForkProgress::new_from_bank(&bank0, bank0.leader_id(), &Pubkey::default(), None, 0, 0),
+        ForkProgress::new_from_bank(
+            &bank0,
+            bank0.leader_id(),
+            &Pubkey::default(),
+            None,
+            0,
+            0,
+            None,
+        ),
     );
     let heaviest_subtree_fork_choice =
         HeaviestSubtreeForkChoice::new_from_bank_forks(bank_forks.clone());

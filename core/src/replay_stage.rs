@@ -58,9 +58,9 @@ use {
         block_error::BlockError,
         blockstore::Blockstore,
         blockstore_processor::{
-            self, BlockstoreProcessorError, ChainedBlockIdCheck, ConfirmationProgress,
-            ExecuteBatchesInternalMetrics, ReplaySlotStats, TransactionStatusSender,
-            check_chained_block_id,
+            self, AsyncVerificationProgress, BlockstoreProcessorError, ChainedBlockIdCheck,
+            ConfirmationProgress, ExecuteBatchesInternalMetrics, ReplaySlotStats,
+            TransactionStatusSender, check_chained_block_id,
         },
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
@@ -113,6 +113,7 @@ pub const SUPERMINORITY_THRESHOLD: f64 = 1f64 / 3f64;
 pub const MAX_UNCONFIRMED_SLOTS: usize = 5;
 pub const DUPLICATE_LIVENESS_THRESHOLD: f64 = 0.1;
 pub const DUPLICATE_THRESHOLD: f64 = 1.0 - SWITCH_FORK_THRESHOLD - DUPLICATE_LIVENESS_THRESHOLD;
+const ASYNC_VERIFICATION_FREELIST_CAPACITY: usize = 5;
 
 pub(crate) const MAX_VOTE_SIGNATURES: usize = 200;
 const MAX_VOTE_REFRESH_INTERVAL_MILLIS: usize = 5000;
@@ -709,6 +710,9 @@ impl ReplayStage {
                 unfrozen_gossip_verified_vote_hashes,
                 epoch_slots_frozen_slots,
             };
+            // AsyncVerificationProgress does a large allocation for its internal channel, so we
+            // keep a free list to avoid doing one of those for each slot
+            let mut async_verification_freelist = Vec::new();
             let working_bank = {
                 let r_bank_forks = bank_forks.read().unwrap();
                 r_bank_forks.working_bank()
@@ -782,6 +786,7 @@ impl ReplayStage {
                     &my_pubkey,
                     &vote_account,
                     &mut progress,
+                    &mut async_verification_freelist,
                     transaction_status_sender.as_ref(),
                     entry_notification_sender.as_ref(),
                     &replay_vote_sender,
@@ -1682,7 +1687,15 @@ impl ReplayStage {
             let prev_leader_slot = progress.get_bank_prev_leader_slot(bank);
             progress.insert(
                 bank.slot(),
-                ForkProgress::new_from_bank(bank, my_pubkey, vote_account, prev_leader_slot, 0, 0),
+                ForkProgress::new_from_bank(
+                    bank,
+                    my_pubkey,
+                    vote_account,
+                    prev_leader_slot,
+                    0,
+                    0,
+                    None,
+                ),
             );
         }
         let root = root_bank.slot();
@@ -3098,6 +3111,7 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
         progress: &mut ProgressMap,
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
         transaction_status_sender: Option<&TransactionStatusSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
         replay_vote_sender: &ReplayVoteSender,
@@ -3114,9 +3128,22 @@ impl ReplayStage {
         // Allow for concurrent replaying of slots from different forks.
         let replay_result_vec: Vec<ReplaySlotFromBlockstore> = fork_thread_pool.install(|| {
             active_bank_slots
-                .into_par_iter()
+                .iter()
                 .map(|bank_slot| {
                     let bank_slot = *bank_slot;
+                    let progress = progress.read().unwrap();
+                    (
+                        bank_slot,
+                        if !progress.contains(&bank_slot) {
+                            async_verification_freelist.pop()
+                        } else {
+                            None
+                        },
+                    )
+                })
+                .collect::<Vec<_>>()
+                .into_par_iter()
+                .map(|(bank_slot, async_verification)| {
                     let mut replay_result = ReplaySlotFromBlockstore {
                         is_slot_dead: false,
                         bank_slot,
@@ -3166,6 +3193,7 @@ impl ReplayStage {
                             prev_leader_slot,
                             num_blocks_on_fork,
                             num_dropped_blocks_on_fork,
+                            async_verification,
                         )
                     });
 
@@ -3235,6 +3263,7 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
         progress: &mut ProgressMap,
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
         transaction_status_sender: Option<&TransactionStatusSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
         replay_vote_sender: &ReplayVoteSender,
@@ -3282,6 +3311,7 @@ impl ReplayStage {
                     prev_leader_slot,
                     num_blocks_on_fork,
                     num_dropped_blocks_on_fork,
+                    async_verification_freelist.pop(),
                 )
             });
 
@@ -3335,6 +3365,7 @@ impl ReplayStage {
         blockstore: &Blockstore,
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
         transaction_status_sender: Option<&TransactionStatusSender>,
         replay_vote_sender: &ReplayVoteSender,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
@@ -3424,19 +3455,27 @@ impl ReplayStage {
                 let verify_res = {
                     let mut poh_verify_elapsed = 0;
                     let mut tx_verify_elapsed = 0;
-                    let res = bank_progress
-                        .replay_progress
-                        .write()
-                        .unwrap()
-                        .wait_for_all_verification_results(
-                            &mut poh_verify_elapsed,
-                            &mut tx_verify_elapsed,
-                        );
+                    let (res, async_verification) = {
+                        let mut replay_progress = bank_progress.replay_progress.write().unwrap();
+                        (
+                            replay_progress.wait_for_all_verification_results(
+                                &mut poh_verify_elapsed,
+                                &mut tx_verify_elapsed,
+                            ),
+                            replay_progress.take_async_verification(),
+                        )
+                    };
                     {
                         let mut stats = replay_stats.write().unwrap();
                         stats.poh_verify_elapsed += poh_verify_elapsed;
                         stats.transaction_verify_elapsed += tx_verify_elapsed;
                     }
+                    if let Some(async_verification) = async_verification {
+                        if async_verification_freelist.len() < ASYNC_VERIFICATION_FREELIST_CAPACITY
+                        {
+                            async_verification_freelist.push(async_verification);
+                        }
+                    };
                     res
                 };
                 // we send this whether the block was valid or not. It's only
@@ -3695,6 +3734,7 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
         progress: &mut ProgressMap,
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
         transaction_status_sender: Option<&TransactionStatusSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
         replay_vote_sender: &ReplayVoteSender,
@@ -3735,6 +3775,7 @@ impl ReplayStage {
                     my_pubkey,
                     vote_account,
                     progress,
+                    async_verification_freelist,
                     transaction_status_sender,
                     entry_notification_sender,
                     replay_vote_sender,
@@ -3755,6 +3796,7 @@ impl ReplayStage {
                         my_pubkey,
                         vote_account,
                         progress,
+                        async_verification_freelist,
                         transaction_status_sender,
                         entry_notification_sender,
                         replay_vote_sender,
@@ -3772,6 +3814,7 @@ impl ReplayStage {
             blockstore,
             bank_forks,
             progress,
+            async_verification_freelist,
             transaction_status_sender,
             replay_vote_sender,
             bank_notification_sender,
@@ -4707,7 +4750,8 @@ pub(crate) mod tests {
             vote_simulator::{self, VoteSimulator},
         },
         blockstore_processor::{
-            ProcessOptions, confirm_full_slot, fill_blockstore_slot_with_ticks, process_bank_0,
+            ConfirmationProgress, ProcessOptions, confirm_full_slot,
+            fill_blockstore_slot_with_ticks, process_bank_0,
         },
         crossbeam_channel::unbounded,
         itertools::Itertools,
@@ -4907,6 +4951,7 @@ pub(crate) mod tests {
                 Some(0),
                 0,
                 0,
+                None,
             ),
         );
         assert!(progress.get_propagated_stats(1).unwrap().is_leader_slot);
@@ -5026,7 +5071,10 @@ pub(crate) mod tests {
 
         let mut progress = ProgressMap::default();
         for i in 0..=root {
-            progress.insert(i, ForkProgress::new(Hash::default(), None, None, 0, 0));
+            progress.insert(
+                i,
+                ForkProgress::new(Hash::default(), None, None, 0, 0, None),
+            );
         }
 
         let duplicate_slots_tracker: DuplicateSlotsTracker =
@@ -5132,7 +5180,10 @@ pub(crate) mod tests {
         bank_forks.write().unwrap().insert(root_bank);
         let mut progress = ProgressMap::default();
         for i in 0..=root {
-            progress.insert(i, ForkProgress::new(Hash::default(), None, None, 0, 0));
+            progress.insert(
+                i,
+                ForkProgress::new(Hash::default(), None, None, 0, 0, None),
+            );
         }
         let (drop_bank_sender, _drop_bank_receiver) = unbounded();
         let mut tbft_structs = TowerBFTStructures {
@@ -5490,9 +5541,9 @@ pub(crate) mod tests {
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let replay_result = {
-            let bank_progress = progress
-                .entry(slot)
-                .or_insert_with(|| ForkProgress::new(bank.last_blockhash(), None, None, 0, 0));
+            let bank_progress = progress.entry(slot).or_insert_with(|| {
+                ForkProgress::new(bank.last_blockhash(), None, None, 0, 0, None)
+            });
             let tx = match failure {
                 CompleteBankFailure::ReplayError => {
                     // trigger a replay error since from_keypair is not funded
@@ -5557,6 +5608,7 @@ pub(crate) mod tests {
             &blockstore,
             &bank_forks,
             &mut progress,
+            &mut Vec::new(),
             None,
             &replay_vote_sender,
             &None,
@@ -5618,9 +5670,9 @@ pub(crate) mod tests {
             let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
             bank_forks.write().unwrap().insert(bank1);
             let bank1 = bank_forks.read().unwrap().get_with_scheduler(1).unwrap();
-            let bank1_progress = progress
-                .entry(bank1.slot())
-                .or_insert_with(|| ForkProgress::new(bank1.last_blockhash(), None, None, 0, 0));
+            let bank1_progress = progress.entry(bank1.slot()).or_insert_with(|| {
+                ForkProgress::new(bank1.last_blockhash(), None, None, 0, 0, None)
+            });
             let shreds = shred_to_insert(
                 &validator_keypairs.values().next().unwrap().node_keypair,
                 bank1.clone(),
@@ -5649,19 +5701,20 @@ pub(crate) mod tests {
             .and_then(|replay_tx_count| {
                 let mut poh_verify_elapsed = 0;
                 let mut tx_verify_elapsed = 0;
-                bank1_progress
+                let verify_result = bank1_progress
                     .replay_progress
                     .write()
                     .unwrap()
                     .wait_for_all_verification_results(
                         &mut poh_verify_elapsed,
                         &mut tx_verify_elapsed,
-                    )?;
+                    );
                 {
                     let mut stats = bank1_progress.replay_stats.write().unwrap();
                     stats.poh_verify_elapsed += poh_verify_elapsed;
                     stats.transaction_verify_elapsed += tx_verify_elapsed;
                 }
+                verify_result?;
                 Ok(replay_tx_count)
             });
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
@@ -6007,7 +6060,7 @@ pub(crate) mod tests {
         // Insert the bank that contains a vote for slot 0, which confirms slot 0
         progress.insert(
             1,
-            ForkProgress::new(bank0.last_blockhash(), None, None, 0, 0),
+            ForkProgress::new(bank0.last_blockhash(), None, None, 0, 0, None),
         );
         let ancestors = bank_forks.read().unwrap().ancestors();
         let mut frozen_banks: Vec<_> = bank_forks
@@ -6439,6 +6492,7 @@ pub(crate) mod tests {
                 }),
                 0,
                 0,
+                None,
             ),
         );
         progress_map.insert(
@@ -6452,6 +6506,7 @@ pub(crate) mod tests {
                 }),
                 0,
                 0,
+                None,
             ),
         );
 
@@ -6547,6 +6602,7 @@ pub(crate) mod tests {
                     },
                     0,
                     0,
+                    None,
                 ),
             );
         }
@@ -6623,6 +6679,7 @@ pub(crate) mod tests {
                 }),
                 0,
                 0,
+                None,
             );
 
             let end_range = {
@@ -6677,7 +6734,7 @@ pub(crate) mod tests {
         // should succeed
         progress_map.insert(
             parent_slot,
-            ForkProgress::new(Hash::default(), None, None, 0, 0),
+            ForkProgress::new(Hash::default(), None, None, 0, 0, None),
         );
         assert!(ReplayStage::check_propagation_for_start_leader(
             poh_slot,
@@ -6696,6 +6753,7 @@ pub(crate) mod tests {
                 Some(ValidatorStakeInfo::default()),
                 0,
                 0,
+                None,
             ),
         );
         assert!(!ReplayStage::check_propagation_for_start_leader(
@@ -6719,7 +6777,14 @@ pub(crate) mod tests {
         let previous_leader_slot = parent_slot - 1;
         progress_map.insert(
             parent_slot,
-            ForkProgress::new(Hash::default(), Some(previous_leader_slot), None, 0, 0),
+            ForkProgress::new(
+                Hash::default(),
+                Some(previous_leader_slot),
+                None,
+                0,
+                0,
+                None,
+            ),
         );
         progress_map.insert(
             previous_leader_slot,
@@ -6729,6 +6794,7 @@ pub(crate) mod tests {
                 Some(ValidatorStakeInfo::default()),
                 0,
                 0,
+                None,
             ),
         );
 
@@ -6790,6 +6856,7 @@ pub(crate) mod tests {
                 Some(ValidatorStakeInfo::default()),
                 0,
                 0,
+                None,
             ),
         );
 
@@ -6825,6 +6892,7 @@ pub(crate) mod tests {
                 Some(ValidatorStakeInfo::default()),
                 0,
                 0,
+                None,
             ),
         );
 
@@ -6848,6 +6916,7 @@ pub(crate) mod tests {
                 Some(ValidatorStakeInfo::default()),
                 0,
                 0,
+                None,
             ),
         );
         assert!(!ReplayStage::check_propagation_for_start_leader(
@@ -7117,6 +7186,7 @@ pub(crate) mod tests {
                     Some(1),
                     0,
                     0,
+                    None,
                 ),
             );
             bank3.freeze();
@@ -7146,6 +7216,7 @@ pub(crate) mod tests {
                     Some(3),
                     0,
                     0,
+                    None,
                 ),
             );
             bank5.freeze();
@@ -7176,6 +7247,7 @@ pub(crate) mod tests {
                     Some(5),
                     0,
                     0,
+                    None,
                 ),
             );
             bank6.freeze();
@@ -8236,7 +8308,15 @@ pub(crate) mod tests {
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
         progress.insert(
             bank0.slot(),
-            ForkProgress::new_from_bank(&bank0, bank0.leader_id(), &Pubkey::default(), None, 0, 0),
+            ForkProgress::new_from_bank(
+                &bank0,
+                bank0.leader_id(),
+                &Pubkey::default(),
+                None,
+                0,
+                0,
+                None,
+            ),
         );
 
         let (voting_sender, voting_receiver) = unbounded();
@@ -8251,7 +8331,15 @@ pub(crate) mod tests {
         bank1.fill_bank_with_ticks_for_tests();
         progress.insert(
             bank1.slot(),
-            ForkProgress::new_from_bank(&bank1, bank1.leader_id(), &Pubkey::default(), None, 0, 0),
+            ForkProgress::new_from_bank(
+                &bank1,
+                bank1.leader_id(),
+                &Pubkey::default(),
+                None,
+                0,
+                0,
+                None,
+            ),
         );
         tower.record_bank_vote(&bank0);
         ReplayStage::push_vote(
@@ -8316,7 +8404,15 @@ pub(crate) mod tests {
         bank2.freeze();
         progress.insert(
             bank2.slot(),
-            ForkProgress::new_from_bank(&bank2, bank2.leader_id(), &Pubkey::default(), None, 0, 0),
+            ForkProgress::new_from_bank(
+                &bank2,
+                bank2.leader_id(),
+                &Pubkey::default(),
+                None,
+                0,
+                0,
+                None,
+            ),
         );
         for refresh_bank in &[bank1.clone(), bank2.clone()] {
             progress
@@ -8461,6 +8557,7 @@ pub(crate) mod tests {
                 None,
                 0,
                 0,
+                None,
             ),
         );
 
@@ -8690,6 +8787,7 @@ pub(crate) mod tests {
                 None,
                 0,
                 0,
+                None,
             )
         });
         bank_forks.read().unwrap().get(my_slot).unwrap()
@@ -8747,6 +8845,7 @@ pub(crate) mod tests {
                 None,
                 0,
                 0,
+                None,
             )
         });
 
@@ -8810,6 +8909,7 @@ pub(crate) mod tests {
                     None,
                     0,
                     0,
+                    None,
                 )
             });
             new_bank = bank_forks.read().unwrap().get(new_slot).unwrap();
@@ -8933,6 +9033,7 @@ pub(crate) mod tests {
                 Some(0),
                 0,
                 0,
+                None,
             ),
         );
         assert!(progress.get_propagated_stats(1).unwrap().is_leader_slot);
@@ -9112,6 +9213,7 @@ pub(crate) mod tests {
                     Some(0),
                     0,
                     0,
+                    None,
                 ),
             );
             assert!(progress.get_propagated_stats(i).unwrap().is_leader_slot);
@@ -9207,6 +9309,7 @@ pub(crate) mod tests {
                 Some(0),
                 0,
                 0,
+                None,
             ),
         );
         assert!(progress.get_propagated_stats(slot_to_dump).is_some());
