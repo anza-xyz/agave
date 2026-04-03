@@ -12,7 +12,7 @@ use {
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::{HASH_BYTES, Hash},
     std::{
-        fmt::Display,
+        fmt::{self, Debug, Display},
         ops::{Range, RangeBounds},
     },
     wincode::{SchemaRead, SchemaWrite},
@@ -55,7 +55,7 @@ impl Default for ConnectedFlags {
 }
 
 /// A fixed size BitVec offers fast lookup and fast de/serialization.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(transparent)]
 pub struct CompletedDataIndexes {
     index: BitVec<MAX_DATA_SHREDS_PER_SLOT>,
@@ -98,6 +98,13 @@ impl FromIterator<u32> for CompletedDataIndexes {
     fn from_iter<T: IntoIterator<Item = u32>>(iter: T) -> Self {
         let index = iter.into_iter().map(|i| i as usize).collect();
         CompletedDataIndexes { index }
+    }
+}
+
+// Manually implement Debut to display indices indices instead of raw u8's
+impl Debug for CompletedDataIndexes {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.iter().collect::<Vec<_>>())
     }
 }
 
