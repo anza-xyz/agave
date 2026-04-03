@@ -241,54 +241,56 @@ impl SigVerifyStage {
             streamer::recv_packet_batches(recvr, SOFT_RECEIVE_CAP)?;
 
         // If we're already at capacity immediately drop the packets
+        let mut should_drop = false;
         if in_flight_count.load(Ordering::Acquire) >= verifier.capacity() {
             stats.total_dropped_on_capacity += num_packets;
-            return Ok(());
+            should_drop = true;
         }
 
         let batches_len = batches.len();
-        debug!(
-            "@{:?} verifier: verifying: {}",
-            timing::timestamp(),
-            num_packets,
-        );
-
-        let mut dedup_time = Measure::start("sigverify_dedup_time");
-        let discard_or_dedup_fail =
-            deduper::dedup_packets_and_count_discards(deduper, &mut batches) as usize;
-        dedup_time.stop();
-        let num_unique = num_packets.saturating_sub(discard_or_dedup_fail);
-        let num_packets_to_verify = num_unique;
-
-        verifier.verify_and_send_packets(
-            batches,
-            num_packets_to_verify,
-            in_flight_count.clone(),
-            stats.total_valid_packets.clone(),
-            stats.total_verify_time_us.clone(),
-        )?;
-
-        debug!(
-            "@{:?} verifier: done. batches: {} packets: {}",
-            timing::timestamp(),
-            batches_len,
-            num_packets
-        );
 
         stats
             .recv_batches_us_hist
             .increment(recv_duration.as_micros() as u64)
             .unwrap();
-        stats
-            .dedup_packets_pp_us_hist
-            .increment(dedup_time.as_us() / (num_packets as u64))
-            .unwrap();
         stats.batches_hist.increment(batches_len as u64).unwrap();
         stats.packets_hist.increment(num_packets as u64).unwrap();
         stats.total_batches += batches_len;
         stats.total_packets += num_packets;
-        stats.total_dedup += discard_or_dedup_fail;
-        stats.total_dedup_time_us += dedup_time.as_us() as usize;
+
+        if !should_drop {
+            debug!(
+                "@{:?} verifier: verifying: {}",
+                timing::timestamp(),
+                num_packets,
+            );
+            let mut dedup_time = Measure::start("sigverify_dedup_time");
+            let discard_or_dedup_fail =
+                deduper::dedup_packets_and_count_discards(deduper, &mut batches) as usize;
+            dedup_time.stop();
+            let num_unique = num_packets.saturating_sub(discard_or_dedup_fail);
+            let num_packets_to_verify = num_unique;
+
+            verifier.verify_and_send_packets(
+                batches,
+                num_packets_to_verify,
+                in_flight_count.clone(),
+                stats.total_valid_packets.clone(),
+                stats.total_verify_time_us.clone(),
+            )?;
+            debug!(
+                "@{:?} verifier: done. batches: {} packets: {}",
+                timing::timestamp(),
+                batches_len,
+                num_packets
+            );
+            stats
+                .dedup_packets_pp_us_hist
+                .increment(dedup_time.as_us() / (num_packets as u64))
+                .unwrap();
+            stats.total_dedup += discard_or_dedup_fail;
+            stats.total_dedup_time_us += dedup_time.as_us() as usize;
+        }
 
         Ok(())
     }
