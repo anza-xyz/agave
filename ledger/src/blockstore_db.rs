@@ -190,10 +190,6 @@ impl Rocks {
             new_cf_descriptor::<columns::BlockHeight>(options, oldest_slot),
             new_cf_descriptor::<columns::OptimisticSlots>(options, oldest_slot),
             new_cf_descriptor::<columns::MerkleRootMeta>(options, oldest_slot),
-            new_cf_descriptor::<columns::AlternateSlotMeta>(options, oldest_slot),
-            new_cf_descriptor::<columns::AlternateIndex>(options, oldest_slot),
-            new_cf_descriptor::<columns::AlternateShredData>(options, oldest_slot),
-            new_cf_descriptor::<columns::AlternateMerkleRootMeta>(options, oldest_slot),
         ];
 
         // When remaining columns are optional we can just return immediately here.
@@ -238,7 +234,7 @@ impl Rocks {
         cf_descriptors
     }
 
-    const fn columns() -> [&'static str; 23] {
+    const fn columns() -> [&'static str; 19] {
         [
             columns::ErasureMeta::NAME,
             columns::DeadSlots::NAME,
@@ -259,10 +255,6 @@ impl Rocks {
             columns::BlockHeight::NAME,
             columns::OptimisticSlots::NAME,
             columns::MerkleRootMeta::NAME,
-            columns::AlternateSlotMeta::NAME,
-            columns::AlternateIndex::NAME,
-            columns::AlternateShredData::NAME,
-            columns::AlternateMerkleRootMeta::NAME,
         ]
     }
 

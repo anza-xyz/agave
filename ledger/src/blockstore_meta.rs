@@ -7,10 +7,7 @@ use {
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
-    std::{
-        fmt::Display,
-        ops::{Range, RangeBounds},
-    },
+    std::ops::{Range, RangeBounds},
     wincode::{SchemaRead, SchemaWrite},
 };
 
@@ -284,22 +281,6 @@ pub struct DuplicateSlotProof {
     pub shred2: shred::Payload,
 }
 
-/// Which column an associated block currently resides
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum BlockLocation {
-    Original,
-    Alternate { block_id: Hash },
-}
-
-impl Display for BlockLocation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BlockLocation::Original => write!(f, "Original"),
-            BlockLocation::Alternate { block_id } => write!(f, "Alternate({block_id})"),
-        }
-    }
-}
-
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub enum FrozenHashVersioned {
     Current(FrozenHashStatus),
@@ -378,6 +359,7 @@ impl ShredIndex {
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn contains(&self, idx: u64) -> bool {
         self.index.contains(idx as usize)
     }
@@ -386,15 +368,6 @@ impl ShredIndex {
         if let Ok(true) = self.index.insert(idx as usize) {
             self.num_shreds += 1;
         }
-    }
-
-    pub(crate) fn count_range<R>(&self, bounds: R) -> usize
-    where
-        R: RangeBounds<u64>,
-    {
-        let start = bounds.start_bound().map(|&b| b as usize);
-        let end = bounds.end_bound().map(|&b| b as usize);
-        self.index.range((start, end)).count_ones()
     }
 
     pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = u64> + '_
