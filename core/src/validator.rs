@@ -1778,6 +1778,7 @@ impl Validator {
             node: Some(node_multihoming),
             banking_control_sender,
             snapshot_controller,
+            blockstore: blockstore.clone(),
         });
 
         Ok(Self {

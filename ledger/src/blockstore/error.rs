@@ -65,5 +65,25 @@ pub enum BlockstoreError {
         #[source]
         inner: Box<BlockstoreError>,
     },
+    #[error(transparent)]
+    ManualPurge(#[from] BlockstoreManualPurgeError),
 }
 pub type Result<T> = std::result::Result<T, BlockstoreError>;
+
+#[derive(Error, Debug)]
+pub enum BlockstoreManualPurgeError {
+    #[error("purge request sender is unavailable")]
+    SenderUnavailable,
+
+    #[error("purge request for slot {request_slot} is newer than the latest root {max_root}")]
+    SlotNewerThanRoot { request_slot: Slot, max_root: Slot },
+
+    #[error("purge request try send error")]
+    TrySend,
+}
+
+impl<T> std::convert::From<crossbeam_channel::TrySendError<T>> for BlockstoreManualPurgeError {
+    fn from(_e: crossbeam_channel::TrySendError<T>) -> BlockstoreManualPurgeError {
+        BlockstoreManualPurgeError::TrySend
+    }
+}
