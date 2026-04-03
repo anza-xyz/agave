@@ -9,12 +9,8 @@ use {
         Blockstore, PurgeType,
         column::{ColumnName, columns},
     },
-<<<<<<< HEAD
-    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
-=======
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
-    solana_clock::Slot,
->>>>>>> 23947b2b6 (validator: Add support for manually purging Blockstore (#11652))
+    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
     solana_measure::measure::Measure,
     std::{
         string::ToString,

@@ -8,11 +8,8 @@ use {
     },
     log::*,
     serde::{Deserialize, Serialize, de::Deserializer},
-<<<<<<< HEAD
     solana_accounts_db::accounts_index::AccountIndex,
-=======
     solana_clock::Slot,
->>>>>>> 23947b2b6 (validator: Add support for manually purging Blockstore (#11652))
     solana_core::{
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
         banking_stage::{
