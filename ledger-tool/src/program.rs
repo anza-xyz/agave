@@ -13,7 +13,7 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
         create_vm,
-        invoke_context::InvokeContext,
+        invoke_context::{BpfAllocator, InvokeContext, MemoryContext},
         loaded_programs::ProgramRuntimeEnvironment,
         program_cache_entry::{
             DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryType,
@@ -28,6 +28,7 @@ use {
         assembler::assemble,
         ebpf::MM_INPUT_START,
         elf::Executable,
+        memory_region::{MemoryMapping, MemoryRegion},
         static_analysis::Analysis,
         verifier::RequisiteVerifier,
         vm::{CallFrame, ExecutionMode},
@@ -513,15 +514,37 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         )
         .unwrap();
 
+    let regions = vec![MemoryRegion::default(); 3]
+        .into_iter()
+        .chain(regions)
+        .collect();
     let program = matches.value_of("PROGRAM").unwrap();
     let verified_executable = load_program(Path::new(program), program_id, &invoke_context);
-    create_vm!(
-        vm,
-        &verified_executable,
+
+    let heap_size = invoke_context.get_compute_budget().heap_size;
+    let virtual_address_space_adjustments = invoke_context
+        .get_feature_set()
+        .virtual_address_space_adjustments;
+    let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
+    let memory_mapping = MemoryMapping::new_uninitialized(
         regions,
-        account_lengths,
-        &mut invoke_context,
+        verified_executable.get_config(),
+        verified_executable.get_sbpf_version(),
+        invoke_context.transaction_context.access_violation_handler(
+            virtual_address_space_adjustments,
+            account_data_direct_mapping,
+        ),
     );
+
+    invoke_context
+        .set_memory_context(MemoryContext::new(
+            BpfAllocator::new(heap_size as u64),
+            account_lengths,
+            memory_mapping,
+        ))
+        .unwrap();
+
+    create_vm!(vm, &verified_executable, &mut invoke_context,);
     let (mut vm, _, _) = vm.unwrap();
     let start_time = Instant::now();
 

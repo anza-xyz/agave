@@ -26,7 +26,7 @@ use {
         ebpf::MM_HEAP_START,
         elf::{ElfError, Executable as GenericExecutable},
         error::{EbpfError, ProgramResult},
-        memory_region::MemoryMapping,
+        memory_region::{MemoryMapping, MemoryRegion},
         program::{BuiltinProgram, SBPFVersion},
         vm::{Config, ContextObject, EbpfVm},
     },
@@ -288,6 +288,16 @@ impl MemoryContext {
                 MemoryMapping::new(Vec::new(), &Config::default(), SBPFVersion::Reserved).unwrap(),
             ),
         }
+    }
+
+    pub fn get_memory_regions_mut(&mut self) -> &mut [MemoryRegion] {
+        self.memory_mapping.get_regions_mut()
+    }
+
+    pub fn initialize(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.memory_mapping
+            .initialize()
+            .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
     }
 }
 
