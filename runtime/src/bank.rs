@@ -3391,6 +3391,16 @@ impl Bank {
             // Reserved key set may have changed, so we must verify that
             // no writable keys are reserved.
             self.check_reserved_keys(transaction)?;
+
+            if self.feature_set.snapshot().limit_instruction_accounts {
+                for instr in transaction.instructions_iter() {
+                    if instr.accounts.len()
+                        > solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION
+                    {
+                        return Err(solana_transaction_error::TransactionError::SanitizeFailure);
+                    }
+                }
+            }
         }
 
         if self.slot() > alt_invalidation_slot {
