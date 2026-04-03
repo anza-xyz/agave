@@ -441,13 +441,6 @@ mod tests {
                 Self::V1 { headers_offset, .. } => *headers_offset,
             }
         }
-
-        fn frames(&self) -> Option<&Vec<LegacyAndV0InstructionFrame>> {
-            match self {
-                Self::LegacyAndV0 { frames, .. } => Some(frames),
-                Self::V1 { .. } => None,
-            }
-        }
     }
 
     #[test]
@@ -846,9 +839,19 @@ mod tests {
         let mut offset = 0;
 
         let frame = InstructionsFrame::try_new_for_legacy_and_v0(&bytes, &mut offset).unwrap();
-        assert_eq!(frame.num_instructions(), 0);
-        assert_eq!(frame.offset(), 1);
-        assert!(frame.frames().unwrap().is_empty());
         assert_eq!(offset, 1);
+
+        match frame {
+            InstructionsFrame::LegacyAndV0 {
+                num_instructions,
+                offset,
+                frames,
+            } => {
+                assert_eq!(num_instructions, 0);
+                assert_eq!(offset, 1);
+                assert!(frames.is_empty());
+            }
+            _ => panic!("expected legacy/v0 repr"),
+        }
     }
 }
