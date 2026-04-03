@@ -84,6 +84,7 @@ impl SigVerifier for TransactionSigVerifier {
             if let Some(forward_stage_sender) = &forward_stage_sender {
                 if let Err(err) = banking_stage_sender.send(banking_packet_batch.clone()) {
                     error!("sigverify send failed: {err:?}");
+                    in_flight_count.fetch_sub(valid_packets, Ordering::Release);
                     return;
                 }
                 if let Err(TrySendError::Full(_)) =
@@ -93,6 +94,7 @@ impl SigVerifier for TransactionSigVerifier {
                 }
             } else if let Err(err) = banking_stage_sender.send(banking_packet_batch) {
                 error!("sigverify send failed: {err:?}");
+                in_flight_count.fetch_sub(valid_packets, Ordering::Release);
                 return;
             }
 
