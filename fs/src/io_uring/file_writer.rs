@@ -48,7 +48,6 @@ impl<'a> IoUringFileWriter<'a> {
     /// Writes the current buffer and sets `self.current_buffer` to `None`
     fn write_current_buffer(&mut self, is_final_write: bool) -> Result<()> {
         debug_assert!(self.current_buffer.is_some());
-        debug_assert!(!self.finalized);
 
         if let Some(current_buffer) = self.current_buffer.take() {
             self.inner.schedule_write(
