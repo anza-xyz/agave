@@ -54,9 +54,10 @@ impl TransactionConfiguration {
     /// return a higher value here than their specified cu_price in the
     /// compute budget instruction.
     pub fn compute_unit_price_in_microlamports(&self) -> u64 {
-        self.priority_fee_lamports
-            .saturating_mul(1_000_000)
-            .checked_div(self.compute_unit_limit as u64)
+        (self.priority_fee_lamports as u128)
+            .saturating_mul(1_000_000u128)
+            .checked_div(self.compute_unit_limit as u128)
+            .and_then(|x| u64::try_from(x).ok())
             .unwrap_or(0)
     }
 }
