@@ -5,8 +5,8 @@ use solana_sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockha
 use {
     agave_syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallGetEpochScheduleSysvar, SyscallGetRentSysvar,
-        SyscallInvokeSignedRust, SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove,
-        SyscallMemset, SyscallSetReturnData,
+        SyscallGetSysvar, SyscallInvokeSignedRust, SyscallLog, SyscallMemcmp, SyscallMemcpy,
+        SyscallMemmove, SyscallMemset, SyscallPanic, SyscallSetReturnData,
     },
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Clock, Slot, UnixTimestamp},
@@ -30,14 +30,6 @@ use {
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_svm_type_overrides::sync::{Arc, RwLock},
-<<<<<<< HEAD
-=======
-    solana_syscalls::{
-        SyscallAbort, SyscallGetClockSysvar, SyscallGetEpochScheduleSysvar, SyscallGetRentSysvar,
-        SyscallGetSysvar, SyscallInvokeSignedRust, SyscallLog, SyscallMemcmp, SyscallMemcpy,
-        SyscallMemmove, SyscallMemset, SyscallPanic, SyscallSetReturnData,
-    },
->>>>>>> c207cb6f7 (test-validator: Update spl-token binary (#11697))
     solana_sysvar_id::SysvarId,
     std::{
         cmp::Ordering,
@@ -401,7 +393,6 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a, 'a>> {
     loader
         .register_function("sol_memcmp_", SyscallMemcmp::vm)
         .expect("Registration failed");
-<<<<<<< HEAD
     loader
         .register_function("sol_memmove_", SyscallMemmove::vm)
         .expect("Registration failed");
@@ -424,9 +415,10 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a, 'a>> {
         )
         .expect("Registration failed");
     loader
-=======
-    SyscallPanic::register(&mut loader, "sol_panic_").expect("Registration failed");
-    SyscallGetSysvar::register(&mut loader, "sol_get_sysvar").expect("Registration failed");
-    ProgramRuntimeEnvironment::from(loader)
->>>>>>> c207cb6f7 (test-validator: Update spl-token binary (#11697))
+        .register_function("sol_panic_", SyscallPanic::vm)
+        .expect("Registration failed");
+    loader
+        .register_function("sol_get_sysvar", SyscallGetSysvar::vm)
+        .expect("Registration failed");
+    loader
 }
