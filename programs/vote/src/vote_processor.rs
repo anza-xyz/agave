@@ -107,6 +107,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     let is_vote_authorize_with_bls_enabled = is_vote_authorize_with_bls_enabled(invoke_context);
     let consume_pop_compute_units = || {
         invoke_context
+            .compute_meter
             .consume_checked(BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS)
             .map_err(|_| InstructionError::ComputationalBudgetExceeded)
     };
@@ -183,7 +184,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             )
         }
         VoteInstruction::UpdateCommission(commission) => {
-            let sysvar_cache = invoke_context.get_sysvar_cache();
+            let sysvar_cache = invoke_context.environment_config.sysvar_cache();
 
             // Disable the commission update rule after the "delay commission
             // update" feature is activated because it imposes a minimum delay
@@ -226,7 +227,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if should_reject_legacy_vote_instructions(invoke_context) {
                 return Err(InstructionError::InvalidInstructionData);
             }
-            let sysvar_cache = invoke_context.get_sysvar_cache();
+            let sysvar_cache = invoke_context.environment_config.sysvar_cache();
             let slot_hashes = sysvar_cache.get_slot_hashes()?;
             let clock = sysvar_cache.get_clock()?;
             vote_state::process_vote_state_update(
@@ -243,7 +244,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if should_reject_legacy_vote_instructions(invoke_context) {
                 return Err(InstructionError::InvalidInstructionData);
             }
-            let sysvar_cache = invoke_context.get_sysvar_cache();
+            let sysvar_cache = invoke_context.environment_config.sysvar_cache();
             let slot_hashes = sysvar_cache.get_slot_hashes()?;
             let clock = sysvar_cache.get_clock()?;
             vote_state::process_vote_state_update(
@@ -260,7 +261,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if invoke_context.is_alpenglow_migration_succeeded() {
                 return Err(InstructionError::InvalidInstructionData);
             }
-            let sysvar_cache = invoke_context.get_sysvar_cache();
+            let sysvar_cache = invoke_context.environment_config.sysvar_cache();
             let slot_hashes = sysvar_cache.get_slot_hashes()?;
             let clock = sysvar_cache.get_clock()?;
             vote_state::process_tower_sync(
@@ -274,8 +275,8 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::Withdraw(lamports) => {
             instruction_context.check_number_of_instruction_accounts(2)?;
-            let rent_sysvar = invoke_context.get_sysvar_cache().get_rent()?;
-            let clock_sysvar = invoke_context.get_sysvar_cache().get_clock()?;
+            let rent_sysvar = invoke_context.environment_config.sysvar_cache().get_rent()?;
+            let clock_sysvar = invoke_context.environment_config.sysvar_cache().get_clock()?;
 
             drop(me);
             vote_state::withdraw(
@@ -312,11 +313,11 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if !is_init_account_v2_enabled {
                 return Err(InstructionError::InvalidInstructionData);
             }
-            let rent = invoke_context.get_sysvar_cache().get_rent()?;
+            let rent = invoke_context.environment_config.sysvar_cache().get_rent()?;
             if !rent.is_exempt(me.get_lamports(), me.get_data().len()) {
                 return Err(InstructionError::InsufficientFunds);
             }
-            let clock = invoke_context.get_sysvar_cache().get_clock()?;
+            let clock = invoke_context.environment_config.sysvar_cache().get_clock()?;
             vote_state::initialize_account_v2(
                 &mut me,
                 target_version,
@@ -365,7 +366,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 NewCommissionCollector::NewAccount(collector_account)
             };
 
-            let rent = invoke_context.get_sysvar_cache().get_rent()?;
+            let rent = invoke_context.environment_config.sysvar_cache().get_rent()?;
 
             vote_state::update_commission_collector(
                 &mut me,

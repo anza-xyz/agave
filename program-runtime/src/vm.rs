@@ -67,11 +67,13 @@ pub fn create_vm<'a, 'b>(
             .virtual_address_space_adjustments,
         invoke_context.get_feature_set().account_data_direct_mapping,
     )?;
-    invoke_context.set_memory_context(MemoryContext::new(
-        BpfAllocator::new(heap_size as u64),
-        accounts_metadata,
-        memory_mapping,
-    ))?;
+    invoke_context
+        .memory_contexts
+        .set_memory_context(MemoryContext::new(
+            BpfAllocator::new(heap_size as u64),
+            accounts_metadata,
+            memory_mapping,
+        ))?;
     Ok(EbpfVm::new(
         program.get_loader().clone(),
         program.get_sbpf_version(),
@@ -127,10 +129,12 @@ macro_rules! create_vm {
         let stack_size = $program.get_config().stack_size();
         let heap_size = invoke_context.get_compute_budget().heap_size;
         let heap_cost_result =
-            invoke_context.consume_checked($crate::__private::calculate_heap_cost(
-                heap_size,
-                invoke_context.get_execution_cost().heap_cost,
-            ));
+            invoke_context
+                .compute_meter
+                .consume_checked($crate::__private::calculate_heap_cost(
+                    heap_size,
+                    invoke_context.get_execution_cost().heap_cost,
+                ));
         let $vm = heap_cost_result.and_then(|_| {
             let (mut stack, mut heap) = $crate::__private::MEMORY_POOL
                 .with_borrow_mut(|pool| (pool.get_stack(stack_size), pool.get_heap(heap_size)));
@@ -253,10 +257,7 @@ pub fn execute<'a, 'b: 'a>(
         }
 
         let execute_time = Measure::start("execute");
-
-        // SAFETY: VM is the only holder of the InvokeContext reference, as it carries its lifetime.
-        let prev_nested_exec_time =
-            unsafe { vm.context_object_pointer.as_ref().total_nested_exec_time };
+        let prev_nested_exec_time = vm.context().total_nested_exec_time;
 
         vm.registers[1] = ebpf::MM_INPUT_START;
         vm.registers[2] = instruction_data_offset as u64;
@@ -412,7 +413,10 @@ pub fn execute<'a, 'b: 'a>(
             virtual_address_space_adjustments,
             account_data_direct_mapping,
             parameter_bytes,
-            &invoke_context.get_memory_context()?.accounts_metadata,
+            &invoke_context
+                .memory_contexts
+                .memory_context()?
+                .accounts_metadata,
         )
     }
 
