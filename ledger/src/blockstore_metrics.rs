@@ -570,7 +570,7 @@ pub(crate) fn report_rocksdb_write_perf(
             ),
             // Time spent on merge operator.
             (
-                "merge_operator_nanos_nanos",
+                "merge_operator_nanos",
                 perf_context.metric(PerfMetric::MergeOperatorTimeNanos) as i64,
                 i64
             ),
