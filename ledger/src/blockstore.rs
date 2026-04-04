@@ -13,17 +13,16 @@ use {
         blockstore_options::{
             BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, BlockstoreOptions, LedgerColumnOptions,
         },
-        blockstore_processor::BlockstoreProcessorError,
         leader_schedule_cache::LeaderScheduleCache,
         next_slots_iterator::NextSlotsIterator,
         shred::{
             self, DATA_SHREDS_PER_FEC_BLOCK, ErasureSetId, ProcessShredsStats, ReedSolomonCache,
             Shred, ShredId, ShredType, Shredder,
+            merkle_tree::{MerkleTree, SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
         },
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
     },
-    agave_feature_set::FeatureSet,
     agave_snapshots::unpack_genesis_archive,
     assert_matches::{assert_matches, debug_assert_matches},
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
@@ -33,6 +32,7 @@ use {
     rand::Rng,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     rocksdb::{DBRawIterator, LiveFile},
+    serde_bytes::ByteBuf,
     solana_account::ReadableAccount,
     solana_address_lookup_table_interface::state::AddressLookupTable,
     solana_clock::{DEFAULT_TICKS_PER_SECOND, Slot, UnixTimestamp},
@@ -41,12 +41,13 @@ use {
         entry::{Entry, MaxDataShredsLen, create_ticks},
     },
     solana_genesis_config::{DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, GenesisConfig},
-    solana_hash::Hash,
+    solana_hash::{HASH_BYTES, Hash},
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
+    solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_signer::Signer,
     solana_storage_proto::{StoredExtendedRewards, StoredTransactionStatusMeta},
@@ -91,8 +92,6 @@ use {
 pub mod blockstore_purge;
 pub mod column;
 pub mod error;
-#[cfg(test)]
-use static_assertions::const_assert_eq;
 pub use {
     crate::{
         blockstore::error::{BlockstoreError, Result},
@@ -193,30 +192,6 @@ impl<T> AsRef<T> for WorkingEntry<T> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct LastFECSetCheckResults {
-    last_fec_set_merkle_root: Option<Hash>,
-    is_retransmitter_signed: bool,
-}
-
-impl LastFECSetCheckResults {
-    fn get_last_fec_set_merkle_root(
-        &self,
-        feature_set: &FeatureSet,
-    ) -> std::result::Result<Option<Hash>, BlockstoreProcessorError> {
-        if self.last_fec_set_merkle_root.is_none() {
-            return Err(BlockstoreProcessorError::IncompleteFinalFecSet);
-        } else if feature_set
-            .snapshot()
-            .vote_only_retransmitter_signed_fec_sets
-            && !self.is_retransmitter_signed
-        {
-            return Err(BlockstoreProcessorError::InvalidRetransmitterSignatureFinalFecSet);
-        }
-        Ok(self.last_fec_set_merkle_root)
-    }
-}
-
 pub struct InsertResults {
     completed_data_set_infos: Vec<CompletedDataSetInfo>,
     duplicate_shreds: Vec<PossibleDuplicateShred>,
@@ -257,6 +232,7 @@ pub struct Blockstore {
     index_cf: LedgerColumn<cf::Index>,
     erasure_meta_cf: LedgerColumn<cf::ErasureMeta>,
     merkle_root_meta_cf: LedgerColumn<cf::MerkleRootMeta>,
+    double_merkle_meta_cf: LedgerColumn<cf::DoubleMerkleMeta>,
     orphans_cf: LedgerColumn<cf::Orphans>,
     duplicate_slots_cf: LedgerColumn<cf::DuplicateSlots>,
 
@@ -286,6 +262,9 @@ pub struct Blockstore {
     new_shreds_signals: Mutex<Vec<Sender<bool>>>,
     completed_slots_senders: Mutex<Vec<CompletedSlotsSender>>,
     pub lowest_cleanup_slot: RwLock<Slot>,
+    // A sender that feeds into the BlockstoreCleanupService request channel
+    // to enable manual Blockstore purge requests to be issued
+    pub(crate) manual_purge_request_sender: Mutex<Option<Sender<Slot>>>,
     pub slots_stats: SlotsStats,
 }
 
@@ -410,6 +389,7 @@ impl Blockstore {
         let index_cf = db.column();
         let erasure_meta_cf = db.column();
         let merkle_root_meta_cf = db.column();
+        let double_merkle_meta_cf = db.column();
         let orphans_cf = db.column();
         let duplicate_slots_cf = db.column();
 
@@ -456,6 +436,7 @@ impl Blockstore {
             erasure_meta_cf,
             index_cf,
             merkle_root_meta_cf,
+            double_merkle_meta_cf,
             meta_cf,
             optimistic_slots_cf,
             perf_samples_cf,
@@ -473,6 +454,7 @@ impl Blockstore {
             insert_shreds_lock: Mutex::<()>::default(),
             max_root,
             lowest_cleanup_slot: RwLock::<Slot>::default(),
+            manual_purge_request_sender: Mutex::default(),
             slots_stats: SlotsStats::default(),
         };
         blockstore.cleanup_old_entries()?;
@@ -571,6 +553,21 @@ impl Blockstore {
         // Database::destroy() fails if the root directory doesn't exist
         fs::create_dir_all(ledger_path)?;
         Rocks::destroy(&Path::new(ledger_path).join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL))
+    }
+
+    /// Checks all available block versions, if we have a *complete* block for
+    /// `block_id`, returns the location where it is stored
+    #[allow(dead_code)]
+    pub fn get_block_location(&self, slot: Slot, block_id: Hash) -> Result<Option<BlockLocation>> {
+        for location in [
+            BlockLocation::Original,
+            BlockLocation::Alternate { block_id },
+        ] {
+            if self.get_double_merkle_root(slot, location)? == Some(block_id) {
+                return Ok(Some(location));
+            }
+        }
+        Ok(None)
     }
 
     /// Returns the SlotMeta of the specified slot.
@@ -756,6 +753,50 @@ impl Blockstore {
                 merkle_root_meta,
             ),
         }
+    }
+
+    /// Gets the double merkle meta for the given block.
+    /// If the meta is present but the proofs have not yet been populated - generate and store them
+    /// and return the updated double merkle meta
+    pub fn get_double_merkle_meta_maybe_populate_proofs(
+        &self,
+        slot: Slot,
+        location: BlockLocation,
+    ) -> Result<Option<DoubleMerkleMeta>> {
+        let Some(mut double_merkle_meta) = self.double_merkle_meta_cf.get((slot, location))? else {
+            return Ok(None);
+        };
+
+        if double_merkle_meta.proofs.is_empty() {
+            self.populate_double_merkle_meta_proofs(slot, location, &mut double_merkle_meta)?;
+            self.double_merkle_meta_cf
+                .put((slot, location), &double_merkle_meta)?;
+        }
+
+        Ok(Some(double_merkle_meta))
+    }
+
+    /// Gets the double merkle root for the block in the given location.
+    /// Returns `None` if the block is not full.
+    /// DoubleMerkleMeta is computed atomically during shred insertion when a slot becomes full.
+    pub fn get_double_merkle_root(
+        &self,
+        slot: Slot,
+        location: BlockLocation,
+    ) -> Result<Option<Hash>> {
+        let Some(double_merkle_meta_bytes) =
+            self.double_merkle_meta_cf.get_slice((slot, location))?
+        else {
+            debug_assert!(
+                self.meta_from_location(slot, location)
+                    .unwrap()
+                    .is_none_or(|meta| !meta.is_full())
+            );
+            return Ok(None);
+        };
+
+        let dmr: Hash = wincode::deserialize(&double_merkle_meta_bytes[0..HASH_BYTES])?;
+        Ok(Some(dmr))
     }
 
     /// Check whether the specified slot is an orphan slot which does not
@@ -1260,13 +1301,148 @@ impl Blockstore {
         }
     }
 
+    /// Computes and adds DoubleMerkleMeta to the write_batch for any newly completed slots.
+    fn compute_double_merkle_meta_for_newly_completed_slots(
+        &self,
+        shred_insertion_tracker: &mut ShredInsertionTracker,
+    ) -> Result<()> {
+        for (&(location, slot), slot_meta_entry) in
+            shred_insertion_tracker.slot_meta_working_set.iter()
+        {
+            let meta = RefCell::borrow(&*slot_meta_entry.new_slot_meta);
+            if !is_newly_completed_slot(&meta, &slot_meta_entry.old_slot_meta) {
+                continue;
+            }
+
+            self.build_double_merkle_meta_in_batch(
+                slot,
+                location,
+                meta.last_index.expect("Slot is full"),
+                &shred_insertion_tracker.slot_meta_working_set,
+                &shred_insertion_tracker.merkle_root_metas,
+                &mut shred_insertion_tracker.write_batch,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Builds DoubleMerkleMeta for a completed slot and adds it to the write batch.
+    /// Expects the block to be full
+    fn build_double_merkle_meta_in_batch(
+        &self,
+        slot: Slot,
+        location: BlockLocation,
+        last_index: u64,
+        slot_metas: &HashMap<(BlockLocation, Slot), SlotMetaWorkingSetEntry>,
+        merkle_root_metas: &HashMap<(BlockLocation, ErasureSetId), WorkingEntry<MerkleRootMeta>>,
+        write_batch: &mut WriteBatch,
+    ) -> Result<()> {
+        let fec_set_count = (last_index / (DATA_SHREDS_PER_FEC_BLOCK as u64) + 1) as usize;
+        let merkle_tree = self.build_double_merkle_tree(
+            slot,
+            location,
+            fec_set_count,
+            Some(slot_metas),
+            Some(merkle_root_metas),
+        )?;
+
+        let double_merkle_root = *merkle_tree.root();
+        // We don't build the proofs here as they are only needed to serve repair requests.
+        // These will be built later when calling `get_double_merkle_meta_maybe_populate_proofs`
+        let proofs = ByteBuf::new();
+
+        // Create and add DoubleMerkleMeta to write batch
+        let double_merkle_meta = DoubleMerkleMeta {
+            double_merkle_root,
+            fec_set_count,
+            proofs,
+        };
+
+        self.double_merkle_meta_cf
+            .put_in_batch(write_batch, (slot, location), &double_merkle_meta)
+    }
+
+    /// Builds the double merkle tree for a completed block (expects the block to be full)
+    fn build_double_merkle_tree(
+        &self,
+        slot: Slot,
+        location: BlockLocation,
+        fec_set_count: usize,
+        slot_metas: Option<&HashMap<(BlockLocation, Slot), SlotMetaWorkingSetEntry>>,
+        merkle_root_metas: Option<
+            &HashMap<(BlockLocation, ErasureSetId), WorkingEntry<MerkleRootMeta>>,
+        >,
+    ) -> Result<MerkleTree> {
+        // Get the parent info from tracker if specified first, then fall back to db
+        let Some((Some(parent_slot), parent_block_id)) =
+            self.get_parent_info_from_tracker_or_db(slot, location, slot_metas)?
+        else {
+            // Something has gone wrong here - the block is full yet the slot meta/parent slot info was missing!
+            error!(
+                "slot {slot} location {location} was full, yet the slot meta is missing / \
+                 incomplete"
+            );
+            return Err(BlockstoreError::ParentInfoUnavailable(slot, location));
+        };
+
+        // Collect merkle roots for each FEC set
+        let merkle_tree_leaves = (0..fec_set_count)
+            .map(|i| {
+                let fec_set_index = (i * DATA_SHREDS_PER_FEC_BLOCK) as u32;
+                let erasure_set = ErasureSetId::new(slot, fec_set_index);
+                self.get_merkle_root_from_tracker_or_db(location, erasure_set, merkle_root_metas)
+                    .map_err(|_| shred::Error::InvalidMerkleRoot)
+                    .and_then(|mr| mr.ok_or(shred::Error::InvalidMerkleRoot))
+            })
+            // Add parent info as the last leaf
+            .chain(std::iter::once(Ok(hashv(&[
+                &parent_slot.to_le_bytes(),
+                parent_block_id.as_ref(),
+            ]))));
+
+        MerkleTree::try_new_with_len(merkle_tree_leaves, fec_set_count + 1)
+            .map_err(|_| BlockstoreError::MerkleTreeConstructionFailure(slot, location))
+    }
+
+    /// Populates the proofs for the block at `slot` `location` into the `double_merkle_meta`
+    fn populate_double_merkle_meta_proofs(
+        &self,
+        slot: Slot,
+        location: BlockLocation,
+        double_merkle_meta: &mut DoubleMerkleMeta,
+    ) -> Result<()> {
+        let merkle_tree = self.build_double_merkle_tree(
+            slot,
+            location,
+            double_merkle_meta.fec_set_count,
+            None,
+            None,
+        )?;
+        let tree_size = double_merkle_meta.fec_set_count + 1;
+        let proof_len_bytes = get_proof_size(tree_size) as usize * SIZE_OF_MERKLE_PROOF_ENTRY;
+        let mut proofs = ByteBuf::with_capacity(tree_size * proof_len_bytes);
+
+        for leaf_index in 0..tree_size {
+            for proof_entry in merkle_tree.make_merkle_proof(leaf_index, tree_size) {
+                let proof_entry = proof_entry
+                    .map_err(|_| BlockstoreError::MerkleProofConstructionFailure(slot, location))?;
+                proofs.extend_from_slice(proof_entry);
+            }
+        }
+
+        double_merkle_meta.proofs = proofs;
+
+        Ok(())
+    }
+
     /// Gets the merkle root from the tracker if available, otherwise from the db.
-    #[allow(dead_code)]
     fn get_merkle_root_from_tracker_or_db(
         &self,
         location: BlockLocation,
         erasure_set: ErasureSetId,
-        merkle_root_metas: &HashMap<(BlockLocation, ErasureSetId), WorkingEntry<MerkleRootMeta>>,
+        merkle_root_metas: Option<
+            &HashMap<(BlockLocation, ErasureSetId), WorkingEntry<MerkleRootMeta>>,
+        >,
     ) -> Result<Option<Hash>> {
         let err = || {
             BlockstoreError::MissingMerkleRoot(
@@ -1274,8 +1450,10 @@ impl Blockstore {
                 erasure_set.fec_set_index() as u64,
             )
         };
-        // First check the tracker
-        if let Some(working_entry) = merkle_root_metas.get(&(location, erasure_set)) {
+        // First check the tracker if available
+        if let Some(working_entry) =
+            merkle_root_metas.and_then(|mm| mm.get(&(location, erasure_set)))
+        {
             return Ok(Some(working_entry.as_ref().merkle_root().ok_or_else(err)?));
         }
 
@@ -1286,6 +1464,25 @@ impl Blockstore {
                     .map(|meta| meta.merkle_root().ok_or_else(err))
                     .transpose()
             })
+    }
+
+    /// Gets the parent info for this block using the slot meta from the tracker if available, otherwise from the db
+    fn get_parent_info_from_tracker_or_db(
+        &self,
+        slot: Slot,
+        location: BlockLocation,
+        slot_metas: Option<&HashMap<(BlockLocation, Slot), SlotMetaWorkingSetEntry>>,
+    ) -> Result<Option<(Option<Slot>, Hash)>> {
+        if let Some(working_entry) = slot_metas.and_then(|sm| sm.get(&(location, slot))) {
+            // First check the tracker if available
+            let parent_slot = RefCell::borrow(&*working_entry.new_slot_meta).parent_slot;
+            Ok(Some((parent_slot, Hash::default())))
+        } else if let Some(meta) = self.meta_from_location(slot, location)? {
+            // Fall back to DB
+            Ok(Some((meta.parent_slot, Hash::default())))
+        } else {
+            Ok(None)
+        }
     }
 
     fn commit_updates_to_write_batch(
@@ -1458,6 +1655,9 @@ impl Blockstore {
         )?;
 
         self.check_chained_merkle_root_consistency(&mut shred_insertion_tracker);
+
+        // Compute DoubleMerkleMeta for any newly completed slots so it's committed atomically
+        self.compute_double_merkle_meta_for_newly_completed_slots(&mut shred_insertion_tracker)?;
 
         let (should_signal, newly_completed_slots) =
             self.commit_updates_to_write_batch(&mut shred_insertion_tracker, metrics)?;
@@ -4098,116 +4298,6 @@ impl Blockstore {
         self.get_slot_entries_in_block(slot, &vec![range], slot_meta)
     }
 
-    /// Performs checks on the last fec set of a replayed slot, and returns the block_id.
-    /// Returns:
-    ///     - BlockstoreProcessorError::IncompleteFinalFecSet
-    ///       if the last fec set is not full
-    ///     - BlockstoreProcessorError::InvalidRetransmitterSignatureFinalFecSet
-    ///       if the last fec set is not signed by retransmitters
-    pub fn check_last_fec_set_and_get_block_id(
-        &self,
-        slot: Slot,
-        bank_hash: Hash,
-        feature_set: &FeatureSet,
-    ) -> std::result::Result<Option<Hash>, BlockstoreProcessorError> {
-        let results = self.check_last_fec_set(slot);
-        let Ok(results) = results else {
-            warn!(
-                "Unable to check the last fec set for slot {slot} {bank_hash}, marking as dead: \
-                 {results:?}",
-            );
-            return Err(BlockstoreProcessorError::IncompleteFinalFecSet);
-        };
-        // Update metrics
-        if results.last_fec_set_merkle_root.is_none() {
-            datapoint_warn!("incomplete_final_fec_set", ("slot", slot, i64),);
-        }
-        // Return block id / error based on feature flags
-        results.get_last_fec_set_merkle_root(feature_set)
-    }
-
-    /// Performs checks on the last FEC set for this slot.
-    /// - `block_id` will be `Some(mr)` if the last `DATA_SHREDS_PER_FEC_BLOCK` data shreds of
-    ///   `slot` have the same merkle root of `mr`, indicating they are a part of the same FEC set.
-    ///   This indicates that the last FEC set is sufficiently sized.
-    /// - `is_retransmitter_signed` will be true if the last `DATA_SHREDS_PER_FEC_BLOCK`
-    ///   data shreds of `slot` are of the retransmitter variant. Since we already discard
-    ///   invalid signatures on ingestion, this indicates that the last FEC set is properly
-    ///   signed by retransmitters.
-    ///
-    /// Will error if:
-    ///     - Slot meta is missing
-    ///     - LAST_SHRED_IN_SLOT flag has not been received
-    ///     - There are missing shreds in the last fec set
-    ///     - The block contains legacy shreds
-    fn check_last_fec_set(&self, slot: Slot) -> Result<LastFECSetCheckResults> {
-        // We need to check if the last FEC set index contains at least `DATA_SHREDS_PER_FEC_BLOCK` data shreds.
-        // We compare the merkle roots of the last `DATA_SHREDS_PER_FEC_BLOCK` shreds in this block.
-        // Since the merkle root contains the fec_set_index, if all of them match, we know that the last fec set has
-        // at least `DATA_SHREDS_PER_FEC_BLOCK` shreds.
-        let slot_meta = self.meta(slot)?.ok_or(BlockstoreError::SlotUnavailable)?;
-        let last_shred_index = slot_meta
-            .last_index
-            .ok_or(BlockstoreError::UnknownLastIndex(slot))?;
-
-        const MINIMUM_INDEX: u64 = DATA_SHREDS_PER_FEC_BLOCK as u64 - 1;
-        #[cfg(test)]
-        const_assert_eq!(MINIMUM_INDEX, 31);
-        let Some(start_index) = last_shred_index.checked_sub(MINIMUM_INDEX) else {
-            warn!(
-                "Slot {slot} has only {} shreds, fewer than the {DATA_SHREDS_PER_FEC_BLOCK} \
-                 required",
-                last_shred_index + 1
-            );
-            return Ok(LastFECSetCheckResults {
-                last_fec_set_merkle_root: None,
-                is_retransmitter_signed: false,
-            });
-        };
-        let keys = self
-            .data_shred_cf
-            .multi_get_keys((start_index..=last_shred_index).map(|index| (slot, index)));
-
-        let deduped_shred_checks: Vec<(Hash, bool)> = self
-            .data_shred_cf
-            .multi_get_bytes(&keys)
-            .enumerate()
-            .map(|(offset, shred_bytes)| {
-                let shred_bytes = shred_bytes.ok().flatten().ok_or_else(|| {
-                    let shred_index = start_index + u64::try_from(offset).unwrap();
-                    warn!("Missing shred for {slot} index {shred_index}");
-                    BlockstoreError::MissingShred(slot, shred_index)
-                })?;
-                let is_retransmitter_signed =
-                    shred::layout::is_retransmitter_signed_variant(&shred_bytes).map_err(|_| {
-                        let shred_index = start_index + u64::try_from(offset).unwrap();
-                        warn!("Found legacy shred for {slot}, index {shred_index}");
-                        BlockstoreError::LegacyShred(slot, shred_index)
-                    })?;
-                let merkle_root =
-                    shred::layout::get_merkle_root(&shred_bytes).ok_or_else(|| {
-                        let shred_index = start_index + u64::try_from(offset).unwrap();
-                        warn!("Unable to read merkle root for {slot}, index {shred_index}");
-                        BlockstoreError::MissingMerkleRoot(slot, shred_index)
-                    })?;
-                Ok((merkle_root, is_retransmitter_signed))
-            })
-            .dedup_by(|res1, res2| res1.as_ref().ok() == res2.as_ref().ok())
-            .collect::<Result<Vec<(Hash, bool)>>>()?;
-
-        // After the dedup there should be exactly one Hash left and one true value
-        let &[(block_id, is_retransmitter_signed)] = deduped_shred_checks.as_slice() else {
-            return Ok(LastFECSetCheckResults {
-                last_fec_set_merkle_root: None,
-                is_retransmitter_signed: false,
-            });
-        };
-        Ok(LastFECSetCheckResults {
-            last_fec_set_merkle_root: Some(block_id),
-            is_retransmitter_signed,
-        })
-    }
-
     /// Returns a mapping from each elements of `slots` to a list of the
     /// element's children slots.
     pub fn get_slots_since(&self, slots: &[Slot]) -> Result<HashMap<Slot, Vec<Slot>>> {
@@ -4495,10 +4585,6 @@ impl Blockstore {
 
     pub fn lowest_cleanup_slot(&self) -> Slot {
         *self.lowest_cleanup_slot.read().unwrap()
-    }
-
-    pub fn storage_size(&self) -> Result<u64> {
-        self.db.storage_size()
     }
 
     /// Returns the total physical storage size contributed by all data shreds.
@@ -5132,7 +5218,7 @@ fn send_signals(
 
         slots.push(newly_completed_slots);
 
-        for (signal, slots) in completed_slots_senders.iter().zip(slots.into_iter()) {
+        for (signal, slots) in completed_slots_senders.iter().zip(slots) {
             let res = signal.try_send(slots);
             if let Err(TrySendError::Full(_)) = res {
                 datapoint_error!(
@@ -5624,7 +5710,12 @@ pub mod tests {
         super::*,
         crate::{
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
-            shred::max_ticks_per_n_shreds,
+            shred::{
+                max_ticks_per_n_shreds,
+                merkle_tree::{
+                    MerkleProofEntry, SIZE_OF_MERKLE_PROOF_ENTRY, get_merkle_root, get_proof_size,
+                },
+            },
         },
         assert_matches::assert_matches,
         crossbeam_channel::unbounded,
@@ -5650,6 +5741,7 @@ pub mod tests {
             InnerInstruction, InnerInstructions, Reward, Rewards, TransactionTokenBalance,
         },
         std::{cmp::Ordering, num::NonZeroUsize, time::Duration},
+        test_case::test_case,
     };
 
     // used for tests only
@@ -11769,205 +11861,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_check_last_fec_set() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        let parent_slot = 0;
-        let slot = 1;
-
-        let fec_set_index = 30;
-        let (data_shreds, _, _) =
-            setup_erasure_shreds_with_index(slot, parent_slot, 10, fec_set_index);
-        let total_shreds = fec_set_index as u64 + data_shreds.len() as u64;
-
-        // FEC set should be padded
-        assert_eq!(data_shreds.len(), DATA_SHREDS_PER_FEC_BLOCK);
-
-        // Missing slot meta
-        assert_matches!(
-            blockstore.check_last_fec_set(0),
-            Err(BlockstoreError::SlotUnavailable)
-        );
-
-        // Incomplete slot
-        blockstore
-            .insert_shreds(
-                data_shreds[0..DATA_SHREDS_PER_FEC_BLOCK - 1].to_vec(),
-                None,
-                false,
-            )
-            .unwrap();
-        let meta = blockstore.meta(slot).unwrap().unwrap();
-        assert!(meta.last_index.is_none());
-        assert_matches!(
-            blockstore.check_last_fec_set(slot),
-            Err(BlockstoreError::UnknownLastIndex(_))
-        );
-        blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
-
-        // Missing shreds
-        blockstore
-            .insert_shreds(data_shreds[1..].to_vec(), None, false)
-            .unwrap();
-        let meta = blockstore.meta(slot).unwrap().unwrap();
-        assert_eq!(meta.last_index, Some(total_shreds - 1));
-        assert_matches!(
-            blockstore.check_last_fec_set(slot),
-            Err(BlockstoreError::MissingShred(_, _))
-        );
-        blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
-
-        // Full slot
-        let block_id = data_shreds[0].merkle_root().unwrap();
-        blockstore.insert_shreds(data_shreds, None, false).unwrap();
-        let results = blockstore.check_last_fec_set(slot).unwrap();
-        assert_eq!(results.last_fec_set_merkle_root, Some(block_id));
-        assert!(results.is_retransmitter_signed);
-        blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
-
-        // Slot has two batches with small number of entries.
-        let mut fec_set_index = 0;
-        let (first_data_shreds, _, _) =
-            setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
-                slot,
-                parent_slot,
-                10,
-                fec_set_index,
-                Hash::default(),
-                false,
-            );
-        let merkle_root = first_data_shreds[0].merkle_root().unwrap();
-        fec_set_index += first_data_shreds.len() as u32;
-        let (last_data_shreds, _, _) =
-            setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
-                slot,
-                parent_slot,
-                40,
-                fec_set_index,
-                merkle_root,
-                false,
-            );
-        let last_index = last_data_shreds.last().unwrap().index();
-        let total_shreds = first_data_shreds.len() + last_data_shreds.len();
-        assert_eq!(total_shreds, 2 * DATA_SHREDS_PER_FEC_BLOCK);
-        let merkle_root = last_data_shreds[0].merkle_root().unwrap();
-        blockstore
-            .insert_shreds(first_data_shreds, None, false)
-            .unwrap();
-        blockstore
-            .insert_shreds(last_data_shreds, None, false)
-            .unwrap();
-        // Manually update last index flag
-        let mut slot_meta = blockstore.meta(slot).unwrap().unwrap();
-        slot_meta.last_index = Some(last_index as u64);
-        blockstore.put_meta(slot, &slot_meta).unwrap();
-        let results = blockstore.check_last_fec_set(slot).unwrap();
-        assert_eq!(results.last_fec_set_merkle_root, Some(merkle_root));
-        assert!(!results.is_retransmitter_signed);
-        blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
-
-        // Slot has batches with medium number of entries.
-        let mut fec_set_index = 0;
-        let (first_data_shreds, _, _) =
-            setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
-                slot,
-                parent_slot,
-                100,
-                fec_set_index,
-                Hash::default(),
-                false,
-            );
-        let merkle_root = first_data_shreds[0].merkle_root().unwrap();
-        fec_set_index += first_data_shreds.len() as u32;
-        let (last_data_shreds, _, _) =
-            setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
-                slot,
-                parent_slot,
-                100,
-                fec_set_index,
-                merkle_root,
-                false,
-            );
-        let last_index = last_data_shreds.last().unwrap().index();
-        let total_shreds = first_data_shreds.len() + last_data_shreds.len();
-        assert_eq!(last_data_shreds.len(), DATA_SHREDS_PER_FEC_BLOCK);
-        assert_eq!(total_shreds, 2 * DATA_SHREDS_PER_FEC_BLOCK);
-        let merkle_root = last_data_shreds[0].merkle_root().unwrap();
-        blockstore
-            .insert_shreds(first_data_shreds, None, false)
-            .unwrap();
-        blockstore
-            .insert_shreds(last_data_shreds, None, false)
-            .unwrap();
-        // Manually update last index flag
-        let mut slot_meta = blockstore.meta(slot).unwrap().unwrap();
-        slot_meta.last_index = Some(last_index as u64);
-        blockstore.put_meta(slot, &slot_meta).unwrap();
-        let results = blockstore.check_last_fec_set(slot).unwrap();
-        assert_eq!(results.last_fec_set_merkle_root, Some(merkle_root));
-        assert!(!results.is_retransmitter_signed);
-    }
-
-    #[test]
-    fn test_last_fec_set_check_results() {
-        let enabled_feature_set = FeatureSet::all_enabled();
-        let full_only = FeatureSet::default();
-
-        let results = LastFECSetCheckResults {
-            last_fec_set_merkle_root: None,
-            is_retransmitter_signed: false,
-        };
-        assert_matches!(
-            results.get_last_fec_set_merkle_root(&enabled_feature_set),
-            Err(BlockstoreProcessorError::IncompleteFinalFecSet)
-        );
-        assert_matches!(
-            results.get_last_fec_set_merkle_root(&full_only),
-            Err(BlockstoreProcessorError::IncompleteFinalFecSet)
-        );
-
-        let block_id = Hash::new_unique();
-        let results = LastFECSetCheckResults {
-            last_fec_set_merkle_root: Some(block_id),
-            is_retransmitter_signed: false,
-        };
-        assert_matches!(
-            results.get_last_fec_set_merkle_root(&enabled_feature_set),
-            Err(BlockstoreProcessorError::InvalidRetransmitterSignatureFinalFecSet)
-        );
-        assert_eq!(
-            results.get_last_fec_set_merkle_root(&full_only).unwrap(),
-            Some(block_id)
-        );
-
-        let results = LastFECSetCheckResults {
-            last_fec_set_merkle_root: None,
-            is_retransmitter_signed: true,
-        };
-        assert_matches!(
-            results.get_last_fec_set_merkle_root(&enabled_feature_set),
-            Err(BlockstoreProcessorError::IncompleteFinalFecSet)
-        );
-        assert_matches!(
-            results.get_last_fec_set_merkle_root(&full_only),
-            Err(BlockstoreProcessorError::IncompleteFinalFecSet)
-        );
-
-        let block_id = Hash::new_unique();
-        let results = LastFECSetCheckResults {
-            last_fec_set_merkle_root: Some(block_id),
-            is_retransmitter_signed: true,
-        };
-        for feature_set in [enabled_feature_set, full_only] {
-            assert_eq!(
-                results.get_last_fec_set_merkle_root(&feature_set).unwrap(),
-                Some(block_id)
-            );
-        }
-    }
-
-    #[test]
     fn test_write_transaction_memos() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
@@ -12105,6 +11998,168 @@ pub mod tests {
         assert_eq!(
             tx_status2.status,
             Err(TransactionError::InsufficientFundsForFee)
+        );
+    }
+
+    #[test_case(false ; "original_location")]
+    #[test_case(true ; "alternate_location")]
+    fn test_get_double_merkle_root(use_alternate_location: bool) {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let parent_slot = 990;
+        let parent_block_id = Hash::default();
+        let slot = 1000;
+        let num_entries = 200;
+
+        // Create a set of shreds for a complete block
+        let (data_shreds, _, leader_schedule) =
+            setup_erasure_shreds(slot, parent_slot, num_entries);
+
+        // Collect FEC set merkle roots for verification
+        let mut fec_set_roots = [Hash::default(); 3];
+        for shred in data_shreds.iter() {
+            if shred.index() % (DATA_SHREDS_PER_FEC_BLOCK as u32) == 0 {
+                fec_set_roots[(shred.index() as usize) / DATA_SHREDS_PER_FEC_BLOCK] =
+                    shred.merkle_root().unwrap();
+            }
+        }
+
+        let parent_info_hash = hashv(&[&parent_slot.to_le_bytes(), parent_block_id.as_ref()]);
+        let merkle_tree_leaves: Vec<_> = fec_set_roots
+            .iter()
+            .copied()
+            .chain(std::iter::once(parent_info_hash))
+            .map(Ok)
+            .collect();
+        let merkle_tree = MerkleTree::try_new(merkle_tree_leaves.into_iter()).unwrap();
+        let expected_double_merkle_root = *merkle_tree.root();
+
+        let block_location = if use_alternate_location {
+            BlockLocation::Alternate {
+                block_id: expected_double_merkle_root,
+            }
+        } else {
+            BlockLocation::Original
+        };
+
+        // Insert shreds into blockstore at the specified location
+        let shreds = data_shreds
+            .iter()
+            .map(|shred| (Cow::Borrowed(shred), use_alternate_location, block_location));
+        let insert_results = blockstore
+            .do_insert_shreds(
+                shreds,
+                Some(&leader_schedule),
+                false,
+                None,
+                &mut BlockstoreInsertionMetrics::default(),
+            )
+            .unwrap();
+        assert!(insert_results.duplicate_shreds.is_empty());
+
+        let slot_meta = blockstore
+            .meta_from_location(slot, block_location)
+            .unwrap()
+            .unwrap();
+        assert!(slot_meta.is_full());
+
+        // Test getting the double merkle root
+        let double_merkle_root = blockstore
+            .get_double_merkle_root(slot, block_location)
+            .unwrap()
+            .unwrap();
+
+        let double_merkle_meta = blockstore
+            .double_merkle_meta_cf
+            .get((slot, block_location))
+            .unwrap()
+            .unwrap();
+
+        // Verify the double merkle root matches our pre-computed value
+        assert_eq!(double_merkle_root, expected_double_merkle_root);
+        assert_eq!(double_merkle_meta.double_merkle_root, double_merkle_root);
+        assert_eq!(double_merkle_meta.fec_set_count, 3); // With 200 entries, we should have 3 FEC sets
+        // Proofs are empty
+        assert_eq!(double_merkle_meta.proofs.len(), 0);
+
+        // Generate the proofs
+        let double_merkle_meta = blockstore
+            .get_double_merkle_meta_maybe_populate_proofs(slot, block_location)
+            .unwrap()
+            .unwrap();
+        let proof_size = get_proof_size(double_merkle_meta.fec_set_count + 1) as usize;
+        assert_eq!(
+            double_merkle_meta.proofs.len(),
+            4 * proof_size * SIZE_OF_MERKLE_PROOF_ENTRY
+        ); // 3 FEC sets + 1 parent info
+
+        // Verify the proofs
+        // FEC sets
+        for (fec_set, root) in fec_set_roots.iter().enumerate() {
+            let proof: Vec<_> = double_merkle_meta
+                .get_fec_set_proof(fec_set)
+                .unwrap()
+                .chunks(SIZE_OF_MERKLE_PROOF_ENTRY)
+                .map(<&MerkleProofEntry>::try_from)
+                .map(std::result::Result::unwrap)
+                .collect();
+            assert_eq!(proof_size, proof.len());
+
+            let verified_root = get_merkle_root(fec_set, *root, proof).unwrap();
+            assert_eq!(double_merkle_meta.double_merkle_root, verified_root);
+        }
+
+        // Parent info - final proof
+        let parent_info_proof: Vec<_> = double_merkle_meta
+            .get_parent_info_proof()
+            .unwrap()
+            .chunks(SIZE_OF_MERKLE_PROOF_ENTRY)
+            .map(<&MerkleProofEntry>::try_from)
+            .map(std::result::Result::unwrap)
+            .collect();
+        assert_eq!(proof_size, parent_info_proof.len());
+
+        let verified_root = get_merkle_root(
+            double_merkle_meta.fec_set_count,
+            parent_info_hash,
+            parent_info_proof,
+        )
+        .unwrap();
+        assert_eq!(double_merkle_meta.double_merkle_root, verified_root);
+
+        // Slot not full should return None
+        let incomplete_slot = 1001;
+        let (partial_shreds, _, leader_schedule) =
+            setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
+                incomplete_slot,
+                slot, // parent is 1000
+                5,
+                0,
+                Hash::new_from_array(rand::random()),
+                false, // not last in slot
+            );
+
+        let shreds = partial_shreds
+            .iter()
+            .take(3)
+            .map(|shred| (Cow::Borrowed(shred), use_alternate_location, block_location));
+        let insert_results = blockstore
+            .do_insert_shreds(
+                shreds,
+                Some(&leader_schedule),
+                false,
+                None,
+                &mut BlockstoreInsertionMetrics::default(),
+            )
+            .unwrap();
+        assert!(insert_results.duplicate_shreds.is_empty());
+
+        assert!(
+            blockstore
+                .get_double_merkle_root(incomplete_slot, block_location)
+                .unwrap()
+                .is_none()
         );
     }
 }

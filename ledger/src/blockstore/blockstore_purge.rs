@@ -1,4 +1,7 @@
-use {super::*, solana_message::AccountKeys, std::time::Instant};
+use {
+    super::*, crate::blockstore::error::BlockstoreManualPurgeError, crossbeam_channel::Sender,
+    solana_message::AccountKeys, std::time::Instant,
+};
 
 #[derive(Default)]
 pub struct PurgeStats {
@@ -301,6 +304,19 @@ impl Blockstore {
                 .delete_range_in_batch(write_batch, from_slot, to_slot);
             self.alt_merkle_root_meta_cf
                 .delete_range_in_batch(write_batch, from_slot, to_slot);
+            // This column stores information for both the original and alternate
+            // columns. When `purge_alt_columns` is specified we delete the
+            // entire column.
+            self.double_merkle_meta_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot);
+        } else {
+            // This column stores information for both the original and alternate
+            // locations. When `purge_alt_columns` is not specified we only delete the
+            // data associated with the original column.
+            for slot in from_slot..=to_slot {
+                self.double_merkle_meta_cf
+                    .delete_in_batch(write_batch, (slot, BlockLocation::Original));
+            }
         }
 
         match purge_type {
@@ -346,6 +362,8 @@ impl Blockstore {
         self.alt_data_shred_cf
             .delete_file_in_range(from_slot, to_slot)?;
         self.alt_merkle_root_meta_cf
+            .delete_file_in_range(from_slot, to_slot)?;
+        self.double_merkle_meta_cf
             .delete_file_in_range(from_slot, to_slot)
     }
 
@@ -415,6 +433,38 @@ impl Blockstore {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    pub(crate) fn register_manual_purge_request_sender(&self, sender: Sender<Slot>) {
+        *self.manual_purge_request_sender.lock().unwrap() = Some(sender);
+    }
+
+    /// Send a purge request to the BlockstoreCleanupService request channel
+    pub fn send_manual_purge_request(&self, max_slot_to_delete: Slot) -> Result<()> {
+        // Deleting data newer than the latest root is likely to interfere
+        // with replay so save any callers from themself
+        let max_root = self.max_root();
+        if max_slot_to_delete > max_root {
+            return Err(BlockstoreError::ManualPurge(
+                BlockstoreManualPurgeError::SlotNewerThanRoot {
+                    request_slot: max_slot_to_delete,
+                    max_root,
+                },
+            ));
+        }
+
+        let sender_guard = self.manual_purge_request_sender.lock().unwrap();
+        let Some(ref sender) = *sender_guard else {
+            return Err(BlockstoreError::ManualPurge(
+                BlockstoreManualPurgeError::SenderUnavailable,
+            ));
+        };
+        sender
+            .try_send(max_slot_to_delete)
+            .map_err(BlockstoreManualPurgeError::from)
+            .map_err(BlockstoreError::ManualPurge)?;
 
         Ok(())
     }
@@ -836,5 +886,31 @@ pub mod tests {
 
         let child_slot_meta = blockstore.meta(12).unwrap().unwrap();
         assert_eq!(child_slot_meta.parent_slot.unwrap(), 5);
+    }
+
+    #[test]
+    fn test_send_manual_purge_request() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let (sender, receiver) = bounded(1);
+
+        blockstore.set_roots(std::iter::once(&10)).unwrap();
+
+        // Request before sender has been registered fails
+        assert!(blockstore.send_manual_purge_request(5).is_err());
+
+        blockstore.register_manual_purge_request_sender(sender.clone());
+
+        // Request slot > max root fails
+        assert!(blockstore.send_manual_purge_request(15).is_err());
+        // Request slot < max root succeeds
+        blockstore.send_manual_purge_request(5).unwrap();
+        // Request to full channel fails
+        assert!(blockstore.send_manual_purge_request(5).is_err());
+
+        // Drain + drop the channel so next send fails but does not panic
+        let _ = receiver.try_recv().unwrap();
+        drop(receiver);
+        assert!(blockstore.send_manual_purge_request(7).is_err());
     }
 }

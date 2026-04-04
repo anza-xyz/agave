@@ -8,6 +8,7 @@ use {
     },
     log::*,
     serde::{Deserialize, Serialize, de::Deserializer},
+    solana_clock::Slot,
     solana_core::{
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
         banking_stage::{
@@ -284,6 +285,9 @@ pub trait AdminRpc {
 
     #[rpc(meta, name = "isGeneratingSnapshots")]
     fn is_generating_snapshots(&self, meta: Self::Metadata) -> Result<bool>;
+
+    #[rpc(meta, name = "blockstorePurge")]
+    fn blockstore_purge(&self, meta: Self::Metadata, maximum_purge_slot: Slot) -> Result<()>;
 }
 
 pub struct AdminRpcImpl;
@@ -836,6 +840,19 @@ impl AdminRpc for AdminRpcImpl {
             ))
         }
     }
+
+    fn blockstore_purge(&self, meta: Self::Metadata, maximum_purge_slot: Slot) -> Result<()> {
+        meta.with_post_init(|post_init| {
+            post_init
+                .blockstore
+                .send_manual_purge_request(maximum_purge_slot)
+                .map_err(|err| jsonrpc_core::Error {
+                    code: ErrorCode::InvalidRequest,
+                    message: format!("{err}"),
+                    data: None,
+                })
+        })
+    }
 }
 
 impl AdminRpcImpl {
@@ -1040,10 +1057,12 @@ mod tests {
         },
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_ledger::{
+            blockstore::Blockstore,
             create_new_tmp_ledger,
             genesis_utils::{
                 GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
+            get_tmp_ledger_path_auto_delete,
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_rpc::rpc::create_validator_exit,
@@ -1097,6 +1116,9 @@ mod tests {
                 bank_forks.read().unwrap().root(),
             ));
 
+            let ledger_path = get_tmp_ledger_path_auto_delete!();
+            let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+
             let vote_account = vote_keypair.pubkey();
             let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
             let repair_whitelist = Arc::new(RwLock::new(HashSet::new()));
@@ -1124,6 +1146,7 @@ mod tests {
                     node: None,
                     banking_control_sender: mpsc::channel(1).0,
                     snapshot_controller,
+                    blockstore,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,

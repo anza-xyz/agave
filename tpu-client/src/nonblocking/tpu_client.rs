@@ -648,9 +648,7 @@ where
                         .await
                     {
                         let statuses = result.value;
-                        for (signature, status) in
-                            pending_signatures_chunk.iter().zip(statuses.into_iter())
-                        {
+                        for (signature, status) in pending_signatures_chunk.iter().zip(statuses) {
                             if let Some(status) = status {
                                 if status.satisfies_commitment(self.rpc_client.commitment()) {
                                     if let Some((i, _)) = pending_transactions.remove(signature) {

@@ -774,6 +774,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     }
 
     /// Returns the list of all entries in the cache.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn get_flattened_entries_for_tests(&self) -> Vec<(Pubkey, Arc<ProgramCacheEntry>)> {
         match &self.index {
             IndexImplementation::V1 { entries, .. } => entries

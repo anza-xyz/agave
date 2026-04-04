@@ -754,8 +754,7 @@ fn update_finalized_transactions(
         statuses.extend(
             client
                 .get_signature_statuses(unconfirmed_signatures_chunk)?
-                .value
-                .into_iter(),
+                .value,
         );
     }
 
@@ -781,9 +780,8 @@ fn log_transaction_confirmations(
     confirmations: &mut Option<usize>,
 ) -> Result<(), Error> {
     let finalized_block_height = client.get_block_height()?;
-    for ((transaction, last_valid_block_height), opt_transaction_status) in unconfirmed_transactions
-        .into_iter()
-        .zip(statuses.into_iter())
+    for ((transaction, last_valid_block_height), opt_transaction_status) in
+        unconfirmed_transactions.into_iter().zip(statuses)
     {
         match db::update_finalized_transaction(
             db,

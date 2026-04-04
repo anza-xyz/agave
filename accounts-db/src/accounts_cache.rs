@@ -264,7 +264,7 @@ pub struct AccountsCache {
     /// The size of account data stored in the whole AccountsCache, in bytes
     total_size: Arc<AtomicU64>,
     /// The number of accounts stored in the whole AccountsCache
-    total_accounts_counts: Arc<AtomicU64>,
+    total_accounts_count: Arc<AtomicU64>,
 }
 
 impl AccountsCache {
@@ -278,7 +278,7 @@ impl AccountsCache {
             total_size: Arc::clone(&self.total_size),
             is_frozen: AtomicBool::default(),
             accounts_count: AtomicU64::new(0),
-            total_accounts_count: Arc::clone(&self.total_accounts_counts),
+            total_accounts_count: Arc::clone(&self.total_accounts_count),
         })
     }
     pub fn size(&self) -> u64 {
@@ -296,7 +296,7 @@ impl AccountsCache {
             ("total_size", self.size(), i64),
             (
                 "total_accounts_count",
-                self.total_accounts_counts.load(Ordering::Relaxed),
+                self.total_accounts_count.load(Ordering::Relaxed),
                 i64
             ),
             (

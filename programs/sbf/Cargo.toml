@@ -206,7 +206,6 @@ solana-hash = "4.2.0"
 solana-instruction = { workspace = true }
 solana-keypair = "3.0.0"
 solana-loader-v3-interface = "6.1.0"
-solana-loader-v4-interface = "3.1.0"
 solana-message = "4.0.0"
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = "4.1.0"

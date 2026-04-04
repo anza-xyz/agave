@@ -79,6 +79,7 @@ security advisory with one of the following, depending on the severity:
 - [Bounty Category: Critical: DoS Attacks]
 - [Bounty Category: Supply Chain Attacks]
 - [Bounty Category: RPC]
+- [Bounty Category: Other]
 
 Confirm with the reporter that they agree with the severity assessment, and discuss as required to reach a conclusion.
 
@@ -136,27 +137,46 @@ _Max: 65 SOL tokens. Min: 20 SOL tokens_
 
 * RPC attacks
 
+#### Other:
+_Max: None. Min: None_
+
+This category may be assigned at the sole discretion of the Solana Foundation for
+reports that fall outside the explicitly declared categories, but are deemed
+worthy of a reward nonetheless. Attempting to self-assign this category will
+almost certainly disqualify the report
+
 ### Out of Scope:
-The following components are out of scope for the bounty program
+The following components and subjects are out of scope for the bounty program.
+Findings in these areas are urged to be reported as normal public issues against
+the repo.
 * Metrics: `/metrics` in the monorepo as well as https://metrics.solana.com
 * Any encrypted credentials, auth tokens, etc. checked into the repo
 * Bugs in dependencies. Please take them upstream!
 * Attacks that require social engineering
-* Any undeveloped automated tooling (scanners, etc) results. (OK with developed PoC)
-* Any asset whose source code does not exist in this repository (including, but not limited
-to, any and all web properties not explicitly listed on this page)
-* Programs in the Solana Program Library, such as SPL Token. Please refer to the
-[SPL security policy](https://github.com/solana-labs/solana-program-library/security/policy).
+* Any undeveloped automated tooling (ai, scanners, etc) results. (OK with developed PoC)
+* Any asset whose source code does not exist in this repository. Including, but
+not limited to;
+  * Any and all web properties (See domain ToC page for contact)
+  * [SPL member projects](https://github.com/solana-program) (See repo security tab)
+  * [Solana SDK crates](https://github.com/anza-xyz/solana-sdk) (See securtity tab)
+* Issues that have been previously disclosed in a public venue
+* Issues that affect node stability during the bootstrap phase and can be trivially
+mitigated by configuration adjustments. The bootstrap phase is defined as the time
+between process creation and completion of replay for the first block after the
+snapshot slot or genesis.
+* Issues involving maliciously crafted snapshots. Snapshots have historically been
+considered trust on first use and have many shortcomings with respect to consistency
+and verifiabilty as a result. An effort to improve this situation is actively underway
+* For the RPC DoS category, the following classes of issue are out of scope
+  * Those requiring a call rate greater than once per `CLUSTER_SLOT_TIME_TARGET / 2`
+  * Those requiring calls from multiple clients
+  * Those impacting getProgramAccounts, et. al without secondary indexes enabled and/or
+    unfiltered requests, which are known to be slow on clusters with large accounts sets
 * Alpenglow crates (votor, votor-messages, etc) and plumbing. Migration of the
 Alpenglow logic from a feature fork to agave master is currently underway. As
 such there are many paritially migrated changes isolated to a few areas. These
 are disqualified from reports and bounties. Bugs in integration logic that impact
 the no-Alpenglow code path remain in scope
-* For the RPC DoS category, the following classes of issue are out of scope
-  * Those requiring a call rate greater than once per 200ms
-  * Those requiring calls from multiple clients
-  * Those impacting getProgramAccounts, et. al without secondary indexes enabled and/or
-    unfiltered requests, which are known to be slow on clusters with large accounts sets
 
 ### Eligibility:
 * Submissions _MUST_ include an exploit proof-of-concept to be considered eligible

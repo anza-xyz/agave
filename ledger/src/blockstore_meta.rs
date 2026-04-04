@@ -1,14 +1,18 @@
 use {
     crate::{
         bit_vec::BitVec,
-        shred::{self, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, Shred, ShredType},
+        shred::{
+            self, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, Shred, ShredType,
+            merkle_tree::{SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
+        },
     },
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
+    serde_bytes::ByteBuf,
     solana_clock::{Slot, UnixTimestamp},
-    solana_hash::Hash,
+    solana_hash::{HASH_BYTES, Hash},
     std::{
-        fmt::Display,
+        fmt::{self, Debug, Display},
         ops::{Range, RangeBounds},
     },
     wincode::{SchemaRead, SchemaWrite},
@@ -51,7 +55,7 @@ impl Default for ConnectedFlags {
 }
 
 /// A fixed size BitVec offers fast lookup and fast de/serialization.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(transparent)]
 pub struct CompletedDataIndexes {
     index: BitVec<MAX_DATA_SHREDS_PER_SLOT>,
@@ -94,6 +98,13 @@ impl FromIterator<u32> for CompletedDataIndexes {
     fn from_iter<T: IntoIterator<Item = u32>>(iter: T) -> Self {
         let index = iter.into_iter().map(|i| i as usize).collect();
         CompletedDataIndexes { index }
+    }
+}
+
+// Manually implement Debut to display indices indices instead of raw u8's
+impl Debug for CompletedDataIndexes {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.iter().collect::<Vec<_>>())
     }
 }
 
@@ -289,6 +300,24 @@ pub struct DuplicateSlotProof {
 pub enum BlockLocation {
     Original,
     Alternate { block_id: Hash },
+}
+
+impl BlockLocation {
+    pub(crate) fn from_bytes(bytes: [u8; HASH_BYTES]) -> Self {
+        let block_id = Hash::new_from_array(bytes);
+        if block_id == Hash::default() {
+            Self::Original
+        } else {
+            Self::Alternate { block_id }
+        }
+    }
+
+    pub(crate) fn as_bytes(&self) -> [u8; HASH_BYTES] {
+        match self {
+            BlockLocation::Original => Hash::default().to_bytes(),
+            BlockLocation::Alternate { block_id } => block_id.to_bytes(),
+        }
+    }
 }
 
 impl Display for BlockLocation {
@@ -695,6 +724,55 @@ impl OptimisticSlotMetaVersioned {
         match self {
             OptimisticSlotMetaVersioned::V0(meta) => meta.timestamp,
         }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DoubleMerkleMeta {
+    /// The double merkle root computed as the root of the merkle tree
+    /// containing the merkle roots of each fec set + the parent info (parent_slot, parent_double_merkle_root)
+    pub(crate) double_merkle_root: Hash,
+
+    /// The number of fec sets in this block
+    pub(crate) fec_set_count: usize,
+
+    /// The merkle proofs.
+    /// Each proof is of size `get_proof_size(fec_set_count + 1)`
+    /// This `ByteBuf` contains the concatenated proofs for all the fec set leaves and the parent info leaf
+    ///
+    /// The size of this vec is `(fec_set_count + 1) * get_proof_size(fec_set_count + 1) * SIZE_OF_MERKLE_PROOF_ENTRY`
+    /// To access the proof for the i-th leaf:
+    ///   `proofs[i * get_proof_size(fec_set_count + 1) * SIZE_OF_MERKLE_PROOF_ENTRY
+    ///      ..(i + 1) * get_proof_size(fec_set_count + 1) * SIZE_OF_MERKLE_PROOF_ENTRY]`
+    pub(crate) proofs: ByteBuf,
+}
+
+impl DoubleMerkleMeta {
+    /// Return the proof associated with the leaf of fec set `fec_set_index`
+    /// Returns `None` if the proofs are yet to be populated or `fec_set_index` is out of bounds
+    pub fn get_fec_set_proof(&self, fec_set_index: usize) -> Option<&[u8]> {
+        if fec_set_index >= self.fec_set_count {
+            return None;
+        }
+        if self.proofs.is_empty() {
+            return None;
+        }
+
+        let proof_size =
+            usize::from(get_proof_size(self.fec_set_count + 1)) * SIZE_OF_MERKLE_PROOF_ENTRY;
+        Some(&self.proofs[fec_set_index * proof_size..(fec_set_index + 1) * proof_size])
+    }
+
+    /// Return the proof associated with the parent info leaf
+    /// Returns `None` if the proofs are yet to be populated
+    pub fn get_parent_info_proof(&self) -> Option<&[u8]> {
+        if self.proofs.is_empty() {
+            return None;
+        }
+
+        let proof_size =
+            usize::from(get_proof_size(self.fec_set_count + 1)) * SIZE_OF_MERKLE_PROOF_ENTRY;
+        Some(&self.proofs[self.fec_set_count * proof_size..])
     }
 }
 

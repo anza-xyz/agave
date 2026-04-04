@@ -70,7 +70,6 @@ use {
         get_program_data_address, instruction::UpgradeableLoaderInstruction,
         state::UpgradeableLoaderState,
     },
-    solana_loader_v4_interface::{instruction as loader_v4, state::LoaderV4State},
     solana_message::{
         Message, MessageHeader, SanitizedMessage, compiled_instruction::CompiledInstruction,
     },
@@ -102,7 +101,7 @@ use {
         account_loader::{FeesOnlyTransaction, LoadedTransaction, TRANSACTION_ACCOUNT_BASE_SIZE},
         rollback_accounts::RollbackAccounts,
         transaction_commit_result::TransactionCommitResultExtensions,
-        transaction_execution_result::ExecutedTransaction,
+        transaction_execution_result::{AccountsDeltas, ExecutedTransaction},
     },
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMMessage,
@@ -237,6 +236,10 @@ fn new_executed_processing_result(
     status: Result<()>,
     fee_details: FeeDetails,
 ) -> TransactionProcessingResult {
+    let accounts_deltas = status.as_ref().is_ok().then_some(AccountsDeltas {
+        accounts_resize_delta: 0,
+        accounts_uninitialized_size: 0,
+    });
     Ok(ProcessedTransaction::Executed(Box::new(
         ExecutedTransaction {
             loaded_transaction: LoadedTransaction {
@@ -249,7 +252,7 @@ fn new_executed_processing_result(
                 inner_instructions: None,
                 return_data: None,
                 executed_units: 0,
-                accounts_data_len_delta: 0,
+                accounts_deltas,
             },
             programs_modified_by_tx: HashMap::new(),
         },
@@ -9535,6 +9538,116 @@ fn create_mock_transfer(
 }
 
 #[test]
+fn test_accounts_data_size_delta_on_chain_with_deleted_account_transaction() {
+    #[derive(Clone, Copy)]
+    enum PreExecState {
+        RentExempt,
+        RentPaying,
+        Uninitialized,
+    }
+
+    let account_data_size = 100;
+
+    for pre_exec_state in [
+        PreExecState::RentExempt,
+        PreExecState::RentPaying,
+        PreExecState::Uninitialized,
+    ] {
+        let (mut genesis_config, mint_keypair) = create_genesis_config(100 * LAMPORTS_PER_SOL);
+        genesis_config.rent = Rent::default();
+        let mock_program_id = Pubkey::new_unique();
+        let rent_exempt_minimum = genesis_config.rent.minimum_balance(account_data_size);
+        let deleted_account = Keypair::new();
+
+        // Cases 1 and 2 begin with an existing account. Case 3 creates and
+        // drains the account within the same transaction.
+        let balance = match pre_exec_state {
+            PreExecState::RentExempt => {
+                let balance = rent_exempt_minimum + 1;
+                genesis_config.accounts.insert(
+                    deleted_account.pubkey(),
+                    Account::new(balance, account_data_size, &mock_program_id),
+                );
+                balance
+            }
+            PreExecState::RentPaying => {
+                let balance = rent_exempt_minimum - 1;
+                genesis_config.accounts.insert(
+                    deleted_account.pubkey(),
+                    Account::new_rent_epoch(
+                        balance,
+                        account_data_size,
+                        &mock_program_id,
+                        INITIAL_RENT_EPOCH + 1,
+                    ),
+                );
+                balance
+            }
+            PreExecState::Uninitialized => 0,
+        };
+
+        let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
+            &genesis_config,
+            mock_program_id,
+            MockTransferBuiltin::register,
+        );
+        let recent_blockhash = bank.last_blockhash();
+
+        let accounts_data_size_delta_on_chain_before =
+            bank.load_accounts_data_size_delta_on_chain();
+        let tx = match pre_exec_state {
+            // Existing rent-exempt/rent-paying account is fully drained and deleted.
+            PreExecState::RentExempt | PreExecState::RentPaying => create_mock_transfer(
+                &mint_keypair,
+                &deleted_account,
+                &mint_keypair,
+                balance,
+                mock_program_id,
+                recent_blockhash,
+            ),
+            // The account starts uninitialized, is created, then immediately drained.
+            PreExecState::Uninitialized => {
+                let create_instruction = system_instruction::create_account(
+                    &mint_keypair.pubkey(),
+                    &deleted_account.pubkey(),
+                    rent_exempt_minimum,
+                    account_data_size as u64,
+                    &mock_program_id,
+                );
+                let transfer_from_instruction = Instruction::new_with_bincode(
+                    mock_program_id,
+                    &MockTransferInstruction::Transfer(rent_exempt_minimum),
+                    vec![
+                        AccountMeta::new(mint_keypair.pubkey(), true),
+                        AccountMeta::new(deleted_account.pubkey(), true),
+                        AccountMeta::new(mint_keypair.pubkey(), false),
+                    ],
+                );
+                Transaction::new_signed_with_payer(
+                    &[create_instruction, transfer_from_instruction],
+                    Some(&mint_keypair.pubkey()),
+                    &[&mint_keypair, &deleted_account],
+                    recent_blockhash,
+                )
+            }
+        };
+        bank.process_transaction(&tx).unwrap();
+        let accounts_data_size_delta_on_chain_after = bank.load_accounts_data_size_delta_on_chain();
+
+        assert!(bank.get_account(&deleted_account.pubkey()).is_none());
+        assert_eq!(
+            accounts_data_size_delta_on_chain_after - accounts_data_size_delta_on_chain_before,
+            match pre_exec_state {
+                PreExecState::RentExempt | PreExecState::RentPaying => {
+                    -(account_data_size as i64)
+                }
+                PreExecState::Uninitialized => 0,
+            },
+        );
+    }
+}
+
+#[test]
 fn test_invalid_rent_state_changes_existing_accounts() {
     let GenesisConfigInfo {
         mut genesis_config,
@@ -11351,11 +11464,7 @@ fn test_deploy_last_epoch_slot() {
     agave_logger::setup();
 
     // Bank Setup
-    let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    activate_feature(
-        &mut genesis_config,
-        agave_feature_set::enable_loader_v4::id(),
-    );
+    let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
     let bank = Bank::new_for_tests(&genesis_config);
 
     // go to the last slot in the epoch
@@ -11372,44 +11481,51 @@ fn test_deploy_last_epoch_slot() {
     // deploy a program
     let payer_keypair = Keypair::new();
     let program_keypair = Keypair::new();
+    let buffer_address = Pubkey::new_unique();
+    let upgrade_authority_keypair = Keypair::new();
     let mut file = File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so").unwrap();
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
-    let min_program_balance = bank.get_minimum_balance_for_rent_exemption(
-        LoaderV4State::program_data_offset().saturating_add(elf.len()),
-    );
-    let upgrade_authority_keypair = Keypair::new();
 
-    let mut program_account = AccountSharedData::new(
-        min_program_balance,
-        LoaderV4State::program_data_offset().saturating_add(elf.len()),
-        &solana_sdk_ids::loader_v4::id(),
+    let program_len = elf.len();
+    let min_program_balance =
+        bank.get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program());
+    let min_buffer_balance = bank.get_minimum_balance_for_rent_exemption(
+        UpgradeableLoaderState::size_of_buffer(program_len),
     );
-    let program_state = <&mut [u8; LoaderV4State::program_data_offset()]>::try_from(
-        program_account
+    let min_programdata_balance = bank.get_minimum_balance_for_rent_exemption(
+        UpgradeableLoaderState::size_of_programdata(program_len),
+    );
+
+    // Setup buffer account with ELF.
+    let buffer_account = {
+        let mut account = AccountSharedData::new(
+            min_buffer_balance,
+            UpgradeableLoaderState::size_of_buffer(program_len),
+            &bpf_loader_upgradeable::id(),
+        );
+        account
+            .set_state(&UpgradeableLoaderState::Buffer {
+                authority_address: Some(upgrade_authority_keypair.pubkey()),
+            })
+            .unwrap();
+        account
             .data_as_mut_slice()
-            .get_mut(0..LoaderV4State::program_data_offset())
-            .unwrap(),
-    )
-    .unwrap();
-    let program_state = unsafe {
-        std::mem::transmute::<&mut [u8; LoaderV4State::program_data_offset()], &mut LoaderV4State>(
-            program_state,
-        )
+            .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
+            .unwrap()
+            .copy_from_slice(&elf);
+        account
     };
-    program_state.authority_address_or_next_version = upgrade_authority_keypair.pubkey();
-    program_account
-        .data_as_mut_slice()
-        .get_mut(LoaderV4State::program_data_offset()..)
-        .unwrap()
-        .copy_from_slice(&elf);
 
     let payer_base_balance = LAMPORTS_PER_SOL;
     let deploy_fees = {
         let fee_calculator = genesis_config.fee_rate_governor.create_fee_calculator();
         3 * fee_calculator.lamports_per_signature
     };
-    let min_payer_balance = min_program_balance.saturating_add(deploy_fees);
+    let min_payer_balance = min_program_balance
+        .saturating_add(min_programdata_balance)
+        .saturating_sub(min_buffer_balance)
+        .saturating_add(deploy_fees);
     bank.store_account(
         &payer_keypair.pubkey(),
         &AccountSharedData::new(
@@ -11418,15 +11534,22 @@ fn test_deploy_last_epoch_slot() {
             &system_program::id(),
         ),
     );
-    bank.store_account(&program_keypair.pubkey(), &program_account);
+    bank.store_account(&buffer_address, &buffer_account);
+
+    #[allow(deprecated)]
     let message = Message::new(
-        &[loader_v4::deploy(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
+            &payer_keypair.pubkey(),
             &program_keypair.pubkey(),
+            &buffer_address,
             &upgrade_authority_keypair.pubkey(),
-        )],
+            min_program_balance,
+            program_len,
+        )
+        .unwrap(),
         Some(&payer_keypair.pubkey()),
     );
-    let signers = &[&payer_keypair, &upgrade_authority_keypair];
+    let signers = &[&payer_keypair, &program_keypair, &upgrade_authority_keypair];
     let transaction = Transaction::new(signers, message, bank.last_blockhash());
     let ret = bank.process_transaction(&transaction);
     assert!(ret.is_ok(), "ret: {ret:?}");

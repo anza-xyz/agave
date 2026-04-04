@@ -133,7 +133,10 @@ fn test_scheduler_waited_by_drop_bank_service() {
 
         let mut progress = ProgressMap::default();
         for i in genesis..=root {
-            progress.insert(i, ForkProgress::new(Hash::default(), None, None, 0, 0));
+            progress.insert(
+                i,
+                ForkProgress::new(Hash::default(), None, None, 0, 0, None),
+            );
         }
 
         let duplicate_slots_tracker: DuplicateSlotsTracker =

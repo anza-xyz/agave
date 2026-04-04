@@ -854,6 +854,7 @@ impl Validator {
         let (
             accounts_update_notifier,
             transaction_notifier,
+            deshred_transaction_notifier,
             entry_notifier,
             block_metadata_notifier,
             slot_status_notifier,
@@ -861,19 +862,21 @@ impl Validator {
             (
                 service.get_accounts_update_notifier(),
                 service.get_transaction_notifier(),
+                service.get_deshred_transaction_notifier(),
                 service.get_entry_notifier(),
                 service.get_block_metadata_notifier(),
                 service.get_slot_status_notifier(),
             )
         } else {
-            (None, None, None, None, None)
+            (None, None, None, None, None, None)
         };
 
         info!(
             "Geyser plugin: accounts_update_notifier: {}, transaction_notifier: {}, \
-             entry_notifier: {}",
+             deshred_transaction_notifier: {}, entry_notifier: {}",
             accounts_update_notifier.is_some(),
             transaction_notifier.is_some(),
+            deshred_transaction_notifier.is_some(),
             entry_notifier.is_some()
         );
 
@@ -1139,17 +1142,6 @@ impl Validator {
         }
         *start_progress.write().unwrap() = ValidatorStartProgress::StartingServices;
 
-        let sample_performance_service =
-            if config.rpc_addrs.is_some() && config.rpc_config.enable_rpc_transaction_history {
-                Some(SamplePerformanceService::new(
-                    &bank_forks,
-                    blockstore.clone(),
-                    exit.clone(),
-                ))
-            } else {
-                None
-            };
-
         let mut block_commitment_cache = BlockCommitmentCache::default();
         let bank_forks_guard = bank_forks.read().unwrap();
         block_commitment_cache.initialize_slots(
@@ -1242,6 +1234,7 @@ impl Validator {
             completed_data_sets_sender,
             completed_data_sets_service,
             rpc_completed_slots_service,
+            sample_performance_service,
             optimistically_confirmed_bank_tracker,
             bank_notification_sender,
         ) = if let Some((rpc_addr, rpc_pubsub_addr)) = config.rpc_addrs {
@@ -1332,8 +1325,10 @@ impl Validator {
                         completed_data_sets_receiver,
                         blockstore.clone(),
                         rpc_subscriptions.clone(),
+                        deshred_transaction_notifier.clone(),
                         exit.clone(),
                         max_slots.clone(),
+                        bank_forks.clone(),
                     );
                     (
                         Some(completed_data_sets_sender),
@@ -1356,6 +1351,16 @@ impl Validator {
                 } else {
                     None
                 };
+
+            let sample_performance_service = if config.rpc_config.enable_rpc_transaction_history {
+                Some(SamplePerformanceService::new(
+                    &bank_forks,
+                    blockstore.clone(),
+                    exit.clone(),
+                ))
+            } else {
+                None
+            };
 
             let dependency_tracker = transaction_status_sender
                 .is_some()
@@ -1383,11 +1388,12 @@ impl Validator {
                 completed_data_sets_sender,
                 completed_data_sets_service,
                 rpc_completed_slots_service,
+                sample_performance_service,
                 optimistically_confirmed_bank_tracker,
                 bank_notification_sender_config,
             )
         } else {
-            (None, None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None, None, None)
         };
 
         let ip_echo_server = match node.sockets.ip_echo {
@@ -1781,6 +1787,7 @@ impl Validator {
             node: Some(node_multihoming),
             banking_control_sender,
             snapshot_controller,
+            blockstore: blockstore.clone(),
         });
 
         Ok(Self {

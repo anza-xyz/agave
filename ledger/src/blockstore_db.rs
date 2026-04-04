@@ -88,7 +88,6 @@ impl OldestSlot {
 #[derive(Debug)]
 pub(crate) struct Rocks {
     db: rocksdb::DB,
-    path: PathBuf,
     access_type: AccessType,
     oldest_slot: OldestSlot,
     column_options: Arc<LedgerColumnOptions>,
@@ -144,7 +143,6 @@ impl Rocks {
 
         let rocks = Rocks {
             db,
-            path,
             access_type: options.access_type,
             oldest_slot,
             column_options,
@@ -194,6 +192,7 @@ impl Rocks {
             new_cf_descriptor::<columns::AlternateIndex>(options, oldest_slot),
             new_cf_descriptor::<columns::AlternateShredData>(options, oldest_slot),
             new_cf_descriptor::<columns::AlternateMerkleRootMeta>(options, oldest_slot),
+            new_cf_descriptor::<columns::DoubleMerkleMeta>(options, oldest_slot),
         ];
 
         // When remaining columns are optional we can just return immediately here.
@@ -238,7 +237,7 @@ impl Rocks {
         cf_descriptors
     }
 
-    const fn columns() -> [&'static str; 23] {
+    const fn columns() -> [&'static str; 24] {
         [
             columns::ErasureMeta::NAME,
             columns::DeadSlots::NAME,
@@ -263,6 +262,7 @@ impl Rocks {
             columns::AlternateIndex::NAME,
             columns::AlternateShredData::NAME,
             columns::AlternateMerkleRootMeta::NAME,
+            columns::DoubleMerkleMeta::NAME,
         ]
     }
 
@@ -452,10 +452,6 @@ impl Rocks {
         }
     }
 
-    pub(crate) fn storage_size(&self) -> Result<u64> {
-        Ok(fs_extra::dir::get_size(&self.path)?)
-    }
-
     pub(crate) fn set_oldest_slot(&self, oldest_slot: Slot) {
         self.oldest_slot.set(oldest_slot);
     }
@@ -583,6 +579,26 @@ where
 
         let key = <C as Column>::key(&index);
         let result = self.backend.get_cf(self.handle(), key);
+
+        if let Some(op_start_instant) = is_perf_enabled {
+            report_rocksdb_read_perf(
+                C::NAME,
+                PERF_METRIC_OP_NAME_GET,
+                &op_start_instant.elapsed(),
+                &self.column_options,
+            );
+        }
+        result
+    }
+
+    pub fn get_slice(&self, index: C::Index) -> Result<Option<DBPinnableSlice<'_>>> {
+        let is_perf_enabled = maybe_enable_rocksdb_perf(
+            self.column_options.rocks_perf_sample_interval,
+            &self.read_perf_status,
+        );
+
+        let key = <C as Column>::key(&index);
+        let result = self.backend.get_pinned_cf(self.handle(), key);
 
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_read_perf(
