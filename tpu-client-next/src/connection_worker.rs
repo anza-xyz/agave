@@ -300,7 +300,7 @@ impl ConnectionWorker {
             } else {
                 let events = connection.stats().path.congestion_events;
                 self.send_txs_stats.transport_congestion_events.fetch_add(
-                    self.last_congestion_events.saturating_sub(events),
+                    events.saturating_sub(self.last_congestion_events),
                     Ordering::Relaxed,
                 );
                 self.last_congestion_events = events;
