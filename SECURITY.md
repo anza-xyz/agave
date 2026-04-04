@@ -1,10 +1,10 @@
 # Security Policy
 
 1. [Reporting security problems](#reporting)
-4. [Security Bug Bounties](#bounty)
 2. [Incident Response Process](#process)
+3. [Security Bug Bounties](#bounty)
 
-<a name="reporting"></a>
+<a id="reporting"></a>
 ## Reporting security problems in the Agave Validator
 
 **DO NOT CREATE A GITHUB ISSUE** to report a security problem.
@@ -33,7 +33,7 @@ the team directly. You can do this in the `#core-technology` channel of the
 [Solana Tech discord server](https://solana.com/discord), by pinging the `Anza`
 role in the channel and referencing the fact that you submitted a security problem.
 
-<a name="process"></a>
+<a id="process"></a>
 ## Incident Response Process
 
 In case an incident is discovered or reported, the following process will be
@@ -85,7 +85,7 @@ Confirm with the reporter that they agree with the severity assessment, and disc
 
 We currently do not use the Github workflow to publish security advisories. Once the issue and fix have been disclosed, and a bounty category is assessed if appropriate, the GitHub security advisory is no longer needed and can be closed.
 
-<a name="bounty"></a>
+<a id="bounty"></a>
 ## Security Bug Bounties
 At its sole discretion, the Solana Foundation may offer a bounty for
 [valid reports](#reporting) of critical Solana vulnerabilities. Please see below
@@ -143,7 +143,7 @@ _Max: None. Min: None_
 This category may be assigned at the sole discretion of the Solana Foundation for
 reports that fall outside the explicitly declared categories, but are deemed
 worthy of a reward nonetheless. Attempting to self-assign this category will
-almost certainly disqualify the report
+almost certainly disqualify the report.
 
 ### Out of Scope:
 The following components and subjects are out of scope for the bounty program.
@@ -158,7 +158,7 @@ the repo.
 not limited to;
   * Any and all web properties (See domain ToC page for contact)
   * [SPL member projects](https://github.com/solana-program) (See repo security tab)
-  * [Solana SDK crates](https://github.com/anza-xyz/solana-sdk) (See securtity tab)
+  * [Solana SDK crates](https://github.com/anza-xyz/solana-sdk) (See security tab)
 * Issues that have been previously disclosed in a public venue
 * Issues that affect node stability during the bootstrap phase and can be trivially
 mitigated by configuration adjustments. The bootstrap phase is defined as the time
@@ -166,15 +166,15 @@ between process creation and completion of replay for the first block after the
 snapshot slot or genesis.
 * Issues involving maliciously crafted snapshots. Snapshots have historically been
 considered trust on first use and have many shortcomings with respect to consistency
-and verifiabilty as a result. An effort to improve this situation is actively underway
+and verifiability as a result. An effort to improve this situation is actively underway
 * For the RPC DoS category, the following classes of issue are out of scope
   * Those requiring a call rate greater than once per `CLUSTER_SLOT_TIME_TARGET / 2`
   * Those requiring calls from multiple clients
-  * Those impacting getProgramAccounts, et. al without secondary indexes enabled and/or
+  * Those impacting getProgramAccounts, et al. without secondary indexes enabled and/or
     unfiltered requests, which are known to be slow on clusters with large accounts sets
 * Alpenglow crates (votor, votor-messages, etc) and plumbing. Migration of the
 Alpenglow logic from a feature fork to agave master is currently underway. As
-such there are many paritially migrated changes isolated to a few areas. These
+such there are many partially migrated changes isolated to a few areas. These
 are disqualified from reports and bounties. Bugs in integration logic that impact
 the no-Alpenglow code path remain in scope
 
