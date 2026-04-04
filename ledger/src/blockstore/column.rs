@@ -311,10 +311,12 @@ pub trait TypedColumn: Column {
     type Type: SchemaWrite<DefaultConfig, Src = Self::Type>
         + SchemaReadOwned<DefaultConfig, Dst = Self::Type>;
 
+    #[inline]
     fn deserialize(data: &[u8]) -> Result<Self::Type> {
         Ok(wincode::deserialize(data)?)
     }
 
+    #[inline]
     fn serialize(data: &Self::Type) -> Result<Vec<u8>> {
         Ok(wincode::serialize(data)?)
     }
