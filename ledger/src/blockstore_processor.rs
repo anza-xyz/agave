@@ -850,12 +850,6 @@ pub enum BlockstoreProcessorError {
     #[error("root bank with mismatched capitalization at {0}")]
     RootBankWithMismatchedCapitalization(Slot),
 
-    #[error("incomplete final fec set")]
-    IncompleteFinalFecSet,
-
-    #[error("invalid retransmitter signature final fec set")]
-    InvalidRetransmitterSignatureFinalFecSet,
-
     #[error("user transactions found in vote only mode bank at slot {0}")]
     UserTransactionsInVoteOnlyBank(Slot),
 

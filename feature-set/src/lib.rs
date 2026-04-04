@@ -42,7 +42,6 @@ pub struct FeatureSnapshot {
     pub get_sysvar_syscall_enabled: bool,
     pub enable_get_epoch_stake_syscall: bool,
     pub move_stake_and_move_lamports_ixs: bool,
-    pub vote_only_retransmitter_signed_fec_sets: bool,
     pub move_precompile_verification_to_svm: bool,
     pub deprecate_legacy_vote_ixs: bool,
     pub disable_sbpf_v0_execution: bool,
@@ -135,9 +134,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             get_sysvar_syscall_enabled: is_active(&get_sysvar_syscall_enabled::ID),
             enable_get_epoch_stake_syscall: is_active(&enable_get_epoch_stake_syscall::ID),
             move_stake_and_move_lamports_ixs: is_active(&move_stake_and_move_lamports_ixs::ID),
-            vote_only_retransmitter_signed_fec_sets: is_active(
-                &vote_only_retransmitter_signed_fec_sets::ID,
-            ),
             move_precompile_verification_to_svm: is_active(
                 &move_precompile_verification_to_svm::ID,
             ),

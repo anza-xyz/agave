@@ -904,8 +904,7 @@ fn check_fixed_fec_set(index: u32, fec_set_index: u32) -> bool {
 /// - `index + 1` must be a multiple of `DATA_SHREDS_PER_FEC_BLOCK`
 ///
 /// Note: this check is critical to verify that the last fec set is sufficiently sized.
-/// This currently is checked post insert in `Blockstore::check_last_fec_set`, but in the
-/// future it can be solely checked during ingest
+/// This is checked during shred ingest with `enforce_fixed_fec_set` active.
 fn check_last_data_shred_index(index: u32) -> bool {
     (index + 1).is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK as u32)
 }
