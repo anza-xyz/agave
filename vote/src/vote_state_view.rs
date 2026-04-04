@@ -14,6 +14,7 @@ use {
     frame_v4::VoteStateFrameV4,
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
+    solana_transaction::SchemaWrite,
     solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, BlockTimestamp, Lockout},
     std::sync::Arc,
 };
@@ -66,7 +67,7 @@ enum Simd185Field {
 /// This struct provides access to the VoteState data without
 /// deserializing it. This is done by parsing and caching metadata
 /// about the layout of the serialized VoteState.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, SchemaWrite)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub struct VoteStateView {
     data: Arc<Vec<u8>>,
@@ -257,7 +258,7 @@ impl From<VoteStateV4> for VoteStateView {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, SchemaWrite)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 enum VoteStateFrame {
     V1_14_11(VoteStateFrameV1_14_11),

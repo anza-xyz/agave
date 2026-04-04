@@ -9,9 +9,10 @@ use {
     solana_pubkey::Pubkey,
     solana_vote_interface::state::BlockTimestamp,
     std::io::BufRead,
+    wincode::SchemaWrite,
 };
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, SchemaWrite)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct VoteStateFrameV3 {
     pub(super) votes_frame: LandedVotesListFrame,

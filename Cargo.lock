@@ -7009,6 +7009,7 @@ dependencies = [
  "solana-pubkey 4.2.0",
  "solana-sdk-ids",
  "solana-sysvar",
+ "wincode",
 ]
 
 [[package]]
@@ -7196,6 +7197,7 @@ dependencies = [
  "test-case",
  "thiserror 2.0.18",
  "tikv-jemallocator",
+ "wincode",
 ]
 
 [[package]]
@@ -8417,6 +8419,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-sysvar-id",
+ "wincode",
 ]
 
 [[package]]
@@ -8828,6 +8831,7 @@ dependencies = [
  "serde_derive",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "wincode",
 ]
 
 [[package]]
@@ -8874,6 +8878,7 @@ dependencies = [
  "serde_derive",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "wincode",
 ]
 
 [[package]]
@@ -9940,6 +9945,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-sysvar-id",
+ "wincode",
 ]
 
 [[package]]
@@ -11664,6 +11670,7 @@ dependencies = [
  "solana-vote-interface",
  "static_assertions",
  "thiserror 2.0.18",
+ "wincode",
 ]
 
 [[package]]

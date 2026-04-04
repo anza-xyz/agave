@@ -1,6 +1,7 @@
 use {
     solana_accounts_db::accounts_hash::AccountsLtHash, solana_clock::Epoch,
     solana_epoch_schedule::EpochSchedule, solana_lattice_hash::lt_hash::LtHash, solana_rent::Rent,
+    wincode::SchemaWrite,
 };
 
 /// Snapshot serde-safe AccountsLtHash
@@ -27,7 +28,7 @@ impl From<AccountsLtHash> for SerdeAccountsLtHash {
 /// Snapshot serde-safe RentCollector, which is now unused
 #[repr(C)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, Clone, SchemaWrite)]
 pub struct UnusedRentCollector {
     epoch: Epoch,
     epoch_schedule: EpochSchedule,

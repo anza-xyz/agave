@@ -215,6 +215,7 @@ use {
         time::{Duration, Instant},
     },
     thiserror::Error,
+    wincode::{SchemaRead, SchemaWrite},
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
@@ -1051,8 +1052,9 @@ pub struct ProcessedTransactionCounts {
 
 /// Account stats for computing the bank hash
 /// This struct is serialized and stored in the snapshot.
+#[repr(C)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct BankHashStats {
     pub num_updated_accounts: u64,
     pub num_removed_accounts: u64,

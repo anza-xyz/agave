@@ -9,6 +9,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
+    solana_transaction::SchemaWrite,
     std::{
         cmp::Ordering,
         collections::{HashMap, hash_map::Entry},
@@ -36,6 +37,23 @@ use {
 #[derive(Clone, Debug, PartialEq)]
 pub struct VoteAccount(Arc<VoteAccountInner>);
 
+// `VoteAccount` serializes only its `account` (see the `Serialize` impl below). Mirror that for
+// wincode so the snapshot wire format matches bincode: `vote_state_view` is a parsed view of the
+// account data, rebuilt on read, and is intentionally not written.
+unsafe impl<C: wincode::config::Config> wincode::SchemaWrite<C> for VoteAccount {
+    type Src = Self;
+
+    const TYPE_META: wincode::TypeMeta = <AccountSharedData as wincode::SchemaWrite<C>>::TYPE_META;
+
+    fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
+        <AccountSharedData as wincode::SchemaWrite<C>>::size_of(&src.0.account)
+    }
+
+    fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        <AccountSharedData as wincode::SchemaWrite<C>>::write(writer, &src.0.account)
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(transparent)]
@@ -44,6 +62,7 @@ pub enum Error {
     InvalidOwner(/*owner:*/ Pubkey),
 }
 
+// No `SchemaWrite`: `VoteAccount` has a custom impl that writes only `account` (see above).
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug)]
 struct VoteAccountInner {
@@ -58,7 +77,7 @@ struct VoteAccountInner {
 
 pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, SchemaWrite)]
 #[cfg_attr(
     feature = "dev-context-only-utils",
     field_qualifiers(vote_accounts(pub))
@@ -69,6 +88,7 @@ pub struct VoteAccounts {
     // Inner Arc is meant to implement copy-on-write semantics.
     #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
     #[serde(skip)]
+    #[wincode(skip)]
     staked_nodes: OnceLock<
         Arc<
             HashMap<

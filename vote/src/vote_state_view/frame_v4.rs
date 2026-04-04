@@ -7,9 +7,10 @@ use {
     solana_pubkey::Pubkey,
     solana_vote_interface::state::BlockTimestamp,
     std::io::BufRead,
+    wincode::SchemaWrite,
 };
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, SchemaWrite)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(crate) struct VoteStateFrameV4 {
     pub(super) bls_pubkey_compressed_frame: BlsPubkeyCompressedFrame,

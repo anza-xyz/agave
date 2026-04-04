@@ -6,11 +6,12 @@ use {
         },
     },
     solana_pubkey::Pubkey,
+    solana_transaction::SchemaWrite,
     solana_vote_interface::state::BlockTimestamp,
     std::io::BufRead,
 };
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, SchemaWrite)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct VoteStateFrameV1_14_11 {
     pub(super) votes_frame: LockoutListFrame,

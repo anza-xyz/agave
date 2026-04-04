@@ -57,7 +57,7 @@ use {
     },
     types::{SerdeAccountsLtHash, UnusedRentCollector},
     wincode::{
-        SchemaReadOwned, SchemaWrite,
+        SchemaRead, SchemaReadOwned, SchemaWrite,
         io::{Reader, std_write::WriteAdapter},
     },
 };
@@ -106,15 +106,17 @@ pub struct UnusedIncrementalSnapshotPersistence {
     pub incremental_capitalization: u64,
 }
 
+#[repr(C)]
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "EcPdH21GSyYYTiSZbAN157YfrT3G8rKvDiNh7q1fw8Bc",
+        abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "eq_and_wire"
     )
 )]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct BankHashInfo {
     unused_accounts_delta_hash: [u8; 32],
     unused_accounts_hash: [u8; 32],
@@ -122,7 +124,7 @@ struct BankHashInfo {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Default, Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+#[derive(Default, Clone, PartialEq, Eq, Debug, Deserialize, Serialize, SchemaWrite)]
 struct UnusedAccounts {
     unused1: HashSet<Pubkey>,
     unused2: HashSet<Pubkey>,
@@ -215,10 +217,11 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
     // digest only verifies the serialized wire format; there is no roundtrip.
     frozen_abi(
         abi_digest = "6sm6hSNiTsNBAbSAiNe2BSQgnum3UdeNBpZnZiX7aM9r",
+        abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "no"
     )
 )]
-#[derive(Serialize)]
+#[derive(Serialize, SchemaWrite)]
 struct SerializableVersionedBank {
     blockhash_queue: BlockhashQueue,
     unused_ancestors: HashMap<Slot, usize>,

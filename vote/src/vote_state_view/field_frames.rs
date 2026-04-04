@@ -2,6 +2,7 @@ use {
     super::{Result, VoteStateViewError, list_view::ListView},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
+    solana_transaction::SchemaWrite,
     solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     std::io::{BufRead, Read},
 };
@@ -93,7 +94,8 @@ impl LockoutItem {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(transparent)]
+#[derive(Debug, PartialEq, Clone, Copy, SchemaWrite)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct LockoutListFrame {
     pub(super) len: u8,
@@ -148,7 +150,8 @@ impl BlsPubkeyCompressedView<'_> {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(transparent)]
+#[derive(Debug, PartialEq, Clone, Copy, SchemaWrite)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct BlsPubkeyCompressedFrame {
     pub(super) has_pubkey: bool,
@@ -182,7 +185,8 @@ impl BlsPubkeyCompressedFrame {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(transparent)]
+#[derive(Debug, PartialEq, Clone, Copy, SchemaWrite)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct LandedVotesListFrame {
     pub(super) len: u8,
@@ -227,7 +231,8 @@ impl ListFrame for LandedVotesListFrame {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(transparent)]
+#[derive(Debug, PartialEq, Clone, Copy, SchemaWrite)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct AuthorizedVotersListFrame {
     pub(super) len: u8,
@@ -284,7 +289,8 @@ pub struct EpochCreditsItem {
     prev_credits: [u8; 8],
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(transparent)]
+#[derive(Debug, PartialEq, Clone, Copy, SchemaWrite)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct EpochCreditsListFrame {
     pub(super) len: u8,
@@ -423,7 +429,8 @@ impl RootSlotView<'_> {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(transparent)]
+#[derive(Debug, PartialEq, Clone, Copy, SchemaWrite)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct RootSlotFrame {
     pub(super) has_root_slot: bool,
