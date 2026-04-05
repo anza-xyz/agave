@@ -88,7 +88,6 @@ impl OldestSlot {
 #[derive(Debug)]
 pub(crate) struct Rocks {
     db: rocksdb::DB,
-    path: PathBuf,
     access_type: AccessType,
     oldest_slot: OldestSlot,
     column_options: Arc<LedgerColumnOptions>,
@@ -144,7 +143,6 @@ impl Rocks {
 
         let rocks = Rocks {
             db,
-            path,
             access_type: options.access_type,
             oldest_slot,
             column_options,
@@ -452,10 +450,6 @@ impl Rocks {
             Ok(live_files) => Ok(live_files),
             Err(e) => Err(BlockstoreError::RocksDb(e)),
         }
-    }
-
-    pub(crate) fn storage_size(&self) -> Result<u64> {
-        Ok(fs_extra::dir::get_size(&self.path)?)
     }
 
     pub(crate) fn set_oldest_slot(&self, oldest_slot: Slot) {

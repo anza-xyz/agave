@@ -5,6 +5,7 @@ use {
         repair::{outstanding_requests::OutstandingRequests, serve_repair::ShredRepairType},
     },
     solana_gossip::{cluster_info::ClusterInfo, node::NodeMultihoming},
+    solana_ledger::blockstore::Blockstore,
     solana_pubkey::Pubkey,
     solana_runtime::{bank_forks::BankForks, snapshot_controller::SnapshotController},
     solana_tls_utils::NotifyKeyUpdate,
@@ -87,4 +88,5 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub node: Option<Arc<NodeMultihoming>>,
     pub banking_control_sender: mpsc::Sender<BankingControlMsg>,
     pub snapshot_controller: Arc<SnapshotController>,
+    pub blockstore: Arc<Blockstore>,
 }

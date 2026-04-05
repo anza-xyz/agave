@@ -15,9 +15,8 @@ use {
  */
 fn main() {
     let syscalls_rs_name = "../src/lib.rs";
-    let syscalls_txt_name = "../../platform-tools-sdk/sbf/syscalls.txt";
+    let syscalls_txt_name = "syscalls.txt";
     println!("cargo::rerun-if-changed={syscalls_rs_name}");
-    println!("cargo::rerun-if-changed={syscalls_txt_name}");
     println!("cargo::rerun-if-changed=build.rs");
 
     let syscalls_rs_path = PathBuf::from(syscalls_rs_name);

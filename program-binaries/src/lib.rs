@@ -19,8 +19,8 @@ mod spl_memo_3_0 {
 static SPL_PROGRAMS: &[(Pubkey, Pubkey, &[u8])] = &[
     (
         spl_generic_token::token::ID,
-        solana_sdk_ids::bpf_loader::ID,
-        include_bytes!("programs/spl_token-3.5.0.so"),
+        solana_sdk_ids::bpf_loader_upgradeable::ID,
+        include_bytes!("programs/spl_p_token-1.0.0-rc.1.so"),
     ),
     (
         spl_generic_token::token_2022::ID,

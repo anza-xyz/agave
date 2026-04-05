@@ -83,7 +83,7 @@ pub use {
         error::EbpfError,
         memory_region::MemoryMapping,
         program::BuiltinFunctionDefinition,
-        vm::{EbpfVm, get_runtime_environment_key},
+        vm::{EbpfVm, EncryptedHostAddressToEbpfVm, get_runtime_environment_key},
     },
     solana_transaction_context::IndexOfAccount,
 };
@@ -228,22 +228,23 @@ macro_rules! processor {
                 unreachable!()
             }
             fn vm(
-                vm: *mut $crate::EbpfVm<$crate::InvokeContext>,
+                mut vm: $crate::EncryptedHostAddressToEbpfVm<$crate::InvokeContext>,
                 _: u64,
                 _: u64,
                 _: u64,
                 _: u64,
                 _: u64,
             ) {
-                let vm = unsafe {
-                    &mut *((vm as *mut u64)
-                        .offset(-($crate::get_runtime_environment_key() as isize))
-                        as *mut $crate::EbpfVm<$crate::InvokeContext>)
-                };
-                vm.program_result =
-                    $crate::invoke_builtin_function($builtin_function, vm.context_object_pointer)
+                unsafe {
+                    vm.with_vm(|vm| {
+                        vm.program_result = $crate::invoke_builtin_function(
+                            $builtin_function,
+                            vm.context_object_pointer.as_mut(),
+                        )
                         .map_err(|err| $crate::EbpfError::SyscallError(err))
                         .into();
+                    });
+                }
             }
         };
         Some(<Converter as $crate::BuiltinFunctionDefinition<_>>::register)

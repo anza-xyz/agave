@@ -67,15 +67,15 @@ pub fn create_vm<'a, 'b>(
             .virtual_address_space_adjustments,
         invoke_context.get_feature_set().account_data_direct_mapping,
     )?;
-    invoke_context.set_memory_context(MemoryContext {
-        allocator: BpfAllocator::new(heap_size as u64),
+    invoke_context.set_memory_context(MemoryContext::new(
+        BpfAllocator::new(heap_size as u64),
         accounts_metadata,
-    })?;
+        memory_mapping,
+    ))?;
     Ok(EbpfVm::new(
         program.get_loader().clone(),
         program.get_sbpf_version(),
         invoke_context,
-        memory_mapping,
         stack_size,
     ))
 }
@@ -253,7 +253,10 @@ pub fn execute<'a, 'b: 'a>(
         }
 
         let execute_time = Measure::start("execute");
-        let prev_nested_exec_time = vm.context_object_pointer.total_nested_exec_time;
+
+        // SAFETY: VM is the only holder of the InvokeContext reference, as it carries its lifetime.
+        let prev_nested_exec_time =
+            unsafe { vm.context_object_pointer.as_ref().total_nested_exec_time };
 
         vm.registers[1] = ebpf::MM_INPUT_START;
         vm.registers[2] = instruction_data_offset as u64;

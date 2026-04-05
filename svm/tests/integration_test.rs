@@ -3586,10 +3586,11 @@ mod balance_collector {
             u64::MAX,
         );
 
-        let (_, spl_token) =
-            solana_program_binaries::by_id(&spl_token_interface::id(), &Rent::default())
-                .unwrap()
-                .swap_remove(0);
+        let mut program_accounts =
+            solana_program_binaries::by_id(&spl_token_interface::id(), &Rent::default()).unwrap();
+
+        let (_, spl_token) = program_accounts.swap_remove(0);
+        let (program_data_key, program_data) = program_accounts.swap_remove(0);
 
         for _ in 0..100 {
             let mut test_entry = SvmTestEntry::default();
@@ -3597,6 +3598,8 @@ mod balance_collector {
 
             if use_tokens {
                 test_entry.add_initial_account(spl_token_interface::id(), &spl_token);
+                test_entry.add_initial_account(program_data_key, &program_data);
+
                 test_entry.add_initial_account(mint, &mint_state);
                 test_entry.add_initial_account(alice, &token_state);
                 test_entry.add_initial_account(bob, &token_state);

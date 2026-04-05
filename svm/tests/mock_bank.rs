@@ -28,8 +28,8 @@ use {
     solana_svm_type_overrides::sync::{Arc, RwLock},
     solana_syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallGetEpochScheduleSysvar, SyscallGetRentSysvar,
-        SyscallInvokeSignedRust, SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove,
-        SyscallMemset, SyscallSetReturnData,
+        SyscallGetSysvar, SyscallInvokeSignedRust, SyscallLog, SyscallMemcmp, SyscallMemcpy,
+        SyscallMemmove, SyscallMemset, SyscallPanic, SyscallSetReturnData,
     },
     solana_sysvar_id::SysvarId,
     std::{
@@ -380,5 +380,7 @@ pub fn create_custom_loader() -> ProgramRuntimeEnvironment {
         .expect("Registration failed");
     SyscallGetEpochScheduleSysvar::register(&mut loader, "sol_get_epoch_schedule_sysvar")
         .expect("Registration failed");
+    SyscallPanic::register(&mut loader, "sol_panic_").expect("Registration failed");
+    SyscallGetSysvar::register(&mut loader, "sol_get_sysvar").expect("Registration failed");
     ProgramRuntimeEnvironment::from(loader)
 }
