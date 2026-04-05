@@ -176,9 +176,10 @@ pub struct JsonRpcConfig {
     pub scan_results_limit_bytes: Option<usize>,
     /// Disable the health check, used for tests and TestValidator
     pub disable_health_check: bool,
-    /// Skip populating the AccountsDb read-only cache for `getAccountInfo` and
-    /// `getMultipleAccounts` loads.
-    pub rpc_read_only_accounts_cache_bypass: bool,
+    /// Populate the AccountsDb read-only cache for `getAccountInfo` and
+    /// `getMultipleAccounts` loads. Disabled by default; enable with
+    /// `--rpc-populate-read-cache`.
+    pub rpc_populate_read_only_accounts_cache: bool,
 }
 
 impl Default for JsonRpcConfig {
@@ -200,7 +201,7 @@ impl Default for JsonRpcConfig {
             max_request_body_size: Option::default(),
             scan_results_limit_bytes: Option::default(),
             disable_health_check: Default::default(),
-            rpc_read_only_accounts_cache_bypass: Default::default(),
+            rpc_populate_read_only_accounts_cache: Default::default(),
         }
     }
 }
@@ -552,8 +553,8 @@ impl JsonRpcRequestProcessor {
             .runtime
             .spawn_blocking({
                 let bank = Arc::clone(&bank);
-                let rpc_read_only_accounts_cache_bypass =
-                    self.config.rpc_read_only_accounts_cache_bypass;
+                let rpc_populate_read_only_accounts_cache =
+                    self.config.rpc_populate_read_only_accounts_cache;
                 move || {
                     get_encoded_account(
                         &bank,
@@ -561,7 +562,7 @@ impl JsonRpcRequestProcessor {
                         encoding,
                         data_slice,
                         None,
-                        rpc_read_only_accounts_cache_bypass,
+                        rpc_populate_read_only_accounts_cache,
                     )
                 }
             })
@@ -590,8 +591,8 @@ impl JsonRpcRequestProcessor {
         let mut accounts = Vec::with_capacity(pubkeys.len());
         for pubkey in pubkeys {
             let bank = Arc::clone(&bank);
-            let rpc_read_only_accounts_cache_bypass =
-                self.config.rpc_read_only_accounts_cache_bypass;
+            let rpc_populate_read_only_accounts_cache =
+                self.config.rpc_populate_read_only_accounts_cache;
             accounts.push(
                 self.runtime
                     .spawn_blocking(move || {
@@ -601,7 +602,7 @@ impl JsonRpcRequestProcessor {
                             encoding,
                             data_slice,
                             None,
-                            rpc_read_only_accounts_cache_bypass,
+                            rpc_populate_read_only_accounts_cache,
                         )
                     })
                     .await
@@ -2563,13 +2564,13 @@ fn get_encoded_account(
     data_slice: Option<UiDataSliceConfig>,
     // only used for simulation results
     overwrite_accounts: Option<&HashMap<Pubkey, AccountSharedData>>,
-    rpc_read_only_accounts_cache_bypass: bool,
+    rpc_populate_read_only_accounts_cache: bool,
 ) -> Result<Option<UiAccount>> {
     match account_resolver::get_account_from_overwrites_or_bank(
         pubkey,
         bank,
         overwrite_accounts,
-        rpc_read_only_accounts_cache_bypass,
+        rpc_populate_read_only_accounts_cache,
     ) {
         Some(account) => {
             let response = if is_known_spl_token_id(account.owner())
@@ -2580,7 +2581,7 @@ fn get_encoded_account(
                     pubkey,
                     account,
                     overwrite_accounts,
-                    rpc_read_only_accounts_cache_bypass,
+                    rpc_populate_read_only_accounts_cache,
                 )
             } else {
                 encode_account(&account, pubkey, encoding, data_slice)?
@@ -5689,7 +5690,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_get_encoded_account_read_only_cache_bypass() {
+    fn test_get_encoded_account_read_only_cache_populate() {
         let (bank, pubkey, _) = create_storage_backed_bank_account_for_cache_test(42);
         let accounts_db = &bank.rc.accounts.accounts_db;
 
@@ -5698,7 +5699,7 @@ pub mod tests {
             get_encoded_account(&bank, &pubkey, UiAccountEncoding::Base64, None, None, false)
                 .unwrap();
         assert!(account.is_some());
-        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 1);
+        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 0);
 
         let (bank, pubkey, _) = create_storage_backed_bank_account_for_cache_test(84);
         let accounts_db = &bank.rc.accounts.accounts_db;
@@ -5708,7 +5709,7 @@ pub mod tests {
             get_encoded_account(&bank, &pubkey, UiAccountEncoding::Base64, None, None, true)
                 .unwrap();
         assert!(account.is_some());
-        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 0);
+        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 1);
     }
 
     #[test]
@@ -5940,7 +5941,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_get_multiple_encoded_accounts_read_only_cache_bypass() {
+    fn test_get_multiple_encoded_accounts_read_only_cache_populate() {
         let bank = Bank::default_for_tests();
         let accounts_db = &bank.rc.accounts.accounts_db;
         let pubkey1 = Pubkey::new_unique();
@@ -5961,7 +5962,7 @@ pub mod tests {
                     .unwrap();
             assert!(account.is_some());
         }
-        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 2);
+        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 0);
 
         let bank = Bank::default_for_tests();
         let accounts_db = &bank.rc.accounts.accounts_db;
@@ -5983,7 +5984,7 @@ pub mod tests {
                     .unwrap();
             assert!(account.is_some());
         }
-        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 0);
+        assert_eq!(accounts_db.read_only_accounts_cache_len_for_tests(), 2);
     }
 
     #[test]

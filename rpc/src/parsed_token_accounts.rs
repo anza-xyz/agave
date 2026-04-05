@@ -26,7 +26,7 @@ pub fn get_parsed_token_account(
     account: AccountSharedData,
     // only used for simulation results
     overwrite_accounts: Option<&HashMap<Pubkey, AccountSharedData>>,
-    rpc_read_only_accounts_cache_bypass: bool,
+    rpc_populate_read_only_accounts_cache: bool,
 ) -> UiAccount {
     let additional_data = get_token_account_mint(account.data())
         .and_then(|mint_pubkey| {
@@ -34,7 +34,7 @@ pub fn get_parsed_token_account(
                 &mint_pubkey,
                 bank,
                 overwrite_accounts,
-                rpc_read_only_accounts_cache_bypass,
+                rpc_populate_read_only_accounts_cache,
             )
         })
         .and_then(|mint_account| get_additional_mint_data(bank, mint_account.data()).ok())
@@ -101,7 +101,7 @@ pub(crate) fn get_mint_owner_and_additional_data(
 pub(crate) fn get_mint_owner_and_additional_data_with_options(
     bank: &Bank,
     mint: &Pubkey,
-    rpc_read_only_accounts_cache_bypass: bool,
+    rpc_populate_read_only_accounts_cache: bool,
 ) -> Result<(Pubkey, SplTokenAdditionalDataV2)> {
     if mint == &spl_token_interface::native_mint::id() {
         Ok((
@@ -113,7 +113,7 @@ pub(crate) fn get_mint_owner_and_additional_data_with_options(
             mint,
             bank,
             None,
-            rpc_read_only_accounts_cache_bypass,
+            rpc_populate_read_only_accounts_cache,
         )
         .ok_or_else(|| Error::invalid_params("Invalid param: could not find mint".to_string()))?;
         let mint_data = get_additional_mint_data(bank, mint_account.data())?;
