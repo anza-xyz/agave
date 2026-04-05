@@ -198,22 +198,37 @@ impl VoteStorage {
             self.deprecate_legacy_vote_ixs = bank.feature_set.snapshot().deprecate_legacy_vote_ixs;
         }
 
-        // Evict any now unstaked pubkeys
+        // Evict entries that are now unstaked or have a stale authorized voter
         let mut unstaked_votes = 0;
+        let mut evicted_stale_authority_votes = 0;
+        let mut total_evicted = 0;
         self.latest_vote_per_vote_pubkey
             .retain(|vote_pubkey, vote| {
                 let is_present = !vote.is_vote_taken();
-                let should_evict = self.cached_epoch_stakes.vote_account_stake(vote_pubkey) == 0;
+                let has_no_stake =
+                    self.cached_epoch_stakes.vote_account_stake(vote_pubkey) == 0;
+                let has_stale_authority = self
+                    .cached_epoch_authorized_voters
+                    .get(vote_pubkey)
+                    .is_none_or(|auth| *auth != vote.authorized_voter_pubkey());
+                let should_evict = has_no_stake || has_stale_authority;
                 if is_present && should_evict {
-                    unstaked_votes += 1;
+                    total_evicted += 1;
+                    if has_no_stake {
+                        unstaked_votes += 1;
+                    }
+                    if has_stale_authority {
+                        evicted_stale_authority_votes += 1;
+                    }
                 }
                 !should_evict
             });
-        self.num_unprocessed_votes -= unstaked_votes;
+        self.num_unprocessed_votes -= total_evicted;
         datapoint_info!(
             "latest_unprocessed_votes-epoch-boundary",
             ("epoch", bank.epoch(), i64),
-            ("evicted_unstaked_votes", unstaked_votes, i64)
+            ("evicted_unstaked_votes", unstaked_votes, i64),
+            ("evicted_stale_authority_votes", evicted_stale_authority_votes, i64)
         );
     }
 
