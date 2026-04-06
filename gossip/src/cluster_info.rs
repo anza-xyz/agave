@@ -2128,7 +2128,6 @@ impl ClusterInfo {
             })
         }
         let stakes = epoch_specs
-            .as_deref_mut()
             .map(|es| es.current_epoch_staked_nodes())
             .unwrap_or_default();
         let packets_verified: Vec<_> = {
@@ -2222,7 +2221,7 @@ impl ClusterInfo {
             while !exit.load(Ordering::Relaxed) {
                 let result = self.run_socket_consume(
                     &thread_pool,
-                    &mut epoch_specs,
+                    epoch_specs.as_mut(),
                     &receiver,
                     &sender,
                     &mut packet_buf,
