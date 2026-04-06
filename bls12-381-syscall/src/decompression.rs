@@ -16,7 +16,7 @@ pub fn bls12_381_g1_decompress(
     endianness: Endianness,
 ) -> Option<PodG1Point> {
     let p1 = match endianness {
-        // `G1Affine::from_compressed_unchecked` performs field and on-curve checks
+        // `G2Affine::from_compressed_unchecked` performs field and on-curve checks
         Endianness::BE => G1Affine::from_compressed_unchecked(&input.0).into_option()?,
         Endianness::LE => {
             let mut bytes = input.0;
