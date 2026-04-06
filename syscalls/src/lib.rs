@@ -2348,7 +2348,9 @@ declare_builtin_function!(
             );
             return Err(SyscallError::ArithmeticOverflow.into());
         };
-        invoke_context.compute_meter.consume_checked(cost.to_owned())?;
+        invoke_context
+            .compute_meter
+            .consume_checked(cost.to_owned())?;
 
         let check_aligned = invoke_context.get_check_aligned();
         let poseidon_enforce_padding = invoke_context.get_feature_set().poseidon_enforce_padding;
@@ -2616,7 +2618,9 @@ declare_builtin_function!(
             // syscall_base
             // ```
             let compute_units = compute_cost.syscall_base_cost;
-            invoke_context.compute_meter.consume_checked(compute_units)?;
+            invoke_context
+                .compute_meter
+                .consume_checked(compute_units)?;
             //
             // Control flow:
             //
@@ -2641,7 +2645,9 @@ declare_builtin_function!(
                         .unwrap_or(u64::MAX),
                 )
                 .saturating_add(compute_cost.mem_op_base_cost);
-            invoke_context.compute_meter.consume_checked(compute_units)?;
+            invoke_context
+                .compute_meter
+                .consume_checked(compute_units)?;
             //
             // Control flow:
             //
@@ -2971,7 +2977,10 @@ mod tests {
     fn test_syscall_abort() {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
+        let memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
         let result = SyscallAbort::rust(&mut invoke_context, 0, 0, 0, 0, 0);
         result.unwrap();
     }
@@ -2983,13 +2992,15 @@ mod tests {
 
         let string = "Gaggablaghblagh!";
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(string.as_bytes(), 0x100000000)],
             &config,
             SBPFVersion::V3,
         )
         .unwrap();
-
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
         invoke_context
             .compute_meter
             .mock_set_remaining(string.len() as u64 - 1);
@@ -3026,13 +3037,15 @@ mod tests {
 
         let string = "Gaggablaghblagh!";
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(string.as_bytes(), 0x100000000)],
             &config,
             SBPFVersion::V3,
         )
         .unwrap();
-
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(400 - 1);
         let result = SyscallLog::rust(
             &mut invoke_context,
@@ -3092,7 +3105,10 @@ mod tests {
 
         invoke_context.compute_meter.mock_set_remaining(cost);
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
+        let memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
         let result = SyscallLogU64::rust(&mut invoke_context, 1, 2, 3, 4, 5);
         result.unwrap();
 
@@ -3113,12 +3129,15 @@ mod tests {
 
         let pubkey = Pubkey::from_str("MoqiU1vryuCGQSxFKA1SZ316JdLEFFhoAu6cKUNk7dN").unwrap();
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(bytes_of(&pubkey), 0x100000000)],
             &config,
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let result = SyscallLogPubkey::rust(
             &mut invoke_context,
@@ -3152,9 +3171,8 @@ mod tests {
     }
 
     macro_rules! setup_alloc_test {
-        ($invoke_context:ident, $memory_mapping:ident, $heap:ident) => {
+        ($invoke_context:ident, $heap:ident) => {
             prepare_mockup!($invoke_context, program_id, bpf_loader::id());
-            use solana_sbpf::vm::ContextObject;
             let config = Config {
                 aligned_memory_mapping: false,
                 ..Config::default()
@@ -3174,7 +3192,6 @@ mod tests {
                     mapping,
                 ))
                 .unwrap();
-            let $memory_mapping = unsafe { $invoke_context.active_mapping_ptr().as_mut() };
         };
     }
 
@@ -3182,7 +3199,7 @@ mod tests {
     fn test_syscall_sol_alloc_free() {
         // large alloc
         {
-            setup_alloc_test!(invoke_context, memory_mapping, heap);
+            setup_alloc_test!(invoke_context, heap);
             let result = SyscallAllocFree::rust(
                 &mut invoke_context,
                 solana_program_entrypoint::HEAP_LENGTH as u64,
@@ -3207,7 +3224,7 @@ mod tests {
 
         // many small unaligned allocs
         {
-            setup_alloc_test!(invoke_context, memory_mapping, heap);
+            setup_alloc_test!(invoke_context, heap);
             for _ in 0..100 {
                 let result = SyscallAllocFree::rust(&mut invoke_context, 1, 0, 0, 0, 0);
                 assert_ne!(result.unwrap(), 0);
@@ -3225,7 +3242,7 @@ mod tests {
 
         // many small aligned allocs
         {
-            setup_alloc_test!(invoke_context, memory_mapping, heap);
+            setup_alloc_test!(invoke_context, heap);
             for _ in 0..12 {
                 let result = SyscallAllocFree::rust(&mut invoke_context, 1, 0, 0, 0, 0);
                 assert_ne!(result.unwrap(), 0);
@@ -3244,7 +3261,7 @@ mod tests {
         // aligned allocs
 
         fn aligned<T>() {
-            setup_alloc_test!(invoke_context, memory_mapping, heap);
+            setup_alloc_test!(invoke_context, heap);
             let result =
                 SyscallAllocFree::rust(&mut invoke_context, size_of::<T>() as u64, 0, 0, 0, 0);
             let address = result.unwrap();
@@ -3279,7 +3296,7 @@ mod tests {
         let ro_len = bytes_to_hash.len() as u64;
         let ro_va = 0x100000000;
         let rw_va = 0x200000000;
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(bytes_of_slice(&bytes_to_hash), ro_va),
                 MemoryRegion::new_writable(bytes_of_slice_mut(&mut hash_result), rw_va),
@@ -3290,7 +3307,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
-
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(
             (invoke_context.get_execution_cost().sha256_base_cost
                 + invoke_context.get_execution_cost().mem_op_base_cost.max(
@@ -3362,7 +3381,7 @@ mod tests {
         ];
         let invalid_bytes_va = 0x200000000;
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&valid_bytes, valid_bytes_va),
                 MemoryRegion::new_readonly(&invalid_bytes, invalid_bytes_va),
@@ -3372,6 +3391,9 @@ mod tests {
         )
         .unwrap();
 
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(
             (invoke_context
                 .get_execution_cost()
@@ -3432,7 +3454,7 @@ mod tests {
         ];
         let invalid_bytes_va = 0x200000000;
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&valid_bytes, valid_bytes_va),
                 MemoryRegion::new_readonly(&invalid_bytes, invalid_bytes_va),
@@ -3442,6 +3464,9 @@ mod tests {
         )
         .unwrap();
 
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(
             (invoke_context
                 .get_execution_cost()
@@ -3513,7 +3538,7 @@ mod tests {
         let mut result_point: [u8; 32] = [0; 32];
         let result_point_va = 0x500000000;
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(bytes_of_slice(&left_point), left_point_va),
                 MemoryRegion::new_readonly(bytes_of_slice(&right_point), right_point_va),
@@ -3526,6 +3551,9 @@ mod tests {
         )
         .unwrap();
 
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(
             (invoke_context
                 .get_execution_cost()
@@ -3661,7 +3689,7 @@ mod tests {
         let mut result_point: [u8; 32] = [0; 32];
         let result_point_va = 0x500000000;
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(bytes_of_slice(&left_point), left_point_va),
                 MemoryRegion::new_readonly(bytes_of_slice(&right_point), right_point_va),
@@ -3674,6 +3702,9 @@ mod tests {
         )
         .unwrap();
 
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(
             (invoke_context
                 .get_execution_cost()
@@ -3825,7 +3856,7 @@ mod tests {
         let mut result_point: [u8; 32] = [0; 32];
         let result_point_va = 0x400000000;
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(bytes_of_slice(&scalars), scalars_va),
                 MemoryRegion::new_readonly(bytes_of_slice(&edwards_points), edwards_points_va),
@@ -3837,6 +3868,9 @@ mod tests {
         )
         .unwrap();
 
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(
             invoke_context
                 .get_execution_cost()
@@ -3916,7 +3950,7 @@ mod tests {
         let mut result_point: [u8; 32] = [0; 32];
         let result_point_va = 0x400000000;
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(bytes_of_slice(&scalars), scalars_va),
                 MemoryRegion::new_readonly(bytes_of_slice(&edwards_points), edwards_points_va),
@@ -3929,6 +3963,9 @@ mod tests {
         .unwrap();
 
         // test Edwards
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(500_000);
         let result = SyscallCurveMultiscalarMultiplication::rust(
             &mut invoke_context,
@@ -4100,7 +4137,7 @@ mod tests {
             let clock_id_va = 0x300000000;
             let clock_id = Clock::id().to_bytes();
 
-            let mut memory_mapping = MemoryMapping::new(
+            let memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(bytes_of_mut(&mut got_clock_obj), got_clock_obj_va),
                     MemoryRegion::new_writable(&mut got_clock_buf, got_clock_buf_va),
@@ -4110,6 +4147,9 @@ mod tests {
                 SBPFVersion::V3,
             )
             .unwrap();
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
 
             let result =
                 SyscallGetClockSysvar::rust(&mut invoke_context, got_clock_obj_va, 0, 0, 0, 0);
@@ -4150,7 +4190,7 @@ mod tests {
             let epochschedule_id_va = 0x300000000;
             let epochschedule_id = EpochSchedule::id().to_bytes();
 
-            let mut memory_mapping = MemoryMapping::new(
+            let memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(
                         bytes_of_mut(&mut got_epochschedule_obj),
@@ -4166,6 +4206,9 @@ mod tests {
                 SBPFVersion::V3,
             )
             .unwrap();
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
 
             let result = SyscallGetEpochScheduleSysvar::rust(
                 &mut invoke_context,
@@ -4217,7 +4260,7 @@ mod tests {
             let mut got_fees = Fees::default();
             let got_fees_va = 0x100000000;
 
-            let mut memory_mapping = MemoryMapping::new(
+            let memory_mapping = MemoryMapping::new(
                 vec![MemoryRegion::new_writable(
                     bytes_of_mut(&mut got_fees),
                     got_fees_va,
@@ -4226,6 +4269,9 @@ mod tests {
                 SBPFVersion::V3,
             )
             .unwrap();
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
 
             let result = SyscallGetFeesSysvar::rust(&mut invoke_context, got_fees_va, 0, 0, 0, 0);
             assert_eq!(result.unwrap(), 0);
@@ -4248,7 +4294,7 @@ mod tests {
             let rent_id_va = 0x300000000;
             let rent_id = Rent::id().to_bytes();
 
-            let mut memory_mapping = MemoryMapping::new(
+            let memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(bytes_of_mut(&mut got_rent_obj), got_rent_obj_va),
                     MemoryRegion::new_writable(&mut got_rent_buf, got_rent_buf_va),
@@ -4258,6 +4304,9 @@ mod tests {
                 SBPFVersion::V3,
             )
             .unwrap();
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
 
             let result =
                 SyscallGetRentSysvar::rust(&mut invoke_context, got_rent_obj_va, 0, 0, 0, 0);
@@ -4298,7 +4347,7 @@ mod tests {
             let rewards_id_va = 0x300000000;
             let rewards_id = EpochRewards::id().to_bytes();
 
-            let mut memory_mapping = MemoryMapping::new(
+            let memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(
                         bytes_of_mut(&mut got_rewards_obj),
@@ -4311,6 +4360,9 @@ mod tests {
                 SBPFVersion::V3,
             )
             .unwrap();
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
 
             let result = SyscallGetEpochRewardsSysvar::rust(
                 &mut invoke_context,
@@ -4362,7 +4414,7 @@ mod tests {
             let restart_id_va = 0x300000000;
             let restart_id = LastRestartSlot::id().to_bytes();
 
-            let mut memory_mapping = MemoryMapping::new(
+            let memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(
                         bytes_of_mut(&mut got_restart_obj),
@@ -4375,6 +4427,9 @@ mod tests {
                 SBPFVersion::V3,
             )
             .unwrap();
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
 
             let result = SyscallGetLastRestartSlotSysvar::rust(
                 &mut invoke_context,
@@ -4450,7 +4505,7 @@ mod tests {
             let history_id_va = 0x200000000;
             let history_id = StakeHistory::id().to_bytes();
 
-            let mut memory_mapping = MemoryMapping::new(
+            let memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(&mut got_history_buf, got_history_buf_va),
                     MemoryRegion::new_readonly(&history_id, history_id_va),
@@ -4459,6 +4514,9 @@ mod tests {
                 SBPFVersion::V3,
             )
             .unwrap();
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
 
             let result = SyscallGetSysvar::rust(
                 &mut invoke_context,
@@ -4509,7 +4567,7 @@ mod tests {
             let hashes_id_va = 0x200000000;
             let hashes_id = SlotHashes::id().to_bytes();
 
-            let mut memory_mapping = MemoryMapping::new(
+            let memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(&mut got_hashes_buf, got_hashes_buf_va),
                     MemoryRegion::new_readonly(&hashes_id, hashes_id_va),
@@ -4518,6 +4576,9 @@ mod tests {
                 SBPFVersion::V3,
             )
             .unwrap();
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
 
             let result = SyscallGetSysvar::rust(
                 &mut invoke_context,
@@ -4554,17 +4615,6 @@ mod tests {
         let got_clock_buf_ro = vec![0; Clock::size_of()];
         let got_clock_buf_ro_va = 0x500000000;
 
-        let mut memory_mapping = MemoryMapping::new(
-            vec![
-                MemoryRegion::new_readonly(&clock_id, clock_id_va),
-                MemoryRegion::new_writable(&mut got_clock_buf_rw, got_clock_buf_rw_va),
-                MemoryRegion::new_readonly(&got_clock_buf_ro, got_clock_buf_ro_va),
-            ],
-            &config,
-            SBPFVersion::V3,
-        )
-        .unwrap();
-
         let access_violation_err =
             std::mem::discriminant(&EbpfError::AccessViolation(AccessType::Load, 0, 0, ""));
 
@@ -4573,6 +4623,19 @@ mod tests {
         {
             // start without the clock sysvar because we expect to hit specific errors before loading it
             with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
+            let memory_mapping = MemoryMapping::new(
+                vec![
+                    MemoryRegion::new_readonly(&clock_id, clock_id_va),
+                    MemoryRegion::new_writable(&mut got_clock_buf_rw, got_clock_buf_rw_va),
+                    MemoryRegion::new_readonly(&got_clock_buf_ro, got_clock_buf_ro_va),
+                ],
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap();
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
 
             // Abort: "Not all bytes in VM memory range `[sysvar_id, sysvar_id + 32)` are readable."
             let e = SyscallGetSysvar::rust(
@@ -4664,7 +4727,20 @@ mod tests {
                 sysvar::clock::id(),
                 create_account_shared_data_for_test(&src_clock),
             )];
+            let memory_mapping = MemoryMapping::new(
+                vec![
+                    MemoryRegion::new_readonly(&clock_id, clock_id_va),
+                    MemoryRegion::new_writable(&mut got_clock_buf_rw, got_clock_buf_rw_va),
+                    MemoryRegion::new_readonly(&got_clock_buf_ro, got_clock_buf_ro_va),
+                ],
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap();
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
 
             // "`1` if `offset + length` is greater than the length of the sysvar data."
             let result = SyscallGetSysvar::rust(
@@ -4742,7 +4818,10 @@ mod tests {
             bytes_of_slice(&mock_slices),
             SEEDS_VA,
         ));
-        let mut memory_mapping = MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap();
+        let memory_mapping = MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let result = syscall(
             invoke_context,
@@ -4798,7 +4877,7 @@ mod tests {
         let mut id_buffer = vec![0; 32];
 
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&data, SRC_VA),
                 MemoryRegion::new_writable(&mut data_buffer, DST_VA),
@@ -4810,6 +4889,9 @@ mod tests {
         .unwrap();
 
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let result =
             SyscallSetReturnData::rust(&mut invoke_context, SRC_VA, data.len() as u64, 0, 0, 0);
@@ -4914,12 +4996,15 @@ mod tests {
         const END_OFFSET: usize = ACCOUNTS_OFFSET + std::mem::size_of::<AccountInfo>() * 4;
         let mut memory = [0u8; END_OFFSET];
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_writable(&mut memory, VM_BASE_ADDRESS)],
             &config,
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
         let processed_sibling_instruction =
             unsafe { &mut *memory.as_mut_ptr().cast::<ProcessedSiblingInstruction>() };
         processed_sibling_instruction.data_len = 1;
@@ -4939,21 +5024,22 @@ mod tests {
         );
         assert_eq!(result.unwrap(), 1);
         {
+            let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
             let program_id = translate_type::<Pubkey>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
                 true,
             )
             .unwrap();
             let data = translate_slice::<u8>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
                 processed_sibling_instruction.data_len,
                 true,
             )
             .unwrap();
             let accounts = translate_slice::<AccountMeta>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
                 processed_sibling_instruction.accounts_len,
                 true,
@@ -4992,21 +5078,22 @@ mod tests {
 
         assert_eq!(result.unwrap(), 1);
         {
+            let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
             let program_id = translate_type::<Pubkey>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
                 true,
             )
             .unwrap();
             let data = translate_slice::<u8>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
                 processed_sibling_instruction.data_len,
                 true,
             )
             .unwrap();
             let accounts = translate_slice::<AccountMeta>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
                 processed_sibling_instruction.accounts_len,
                 true,
@@ -5083,12 +5170,15 @@ mod tests {
         const END_OFFSET: usize = ACCOUNTS_OFFSET + std::mem::size_of::<AccountInfo>() * 4;
         let mut memory = [0u8; END_OFFSET];
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_writable(&mut memory, VM_BASE_ADDRESS)],
             &config,
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
         let processed_sibling_instruction =
             unsafe { &mut *memory.as_mut_ptr().cast::<ProcessedSiblingInstruction>() };
         processed_sibling_instruction.data_len = 2;
@@ -5250,21 +5340,22 @@ mod tests {
 
         assert_eq!(result.unwrap(), 1);
         {
+            let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
             let program_id = translate_type::<Pubkey>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
                 true,
             )
             .unwrap();
             let data = translate_slice::<u8>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
                 processed_sibling_instruction.data_len,
                 true,
             )
             .unwrap();
             let accounts = translate_slice::<AccountMeta>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
                 processed_sibling_instruction.accounts_len,
                 true,
@@ -5331,21 +5422,22 @@ mod tests {
 
         assert_eq!(result.unwrap(), 1);
         {
+            let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
             let program_id = translate_type::<Pubkey>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
                 true,
             )
             .unwrap();
             let data = translate_slice::<u8>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
                 processed_sibling_instruction.data_len,
                 true,
             )
             .unwrap();
             let accounts = translate_slice::<AccountMeta>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
                 processed_sibling_instruction.accounts_len,
                 true,
@@ -5384,21 +5476,22 @@ mod tests {
 
         assert_eq!(result.unwrap(), 1);
         {
+            let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
             let program_id = translate_type::<Pubkey>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
                 true,
             )
             .unwrap();
             let data = translate_slice::<u8>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
                 processed_sibling_instruction.data_len,
                 true,
             )
             .unwrap();
             let accounts = translate_slice::<AccountMeta>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
                 processed_sibling_instruction.accounts_len,
                 true,
@@ -5462,21 +5555,22 @@ mod tests {
 
         assert_eq!(result.unwrap(), 1);
         {
+            let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
             let program_id = translate_type::<Pubkey>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
                 true,
             )
             .unwrap();
             let data = translate_slice::<u8>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
                 processed_sibling_instruction.data_len,
                 true,
             )
             .unwrap();
             let accounts = translate_slice::<AccountMeta>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
                 processed_sibling_instruction.accounts_len,
                 true,
@@ -5554,21 +5648,22 @@ mod tests {
 
         assert_eq!(result.unwrap(), 1);
         {
+            let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
             let program_id = translate_type::<Pubkey>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
                 true,
             )
             .unwrap();
             let data = translate_slice::<u8>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
                 processed_sibling_instruction.data_len,
                 true,
             )
             .unwrap();
             let accounts = translate_slice::<AccountMeta>(
-                &memory_mapping,
+                memory_mapping,
                 VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
                 processed_sibling_instruction.accounts_len,
                 true,
@@ -5828,7 +5923,7 @@ mod tests {
                 modulus_len: MAX_LEN,
             };
 
-            let mut memory_mapping = MemoryMapping::new(
+            let memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_readonly(bytes_of(&params_max_len), VADDR_PARAMS),
                     MemoryRegion::new_readonly(&data, VADDR_DATA),
@@ -5839,6 +5934,9 @@ mod tests {
             )
             .unwrap();
 
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
             let budget = invoke_context.get_execution_cost();
             invoke_context.compute_meter.mock_set_remaining(
                 budget.syscall_base_cost
@@ -5863,7 +5961,7 @@ mod tests {
                 modulus_len: INV_LEN,
             };
 
-            let mut memory_mapping = MemoryMapping::new(
+            let memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_readonly(bytes_of(&params_inv_len), VADDR_PARAMS),
                     MemoryRegion::new_readonly(&data, VADDR_DATA),
@@ -5873,7 +5971,9 @@ mod tests {
                 SBPFVersion::V3,
             )
             .unwrap();
-
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
             let budget = invoke_context.get_execution_cost();
             invoke_context.compute_meter.mock_set_remaining(
                 budget.syscall_base_cost
@@ -5934,7 +6034,10 @@ mod tests {
 
         let null_pointer_var = std::ptr::null::<Pubkey>() as u64;
 
-        let mut memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
+        let memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let result =
             SyscallGetEpochStake::rust(&mut invoke_context, null_pointer_var, 0, 0, 0, 0).unwrap();
@@ -5994,7 +6097,7 @@ mod tests {
             // memory range `[vote_addr, vote_addr + 32)` are readable.
             let vote_address_var = 0x100000000;
 
-            let mut memory_mapping = MemoryMapping::new(
+            let memory_mapping = MemoryMapping::new(
                 vec![
                     // Invalid read-only memory region.
                     MemoryRegion::new_readonly(&[2; 31], vote_address_var),
@@ -6003,6 +6106,9 @@ mod tests {
                 SBPFVersion::V3,
             )
             .unwrap();
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
 
             let result =
                 SyscallGetEpochStake::rust(&mut invoke_context, vote_address_var, 0, 0, 0, 0);
@@ -6019,7 +6125,7 @@ mod tests {
             // address.
             let vote_address_var = 0x100000000;
 
-            let mut memory_mapping = MemoryMapping::new(
+            let memory_mapping = MemoryMapping::new(
                 vec![MemoryRegion::new_readonly(
                     bytes_of(&TARGET_VOTE_ADDRESS),
                     vote_address_var,
@@ -6028,6 +6134,9 @@ mod tests {
                 SBPFVersion::V3,
             )
             .unwrap();
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
 
             let result =
                 SyscallGetEpochStake::rust(&mut invoke_context, vote_address_var, 0, 0, 0, 0)
@@ -6046,7 +6155,7 @@ mod tests {
             let vote_address_var = 0x100000000;
             let not_a_vote_address = Pubkey::new_unique(); // Not a vote account.
 
-            let mut memory_mapping = MemoryMapping::new(
+            let memory_mapping = MemoryMapping::new(
                 vec![MemoryRegion::new_readonly(
                     bytes_of(&not_a_vote_address),
                     vote_address_var,
@@ -6055,6 +6164,9 @@ mod tests {
                 SBPFVersion::V3,
             )
             .unwrap();
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping(memory_mapping);
 
             let result =
                 SyscallGetEpochStake::rust(&mut invoke_context, vote_address_var, 0, 0, 0, 0)
@@ -6107,7 +6219,7 @@ mod tests {
         let mem = (0..12).collect::<Vec<u8>>();
         let mut result_mem = vec![0; 4];
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&mem, 0x100000000),
                 MemoryRegion::new_readonly(&mem, 0x200000000),
@@ -6117,6 +6229,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let result = SyscallMemcmp::rust(&mut invoke_context, src_a, src_b, 4, 0x300000000, 0);
         result.unwrap();
@@ -6135,7 +6250,7 @@ mod tests {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
         let mut mem = (0..24).collect::<Vec<u8>>();
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_writable(&mut mem[..12], 0x100000000),
                 MemoryRegion::new_writable(&mut mem[12..], 0x200000000),
@@ -6144,6 +6259,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let result = SyscallMemmove::rust(&mut invoke_context, dst, src, 4, 0, 0);
         result.unwrap();
@@ -6158,12 +6276,15 @@ mod tests {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
         let mut mem = (0..12).collect::<Vec<u8>>();
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_writable(&mut mem, 0x100000000)],
             &config,
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let result = SyscallMemset::rust(&mut invoke_context, dst, value, 4, 0, 0);
         result.unwrap();
@@ -6178,12 +6299,15 @@ mod tests {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
         let mut mem = (0..12).collect::<Vec<u8>>();
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_writable(&mut mem, 0x100000000)],
             &config,
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let result = SyscallMemcpy::rust(&mut invoke_context, dst, src, 4, 0, 0);
         assert_matches!(
@@ -6200,12 +6324,15 @@ mod tests {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
         let mut mem = (0..12).collect::<Vec<u8>>();
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_writable(&mut mem, 0x100000000)],
             &config,
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let result = SyscallMemcpy::rust(&mut invoke_context, dst, src, 4, 0, 0);
         assert_access_violation!(result, fault_address, 4);
@@ -6221,12 +6348,15 @@ mod tests {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
         let mut mem = (0..12).collect::<Vec<u8>>();
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_writable(&mut mem, 0x100000000)],
             &config,
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let result = SyscallMemset::rust(&mut invoke_context, dst, 0, 4, 0, 0);
         assert_access_violation!(result, dst, 4);
@@ -6237,12 +6367,15 @@ mod tests {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
         let mem = (0..12).collect::<Vec<u8>>();
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(&mem, 0x100000000)],
             &config,
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let result = SyscallMemcmp::rust(
             &mut invoke_context,
@@ -6326,7 +6459,7 @@ mod tests {
         let mut result_be_buf = [0u8; 96];
         let mut result_le_buf = [0u8; 96];
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&p1_bytes_be, p1_be_va),
                 MemoryRegion::new_readonly(&p2_bytes_be, p2_be_va),
@@ -6339,6 +6472,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let bls12_381_g1_add_cost = invoke_context.get_execution_cost().bls12_381_g1_add_cost;
         invoke_context
@@ -6442,7 +6578,7 @@ mod tests {
         let mut result_be_buf = [0u8; 96];
         let mut result_le_buf = [0u8; 96];
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&sub_p1_be, p1_be_va),
                 MemoryRegion::new_readonly(&sub_p2_be, p2_be_va),
@@ -6455,6 +6591,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let bls12_381_g1_subtract_cost = invoke_context
             .get_execution_cost()
@@ -6553,7 +6692,7 @@ mod tests {
         let mut result_be_buf = [0u8; 96];
         let mut result_le_buf = [0u8; 96];
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&mul_scalar_be, scalar_be_va),
                 MemoryRegion::new_readonly(&mul_point_be, point_be_va),
@@ -6566,6 +6705,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let bls12_381_g1_multiply_cost = invoke_context
             .get_execution_cost()
@@ -6702,7 +6844,7 @@ mod tests {
         let mut result_be_buf = [0u8; 192];
         let mut result_le_buf = [0u8; 192];
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&p1_bytes_be, p1_be_va),
                 MemoryRegion::new_readonly(&p2_bytes_be, p2_be_va),
@@ -6715,6 +6857,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let bls12_381_g2_add_cost = invoke_context.get_execution_cost().bls12_381_g2_add_cost;
         invoke_context
@@ -6850,7 +6995,7 @@ mod tests {
         let mut result_be_buf = [0u8; 192];
         let mut result_le_buf = [0u8; 192];
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&sub_p1_be, p1_be_va),
                 MemoryRegion::new_readonly(&sub_p2_be, p2_be_va),
@@ -6863,6 +7008,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let bls12_381_g2_subtract_cost = invoke_context
             .get_execution_cost()
@@ -6982,7 +7130,7 @@ mod tests {
         let mut result_be_buf = [0u8; 192];
         let mut result_le_buf = [0u8; 192];
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&mul_scalar_be, scalar_be_va),
                 MemoryRegion::new_readonly(&mul_point_be, point_be_va),
@@ -6995,6 +7143,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let bls12_381_g2_multiply_cost = invoke_context
             .get_execution_cost()
@@ -7101,7 +7252,7 @@ mod tests {
 
         let mut result_buf = [0u8; 576]; // GT size
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&g1_bytes, g1_va),
                 MemoryRegion::new_readonly(&g2_bytes, g2_va),
@@ -7111,6 +7262,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let bls12_381_one_pair_cost = invoke_context.get_execution_cost().bls12_381_one_pair_cost;
         invoke_context
@@ -7203,7 +7357,7 @@ mod tests {
 
         let mut result_buf = [0u8; 576]; // GT size
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&g1_bytes, g1_va),
                 MemoryRegion::new_readonly(&g2_bytes, g2_va),
@@ -7213,6 +7367,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let bls12_381_one_pair_cost = invoke_context.get_execution_cost().bls12_381_one_pair_cost;
         invoke_context
@@ -7279,7 +7436,7 @@ mod tests {
         let mut result_be_buf = [0u8; 96];
         let mut result_le_buf = [0u8; 96];
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&compressed_be, input_be_va),
                 MemoryRegion::new_writable(&mut result_be_buf, result_be_va),
@@ -7290,6 +7447,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let bls12_381_g2_decompress_cost = invoke_context
             .get_execution_cost()
@@ -7386,7 +7546,7 @@ mod tests {
         let mut result_be_buf = [0u8; 192];
         let mut result_le_buf = [0u8; 192];
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&compressed_be, input_be_va),
                 MemoryRegion::new_writable(&mut result_be_buf, result_be_va),
@@ -7397,6 +7557,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let bls12_381_g2_decompress_cost = invoke_context
             .get_execution_cost()
@@ -7462,7 +7625,7 @@ mod tests {
         let point_be_va = 0x100000000;
         let point_le_va = 0x200000000;
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&point_bytes_be, point_be_va),
                 MemoryRegion::new_readonly(&point_bytes_le, point_le_va),
@@ -7471,6 +7634,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let bls12_381_g1_validate_cost = invoke_context
             .get_execution_cost()
@@ -7546,7 +7712,7 @@ mod tests {
         let point_be_va = 0x100000000;
         let point_le_va = 0x200000000;
 
-        let mut memory_mapping = MemoryMapping::new(
+        let memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&point_bytes_be, point_be_va),
                 MemoryRegion::new_readonly(&point_bytes_le, point_le_va),
@@ -7555,6 +7721,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let bls12_381_g2_validate_cost = invoke_context
             .get_execution_cost()

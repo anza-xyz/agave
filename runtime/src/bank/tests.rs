@@ -11342,7 +11342,10 @@ fn test_failed_simulation_compute_units() {
         (bank.get_account(&program_id).unwrap().data().len() + TRANSACTION_ACCOUNT_BASE_SIZE * 2)
             as u32;
     declare_process_instruction!(MockBuiltin, MOCK_BUILTIN_UNITS, |invoke_context| {
-        invoke_context.compute_meter.consume_checked(TEST_UNITS).unwrap();
+        invoke_context
+            .compute_meter
+            .consume_checked(TEST_UNITS)
+            .unwrap();
         Err(InstructionError::InvalidInstructionData)
     });
 

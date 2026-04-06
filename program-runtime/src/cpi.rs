@@ -827,7 +827,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     let instruction_context = invoke_context
         .transaction_context
         .get_current_instruction_context()?;
-    let caller_program_id = instruction_context.get_program_key()?.clone();
+    let caller_program_id = instruction_context.get_program_key()?;
     let signers = S::translate_signers(
         &caller_program_id,
         signers_seeds_addr,
@@ -1810,8 +1810,11 @@ mod tests {
             ..Config::default()
         };
         let memory_mapping = MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
-        let ins = translate_instruction_rust(vm_addr, &mut invoke_context).unwrap();
+        let ins = translate_instruction_rust(vm_addr, &invoke_context).unwrap();
         assert_eq!(ins.program_id, program_id);
         assert_eq!(ins.accounts, accounts);
         assert_eq!(ins.data, data);
@@ -1840,16 +1843,10 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
+        *invoke_context.memory_contexts.memory_mapping_mut().unwrap() =
+            MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
 
-        let signers = translate_signers_rust(
-            &program_id,
-            vm_addr,
-            1,
-            &memory_mapping,
-            true, // check_aligned
-        )
-        .unwrap();
+        let signers = translate_signers_rust(&program_id, vm_addr, 1, &invoke_context).unwrap();
         assert_eq!(signers[0], derived_key);
     }
 
@@ -1901,8 +1898,7 @@ mod tests {
             )
             .unwrap();
 
-        let mapping_ptr = invoke_context.active_mapping_ptr();
-        let accounts = translate_accounts_rust(vm_addr, 1, &mut invoke_context).unwrap();
+        let accounts = translate_accounts_rust(vm_addr, 1, &invoke_context).unwrap();
         assert_eq!(accounts.len(), 1);
         let caller_account = &accounts[0].caller_account;
         assert_eq!(caller_account.serialized_data, account.data());
@@ -2021,6 +2017,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let mut caller_account = mock_caller_account.caller_account();
         let instruction_context = invoke_context
@@ -2079,6 +2078,9 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
 
         let data_slice = mock_caller_account.data_slice();
         let len_ptr = unsafe {

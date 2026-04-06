@@ -275,8 +275,14 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::Withdraw(lamports) => {
             instruction_context.check_number_of_instruction_accounts(2)?;
-            let rent_sysvar = invoke_context.environment_config.sysvar_cache().get_rent()?;
-            let clock_sysvar = invoke_context.environment_config.sysvar_cache().get_clock()?;
+            let rent_sysvar = invoke_context
+                .environment_config
+                .sysvar_cache()
+                .get_rent()?;
+            let clock_sysvar = invoke_context
+                .environment_config
+                .sysvar_cache()
+                .get_clock()?;
 
             drop(me);
             vote_state::withdraw(
@@ -313,11 +319,17 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if !is_init_account_v2_enabled {
                 return Err(InstructionError::InvalidInstructionData);
             }
-            let rent = invoke_context.environment_config.sysvar_cache().get_rent()?;
+            let rent = invoke_context
+                .environment_config
+                .sysvar_cache()
+                .get_rent()?;
             if !rent.is_exempt(me.get_lamports(), me.get_data().len()) {
                 return Err(InstructionError::InsufficientFunds);
             }
-            let clock = invoke_context.environment_config.sysvar_cache().get_clock()?;
+            let clock = invoke_context
+                .environment_config
+                .sysvar_cache()
+                .get_clock()?;
             vote_state::initialize_account_v2(
                 &mut me,
                 target_version,
@@ -366,7 +378,10 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 NewCommissionCollector::NewAccount(collector_account)
             };
 
-            let rent = invoke_context.environment_config.sysvar_cache().get_rent()?;
+            let rent = invoke_context
+                .environment_config
+                .sysvar_cache()
+                .get_rent()?;
 
             vote_state::update_commission_collector(
                 &mut me,

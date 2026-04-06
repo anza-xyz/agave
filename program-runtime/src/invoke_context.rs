@@ -102,7 +102,9 @@ impl ContextObject for InvokeContext<'_, '_> {
         // 1 to 1 instruction to compute unit mapping
         // ignore overflow, Ebpf will bail if exceeded
         let compute_meter = self.compute_meter.0.get();
-        self.compute_meter.0.set(compute_meter.saturating_sub(amount));
+        self.compute_meter
+            .0
+            .set(compute_meter.saturating_sub(amount));
     }
 
     fn get_remaining(&self) -> u64 {
@@ -242,6 +244,15 @@ impl MemoryContexts {
     pub fn memory_mapping_mut(&mut self) -> Result<&mut MemoryMapping, InstructionError> {
         let last_context = self.memory_context_mut()?;
         Ok(&mut last_context.memory_mapping)
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn mock_set_mapping(&mut self, memory_mapping: MemoryMapping) {
+        self.0 = vec![MemoryContext {
+            allocator: BpfAllocator::new(0),
+            accounts_metadata: vec![],
+            memory_mapping: Box::new(memory_mapping),
+        }];
     }
 }
 
