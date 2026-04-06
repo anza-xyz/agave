@@ -31,7 +31,7 @@ pub trait TransactionMeta {
 
 #[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
 #[derive(Debug)]
-pub struct CachedTransactionMeta {
+pub(crate) struct CachedTransactionMeta {
     pub(crate) message_hash: Hash,
     pub(crate) is_simple_vote_transaction: bool,
     pub(crate) signature_details: TransactionSignatureDetails,
