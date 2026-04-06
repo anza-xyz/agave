@@ -93,6 +93,8 @@ pub fn rx_loop(
     loop {
         let available = rx_ring.read_batch(&mut descs).unwrap_or(0);
 
+        let mut recycled = 0usize;
+        let bulk = available & !3;
         for (chunk, frame) in descs[..available]
             .chunks_exact(4)
             .zip(frames[..available].chunks_exact_mut(4))
@@ -118,9 +120,24 @@ pub fn rx_loop(
                 frame[2] = FrameOffset(chunk[2].addr as usize);
                 frame[3] = FrameOffset(chunk[3].addr as usize);
             }
+            recycled += 4;
         }
 
-        let _ = fill_ring.write_batch(umem, &frames);
+        // remainder of packets not divisible by 4
+        if bulk != available {
+            for d in &descs[bulk..available] {
+                unsafe {
+                    let p = umem_base.add(d.addr as usize);
+                    handle_packet(p, d.len as usize, &sender);
+                }
+                let off = FrameOffset(d.addr as usize);
+                umem.release(off);
+                frames[recycled] = off;
+                recycled += 1;
+            }
+        }
+
+        let _ = fill_ring.write_batch(umem, &frames[..recycled]);
     }
 }
 
