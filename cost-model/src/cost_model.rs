@@ -12,7 +12,7 @@ use {
     solana_compute_budget::compute_budget_limits::DEFAULT_HEAP_COST,
     solana_fee_structure::FeeStructure,
     solana_pubkey::Pubkey,
-    solana_runtime_transaction::transaction_meta::StaticMeta,
+    solana_runtime_transaction::transaction_meta::TransactionMeta,
     solana_sdk_ids::system_program,
     solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMStaticMessage},
     solana_system_interface::{
@@ -32,7 +32,7 @@ enum SystemProgramAccountAllocation {
 }
 
 impl CostModel {
-    pub fn calculate_cost<'a, Tx: StaticMeta + SVMStaticMessage>(
+    pub fn calculate_cost<'a, Tx: TransactionMeta + SVMStaticMessage>(
         transaction: &'a Tx,
         feature_set: &FeatureSet,
     ) -> TransactionCost<'a, Tx> {
@@ -58,7 +58,7 @@ impl CostModel {
 
     // Calculate executed transaction CU cost, with actual execution and loaded accounts size
     // costs.
-    pub fn calculate_cost_for_executed_transaction<'a, Tx: StaticMeta + SVMStaticMessage>(
+    pub fn calculate_cost_for_executed_transaction<'a, Tx: TransactionMeta + SVMStaticMessage>(
         transaction: &'a Tx,
         actual_programs_execution_cost: u64,
         actual_loaded_accounts_data_size_bytes: u32,
@@ -91,7 +91,7 @@ impl CostModel {
     /// - `meta` - transaction meta
     /// - `instructions` - transaction instructions
     /// - `num_write_locks` - number of requested write locks
-    pub fn estimate_cost<'a, Tx: StaticMeta>(
+    pub fn estimate_cost<'a, Tx: TransactionMeta>(
         transaction: &'a Tx,
         instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
         num_write_locks: u64,
@@ -116,7 +116,7 @@ impl CostModel {
         )
     }
 
-    fn calculate_non_vote_transaction_cost<'a, Tx: StaticMeta>(
+    fn calculate_non_vote_transaction_cost<'a, Tx: TransactionMeta>(
         transaction: &'a Tx,
         instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
         num_write_locks: u64,
@@ -145,7 +145,7 @@ impl CostModel {
     }
 
     /// Returns signature details and the total signature cost
-    fn get_signature_cost(transaction: &impl StaticMeta) -> u64 {
+    fn get_signature_cost(transaction: &impl TransactionMeta) -> u64 {
         let signatures_count_detail = transaction.signature_details();
 
         signatures_count_detail
@@ -175,30 +175,28 @@ impl CostModel {
 
     /// Return (programs_execution_cost, loaded_accounts_data_size_cost)
     fn get_estimated_execution_cost(
-        transaction: &impl StaticMeta,
+        transaction: &impl TransactionMeta,
         feature_set: &FeatureSet,
     ) -> (u64, u64) {
         // if failed to process compute_budget instructions, the transaction will not be executed
         // by `bank`, therefore it should be considered as no execution cost by cost model.
-        let (programs_execution_costs, loaded_accounts_data_size_cost) = match transaction
-            .compute_budget_instruction_details()
-            .sanitize_and_convert_to_compute_budget_limits(feature_set)
-        {
-            Ok(compute_budget_limits) => (
-                u64::from(compute_budget_limits.compute_unit_limit),
-                Self::calculate_loaded_accounts_data_size_cost(
-                    compute_budget_limits.loaded_accounts_bytes.get(),
-                    feature_set,
+        let (programs_execution_costs, loaded_accounts_data_size_cost) =
+            match transaction.transaction_configuration(feature_set) {
+                Ok(config) => (
+                    u64::from(config.compute_unit_limit),
+                    Self::calculate_loaded_accounts_data_size_cost(
+                        config.loaded_accounts_data_size_limit.get(),
+                        feature_set,
+                    ),
                 ),
-            ),
-            Err(_) => (0, 0),
-        };
+                Err(_) => (0, 0),
+            };
 
         (programs_execution_costs, loaded_accounts_data_size_cost)
     }
 
     /// Return the instruction data bytes cost.
-    fn get_instructions_data_cost(transaction: &impl StaticMeta) -> u16 {
+    fn get_instructions_data_cost(transaction: &impl TransactionMeta) -> u16 {
         transaction.instruction_data_len() / (INSTRUCTION_DATA_BYTES_COST as u16)
     }
 

@@ -597,10 +597,6 @@ impl LeaderSlotMetricsTracker {
                 .cost_model_throttled_transactions_count += cost_model_throttled_transactions_count;
 
             leader_slot_metrics
-                .packet_count_metrics
-                .cost_model_throttled_transactions_count += cost_model_throttled_transactions_count;
-
-            leader_slot_metrics
                 .timing_metrics
                 .process_packets_timings
                 .cost_model_us += cost_model_us;

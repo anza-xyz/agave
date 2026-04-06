@@ -26,7 +26,7 @@ use {
     solana_poh::poh_recorder::PohRecorderError,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
         transaction_with_meta::TransactionWithMeta,
     },
     solana_svm::{
@@ -583,7 +583,7 @@ mod tests {
         solana_perf::packet::BytesPacket,
         solana_poh::record_channels::record_channels,
         solana_runtime::genesis_utils::ValidatorVoteKeypairs,
-        solana_runtime_transaction::transaction_meta::StaticMeta,
+        solana_runtime_transaction::transaction_meta::TransactionMeta,
         solana_svm::account_loader::CheckedTransactionDetails,
         solana_system_transaction as system_transaction,
         std::collections::HashSet,

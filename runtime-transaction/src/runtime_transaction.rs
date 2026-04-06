@@ -10,7 +10,8 @@
 //!    ALT, RuntimeTransaction<SanitizedMessage> transits into Dynamically Loaded state,
 //!    with its dynamic metadata loaded.
 use {
-    crate::transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
+    crate::transaction_meta::{CachedTransactionMeta, TransactionConfiguration, TransactionMeta},
+    agave_feature_set::FeatureSet,
     core::ops::Deref,
     solana_compute_budget_instruction::compute_budget_instruction_details::*,
     solana_hash::Hash,
@@ -23,6 +24,7 @@ use {
         svm_message::{SVMMessage, SVMStaticMessage},
         svm_transaction::SVMTransaction,
     },
+    solana_transaction::TransactionError,
 };
 
 mod sdk_transactions;
@@ -34,7 +36,7 @@ pub struct RuntimeTransaction<T> {
     transaction: T,
     // transaction meta is a collection of fields, it is updated
     // during message state transition
-    meta: TransactionMeta,
+    meta: CachedTransactionMeta,
 }
 
 impl<T> RuntimeTransaction<T> {
@@ -43,7 +45,7 @@ impl<T> RuntimeTransaction<T> {
     }
 }
 
-impl<T> StaticMeta for RuntimeTransaction<T> {
+impl<T> TransactionMeta for RuntimeTransaction<T> {
     fn message_hash(&self) -> &Hash {
         &self.meta.message_hash
     }
@@ -53,15 +55,25 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
     fn signature_details(&self) -> &TransactionSignatureDetails {
         &self.meta.signature_details
     }
-    fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails {
-        &self.meta.compute_budget_instruction_details
+    fn transaction_configuration(
+        &self,
+        feature_set: &FeatureSet,
+    ) -> Result<TransactionConfiguration, TransactionError> {
+        let compute_budget_limits = self
+            .meta
+            .compute_budget_instruction_details
+            .sanitize_and_convert_to_compute_budget_limits(feature_set)?;
+        Ok(TransactionConfiguration {
+            updated_heap_bytes: compute_budget_limits.updated_heap_bytes,
+            compute_unit_limit: compute_budget_limits.compute_unit_limit,
+            priority_fee_lamports: compute_budget_limits.get_prioritization_fee(),
+            loaded_accounts_data_size_limit: compute_budget_limits.loaded_accounts_bytes,
+        })
     }
     fn instruction_data_len(&self) -> u16 {
         self.meta.instruction_data_len
     }
 }
-
-impl<T: SVMMessage> DynamicMeta for RuntimeTransaction<T> {}
 
 impl<T> Deref for RuntimeTransaction<T> {
     type Target = T;
