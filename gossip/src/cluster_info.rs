@@ -2084,7 +2084,7 @@ impl ClusterInfo {
     fn run_socket_consume(
         &self,
         thread_pool: &ThreadPool,
-        epoch_specs: &mut Option<Box<dyn EpochSpecs>>,
+        epoch_specs: Option<&mut Box<dyn EpochSpecs>>,
         receiver: &PacketBatchReceiver,
         sender: &impl ChannelSend<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         packet_buf: &mut Vec<PacketBatch>,
