@@ -7,7 +7,7 @@
 use {
     crate::sigverify,
     core::time::Duration,
-    crossbeam_channel::{Receiver, RecvTimeoutError, SendError},
+    crossbeam_channel::{Receiver, RecvTimeoutError},
     itertools::Itertools,
     rayon::ThreadPool,
     solana_measure::measure::Measure,
@@ -30,22 +30,18 @@ use {
 };
 
 #[derive(Error, Debug)]
-pub enum SigVerifyServiceError<SendType> {
-    #[error("send packets batch error")]
-    Send(#[from] SendError<SendType>),
-
+pub enum SigVerifyServiceError {
     #[error("streamer error")]
     Streamer(#[from] StreamerError),
 }
 
-type Result<T, SendType> = std::result::Result<T, SigVerifyServiceError<SendType>>;
+type Result<T> = std::result::Result<T, SigVerifyServiceError>;
 
 pub struct SigVerifyStage {
     thread_hdl: JoinHandle<()>,
 }
 
 pub trait SigVerifier {
-    type SendType: std::fmt::Debug;
     fn verify_and_send_packets(
         &mut self,
         batches: Vec<PacketBatch>,
@@ -53,7 +49,7 @@ pub trait SigVerifier {
         in_flight_count: Arc<AtomicUsize>,
         total_valid_packets: Arc<AtomicUsize>,
         total_verify_time_us: Arc<AtomicUsize>,
-    ) -> Result<(), Self::SendType>;
+    ) -> Result<()>;
 
     /// Return maximum number of packets that are allowed to be in the verification pool.
     fn capacity(&self) -> usize;
@@ -170,7 +166,6 @@ impl SigVerifierStats {
 }
 
 impl SigVerifier for DisabledSigVerifier {
-    type SendType = ();
     fn verify_and_send_packets(
         &mut self,
         mut batches: Vec<PacketBatch>,
@@ -178,7 +173,7 @@ impl SigVerifier for DisabledSigVerifier {
         _in_flight_count: Arc<AtomicUsize>,
         total_valid_packets: Arc<AtomicUsize>,
         total_verify_time_us: Arc<AtomicUsize>,
-    ) -> Result<(), Self::SendType> {
+    ) -> Result<()> {
         let mut verify_time = Measure::start("sigverify_batch_time");
         sigverify::ed25519_verify_disabled(&self.thread_pool, &mut batches);
         verify_time.stop();
@@ -235,7 +230,7 @@ impl SigVerifyStage {
         verifier: &mut T,
         stats: &mut SigVerifierStats,
         in_flight_count: &Arc<AtomicUsize>,
-    ) -> Result<(), T::SendType> {
+    ) -> Result<()> {
         const SOFT_RECEIVE_CAP: usize = 5_000;
         let (mut batches, num_packets, recv_duration) =
             streamer::recv_packet_batches(recvr, SOFT_RECEIVE_CAP)?;
@@ -330,9 +325,6 @@ impl SigVerifyStage {
                             SigVerifyServiceError::Streamer(StreamerError::RecvTimeout(
                                 RecvTimeoutError::Timeout,
                             )) => (),
-                            SigVerifyServiceError::Send(_) => {
-                                break;
-                            }
                             _ => error!("{e:?}"),
                         }
                     }

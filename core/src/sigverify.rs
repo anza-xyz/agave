@@ -56,8 +56,6 @@ impl TransactionSigVerifier {
 }
 
 impl SigVerifier for TransactionSigVerifier {
-    type SendType = BankingPacketBatch;
-
     fn verify_and_send_packets(
         &mut self,
         batches: Vec<PacketBatch>,
@@ -65,7 +63,7 @@ impl SigVerifier for TransactionSigVerifier {
         in_flight_count: Arc<AtomicUsize>,
         total_valid_packets: Arc<AtomicUsize>,
         total_verify_time_us: Arc<AtomicUsize>,
-    ) -> Result<(), SigVerifyServiceError<Self::SendType>> {
+    ) -> Result<(), SigVerifyServiceError> {
         let thread_pool = self.thread_pool.clone();
         let banking_stage_sender = self.banking_stage_sender.clone();
         let forward_stage_sender = self.forward_stage_sender.clone();

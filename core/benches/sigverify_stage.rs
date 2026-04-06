@@ -50,8 +50,6 @@ struct BenchSigVerifier {
 }
 
 impl SigVerifier for BenchSigVerifier {
-    type SendType = ();
-
     fn verify_and_send_packets(
         &mut self,
         mut batches: Vec<PacketBatch>,
@@ -59,7 +57,7 @@ impl SigVerifier for BenchSigVerifier {
         _in_flight_count: Arc<AtomicUsize>,
         total_valid_packets: Arc<AtomicUsize>,
         total_verify_time_us: Arc<AtomicUsize>,
-    ) -> Result<(), SigVerifyServiceError<Self::SendType>> {
+    ) -> Result<(), SigVerifyServiceError> {
         let mut verify_time = Measure::start("sigverify_batch_time");
         sigverify::ed25519_verify(&self.thread_pool, &mut batches, false, valid_packets);
         verify_time.stop();
