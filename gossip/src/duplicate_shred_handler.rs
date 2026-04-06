@@ -95,7 +95,7 @@ impl DuplicateShredHandler {
         }
         self.last_root = last_root;
         self.cached_slots_in_epoch = self.epoch_specs.epoch_slots();
-        self.cached_staked_nodes = self.epoch_specs.epoch_current_staked_nodes();
+        self.cached_staked_nodes = self.epoch_specs.current_epoch_staked_nodes();
     }
 
     fn handle_shred_data(&mut self, chunk: DuplicateShred) -> Result<(), Error> {
@@ -242,7 +242,7 @@ mod tests {
     }
 
     impl EpochSpecs for TestEpochSpecs {
-        fn epoch_current_staked_nodes(&mut self) -> Arc<HashMap<Pubkey, u64>> {
+        fn current_epoch_staked_nodes(&mut self) -> Arc<HashMap<Pubkey, u64>> {
             Arc::new(HashMap::new())
         }
         fn epoch_duration(&mut self) -> Duration {

@@ -1486,7 +1486,7 @@ impl ClusterInfo {
                     }
                     let stakes = epoch_specs
                         .as_mut()
-                        .map(|es| es.epoch_current_staked_nodes())
+                        .map(|es| es.current_epoch_staked_nodes())
                         .unwrap_or_default();
 
                     let _ = self.run_gossip(
@@ -2129,7 +2129,7 @@ impl ClusterInfo {
         }
         let stakes = epoch_specs
             .as_deref_mut()
-            .map(|es| es.epoch_current_staked_nodes())
+            .map(|es| es.current_epoch_staked_nodes())
             .unwrap_or_default();
         let packets_verified: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
@@ -2183,7 +2183,7 @@ impl ClusterInfo {
         }
         let stakes = epoch_specs
             .as_deref_mut()
-            .map(|es| es.epoch_current_staked_nodes())
+            .map(|es| es.current_epoch_staked_nodes())
             .unwrap_or_default();
         let epoch_duration = epoch_specs
             .as_deref_mut()

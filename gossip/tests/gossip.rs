@@ -42,7 +42,7 @@ struct TestEpochSpecs {
 }
 
 impl EpochSpecs for TestEpochSpecs {
-    fn epoch_current_staked_nodes(&mut self) -> Arc<HashMap<Pubkey, u64>> {
+    fn current_epoch_staked_nodes(&mut self) -> Arc<HashMap<Pubkey, u64>> {
         Arc::clone(&self.staked_nodes)
     }
     fn epoch_duration(&mut self) -> Duration {

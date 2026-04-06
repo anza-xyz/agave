@@ -108,7 +108,7 @@ impl GossipService {
                         sleep(SUBMIT_GOSSIP_STATS_INTERVAL);
                         let stakes = epoch_specs
                             .as_mut()
-                            .map(|es| es.epoch_current_staked_nodes())
+                            .map(|es| es.current_epoch_staked_nodes())
                             .unwrap_or_default();
 
                         submit_gossip_stats(&cluster_info.stats, &cluster_info.gossip, &stakes);

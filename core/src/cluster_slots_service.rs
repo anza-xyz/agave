@@ -120,7 +120,7 @@ impl ClusterSlotsService {
             if let Some(slots) = slots {
                 let node_id = cluster_info.id();
                 let my_stake = epoch_specs
-                    .epoch_current_staked_nodes()
+                    .current_epoch_staked_nodes()
                     .get(&node_id)
                     .cloned()
                     .unwrap_or_default();

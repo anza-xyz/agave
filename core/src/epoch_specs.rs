@@ -29,7 +29,7 @@ pub struct EpochSpecs {
     cache: EpochSpecsCache,
 }
 impl EpochSpecsTrait for EpochSpecs {
-    fn epoch_current_staked_nodes(&mut self) -> Arc<HashMap<Pubkey, u64>> {
+    fn current_epoch_staked_nodes(&mut self) -> Arc<HashMap<Pubkey, u64>> {
         let cache = &mut self.cache;
         Self::maybe_refresh_cache(cache, &self.sharable_banks);
         Arc::clone(&cache.current_epoch_staked_nodes)
@@ -169,7 +169,7 @@ mod tests {
     fn verify_epoch_specs(epoch_specs: &mut EpochSpecs, root_bank: &Bank) {
         assert_eq!(
             // also triggers the cache refresh needed for the rest of the tests
-            epoch_specs.epoch_current_staked_nodes(),
+            epoch_specs.current_epoch_staked_nodes(),
             root_bank.current_epoch_staked_nodes()
         );
 
