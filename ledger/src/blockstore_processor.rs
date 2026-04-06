@@ -399,6 +399,7 @@ impl ExecuteBatchesInternalMetrics {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 fn execute_batches_internal(
     bank: &Arc<Bank>,
     replay_tx_thread_pool: &ThreadPool,
@@ -574,6 +575,7 @@ fn schedule_batches_for_execution(
     first_err
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 fn execute_batches(
     bank: &Arc<Bank>,
     replay_tx_thread_pool: &ThreadPool,
