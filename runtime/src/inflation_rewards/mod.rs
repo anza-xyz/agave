@@ -37,18 +37,25 @@ pub(crate) fn redeem_rewards<'a>(
 ) -> Result<(u64, u64, Stake), InstructionError> {
     if let StakeStateV2::Stake(_meta, stake, _stake_flags) = stake_state {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
+            let CalculationEnvironment {
+                rewarded_epoch,
+                stake_history,
+                new_rate_activation_epoch,
+                commission_rate_in_basis_points,
+                ..
+            } = calculation_environment;
             inflation_point_calc_tracer(
                 &InflationPointCalculationEvent::EffectiveStakeAtRewardedEpoch(stake.stake(
-                    calculation_environment.rewarded_epoch,
-                    calculation_environment.stake_history,
-                    calculation_environment.new_rate_activation_epoch,
+                    rewarded_epoch,
+                    stake_history,
+                    new_rate_activation_epoch,
                 )),
             );
             inflation_point_calc_tracer(&InflationPointCalculationEvent::PriorTotalLamports(
                 stake_account_lamports_for_trace,
             ));
             // Choose which trace to emit based on the `commission_rate_in_basis_points` feature.
-            if calculation_environment.commission_rate_in_basis_points {
+            if commission_rate_in_basis_points {
                 inflation_point_calc_tracer(&InflationPointCalculationEvent::CommissionBps(
                     voter_commission_bps,
                 ));
@@ -126,6 +133,13 @@ fn calculate_stake_rewards<'a>(
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
 ) -> Option<CalculatedStakeRewards> {
+    let CalculationEnvironment {
+        stake_history,
+        new_rate_activation_epoch,
+        point_value,
+        rewarded_epoch,
+        ..
+    } = calculation_environment;
     // ensure to run to trigger (optional) inflation_point_calc_tracer
     let CalculatedStakePoints {
         points,
@@ -134,19 +148,19 @@ fn calculate_stake_rewards<'a>(
     } = calculate_stake_points_and_credits(
         stake,
         vote_state,
-        calculation_environment.stake_history,
+        stake_history,
         inflation_point_calc_tracer.as_ref(),
-        calculation_environment.new_rate_activation_epoch,
+        new_rate_activation_epoch,
     );
 
     // Drive credits_observed forward unconditionally when rewards are disabled
     // or when this is the stake's activation epoch
-    if calculation_environment.point_value.rewards == 0 {
+    if point_value.rewards == 0 {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
             inflation_point_calc_tracer(&SkippedReason::DisabledInflation.into());
         }
         force_credits_update_with_skipped_reward = true;
-    } else if stake.delegation.activation_epoch == calculation_environment.rewarded_epoch {
+    } else if stake.delegation.activation_epoch == rewarded_epoch {
         // not assert!()-ed; but points should be zero
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
             inflation_point_calc_tracer(&SkippedReason::JustActivated.into());
@@ -168,7 +182,7 @@ fn calculate_stake_rewards<'a>(
         }
         return None;
     }
-    if calculation_environment.point_value.points == 0 {
+    if point_value.points == 0 {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
             inflation_point_calc_tracer(&SkippedReason::ZeroPointValue.into());
         }
@@ -177,9 +191,9 @@ fn calculate_stake_rewards<'a>(
 
     // The final unwrap is safe, as points_value.points is guaranteed to be non zero above.
     let rewards = points
-        .checked_mul(u128::from(calculation_environment.point_value.rewards))
+        .checked_mul(u128::from(point_value.rewards))
         .expect("Rewards intermediate calculation should fit within u128")
-        .checked_div(calculation_environment.point_value.points)
+        .checked_div(point_value.points)
         .unwrap();
 
     let rewards = u64::try_from(rewards).expect("Rewards should fit within u64");
@@ -197,7 +211,7 @@ fn calculate_stake_rewards<'a>(
             rewards,
             voter_rewards,
             staker_rewards,
-            calculation_environment.point_value.clone(),
+            point_value.clone(),
         ));
     }
 
