@@ -524,6 +524,16 @@ fn process_batches(
         // `BankWithScheduler::schedule_transaction_executions()`.
         schedule_batches_for_execution(bank, locked_entries)
     } else {
+        // Slot 0 is unique and should not have a scheduler - but also has no transactions.
+        if bank.slot() == 0 {
+            assert_eq!(
+                locked_entries.len(),
+                0,
+                "slot 0 should not have any transactions"
+            );
+            return Ok(());
+        }
+
         #[cfg(not(feature = "dev-context-only-utils"))]
         {
             // Avoid un-used parameter warnings.
