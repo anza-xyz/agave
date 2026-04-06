@@ -8,7 +8,8 @@ use {
 };
 
 /// Performs point subtraction on G1: `P1 - P2`.
-pub fn bls12_381_g1_subtraction(
+/// Does not check if points are in the correct subgroup for efficiency.
+pub fn bls12_381_g1_subtraction_unchecked(
     _version: Version,
     p1: &PodG1Point,
     p2: &PodG1Point,
@@ -34,7 +35,8 @@ pub fn bls12_381_g1_subtraction(
 }
 
 /// Performs point subtraction on G2: `P1 - P2`.
-pub fn bls12_381_g2_subtraction(
+/// Does not check if points are in the correct subgroup for efficiency.
+pub fn bls12_381_g2_subtraction_unchecked(
     _version: Version,
     p1: &PodG2Point,
     p2: &PodG2Point,
@@ -84,7 +86,8 @@ mod tests {
         let p2_be = to_pod_g1(p2_be);
         let expected_be = to_pod_g1(output_be);
 
-        let result_be = bls12_381_g1_subtraction(Version::V0, &p1_be, &p2_be, Endianness::BE);
+        let result_be =
+            bls12_381_g1_subtraction_unchecked(Version::V0, &p1_be, &p2_be, Endianness::BE);
         assert_eq!(
             result_be,
             Some(expected_be),
@@ -96,7 +99,8 @@ mod tests {
         let p2_le = to_pod_g1(p2_le);
         let expected_le = to_pod_g1(output_le);
 
-        let result_le = bls12_381_g1_subtraction(Version::V0, &p1_le, &p2_le, Endianness::LE);
+        let result_le =
+            bls12_381_g1_subtraction_unchecked(Version::V0, &p1_le, &p2_le, Endianness::LE);
         assert_eq!(
             result_le,
             Some(expected_le),
@@ -116,7 +120,8 @@ mod tests {
         let p2_be = to_pod_g2(p2_be);
         let expected_be = to_pod_g2(output_be);
 
-        let result_be = bls12_381_g2_subtraction(Version::V0, &p1_be, &p2_be, Endianness::BE);
+        let result_be =
+            bls12_381_g2_subtraction_unchecked(Version::V0, &p1_be, &p2_be, Endianness::BE);
         assert_eq!(
             result_be,
             Some(expected_be),
@@ -128,7 +133,8 @@ mod tests {
         let p2_le = to_pod_g2(p2_le);
         let expected_le = to_pod_g2(output_le);
 
-        let result_le = bls12_381_g2_subtraction(Version::V0, &p1_le, &p2_le, Endianness::LE);
+        let result_le =
+            bls12_381_g2_subtraction_unchecked(Version::V0, &p1_le, &p2_le, Endianness::LE);
         assert_eq!(
             result_le,
             Some(expected_le),
