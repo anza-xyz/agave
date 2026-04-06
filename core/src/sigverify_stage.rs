@@ -237,7 +237,7 @@ impl SigVerifyStage {
 
         // If we're already at capacity immediately drop the packets
         let mut should_drop = false;
-        if in_flight_count.load(Ordering::Acquire) >= verifier.capacity() {
+        if in_flight_count.load(Ordering::Relaxed) >= verifier.capacity() {
             stats.total_dropped_on_capacity += num_packets;
             should_drop = true;
         }
