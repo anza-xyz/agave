@@ -13,6 +13,10 @@
 //!
 use {
     agave_feature_set::FeatureSet,
+    solana_compute_budget::compute_budget_limits::{
+        MAX_COMPUTE_UNIT_LIMIT, MAX_HEAP_FRAME_BYTES, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+        MIN_HEAP_FRAME_BYTES,
+    },
     solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
     solana_hash::Hash, solana_message::TransactionSignatureDetails,
     solana_transaction::TransactionError,
@@ -35,10 +39,12 @@ pub(crate) struct CachedTransactionMeta {
     pub(crate) message_hash: Hash,
     pub(crate) is_simple_vote_transaction: bool,
     pub(crate) signature_details: TransactionSignatureDetails,
-    pub(crate) compute_budget_instruction_details: ComputeBudgetInstructionDetails,
+    pub(crate) versioned_transaction_config: VersionedTransactionConfiguration,
     pub(crate) instruction_data_len: u16,
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
+#[derive(Debug)]
 pub struct TransactionConfiguration {
     pub updated_heap_bytes: u32,
     pub compute_unit_limit: u32,
@@ -59,5 +65,53 @@ impl TransactionConfiguration {
             .checked_div(self.compute_unit_limit as u128)
             .and_then(|x| u64::try_from(x).ok())
             .unwrap_or(0)
+    }
+}
+
+#[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
+#[derive(Debug)]
+pub(crate) enum VersionedTransactionConfiguration {
+    LegacyAndV0(ComputeBudgetInstructionDetails),
+    V1(TransactionConfiguration),
+}
+
+impl VersionedTransactionConfiguration {
+    pub(crate) fn try_into_config(
+        &self,
+        feature_set: &FeatureSet,
+    ) -> Result<TransactionConfiguration, TransactionError> {
+        match self {
+            Self::LegacyAndV0(compute_budget_instruction_details) => {
+                let compute_budget_limits = compute_budget_instruction_details
+                    .sanitize_and_convert_to_compute_budget_limits(feature_set)?;
+                Ok(TransactionConfiguration {
+                    updated_heap_bytes: compute_budget_limits.updated_heap_bytes,
+                    compute_unit_limit: compute_budget_limits.compute_unit_limit,
+                    priority_fee_lamports: compute_budget_limits.get_prioritization_fee(),
+                    loaded_accounts_data_size_limit: compute_budget_limits.loaded_accounts_bytes,
+                })
+            }
+            Self::V1(transaction_configuration) => {
+                if !(MIN_HEAP_FRAME_BYTES..=MAX_HEAP_FRAME_BYTES)
+                    .contains(&transaction_configuration.updated_heap_bytes)
+                    || !transaction_configuration
+                        .updated_heap_bytes
+                        .is_multiple_of(1024)
+                {
+                    return Err(TransactionError::SanitizeFailure);
+                }
+
+                Ok(TransactionConfiguration {
+                    updated_heap_bytes: transaction_configuration.updated_heap_bytes,
+                    compute_unit_limit: transaction_configuration
+                        .compute_unit_limit
+                        .min(MAX_COMPUTE_UNIT_LIMIT),
+                    priority_fee_lamports: transaction_configuration.priority_fee_lamports,
+                    loaded_accounts_data_size_limit: transaction_configuration
+                        .loaded_accounts_data_size_limit
+                        .min(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES),
+                })
+            }
+        }
     }
 }

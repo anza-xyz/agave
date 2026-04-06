@@ -59,16 +59,9 @@ impl<T> TransactionMeta for RuntimeTransaction<T> {
         &self,
         feature_set: &FeatureSet,
     ) -> Result<TransactionConfiguration, TransactionError> {
-        let compute_budget_limits = self
-            .meta
-            .compute_budget_instruction_details
-            .sanitize_and_convert_to_compute_budget_limits(feature_set)?;
-        Ok(TransactionConfiguration {
-            updated_heap_bytes: compute_budget_limits.updated_heap_bytes,
-            compute_unit_limit: compute_budget_limits.compute_unit_limit,
-            priority_fee_lamports: compute_budget_limits.get_prioritization_fee(),
-            loaded_accounts_data_size_limit: compute_budget_limits.loaded_accounts_bytes.get(),
-        })
+        self.meta
+            .versioned_transaction_config
+            .try_into_config(feature_set)
     }
     fn instruction_data_len(&self) -> u16 {
         self.meta.instruction_data_len
