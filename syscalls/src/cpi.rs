@@ -33,7 +33,7 @@ declare_builtin_function!(
 impl SyscallInvokeSigned for SyscallInvokeSignedRust {
     fn translate_instruction(
         addr: u64,
-        invoke_context: &mut InvokeContext,
+        invoke_context: &InvokeContext,
     ) -> Result<Instruction, Error> {
         translate_instruction_rust(addr, invoke_context)
     }
@@ -41,7 +41,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
     fn translate_accounts<'a>(
         account_infos_addr: u64,
         account_infos_len: u64,
-        invoke_context: &mut InvokeContext,
+        invoke_context: &InvokeContext,
     ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
         translate_accounts_rust(account_infos_addr, account_infos_len, invoke_context)
     }
@@ -50,7 +50,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         program_id: &Pubkey,
         signers_seeds_addr: u64,
         signers_seeds_len: u64,
-        invoke_context: &mut InvokeContext,
+        invoke_context: &InvokeContext,
     ) -> Result<Vec<Pubkey>, Error> {
         translate_signers_rust(
             program_id,
@@ -86,7 +86,7 @@ declare_builtin_function!(
 impl SyscallInvokeSigned for SyscallInvokeSignedC {
     fn translate_instruction(
         addr: u64,
-        invoke_context: &mut InvokeContext,
+        invoke_context: &InvokeContext,
     ) -> Result<Instruction, Error> {
         translate_instruction_c(addr, invoke_context)
     }
@@ -94,7 +94,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
     fn translate_accounts<'a>(
         account_infos_addr: u64,
         account_infos_len: u64,
-        invoke_context: &mut InvokeContext,
+        invoke_context: &InvokeContext,
     ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
         translate_accounts_c(account_infos_addr, account_infos_len, invoke_context)
     }
@@ -103,7 +103,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
         program_id: &Pubkey,
         signers_seeds_addr: u64,
         signers_seeds_len: u64,
-        invoke_context: &mut InvokeContext,
+        invoke_context: &InvokeContext,
     ) -> Result<Vec<Pubkey>, Error> {
         translate_signers_c(
             program_id,

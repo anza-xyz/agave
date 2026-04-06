@@ -47,7 +47,7 @@ use {
     std::{
         alloc::Layout,
         borrow::Cow,
-        cell::RefCell,
+        cell::{Cell, RefCell},
         fmt::{self, Debug},
         ptr,
         rc::Rc,
@@ -101,12 +101,12 @@ impl ContextObject for InvokeContext<'_, '_> {
     fn consume(&mut self, amount: u64) {
         // 1 to 1 instruction to compute unit mapping
         // ignore overflow, Ebpf will bail if exceeded
-        let mut compute_meter = self.compute_meter.0.borrow_mut();
-        *compute_meter = compute_meter.saturating_sub(amount);
+        let compute_meter = self.compute_meter.0.get();
+        self.compute_meter.0.set(compute_meter.saturating_sub(amount));
     }
 
     fn get_remaining(&self) -> u64 {
-        *self.compute_meter.0.borrow()
+        self.compute_meter.0.get()
     }
 
     fn active_mapping_ptr(&mut self) -> ptr::NonNull<MemoryMapping> {
@@ -190,14 +190,14 @@ impl<'a> EnvironmentConfig<'a> {
     }
 }
 
-pub struct ComputeMeter(RefCell<u64>);
+pub struct ComputeMeter(Cell<u64>);
 
 impl ComputeMeter {
     /// Consume compute units
     pub fn consume_checked(&self, amount: u64) -> Result<(), Box<dyn std::error::Error>> {
-        let mut compute_meter = self.0.borrow_mut();
-        let exceeded = *compute_meter < amount;
-        *compute_meter = compute_meter.saturating_sub(amount);
+        let compute_meter = self.0.get();
+        let exceeded = compute_meter < amount;
+        self.0.set(compute_meter.saturating_sub(amount));
         if exceeded {
             return Err(Box::new(InstructionError::ComputationalBudgetExceeded));
         }
@@ -208,7 +208,7 @@ impl ComputeMeter {
     ///
     /// Only use for tests and benchmarks
     pub fn mock_set_remaining(&self, remaining: u64) {
-        *self.0.borrow_mut() = remaining;
+        self.0.set(remaining);
     }
 }
 
@@ -331,7 +331,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             log_collector,
             compute_budget,
             execution_cost,
-            compute_meter: ComputeMeter(RefCell::new(compute_budget.compute_unit_limit)),
+            compute_meter: ComputeMeter(Cell::new(compute_budget.compute_unit_limit)),
             total_nested_exec_time: Duration::ZERO,
             timings: ExecuteDetailsTimings::default(),
             memory_contexts: MemoryContexts(Vec::new()),
@@ -1247,6 +1247,7 @@ mod tests {
                         desired_result,
                     } => {
                         invoke_context
+                            .compute_meter
                             .consume_checked(compute_units_to_consume)
                             .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
                         return desired_result;

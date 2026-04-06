@@ -4577,9 +4577,8 @@ pub mod tests {
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_program_option::COption,
         solana_program_runtime::{
-            invoke_context::InvokeContext,
-            program_cache_entry::ProgramCacheEntry,
-            solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
+            invoke_context::InvokeContext, program_cache_entry::ProgramCacheEntry,
+            solana_sbpf::declare_builtin_function,
         },
         solana_rpc_client_api::{
             custom_error::{
@@ -4697,7 +4696,9 @@ pub mod tests {
         invoke_context: &mut InvokeContext,
     ) -> std::result::Result<u64, Box<dyn std::error::Error>> {
         let log_collector = invoke_context.get_log_collector();
-        invoke_context.consume_checked(TestBuiltinEntrypoint::COMPUTE_UNITS)?;
+        invoke_context
+            .compute_meter
+            .consume_checked(TestBuiltinEntrypoint::COMPUTE_UNITS)?;
 
         let transaction_context = &invoke_context.transaction_context;
         let instruction_context = transaction_context.get_current_instruction_context()?;
@@ -4741,7 +4742,6 @@ pub mod tests {
             _arg2: u64,
             _arg3: u64,
             _arg4: u64,
-            _memory_mapping: &mut MemoryMapping,
         ) -> Result<u64, Box<dyn std::error::Error>> {
             test_builtin_processor(invoke_context)
         }

@@ -1195,7 +1195,7 @@ mod tests {
             Err(InstructionError::ProgramFailedToComplete),
             Entrypoint::register,
             |invoke_context| {
-                invoke_context.mock_set_remaining(0);
+                invoke_context.compute_meter.mock_set_remaining(0);
                 test_utils::load_all_invoked_programs(invoke_context);
             },
             |_invoke_context| {},

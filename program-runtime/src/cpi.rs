@@ -533,24 +533,24 @@ impl<'a> CallerAccount<'a> {
 pub trait SyscallInvokeSigned {
     fn translate_instruction(
         addr: u64,
-        invoke_context: &mut InvokeContext,
+        invoke_context: &InvokeContext,
     ) -> Result<Instruction, Error>;
     fn translate_accounts<'a>(
         account_infos_addr: u64,
         account_infos_len: u64,
-        invoke_context: &mut InvokeContext,
+        invoke_context: &InvokeContext,
     ) -> Result<Vec<TranslatedAccount<'a>>, Error>;
     fn translate_signers(
         program_id: &Pubkey,
         signers_seeds_addr: u64,
         signers_seeds_len: u64,
-        invoke_context: &mut InvokeContext,
+        invoke_context: &InvokeContext,
     ) -> Result<Vec<Pubkey>, Error>;
 }
 
 pub fn translate_instruction_rust(
     addr: u64,
-    invoke_context: &mut InvokeContext,
+    invoke_context: &InvokeContext,
 ) -> Result<Instruction, Error> {
     let check_aligned = invoke_context.get_check_aligned();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
@@ -616,7 +616,7 @@ pub fn translate_instruction_rust(
 pub fn translate_accounts_rust<'a>(
     account_infos_addr: u64,
     account_infos_len: u64,
-    invoke_context: &mut InvokeContext,
+    invoke_context: &InvokeContext,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
     translate_accounts_common(
         account_infos_addr,
@@ -674,7 +674,7 @@ pub fn translate_signers_rust(
 
 pub fn translate_instruction_c(
     addr: u64,
-    invoke_context: &mut InvokeContext,
+    invoke_context: &InvokeContext,
 ) -> Result<Instruction, Error> {
     let check_aligned = invoke_context.get_check_aligned();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
@@ -743,7 +743,7 @@ pub fn translate_instruction_c(
 pub fn translate_accounts_c<'a>(
     account_infos_addr: u64,
     account_infos_len: u64,
-    invoke_context: &mut InvokeContext,
+    invoke_context: &InvokeContext,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
     translate_accounts_common(
         account_infos_addr,
@@ -926,7 +926,7 @@ pub struct TranslatedAccount<'a> {
 fn translate_accounts_common<'a, T, F, KF>(
     account_infos_addr: u64,
     account_infos_len: u64,
-    invoke_context: &mut InvokeContext,
+    invoke_context: &InvokeContext,
     do_translate: F,
     key_addr: KF,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error>
@@ -1329,10 +1329,7 @@ mod tests {
         solana_account::{Account, AccountSharedData, ReadableAccount},
         solana_account_info::AccountInfo,
         solana_sbpf::{
-            ebpf::MM_INPUT_START,
-            memory_region::MemoryRegion,
-            program::SBPFVersion,
-            vm::{Config, ContextObject},
+            ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
         },
         solana_sdk_ids::{bpf_loader, system_program},
         solana_svm_feature_set::SVMFeatureSet,
