@@ -21,6 +21,7 @@ agave-unstable-api = []
 dev-context-only-utils = ["solana-compute-budget-instruction/dev-context-only-utils"]
 
 [dependencies]
+agave-feature-set = { workspace = true }
 agave-transaction-view = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-hash = { workspace = true }

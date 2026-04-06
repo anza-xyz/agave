@@ -3,8 +3,8 @@ use {
     agave_feature_set::FeatureSet,
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_clock::{MAX_TRANSACTION_FORWARDING_DELAY, Slot},
+    solana_compute_budget::compute_budget::SVMTransactionExecutionBudget,
     solana_fee::{FeeFeatures, calculate_fee_details},
-    solana_fee_structure::FeeBudgetLimits,
     solana_nonce::state::{Data as NonceData, DurableNonce},
     solana_nonce_account as nonce_account,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
@@ -107,14 +107,12 @@ impl Bank {
                 Ok(()) => {
                     let compute_budget_and_limits = tx
                         .borrow()
-                        .compute_budget_instruction_details()
-                        .sanitize_and_convert_to_compute_budget_limits(feature_set)
-                        .map(|limit| {
-                            let fee_budget = FeeBudgetLimits::from(limit);
+                        .transaction_configuration(feature_set)
+                        .map(|config| {
                             let fee_details = calculate_fee_details(
                                 tx.borrow(),
                                 self.fee_structure.lamports_per_signature,
-                                fee_budget.prioritization_fee,
+                                config.priority_fee_lamports,
                                 fee_features,
                             );
                             if let Some(compute_budget) = self.compute_budget {
@@ -122,15 +120,22 @@ impl Bank {
                                 // It should be removed along with the change to favor transaction's compute budget limits
                                 // over configured compute budget in Bank.
                                 compute_budget.get_compute_budget_and_limits(
-                                    fee_budget.loaded_accounts_data_size_limit,
+                                    config.loaded_accounts_data_size_limit,
                                     fee_details,
                                 )
                             } else {
-                                limit.get_compute_budget_and_limits(
-                                    fee_budget.loaded_accounts_data_size_limit,
+                                SVMTransactionExecutionAndFeeBudgetLimits {
+                                    budget: SVMTransactionExecutionBudget {
+                                        compute_unit_limit: u64::from(config.compute_unit_limit),
+                                        heap_size: config.updated_heap_bytes,
+                                        ..SVMTransactionExecutionBudget::new_with_defaults(
+                                            raise_cpi_limit,
+                                        )
+                                    },
+                                    loaded_accounts_data_size_limit: config
+                                        .loaded_accounts_data_size_limit,
                                     fee_details,
-                                    raise_cpi_limit,
-                                )
+                                }
                             }
                         })
                         .inspect_err(|_err| {

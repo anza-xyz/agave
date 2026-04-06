@@ -489,7 +489,7 @@ mod tests {
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
-        solana_runtime_transaction::transaction_meta::StaticMeta,
+        solana_runtime_transaction::transaction_meta::TransactionMeta,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::Transaction,

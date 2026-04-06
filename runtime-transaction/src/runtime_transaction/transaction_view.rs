@@ -2,7 +2,7 @@ use {
     super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
     crate::{
         instruction_meta::InstructionMeta,
-        transaction_meta::{StaticMeta, TransactionMeta},
+        transaction_meta::{CachedTransactionMeta, TransactionMeta},
         transaction_with_meta::TransactionWithMeta,
     },
     agave_transaction_view::{
@@ -65,7 +65,7 @@ fn from_sanitized_transaction_view<D>(
     transaction: &SanitizedTransactionView<D>,
     message_hash: MessageHash,
     is_simple_vote_tx: Option<bool>,
-) -> Result<TransactionMeta>
+) -> Result<CachedTransactionMeta>
 where
     D: TransactionData,
 {
@@ -90,7 +90,7 @@ where
     let compute_budget_instruction_details =
         ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?;
 
-    Ok(TransactionMeta {
+    Ok(CachedTransactionMeta {
         message_hash,
         is_simple_vote_transaction: is_simple_vote_tx,
         signature_details,

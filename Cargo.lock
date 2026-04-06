@@ -142,7 +142,7 @@ dependencies = [
  "nix",
  "reqwest 0.12.28",
  "scopeguard",
- "semver 1.0.27",
+ "semver 1.0.28",
  "serde",
  "serde_yaml",
  "solana-clap-utils",
@@ -285,7 +285,7 @@ dependencies = [
  "lz4",
  "rand 0.9.2",
  "regex",
- "semver 1.0.27",
+ "semver 1.0.28",
  "solana-accounts-db",
  "solana-clock",
  "solana-genesis-config",
@@ -736,9 +736,9 @@ dependencies = [
 
 [[package]]
 name = "arc-swap"
-version = "1.9.0"
+version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a07d1f37ff60921c83bdfc7407723bdefe89b44b98a9b772f225c8f9d67141a6"
+checksum = "6a3a1fd6f75306b68087b831f025c712524bcb19aad54e557b1129cfa0a2b207"
 dependencies = [
  "rustversion",
 ]
@@ -4563,13 +4563,13 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "1.0.3"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2886843bf800fba2e3377cff24abf6379b4c4d5c6681eaf9ea5b0d15090450bd"
+checksum = "50b7e5b27aa02a74bac8c3f23f448f8d87ff11f92d3aac1a6ed369ee08cc56c1"
 dependencies = [
  "libc",
  "wasi 0.11.0+wasi-snapshot-preview1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -6076,7 +6076,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
- "semver 1.0.27",
+ "semver 1.0.28",
 ]
 
 [[package]]
@@ -6329,9 +6329,9 @@ dependencies = [
 
 [[package]]
 name = "semver"
-version = "1.0.27"
+version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
+checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "semver-parser"
@@ -7510,7 +7510,7 @@ dependencies = [
  "humantime",
  "indicatif",
  "pretty-hex",
- "semver 1.0.27",
+ "semver 1.0.28",
  "serde",
  "serde_json",
  "solana-account 4.1.0",
@@ -9649,7 +9649,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "parking_lot 0.12.3",
- "semver 1.0.27",
+ "semver 1.0.28",
  "serial_test",
  "solana-derivation-path",
  "solana-offchain-message",
@@ -9816,7 +9816,7 @@ dependencies = [
  "log",
  "reqwest 0.12.28",
  "reqwest-middleware",
- "semver 1.0.27",
+ "semver 1.0.28",
  "serde",
  "serde_json",
  "solana-account 4.1.0",
@@ -9901,7 +9901,7 @@ dependencies = [
  "base64 0.22.1",
  "bs58",
  "const_format",
- "semver 1.0.27",
+ "semver 1.0.28",
  "serde",
  "serde_json",
  "solana-account-decoder-client-types",
@@ -9998,7 +9998,7 @@ dependencies = [
  "rand 0.9.2",
  "rayon",
  "regex",
- "semver 1.0.27",
+ "semver 1.0.28",
  "serde",
  "serde_json",
  "serde_with",
@@ -11348,7 +11348,7 @@ dependencies = [
  "agave-feature-set",
  "bincode",
  "rand 0.9.2",
- "semver 1.0.27",
+ "semver 1.0.28",
  "serde",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
@@ -12250,9 +12250,9 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 
 [[package]]
 name = "tokio"
-version = "1.50.0"
+version = "1.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27ad5e34374e03cfffefc301becb44e9dc3c17584f414349ebe29ed26661822d"
+checksum = "2bd1c4c0fc4a7ab90fc15ef6daaa3ec3b893f004f915f2392557ed23237820cd"
 dependencies = [
  "bytes",
  "libc",
@@ -12267,9 +12267,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-macros"
-version = "2.6.0"
+version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af407857209536a95c8e56f8231ef2c2e2aff839b22e07a1ffcbc617e9db9fa5"
+checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
 dependencies = [
  "proc-macro2",
  "quote",
