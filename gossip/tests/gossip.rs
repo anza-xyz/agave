@@ -8,7 +8,7 @@ use {
         cluster_info::ClusterInfo,
         contact_info::{ContactInfo, Protocol},
         crds::Cursor,
-        epoch_specs::EpochSpecs,
+        epoch_specs::{EpochSpecs, TestEpochSpecs},
         gossip_service::GossipService,
         node::Node,
     },
@@ -23,7 +23,6 @@ use {
     solana_transaction::Transaction,
     solana_vote_program::{vote_instruction, vote_state::Vote},
     std::{
-        collections::HashMap,
         net::UdpSocket,
         sync::{
             Arc,
@@ -33,28 +32,6 @@ use {
         time::Duration,
     },
 };
-
-#[derive(Clone)]
-struct TestEpochSpecs {
-    staked_nodes: Arc<HashMap<Pubkey, u64>>,
-    slots_in_epoch: u64,
-    epoch_duration: Duration,
-}
-
-impl EpochSpecs for TestEpochSpecs {
-    fn current_epoch_staked_nodes(&mut self) -> Arc<HashMap<Pubkey, u64>> {
-        Arc::clone(&self.staked_nodes)
-    }
-    fn epoch_duration(&mut self) -> Duration {
-        self.epoch_duration
-    }
-    fn epoch_slots(&mut self) -> u64 {
-        self.slots_in_epoch
-    }
-    fn clone_box(&self) -> Box<dyn EpochSpecs> {
-        Box::new(self.clone())
-    }
-}
 
 fn test_node(exit: Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSocket) {
     let keypair = Arc::new(Keypair::new());

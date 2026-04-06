@@ -216,6 +216,7 @@ mod tests {
         super::*,
         crate::{
             duplicate_shred::{from_shred, tests::new_rand_shred},
+            epoch_specs::TestEpochSpecs,
             protocol::DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
         },
         crossbeam_channel::unbounded,
@@ -234,27 +235,6 @@ mod tests {
         solana_time_utils::timestamp,
         std::time::Duration,
     };
-
-    #[derive(Clone)]
-    struct TestEpochSpecs {
-        epoch_duration: Duration,
-        slots_in_epoch: u64,
-    }
-
-    impl EpochSpecs for TestEpochSpecs {
-        fn current_epoch_staked_nodes(&mut self) -> Arc<HashMap<Pubkey, u64>> {
-            Arc::new(HashMap::new())
-        }
-        fn epoch_duration(&mut self) -> Duration {
-            self.epoch_duration
-        }
-        fn epoch_slots(&mut self) -> u64 {
-            self.slots_in_epoch
-        }
-        fn clone_box(&self) -> Box<dyn EpochSpecs> {
-            Box::new(self.clone())
-        }
-    }
 
     fn create_duplicate_proof(
         keypair: Arc<Keypair>,
@@ -322,6 +302,7 @@ mod tests {
             .working_bank()
             .get_slots_in_epoch(0);
         let epoch_specs = TestEpochSpecs {
+            staked_nodes: Arc::new(HashMap::new()),
             epoch_duration: Duration::from_millis(slots_in_epoch * 400),
             slots_in_epoch,
         };
@@ -425,6 +406,7 @@ mod tests {
             .working_bank()
             .get_slots_in_epoch(0);
         let epoch_specs = TestEpochSpecs {
+            staked_nodes: Arc::new(HashMap::new()),
             epoch_duration: Duration::from_millis(slots_in_epoch * 400),
             slots_in_epoch,
         };
