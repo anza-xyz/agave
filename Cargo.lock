@@ -142,7 +142,7 @@ dependencies = [
  "nix",
  "reqwest 0.12.28",
  "scopeguard",
- "semver 1.0.27",
+ "semver 1.0.28",
  "serde",
  "serde_yaml",
  "solana-clap-utils",
@@ -285,7 +285,7 @@ dependencies = [
  "lz4",
  "rand 0.9.2",
  "regex",
- "semver 1.0.27",
+ "semver 1.0.28",
  "solana-accounts-db",
  "solana-clock",
  "solana-genesis-config",
@@ -6076,7 +6076,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
- "semver 1.0.27",
+ "semver 1.0.28",
 ]
 
 [[package]]
@@ -6329,9 +6329,9 @@ dependencies = [
 
 [[package]]
 name = "semver"
-version = "1.0.27"
+version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
+checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "semver-parser"
@@ -7510,7 +7510,7 @@ dependencies = [
  "humantime",
  "indicatif",
  "pretty-hex",
- "semver 1.0.27",
+ "semver 1.0.28",
  "serde",
  "serde_json",
  "solana-account 4.1.0",
@@ -9649,7 +9649,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "parking_lot 0.12.3",
- "semver 1.0.27",
+ "semver 1.0.28",
  "serial_test",
  "solana-derivation-path",
  "solana-offchain-message",
@@ -9816,7 +9816,7 @@ dependencies = [
  "log",
  "reqwest 0.12.28",
  "reqwest-middleware",
- "semver 1.0.27",
+ "semver 1.0.28",
  "serde",
  "serde_json",
  "solana-account 4.1.0",
@@ -9901,7 +9901,7 @@ dependencies = [
  "base64 0.22.1",
  "bs58",
  "const_format",
- "semver 1.0.27",
+ "semver 1.0.28",
  "serde",
  "serde_json",
  "solana-account-decoder-client-types",
@@ -9998,7 +9998,7 @@ dependencies = [
  "rand 0.9.2",
  "rayon",
  "regex",
- "semver 1.0.27",
+ "semver 1.0.28",
  "serde",
  "serde_json",
  "serde_with",
@@ -11348,7 +11348,7 @@ dependencies = [
  "agave-feature-set",
  "bincode",
  "rand 0.9.2",
- "semver 1.0.27",
+ "semver 1.0.28",
  "serde",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
