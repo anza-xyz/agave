@@ -521,20 +521,27 @@ fn process_batches(
         // `BankWithScheduler::schedule_transaction_executions()`.
         schedule_batches_for_execution(bank, locked_entries)
     } else {
-        debug!(
-            "process_batches()/execute_batches({} batches)",
-            locked_entries.len()
-        );
-        execute_batches(
-            bank,
-            replay_tx_thread_pool,
-            locked_entries,
-            transaction_status_sender,
-            replay_vote_sender,
-            batch_execution_timing,
-            log_messages_bytes_limit,
-            prioritization_fee_cache,
-        )
+        #[cfg(not(feature = "dev-context-only-utils"))]
+        {
+            unreachable!("Bank without scheduler should only be reachable in test code");
+        }
+        #[cfg(feature = "dev-context-only-utils")]
+        {
+            debug!(
+                "process_batches()/execute_batches({} batches)",
+                locked_entries.len()
+            );
+            execute_batches(
+                bank,
+                replay_tx_thread_pool,
+                locked_entries,
+                transaction_status_sender,
+                replay_vote_sender,
+                batch_execution_timing,
+                log_messages_bytes_limit,
+                prioritization_fee_cache,
+            )
+        }
     }
 }
 
