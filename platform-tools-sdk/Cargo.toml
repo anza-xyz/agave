@@ -45,7 +45,7 @@ log = "0.4.29"
 predicates = "3.1"
 regex = "1.12.3"
 reqwest = { version = "0.12.28", default-features = false }
-semver = "1.0.27"
+semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serial_test = "3.4.0"
 tar = "0.4.45"
