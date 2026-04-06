@@ -9193,15 +9193,25 @@ name = "solana-svm-test-harness-fixture"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-precompiles",
  "bincode",
  "prost 0.14.3",
  "prost-build 0.14.3",
  "protosol",
  "solana-account 4.3.0",
+ "solana-address-lookup-table-interface",
+ "solana-fee-structure",
+ "solana-hash 4.3.0",
  "solana-instruction",
  "solana-instruction-error",
+ "solana-message",
  "solana-pubkey 4.2.0",
+ "solana-signature",
+ "solana-stable-layout",
  "solana-svm-feature-set",
+ "solana-svm-transaction",
+ "solana-transaction",
+ "solana-transaction-error",
  "thiserror 2.0.18",
 ]
 

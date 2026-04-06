@@ -88,6 +88,7 @@ signal-hook = "0.4.4"
 solana-account = "4.3.0"
 solana-account-decoder = { path = "../account-decoder", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-accounts-db = { path = "../accounts-db", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
+solana-address-lookup-table-interface = "3.0.1"
 solana-bpf-loader-program = { path = "../programs/bpf_loader", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-builtins = { path = "../builtins", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-clap-utils = { path = "../clap-utils", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
@@ -107,6 +108,7 @@ solana-entry = { path = "../entry", version = "=4.1.0-alpha.0", features = ["aga
 solana-faucet = { path = "../faucet", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-feature-gate-interface = "4.0.0"
 solana-fee-calculator = "3.2.0"
+solana-fee-structure = "3.0.0"
 solana-genesis = { path = "../genesis", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-genesis-config = "4.0.0"
 solana-genesis-utils = { path = "../genesis-utils", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
@@ -142,6 +144,7 @@ solana-sdk-ids = "3.1.0"
 solana-shred-version = "3.0.1"
 solana-signature = { version = "3.4.0", default-features = false }
 solana-signer = "3.0.0"
+solana-stable-layout = "3.0.1"
 solana-stake-interface = "3.0.0"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "../streamer", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
@@ -163,6 +166,7 @@ solana-tps-client = { path = "../tps-client", version = "=4.1.0-alpha.0", featur
 solana-tpu-client = { path = "../tpu-client", version = "=4.1.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-transaction = "4.1.0"
 solana-transaction-context = { path = "../transaction-context", version = "=4.1.0-alpha.0", features = ["agave-unstable-api", "bincode"] }
+solana-transaction-error = "3.1.0"
 solana-transaction-status = { path = "../transaction-status", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-version = { path = "../version", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
