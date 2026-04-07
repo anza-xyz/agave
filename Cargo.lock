@@ -7260,10 +7260,12 @@ dependencies = [
 name = "solana-bpf-loader-program-tests"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-feature-set",
  "assert_matches",
  "bincode",
  "solana-account 4.2.0",
  "solana-bpf-loader-program",
+ "solana-clock",
  "solana-instruction",
  "solana-keypair",
  "solana-loader-v3-interface",
