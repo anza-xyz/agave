@@ -388,7 +388,10 @@ impl TransactionFrame {
 mod tests {
     use {
         super::*,
-        solana_message::{AddressLookupTableAccount, Message, MessageHeader, VersionedMessage, v0},
+        solana_message::{
+            AddressLookupTableAccount, Message, MessageHeader, VersionedMessage,
+            compiled_instruction::CompiledInstruction, v0, v1,
+        },
         solana_pubkey::Pubkey,
         solana_signature::Signature,
         solana_system_interface::instruction::{self as system_instruction, SystemInstruction},
@@ -544,6 +547,43 @@ mod tests {
                 )
                 .unwrap(),
             ),
+        }
+    }
+
+    fn simple_v1_transaction() -> VersionedTransaction {
+        let payer = Pubkey::new_unique();
+        let program = Pubkey::new_unique();
+        let other = Pubkey::new_unique();
+
+        VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::V1(v1::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                config: v1::TransactionConfig {
+                    priority_fee: Some(123),
+                    compute_unit_limit: Some(456),
+                    loaded_accounts_data_size_limit: Some(789),
+                    heap_size: Some(1024),
+                },
+                lifetime_specifier: Hash::default(),
+                account_keys: vec![payer, other, program],
+                instructions: vec![
+                    CompiledInstruction {
+                        program_id_index: 2,
+                        accounts: vec![0, 1],
+                        data: vec![10, 11, 12],
+                    },
+                    CompiledInstruction {
+                        program_id_index: 2,
+                        accounts: vec![],
+                        data: vec![99],
+                    },
+                ],
+            }),
         }
     }
 
@@ -787,5 +827,116 @@ mod tests {
 
             assert!(iter.next().is_none());
         }
+    }
+
+    #[test]
+    fn test_v1_transaction_frame_parses() {
+        let tx = simple_v1_transaction();
+        let bytes = wincode::serialize(&tx).unwrap();
+
+        let frame = TransactionFrame::try_new(&bytes).unwrap();
+
+        assert!(matches!(frame.version(), TransactionVersion::V1));
+        assert_eq!(frame.num_signatures(), 1);
+        assert_eq!(frame.num_required_signatures(), 1);
+        assert_eq!(frame.num_readonly_signed_static_accounts(), 0);
+        assert_eq!(frame.num_readonly_unsigned_static_accounts(), 1);
+        assert_eq!(frame.num_static_account_keys(), 3);
+        assert_eq!(frame.num_instructions(), 2);
+
+        // txv1 should not have ALTs
+        assert_eq!(frame.num_address_table_lookups(), 0);
+        assert_eq!(frame.total_writable_lookup_accounts(), 0);
+        assert_eq!(frame.total_readonly_lookup_accounts(), 0);
+
+        // new v1-only frame metadata
+        assert!(frame.signatures_offset() > frame.message_offset());
+    }
+
+    #[test]
+    fn test_v1_is_not_legacy_or_v0() {
+        let tx = simple_v1_transaction();
+        let bytes = wincode::serialize(&tx).unwrap();
+
+        assert!(!TransactionFrame::is_wire_transaction_legacy_and_v0(&bytes).unwrap());
+    }
+
+    #[test]
+    fn test_legacy_is_legacy_or_v0() {
+        let payer = Pubkey::new_unique();
+        let tx = VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::Legacy(solana_message::Message::new(&[], Some(&payer))),
+        };
+        let bytes = wincode::serialize(&tx).unwrap();
+
+        assert!(TransactionFrame::is_wire_transaction_legacy_and_v0(&bytes).unwrap());
+    }
+
+    #[test]
+    fn test_is_wire_transaction_legacy_and_v0_empty_bytes() {
+        assert!(matches!(
+            TransactionFrame::is_wire_transaction_legacy_and_v0(&[]),
+            Err(TransactionViewError::ParseError),
+        ));
+    }
+
+    #[test]
+    fn test_v1_rejects_unknown_version() {
+        let tx = simple_v1_transaction();
+        let mut bytes = wincode::serialize(&tx).unwrap();
+
+        // First byte is version-tagged for versioned messages.
+        // Flip underlying version to an unsupported value.
+        bytes[0] = solana_message::MESSAGE_VERSION_PREFIX | 2;
+
+        assert!(matches!(
+            TransactionFrame::try_new(&bytes),
+            Err(TransactionViewError::ParseError),
+        ));
+    }
+
+    #[test]
+    fn test_v1_rejects_trailing_byte() {
+        let tx = simple_v1_transaction();
+        let mut bytes = wincode::serialize(&tx).unwrap();
+        bytes.push(0);
+
+        assert!(matches!(
+            TransactionFrame::try_new(&bytes),
+            Err(TransactionViewError::ParseError),
+        ));
+    }
+
+    #[test]
+    fn test_v1_rejects_truncated_bytes() {
+        let tx = simple_v1_transaction();
+        let bytes = wincode::serialize(&tx).unwrap();
+
+        assert!(matches!(
+            TransactionFrame::try_new(&bytes[..bytes.len() - 1]),
+            Err(TransactionViewError::ParseError),
+        ));
+    }
+
+    #[test]
+    fn test_v1_instruction_iteration() {
+        let tx = simple_v1_transaction();
+        let bytes = wincode::serialize(&tx).unwrap();
+        let frame = TransactionFrame::try_new(&bytes).unwrap();
+
+        let mut iter = unsafe { frame.instructions_iter(&bytes) };
+
+        let ix0 = iter.next().unwrap();
+        assert_eq!(ix0.program_id_index, 2);
+        assert_eq!(ix0.accounts, &[0, 1]);
+        assert_eq!(ix0.data, &[10, 11, 12]);
+
+        let ix1 = iter.next().unwrap();
+        assert_eq!(ix1.program_id_index, 2);
+        assert_eq!(ix1.accounts, &[] as &[u8]);
+        assert_eq!(ix1.data, &[99]);
+
+        assert!(iter.next().is_none());
     }
 }
