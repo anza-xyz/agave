@@ -73,7 +73,7 @@ dependencies = [
  "solana-bls-signatures",
  "solana-signer-store",
  "thiserror 2.0.18",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -368,7 +368,7 @@ dependencies = [
  "solana-vote",
  "solana-vote-program",
  "thiserror 2.0.18",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -378,7 +378,7 @@ dependencies = [
  "agave-feature-set",
  "log",
  "serde",
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-bls-signatures",
  "solana-clock",
  "solana-epoch-schedule",
@@ -386,7 +386,7 @@ dependencies = [
  "solana-pubkey 4.2.0",
  "solana-signer-store",
  "thiserror 2.0.18",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -5881,7 +5881,7 @@ checksum = "a9cf16495d9eb53e3d04e72366a33bb1c20c24e78c171d8b8f5978357b63ae95"
 dependencies = [
  "bincode",
  "serde_core",
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-program-error",
  "solana-program-memory",
 ]
@@ -5892,7 +5892,7 @@ version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc141b940560430425ebaadb7645496c45f6a10fad9911d719bd03eab7f4d422"
 dependencies = [
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-program-error",
 ]
 
@@ -5955,14 +5955,14 @@ version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2ecac8e1b7f74c2baa9e774c42817e3e75b20787134b76cc4d45e8a604488f5"
 dependencies = [
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
 ]
 
 [[package]]
 name = "solana-address"
-version = "2.5.0"
+version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f08236dacd0e6dc8234becef58e27c8567856644ef509d7e97957d55a91dc72"
+checksum = "f1384b52c435a750cc9c538760fc7bb472fd78e65a9900a2d07312c5bb335b72"
 dependencies = [
  "borsh",
  "bytemuck",
@@ -5980,7 +5980,7 @@ dependencies = [
  "solana-program-error",
  "solana-sanitize",
  "solana-sha256-hasher",
- "wincode",
+ "wincode 0.5.1",
 ]
 
 [[package]]
@@ -6637,7 +6637,7 @@ dependencies = [
  "tokio",
  "tokio-util 0.7.18",
  "trees",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -6776,7 +6776,7 @@ dependencies = [
  "num_cpus",
  "rayon",
  "smallvec",
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-bls-signatures",
  "solana-clock",
  "solana-hash 4.2.0",
@@ -6791,7 +6791,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-error",
  "thiserror 2.0.18",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -6825,7 +6825,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ee8beac9bff4db9225e57d532d169b0be5e447f1e6601a2f50f27a01bf5518f"
 dependencies = [
  "siphasher 0.3.11",
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-hash 4.2.0",
 ]
 
@@ -6932,7 +6932,7 @@ dependencies = [
  "log",
  "serde",
  "serde_derive",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -7087,7 +7087,7 @@ dependencies = [
  "solana-vote-program",
  "static_assertions",
  "thiserror 2.0.18",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -7123,7 +7123,7 @@ dependencies = [
  "serde_derive",
  "solana-atomic-u64",
  "solana-sanitize",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -7149,7 +7149,7 @@ dependencies = [
  "solana-define-syscall 5.0.0",
  "solana-instruction-error",
  "solana-pubkey 4.2.0",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -7204,7 +7204,7 @@ dependencies = [
  "five8",
  "five8_core",
  "rand 0.9.2",
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-derivation-path",
  "solana-seed-derivable",
  "solana-seed-phrase",
@@ -7340,7 +7340,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "trees",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -7431,14 +7431,14 @@ dependencies = [
  "lazy_static",
  "serde",
  "serde_derive",
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-hash 4.2.0",
  "solana-instruction",
  "solana-sanitize",
  "solana-sdk-ids",
  "solana-short-vec",
  "solana-transaction-error",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -7509,7 +7509,7 @@ dependencies = [
  "solana-hash 4.2.0",
  "solana-pubkey 4.2.0",
  "solana-sha256-hasher",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -7522,7 +7522,7 @@ dependencies = [
  "solana-hash 4.2.0",
  "solana-nonce",
  "solana-sdk-ids",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -7837,7 +7837,7 @@ dependencies = [
  "solana-account 4.1.0",
  "solana-account-info",
  "solana-accounts-db",
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-banks-client",
  "solana-banks-interface",
  "solana-banks-server",
@@ -7898,7 +7898,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7db719574990de7e8b0f55a8593ac92a5ccb42c8ce67b3e4bf05b139d5d9ee71"
 dependencies = [
  "rand 0.9.2",
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
 ]
 
 [[package]]
@@ -8170,7 +8170,7 @@ dependencies = [
  "serde",
  "serde_json",
  "solana-account-decoder-client-types",
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-clock",
  "solana-commitment-config",
  "solana-fee-calculator",
@@ -8309,7 +8309,7 @@ dependencies = [
  "symlink",
  "tempfile",
  "thiserror 2.0.18",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -8544,7 +8544,7 @@ name = "solana-sbf-rust-direct-account-pointers"
 version = "4.1.0-alpha.0"
 dependencies = [
  "solana-account-view",
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-cpi",
  "solana-program-entrypoint",
  "solana-program-error",
@@ -9086,7 +9086,7 @@ version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "def234c1956ff616d46c9dd953f251fa7096ddbaa6d52b165218de97882b7280"
 dependencies = [
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
 ]
 
 [[package]]
@@ -9253,7 +9253,7 @@ dependencies = [
  "serde-big-array",
  "serde_derive",
  "solana-sanitize",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -9629,11 +9629,11 @@ dependencies = [
  "num-traits",
  "serde",
  "serde_derive",
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-instruction",
  "solana-msg",
  "solana-program-error",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -9713,7 +9713,7 @@ version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17358d1e9a13e5b9c2264d301102126cf11a47fd394cdf3dec174fe7bc96e1de"
 dependencies = [
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-sdk-ids",
 ]
 
@@ -9850,7 +9850,7 @@ checksum = "9dc0d18f4f109cc1777459271800755705ca6d1aba319934611e1d4f6bb162b5"
 dependencies = [
  "serde",
  "serde_derive",
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-hash 4.2.0",
  "solana-instruction",
  "solana-instruction-error",
@@ -9861,7 +9861,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-transaction-error",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -9994,7 +9994,7 @@ dependencies = [
  "solana-time-utils",
  "solana-transaction-error",
  "thiserror 2.0.18",
- "wincode",
+ "wincode 0.4.9",
 ]
 
 [[package]]
@@ -10230,7 +10230,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "sha3",
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-derivation-path",
  "solana-instruction",
  "solana-sdk-ids",
@@ -10421,7 +10421,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "num_enum",
- "solana-address 2.5.0",
+ "solana-address 2.6.0",
  "solana-instruction",
  "solana-nullable",
  "solana-program-error",
@@ -11662,6 +11662,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "solana-short-vec",
+ "thiserror 2.0.18",
+ "wincode-derive",
+]
+
+[[package]]
+name = "wincode"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a61f8f0a55eb6cae5d7b7ad2eca536a944deb9722a948525181069064ecd1abc"
+dependencies = [
+ "pastey",
+ "proc-macro2",
+ "quote",
  "thiserror 2.0.18",
  "wincode-derive",
 ]
