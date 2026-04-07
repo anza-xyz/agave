@@ -7105,10 +7105,8 @@ dependencies = [
 name = "solana-faucet"
 version = "4.1.0-alpha.0"
 dependencies = [
- "bincode",
  "crossbeam-channel",
  "log",
- "serde",
  "solana-cli-output",
  "solana-hash 4.2.0",
  "solana-instruction",
@@ -7125,6 +7123,7 @@ dependencies = [
  "spl-memo-interface",
  "thiserror 2.0.18",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
