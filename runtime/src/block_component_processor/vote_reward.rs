@@ -339,6 +339,8 @@ mod tests {
         solana_rent::Rent,
         solana_signer::Signer,
         solana_signer_store::encode_base2,
+        solana_vote_interface::state::VoteStateVersions,
+        std::{collections::HashMap, sync::Arc},
     };
 
     fn get_vote_state_v4(bank: &Bank, vote_pubkey: &Pubkey) -> VoteStateV4 {
@@ -698,5 +700,121 @@ mod tests {
                 assert!(vote_state.epoch_credits.is_empty());
             }
         }
+    }
+
+    fn find_leader(validators: &[ValidatorVoteKeypairs]) -> SlotLeader {
+        let node_pubkey = validators[0].node_keypair.pubkey();
+        let vote_pubkey = validators[0].vote_keypair.pubkey();
+        SlotLeader {
+            id: node_pubkey,
+            vote_address: vote_pubkey,
+        }
+    }
+
+    fn ag_vote_rewards(pay_leader: bool) {
+        let num_validators = 3;
+        let validator_keypairs = (0..num_validators)
+            .map(|_| ValidatorVoteKeypairs::new_rand())
+            .collect::<Vec<_>>();
+        let per_validator_stake = LAMPORTS_PER_SOL;
+        let mut genesis_config_info = create_genesis_config_with_alpenglow_vote_accounts(
+            1_000_000_000,
+            &validator_keypairs,
+            vec![per_validator_stake; validator_keypairs.len()],
+        );
+        genesis_config_info.genesis_config.epoch_schedule = EpochSchedule::without_warmup();
+        genesis_config_info.genesis_config.rent = Rent::default();
+
+        let (bank_epoch0, _bank_forks) =
+            Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config);
+        assert_eq!(bank_epoch0.epoch(), 0);
+
+        let epoch1_slot = bank_epoch0.epoch_schedule.get_first_slot_in_epoch(1);
+        let bank_epoch1 = Arc::new(Bank::new_from_parent(
+            bank_epoch0.clone(),
+            SlotLeader::new_unique(),
+            epoch1_slot,
+        ));
+        assert_eq!(bank_epoch1.epoch(), 1);
+
+        let epoch2_slot = bank_epoch1.epoch_schedule.get_first_slot_in_epoch(2);
+        let leader = if pay_leader {
+            find_leader(&validator_keypairs)
+        } else {
+            SlotLeader::new_unique()
+        };
+        let bank_epoch2 = Arc::new(Bank::new_from_parent(
+            bank_epoch1.clone(),
+            leader,
+            epoch2_slot,
+        ));
+        assert_eq!(bank_epoch2.epoch(), 2);
+
+        let validators_to_reward = validator_keypairs
+            .iter()
+            .map(|k| k.vote_keypair.pubkey())
+            .collect::<Vec<_>>();
+        calculate_and_pay_voting_reward_and_update_vote_state(
+            &bank_epoch2,
+            Some((bank_epoch1.slot(), validators_to_reward)),
+            None,
+        )
+        .unwrap();
+
+        let vote_accounts = bank_epoch2.vote_accounts();
+        let rewarded_validators = validator_keypairs
+            .iter()
+            .map(|keypair| {
+                let stake_pubkey = keypair.stake_keypair.pubkey();
+                let stake_account = bank_epoch2.get_account(&stake_pubkey).unwrap();
+                let vote_pubkey = keypair.vote_keypair.pubkey();
+                let (_stake, account) = vote_accounts.get(&vote_pubkey).unwrap();
+                let data = account.account().data();
+                let vote_state_versions = bincode::deserialize(data).unwrap();
+                let VoteStateVersions::V4(v4) = vote_state_versions else {
+                    panic!();
+                };
+                assert_eq!(v4.epoch_credits.len(), 1);
+                let expected_reward = v4.epoch_credits[0].1;
+                (stake_pubkey, (stake_account.lamports(), expected_reward))
+            })
+            .collect::<HashMap<_, _>>();
+
+        let epoch3_slot = bank_epoch2.epoch_schedule.get_first_slot_in_epoch(3);
+        let bank_epoch3 = Bank::new_from_parent(
+            bank_epoch2.clone(),
+            find_leader(&validator_keypairs),
+            epoch3_slot,
+        );
+        assert_eq!(bank_epoch3.epoch(), 3);
+
+        // Need to progress banks a few times for the rewards to be paid.
+        let mut prev_bank = Arc::new(bank_epoch3);
+        for i in 0..10 {
+            let bank = Arc::new(Bank::new_from_parent(
+                prev_bank.clone(),
+                SlotLeader::new_unique(),
+                prev_bank.slot() + 1 + i,
+            ));
+            prev_bank = bank;
+        }
+
+        for (stake_pubkey, (prev_lamports, expected_reward)) in rewarded_validators {
+            let stake_account = prev_bank.get_account(&stake_pubkey).unwrap();
+            let current_lamports = stake_account.lamports();
+            assert_eq!(prev_lamports + expected_reward, current_lamports);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn ag_vote_rewards_leader() {
+        ag_vote_rewards(true);
+    }
+
+    #[test]
+    #[ignore]
+    fn ag_vote_rewards_no_leader() {
+        ag_vote_rewards(false);
     }
 }
