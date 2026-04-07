@@ -1,6 +1,6 @@
 use {
-    solana_account::AccountSharedData, solana_pubkey::Pubkey, solana_runtime::bank::Bank,
-    std::collections::HashMap,
+    solana_account::AccountSharedData, solana_accounts_db::accounts_db::PopulateReadCache,
+    solana_pubkey::Pubkey, solana_runtime::bank::Bank, std::collections::HashMap,
 };
 
 pub(crate) fn get_account_from_overwrites_or_bank(
@@ -12,10 +12,11 @@ pub(crate) fn get_account_from_overwrites_or_bank(
     overwrite_accounts
         .and_then(|accounts| accounts.get(pubkey).cloned())
         .or_else(|| {
-            if rpc_populate_read_only_accounts_cache {
-                bank.get_account(pubkey)
+            let populate = if rpc_populate_read_only_accounts_cache {
+                PopulateReadCache::True
             } else {
-                bank.get_account_do_not_populate_read_cache(pubkey)
-            }
+                PopulateReadCache::False
+            };
+            bank.get_account_with_cache_option(pubkey, populate)
         })
 }
