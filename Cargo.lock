@@ -330,6 +330,7 @@ dependencies = [
  "solana-system-interface 3.1.0",
  "solana-transaction",
  "solana-transaction-context",
+ "wincode",
 ]
 
 [[package]]

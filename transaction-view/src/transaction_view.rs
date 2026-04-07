@@ -371,7 +371,7 @@ mod tests {
     };
 
     fn verify_transaction_view_frame(tx: &VersionedTransaction) {
-        let bytes = bincode::serialize(tx).unwrap();
+        let bytes = wincode::serialize(tx).unwrap();
         let view = TransactionView::try_new_unsanitized(bytes.as_ref()).unwrap();
 
         assert_eq!(view.num_signatures(), tx.signatures.len() as u8);

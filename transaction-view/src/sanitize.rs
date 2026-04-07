@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn test_sanitize_multiple_transfers() {
         let transaction = multiple_transfers();
-        let data = bincode::serialize(&transaction).unwrap();
+        let data = wincode::serialize(&transaction).unwrap();
         let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
         assert!(view.sanitize(true).is_ok());
     }
@@ -208,7 +208,7 @@ mod tests {
                 (0..3).map(|_| Pubkey::new_unique()).collect(),
                 vec![],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_signatures(&view),
@@ -228,7 +228,7 @@ mod tests {
                 (0..3).map(|_| Pubkey::new_unique()).collect(),
                 vec![],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_signatures(&view),
@@ -248,7 +248,7 @@ mod tests {
                 (0..1).map(|_| Pubkey::new_unique()).collect(),
                 vec![],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_signatures(&view),
@@ -273,7 +273,7 @@ mod tests {
                     readonly_indexes: vec![6, 7, 8],
                 }],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_signatures(&view),
@@ -296,7 +296,7 @@ mod tests {
                 (0..2).map(|_| Pubkey::new_unique()).collect(),
                 vec![],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_account_access(&view),
@@ -316,7 +316,7 @@ mod tests {
                 (0..2).map(|_| Pubkey::new_unique()).collect(),
                 vec![],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_account_access(&view),
@@ -348,7 +348,7 @@ mod tests {
                     },
                 ],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_account_access(&view),
@@ -396,7 +396,7 @@ mod tests {
                 account_keys.clone(),
                 valid_instructions.clone(),
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert!(sanitize_instructions(&view, true).is_ok());
 
@@ -407,7 +407,7 @@ mod tests {
                 valid_instructions.clone(),
                 atls.clone(),
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert!(sanitize_instructions(&view, true).is_ok());
         }
@@ -423,7 +423,7 @@ mod tests {
                     account_keys.clone(),
                     instructions,
                 );
-                let data = bincode::serialize(&transaction).unwrap();
+                let data = wincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
                     sanitize_instructions(&view, true),
@@ -442,7 +442,7 @@ mod tests {
                     instructions,
                     atls.clone(),
                 );
-                let data = bincode::serialize(&transaction).unwrap();
+                let data = wincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
                     sanitize_instructions(&view, true),
@@ -460,7 +460,7 @@ mod tests {
                     account_keys.clone(),
                     instructions,
                 );
-                let data = bincode::serialize(&transaction).unwrap();
+                let data = wincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
                     sanitize_instructions(&view, true),
@@ -480,7 +480,7 @@ mod tests {
                     account_keys.clone(),
                     instructions,
                 );
-                let data = bincode::serialize(&transaction).unwrap();
+                let data = wincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
                     sanitize_instructions(&view, true),
@@ -504,7 +504,7 @@ mod tests {
                     instructions,
                     atls.clone(),
                 );
-                let data = bincode::serialize(&transaction).unwrap();
+                let data = wincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
                     sanitize_instructions(&view, true),
@@ -527,7 +527,7 @@ mod tests {
                 account_keys.clone(),
                 too_many_instructions.clone(),
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_instructions(&view, true),
@@ -541,7 +541,7 @@ mod tests {
                 too_many_instructions.clone(),
                 atls.clone(),
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_instructions(&view, true),
@@ -561,7 +561,7 @@ mod tests {
                 account_keys.clone(),
                 vec![instr],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_instructions(&view, true),
@@ -580,7 +580,7 @@ mod tests {
                 account_keys.clone(),
                 vec![instr],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             // Exactly 255 accounts must pass sanitization.
             assert!(sanitize_instructions(&view, true).is_ok());
@@ -623,7 +623,7 @@ mod tests {
                 transaction.message.address_table_lookups().unwrap().len(),
                 2
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_address_table_lookups(&view),

@@ -34,8 +34,9 @@ solana-keypair = { workspace = true }
 solana-message = { workspace = true, features = ["serde"] }
 solana-signature = { workspace = true, features = ["serde"] }
 solana-signer = { workspace = true }
-solana-system-interface = { workspace = true, features = ["bincode"] }
+solana-system-interface = { workspace = true, features = ["wincode"] }
 solana-transaction = { workspace = true, features = ["serde", "wincode"] }
+wincode = { workspace = true }
 
 [[bench]]
 name = "bytes"

@@ -283,7 +283,7 @@ mod tests {
     };
 
     fn verify_transaction_view_frame(tx: &VersionedTransaction) {
-        let bytes = bincode::serialize(tx).unwrap();
+        let bytes = wincode::serialize(tx).unwrap();
         let frame = TransactionFrame::try_new(&bytes).unwrap();
 
         assert_eq!(frame.signature.num_signatures, tx.signatures.len() as u8);
@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn test_trailing_byte() {
         let tx = simple_transfer();
-        let mut bytes = bincode::serialize(&tx).unwrap();
+        let mut bytes = wincode::serialize(&tx).unwrap();
         bytes.push(0);
         assert!(TransactionFrame::try_new(&bytes).is_err());
     }
@@ -465,14 +465,14 @@ mod tests {
     #[test]
     fn test_insufficient_bytes() {
         let tx = simple_transfer();
-        let bytes = bincode::serialize(&tx).unwrap();
+        let bytes = wincode::serialize(&tx).unwrap();
         assert!(TransactionFrame::try_new(&bytes[..bytes.len().wrapping_sub(1)]).is_err());
     }
 
     #[test]
     fn test_signature_overflow() {
         let tx = simple_transfer();
-        let mut bytes = bincode::serialize(&tx).unwrap();
+        let mut bytes = wincode::serialize(&tx).unwrap();
         // Set the number of signatures to u16::MAX
         bytes[0] = 0xff;
         bytes[1] = 0xff;
@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn test_account_key_overflow() {
         let tx = simple_transfer();
-        let mut bytes = bincode::serialize(&tx).unwrap();
+        let mut bytes = wincode::serialize(&tx).unwrap();
         // Set the number of accounts to u16::MAX
         let offset = 1 + core::mem::size_of::<Signature>() + 3;
         bytes[offset] = 0xff;
@@ -495,7 +495,7 @@ mod tests {
     #[test]
     fn test_instructions_overflow() {
         let tx = simple_transfer();
-        let mut bytes = bincode::serialize(&tx).unwrap();
+        let mut bytes = wincode::serialize(&tx).unwrap();
         // Set the number of instructions to u16::MAX
         let offset = 1
             + core::mem::size_of::<Signature>()
@@ -513,7 +513,7 @@ mod tests {
     fn test_alt_overflow() {
         let tx = simple_transfer_v0();
         let ix_bytes = tx.message.instructions()[0].data.len();
-        let mut bytes = bincode::serialize(&tx).unwrap();
+        let mut bytes = wincode::serialize(&tx).unwrap();
         // Set the number of instructions to u16::MAX
         let offset = 1 // byte for num signatures
             + core::mem::size_of::<Signature>() // signature
@@ -535,7 +535,7 @@ mod tests {
     #[test]
     fn test_basic_accessors() {
         let tx = simple_transfer();
-        let bytes = bincode::serialize(&tx).unwrap();
+        let bytes = wincode::serialize(&tx).unwrap();
         let frame = TransactionFrame::try_new(&bytes).unwrap();
 
         assert_eq!(frame.num_signatures(), 1);
@@ -563,7 +563,7 @@ mod tests {
     #[test]
     fn test_instructions_iter_empty() {
         let tx = minimally_sized_transaction();
-        let bytes = bincode::serialize(&tx).unwrap();
+        let bytes = wincode::serialize(&tx).unwrap();
         let frame = TransactionFrame::try_new(&bytes).unwrap();
 
         // SAFETY: `bytes` is the same slice used to create `frame`.
@@ -576,7 +576,7 @@ mod tests {
     #[test]
     fn test_instructions_iter_single() {
         let tx = simple_transfer();
-        let bytes = bincode::serialize(&tx).unwrap();
+        let bytes = wincode::serialize(&tx).unwrap();
         let frame = TransactionFrame::try_new(&bytes).unwrap();
 
         // SAFETY: `bytes` is the same slice used to create `frame`.
@@ -587,7 +587,7 @@ mod tests {
             assert_eq!(ix.accounts, &[0, 1]);
             assert_eq!(
                 ix.data,
-                &bincode::serialize(&SystemInstruction::Transfer { lamports: 1 }).unwrap()
+                &wincode::serialize(&SystemInstruction::Transfer { lamports: 1 }).unwrap()
             );
             assert!(iter.next().is_none());
         }
@@ -596,7 +596,7 @@ mod tests {
     #[test]
     fn test_instructions_iter_multiple() {
         let tx = multiple_transfers();
-        let bytes = bincode::serialize(&tx).unwrap();
+        let bytes = wincode::serialize(&tx).unwrap();
         let frame = TransactionFrame::try_new(&bytes).unwrap();
 
         // SAFETY: `bytes` is the same slice used to create `frame`.
@@ -607,14 +607,14 @@ mod tests {
             assert_eq!(ix.accounts, &[0, 1]);
             assert_eq!(
                 ix.data,
-                &bincode::serialize(&SystemInstruction::Transfer { lamports: 1 }).unwrap()
+                &wincode::serialize(&SystemInstruction::Transfer { lamports: 1 }).unwrap()
             );
             let ix = iter.next().unwrap();
             assert_eq!(ix.program_id_index, 3);
             assert_eq!(ix.accounts, &[0, 2]);
             assert_eq!(
                 ix.data,
-                &bincode::serialize(&SystemInstruction::Transfer { lamports: 1 }).unwrap()
+                &wincode::serialize(&SystemInstruction::Transfer { lamports: 1 }).unwrap()
             );
             assert!(iter.next().is_none());
         }
@@ -623,7 +623,7 @@ mod tests {
     #[test]
     fn test_address_table_lookup_iter_empty() {
         let tx = simple_transfer();
-        let bytes = bincode::serialize(&tx).unwrap();
+        let bytes = wincode::serialize(&tx).unwrap();
         let frame = TransactionFrame::try_new(&bytes).unwrap();
 
         // SAFETY: `bytes` is the same slice used to create `frame`.
@@ -636,7 +636,7 @@ mod tests {
     #[test]
     fn test_address_table_lookup_iter_single() {
         let tx = v0_with_single_lookup();
-        let bytes = bincode::serialize(&tx).unwrap();
+        let bytes = wincode::serialize(&tx).unwrap();
         let frame = TransactionFrame::try_new(&bytes).unwrap();
 
         let atls_actual = tx.message.address_table_lookups().unwrap();
@@ -654,7 +654,7 @@ mod tests {
     #[test]
     fn test_address_table_lookup_iter_multiple() {
         let tx = v0_with_multiple_lookups();
-        let bytes = bincode::serialize(&tx).unwrap();
+        let bytes = wincode::serialize(&tx).unwrap();
         let frame = TransactionFrame::try_new(&bytes).unwrap();
 
         let atls_actual = tx.message.address_table_lookups().unwrap();
