@@ -30,7 +30,7 @@ impl Reporting {
 
     /// Returns `true` if reporting should be done else `false`.
     fn should_report(&self, root_slot: Slot) -> bool {
-        self.slot + SLOTS_INTERVAL >= root_slot || self.time.elapsed() > DURATION_INTERVAL
+        root_slot >= self.slot + SLOTS_INTERVAL || self.time.elapsed() > DURATION_INTERVAL
     }
 }
 
