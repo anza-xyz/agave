@@ -71,11 +71,15 @@ fn configure_program_regions<'a, C: ContextObject>(
     let memory_context = invoke_context.get_memory_context_mut()?;
     let regions = memory_context.get_memory_regions_mut();
 
-    let ro_area = regions.get_mut(0).unwrap();
+    let ro_area = regions
+        .get_mut(0)
+        .expect("The regions vector must have at least three entries");
     *ro_area = executable.get_ro_region();
 
     let sbpf_version = executable.get_sbpf_version();
-    let stack_area = regions.get_mut(1).unwrap();
+    let stack_area = regions
+        .get_mut(1)
+        .expect("The regions vector must have at least three entries");
     let config = executable.get_config();
     *stack_area = MemoryRegion::new_writable_gapped(
         stack,
@@ -87,7 +91,9 @@ fn configure_program_regions<'a, C: ContextObject>(
         },
     );
 
-    let heap_area = regions.get_mut(2).unwrap();
+    let heap_area = regions
+        .get_mut(2)
+        .expect("The regions vector must have at least three entries");
     *heap_area = MemoryRegion::new_writable(heap, MM_HEAP_START);
 
     memory_context.initialize()
@@ -238,6 +244,7 @@ pub fn execute<'a, 'b: 'a>(
         (None, None)
     };
 
+    let mut create_vm_time = Measure::start("create_vm");
     set_memory_context(
         regions,
         accounts_metadata,
@@ -247,7 +254,6 @@ pub fn execute<'a, 'b: 'a>(
         account_data_direct_mapping,
     )?;
 
-    let mut create_vm_time = Measure::start("create_vm");
     let execution_result = {
         let mut execution_mode = ExecutionMode::PreferJit;
 
