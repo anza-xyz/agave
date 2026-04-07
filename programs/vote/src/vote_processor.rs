@@ -2028,7 +2028,7 @@ mod tests {
                 &instruction_data,
                 transaction_accounts.clone(),
                 instruction_accounts.clone(),
-                error(InstructionError::UninitializedAccount),
+                error(InstructionError::InvalidAccountData),
             );
         }
     }
@@ -2861,7 +2861,7 @@ mod tests {
                     is_writable: false,
                 },
             ],
-            Err(InstructionError::UninitializedAccount),
+            Err(InstructionError::InvalidAccountData),
         );
 
         // Re-initialize with new fields.
@@ -4094,7 +4094,7 @@ mod tests {
         let vote_pubkey = solana_pubkey::new_rand();
         let vote_account = AccountSharedData::new(100, vote_state_size_of(), &id());
 
-        let expected_error = InstructionError::UninitializedAccount;
+        let expected_error = InstructionError::InvalidAccountData;
 
         let features = VoteProgramFeatures {
             ..Default::default()
@@ -4552,7 +4552,7 @@ mod tests {
                 (source_pubkey, source_account.clone()),
             ],
             instruction_accounts.clone(),
-            Err(InstructionError::UninitializedAccount),
+            Err(InstructionError::InvalidAccountData),
         );
 
         // Fail - Vote account is initialized but V3 (not V4).
