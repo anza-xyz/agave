@@ -1,7 +1,10 @@
 use {
     crate::{
         address_table_lookup_frame::{AddressTableLookupFrame, AddressTableLookupIterator},
-        bytes::advance_offset_for_type,
+        bytes::{
+            advance_offset_for_array, advance_offset_for_type, check_remaining, read_byte,
+            unchecked_copy_value,
+        },
         instructions_frame::{InstructionsFrame, InstructionsIterator},
         message_header_frame::MessageHeaderFrame,
         result::{Result, TransactionViewError},
@@ -37,6 +40,14 @@ impl TransactionFrame {
     /// Parse a serialized transaction and verify basic structure.
     /// The `bytes` parameter must have no trailing data.
     pub(crate) fn try_new(bytes: &[u8]) -> Result<Self> {
+        if Self::is_wire_transaction_legacy_and_v0(bytes)? {
+            Self::try_new_from_legacy_and_v0(bytes)
+        } else {
+            Self::try_new_from_v1(bytes)
+        }
+    }
+
+    fn try_new_from_legacy_and_v0(bytes: &[u8]) -> Result<Self> {
         let mut offset = 0;
         let signature = SignatureFrame::try_new(bytes, &mut offset)?;
         let message_header = MessageHeaderFrame::try_new(bytes, &mut offset)?;
@@ -76,6 +87,99 @@ impl TransactionFrame {
             address_table_lookup,
             transaction_config_frame: TransactionConfigFrame::not_applicable(),
         })
+    }
+
+    fn try_new_from_v1(bytes: &[u8]) -> Result<Self> {
+        let mut offset: usize = 0;
+
+        // message offset would be the first byte of txv1 packet, which is version byte
+        let message_offset = offset as u16;
+        // Version Byte
+        let version = read_byte(bytes, &mut offset)?;
+        let version = match version & !solana_message::MESSAGE_VERSION_PREFIX {
+            1 => TransactionVersion::V1,
+            _ => return Err(TransactionViewError::ParseError),
+        };
+        // Legacy Header
+        let num_required_signatures = read_byte(bytes, &mut offset)?;
+        let num_readonly_signed_accounts = read_byte(bytes, &mut offset)?;
+        let num_readonly_unsigned_accounts = read_byte(bytes, &mut offset)?;
+        // Transaction COnfig Bit Mask
+        let transaction_config_mask_offset = offset;
+        check_remaining(bytes, transaction_config_mask_offset, 4)?;
+        let transaction_config_mask =
+            unsafe { unchecked_copy_value(bytes, transaction_config_mask_offset) };
+        advance_offset_for_type::<u32>(bytes, &mut offset)?;
+        // Lifetime specifier
+        let recent_blockhash_offset = offset as u16;
+        advance_offset_for_type::<Hash>(bytes, &mut offset)?;
+        // Num instructions and addresses
+        let num_instructions = read_byte(bytes, &mut offset)?;
+        let num_addresses = read_byte(bytes, &mut offset)?;
+        // addresses
+        let addresses_offset = offset as u16;
+        advance_offset_for_array::<Pubkey>(bytes, &mut offset, u16::from(num_addresses))?;
+        // config value slots: one 4-byte slot per set bit in mask
+        let transaction_config_frame = TransactionConfigFrame::try_new(
+            bytes,
+            transaction_config_mask_offset,
+            transaction_config_mask,
+            &mut offset,
+        )?;
+        // instruction headers and payloads
+        let instructions = InstructionsFrame::try_new_for_v1(bytes, &mut offset, num_instructions)?;
+        // signatures
+        let signatures_offset = offset as u16;
+        advance_offset_for_array::<Signature>(
+            bytes,
+            &mut offset,
+            u16::from(num_required_signatures),
+        )?;
+        // Verify that the entire transaction was parsed.
+        if offset != bytes.len() {
+            return Err(TransactionViewError::ParseError);
+        }
+
+        let frame = Self {
+            signature: SignatureFrame {
+                num_signatures: num_required_signatures,
+                offset: signatures_offset,
+            },
+            message_header: MessageHeaderFrame {
+                offset: message_offset,
+                version,
+                num_required_signatures,
+                num_readonly_signed_accounts,
+                num_readonly_unsigned_accounts,
+            },
+            static_account_keys: StaticAccountKeysFrame {
+                num_static_accounts: num_addresses, // always static accounts in txv1
+                offset: addresses_offset,
+            },
+            recent_blockhash_offset,
+            instructions,
+            // Don't have ATL in txv1
+            address_table_lookup: AddressTableLookupFrame {
+                num_address_table_lookups: 0,
+                offset: 0,
+                total_writable_lookup_accounts: 0,
+                total_readonly_lookup_accounts: 0,
+            },
+            transaction_config_frame,
+        };
+
+        Ok(frame)
+    }
+
+    fn is_wire_transaction_legacy_and_v0(bytes: &[u8]) -> Result<bool> {
+        let first_byte = *bytes.first().ok_or(TransactionViewError::ParseError)?;
+
+        // In wire format:
+        // - Legacy/v0 transactions start with signatures (compact-u16 count).
+        //   Packet size limits keep the signature count well below 128, so the
+        //   first byte never has MSB set.
+        // - v1 transactions start with a version byte with MSB = 1.
+        Ok((first_byte & solana_message::MESSAGE_VERSION_PREFIX) == 0)
     }
 
     /// Return the number of signatures in the transaction.
@@ -148,6 +252,12 @@ impl TransactionFrame {
     #[inline]
     pub(crate) fn transaction_config_frame(&self) -> &TransactionConfigFrame {
         &self.transaction_config_frame
+    }
+
+    /// Return the offset to signature
+    #[inline]
+    pub(crate) fn signatures_offset(&self) -> u16 {
+        self.signature.offset
     }
 }
 
