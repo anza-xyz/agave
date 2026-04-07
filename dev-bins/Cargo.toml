@@ -84,7 +84,7 @@ serde_bytes = "0.11.19"
 serde_json = "1.0.149"
 serde_yaml = "0.9.34"
 serial_test = "3.2.0"
-signal-hook = "0.4.3"
+signal-hook = "0.4.4"
 solana-account = "4.0.0"
 solana-account-decoder = { path = "../account-decoder", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-accounts-db = { path = "../accounts-db", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
@@ -129,7 +129,7 @@ solana-net-utils = { path = "../net-utils", version = "=4.1.0-alpha.0", features
 solana-nonce = "3.1.0"
 solana-precompile-error = "3.0.0"
 solana-program-runtime = { path = "../program-runtime", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-solana-pubkey = { version = "4.1.0", default-features = false }
+solana-pubkey = { version = "4.2.0", default-features = false }
 solana-quic-client = { path = "../quic-client", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-rent = "4.1.0"
 solana-rpc = { path = "../rpc", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }

@@ -24,6 +24,7 @@ use {
         transaction_address_lookup_table_scanner::scan_transaction,
     },
     agave_snapshots::unpack_genesis_archive,
+    agave_votor_messages::migration::MigrationStatus,
     assert_matches::{assert_matches, debug_assert_matches},
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
     dashmap::DashSet,
@@ -2811,6 +2812,20 @@ impl Blockstore {
             .ok_or(BlockstoreError::MissingShred(slot, last_index))?;
         shred::layout::get_merkle_root(&shred_bytes)
             .ok_or(BlockstoreError::MissingMerkleRoot(slot, last_index))
+    }
+
+    /// Retrieves the block id of this slot depending on the `migration_status`:
+    /// - For TowerBFT blocks this is the merkle root of the last shred
+    /// - For Alpenglow blocks this is the double merkle root
+    ///
+    /// Returns None if the block is not complete
+    pub fn get_block_id(&self, slot: Slot, migration_status: &MigrationStatus) -> Result<Hash> {
+        if migration_status.should_use_double_merkle_block_id(slot) {
+            let dmr = self.get_double_merkle_root(slot, BlockLocation::Original)?;
+            dmr.ok_or(BlockstoreError::SlotNotFull)
+        } else {
+            self.get_last_shred_merkle_root(slot)
+        }
     }
 
     pub fn get_data_shreds_for_slot(&self, slot: Slot, start_index: u64) -> Result<Vec<Shred>> {

@@ -277,6 +277,11 @@ impl MigrationPhase {
         self.is_alpenglow_block(slot)
     }
 
+    /// Should this block use the double merkle root as the block id (instead of chained merkle root)?
+    fn should_use_double_merkle_block_id(&self, slot: Slot) -> bool {
+        self.is_alpenglow_block(slot)
+    }
+
     /// Should this block allow the UpdateParent marker, i.e., support fast leader handover?
     fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool {
         self.is_alpenglow_block(slot)
@@ -419,6 +424,7 @@ impl MigrationStatus {
     dispatch!(pub fn should_have_alpenglow_ticks(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_allow_block_markers(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool);
+    dispatch!(pub fn should_use_double_merkle_block_id(&self, slot: Slot) -> bool);
 
     /// The alpenglow feature flag has been activated in slot `slot`.
     /// This should only be called using the feature account of a *rooted* slot,

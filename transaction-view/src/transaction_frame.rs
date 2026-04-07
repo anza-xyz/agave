@@ -48,7 +48,7 @@ impl TransactionFrame {
         let recent_blockhash_offset = offset as u16;
         advance_offset_for_type::<Hash>(bytes, &mut offset)?;
 
-        let instructions = InstructionsFrame::try_new(bytes, &mut offset)?;
+        let instructions = InstructionsFrame::try_new_for_legacy_and_v0(bytes, &mut offset)?;
         let address_table_lookup = match message_header.version {
             TransactionVersion::Legacy => AddressTableLookupFrame {
                 num_address_table_lookups: 0,
@@ -114,7 +114,7 @@ impl TransactionFrame {
     /// Return the number of instructions in the transaction.
     #[inline]
     pub(crate) fn num_instructions(&self) -> u16 {
-        self.instructions.num_instructions
+        self.instructions.num_instructions()
     }
 
     /// Return the number of address table lookups in the transaction.
@@ -250,13 +250,7 @@ impl TransactionFrame {
         &'a self,
         bytes: &'a [u8],
     ) -> InstructionsIterator<'a> {
-        InstructionsIterator {
-            bytes,
-            offset: usize::from(self.instructions.offset),
-            num_instructions: self.instructions.num_instructions,
-            index: 0,
-            frames: &self.instructions.frames,
-        }
+        self.instructions.iter(bytes)
     }
 
     /// Return an iterator over the address table lookups in the transaction.
@@ -313,7 +307,7 @@ mod tests {
             tx.message.static_account_keys().len() as u8
         );
         assert_eq!(
-            frame.instructions.num_instructions,
+            frame.instructions.num_instructions(),
             tx.message.instructions().len() as u16
         );
         assert_eq!(

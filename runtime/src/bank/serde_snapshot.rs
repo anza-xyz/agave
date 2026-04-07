@@ -3,7 +3,9 @@ mod tests {
     use {
         crate::{
             bank::{Bank, test_utils as bank_test_utils},
-            epoch_stakes::{EpochAuthorizedVoters, NodeIdToVoteAccounts, VersionedEpochStakes},
+            epoch_stakes::{
+                EpochAuthorizedVoters, EpochStakes, NodeIdToVoteAccounts, VersionedEpochStakes,
+            },
             genesis_utils::{
                 GenesisConfigInfo, activate_all_features, create_genesis_config_with_leader,
             },
@@ -11,7 +13,6 @@ mod tests {
             serde_snapshot::{self, ExtraFieldsToSerialize, SnapshotStreams},
             snapshot_bank_utils,
             snapshot_utils::{StorageAndNextAccountsFileId, create_tmp_accounts_dir_for_tests},
-            stakes::{SerdeStakesToStakeFormat, Stakes},
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
         solana_accounts_db::{
@@ -28,7 +29,6 @@ mod tests {
         solana_hash::Hash,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
-        solana_stake_interface::state::Stake,
         std::{
             io::{BufReader, BufWriter, Cursor},
             mem,
@@ -217,12 +217,12 @@ mod tests {
         // Set extra fields
         bank.fee_rate_governor.lamports_per_signature = 7000;
         // Note that epoch_stakes already has two epoch stakes entries for epochs 0 and 1
-        // which will also be serialized to the versioned epoch stakes extra field. Those
-        // entries are of type Stakes<StakeAccount> so add a new entry for Stakes<Stake>.
+        // which will also be serialized to the versioned epoch stakes extra field, so add a
+        // third entry to exercise round-tripping the extra field.
         bank.epoch_stakes.insert(
             42,
             VersionedEpochStakes::Current {
-                stakes: SerdeStakesToStakeFormat::Stake(Stakes::<Stake>::default()),
+                stakes: EpochStakes::default(),
                 total_stake: 42,
                 node_id_to_vote_accounts: Arc::<NodeIdToVoteAccounts>::default(),
                 epoch_authorized_voters: Arc::<EpochAuthorizedVoters>::default(),
@@ -377,7 +377,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "ELfWa1ABrJu9sQABjieyqnWioDaHNykbmYqsQr7yYYBb")
+            frozen_abi(digest = "5ESyZ9Aseo4v1XA2xnC8dENK8MueieQESYfeNcxByCmd")
         )]
         #[derive(serde::Serialize)]
         pub struct BankAbiTestWrapper {

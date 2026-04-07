@@ -3553,7 +3553,7 @@ impl ReplayStage {
                 // finishes.
                 let block_id = process_active_banks_context
                     .blockstore
-                    .get_last_shred_merkle_root(bank.slot())
+                    .get_block_id(bank.slot(), &process_active_banks_context.migration_status)
                     .ok();
                 debug_assert!(block_id.is_some() || is_leader_block);
                 if block_id.is_some() {

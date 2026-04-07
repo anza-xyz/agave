@@ -850,12 +850,6 @@ pub enum BlockstoreProcessorError {
     #[error("root bank with mismatched capitalization at {0}")]
     RootBankWithMismatchedCapitalization(Slot),
 
-    #[error("incomplete final fec set")]
-    IncompleteFinalFecSet,
-
-    #[error("invalid retransmitter signature final fec set")]
-    InvalidRetransmitterSignatureFinalFecSet,
-
     #[error("user transactions found in vote only mode bank at slot {0}")]
     UserTransactionsInVoteOnlyBank(Slot),
 
@@ -2613,7 +2607,7 @@ pub fn process_single_slot(
     })?;
 
     let block_id = blockstore
-        .get_last_shred_merkle_root(slot)
+        .get_block_id(slot, migration_status)
         .expect("Full block must have block id");
     bank.set_block_id(Some(block_id));
     bank.freeze(); // all banks handled by this routine are created from complete slots

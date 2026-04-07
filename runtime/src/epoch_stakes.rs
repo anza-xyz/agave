@@ -1,6 +1,9 @@
 use {
-    crate::stakes::{DeserializableStakes, SerdeStakesToStakeFormat, Stakes},
-    serde::{Deserialize, Serialize},
+    crate::{stake_history::StakeHistory, stakes::SerdeStakesToStakeFormat},
+    serde::{
+        Deserialize, Deserializer, Serialize, Serializer,
+        de::{SeqAccess, Visitor},
+    },
     solana_bls_signatures::{
         BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         pubkey::{PubkeyAffine as BLSPubkeyAffine, PubkeyCompressed as BLSPubkeyCompressed},
@@ -8,9 +11,10 @@ use {
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_stake_interface::state::Stake,
-    solana_vote::vote_account::VoteAccountsHashMap,
+    solana_vote::vote_account::{VoteAccounts, VoteAccountsHashMap},
     std::{
         collections::HashMap,
+        fmt,
         sync::{Arc, OnceLock},
     },
 };
@@ -133,11 +137,11 @@ pub struct NodeVoteAccounts {
 /// Simplified, intermediate representation of [`VersionedEpochStakes`]
 ///
 /// Its bincode serializaiton format is identical as `VersionedEpochStakes`, but allows faster
-/// deserialization by storing stakes in [`DeserializableStakes`]).
+/// deserialization by ignoring serialized stake delegations entirely.
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) enum DeserializableVersionedEpochStakes {
     Current {
-        stakes: DeserializableStakes<Stake>,
+        stakes: DeserializableEpochStakes,
         total_stake: u64,
         node_id_to_vote_accounts: NodeIdToVoteAccounts,
         epoch_authorized_voters: EpochAuthorizedVoters,
@@ -149,7 +153,7 @@ pub(crate) enum DeserializableVersionedEpochStakes {
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub enum VersionedEpochStakes {
     Current {
-        stakes: SerdeStakesToStakeFormat,
+        stakes: EpochStakes,
         /// Total stake in Lamports
         total_stake: u64,
         node_id_to_vote_accounts: Arc<NodeIdToVoteAccounts>,
@@ -168,7 +172,7 @@ impl From<DeserializableVersionedEpochStakes> for VersionedEpochStakes {
             epoch_authorized_voters,
         } = epoch_stakes;
         Self::Current {
-            stakes: SerdeStakesToStakeFormat::Stake(Stakes::from_deserialized(stakes)),
+            stakes: stakes.into(),
             total_stake,
             node_id_to_vote_accounts: Arc::new(node_id_to_vote_accounts),
             epoch_authorized_voters: Arc::new(epoch_authorized_voters),
@@ -179,6 +183,7 @@ impl From<DeserializableVersionedEpochStakes> for VersionedEpochStakes {
 
 impl VersionedEpochStakes {
     pub(crate) fn new(stakes: SerdeStakesToStakeFormat, leader_schedule_epoch: Epoch) -> Self {
+        let stakes = EpochStakes::from(stakes);
         let epoch_vote_accounts = stakes.vote_accounts();
         let (total_stake, node_id_to_vote_accounts, epoch_authorized_voters) =
             Self::parse_epoch_vote_accounts(epoch_vote_accounts.as_ref(), leader_schedule_epoch);
@@ -206,7 +211,7 @@ impl VersionedEpochStakes {
         )
     }
 
-    pub fn stakes(&self) -> &SerdeStakesToStakeFormat {
+    pub fn stakes(&self) -> &EpochStakes {
         match self {
             Self::Current { stakes, .. } => stakes,
         }
@@ -312,14 +317,139 @@ impl VersionedEpochStakes {
     }
 }
 
+/// The current version of epoch stakes
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
+pub struct EpochStakes {
+    epoch: Epoch,
+    vote_accounts: VoteAccounts,
+    stake_history: StakeHistory,
+}
+
+impl EpochStakes {
+    pub fn vote_accounts(&self) -> &VoteAccounts {
+        &self.vote_accounts
+    }
+    pub fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+        self.vote_accounts.staked_nodes()
+    }
+}
+
+/// Customization of EpochStakes for snapshot serialization.
+///
+/// Needed because snapshots require additional fields no longer present in EpochStakes.
+impl Serialize for EpochStakes {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        #[derive(Serialize)]
+        struct SerializableEpochStakes<'a> {
+            vote_accounts: &'a VoteAccounts,
+            stake_delegations: Vec<(Pubkey, Stake)>,
+            unused: u64,
+            epoch: Epoch,
+            stake_history: &'a StakeHistory,
+        }
+
+        SerializableEpochStakes {
+            vote_accounts: &self.vote_accounts,
+            stake_delegations: Vec::new(), // do not serialize any stake delegations
+            unused: 0,
+            epoch: self.epoch,
+            stake_history: &self.stake_history,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl From<SerdeStakesToStakeFormat> for EpochStakes {
+    fn from(stakes: SerdeStakesToStakeFormat) -> Self {
+        let (epoch, vote_accounts, stake_history) = match stakes {
+            SerdeStakesToStakeFormat::Stake(stakes) => stakes.into_epoch_stakes_fields(),
+            SerdeStakesToStakeFormat::Account(stakes) => stakes.into_epoch_stakes_fields(),
+        };
+        Self {
+            epoch,
+            vote_accounts,
+            stake_history,
+        }
+    }
+}
+
+/// Customization of EpochStakes for snapshot deserialization.
+///
+/// Needed because snapshots contain additional fields no longer present in EpochStakes.
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct DeserializableEpochStakes {
+    vote_accounts: VoteAccounts,
+    #[serde(deserialize_with = "deserialize_and_ignore_stake_delegations")]
+    _stake_delegations: (),
+    _unused: u64,
+    epoch: Epoch,
+    stake_history: StakeHistory,
+}
+
+impl From<DeserializableEpochStakes> for EpochStakes {
+    fn from(stakes: DeserializableEpochStakes) -> Self {
+        let DeserializableEpochStakes {
+            vote_accounts,
+            _stake_delegations: _,
+            _unused: _,
+            epoch,
+            stake_history,
+        } = stakes;
+        Self {
+            epoch,
+            vote_accounts,
+            stake_history,
+        }
+    }
+}
+
+/// Snapshot epoch stakes contain delegations, but the main EpochStakes no longer uses them.
+/// This fn does custom deserialization to visit-and-ignore the delegations,
+/// avoiding the need to construct an expensive im::HashMap.
+fn deserialize_and_ignore_stake_delegations<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct IgnoredStakeDelegationsVisitor;
+
+    impl<'de> Visitor<'de> for IgnoredStakeDelegationsVisitor {
+        type Value = ();
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a sequence of serialized stake delegations")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            while seq.next_element::<(Pubkey, Stake)>()?.is_some() {
+                // nothing to do here, ignore the delegations
+            }
+            Ok(())
+        }
+    }
+
+    deserializer.deserialize_seq(IgnoredStakeDelegationsVisitor)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use {
-        super::*, solana_account::AccountSharedData,
+        super::*,
+        crate::{stake_account::StakeAccount, stakes::Stakes},
+        solana_account::AccountSharedData,
         solana_bls_signatures::keypair::Keypair as BLSKeypair,
-        solana_vote::vote_account::VoteAccount,
+        solana_rent::Rent,
+        solana_vote::vote_account::{VoteAccount, VoteAccounts},
         solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
-        solana_vote_program::vote_state::create_v4_account_with_authorized, std::iter,
+        solana_vote_program::vote_state::create_v4_account_with_authorized,
+        std::iter,
         test_case::test_case,
     };
 
@@ -531,5 +661,93 @@ pub(crate) mod tests {
             .expect("Epoch stakes should exist");
         let bls_pubkey_to_rank_map2 = epoch_stakes.bls_pubkey_to_rank_map();
         assert_eq!(bls_pubkey_to_rank_map2, bls_pubkey_to_rank_map);
+    }
+
+    #[test]
+    fn test_versioned_epoch_stakes_does_not_serialize_delegations() {
+        // test-only types to get the serialized EpochStakes that still have stake delegations
+        #[derive(Deserialize)]
+        enum SerializedVersionedEpochStakes {
+            Current {
+                stakes: SerializedEpochStakes,
+                total_stake: u64,
+                node_id_to_vote_accounts: NodeIdToVoteAccounts,
+                epoch_authorized_voters: EpochAuthorizedVoters,
+            },
+        }
+        #[derive(Deserialize)]
+        struct SerializedEpochStakes {
+            vote_accounts: VoteAccounts,
+            stake_delegations: Vec<(Pubkey, Stake)>,
+            unused: u64,
+            epoch: Epoch,
+            stake_history: StakeHistory,
+        }
+
+        let epoch = 42;
+        let delegated_amount = 456_789;
+        let rent = Rent::default();
+        let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
+            crate::stakes::tests::create_staked_node_accounts(123, &rent);
+        let vote_account = VoteAccount::try_from(vote_account).unwrap();
+        let vote_accounts = VoteAccounts::from(Arc::new(HashMap::from([(
+            vote_pubkey,
+            (delegated_amount, vote_account),
+        )])));
+        let stake_account = StakeAccount::try_from(stake_account).unwrap();
+        let stakes = Stakes::new_for_tests(
+            epoch,
+            vote_accounts,
+            im::HashMap::from_iter([(stake_pubkey, stake_account)]),
+        );
+
+        // ensure stake delegations start off *not* empty
+        assert!(!stakes.stake_delegations().is_empty());
+
+        let epoch_stakes = VersionedEpochStakes::new(SerdeStakesToStakeFormat::Account(stakes), 0);
+
+        assert_eq!(
+            epoch_stakes
+                .stakes()
+                .vote_accounts()
+                .get_delegated_stake(&vote_pubkey),
+            delegated_amount,
+        );
+
+        let serialized_bytes = bincode::serialize(&epoch_stakes).unwrap();
+        let serialized_epoch_stakes: SerializedVersionedEpochStakes =
+            bincode::deserialize(&serialized_bytes).unwrap();
+        match serialized_epoch_stakes {
+            SerializedVersionedEpochStakes::Current {
+                stakes,
+                total_stake,
+                node_id_to_vote_accounts,
+                epoch_authorized_voters,
+            } => {
+                assert_eq!(
+                    stakes.vote_accounts.get_delegated_stake(&vote_pubkey),
+                    delegated_amount,
+                );
+                assert!(stakes.stake_delegations.is_empty()); // delegations are *not* serialized
+                assert_eq!(stakes.unused, 0);
+                assert_eq!(stakes.epoch, epoch);
+                assert_eq!(stakes.stake_history, StakeHistory::default());
+                assert_eq!(total_stake, delegated_amount);
+                assert_eq!(node_id_to_vote_accounts.len(), 1);
+                assert_eq!(epoch_authorized_voters.len(), 1);
+            }
+        }
+
+        let deserialized_epoch_stakes: VersionedEpochStakes =
+            bincode::deserialize::<DeserializableVersionedEpochStakes>(&serialized_bytes)
+                .unwrap()
+                .into();
+        assert_eq!(
+            deserialized_epoch_stakes
+                .stakes()
+                .vote_accounts()
+                .get_delegated_stake(&vote_pubkey),
+            delegated_amount,
+        );
     }
 }

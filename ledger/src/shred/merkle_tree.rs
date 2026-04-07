@@ -20,7 +20,7 @@ pub(crate) const MERKLE_HASH_PREFIX_NODE: &[u8] = b"\x01SOLANA_MERKLE_SHREDS_NOD
 pub(crate) type MerkleProofEntry = [u8; 20];
 
 /// A struct to track a given Merkle tree.
-pub(crate) struct MerkleTree {
+pub struct MerkleTree {
     /// List of all the nodes in the tree.
     /// The constructor ensures that this is not empty.
     /// The last node in the list is the root of the tree.
@@ -44,7 +44,7 @@ impl MerkleTree {
         Self::try_new_with_len(shreds, num_shreds)
     }
 
-    pub(crate) fn try_new_with_len(
+    pub fn try_new_with_len(
         shreds: impl Iterator<Item = Result<Hash, Error>>,
         len: usize,
     ) -> Result<MerkleTree, Error> {
@@ -68,7 +68,7 @@ impl MerkleTree {
     }
 
     /// Returns a reference to the root of the tree.
-    pub(crate) fn root(&self) -> &Hash {
+    pub fn root(&self) -> &Hash {
         // constructor ensures that the tree contains at least one node so this unwrap() should be safe.
         self.nodes.last().unwrap()
     }

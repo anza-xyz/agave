@@ -43,6 +43,7 @@ solana-pubkey = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
+solana-sha256-hasher = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }

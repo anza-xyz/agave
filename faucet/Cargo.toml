@@ -21,10 +21,8 @@ agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
-bincode = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
-serde = { workspace = true }
 solana-cli-output = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
@@ -41,6 +39,7 @@ solana-transaction = { workspace = true }
 spl-memo-interface = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+wincode = { workspace = true }
 
 [dev-dependencies]
 solana-faucet = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
