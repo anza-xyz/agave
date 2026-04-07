@@ -145,7 +145,16 @@ where
     ) -> TransportResult<()> {
         let wire_transactions = transactions
             .into_par_iter()
-            .map(|tx| bincode::serialize(&tx).expect("serialize Transaction in send_batch"))
+            .map(|tx| {
+                match tx.version() {
+                    solana_transaction::versioned::TransactionVersion::Number(1) => {
+                        wincode::serialize(&tx).expect("serialize v1 Transaction in send_batch")
+                    },
+                    _ => {
+                        bincode::serialize(&tx).expect("serialize legacy and V0 Transaction in send_batch")
+                    }
+                }
+            })
             .collect::<Vec<_>>();
         self.invoke(
             self.tpu_client

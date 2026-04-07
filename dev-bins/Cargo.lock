@@ -9492,6 +9492,7 @@ dependencies = [
  "solana-transaction-error",
  "thiserror 2.0.18",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
