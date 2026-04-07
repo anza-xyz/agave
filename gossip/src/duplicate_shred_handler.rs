@@ -35,7 +35,6 @@ pub struct DuplicateShredHandler {
     blockstore: Arc<Blockstore>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     epoch_specs: Box<dyn EpochSpecs>,
-    cached_staked_nodes: Arc<HashMap<Pubkey, u64>>,
     cached_slots_in_epoch: u64,
     // Used to notify duplicate consensus state machine
     duplicate_slots_sender: Sender<Slot>,
@@ -78,7 +77,6 @@ impl DuplicateShredHandler {
             buffer: HashMap::<(Slot, Pubkey), BufferEntry>::default(),
             consumed: HashMap::<Slot, bool>::default(),
             last_root: 0,
-            cached_staked_nodes: Arc::new(HashMap::new()),
             cached_slots_in_epoch: 0,
             blockstore,
             leader_schedule_cache,
@@ -90,12 +88,11 @@ impl DuplicateShredHandler {
 
     fn cache_root_info(&mut self) {
         let last_root = self.blockstore.max_root();
-        if last_root == self.last_root && !self.cached_staked_nodes.is_empty() {
+        if last_root == self.last_root && self.cached_slots_in_epoch != 0 {
             return;
         }
         self.last_root = last_root;
         self.cached_slots_in_epoch = self.epoch_specs.epoch_slots();
-        self.cached_staked_nodes = self.epoch_specs.current_epoch_staked_nodes();
     }
 
     fn handle_shred_data(&mut self, chunk: DuplicateShred) -> Result<(), Error> {
@@ -175,15 +172,12 @@ impl DuplicateShredHandler {
             return;
         }
         // Lookup stake for each entry.
+        let staked_nodes = self.epoch_specs.current_epoch_staked_nodes();
         let mut buffer: Vec<_> = self
             .buffer
             .drain()
             .map(|entry @ ((_, pubkey), _)| {
-                let stake = self
-                    .cached_staked_nodes
-                    .get(&pubkey)
-                    .copied()
-                    .unwrap_or_default();
+                let stake = staked_nodes.get(&pubkey).copied().unwrap_or_default();
                 (stake, entry)
             })
             .collect();
