@@ -349,7 +349,7 @@ serde_yaml = "0.9.34"
 serial_test = "3.4.0"
 shaq = { version = "2.0.0" }
 shuttle = "0.7.1"
-signal-hook = "0.4.3"
+signal-hook = "0.4.4"
 siphasher = "1.0.2"
 slab = "0.4.12"
 slotmap = "1.0.7"
