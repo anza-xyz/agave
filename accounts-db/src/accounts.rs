@@ -202,16 +202,17 @@ impl Accounts {
         )
     }
 
-    pub fn load_without_fixed_root_do_not_populate_read_cache(
+    pub fn load_without_fixed_root_with_populate_option(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
+        populate_read_cache: PopulateReadCache,
     ) -> Option<(AccountSharedData, Slot)> {
         self.accounts_db.load(
             ancestors,
             pubkey,
             LoadHint::Unspecified,
-            PopulateReadCache::False,
+            populate_read_cache,
         )
     }
 
