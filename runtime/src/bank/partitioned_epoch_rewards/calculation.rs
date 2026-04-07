@@ -492,6 +492,7 @@ impl Bank {
             },
             reward_calc_tracer,
             stake_account.lamports(),
+            self.feature_set.snapshot().alpenglow,
         ) {
             Ok((stake_reward, commission_lamports, stake)) => {
                 let stake_reward = PartitionedStakeReward {

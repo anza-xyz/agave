@@ -807,13 +807,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn ag_vote_rewards_leader() {
         ag_vote_rewards(true);
     }
 
     #[test]
-    #[ignore]
     fn ag_vote_rewards_no_leader() {
         ag_vote_rewards(false);
     }

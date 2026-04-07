@@ -125,6 +125,7 @@ fn calculate_stake_points(
         stake_history,
         inflation_point_calc_tracer,
         new_rate_activation_epoch,
+        false,
     )
     .points
 }
@@ -138,6 +139,7 @@ pub(crate) fn calculate_stake_points_and_credits(
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
+    alpenglow_feature: bool,
 ) -> CalculatedStakePoints {
     let credits_in_stake = stake.credits_observed;
     let credits_in_vote = vote_state.credits;
@@ -215,7 +217,14 @@ pub(crate) fn calculate_stake_points_and_credits(
         new_credits_observed = new_credits_observed.max(final_epoch_credits);
 
         // finally calculate points for this epoch
-        let earned_points = stake_amount * earned_credits;
+        let earned_points = if alpenglow_feature {
+            // in alpenglow, points represent the total reward that this `vote_state` has earned.
+            // `earned_credits` has already taken the stake into account.
+            earned_credits
+        } else {
+            // in tower, the stake has to be included to calculate the total points this `vote_state` earned.
+            stake_amount * earned_credits
+        };
         points += earned_points;
 
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
