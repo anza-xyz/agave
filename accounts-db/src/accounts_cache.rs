@@ -388,7 +388,10 @@ impl AccountsCache {
         // the querying bank's ancestor chain are not visible. Using min_slot is more
         // correct than max_slot because a root between min and max that is not an
         // ancestor belongs to a different fork and should not be returned.
-        let max_root_slot = ancestors.min_slot().unwrap_or(index_max_slot).min(index_max_slot);
+        let max_root_slot = ancestors
+            .min_slot()
+            .unwrap_or(index_max_slot)
+            .min(index_max_slot);
 
         let r_maybe_unflushed_roots = self.maybe_unflushed_roots.read().unwrap();
         for &slot in r_maybe_unflushed_roots.range(..=max_root_slot).rev() {
@@ -872,5 +875,4 @@ mod tests {
 
         cache.end_flush_roots();
     }
-
 }
