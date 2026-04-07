@@ -867,6 +867,47 @@ pub enum NewCommissionCollector<'a, 'b> {
     NewAccount(BorrowedInstructionAccount<'a, 'b>),
 }
 
+impl NewCommissionCollector<'_, '_> {
+    /// Validates the collector per SIMD-0232 and returns its pubkey.
+    ///
+    /// The designated commission collector must either be equal to the vote
+    /// account's address OR satisfy ALL of the following constraints:
+    ///
+    /// 1. Must be a system program owned account.
+    /// 2. Must be rent-exempt.
+    /// 3. Must not be a reserved account (checked via writable flag).
+    pub fn validate_and_resolve_key(
+        &self,
+        vote_account: &BorrowedInstructionAccount,
+        rent: &Rent,
+    ) -> Result<Pubkey, InstructionError> {
+        match self {
+            NewCommissionCollector::VoteAccount => Ok(*vote_account.get_key()),
+            NewCommissionCollector::NewAccount(collector_account) => {
+                // 1. Must be a system program owned account.
+                if collector_account.get_owner() != &system_program::id() {
+                    return Err(InstructionError::InvalidAccountOwner);
+                }
+
+                // 2. Must be rent-exempt.
+                if !rent.is_exempt(
+                    collector_account.get_lamports(),
+                    collector_account.get_data().len(),
+                ) {
+                    return Err(InstructionError::InsufficientFunds);
+                }
+
+                // 3. Must not be a reserved account (checked via writable flag).
+                if !collector_account.is_writable() {
+                    return Err(InstructionError::InvalidArgument);
+                }
+
+                Ok(*collector_account.get_key())
+            }
+        }
+    }
+}
+
 /// Update the vote account's commission collector (SIMD-0232).
 pub fn update_commission_collector<S: std::hash::BuildHasher>(
     vote_account: &mut BorrowedInstructionAccount,
@@ -881,38 +922,7 @@ pub fn update_commission_collector<S: std::hash::BuildHasher>(
     // Require authorized withdrawer to sign.
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
-    // Per SIMD-0232:
-    //
-    // The designated commission collector must either be equal to the vote
-    // account's address OR satisfy ALL of the following constraints:
-    //
-    // 1. Must be a system program owned account
-    // 2. Must be rent-exempt after depositing block revenue commission
-    // 3. Must not be a reserved account
-    let new_collector_key = match new_collector {
-        NewCommissionCollector::VoteAccount => *vote_account.get_key(),
-        NewCommissionCollector::NewAccount(collector_account) => {
-            // 1. Must be a system program owned account.
-            if collector_account.get_owner() != &system_program::id() {
-                return Err(InstructionError::InvalidAccountOwner);
-            }
-
-            // 2. Must be rent-exempt after depositing block revenue commission.
-            if !rent.is_exempt(
-                collector_account.get_lamports(),
-                collector_account.get_data().len(),
-            ) {
-                return Err(InstructionError::InsufficientFunds);
-            }
-
-            // 3. Must not be a reserved account (checked via writable flag).
-            if !collector_account.is_writable() {
-                return Err(InstructionError::InvalidArgument);
-            }
-
-            *collector_account.get_key()
-        }
-    };
+    let new_collector_key = new_collector.validate_and_resolve_key(vote_account, rent)?;
 
     match kind {
         CommissionKind::InflationRewards => {
@@ -1131,15 +1141,22 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 }
 
 /// Initialize the vote_state for a vote account using VoteInitV2
-/// Assumes that the account is being init as part of a account creation or balance transfer and
-/// that the transaction must be signed by the staker's keys
-/// It also verifies the BLS proof of possession for the authorized voter BLS pubkey
+/// Assumes that the account is being init as part of a account creation or
+/// balance transfer and that the transaction must be signed by the staker's
+/// keys.
+///
+/// Also validates the inflation-rewards and block-revenue collector accounts
+/// per SIMD-0464 (which delegates to the SIMD-0232 collector checks) and
+/// verifies the BLS proof of possession for the authorized voter BLS pubkey.
 pub fn initialize_account_v2<S: std::hash::BuildHasher, F>(
     vote_account: &mut BorrowedInstructionAccount,
     target_version: VoteStateTargetVersion,
     vote_init: &VoteInitV2,
+    inflation_rewards_collector: NewCommissionCollector,
+    block_revenue_collector: NewCommissionCollector,
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
+    rent: &Rent,
     consume_pop_compute_units: F,
 ) -> Result<(), InstructionError>
 where
@@ -1155,6 +1172,13 @@ where
     // node must agree to accept this vote account
     verify_authorized_signer(&vote_init.node_pubkey, signers)?;
 
+    // Per SIMD-0464, validate the collector accounts using the same checks as
+    // `UpdateCommissionCollector` (SIMD-0232).
+    let inflation_rewards_collector_key =
+        inflation_rewards_collector.validate_and_resolve_key(vote_account, rent)?;
+    let block_revenue_collector_key =
+        block_revenue_collector.validate_and_resolve_key(vote_account, rent)?;
+
     // verify the BLS pubkey proof of possession
     verify_bls_proof_of_possession(
         vote_account.get_key(),
@@ -1163,7 +1187,14 @@ where
         consume_pop_compute_units,
     )?;
 
-    VoteStateHandler::init_vote_account_state_v2(vote_account, vote_init, clock, target_version)
+    VoteStateHandler::init_vote_account_state_v2(
+        vote_account,
+        vote_init,
+        &inflation_rewards_collector_key,
+        &block_revenue_collector_key,
+        clock,
+        target_version,
+    )
 }
 
 /// Initialize the vote_state for a vote account
@@ -1340,10 +1371,10 @@ pub fn create_v4_account_with_authorized(
             authorized_voter_bls_proof_of_possession,
             authorized_withdrawer: *authorized_withdrawer,
             inflation_rewards_commission_bps,
-            inflation_rewards_collector: *inflation_rewards_collector,
             block_revenue_commission_bps,
-            block_revenue_collector: *block_revenue_collector,
         },
+        inflation_rewards_collector,
+        block_revenue_collector,
         &Clock::default(),
     );
 

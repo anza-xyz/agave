@@ -1079,7 +1079,12 @@ mod tests {
                     authorized_voter_bls_proof_of_possession: bls_pop,
                     ..VoteInitV2::default()
                 };
-                let vote_state = VoteStateV4::new(&vote_init, &Clock::default());
+                let vote_state = VoteStateV4::new(
+                    &vote_init,
+                    vote_address,
+                    &identity.pubkey(),
+                    &Clock::default(),
+                );
                 let mut account = solana_account::AccountSharedData::new(
                     *balance,
                     VoteStateV4::size_of(),

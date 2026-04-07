@@ -342,12 +342,19 @@ impl VoteStateHandler {
     pub fn init_vote_account_state_v2(
         vote_account: &mut BorrowedInstructionAccount,
         vote_init: &VoteInitV2,
+        inflation_rewards_collector: &Pubkey,
+        block_revenue_collector: &Pubkey,
         clock: &Clock,
         target_version: VoteStateTargetVersion,
     ) -> Result<(), InstructionError> {
         let handler = match target_version {
             VoteStateTargetVersion::V4 => {
-                let vote_state = VoteStateV4::new(vote_init, clock);
+                let vote_state = VoteStateV4::new(
+                    vote_init,
+                    inflation_rewards_collector,
+                    block_revenue_collector,
+                    clock,
+                );
                 Self::new_v4(vote_state)
             }
         };

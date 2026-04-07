@@ -168,7 +168,7 @@ solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.1
 solana-system-interface = { version = "=3.2", features = ["bincode"] }
 solana-sysvar = "=4.0.0"
 solana-vote = { path = "../../vote", version = "=4.1.0-alpha.0" }
-solana-vote-interface = "5.1.0"
+solana-vote-interface = "6.0.0"
 solana-vote-program = { path = "../../programs/vote", version = "=4.1.0-alpha.0" }
 test-case = "3.3.1"
 thiserror = "2.0"

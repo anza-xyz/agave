@@ -52,6 +52,8 @@ fn create_accounts() -> (
                 authorized_withdrawer: authority_pubkey,
                 ..Default::default()
             },
+            &authority_pubkey,
+            &authority_pubkey,
             &clock,
         ));
 
