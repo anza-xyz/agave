@@ -4,10 +4,11 @@ use {
     log::debug,
     solana_account::{ReadableAccount, WritableAccount},
     solana_fee::FeeFeatures,
-    solana_fee_structure::FeeBudgetLimits,
     solana_pubkey::Pubkey,
     solana_reward_info::RewardType,
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_runtime_transaction::{
+        transaction_meta::TransactionConfiguration, transaction_with_meta::TransactionWithMeta,
+    },
     solana_svm::rent_calculator::{get_account_rent_state, transition_allowed},
     solana_system_interface::program as system_program,
     std::{result::Result, sync::atomic::Ordering::Relaxed},
@@ -64,12 +65,12 @@ impl Bank {
     pub fn calculate_reward_for_transaction(
         &self,
         transaction: &impl TransactionWithMeta,
-        fee_budget_limits: &FeeBudgetLimits,
+        transaction_configuration: &TransactionConfiguration,
     ) -> u64 {
         let fee_details = solana_fee::calculate_fee_details(
             transaction,
             self.fee_structure().lamports_per_signature,
-            fee_budget_limits.prioritization_fee,
+            transaction_configuration.priority_fee_lamports,
             FeeFeatures::from(self.feature_set.as_ref()),
         );
         let FeeDistribution {

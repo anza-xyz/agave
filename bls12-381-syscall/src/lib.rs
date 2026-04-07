@@ -8,7 +8,7 @@
 //! # Supported Operations
 //!
 //! - **Group Operations** (G1 & G2): Addition, Subtraction, Scalar Multiplication.
-//! - **Pairing**: Multi-scalar multiplication (Miller loop + Final Exponentiation).
+//! - **Pairing**: Product of pairings over G1/G2 point pairs (multi-Miller loop + final exponentiation).
 //! - **Validation**: Subgroup and on-curve checks.
 //! - **Decompression**: Converting compressed byte representations to affine points.
 //!

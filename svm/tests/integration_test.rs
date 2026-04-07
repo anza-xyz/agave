@@ -413,7 +413,7 @@ impl SvmTestEntry {
         self.rent = rent;
     }
 
-    // add a new a rent-exempt account that exists before the batch
+    // add a new rent-exempt account that exists before the batch
     // inserts it into both account maps, assuming it lives unchanged (except for svm fixing rent epoch)
     // rent-paying accounts must be added by hand because svm will not set rent epoch to u64::MAX
     pub fn add_initial_account(&mut self, pubkey: Pubkey, account: &AccountSharedData) {
@@ -605,7 +605,7 @@ impl Default for TransactionBatchItem {
 
 // asserts for a given transaction in a batch
 // we can automatically check whether it executed, whether it succeeded
-// log items we expect to see (exect match only), and rodata
+// log items we expect to see (exact match only), and rodata
 #[derive(Clone, Debug, Default)]
 pub struct TransactionBatchItemAsserts {
     pub status: ExecutionStatus,
@@ -2927,8 +2927,8 @@ fn program_cache_stats() {
         )
     };
 
-    let succesful_noop_instruction = Instruction::new_with_bytes(noop_program, &[], vec![]);
-    let succesful_transfer_instruction =
+    let successful_noop_instruction = Instruction::new_with_bytes(noop_program, &[], vec![]);
+    let successful_transfer_instruction =
         system_instruction::transfer(&fee_payer, &Pubkey::new_unique(), LAMPORTS_PER_SOL);
     let failing_transfer_instruction =
         system_instruction::transfer(&fee_payer, &Pubkey::new_unique(), LAMPORTS_PER_SOL * 1000);
@@ -2939,12 +2939,12 @@ fn program_cache_stats() {
     let mut successful_transfers = 0;
 
     test_entry.push_transaction(make_transaction(slice::from_ref(
-        &succesful_noop_instruction,
+        &successful_noop_instruction,
     )));
     noop_tx_usage += 1;
 
     test_entry.push_transaction(make_transaction(slice::from_ref(
-        &succesful_transfer_instruction,
+        &successful_transfer_instruction,
     )));
     system_tx_usage += 1;
     successful_transfers += 1;
@@ -2956,11 +2956,11 @@ fn program_cache_stats() {
     system_tx_usage += 1;
 
     test_entry.push_transaction(make_transaction(&[
-        succesful_noop_instruction.clone(),
-        succesful_noop_instruction.clone(),
-        succesful_transfer_instruction.clone(),
-        succesful_transfer_instruction.clone(),
-        succesful_noop_instruction.clone(),
+        successful_noop_instruction.clone(),
+        successful_noop_instruction.clone(),
+        successful_transfer_instruction.clone(),
+        successful_transfer_instruction.clone(),
+        successful_noop_instruction.clone(),
     ]));
     noop_tx_usage += 1;
     system_tx_usage += 1;
@@ -2969,8 +2969,8 @@ fn program_cache_stats() {
     test_entry.push_transaction_with_status(
         make_transaction(&[
             failing_transfer_instruction,
-            succesful_noop_instruction.clone(),
-            succesful_transfer_instruction.clone(),
+            successful_noop_instruction.clone(),
+            successful_transfer_instruction.clone(),
         ]),
         ExecutionStatus::ExecutedFailed,
     );
@@ -2980,7 +2980,7 @@ fn program_cache_stats() {
     // load failure/fee-only does not touch the program cache
     test_entry.push_transaction_with_status(
         make_transaction(&[
-            succesful_noop_instruction.clone(),
+            successful_noop_instruction.clone(),
             fee_only_noop_instruction,
         ]),
         ExecutionStatus::ProcessedFailed,
@@ -2994,7 +2994,7 @@ fn program_cache_stats() {
 
     // nor does discard
     test_entry.transaction_batch.push(TransactionBatchItem {
-        transaction: make_transaction(slice::from_ref(&succesful_transfer_instruction)),
+        transaction: make_transaction(slice::from_ref(&successful_transfer_instruction)),
         check_result: Err(TransactionError::BlockhashNotFound),
         asserts: ExecutionStatus::Discarded.into(),
     });
@@ -3070,7 +3070,7 @@ fn program_cache_stats() {
     test_entry.drop_expected_account(buffer_address);
 
     test_entry.push_transaction_with_status(
-        make_transaction(slice::from_ref(&succesful_noop_instruction)),
+        make_transaction(slice::from_ref(&successful_noop_instruction)),
         ExecutionStatus::ExecutedFailed,
     );
     noop_tx_usage += 1;
@@ -3105,7 +3105,7 @@ fn program_cache_stats() {
     };
 
     test_entry.push_transaction_with_status(
-        make_transaction(slice::from_ref(&succesful_noop_instruction)),
+        make_transaction(slice::from_ref(&successful_noop_instruction)),
         ExecutionStatus::ExecutedFailed,
     );
     noop_tx_usage += 1;

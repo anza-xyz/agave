@@ -9475,6 +9475,15 @@ pub mod tests {
             assert_eq!(expected, actual);
         }
 
+        fn get_effective_price(price: u64, transaction_cu_limit: u64) -> u64 {
+            price
+                .saturating_mul(transaction_cu_limit) // fee in micro lamports
+                .div_ceil(1_000_000) // fee in lamports rounded up
+                .saturating_mul(1_000_000) // fee in micro-lamports rounded up
+                .checked_div(transaction_cu_limit) // effective price in micro-lamports per CU
+                .unwrap_or(0)
+        }
+
         let rpc = RpcHandler::start();
         assert_eq!(
             rpc.get_prioritization_fee_cache().available_block_count(),
@@ -9485,7 +9494,9 @@ pub mod tests {
         let account0 = Pubkey::new_unique();
         let account1 = Pubkey::new_unique();
         let account2 = Pubkey::new_unique();
-        let price0 = 42;
+        let price0 = 42u64;
+        let transaction_cu_limit = 6_000;
+        let effective_price0 = get_effective_price(price0, transaction_cu_limit);
         let transactions = vec![
             Transaction::new_unsigned(Message::new(
                 &[
@@ -9525,7 +9536,7 @@ pub mod tests {
             &mut response,
             &mut vec![RpcPrioritizationFee {
                 slot: slot0,
-                prioritization_fee: price0,
+                prioritization_fee: effective_price0,
             }],
         );
 
@@ -9547,6 +9558,7 @@ pub mod tests {
         let slot1 = rpc.working_bank().slot();
         let bank1_id = rpc.working_bank().bank_id();
         let price1 = 11;
+        let effective_price1 = get_effective_price(price1, transaction_cu_limit);
         let transactions = vec![
             Transaction::new_unsigned(Message::new(
                 &[
@@ -9593,7 +9605,7 @@ pub mod tests {
             &mut vec![
                 RpcPrioritizationFee {
                     slot: slot0,
-                    prioritization_fee: price0,
+                    prioritization_fee: effective_price0,
                 },
                 RpcPrioritizationFee {
                     slot: slot1,
@@ -9617,7 +9629,7 @@ pub mod tests {
                 },
                 RpcPrioritizationFee {
                     slot: slot1,
-                    prioritization_fee: price1,
+                    prioritization_fee: effective_price1,
                 },
             ],
         );

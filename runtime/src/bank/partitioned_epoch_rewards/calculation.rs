@@ -12,7 +12,7 @@ use {
             RewardsMetrics, null_tracer,
         },
         inflation_rewards::{
-            points::{DelegatedVoteState, PointValue, calculate_points},
+            points::{CalculationEnvironment, DelegatedVoteState, PointValue, calculate_points},
             redeem_rewards,
         },
         stake_account::StakeAccount,
@@ -480,15 +480,17 @@ impl Bank {
         };
 
         match redeem_rewards(
-            rewarded_epoch,
             stake_state,
             commission_bps,
             DelegatedVoteState::from(vote_state),
-            point_value,
-            stake_history,
+            CalculationEnvironment {
+                rewarded_epoch,
+                point_value,
+                stake_history,
+                new_rate_activation_epoch,
+                commission_rate_in_basis_points,
+            },
             reward_calc_tracer,
-            new_rate_activation_epoch,
-            commission_rate_in_basis_points,
             stake_account.lamports(),
         ) {
             Ok((stake_reward, commission_lamports, stake)) => {

@@ -15,6 +15,8 @@ pub enum BlockstoreError {
     RocksDb(#[from] rocksdb::Error),
     #[error("slot is not rooted")]
     SlotNotRooted,
+    #[error("slot is not full")]
+    SlotNotFull,
     #[error("dead slot")]
     DeadSlot,
     #[error("io error: {0}")]

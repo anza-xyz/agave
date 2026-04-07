@@ -7,7 +7,6 @@ use {
     },
     itertools::Itertools,
     solana_fee::FeeFeatures,
-    solana_fee_structure::FeeBudgetLimits,
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
@@ -487,15 +486,11 @@ impl Consumer {
         error_counters: &mut TransactionErrorMetrics,
     ) -> Result<(), TransactionError> {
         let fee_payer = transaction.fee_payer();
-        let fee_budget_limits = FeeBudgetLimits::from(
-            transaction
-                .compute_budget_instruction_details()
-                .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)?,
-        );
+        let transaction_configuration = transaction.transaction_configuration(&bank.feature_set)?;
         let fee = solana_fee::calculate_fee(
             transaction,
             bank.fee_structure().lamports_per_signature,
-            fee_budget_limits.prioritization_fee,
+            transaction_configuration.priority_fee_lamports,
             FeeFeatures::from(bank.feature_set.as_ref()),
         );
         let (mut fee_payer_account, _slot) = bank
