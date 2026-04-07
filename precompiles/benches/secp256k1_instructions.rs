@@ -40,47 +40,61 @@ fn create_test_instructions(message_length: u16) -> Vec<Instruction> {
         .collect()
 }
 
-#[bench]
-fn bench_secp256k1_len_032(b: &mut Bencher) {
-    let feature_set = FeatureSet::all_enabled();
-    let ixs = create_test_instructions(32);
+fn bench_verify(b: &mut Bencher, feature_set: &FeatureSet, message_length: u16) {
+    let ixs = create_test_instructions(message_length);
     let mut ix_iter = ixs.iter().cycle();
     b.iter(|| {
         let instruction = ix_iter.next().unwrap();
-        verify(&instruction.data, &[&instruction.data], &feature_set).unwrap();
+        verify(&instruction.data, &[&instruction.data], feature_set).unwrap();
     });
 }
 
 #[bench]
-fn bench_secp256k1_len_256(b: &mut Bencher) {
-    let feature_set = FeatureSet::all_enabled();
-    let ixs = create_test_instructions(256);
-    let mut ix_iter = ixs.iter().cycle();
-    b.iter(|| {
-        let instruction = ix_iter.next().unwrap();
-        verify(&instruction.data, &[&instruction.data], &feature_set).unwrap();
-    });
+fn bench_secp256k1_legacy_len_032(b: &mut Bencher) {
+    let feature_set = FeatureSet::default();
+    bench_verify(b, &feature_set, 32);
 }
 
 #[bench]
-fn bench_secp256k1_len_32k(b: &mut Bencher) {
+fn bench_secp256k1_k256_len_032(b: &mut Bencher) {
     let feature_set = FeatureSet::all_enabled();
-    let ixs = create_test_instructions(32 * 1024);
-    let mut ix_iter = ixs.iter().cycle();
-    b.iter(|| {
-        let instruction = ix_iter.next().unwrap();
-        verify(&instruction.data, &[&instruction.data], &feature_set).unwrap();
-    });
+    bench_verify(b, &feature_set, 32);
 }
 
 #[bench]
-fn bench_secp256k1_len_max(b: &mut Bencher) {
+fn bench_secp256k1_legacy_len_256(b: &mut Bencher) {
+    let feature_set = FeatureSet::default();
+    bench_verify(b, &feature_set, 256);
+}
+
+#[bench]
+fn bench_secp256k1_k256_len_256(b: &mut Bencher) {
+    let feature_set = FeatureSet::all_enabled();
+    bench_verify(b, &feature_set, 256);
+}
+
+#[bench]
+fn bench_secp256k1_legacy_len_32k(b: &mut Bencher) {
+    let feature_set = FeatureSet::default();
+    bench_verify(b, &feature_set, 32 * 1024);
+}
+
+#[bench]
+fn bench_secp256k1_k256_len_32k(b: &mut Bencher) {
+    let feature_set = FeatureSet::all_enabled();
+    bench_verify(b, &feature_set, 32 * 1024);
+}
+
+#[bench]
+fn bench_secp256k1_legacy_len_max(b: &mut Bencher) {
+    let required_extra_space = 113_u16; // len for pubkey, sig, and offsets
+    let feature_set = FeatureSet::default();
+    bench_verify(b, &feature_set, u16::MAX - required_extra_space);
+}
+
+#[bench]
+fn bench_secp256k1_k256_len_max(b: &mut Bencher) {
     let required_extra_space = 113_u16; // len for pubkey, sig, and offsets
     let feature_set = FeatureSet::all_enabled();
-    let ixs = create_test_instructions(u16::MAX - required_extra_space);
-    let mut ix_iter = ixs.iter().cycle();
-    b.iter(|| {
-        let instruction = ix_iter.next().unwrap();
-        verify(&instruction.data, &[&instruction.data], &feature_set).unwrap();
-    });
+    bench_verify(b, &feature_set, u16::MAX - required_extra_space);
 }
