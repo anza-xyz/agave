@@ -15,7 +15,7 @@ pub(crate) fn get_account_from_overwrites_or_bank(
             if rpc_populate_read_only_accounts_cache {
                 bank.get_account(pubkey)
             } else {
-                bank.get_account_with_fixed_root_no_cache(pubkey)
+                bank.get_account_do_not_populate_read_cache(pubkey)
             }
         })
 }

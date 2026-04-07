@@ -4552,6 +4552,16 @@ impl Bank {
             .map(|(acc, _slot)| acc)
     }
 
+    pub fn get_account_do_not_populate_read_cache(
+        &self,
+        pubkey: &Pubkey,
+    ) -> Option<AccountSharedData> {
+        self.rc
+            .accounts
+            .load_without_fixed_root_do_not_populate_read_cache(&self.ancestors, pubkey)
+            .map(|(acc, _slot)| acc)
+    }
+
     // Hi! leaky abstraction here....
     // try to use get_account_with_fixed_root() if it's called ONLY from on-chain runtime account
     // processing. That alternative fn provides more safety.

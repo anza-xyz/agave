@@ -4145,7 +4145,7 @@ pub mod rpc_full {
                                     accounts_encoding,
                                     None,
                                     Some(&post_simulation_accounts_map),
-                                    false,
+                                    meta.config.rpc_populate_read_only_accounts_cache,
                                 )
                             })
                             .collect::<Result<Vec<_>>>()?,
@@ -5869,6 +5869,7 @@ pub mod tests {
             }
         ]);
         assert_eq!(result.value, expected);
+
         // Test config settings still work with multiple accounts
         let request = create_test_request(
             "getMultipleAccounts",

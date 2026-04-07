@@ -375,6 +375,7 @@ fn filter_account_result(
     params: &AccountSubscriptionParams,
     last_notified_slot: Slot,
     bank: Arc<Bank>,
+    populate_read_only_accounts_cache: bool,
 ) -> (Option<UiAccount>, Slot) {
     // If the account is not found, `last_modified_slot` will default to zero and
     // we will notify clients that the account no longer exists if we haven't already
@@ -386,7 +387,13 @@ fn filter_account_result(
         if is_known_spl_token_id(account.owner())
             && params.encoding == UiAccountEncoding::JsonParsed
         {
-            get_parsed_token_account(&bank, &params.pubkey, account, None, false)
+            get_parsed_token_account(
+                &bank,
+                &params.pubkey,
+                account,
+                None,
+                populate_read_only_accounts_cache,
+            )
         } else {
             encode_ui_account(&params.pubkey, &account, params.encoding, None, None)
         }
@@ -548,6 +555,7 @@ impl RpcSubscriptions {
             optimistically_confirmed_bank,
             &PubSubConfig::default(),
             None,
+            false,
         )
     }
 
@@ -591,6 +599,7 @@ impl RpcSubscriptions {
             optimistically_confirmed_bank,
             &PubSubConfig::default_for_tests(),
             Some(rpc_notifier_ready.clone()),
+            false,
         );
 
         // Ensure RPC notifier is ready to receive notifications before proceeding
@@ -615,6 +624,7 @@ impl RpcSubscriptions {
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         config: &PubSubConfig,
         rpc_notifier_ready: Option<Arc<AtomicBool>>,
+        populate_read_only_accounts_cache: bool,
     ) -> Self {
         let (notification_sender, notification_receiver) = crossbeam_channel::unbounded();
 
@@ -654,6 +664,7 @@ impl RpcSubscriptions {
                             bank_forks,
                             block_commitment_cache,
                             optimistically_confirmed_bank,
+                            populate_read_only_accounts_cache,
                         )
                     });
                 })
@@ -764,6 +775,7 @@ impl RpcSubscriptions {
         bank_forks: Arc<RwLock<BankForks>>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+        populate_read_only_accounts_cache: bool,
     ) {
         let mut stats = PubsubNotificationStats::default();
 
@@ -848,6 +860,7 @@ impl RpcSubscriptions {
                                 &commitment_slots,
                                 &notifier,
                                 SOURCE,
+                                populate_read_only_accounts_cache,
                             );
                         }
                         NotificationEntry::Gossip(slot) => {
@@ -864,6 +877,7 @@ impl RpcSubscriptions {
                                 &commitment_slots,
                                 &notifier,
                                 SOURCE,
+                                populate_read_only_accounts_cache,
                             );
                         }
                         NotificationEntry::SignaturesReceived((slot, slot_signatures)) => {
@@ -918,6 +932,7 @@ impl RpcSubscriptions {
         commitment_slots: &CommitmentSlots,
         notifier: &RpcNotifier,
         source: &'static str,
+        populate_read_only_accounts_cache: bool,
     ) {
         let mut total_time = Measure::start("notify_watchers");
 
@@ -960,7 +975,15 @@ impl RpcSubscriptions {
                             bank_forks,
                             slot,
                             |bank, params| bank.get_account_modified_slot(&params.pubkey),
-                            filter_account_result,
+                            |result, params, last_notified_slot, bank| {
+                                filter_account_result(
+                                    result,
+                                    params,
+                                    last_notified_slot,
+                                    bank,
+                                    populate_read_only_accounts_cache,
+                                )
+                            },
                             notifier,
                             false,
                         );
