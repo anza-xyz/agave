@@ -77,7 +77,7 @@ struct SigVerifierStats {
 }
 
 impl SigVerifierStats {
-    fn maybe_report(&self, name: &'static str) {
+    fn maybe_report_and_reset(&mut self, name: &'static str) {
         // No need to report a datapoint if no batches/packets received
         if self.total_batches == 0 {
             return;
@@ -141,27 +141,48 @@ impl SigVerifierStats {
             ("packets_min", self.packets_hist.minimum().unwrap_or(0), i64),
             ("packets_max", self.packets_hist.maximum().unwrap_or(0), i64),
             ("packets_mean", self.packets_hist.mean().unwrap_or(0), i64),
-            ("num_deduper_saturations", self.num_deduper_saturations, i64),
-            ("total_batches", self.total_batches, i64),
-            ("total_packets", self.total_packets, i64),
-            ("total_dedup", self.total_dedup, i64),
-            ("total_dedup_time_us", self.total_dedup_time_us, i64),
+            (
+                "num_deduper_saturations",
+                core::mem::take(&mut self.num_deduper_saturations),
+                i64
+            ),
+            (
+                "total_batches",
+                core::mem::take(&mut self.total_batches),
+                i64
+            ),
+            (
+                "total_packets",
+                core::mem::take(&mut self.total_packets),
+                i64
+            ),
+            ("total_dedup", core::mem::take(&mut self.total_dedup), i64),
+            (
+                "total_dedup_time_us",
+                core::mem::take(&mut self.total_dedup_time_us),
+                i64
+            ),
             (
                 "total_dropped_on_capacity",
-                self.total_dropped_on_capacity,
+                core::mem::take(&mut self.total_dropped_on_capacity),
                 i64
             ),
             (
                 "total_valid_packets",
-                self.total_valid_packets.load(Ordering::Relaxed) as i64,
+                self.total_valid_packets.swap(0, Ordering::Relaxed) as i64,
                 i64
             ),
             (
                 "total_verify_time_us",
-                self.total_verify_time_us.load(Ordering::Relaxed) as i64,
+                self.total_verify_time_us.swap(0, Ordering::Relaxed) as i64,
                 i64
             ),
         );
+
+        self.recv_batches_us_hist = histogram::Histogram::new();
+        self.dedup_packets_pp_us_hist = histogram::Histogram::new();
+        self.batches_hist = histogram::Histogram::new();
+        self.packets_hist = histogram::Histogram::new();
     }
 }
 
@@ -329,8 +350,7 @@ impl SigVerifyStage {
                         }
                     }
                     if last_print.elapsed().as_secs() > 2 {
-                        stats.maybe_report(metrics_name);
-                        stats = SigVerifierStats::default();
+                        stats.maybe_report_and_reset(metrics_name);
                         last_print = Instant::now();
                     }
                 }
