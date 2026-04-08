@@ -104,7 +104,7 @@ impl TransactionFrame {
         let num_required_signatures = read_byte(bytes, &mut offset)?;
         let num_readonly_signed_accounts = read_byte(bytes, &mut offset)?;
         let num_readonly_unsigned_accounts = read_byte(bytes, &mut offset)?;
-        // Transaction COnfig Bit Mask
+        // Transaction Config Bit Mask
         let transaction_config_mask_offset = offset;
         check_remaining(bytes, transaction_config_mask_offset, 4)?;
         let transaction_config_mask =
