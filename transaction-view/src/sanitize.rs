@@ -25,7 +25,12 @@ pub(crate) fn sanitize(
 /// Transaction constraints:
 /// * size <= 4096 bytes
 fn sanitize_transaction(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
-    if view.data().len() > 4096 {
+    let max_transaction_size = match view.version() {
+        TransactionVersion::Legacy | TransactionVersion::V0 => solana_packet::PACKET_DATA_SIZE,
+        TransactionVersion::V1 => solana_message::v1::MAX_TRANSACTION_SIZE,
+    };
+
+    if view.data().len() > max_transaction_size {
         return Err(TransactionViewError::SanitizeError);
     }
     Ok(())
@@ -104,7 +109,7 @@ fn sanitize_signatures(view: &UnsanitizedTransactionView<impl TransactionData>) 
 fn sanitize_account_access(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
     let addresses_limit = match view.version() {
         TransactionVersion::Legacy | TransactionVersion::V0 => 255,
-        _ => 64,
+        TransactionVersion::V1 => 64,
     };
 
     if total_number_of_accounts(view) >= addresses_limit {
