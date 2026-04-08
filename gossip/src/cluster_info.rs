@@ -241,7 +241,7 @@ impl ClusterInfo {
         send_gossip_packets(pings, recycler, sender, &self.stats);
     }
 
-    // TODO kill insert_info, only used by tests
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn insert_info(&self, node: ContactInfo) {
         let entry = CrdsValue::new(CrdsData::ContactInfo(node), &self.keypair());
         if let Err(err) = {
