@@ -498,7 +498,7 @@ solana-signer-store = "0.1.0"
 solana-slot-hashes = "3.0.1"
 solana-slot-history = "3.0.0"
 solana-stable-layout = "3.0.1"
-solana-stake-interface = "3.0.0"
+solana-stake-interface = "3.1.0"
 solana-storage-bigtable = { path = "storage-bigtable", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-storage-proto = { path = "storage-proto", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "streamer", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
