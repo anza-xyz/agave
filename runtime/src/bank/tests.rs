@@ -11422,6 +11422,7 @@ fn test_filter_program_errors_and_collect_fee_details() {
                 load_error: TransactionError::InvalidProgramForExecution,
                 rollback_accounts: RollbackAccounts::default(),
                 fee_details,
+                loaded_accounts_data_size: 0,
             },
         ))),
         new_executed_processing_result(
