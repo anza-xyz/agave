@@ -18,6 +18,37 @@ pub type LruCache = lazy_lru::LruCache<(Signature, Pubkey, /*merkle root:*/ Hash
 pub type SlotPubkeys = HashMap<Slot, Pubkey, BuildNoHashHasher<Slot>>;
 
 #[must_use]
+pub fn verify_shred_with_leader(
+    packet: PacketRef,
+    leader: &Pubkey,
+    cache: &RwLock<LruCache>,
+) -> bool {
+    if packet.meta().discard() {
+        return false;
+    }
+    let Some(shred) = shred::layout::get_shred(packet) else {
+        return false;
+    };
+    let Some(signature) = shred::layout::get_signature(shred) else {
+        return false;
+    };
+    trace!("signature {signature}");
+    let Some(merkle_root) = shred::layout::get_merkle_root(shred) else {
+        return false;
+    };
+
+    let key = (signature, *leader, merkle_root);
+    if cache.read().unwrap().get(&key).is_some() {
+        true
+    } else if key.0.verify(key.1.as_ref(), key.2.as_ref()) {
+        cache.write().unwrap().put(key, ());
+        true
+    } else {
+        false
+    }
+}
+
+#[must_use]
 pub fn verify_shred_cpu(
     packet: PacketRef,
     slot_leaders: &SlotPubkeys,
@@ -36,23 +67,7 @@ pub fn verify_shred_cpu(
     let Some(pubkey) = slot_leaders.get(&slot) else {
         return false;
     };
-    let Some(signature) = shred::layout::get_signature(shred) else {
-        return false;
-    };
-    trace!("signature {signature}");
-    let Some(data) = shred::layout::get_merkle_root(shred) else {
-        return false;
-    };
-
-    let key = (signature, *pubkey, data);
-    if cache.read().unwrap().get(&key).is_some() {
-        true
-    } else if key.0.verify(key.1.as_ref(), key.2.as_ref()) {
-        cache.write().unwrap().put(key, ());
-        true
-    } else {
-        false
-    }
+    verify_shred_with_leader(packet, pubkey, cache)
 }
 
 pub fn par_verify_shreds(

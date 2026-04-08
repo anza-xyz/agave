@@ -7,7 +7,6 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
     itertools::{Either, Itertools},
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
-    solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::{
@@ -18,7 +17,7 @@ use {
             layout::{get_shred, resign_packet},
             wire::is_retransmitter_signed_variant,
         },
-        sigverify_shreds::{LruCache, SlotPubkeys, par_verify_shreds},
+        sigverify_shreds::{LruCache, verify_shred_with_leader},
     },
     solana_perf::{
         self,
@@ -184,43 +183,43 @@ fn run_shred_sigverify<const K: usize>(
     // path once a shred is repaired.
     // For backward compatibility we need to allow trailing bytes in the packet
     // after the shred payload, but have to exclude them here from the deduper.
-    stats.num_duplicates += thread_pool.install(|| {
-        shred_buffer
-            .par_iter_mut()
-            .flatten()
-            .filter(|packet| {
-                !packet.meta().discard()
-                    && shred::wire::get_shred(packet.as_ref())
-                        .map(|shred| deduper.dedup(shred))
-                        .unwrap_or(true)
-                    && !packet.meta().repair()
-            })
-            .map(|mut packet| packet.meta_mut().set_discard(true))
-            .count()
-    });
     let (working_bank, root_bank) = {
         let bank_forks = bank_forks.read().unwrap();
         (bank_forks.working_bank(), bank_forks.root_bank())
     };
-    thread_pool.install(|| {
-        par_verify_packets(
-            &keypair.pubkey(),
-            &working_bank,
-            leader_schedule_cache,
-            shred_buffer,
-            cache,
-        )
-    });
-    stats.num_discards_post += count_discards(shred_buffer);
-    // Verify retransmitter's signature, and resign shreds
-    // Merkle root as the retransmitter node.
-    let resign_start = Instant::now();
-    thread_pool.install(|| {
+    let self_pubkey = keypair.pubkey();
+    let (num_duplicates, num_discards_post, resign_micros) = thread_pool.install(|| {
         shred_buffer
             .par_iter_mut()
             .flatten()
-            .filter(|packet| !packet.meta().discard())
-            .for_each(|mut packet| {
+            .map(|mut packet| {
+                if packet.meta().discard() {
+                    return (0, 1, 0);
+                }
+                let mut num_duplicates = 0;
+                let duplicate = shred::wire::get_shred(packet.as_ref())
+                    .map(|shred| deduper.dedup(shred))
+                    .unwrap_or(true);
+                if duplicate && !packet.meta().repair() {
+                    packet.meta_mut().set_discard(true);
+                    num_duplicates = 1;
+                }
+                if !packet.meta().discard()
+                    && !verify_packet_signature(
+                        &self_pubkey,
+                        packet.as_ref(),
+                        &working_bank,
+                        leader_schedule_cache,
+                        cache,
+                    )
+                {
+                    packet.meta_mut().set_discard(true);
+                }
+                let num_discards_post = usize::from(packet.meta().discard());
+                if packet.meta().discard() {
+                    return (num_duplicates, num_discards_post, 0);
+                }
+                let resign_start = Instant::now();
                 if maybe_verify_and_resign_packet(
                     &mut packet,
                     &root_bank,
@@ -235,9 +234,27 @@ fn run_shred_sigverify<const K: usize>(
                 {
                     packet.meta_mut().set_discard(true);
                 }
+                (
+                    num_duplicates,
+                    num_discards_post,
+                    resign_start.elapsed().as_micros() as u64,
+                )
             })
+            .reduce(
+                || (0, 0, 0),
+                |(num_duplicates_a, num_discards_post_a, resign_micros_a),
+                 (num_duplicates_b, num_discards_post_b, resign_micros_b)| {
+                    (
+                        num_duplicates_a + num_duplicates_b,
+                        num_discards_post_a + num_discards_post_b,
+                        resign_micros_a + resign_micros_b,
+                    )
+                },
+            )
     });
-    stats.resign_micros += resign_start.elapsed().as_micros() as u64;
+    stats.num_duplicates += num_duplicates;
+    stats.num_discards_post += num_discards_post;
+    stats.resign_micros += resign_micros;
     // Extract shred payload from packets, and separate out repaired shreds.
     let (shreds, repairs): (Vec<_>, Vec<_>) = shred_buffer
         .iter()
@@ -415,48 +432,30 @@ fn verify_retransmitter_signature(
     }
 }
 
-fn par_verify_packets(
+fn verify_packet_signature(
     self_pubkey: &Pubkey,
+    packet: PacketRef,
     working_bank: &Bank,
     leader_schedule_cache: &LeaderScheduleCache,
-    packets: &mut [PacketBatch],
     cache: &RwLock<LruCache>,
-) {
-    let leader_slots: SlotPubkeys =
-        get_slot_leaders(self_pubkey, packets, leader_schedule_cache, working_bank)
-            .filter_map(|(slot, pubkey)| Some((slot, pubkey?)))
-            .chain(std::iter::once((Slot::MAX, Pubkey::default())))
-            .collect();
-    par_verify_shreds(packets, &leader_slots, cache);
-}
-
-// Returns pubkey of leaders for shred slots referenced in the packets.
-// Marks packets as discard if:
-//   - fails to deserialize the shred slot.
-//   - slot leader is unknown.
-//   - slot leader is the node itself (circular transmission).
-fn get_slot_leaders<'a>(
-    self_pubkey: &'a Pubkey,
-    batches: &'a mut [PacketBatch],
-    leader_schedule_cache: &'a LeaderScheduleCache,
-    bank: &'a Bank,
-) -> impl Iterator<Item = (Slot, Option<Pubkey>)> + 'a {
-    batches
-        .iter_mut()
-        .flat_map(|batch| batch.iter_mut())
-        .filter(|packet| !packet.meta().discard())
-        .filter_map(move |mut packet| {
-            let shred = shred::layout::get_shred(packet.as_ref());
-            let slot = shred.and_then(shred::layout::get_slot)?;
-            let leader = leader_schedule_cache
-                .slot_leader_at(slot, Some(bank))
-                .map(|leader| leader.id)
-                .filter(|leader| leader != self_pubkey);
-            if leader.is_none() {
-                packet.meta_mut().set_discard(true);
-            }
-            Some((slot, leader))
-        })
+) -> bool {
+    if packet.meta().discard() {
+        return false;
+    }
+    let Some(shred) = shred::layout::get_shred(packet) else {
+        return false;
+    };
+    let Some(slot) = shred::layout::get_slot(shred) else {
+        return false;
+    };
+    let Some(leader) = leader_schedule_cache
+        .slot_leader_at(slot, Some(working_bank))
+        .map(|leader| leader.id)
+        .filter(|leader| leader != self_pubkey)
+    else {
+        return false;
+    };
+    verify_shred_with_leader(packet, &leader, cache)
 }
 
 fn count_discards(packets: &[PacketBatch]) -> usize {
@@ -611,7 +610,7 @@ mod tests {
     };
 
     #[test]
-    fn test_sigverify_shreds_verify_batches() {
+    fn test_verify_packet_signature() {
         let leader_keypair = Arc::new(Keypair::new());
         let wrong_keypair = Keypair::new();
         let leader_pubkey = leader_keypair.pubkey();
@@ -657,23 +656,25 @@ mod tests {
         batches[0][1].meta_mut().size = shred.payload().len();
 
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-        let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
         let working_bank = bank_forks.read().unwrap().working_bank();
-        let mut batches = batches
+        let batches = batches
             .into_iter()
             .map(PacketBatch::from)
             .collect::<Vec<_>>();
-        thread_pool.install(|| {
-            par_verify_packets(
-                &Pubkey::new_unique(), // self_pubkey
-                &working_bank,
-                &leader_schedule_cache,
-                &mut batches,
-                &cache,
-            )
-        });
-        assert!(!batches[0].get(0).unwrap().meta().discard());
-        assert!(batches[0].get(1).unwrap().meta().discard());
+        assert!(verify_packet_signature(
+            &Pubkey::new_unique(), // self_pubkey
+            batches[0].get(0).unwrap(),
+            &working_bank,
+            &leader_schedule_cache,
+            &cache,
+        ));
+        assert!(!verify_packet_signature(
+            &Pubkey::new_unique(), // self_pubkey
+            batches[0].get(1).unwrap(),
+            &working_bank,
+            &leader_schedule_cache,
+            &cache,
+        ));
     }
 
     #[test_matrix(
