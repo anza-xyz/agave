@@ -9,7 +9,6 @@ use {
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
     base64::{Engine, prelude::BASE64_STANDARD},
-    bincode::{config::Options, serialize},
     crossbeam_channel::{Receiver, Sender, unbounded},
     jsonrpc_core::{
         BoxFuture, Error, Metadata, Result,
@@ -2190,7 +2189,7 @@ impl JsonRpcRequestProcessor {
             // Filter on Delegate is_some()
             RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
                 72,
-                bincode::serialize(&1u32).unwrap(),
+                wincode::serialize(&1u32).unwrap(),
             )),
             // Filter on Delegate address
             RpcFilterType::Memcmp(Memcmp::new_raw_bytes(76, delegate.to_bytes().into())),
@@ -3812,17 +3811,17 @@ pub mod rpc_full {
                     },
                 )?;
 
-            let wire_transaction = serialize(&transaction).map_err(|err| {
+            let wire_transaction = wincode::serialize(&transaction).map_err(|err| {
                 info!("request_airdrop: serialize error: {err:?}");
                 Error::internal_error()
             })?;
 
-            let message_hash = transaction.message().hash();
             let signature = if !transaction.signatures.is_empty() {
                 transaction.signatures[0]
             } else {
                 return Err(RpcCustomError::TransactionSignatureVerificationFailure.into());
             };
+            let message_hash = transaction.message().hash();
 
             _send_transaction(
                 meta,
@@ -4371,7 +4370,7 @@ fn decode_and_deserialize<T>(
     encoding: TransactionBinaryEncoding,
 ) -> Result<(Vec<u8>, T)>
 where
-    T: serde::de::DeserializeOwned,
+    T: for<'a> wincode::SchemaRead<'a, wincode::config::DefaultConfig, Dst = T>,
 {
     let wire_output = match encoding {
         TransactionBinaryEncoding::Base58 => {
@@ -4413,11 +4412,8 @@ where
             PACKET_DATA_SIZE
         )));
     }
-    bincode::options()
-        .with_limit(PACKET_DATA_SIZE as u64)
-        .with_fixint_encoding()
-        .allow_trailing_bytes()
-        .deserialize_from(&wire_output[..])
+
+    wincode::deserialize(&wire_output[..])
         .map_err(|err| {
             Error::invalid_params(format!(
                 "failed to deserialize {}: {}",
@@ -4548,7 +4544,6 @@ pub mod tests {
             rpc_subscriptions::RpcSubscriptions,
         },
         agave_reserved_account_keys::ReservedAccountKeys,
-        bincode::deserialize,
         jsonrpc_core::{ErrorCode, MetaIoHandler, Output, Response, Value, futures},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
@@ -6034,11 +6029,13 @@ pub mod tests {
             rent_exempt_amount,
             recent_blockhash,
         );
-        let tx_serialized_encoded = bs58::encode(serialize(&tx).unwrap()).into_string();
+        let tx_serialized_encoded = bs58::encode(wincode::serialize(&tx).unwrap()).into_string();
         tx.signatures[0] = Signature::default();
-        let tx_badsig_serialized_encoded = bs58::encode(serialize(&tx).unwrap()).into_string();
+        let tx_badsig_serialized_encoded =
+            bs58::encode(wincode::serialize(&tx).unwrap()).into_string();
         tx.message.recent_blockhash = Hash::default();
-        let tx_invalid_recent_blockhash = bs58::encode(serialize(&tx).unwrap()).into_string();
+        let tx_invalid_recent_blockhash =
+            bs58::encode(wincode::serialize(&tx).unwrap()).into_string();
 
         // Simulation bank must be frozen
         bank.freeze();
@@ -6424,7 +6421,7 @@ pub mod tests {
         let recent_blockhash = bank.confirmed_last_blockhash();
         let tx =
             system_transaction::transfer(&fee_payer, &token_account_pubkey, 1, recent_blockhash);
-        let tx_serialized_encoded = bs58::encode(serialize(&tx).unwrap()).into_string();
+        let tx_serialized_encoded = bs58::encode(wincode::serialize(&tx).unwrap()).into_string();
 
         // Simulation bank must be frozen
         bank.freeze();
@@ -6545,7 +6542,7 @@ pub mod tests {
             recent_blockhash,
         );
         let tx_serialized_encoded =
-            base64::prelude::BASE64_STANDARD.encode(serialize(&tx).unwrap());
+            base64::prelude::BASE64_STANDARD.encode(wincode::serialize(&tx).unwrap());
 
         // Simulation bank must be frozen
         bank.freeze();
@@ -6736,7 +6733,7 @@ pub mod tests {
 
         let bob_pubkey = Pubkey::new_unique();
         let tx = system_transaction::transfer(&mint_keypair, &bob_pubkey, 1234, recent_blockhash);
-        let tx_serialized_encoded = bs58::encode(serialize(&tx).unwrap()).into_string();
+        let tx_serialized_encoded = bs58::encode(wincode::serialize(&tx).unwrap()).into_string();
 
         assert!(!bank.is_frozen());
 
@@ -6939,7 +6936,7 @@ pub mod tests {
         // sendTransaction will fail because the blockhash is invalid
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}"]}}"#,
-            bs58::encode(serialize(&bad_transaction).unwrap()).into_string()
+            bs58::encode(wincode::serialize(&bad_transaction).unwrap()).into_string()
         );
         let res = io.handle_request_sync(&req, meta.clone());
         assert_eq!(
@@ -6955,7 +6952,7 @@ pub mod tests {
         bad_transaction.sign(&[&mint_keypair], recent_blockhash);
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}"]}}"#,
-            bs58::encode(serialize(&bad_transaction).unwrap()).into_string()
+            bs58::encode(wincode::serialize(&bad_transaction).unwrap()).into_string()
         );
         let res = io.handle_request_sync(&req, meta.clone());
         assert_eq!(
@@ -6975,7 +6972,7 @@ pub mod tests {
         health.stub_set_health_status(Some(RpcHealthStatus::Behind { num_slots: 42 }));
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}"]}}"#,
-            bs58::encode(serialize(&bad_transaction).unwrap()).into_string()
+            bs58::encode(wincode::serialize(&bad_transaction).unwrap()).into_string()
         );
         let res = io.handle_request_sync(&req, meta.clone());
         assert_eq!(
@@ -6991,7 +6988,7 @@ pub mod tests {
 
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}"]}}"#,
-            bs58::encode(serialize(&bad_transaction).unwrap()).into_string()
+            bs58::encode(wincode::serialize(&bad_transaction).unwrap()).into_string()
         );
         let res = io.handle_request_sync(&req, meta.clone());
         let expected = json!({
@@ -7029,7 +7026,7 @@ pub mod tests {
         // transaction
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}", {{"skipPreflight": true}}]}}"#,
-            bs58::encode(serialize(&bad_transaction).unwrap()).into_string()
+            bs58::encode(wincode::serialize(&bad_transaction).unwrap()).into_string()
         );
         let res = io.handle_request_sync(&req, meta.clone());
         assert_eq!(
@@ -7043,7 +7040,7 @@ pub mod tests {
         bad_transaction.signatures.clear();
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}"]}}"#,
-            bs58::encode(serialize(&bad_transaction).unwrap()).into_string()
+            bs58::encode(wincode::serialize(&bad_transaction).unwrap()).into_string()
         );
         let res = io.handle_request_sync(&req, meta);
         assert_eq!(
@@ -7411,7 +7408,7 @@ pub mod tests {
             );
             if let EncodedTransaction::LegacyBinary(transaction) = transaction {
                 let decoded_transaction: Transaction =
-                    deserialize(&bs58::decode(&transaction).into_vec().unwrap()).unwrap();
+                    wincode::deserialize(&bs58::decode(&transaction).into_vec().unwrap()).unwrap();
                 if decoded_transaction.signatures[0] == confirmed_block_signatures[0] {
                     let meta = meta.unwrap();
                     assert_eq!(meta.status, Ok(()));
@@ -9169,14 +9166,13 @@ pub mod tests {
 
         let tx_ser = vec![0xffu8; PACKET_DATA_SIZE - 2];
         let mut tx64 = BASE64_STANDARD.encode(&tx_ser);
-        assert_eq!(
+        let err =
             decode_and_deserialize::<Transaction>(tx64.clone(), TransactionBinaryEncoding::Base64)
-                .unwrap_err(),
-            Error::invalid_params(
-                "failed to deserialize solana_transaction::Transaction: invalid value: continue \
-                 signal on byte-three, expected a terminal signal on or before byte-three"
-                    .to_string()
-            )
+                .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidParams,);
+        assert!(
+            err.message
+                .starts_with("failed to deserialize solana_transaction::Transaction")
         );
 
         tx64.push('!');
@@ -9187,14 +9183,13 @@ pub mod tests {
         );
 
         let mut tx58 = bs58::encode(&tx_ser).into_string();
-        assert_eq!(
+        let err =
             decode_and_deserialize::<Transaction>(tx58.clone(), TransactionBinaryEncoding::Base58)
-                .unwrap_err(),
-            Error::invalid_params(
-                "failed to deserialize solana_transaction::Transaction: invalid value: continue \
-                 signal on byte-three, expected a terminal signal on or before byte-three"
-                    .to_string()
-            )
+                .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidParams,);
+        assert!(
+            err.message
+                .starts_with("failed to deserialize solana_transaction::Transaction")
         );
 
         tx58.push('!');
@@ -9307,7 +9302,7 @@ pub mod tests {
             let request = create_test_request(
                 "getFeeForMessage",
                 Some(json!([
-                    BASE64_STANDARD.encode(serialize(&legacy_msg).unwrap())
+                    BASE64_STANDARD.encode(wincode::serialize(&legacy_msg).unwrap())
                 ])),
             );
             let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));
@@ -9327,7 +9322,9 @@ pub mod tests {
 
             let request = create_test_request(
                 "getFeeForMessage",
-                Some(json!([BASE64_STANDARD.encode(serialize(&v0_msg).unwrap())])),
+                Some(json!([
+                    BASE64_STANDARD.encode(wincode::serialize(&v0_msg).unwrap())
+                ])),
             );
             let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));
             assert_eq!(response.value, TEST_SIGNATURE_FEE);

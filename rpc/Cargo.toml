@@ -24,7 +24,6 @@ dev-context-only-utils = ["solana-ledger/dev-context-only-utils", "solana-rpc/de
 agave-feature-set = { workspace = true }
 agave-snapshots = { workspace = true }
 base64 = { workspace = true }
-bincode = { workspace = true }
 bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
@@ -96,6 +95,7 @@ stream-cancel = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["codec", "compat"] }
+wincode = { workspace = true }
 
 [dev-dependencies]
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }

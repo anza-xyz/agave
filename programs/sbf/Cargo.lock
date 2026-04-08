@@ -8014,7 +8014,6 @@ dependencies = [
  "agave-feature-set",
  "agave-snapshots",
  "base64 0.22.1",
- "bincode",
  "bs58",
  "crossbeam-channel",
  "dashmap",
@@ -8086,6 +8085,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-util 0.7.18",
+ "wincode",
 ]
 
 [[package]]
