@@ -9790,7 +9790,6 @@ dependencies = [
 name = "solana-tpu-client"
 version = "4.1.0-alpha.0"
 dependencies = [
- "bincode",
  "futures-util",
  "indicatif",
  "log",
@@ -9811,6 +9810,7 @@ dependencies = [
  "solana-transaction-error",
  "thiserror 2.0.18",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
