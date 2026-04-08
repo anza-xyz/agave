@@ -62,14 +62,20 @@ pub fn verify_shreds(
     cache: &RwLock<LruCache>,
 ) {
     thread_pool.install(|| {
-        batches.par_iter_mut().for_each(|batch| {
-            batch.par_iter_mut().for_each(|mut packet| {
-                if !packet.meta().discard()
-                    && !verify_shred_cpu(packet.as_ref(), slot_leaders, cache)
-                {
-                    packet.meta_mut().set_discard(true);
-                }
-            });
+        par_verify_shreds(batches, slot_leaders, cache);
+    });
+}
+
+pub fn par_verify_shreds(
+    batches: &mut [PacketBatch],
+    slot_leaders: &SlotPubkeys,
+    cache: &RwLock<LruCache>,
+) {
+    batches.par_iter_mut().for_each(|batch| {
+        batch.par_iter_mut().for_each(|mut packet| {
+            if !packet.meta().discard() && !verify_shred_cpu(packet.as_ref(), slot_leaders, cache) {
+                packet.meta_mut().set_discard(true);
+            }
         });
     });
 }
