@@ -8,7 +8,7 @@ use {
         sockets::{SocketConfiguration, multi_bind_in_range_with_config},
     },
     solana_streamer::{
-        packet::{PACKET_DATA_SIZE, Packet, PacketBatchRecycler, RecycledPacketBatch},
+        packet::{PACKET_DATA_SIZE, Packet, RecycledPacketBatch},
         sendmmsg::batch_send,
         streamer::{PacketBatchReceiver, StreamerReceiveStats, receiver},
     },
@@ -122,7 +122,6 @@ fn main() -> Result<()> {
     .unwrap();
 
     let mut addr = SocketAddr::new(ip_addr, 0);
-    let recycler = PacketBatchRecycler::default();
     let exit = Arc::new(AtomicBool::new(false));
     let stats = Arc::new(StreamerReceiveStats::new("bench-streamer-test"));
 
@@ -140,10 +139,8 @@ fn main() -> Result<()> {
                 Arc::new(read_socket),
                 exit.clone(),
                 packet_sender,
-                recycler.clone(),
                 stats.clone(),
                 None, // coalesce
-                true,
                 false,
             );
 

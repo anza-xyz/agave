@@ -6,10 +6,7 @@ use {
     solana_clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
     solana_metrics::{inc_new_counter_debug, inc_new_counter_info},
     solana_packet::PacketFlags,
-    solana_perf::{
-        packet::{PacketBatchRecycler, PacketRefMut},
-        recycler::Recycler,
-    },
+    solana_perf::packet::PacketRefMut,
     solana_poh::poh_recorder::PohRecorder,
     solana_streamer::streamer::{
         self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats,
@@ -137,8 +134,6 @@ impl FetchStage {
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Option<Duration>,
     ) -> Self {
-        let recycler: PacketBatchRecycler = Recycler::warmed(1000, 1024);
-
         let tpu_vote_stats = Arc::new(StreamerReceiveStats::new("tpu_vote_receiver"));
         let tpu_vote_threads: Vec<_> = tpu_vote_sockets
             .into_iter()
@@ -149,10 +144,8 @@ impl FetchStage {
                     socket,
                     exit.clone(),
                     vote_sender.clone(),
-                    recycler.clone(),
                     tpu_vote_stats.clone(),
                     coalesce,
-                    true,
                     true, // only staked connections should be voting
                 )
             })
