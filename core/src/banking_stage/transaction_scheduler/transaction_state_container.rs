@@ -3,12 +3,19 @@ use {
     crate::banking_stage::scheduler_messages::TransactionId,
     agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     slab::{Slab, VacantEntry},
+    solana_clock::Slot,
     solana_packet::PACKET_DATA_SIZE,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
     std::{collections::BTreeSet, iter::Rev, ops::Bound, sync::Arc},
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HeldTransaction {
+    priority_id: TransactionPriorityId,
+    attempted_slot: Slot,
+}
 
 /// This structure will hold `TransactionState` for the entirety of a
 /// transaction's lifetime in the scheduler and BankingStage as a whole.
@@ -39,7 +46,7 @@ pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
     capacity: usize,
     priority_queue: BTreeSet<TransactionPriorityId>,
     id_to_transaction_state: Slab<TransactionState<Tx>>,
-    held_transactions: Vec<TransactionPriorityId>,
+    held_transactions: Vec<HeldTransaction>,
 }
 
 pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
@@ -71,6 +78,7 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
         transaction_id: TransactionId,
         transaction: Tx,
         immediately_retryable: bool,
+        attempted_slot: Option<Slot>,
     ) {
         let transaction_state = self
             .get_mut_transaction_state(transaction_id)
@@ -81,7 +89,10 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
         if immediately_retryable {
             self.push_ids_into_queue(std::iter::once(priority_id));
         } else {
-            self.hold_transaction(priority_id);
+            self.hold_transaction(
+                priority_id,
+                attempted_slot.expect("held transaction must have attempted slot"),
+            );
         }
     }
 
@@ -97,7 +108,7 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     ) -> usize;
 
     /// Hold the tarnsaction until the next flush (next slot).
-    fn hold_transaction(&mut self, priority_id: TransactionPriorityId);
+    fn hold_transaction(&mut self, priority_id: TransactionPriorityId, attempted_slot: Slot);
 
     /// Remove transaction by id.
     fn remove_by_id(&mut self, id: TransactionId);
@@ -182,8 +193,11 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         num_dropped
     }
 
-    fn hold_transaction(&mut self, priority_id: TransactionPriorityId) {
-        self.held_transactions.push(priority_id);
+    fn hold_transaction(&mut self, priority_id: TransactionPriorityId, attempted_slot: Slot) {
+        self.held_transactions.push(HeldTransaction {
+            priority_id,
+            attempted_slot,
+        });
     }
 
     fn remove_by_id(&mut self, id: TransactionId) {
@@ -196,7 +210,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
 
     fn flush_held_transactions(&mut self) {
         let mut held_transactions = core::mem::take(&mut self.held_transactions);
-        self.push_ids_into_queue(held_transactions.drain(..));
+        self.push_ids_into_queue(held_transactions.drain(..).map(|held| held.priority_id));
         core::mem::swap(&mut self.held_transactions, &mut held_transactions);
     }
 
@@ -357,8 +371,8 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
     }
 
     #[inline]
-    fn hold_transaction(&mut self, priority_id: TransactionPriorityId) {
-        self.inner.hold_transaction(priority_id);
+    fn hold_transaction(&mut self, priority_id: TransactionPriorityId, attempted_slot: Slot) {
+        self.inner.hold_transaction(priority_id, attempted_slot);
     }
 
     #[inline]
@@ -475,6 +489,30 @@ mod tests {
             container
                 .get_mut_transaction_state(non_existing_id)
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn test_hold_retry_stores_attempted_slot() {
+        let mut container = TransactionStateContainer::with_capacity(5);
+        let (transaction, max_age, priority, cost) = test_transaction(10);
+        container.insert_new_transaction(transaction, max_age, priority, cost);
+
+        let priority_id = container.pop().unwrap();
+        let transaction = container
+            .get_mut_transaction_state(priority_id.id)
+            .unwrap()
+            .take_transaction_for_scheduling()
+            .0;
+
+        container.retry_transaction(priority_id.id, transaction, false, Some(42));
+
+        assert_eq!(
+            container.held_transactions,
+            vec![HeldTransaction {
+                priority_id,
+                attempted_slot: 42,
+            }]
         );
     }
 

@@ -226,7 +226,7 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                         transactions,
                         max_ages: _,
                     },
-                attempted_slot: _,
+                attempted_slot,
                 retryable_indexes,
             }) => {
                 let num_transactions = ids.len();
@@ -244,6 +244,7 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                                 id,
                                 transaction,
                                 retryable_index.immediately_retryable,
+                                attempted_slot,
                             );
                             retryable_iter.next();
                             continue;
@@ -540,7 +541,7 @@ mod tests {
         let expected_num_retryable = retryable_indexes.len();
         let finished_work = FinishedConsumeWork {
             work,
-            attempted_slot: None,
+            attempted_slot: Some(42),
             retryable_indexes,
         };
         finished_work_sender.send(finished_work).unwrap();
