@@ -950,13 +950,12 @@ mod tests {
         }
     }
 
-    #[test_matrix([true, false])]
-    fn test_vote_reward_payout(pay_leader: bool) {
+    #[test_matrix([true, false], [1_000, 5_000])]
+    fn test_vote_reward_payout(pay_leader: bool, commission_bps: u16) {
         let num_validators = 3;
         let validators = (0..num_validators)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
-        let commission_bps = 1_000;
         test_vote_reward_payout_impl(&validators, pay_leader, commission_bps);
     }
 
