@@ -1,6 +1,7 @@
 use {
     crate::{
         result::{Result, TransactionViewError},
+        signature_frame::MAX_SIGNATURES_PER_PACKET,
         transaction_data::TransactionData,
         transaction_version::TransactionVersion,
         transaction_view::UnsanitizedTransactionView,
@@ -25,9 +26,10 @@ pub(crate) fn sanitize(
 /// Transaction constraints:
 /// * size <= 4096 bytes
 fn sanitize_transaction(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
+    #[allow(unreachable_patterns)]
     let max_transaction_size = match view.version() {
         TransactionVersion::Legacy | TransactionVersion::V0 => solana_packet::PACKET_DATA_SIZE,
-        TransactionVersion::V1 => solana_message::v1::MAX_TRANSACTION_SIZE,
+        _ /*TransactionVersion::V1*/ => solana_message::v1::MAX_TRANSACTION_SIZE,
     };
 
     if view.data().len() > max_transaction_size {
@@ -89,7 +91,7 @@ fn sanitize_signatures(view: &UnsanitizedTransactionView<impl TransactionData>) 
         return Err(TransactionViewError::SanitizeError);
     }
 
-    if view.num_signatures() > 12 {
+    if view.num_signatures() > MAX_SIGNATURES_PER_PACKET {
         return Err(TransactionViewError::SanitizeError);
     }
 
@@ -107,9 +109,10 @@ fn sanitize_signatures(view: &UnsanitizedTransactionView<impl TransactionData>) 
 ///   * legacy/v0 uses current limits of: num_accounts <= 255 (u8 bound)
 /// * No duplicate addresses
 fn sanitize_account_access(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
+    #[allow(unreachable_patterns)]
     let addresses_limit = match view.version() {
         TransactionVersion::Legacy | TransactionVersion::V0 => 255,
-        TransactionVersion::V1 => 64,
+        _ /*TransactionVersion::V1*/ => 64,
     };
 
     if total_number_of_accounts(view) >= addresses_limit {
@@ -315,6 +318,26 @@ mod tests {
             );
         }
 
+        // More than 12 signatures.
+        {
+            let transaction = create_legacy_transaction(
+                13,
+                MessageHeader {
+                    num_required_signatures: 13,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                (0..13).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+            );
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert_eq!(
+                sanitize_signatures(&view),
+                Err(TransactionViewError::SanitizeError)
+            );
+        }
+
         // Not enough static accounts.
         {
             let transaction = create_legacy_transaction(
@@ -363,6 +386,26 @@ mod tests {
 
     #[test]
     fn test_sanitize_account_access() {
+        // num_required_signatures must be >= 1.
+        {
+            let transaction = create_legacy_transaction(
+                0,
+                MessageHeader {
+                    num_required_signatures: 0,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                vec![Pubkey::new_unique()],
+                vec![],
+            );
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert_eq!(
+                sanitize_message_header(&view),
+                Err(TransactionViewError::SanitizeError)
+            );
+        }
+
         // Overlap of signing and readonly non-signing accounts.
         {
             let transaction = create_legacy_transaction(
