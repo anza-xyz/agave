@@ -399,7 +399,7 @@ impl Consumer {
                 |(index, processing_result)| {
                     processing_result.was_processed().then_some(RetryableIndex {
                         index,
-                        immediately_retryable: true, // recording errors are always immediately retryable
+                        immediately_retryable: false,
                     })
                 },
             ));
@@ -724,7 +724,7 @@ mod tests {
             retryable_transaction_indexes,
             vec![RetryableIndex {
                 index: 0,
-                immediately_retryable: true
+                immediately_retryable: false
             }]
         );
         assert_matches!(
@@ -1245,7 +1245,7 @@ mod tests {
             .retryable_transaction_indexes
             .sort_unstable();
         let expected: Vec<_> = (0..transactions.len())
-            .map(|index| RetryableIndex::new(index, true))
+            .map(|index| RetryableIndex::new(index, false))
             .collect();
         assert_eq!(
             execute_and_commit_transactions_output.retryable_transaction_indexes,
