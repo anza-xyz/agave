@@ -2470,8 +2470,8 @@ async fn process_extend_program(
             let err_msg = if (headroom as u32) < MINIMUM_EXTEND_PROGRAM_BYTES {
                 format!(
                     "Program's current length is {headroom} bytes away from \
-                     {MAX_PERMITTED_DATA_LENGTH}. ExtendProgram requires exactly {headroom} \
-                     bytes, but only {additional_bytes} were requested"
+                     {MAX_PERMITTED_DATA_LENGTH}, but {additional_bytes} were requested. Please \
+                     re-run the command with additional {headroom} bytes."
                 )
             } else {
                 format!(
