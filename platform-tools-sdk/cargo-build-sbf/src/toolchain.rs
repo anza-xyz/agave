@@ -128,7 +128,17 @@ pub(crate) fn validate_platform_tools_version(
     }
 }
 
-pub(crate) fn make_platform_tools_path_for_version(version: &str) -> PathBuf {
+pub(crate) fn make_platform_tools_path_for_version(
+    version: &str,
+    platform_tools_path: Option<&Path>,
+) -> PathBuf {
+    // Allow users to override the platform-tools path via command line argument
+    // (which defaults to the PLATFORM_TOOLS_PATH environment variable).
+    // This is useful for NixOS and other immutable filesystem environments where
+    // platform-tools are pre-packaged and installed elsewhere.
+    if let Some(path) = platform_tools_path {
+        return path.to_path_buf();
+    }
     home_dir()
         .join(".cache")
         .join("solana")
@@ -136,8 +146,11 @@ pub(crate) fn make_platform_tools_path_for_version(version: &str) -> PathBuf {
         .join("platform-tools")
 }
 
-pub(crate) fn get_base_rust_version(platform_tools_version: &str) -> String {
-    let target_path = make_platform_tools_path_for_version(platform_tools_version);
+pub(crate) fn get_base_rust_version(
+    platform_tools_version: &str,
+    platform_tools_path: Option<&Path>,
+) -> String {
+    let target_path = make_platform_tools_path_for_version(platform_tools_version, platform_tools_path);
     let rustc = target_path.join("rust").join("bin").join("rustc");
     if !rustc.exists() {
         return String::from("");
@@ -245,6 +258,13 @@ pub(crate) fn install_if_missing(
     target_path: &Path,
     use_rest_api: bool,
 ) -> Result<(), String> {
+    // If platform_tools_path is set, the user has pre-installed platform-tools
+    // (e.g., via Nix). Skip any download/installation operations.
+    if let Some(p) = &config.platform_tools_path {
+        debug!("Using pre-installed platform-tools at '{}'", p.display());
+        return Ok(());
+    }
+
     if config.force_tools_install && target_path.is_dir() {
         debug!("Remove directory {target_path:?}");
         fs::remove_dir_all(target_path)
@@ -342,12 +362,16 @@ pub(crate) fn corrupted_toolchain(platform_tools_dir: &Path) -> bool {
         || !cargo.try_exists().unwrap_or(false)
 }
 
-pub(crate) fn generate_toolchain_name(requested_toolchain_version: &str) -> String {
+pub(crate) fn generate_toolchain_name(
+    requested_toolchain_version: &str,
+    platform_tools_path: Option<&Path>,
+) -> String {
     if requested_toolchain_version == DEFAULT_PLATFORM_TOOLS_VERSION {
         return format!("{DEFAULT_RUST_VERSION}-sbpf-solana-{DEFAULT_PLATFORM_TOOLS_VERSION}");
     }
 
-    let rustc_version_string = get_base_rust_version(requested_toolchain_version);
+    let rustc_version_string =
+        get_base_rust_version(requested_toolchain_version, platform_tools_path);
     // The version string has the format 'rustc 1.84.1'
     let mut it = rustc_version_string.split_whitespace();
     // Jump 'rustc'
@@ -376,7 +400,10 @@ fn link_solana_toolchain(
     if config.verbose {
         debug!("{rustup_output}");
     }
-    let requested_toolchain_name = generate_toolchain_name(requested_toolchain_version);
+    let requested_toolchain_name = generate_toolchain_name(
+        requested_toolchain_version,
+        config.platform_tools_path.as_deref(),
+    );
     let mut do_link = true;
     for line in rustup_output.lines() {
         let substrings: Vec<&str> = line.split(' ').collect();
@@ -423,7 +450,10 @@ fn link_solana_toolchain(
 }
 
 pub(crate) fn install_tools(config: &Config, platform_tools_version: &str, use_rest_api: bool) {
-    let target_path = make_platform_tools_path_for_version(platform_tools_version);
+    let target_path = make_platform_tools_path_for_version(
+        platform_tools_version,
+        config.platform_tools_path.as_deref(),
+    );
     install_if_missing(config, platform_tools_version, &target_path, use_rest_api).unwrap_or_else(
         |err| {
             // The package version directory doesn't contain a valid
@@ -491,7 +521,10 @@ pub(crate) fn install_and_link_tools(
         let target_triple = rust_target_triple(config);
         check_solana_target_installed(&target_triple);
     } else {
-        let platform_tools_dir = make_platform_tools_path_for_version(&platform_tools_version);
+        let platform_tools_dir = make_platform_tools_path_for_version(
+            &platform_tools_version,
+            config.platform_tools_path.as_deref(),
+        );
         link_solana_toolchain(config, &platform_tools_dir, &platform_tools_version);
         // RUSTC variable overrides cargo +<toolchain> mechanism of
         // selecting the rust compiler and makes cargo run a rust compiler
