@@ -150,7 +150,9 @@ where
                 .maybe_report_and_reset_slot(new_leader_slot);
 
             if most_recent_leader_slot != new_leader_slot {
-                self.container.flush_held_transactions();
+                if let Some(new_leader_slot) = new_leader_slot {
+                    self.container.flush_held_transactions(new_leader_slot);
+                }
                 most_recent_leader_slot = new_leader_slot;
                 cost_pacer = decision.bank().map(|b| {
                     let cost_tracker = b.read_cost_tracker().unwrap();
@@ -188,7 +190,7 @@ where
                 });
             }
 
-            self.receive_completed()?;
+            self.receive_completed(most_recent_leader_slot)?;
             let scheduled = self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
             if scheduled == 0 {
                 let (_, clean_time_us) = measure_us!(self.incremental_recheck());
@@ -378,9 +380,14 @@ where
     }
 
     /// Receives completed transactions from the workers and updates metrics.
-    fn receive_completed(&mut self) -> Result<(), SchedulerError> {
-        let ((num_transactions, num_retryable), receive_completed_time_us) =
-            measure_us!(self.scheduler.receive_completed(&mut self.container)?);
+    fn receive_completed(
+        &mut self,
+        most_recent_leader_slot: Option<u64>,
+    ) -> Result<(), SchedulerError> {
+        let ((num_transactions, num_retryable), receive_completed_time_us) = measure_us!(
+            self.scheduler
+                .receive_completed(&mut self.container, most_recent_leader_slot)?
+        );
 
         self.count_metrics.update(|count_metrics| {
             count_metrics.num_finished += num_transactions;
@@ -628,7 +635,7 @@ mod tests {
             .decision_maker
             .make_consume_or_forward_decision();
         assert!(matches!(decision, BufferedPacketsDecision::Consume(_)));
-        assert!(scheduler_controller.receive_completed().is_ok());
+        assert!(scheduler_controller.receive_completed(None).is_ok());
 
         // Time is not a reliable way for deterministic testing.
         // Loop here until no more packets are received, this avoids parallel

@@ -765,7 +765,7 @@ mod tests {
                 retryable_indexes: vec![],
             })
             .unwrap();
-        scheduler.receive_completed(&mut container).unwrap();
+        scheduler.receive_completed(&mut container, None).unwrap();
         let scheduling_summary = scheduler
             .schedule(
                 &mut container,
