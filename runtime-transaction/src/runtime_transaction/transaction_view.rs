@@ -208,6 +208,22 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
                     })
                     .collect(),
             }),
+            TransactionVersion::V1 => {
+                let config_view = self.transaction_config().expect("V1 must have config_view");
+                let config = solana_message::v1::TransactionConfig {
+                    priority_fee: config_view.priority_fee_lamports(),
+                    compute_unit_limit: config_view.compute_unit_limit(),
+                    loaded_accounts_data_size_limit: config_view.loaded_accounts_data_size_limit(),
+                    heap_size: config_view.requested_heap_size(),
+                };
+                VersionedMessage::V1(solana_message::v1::Message {
+                    header,
+                    config,
+                    lifetime_specifier: recent_blockhash,
+                    account_keys: static_account_keys,
+                    instructions,
+                })
+            }
         };
 
         VersionedTransaction {

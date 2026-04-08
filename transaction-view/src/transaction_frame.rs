@@ -57,6 +57,9 @@ impl TransactionFrame {
                 total_readonly_lookup_accounts: 0,
             },
             TransactionVersion::V0 => AddressTableLookupFrame::try_new(bytes, &mut offset)?,
+            TransactionVersion::V1 => {
+                return Err(TransactionViewError::ParseError);
+            }
         };
 
         // Verify that the entire transaction was parsed.
