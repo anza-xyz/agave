@@ -182,13 +182,8 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
     /// This does not include the signatures.
     #[inline]
     pub fn message_data(&self) -> &[u8] {
-        let data = self.data();
-        let start = usize::from(self.frame.message_offset());
-        let end = match self.version() {
-            TransactionVersion::V1 => usize::from(self.frame.signatures_offset()),
-            _ => data.len(),
-        };
-        &data[start..end]
+        let (start, end) = self.frame.message_range();
+        &self.data()[usize::from(start)..usize::from(end)]
     }
 
     #[inline]

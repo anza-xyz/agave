@@ -34,6 +34,8 @@ pub(crate) struct TransactionFrame {
     address_table_lookup: AddressTableLookupFrame,
     /// Transaction config framing data
     transaction_config_frame: TransactionConfigFrame,
+    /// The end of data
+    end_offset: u16,
 }
 
 impl TransactionFrame {
@@ -84,6 +86,7 @@ impl TransactionFrame {
             instructions,
             address_table_lookup,
             transaction_config_frame: TransactionConfigFrame::not_applicable(),
+            end_offset: offset as u16,
         })
     }
 
@@ -177,6 +180,7 @@ impl TransactionFrame {
                 total_readonly_lookup_accounts: 0,
             },
             transaction_config_frame,
+            end_offset: offset as u16,
         };
 
         Ok(frame)
@@ -253,22 +257,20 @@ impl TransactionFrame {
         self.address_table_lookup.total_readonly_lookup_accounts
     }
 
-    /// Return the offset to the message.
+    /// Return the range to the message as [begin, end]
     #[inline]
-    pub(crate) fn message_offset(&self) -> u16 {
-        self.message_header.offset
+    pub(crate) fn message_range(&self) -> (u16, u16) {
+        let end = match self.version() {
+            TransactionVersion::V1 => self.signature.offset,
+            _ => self.end_offset,
+        };
+        (self.message_header.offset, end)
     }
 
     /// Return transaction_config_frame
     #[inline]
     pub(crate) fn transaction_config_frame(&self) -> &TransactionConfigFrame {
         &self.transaction_config_frame
-    }
-
-    /// Return the offset to signature
-    #[inline]
-    pub(crate) fn signatures_offset(&self) -> u16 {
-        self.signature.offset
     }
 }
 
@@ -392,6 +394,17 @@ impl TransactionFrame {
             num_address_table_lookups: self.address_table_lookup.num_address_table_lookups,
             index: 0,
         }
+    }
+}
+
+#[cfg(test)]
+impl TransactionFrame {
+    pub(crate) fn message_offset(&self) -> u16 {
+        self.message_header.offset
+    }
+
+    pub(crate) fn signatures_offset(&self) -> u16 {
+        self.signature.offset
     }
 }
 
