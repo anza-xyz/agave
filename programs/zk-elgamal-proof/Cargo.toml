@@ -21,7 +21,7 @@ solana-zk-sdk = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-curve25519-dalek = { workspace = true }
+solana-ed25519 = { workspace = true }
 
 [[bench]]
 name = "verify_proofs"

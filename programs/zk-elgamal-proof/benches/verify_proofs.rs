@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     criterion::{Criterion, criterion_group, criterion_main},
-    curve25519_dalek::scalar::Scalar,
+    solana_ed25519::scalar::Scalar,
     solana_zk_sdk::{
         encryption::{
             elgamal::ElGamalKeypair,
