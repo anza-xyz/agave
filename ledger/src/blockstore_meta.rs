@@ -272,7 +272,8 @@ mod wincode_compat_cast {
     unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for U32AsU64 {
         type Dst = u32;
 
-        const TYPE_META: wincode::TypeMeta = <u64 as SchemaRead<'de, C>>::TYPE_META;
+        const TYPE_META: wincode::TypeMeta =
+            <u64 as SchemaRead<'de, C>>::TYPE_META.keep_zero_copy(false);
 
         fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             let val = <u64 as SchemaRead<'de, C>>::get(reader)?;
@@ -283,7 +284,8 @@ mod wincode_compat_cast {
     unsafe impl<C: ConfigCore> SchemaWrite<C> for U32AsU64 {
         type Src = u32;
 
-        const TYPE_META: wincode::TypeMeta = <u64 as SchemaWrite<C>>::TYPE_META;
+        const TYPE_META: wincode::TypeMeta =
+            <u64 as SchemaWrite<C>>::TYPE_META.keep_zero_copy(false);
 
         fn size_of(src: &Self::Src) -> WriteResult<usize> {
             <u64 as SchemaWrite<C>>::size_of(&u64::from(*src))
@@ -714,6 +716,7 @@ pub struct AddressSignatureMeta {
 
 /// Performance information about validator execution during a time slice.
 ///
+#[repr(C)]
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct PerfSample {
     // `PerfSampleV1` part
@@ -725,6 +728,7 @@ pub struct PerfSample {
     pub num_non_vote_transactions: u64,
 }
 
+#[repr(C)]
 #[derive(Clone, Debug, Default, SchemaRead, SchemaWrite, PartialEq, Eq)]
 pub struct OptimisticSlotMetaV0 {
     pub hash: Hash,
