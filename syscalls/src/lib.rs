@@ -1425,12 +1425,14 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                         )?;
 
-                        if let Some(result_point) = solana_bls12_381_syscall::bls12_381_g1_addition(
-                            solana_bls12_381_syscall::Version::V0,
-                            left_point,
-                            right_point,
-                            endianness,
-                        ) {
+                        if let Some(result_point) =
+                            solana_bls12_381_syscall::bls12_381_g1_addition_unchecked(
+                                solana_bls12_381_syscall::Version::V0,
+                                left_point,
+                                right_point,
+                                endianness,
+                            )
+                        {
                             translate_mut!(
                                 memory_mapping,
                                 invoke_context.get_check_aligned(),
@@ -1460,7 +1462,7 @@ declare_builtin_function!(
                         )?;
 
                         if let Some(result_point) =
-                            solana_bls12_381_syscall::bls12_381_g1_subtraction(
+                            solana_bls12_381_syscall::bls12_381_g1_subtraction_unchecked(
                                 solana_bls12_381_syscall::Version::V0,
                                 left_point,
                                 right_point,
@@ -1542,12 +1544,14 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                         )?;
 
-                        if let Some(result_point) = solana_bls12_381_syscall::bls12_381_g2_addition(
-                            solana_bls12_381_syscall::Version::V0,
-                            left_point,
-                            right_point,
-                            endianness,
-                        ) {
+                        if let Some(result_point) =
+                            solana_bls12_381_syscall::bls12_381_g2_addition_unchecked(
+                                solana_bls12_381_syscall::Version::V0,
+                                left_point,
+                                right_point,
+                                endianness,
+                            )
+                        {
                             translate_mut!(
                                 memory_mapping,
                                 invoke_context.get_check_aligned(),
@@ -1577,7 +1581,7 @@ declare_builtin_function!(
                         )?;
 
                         if let Some(result_point) =
-                            solana_bls12_381_syscall::bls12_381_g2_subtraction(
+                            solana_bls12_381_syscall::bls12_381_g2_subtraction_unchecked(
                                 solana_bls12_381_syscall::Version::V0,
                                 left_point,
                                 right_point,

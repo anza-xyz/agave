@@ -521,7 +521,7 @@ impl Blockstore {
                 }
                 let chained_merkle_root = parent
                     .and_then(|p| merkle_roots.get(&p).copied())
-                    .or_else(|| self.get_last_shred_merkle_root(parent_slot).ok())
+                    .or_else(|| self.get_last_shred_merkle_root(parent_slot).ok().flatten())
                     .unwrap_or_else(|| Hash::new_from_array(rand::rng().random()));
                 let shreds: Vec<Shred> = Shredder::new(slot, parent_slot, 0, 0)
                     .unwrap()
@@ -2802,15 +2802,20 @@ impl Blockstore {
     /// Retrieves the merkle root of the last data shred in the given slot,
     /// which serves as the slot's block ID for chained merkle root validation
     /// in child slots (SIMD-0340).
-    pub fn get_last_shred_merkle_root(&self, slot: Slot) -> Result<Hash> {
-        let meta = self.meta(slot)?.ok_or(BlockstoreError::SlotUnavailable)?;
-        let last_index = meta
-            .last_index
-            .ok_or(BlockstoreError::UnknownLastIndex(slot))?;
+    ///
+    /// Returns `Ok(None)`` if the block is not complete
+    pub fn get_last_shred_merkle_root(&self, slot: Slot) -> Result<Option<Hash>> {
+        let Some(meta) = self.meta(slot)? else {
+            return Ok(None);
+        };
+        let Some(last_index) = meta.last_index else {
+            return Ok(None);
+        };
         let shred_bytes = self
             .get_data_shred(slot, last_index)?
             .ok_or(BlockstoreError::MissingShred(slot, last_index))?;
         shred::layout::get_merkle_root(&shred_bytes)
+            .map(Option::Some)
             .ok_or(BlockstoreError::MissingMerkleRoot(slot, last_index))
     }
 
@@ -2818,11 +2823,14 @@ impl Blockstore {
     /// - For TowerBFT blocks this is the merkle root of the last shred
     /// - For Alpenglow blocks this is the double merkle root
     ///
-    /// Returns None if the block is not complete
-    pub fn get_block_id(&self, slot: Slot, migration_status: &MigrationStatus) -> Result<Hash> {
+    /// Returns `Ok(None)` if the block is not complete
+    pub fn get_block_id(
+        &self,
+        slot: Slot,
+        migration_status: &MigrationStatus,
+    ) -> Result<Option<Hash>> {
         if migration_status.should_use_double_merkle_block_id(slot) {
-            let dmr = self.get_double_merkle_root(slot, BlockLocation::Original)?;
-            dmr.ok_or(BlockstoreError::SlotNotFull)
+            self.get_double_merkle_root(slot, BlockLocation::Original)
         } else {
             self.get_last_shred_merkle_root(slot)
         }
@@ -3005,7 +3013,8 @@ impl Blockstore {
         let reed_solomon_cache = ReedSolomonCache::default();
         let mut chained_merkle_root = self
             .get_last_shred_merkle_root(parent_slot)
-            .unwrap_or_else(|_| Hash::new_from_array(rand::rng().random()));
+            .unwrap()
+            .unwrap_or_else(|| Hash::new_from_array(rand::rng().random()));
         // Find all the entries for start_slot
         for entry in entries.into_iter() {
             if remaining_ticks_in_slot == 0 {

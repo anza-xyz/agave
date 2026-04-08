@@ -3554,7 +3554,7 @@ impl ReplayStage {
                 let block_id = process_active_banks_context
                     .blockstore
                     .get_block_id(bank.slot(), &process_active_banks_context.migration_status)
-                    .ok();
+                    .expect("Blockstore operations must succeed");
                 debug_assert!(block_id.is_some() || is_leader_block);
                 if block_id.is_some() {
                     bank.set_block_id(block_id);
