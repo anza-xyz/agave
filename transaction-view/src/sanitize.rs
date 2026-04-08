@@ -83,6 +83,10 @@ fn sanitize_signatures(view: &UnsanitizedTransactionView<impl TransactionData>) 
         return Err(TransactionViewError::SanitizeError);
     }
 
+    if view.num_signatures() > 12 {
+        return Err(TransactionViewError::SanitizeError);
+    }
+
     // Each signature is associated with a unique static public key.
     // Check that there are at least as many static account keys as signatures.
     if view.num_static_account_keys() < view.num_signatures() {
