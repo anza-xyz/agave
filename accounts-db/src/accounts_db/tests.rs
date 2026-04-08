@@ -6319,7 +6319,7 @@ fn test_write_accounts_to_cache_scenarios(
 /// data from a rooted slot that is not an ancestor of the querying bank.
 ///
 /// Scenario
-///   - Bank at slot 19 has ancestors {17, 18, 19}
+///   - Bank at slot 19 has ancestors {17, 19}
 ///   - Account exists at slot 18 (rooted but NOT an ancestor — different fork)
 ///   - Account exists at slot 16 (rooted)
 ///   - min_slot of ancestors = 17
