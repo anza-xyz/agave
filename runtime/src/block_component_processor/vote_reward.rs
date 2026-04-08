@@ -9,7 +9,7 @@ use {
     solana_vote_interface::state::{
         LandedVote, Lockout, MAX_EPOCH_CREDITS_HISTORY, VoteStateV4, VoteStateVersions,
     },
-    std::collections::VecDeque,
+    std::collections::{HashSet, VecDeque},
     thiserror::Error,
 };
 
@@ -62,6 +62,11 @@ pub(super) fn calculate_and_pay_voting_reward_and_update_vote_state(
     let Some((reward_slot, validators_to_reward)) = reward_slot_and_validators else {
         return Ok(());
     };
+
+    debug_assert_eq!(
+        validators_to_reward.len(),
+        validators_to_reward.iter().collect::<HashSet<_>>().len()
+    );
 
     let current_slot = bank.slot();
     let (reward_slot_accounts, reward_slot_total_stake) = {
@@ -345,6 +350,7 @@ mod tests {
             collections::HashMap,
             sync::{Arc, RwLock},
         },
+        test_case::test_matrix,
     };
 
     fn get_vote_state_v4(bank: &Bank, vote_pubkey: &Pubkey) -> VoteStateV4 {
@@ -781,6 +787,12 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct ValidatorRewardState {
+        prev_lamports: u64,
+        expected_rewards: u64,
+    }
+
     fn initial_state(
         validator_keypairs: &[ValidatorVoteKeypairs],
         commission_bps: u16,
@@ -820,6 +832,8 @@ mod tests {
         let validators_to_reward = validators
             .iter()
             .map(|k| k.vote_keypair.pubkey())
+            .collect::<HashSet<_>>()
+            .into_iter()
             .collect::<Vec<_>>();
 
         let mut looping_bank = bank;
@@ -847,19 +861,19 @@ mod tests {
         (looping_bank, map)
     }
 
-    fn test_vote_reward_payout(pay_leader: bool, commission_bps: u16) {
-        let num_validators = 3;
-        let validator_keypairs = (0..num_validators)
-            .map(|_| ValidatorVoteKeypairs::new_rand())
-            .collect::<Vec<_>>();
-        let (initial_bank, _bank_forks) = initial_state(&validator_keypairs, commission_bps);
+    fn test_vote_reward_payout_impl(
+        validators: &[ValidatorVoteKeypairs],
+        pay_leader: bool,
+        commission_bps: u16,
+    ) {
+        let (initial_bank, _bank_forks) = initial_state(validators, commission_bps);
 
         let reward_epoch = initial_bank.epoch() + 1;
         let reward_epoch_slot = initial_bank
             .epoch_schedule
             .get_first_slot_in_epoch(reward_epoch);
         let leader = if pay_leader {
-            find_leader(&validator_keypairs)
+            find_leader(validators)
         } else {
             SlotLeader::new_unique()
         };
@@ -870,18 +884,14 @@ mod tests {
         ));
         assert_eq!(reward_bank.epoch(), reward_epoch);
 
-        let (reward_bank, rewarded_validators) =
-            reward_validators(reward_bank, &validator_keypairs);
+        let (reward_bank, rewarded_validators) = reward_validators(reward_bank, validators);
 
         let payout_epoch = reward_bank.epoch() + 1;
         let payout_epoch_slot = reward_bank
             .epoch_schedule
             .get_first_slot_in_epoch(payout_epoch);
-        let payout_bank = Bank::new_from_parent(
-            reward_bank,
-            find_leader(&validator_keypairs),
-            payout_epoch_slot,
-        );
+        let payout_bank =
+            Bank::new_from_parent(reward_bank, find_leader(validators), payout_epoch_slot);
         assert_eq!(payout_bank.epoch(), payout_epoch);
 
         // Need to progress banks a few times for the rewards to be paid.
@@ -892,15 +902,23 @@ mod tests {
             prev_bank = Arc::new(Bank::new_from_parent(prev_bank, leader, slot));
         }
 
+        let mut voter_rewards = HashMap::new();
+
         for (stake_pubkey, reward_state) in rewarded_validators {
             let stake_account = prev_bank.get_account(&stake_pubkey).unwrap();
             let stake_cur = stake_account.lamports();
 
-            let vote_account = prev_bank.get_account(&reward_state.vote_pubkey).unwrap();
-            let vote_cur = vote_account.lamports();
-
             let (vote_expected_reward, stake_expected_reward, is_split) =
                 commission_split(commission_bps, reward_state.expected_reward);
+
+            let validator_reward_state =
+                voter_rewards
+                    .entry(reward_state.vote_pubkey)
+                    .or_insert(ValidatorRewardState {
+                        prev_lamports: reward_state.vote_prev_lamports,
+                        expected_rewards: 0,
+                    });
+            validator_reward_state.expected_rewards += vote_expected_reward;
 
             assert!(is_split);
             assert_ne!(
@@ -915,10 +933,6 @@ mod tests {
                 stake_cur - reward_state.stake_prev_lamports,
                 stake_expected_reward
             );
-            assert_eq!(
-                vote_cur - reward_state.vote_prev_lamports,
-                vote_expected_reward,
-            );
 
             // Due to rounding issues, off by 1 errors are possible.
             let total_reward = stake_expected_reward + vote_expected_reward;
@@ -928,15 +942,38 @@ mod tests {
                     <= 1
             );
         }
+
+        for (vote_pubkey, state) in voter_rewards {
+            let vote_account = prev_bank.get_account(&vote_pubkey).unwrap();
+            let vote_cur = vote_account.lamports();
+            assert_eq!(vote_cur - state.prev_lamports, state.expected_rewards);
+        }
+    }
+
+    #[test_matrix([true, false])]
+    fn test_vote_reward_payout(pay_leader: bool) {
+        let num_validators = 3;
+        let validators = (0..num_validators)
+            .map(|_| ValidatorVoteKeypairs::new_rand())
+            .collect::<Vec<_>>();
+        let commission_bps = 1_000;
+        test_vote_reward_payout_impl(&validators, pay_leader, commission_bps);
     }
 
     #[test]
-    fn test_vote_reward_payout_with_leader() {
-        test_vote_reward_payout(true, 1_000);
-    }
-
-    #[test]
-    fn test_vote_reward_payout_with_no_leader() {
-        test_vote_reward_payout(false, 1_000);
+    fn test_multiple_delegators() {
+        let num_validators = 5;
+        let vote_keypair = Keypair::new();
+        let validators = (0..num_validators)
+            .map(|_| {
+                ValidatorVoteKeypairs::new(
+                    Keypair::new(),
+                    vote_keypair.insecure_clone(),
+                    Keypair::new(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let commission_bps = 1_000;
+        test_vote_reward_payout_impl(&validators, false, commission_bps);
     }
 }
