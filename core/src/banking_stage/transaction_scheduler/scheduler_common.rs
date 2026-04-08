@@ -556,6 +556,26 @@ mod tests {
         assert_eq!(container.buffer_size(), expected_num_retryable);
         assert_eq!(container.queue_size(), expected_num_retryable - 1); // held transaction not in queue.
 
+        // Immediately retryable transactions should bypass held_transactions even if slot matches.
+        add_transactions_to_container(&mut container, 1);
+        pop_and_add_transaction(&mut container, &mut common, 0);
+        let num_scheduled = common.send_batch(0).unwrap();
+        let work = work_receivers[0].try_recv().unwrap();
+        assert_eq!(work.ids.len(), num_scheduled);
+        let retryable_indexes = vec![RetryableIndex::new(0, true)];
+        let finished_work = FinishedConsumeWork {
+            work,
+            attempted_slot: Some(42),
+            retryable_indexes,
+        };
+        finished_work_sender.send(finished_work).unwrap();
+        let (num_transactions, num_retryable) = common
+            .try_receive_completed(&mut container, Some(42))
+            .unwrap();
+        assert_eq!(num_transactions, num_scheduled);
+        assert_eq!(num_retryable, 1);
+        assert_eq!(container.queue_size(), expected_num_retryable);
+
         // Stale attempted slot should bypass held_transactions.
         add_transactions_to_container(&mut container, 1);
         pop_and_add_transaction(&mut container, &mut common, 0);
@@ -574,7 +594,7 @@ mod tests {
             .unwrap();
         assert_eq!(num_transactions, num_scheduled);
         assert_eq!(num_retryable, 1);
-        assert_eq!(container.queue_size(), expected_num_retryable);
+        assert_eq!(container.queue_size(), expected_num_retryable + 1);
     }
 
     #[test]
