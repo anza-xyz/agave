@@ -5,7 +5,6 @@ use {
     },
     agave_feature_set as feature_set,
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
-    itertools::{Either, Itertools},
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
@@ -188,66 +187,144 @@ fn run_shred_sigverify<const K: usize>(
         (bank_forks.working_bank(), bank_forks.root_bank())
     };
     let self_pubkey = keypair.pubkey();
-    let (num_duplicates, num_discards_post, resign_micros) = thread_pool.install(|| {
+    let (
+        num_duplicates,
+        num_discards_post,
+        resign_micros,
+        num_unknown_block_location,
+        shreds,
+        repairs,
+    ) = thread_pool.install(|| {
         shred_buffer
             .par_iter_mut()
             .flatten()
-            .map(|mut packet| {
-                if packet.meta().discard() {
-                    return (0, 1, 0);
-                }
-                let mut num_duplicates = 0;
-                let duplicate = shred::wire::get_shred(packet.as_ref())
-                    .map(|shred| deduper.dedup(shred))
-                    .unwrap_or(true);
-                if duplicate && !packet.meta().repair() {
-                    packet.meta_mut().set_discard(true);
-                    num_duplicates = 1;
-                }
-                if !packet.meta().discard()
-                    && !verify_packet_signature(
-                        &self_pubkey,
-                        packet.as_ref(),
+            .fold(
+                || (0, 0, 0, 0, Vec::new(), Vec::new()),
+                |(
+                    mut num_duplicates_acc,
+                    mut num_discards_post_acc,
+                    mut resign_micros_acc,
+                    mut num_unknown_block_location_acc,
+                    mut shreds_acc,
+                    mut repairs_acc,
+                ),
+                 mut packet| {
+                    if packet.meta().discard() {
+                        num_discards_post_acc += 1;
+                        return (
+                            num_duplicates_acc,
+                            num_discards_post_acc,
+                            resign_micros_acc,
+                            num_unknown_block_location_acc,
+                            shreds_acc,
+                            repairs_acc,
+                        );
+                    }
+                    let duplicate = shred::wire::get_shred(packet.as_ref())
+                        .map(|shred| deduper.dedup(shred))
+                        .unwrap_or(true);
+                    if duplicate && !packet.meta().repair() {
+                        packet.meta_mut().set_discard(true);
+                        num_duplicates_acc += 1;
+                    }
+                    if !packet.meta().discard()
+                        && !verify_packet_signature(
+                            &self_pubkey,
+                            packet.as_ref(),
+                            &working_bank,
+                            leader_schedule_cache,
+                            cache,
+                        )
+                    {
+                        packet.meta_mut().set_discard(true);
+                    }
+                    if packet.meta().discard() {
+                        num_discards_post_acc += 1;
+                        return (
+                            num_duplicates_acc,
+                            num_discards_post_acc,
+                            resign_micros_acc,
+                            num_unknown_block_location_acc,
+                            shreds_acc,
+                            repairs_acc,
+                        );
+                    }
+                    let resign_start = Instant::now();
+                    if maybe_verify_and_resign_packet(
+                        &mut packet,
+                        &root_bank,
                         &working_bank,
+                        cluster_info,
                         leader_schedule_cache,
-                        cache,
+                        cluster_nodes_cache,
+                        stats,
+                        keypair,
                     )
-                {
-                    packet.meta_mut().set_discard(true);
-                }
-                let num_discards_post = usize::from(packet.meta().discard());
-                if packet.meta().discard() {
-                    return (num_duplicates, num_discards_post, 0);
-                }
-                let resign_start = Instant::now();
-                if maybe_verify_and_resign_packet(
-                    &mut packet,
-                    &root_bank,
-                    &working_bank,
-                    cluster_info,
-                    leader_schedule_cache,
-                    cluster_nodes_cache,
-                    stats,
-                    keypair,
-                )
-                .is_err()
-                {
-                    packet.meta_mut().set_discard(true);
-                }
-                (
-                    num_duplicates,
-                    num_discards_post,
-                    resign_start.elapsed().as_micros() as u64,
-                )
-            })
+                    .is_err()
+                    {
+                        packet.meta_mut().set_discard(true);
+                    }
+                    resign_micros_acc += resign_start.elapsed().as_micros() as u64;
+                    if !packet.meta().discard()
+                        && let Some((shred, nonce)) =
+                            shred::layout::get_shred_and_repair_nonce(packet.as_ref())
+                    {
+                        let shred = shred::Payload::from(shred.to_vec());
+                        match nonce {
+                            None => {
+                                // Share the payload between the retransmit-stage and the
+                                // window-service.
+                                shreds_acc.push(shred);
+                            }
+                            Some(nonce) => {
+                                if let Some(location) = repair_nonce_location_lookup(nonce) {
+                                    // No need for Arc overhead here because repaired shreds
+                                    // are not retranmitted.
+                                    repairs_acc
+                                        .push((shred, /* is_repaired */ true, location));
+                                } else {
+                                    num_unknown_block_location_acc += 1;
+                                }
+                            }
+                        }
+                    }
+                    (
+                        num_duplicates_acc,
+                        num_discards_post_acc,
+                        resign_micros_acc,
+                        num_unknown_block_location_acc,
+                        shreds_acc,
+                        repairs_acc,
+                    )
+                },
+            )
             .reduce(
-                || (0, 0, 0),
-                |(num_duplicates_a, num_discards_post_a, resign_micros_a),
-                 (num_duplicates_b, num_discards_post_b, resign_micros_b)| {
+                || (0, 0, 0, 0, Vec::new(), Vec::new()),
+                |(
+                    num_duplicates_a,
+                    num_discards_post_a,
+                    resign_micros_a,
+                    num_unknown_block_location_a,
+                    mut shreds_a,
+                    mut repairs_a,
+                ),
+                 (
+                    num_duplicates_b,
+                    num_discards_post_b,
+                    resign_micros_b,
+                    num_unknown_block_location_b,
+                    shreds_b,
+                    repairs_b,
+                )| {
+                    shreds_a.extend(shreds_b);
+                    repairs_a.extend(repairs_b);
                     (
                         num_duplicates_a + num_duplicates_b,
                         num_discards_post_a + num_discards_post_b,
                         resign_micros_a + resign_micros_b,
+                        num_unknown_block_location_a + num_unknown_block_location_b,
+                        shreds_a,
+                        repairs_a,
                     )
                 },
             )
@@ -255,30 +332,7 @@ fn run_shred_sigverify<const K: usize>(
     stats.num_duplicates += num_duplicates;
     stats.num_discards_post += num_discards_post;
     stats.resign_micros += resign_micros;
-    // Extract shred payload from packets, and separate out repaired shreds.
-    let (shreds, repairs): (Vec<_>, Vec<_>) = shred_buffer
-        .iter()
-        .flat_map(|batch| batch.iter())
-        .filter(|packet| !packet.meta().discard())
-        .filter_map(|packet| {
-            extract_shred_and_location(packet, repair_nonce_location_lookup, stats)
-        })
-        .partition_map(|(shred, location)| {
-            if let Some(location) = location {
-                // No need for Arc overhead here because repaired shreds are
-                // not retranmitted.
-                Either::Right((
-                    shred::Payload::from(shred),
-                    /* is_repaired */ true,
-                    location,
-                ))
-            } else {
-                // Share the payload between the retransmit-stage and the
-                // window-service.
-                Either::Left(shred::Payload::from(shred))
-            }
-        });
-
+    stats.num_unknown_block_location += num_unknown_block_location;
     // Repaired shreds are not retransmitted.
     stats.num_retransmit_shreds += shreds.len();
     if let Err(send_err) = retransmit_sender.try_send(shreds.clone()) {
@@ -297,29 +351,6 @@ fn run_shred_sigverify<const K: usize>(
     stats.elapsed_micros += now.elapsed().as_micros() as u64;
     shred_buffer.clear();
     Ok(())
-}
-
-/// Extracts shred bytes and, for repaired shreds, the location where the shred
-/// should be inserted into blockstore.
-fn extract_shred_and_location(
-    packet: PacketRef,
-    repair_nonce_location_lookup: &RepairNonceLocationLookup,
-    stats: &mut ShredSigVerifyStats,
-) -> Option<(Vec<u8>, Option<BlockLocation>)> {
-    let (shred, nonce) = shred::layout::get_shred_and_repair_nonce(packet)?;
-    let Some(nonce) = nonce else {
-        // Turbine shred.
-        return Some((shred.to_vec(), None));
-    };
-
-    // Repair shred.
-    if let Some(location) = repair_nonce_location_lookup(nonce) {
-        Some((shred.to_vec(), Some(location)))
-    } else {
-        // This indicates the request entry was evicted before consumption.
-        stats.num_unknown_block_location += 1;
-        None
-    }
 }
 
 /// Checks whether the shred in the given `packet` is of resigned variant. If
