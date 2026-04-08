@@ -732,8 +732,6 @@ mod tests {
             let vote_pubkey = validator.vote_keypair.pubkey();
             let account = genesis_config.accounts.get_mut(&vote_pubkey).unwrap();
             let mut vote_state = into_vote_state_v4(account);
-            // XXX: why do things not work out when this is so small
-            // vote_state.inflation_rewards_commission_bps = 100;
             vote_state.inflation_rewards_commission_bps = commission_bps;
             VoteStateV4::serialize(
                 &VoteStateVersions::V4(vote_state),
@@ -754,19 +752,30 @@ mod tests {
     impl RewardState {
         fn new(keypair: &ValidatorVoteKeypairs, bank: &Bank) -> Self {
             let stake_pubkey = keypair.stake_keypair.pubkey();
-            let stake_account = bank.get_account(&stake_pubkey).unwrap();
             let vote_pubkey = keypair.vote_keypair.pubkey();
+
+            let stake_account = bank.get_account(&stake_pubkey).unwrap();
+            let vote_account = bank.get_account(&vote_pubkey).unwrap();
+
+            let stake_prev_lamports = stake_account.lamports();
+            let vote_prev_lamports = vote_account.lamports();
+
             let vote_account = bank.get_account(&vote_pubkey).unwrap();
             let vote_state_versions = bincode::deserialize(vote_account.data()).unwrap();
             let VoteStateVersions::V4(vote_state) = vote_state_versions else {
                 panic!();
             };
             assert_eq!(vote_state.epoch_credits.len(), 1);
-            let expected_reward = vote_state.epoch_credits[0].1;
+            let (epoch, final_credit, initial_credit) = vote_state.epoch_credits[0];
+
+            assert_eq!(epoch, bank.epoch());
+            assert_eq!(initial_credit, 0);
+            let expected_reward = final_credit;
+
             Self {
                 vote_pubkey,
-                stake_prev_lamports: stake_account.lamports(),
-                vote_prev_lamports: vote_account.lamports(),
+                stake_prev_lamports,
+                vote_prev_lamports,
                 expected_reward,
             }
         }
@@ -796,7 +805,7 @@ mod tests {
 
         let epoch1_slot = bank_epoch0.epoch_schedule.get_first_slot_in_epoch(1);
         let bank_epoch1 = Arc::new(Bank::new_from_parent(
-            bank_epoch0.clone(),
+            bank_epoch0,
             SlotLeader::new_unique(),
             epoch1_slot,
         ));
@@ -805,28 +814,37 @@ mod tests {
     }
 
     fn reward_validators(
-        bank: &Bank,
+        bank: Arc<Bank>,
         validators: &[ValidatorVoteKeypairs],
-    ) -> HashMap<Pubkey, RewardState> {
+    ) -> (Arc<Bank>, HashMap<Pubkey, RewardState>) {
         let validators_to_reward = validators
             .iter()
             .map(|k| k.vote_keypair.pubkey())
             .collect::<Vec<_>>();
-        calculate_and_pay_voting_reward_and_update_vote_state(
-            bank,
-            Some((bank.slot() - 1, validators_to_reward)),
-            None,
-        )
-        .unwrap();
 
-        validators
+        let mut looping_bank = bank;
+        for i in 0..10 {
+            calculate_and_pay_voting_reward_and_update_vote_state(
+                &looping_bank,
+                Some((looping_bank.slot() - 100 - i, validators_to_reward.clone())),
+                None,
+            )
+            .unwrap();
+
+            let leader = *looping_bank.leader();
+            let slot = looping_bank.slot() + 1;
+            looping_bank = Arc::new(Bank::new_from_parent(looping_bank, leader, slot));
+        }
+
+        let map = validators
             .iter()
             .map(|keypair| {
                 let stake_pubkey = keypair.stake_keypair.pubkey();
-                let reward_state = RewardState::new(keypair, bank);
+                let reward_state = RewardState::new(keypair, &looping_bank);
                 (stake_pubkey, reward_state)
             })
-            .collect::<HashMap<_, _>>()
+            .collect::<HashMap<_, _>>();
+        (looping_bank, map)
     }
 
     fn test_vote_reward_payout(pay_leader: bool, commission_bps: u16) {
@@ -846,31 +864,32 @@ mod tests {
             SlotLeader::new_unique()
         };
         let reward_bank = Arc::new(Bank::new_from_parent(
-            initial_bank.clone(),
+            initial_bank,
             leader,
             reward_epoch_slot,
         ));
         assert_eq!(reward_bank.epoch(), reward_epoch);
 
-        let rewarded_validators = reward_validators(&reward_bank, &validator_keypairs);
+        let (reward_bank, rewarded_validators) =
+            reward_validators(reward_bank, &validator_keypairs);
 
-        let epoch3_slot = reward_bank.epoch_schedule.get_first_slot_in_epoch(3);
-        let bank_epoch3 = Bank::new_from_parent(
-            reward_bank.clone(),
+        let payout_epoch = reward_bank.epoch() + 1;
+        let payout_epoch_slot = reward_bank
+            .epoch_schedule
+            .get_first_slot_in_epoch(payout_epoch);
+        let payout_bank = Bank::new_from_parent(
+            reward_bank,
             find_leader(&validator_keypairs),
-            epoch3_slot,
+            payout_epoch_slot,
         );
-        assert_eq!(bank_epoch3.epoch(), 3);
+        assert_eq!(payout_bank.epoch(), payout_epoch);
 
         // Need to progress banks a few times for the rewards to be paid.
-        let mut prev_bank = Arc::new(bank_epoch3);
+        let mut prev_bank = Arc::new(payout_bank);
         for i in 0..10 {
-            let bank = Arc::new(Bank::new_from_parent(
-                prev_bank.clone(),
-                SlotLeader::new_unique(),
-                prev_bank.slot() + 1 + i,
-            ));
-            prev_bank = bank;
+            let leader = SlotLeader::new_unique();
+            let slot = prev_bank.slot() + 1 + i;
+            prev_bank = Arc::new(Bank::new_from_parent(prev_bank, leader, slot));
         }
 
         for (stake_pubkey, reward_state) in rewarded_validators {
@@ -882,28 +901,6 @@ mod tests {
 
             let (vote_expected_reward, stake_expected_reward, is_split) =
                 commission_split(commission_bps, reward_state.expected_reward);
-
-            println!(
-                "is_split={is_split} stake_expected_reward={stake_expected_reward} vote_expected_reward={vote_expected_reward}"
-            );
-            println!("reward_state={reward_state:?}");
-            println!("stake_cur={stake_cur} vote_cur={vote_cur}");
-            println!(
-                "stake_diff={}",
-                stake_cur - reward_state.stake_prev_lamports
-            );
-
-            if vote_cur > reward_state.vote_prev_lamports {
-                println!(
-                    "normal vote diff={}",
-                    vote_cur - reward_state.vote_prev_lamports
-                );
-            } else {
-                println!(
-                    "******* abnormal vote diff={}",
-                    reward_state.vote_prev_lamports - vote_cur
-                );
-            }
 
             assert!(is_split);
             assert_ne!(
