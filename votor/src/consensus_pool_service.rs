@@ -131,7 +131,6 @@ impl ConsensusPoolService {
 
     fn process_consensus_message(
         ctx: &mut ConsensusPoolContext,
-        my_pubkey: &Pubkey,
         message: ConsensusMessage,
         consensus_pool: &mut ConsensusPool,
         events: &mut Vec<VotorEvent>,
@@ -150,7 +149,7 @@ impl ConsensusPoolService {
         let (new_finalized_slot, new_certificates_to_send) =
             Self::add_message_and_maybe_update_commitment(
                 &root_bank,
-                my_pubkey,
+                &ctx.cluster_info.id(),
                 &ctx.my_vote_pubkey,
                 message,
                 consensus_pool,
@@ -184,27 +183,26 @@ impl ConsensusPoolService {
     // Main loop for the certificate pool service, it only exits when any channel is disconnected
     fn consensus_pool_ingest_loop(mut ctx: ConsensusPoolContext) -> Result<(), ()> {
         let mut events = vec![];
-        let mut my_pubkey = ctx.cluster_info.id();
         let root_bank = ctx.sharable_banks.root();
 
         // Unlike the other votor threads, consensus pool starts even before alpenglow is enabled
         // As it is required to track the Genesis Vote.
         let mut consensus_pool = if ctx.migration_status.is_alpenglow_enabled() {
             ConsensusPool::new_from_root_bank(
-                my_pubkey,
+                ctx.cluster_info.clone(),
                 &root_bank,
                 ctx.generated_cert_types.clone(),
             )
         } else {
             ConsensusPool::new_from_root_bank_pre_migration(
-                my_pubkey,
+                ctx.cluster_info.clone(),
                 &root_bank,
                 ctx.generated_cert_types.clone(),
                 ctx.migration_status.clone(),
             )
         };
 
-        info!("{}: Certificate pool loop starting", &my_pubkey);
+        info!("{}: Certificate pool loop starting", ctx.cluster_info.id());
         let mut stats = ConsensusPoolServiceStats::new();
         let mut highest_parent_ready = root_bank.slot();
 
@@ -216,14 +214,6 @@ impl ConsensusPoolService {
 
         // Ingest votes into certificate pool and notify voting loop of new events
         while !ctx.exit.load(Ordering::Relaxed) {
-            // Update the current pubkey if it has changed
-            let new_pubkey = ctx.cluster_info.id();
-            if my_pubkey != new_pubkey {
-                my_pubkey = new_pubkey;
-                consensus_pool.update_pubkey(my_pubkey);
-                warn!("Certificate pool pubkey updated to {my_pubkey}");
-            }
-
             // Kick off parent ready event, this either happens:
             // - When we first migrate to alpenglow from TowerBFT - kick off with genesis block
             // - If we startup post alpenglow migration - kick off with root block
@@ -249,7 +239,6 @@ impl ConsensusPoolService {
             Self::add_produce_block_event(
                 &mut highest_parent_ready,
                 &consensus_pool,
-                &my_pubkey,
                 &mut ctx,
                 &mut events,
                 &mut stats,
@@ -276,7 +265,10 @@ impl ConsensusPoolService {
                         return Self::handle_channel_disconnected(&mut ctx, channel_name.as_str());
                     }
                     Err(e) => {
-                        trace!("{my_pubkey}: unable to push standstill certificates into pool {e}");
+                        trace!(
+                            "{}: unable to push standstill certificates into pool {e}",
+                            ctx.cluster_info.id()
+                        );
                     }
                 }
             }
@@ -302,7 +294,6 @@ impl ConsensusPoolService {
             for message in messages {
                 match Self::process_consensus_message(
                     &mut ctx,
-                    &my_pubkey,
                     message,
                     &mut consensus_pool,
                     &mut events,
@@ -315,7 +306,11 @@ impl ConsensusPoolService {
                     }
                     Err(e) => {
                         // This is a non critical error, a duplicate vote for example
-                        trace!("{}: unable to push vote into pool {}", &my_pubkey, e);
+                        trace!(
+                            "{}: unable to push vote into pool {}",
+                            ctx.cluster_info.id(),
+                            e
+                        );
                         stats.add_message_failed += 1;
                     }
                 }
@@ -361,7 +356,6 @@ impl ConsensusPoolService {
     fn add_produce_block_event(
         highest_parent_ready: &mut Slot,
         consensus_pool: &ConsensusPool,
-        my_pubkey: &Pubkey,
         ctx: &mut ConsensusPoolContext,
         events: &mut Vec<VotorEvent>,
         stats: &mut ConsensusPoolServiceStats,
@@ -396,7 +390,7 @@ impl ConsensusPoolService {
             return;
         };
 
-        if &slot_leader.id != my_pubkey {
+        if slot_leader.id != ctx.cluster_info.id() {
             return;
         }
 
@@ -405,8 +399,9 @@ impl ConsensusPoolService {
 
         if (start_slot..=end_slot).any(|s| ctx.blockstore.has_existing_shreds_for_slot(s)) {
             warn!(
-                "{my_pubkey}: We have already produced shreds in the window \
-                 {start_slot}-{end_slot}, skipping production of our leader window"
+                "{}: We have already produced shreds in the window {start_slot}-{end_slot}, \
+                 skipping production of our leader window",
+                ctx.cluster_info.id()
             );
             return;
         }
@@ -417,18 +412,17 @@ impl ConsensusPoolService {
         {
             BlockProductionParent::MissedWindow => {
                 warn!(
-                    "{my_pubkey}: Leader slot {start_slot} has already been certified, skipping \
-                     production of {start_slot}-{end_slot}"
+                    "{}: Leader slot {start_slot} has already been certified, skipping production \
+                     of {start_slot}-{end_slot}",
+                    ctx.cluster_info.id()
                 );
                 stats.parent_ready_missed_window += 1;
             }
             BlockProductionParent::ParentNotReady => {
-                // This can't happen, place holder depending on how we hook up optimistic
-                ctx.exit.store(true, Ordering::Relaxed);
-                panic!(
-                    "Must have a block production parent: {:#?}",
+                unreachable!(
+                    "Must have block production parent: {:#?}",
                     consensus_pool.parent_ready_tracker
-                );
+                )
             }
             BlockProductionParent::Parent(parent_block) => {
                 events.push(VotorEvent::ProduceWindow(LeaderWindowInfo {
@@ -452,6 +446,7 @@ impl ConsensusPoolService {
 mod tests {
     use {
         super::*,
+        crate::tests::get_cluster_info,
         agave_votor_messages::{
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, CertificateType, VoteMessage},
             vote::Vote,
@@ -459,10 +454,9 @@ mod tests {
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
         },
-        solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
+        solana_gossip::cluster_info::ClusterInfo,
         solana_hash::Hash,
         solana_ledger::get_tmp_ledger_path_auto_delete,
-        solana_net_utils::SocketAddrSpace,
         solana_runtime::{
             bank_forks::{BankForks, SharableBanks},
             genesis_utils::{
@@ -486,6 +480,7 @@ mod tests {
         my_vote_pubkey: Pubkey,
         blockstore: Arc<Blockstore>,
         exit: Arc<AtomicBool>,
+        cluster_info: Arc<ClusterInfo>,
     }
 
     impl Default for TestContext {
@@ -519,8 +514,9 @@ mod tests {
                 Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
 
             let root_bank = sharable_banks.root();
+            let cluster_info = get_cluster_info(my_keypair.insecure_clone());
             let consensus_pool = ConsensusPool::new_from_root_bank(
-                my_pubkey,
+                cluster_info.clone(),
                 &root_bank,
                 Arc::new(GeneratedCertTypes::default()),
             );
@@ -539,6 +535,7 @@ mod tests {
                 my_vote_pubkey,
                 blockstore,
                 exit: Arc::new(AtomicBool::new(false)),
+                cluster_info,
             }
         }
     }
@@ -734,11 +731,7 @@ mod tests {
             exit: ctx.exit.clone(),
             migration_status: Arc::new(MigrationStatus::post_migration_status()),
             generated_cert_types: Arc::new(GeneratedCertTypes::default()),
-            cluster_info: Arc::new(ClusterInfo::new(
-                ContactInfo::new_localhost(&ctx.my_pubkey, 0),
-                Arc::new(ctx.validator_keypairs[0].node_keypair.insecure_clone()),
-                SocketAddrSpace::Unspecified,
-            )),
+            cluster_info: ctx.cluster_info.clone(),
             my_vote_pubkey: ctx.my_vote_pubkey,
             blockstore: ctx.blockstore.clone(),
             sharable_banks: ctx.sharable_banks.clone(),
@@ -759,7 +752,6 @@ mod tests {
         ConsensusPoolService::add_produce_block_event(
             &mut highest_parent_ready,
             &ctx.consensus_pool,
-            &ctx.my_pubkey,
             &mut pool_ctx,
             &mut events,
             &mut stats,

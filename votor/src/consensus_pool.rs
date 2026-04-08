@@ -25,6 +25,7 @@ use {
     log::trace,
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
+    solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, epoch_stakes::VersionedEpochStakes},
@@ -100,11 +101,12 @@ fn get_key_and_stakes(
     }
     Ok((*vote_key, stake, epoch_stakes.total_stake()))
 }
+
 /// Container to store received votes and certificates.
 ///
 /// Based on received votes and certificates, generates new `VotorEvent`s and generates new certificates.
 pub(crate) struct ConsensusPool {
-    my_pubkey: Pubkey,
+    cluster_info: Arc<ClusterInfo>,
     // Vote pools to do bean counting for votes.
     vote_pools: BTreeMap<PoolId, VotePool>,
     /// Completed certificates
@@ -133,28 +135,28 @@ pub(crate) struct ConsensusPool {
 
 impl ConsensusPool {
     pub(crate) fn new_from_root_bank_pre_migration(
-        my_pubkey: Pubkey,
+        cluster_info: Arc<ClusterInfo>,
         bank: &Bank,
         generated_cert_types: Arc<GeneratedCertTypes>,
         migration_status: Arc<MigrationStatus>,
     ) -> Self {
-        let mut pool = Self::new_from_root_bank(my_pubkey, bank, generated_cert_types);
+        let mut pool = Self::new_from_root_bank(cluster_info, bank, generated_cert_types);
         pool.migration_status = Some(migration_status);
         pool
     }
 
     pub fn new_from_root_bank(
-        my_pubkey: Pubkey,
+        cluster_info: Arc<ClusterInfo>,
         bank: &Bank,
         generated_cert_types: Arc<GeneratedCertTypes>,
     ) -> Self {
         // To account for genesis and snapshots we allow default block id until
         // block id can be serialized  as part of the snapshot
         let root_block = (bank.slot(), bank.block_id().unwrap_or_default());
-        let parent_ready_tracker = ParentReadyTracker::new(my_pubkey, root_block);
+        let parent_ready_tracker = ParentReadyTracker::new(cluster_info.clone(), root_block);
 
         Self {
-            my_pubkey,
+            cluster_info,
             vote_pools: BTreeMap::new(),
             completed_certificates: BTreeMap::new(),
             highest_finalized_slot: None,
@@ -308,7 +310,11 @@ impl ConsensusPool {
         cert: Arc<Certificate>,
         events: &mut Vec<VotorEvent>,
     ) {
-        trace!("{}: Inserting certificate {:?}", self.my_pubkey, cert_type);
+        trace!(
+            "{}: Inserting certificate {:?}",
+            self.cluster_info.id(),
+            cert_type
+        );
         self.completed_certificates.insert(cert_type, cert.clone());
         match cert_type {
             CertificateType::NotarizeFallback(slot, block_id) => {
@@ -579,11 +585,6 @@ impl ConsensusPool {
     }
 
     #[cfg(test)]
-    pub(crate) fn my_pubkey(&self) -> Pubkey {
-        self.my_pubkey
-    }
-
-    #[cfg(test)]
     fn make_start_leader_decision(
         &self,
         my_leader_slot: Slot,
@@ -637,14 +638,6 @@ impl ConsensusPool {
         self.last_pruned_slot = root_slot;
     }
 
-    /// Updates the pubkey used for logging purposes only.
-    /// This avoids the need to recreate the entire certificate pool since it's
-    /// not distinguished by the pubkey.
-    pub fn update_pubkey(&mut self, new_pubkey: Pubkey) {
-        self.my_pubkey = new_pubkey;
-        self.parent_ready_tracker.update_pubkey(new_pubkey);
-    }
-
     pub(crate) fn maybe_report(&mut self) {
         self.stats.maybe_report();
     }
@@ -675,7 +668,11 @@ impl ConsensusPool {
                     _ => None,
                 };
                 if cert_to_send.is_some() {
-                    trace!("{}: Refreshing certificate {:?}", self.my_pubkey, cert_type);
+                    trace!(
+                        "{}: Refreshing certificate {:?}",
+                        self.cluster_info.id(),
+                        cert_type
+                    );
                 }
                 cert_to_send
             })
@@ -687,6 +684,7 @@ impl ConsensusPool {
 mod tests {
     use {
         super::*,
+        crate::tests::get_cluster_info,
         agave_votor_messages::consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
         solana_bls_signatures::{
             Pubkey as BLSPubkey, Signature as BLSSignature, VerifiableSignature,
@@ -694,6 +692,7 @@ mod tests {
         },
         solana_clock::Slot,
         solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_runtime::{
             bank::{Bank, NewBankOptions, SlotLeader},
             bank_forks::BankForks,
@@ -721,10 +720,11 @@ mod tests {
             let bank_forks = create_bank_forks(&validator_keypairs);
             let root_bank = bank_forks.read().unwrap().root_bank();
             let generated_cert_types = Arc::new(GeneratedCertTypes::default());
+            let cluster_info = get_cluster_info(Keypair::new());
             Self {
                 validators: validator_keypairs,
                 pool: ConsensusPool::new_from_root_bank(
-                    Pubkey::new_unique(),
+                    cluster_info,
                     &root_bank,
                     generated_cert_types.clone(),
                 ),
@@ -2060,18 +2060,6 @@ mod tests {
             .signature
             .verify(&bls_pubkey, &signed_message)
             .expect("vote message signature should verify");
-    }
-
-    #[test]
-    fn test_update_pubkey() {
-        let new_pubkey = Pubkey::new_unique();
-        let mut ctx = TestContext::new();
-        let old_pubkey = ctx.pool.my_pubkey();
-        assert_eq!(ctx.pool.parent_ready_tracker.my_pubkey(), old_pubkey);
-        assert_ne!(old_pubkey, new_pubkey);
-        ctx.pool.update_pubkey(new_pubkey);
-        assert_eq!(ctx.pool.my_pubkey(), new_pubkey);
-        assert_eq!(ctx.pool.parent_ready_tracker.my_pubkey(), new_pubkey);
     }
 
     #[test]
