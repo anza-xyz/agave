@@ -1334,6 +1334,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let map = self.map_internal.read().unwrap();
         (map.len(), map.capacity())
     }
+
+    /// Returns the number of entries currently held in memory for this bin.
+    pub(crate) fn len(&self) -> usize {
+        self.map_internal.read().unwrap().len()
+    }
 }
 
 /// State of reservoir sampling algorithm for flush/eviction candidates.

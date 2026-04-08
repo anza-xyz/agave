@@ -7,7 +7,10 @@ use {
     solana_time_utils::AtomicInterval,
     std::{
         fmt::Debug,
-        sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        },
     },
 };
 
@@ -182,6 +185,7 @@ impl Stats {
     pub fn report_stats<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>(
         &self,
         storage: &BucketMapHolder<T, U>,
+        in_mem: &[Arc<InMemAccountsIndex<T, U>>],
     ) {
         let elapsed_ms = self.last_time.elapsed_ms();
         if elapsed_ms < STATS_INTERVAL_MS {
@@ -203,6 +207,8 @@ impl Stats {
             })
             .unwrap_or_default();
         let disk_stats = Self::get_stats(disk_per_bucket_counts);
+        let mem_per_bucket_counts = in_mem.iter().map(|bin| bin.len()).collect();
+        let mem_stats = Self::get_stats(mem_per_bucket_counts);
 
         const US_PER_MS: u64 = 1_000;
 
@@ -317,6 +323,10 @@ impl Stats {
                 ("max_in_bin_disk", disk_stats.1, i64),
                 ("count_from_bins_disk", disk_stats.2, i64),
                 ("median_from_bins_disk", disk_stats.3, i64),
+                ("min_in_bin_mem", mem_stats.0, i64),
+                ("max_in_bin_mem", mem_stats.1, i64),
+                ("count_from_bins_mem", mem_stats.2, i64),
+                ("median_from_bins_mem", mem_stats.3, i64),
                 (
                     "gets_from_mem",
                     self.gets_from_mem.swap(0, Ordering::Relaxed),
@@ -620,6 +630,10 @@ impl Stats {
                 ("inserts", self.inserts.swap(0, Ordering::Relaxed), i64),
                 ("deletes", self.deletes.swap(0, Ordering::Relaxed), i64),
                 ("keys", self.keys.swap(0, Ordering::Relaxed), i64),
+                ("min_in_bin_mem", mem_stats.0, i64),
+                ("max_in_bin_mem", mem_stats.1, i64),
+                ("count_from_bins_mem", mem_stats.2, i64),
+                ("median_from_bins_mem", mem_stats.3, i64),
             );
         }
     }
