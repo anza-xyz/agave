@@ -829,7 +829,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
         .get_current_instruction_context()?;
     let caller_program_id = instruction_context.get_program_key()?;
     let signers = S::translate_signers(
-        &caller_program_id,
+        caller_program_id,
         signers_seeds_addr,
         signers_seeds_len,
         invoke_context,

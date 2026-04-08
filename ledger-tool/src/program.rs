@@ -536,10 +536,10 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     let (instruction_count, result) = vm.execute_program(&verified_executable, &mut execution_mode);
     let duration = Instant::now() - start_time;
     if let Some(trace_option) = matches.value_of("trace") {
-        // SAFETY: VM is the only holder of the InvokeContext reference, as it carries its lifetime.
-        let invoke_context_ref = unsafe { vm.context_object_pointer.as_mut() };
-        invoke_context_ref.iterate_vm_traces(
-            &|instruction_context: InstructionContext, executable, register_trace| {
+        vm.context()
+            .iterate_vm_traces(&|instruction_context: InstructionContext,
+                                 executable,
+                                 register_trace| {
                 let mut analysis = LazyAnalysis::new(executable);
                 if trace_option == "stdout" {
                     writeln!(
@@ -572,8 +572,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                         .disassemble_register_trace(&mut fd, register_trace)
                         .unwrap();
                 }
-            },
-        );
+            });
     }
     drop(vm);
 
