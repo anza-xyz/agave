@@ -7,7 +7,7 @@ use {
     solana_program_entrypoint::{SUCCESS, custom_heap_default, custom_panic_default},
 };
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     const ITERS: usize = 100;
     let ones = [1_u64; ITERS];

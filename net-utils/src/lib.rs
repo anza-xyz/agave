@@ -9,16 +9,29 @@
 #![warn(unsafe_attr_outside_unsafe)]
 #![warn(unsafe_op_in_unsafe_fn)]
 
+pub mod banlist;
 mod ip_echo_client;
 mod ip_echo_server;
 pub mod multihomed_sockets;
 pub mod socket_addr_space;
 pub mod sockets;
+#[cfg(any(target_os = "android", target_os = "windows"))]
+#[path = "test_port_allocator_legacy.rs"]
+pub(crate) mod test_port_allocator;
+#[cfg(not(any(target_os = "android", target_os = "windows")))]
+pub(crate) mod test_port_allocator;
 pub mod token_bucket;
 
 #[cfg(feature = "dev-context-only-utils")]
 pub mod tooling_for_tests;
 
+pub use {
+    ip_echo_client::IpEchoClientError,
+    ip_echo_server::{
+        DEFAULT_IP_ECHO_SERVER_THREADS, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE, ip_echo_server,
+    },
+    socket_addr_space::SocketAddrSpace,
+};
 use {
     ip_echo_client::{ip_echo_server_request, ip_echo_server_request_with_binding},
     ip_echo_server::IpEchoServerMessage,
@@ -28,12 +41,6 @@ use {
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket},
     },
     url::Url,
-};
-pub use {
-    ip_echo_server::{
-        DEFAULT_IP_ECHO_SERVER_THREADS, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE, ip_echo_server,
-    },
-    socket_addr_space::SocketAddrSpace,
 };
 
 /// A data type representing a public Udp socket
@@ -67,7 +74,7 @@ pub(crate) const IP_ECHO_SERVER_RESPONSE_LENGTH: usize = HEADER_LENGTH + 23;
 pub fn get_public_ip_addr_with_binding(
     ip_echo_server_addr: &SocketAddr,
     bind_address: IpAddr,
-) -> anyhow::Result<IpAddr> {
+) -> Result<IpAddr, IpEchoClientError> {
     let fut = ip_echo_server_request_with_binding(
         *ip_echo_server_addr,
         IpEchoServerMessage::default(),
@@ -97,7 +104,7 @@ pub fn get_cluster_shred_version(ip_echo_server_addr: &SocketAddr) -> Result<u16
 pub fn get_cluster_shred_version_with_binding(
     ip_echo_server_addr: &SocketAddr,
     bind_address: IpAddr,
-) -> anyhow::Result<u16> {
+) -> Result<u16, IpEchoClientError> {
     let fut = ip_echo_server_request_with_binding(
         *ip_echo_server_addr,
         IpEchoServerMessage::default(),
@@ -107,8 +114,11 @@ pub fn get_cluster_shred_version_with_binding(
         .enable_all()
         .build()?;
     let resp = rt.block_on(fut)?;
-    resp.shred_version
-        .ok_or_else(|| anyhow::anyhow!("IP echo server does not return a shred-version"))
+    resp.shred_version.ok_or_else(|| {
+        IpEchoClientError::InvalidResponse(
+            "IP echo server does not return a shred-version".to_owned(),
+        )
+    })
 }
 
 // Limit the maximum number of port verify threads to something reasonable
@@ -194,7 +204,24 @@ pub fn parse_port_range(port_range: &str) -> Option<PortRange> {
     Some((start_port, end_port))
 }
 
+fn select_ipv4(host: &str, mut ips: impl Iterator<Item = IpAddr>) -> Result<IpAddr, String> {
+    let Some(first_ip) = ips.next() else {
+        return Err(format!("Unable to resolve host: {host}"));
+    };
+
+    if first_ip.is_ipv4() {
+        return Ok(first_ip);
+    }
+
+    ips.find(IpAddr::is_ipv4)
+        .ok_or_else(|| format!("IPv6 addresses are not supported: {host}"))
+}
+
 pub fn parse_host(host: &str) -> Result<IpAddr, String> {
+    if let Ok(IpAddr::V6(_)) = host.parse::<IpAddr>() {
+        return Err(format!("IPv6 addresses are not supported: {host}"));
+    }
+
     // First, check if the host syntax is valid. This check is needed because addresses
     // such as `("localhost:1234", 0)` will resolve to IPs on some networks.
     let parsed_url = Url::parse(&format!("http://{host}")).map_err(|e| e.to_string())?;
@@ -202,17 +229,13 @@ pub fn parse_host(host: &str) -> Result<IpAddr, String> {
         return Err(format!("Expected port in URL: {host}"));
     }
 
-    // Next, check to see if it resolves to an IP address
-    let ips: Vec<_> = (host, 0)
+    // Next, check to see if it resolves to an IPv4 address
+    let mut ips = (host, 0)
         .to_socket_addrs()
         .map_err(|err| err.to_string())?
-        .map(|socket_address| socket_address.ip())
-        .collect();
-    if ips.is_empty() {
-        Err(format!("Unable to resolve host: {host}"))
-    } else {
-        Ok(ips[0])
-    }
+        .map(|socket_address| socket_address.ip());
+
+    select_ipv4(host, &mut ips)
 }
 
 pub fn is_host(string: String) -> Result<(), String> {
@@ -376,6 +399,28 @@ mod tests {
         parse_host("localhost").unwrap();
         parse_host("127.0.0.0:1234").unwrap_err();
         parse_host("127.0.0.0").unwrap();
+        parse_host("2001:db8:abcd:42::dead:beef").unwrap_err();
+
+        assert_eq!(
+            select_ipv4(
+                "ipv6-only.test",
+                [IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)].into_iter()
+            )
+            .unwrap_err(),
+            "IPv6 addresses are not supported: ipv6-only.test",
+        );
+        assert_eq!(
+            select_ipv4(
+                "dual-stack.test",
+                [
+                    IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+                    IpAddr::V4(Ipv4Addr::LOCALHOST),
+                ]
+                .into_iter(),
+            )
+            .unwrap(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+        );
     }
 
     #[test]

@@ -15,9 +15,8 @@ use {
  */
 fn main() {
     let syscalls_rs_name = "../src/lib.rs";
-    let syscalls_txt_name = "../../platform-tools-sdk/sbf/syscalls.txt";
+    let syscalls_txt_name = "syscalls.txt";
     println!("cargo::rerun-if-changed={syscalls_rs_name}");
-    println!("cargo::rerun-if-changed={syscalls_txt_name}");
     println!("cargo::rerun-if-changed=build.rs");
 
     let syscalls_rs_path = PathBuf::from(syscalls_rs_name);
@@ -42,7 +41,8 @@ fn main() {
     let mut text = vec![];
     file.read_to_end(&mut text).unwrap();
     let text = str::from_utf8(&text).unwrap();
-    let sysc_re = Regex::new(r#"register_function\([[:space:]]*"([^"]+)","#).unwrap();
+    let sysc_re =
+        Regex::new(r#"(?m)::register\([ \n]*&mut result,[ \n]*"([^"]+)"[, \n]*\)"#).unwrap();
     let feature_gate_syscall_re =
         Regex::new(r#"register_feature_gated_function!\([^"]+"([^"]+)","#).unwrap();
     let new_num_syscalls = sysc_re

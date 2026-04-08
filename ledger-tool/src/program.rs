@@ -1,6 +1,5 @@
 use {
     crate::{args::*, canonicalize_ledger_path, ledger_utils::*},
-    agave_syscalls::create_program_runtime_environment_v1,
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
     serde::{Deserialize, Serialize},
@@ -15,10 +14,11 @@ use {
     solana_program_runtime::{
         create_vm,
         invoke_context::InvokeContext,
-        loaded_programs::{
-            DELAY_VISIBILITY_SLOT_OFFSET, LoadProgramMetrics, ProgramCacheEntry,
-            ProgramCacheEntryType,
+        loaded_programs::ProgramRuntimeEnvironment,
+        program_cache_entry::{
+            DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryType,
         },
+        program_metrics::LoadProgramMetrics,
         serialization::serialize_parameters,
         with_mock_invoke_context,
     },
@@ -26,9 +26,10 @@ use {
     solana_runtime::bank::Bank,
     solana_sbpf::{
         assembler::assemble, ebpf::MM_INPUT_START, elf::Executable, static_analysis::Analysis,
-        verifier::RequisiteVerifier,
+        verifier::RequisiteVerifier, vm::ExecutionMode,
     },
     solana_sdk_ids::{bpf_loader_upgradeable, sysvar},
+    solana_syscalls::create_program_runtime_environment,
     solana_transaction_context::{
         IndexOfAccount, instruction::InstructionContext, instruction_accounts::InstructionAccount,
     },
@@ -273,7 +274,7 @@ fn load_program<'a>(
         ..LoadProgramMetrics::default()
     };
     let account_size = contents.len();
-    let program_runtime_environment = create_program_runtime_environment_v1(
+    let program_runtime_environment = create_program_runtime_environment(
         invoke_context.get_feature_set(),
         invoke_context.get_compute_budget(),
         false, /* deployment */
@@ -285,7 +286,7 @@ fn load_program<'a>(
     let mut verified_executable = if is_elf {
         let result = ProgramCacheEntry::new(
             &loader_key,
-            Arc::new(program_runtime_environment),
+            ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             slot,
             slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             &contents,
@@ -302,7 +303,7 @@ fn load_program<'a>(
     } else {
         assemble::<InvokeContext>(
             std::str::from_utf8(contents.as_slice()).unwrap(),
-            Arc::new(program_runtime_environment),
+            Arc::clone(&*program_runtime_environment),
         )
         .map_err(|err| format!("Assembling executable failed: {err:?}"))
         .and_then(|executable| {
@@ -472,12 +473,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         sysvar::epoch_schedule::id(),
         create_account_shared_data_for_test(bank.epoch_schedule()),
     ));
-    let interpreted = matches.value_of("mode").unwrap() != "jit";
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
-
-    let provide_instruction_data_offset_in_vm_r2 = invoke_context
-        .get_feature_set()
-        .provide_instruction_data_offset_in_vm_r2;
 
     // Adding `DELAY_VISIBILITY_SLOT_OFFSET` to slots to accommodate for delay visibility of the program
     let mut program_cache_for_tx_batch =
@@ -507,8 +503,9 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 .transaction_context
                 .get_current_instruction_context()
                 .unwrap(),
-            false, // stricter_abi_and_runtime_constraints
+            false, // virtual_address_space_adjustments
             false, // account_data_direct_mapping
+            false, // direct_account_pointers_in_program_input
         )
         .unwrap();
 
@@ -523,19 +520,25 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     );
     let (mut vm, _, _) = vm.unwrap();
     let start_time = Instant::now();
-    if matches.value_of("mode").unwrap() == "debugger" {
-        vm.debug_port = Some(matches.value_of("port").unwrap().parse::<u16>().unwrap());
-    }
-    vm.registers[1] = MM_INPUT_START;
 
-    // SIMD-0321: Provide offset to instruction data in VM register 2.
-    if provide_instruction_data_offset_in_vm_r2 {
-        vm.registers[2] = instruction_data_offset as u64;
-    }
-    let (instruction_count, result) = vm.execute_program(&verified_executable, interpreted);
+    let mode = matches.value_of("mode").unwrap();
+    let mut execution_mode = if mode == "jit" {
+        ExecutionMode::Jit
+    } else if mode == "debugger" {
+        vm.debug_port = Some(matches.value_of("port").unwrap().parse::<u16>().unwrap());
+        ExecutionMode::Interpreted
+    } else {
+        ExecutionMode::Interpreted
+    };
+    vm.registers[1] = MM_INPUT_START;
+    vm.registers[2] = instruction_data_offset as u64;
+
+    let (instruction_count, result) = vm.execute_program(&verified_executable, &mut execution_mode);
     let duration = Instant::now() - start_time;
     if let Some(trace_option) = matches.value_of("trace") {
-        vm.context_object_pointer.iterate_vm_traces(
+        // SAFETY: VM is the only holder of the InvokeContext reference, as it carries its lifetime.
+        let invoke_context_ref = unsafe { vm.context_object_pointer.as_mut() };
+        invoke_context_ref.iterate_vm_traces(
             &|instruction_context: InstructionContext, executable, register_trace| {
                 let mut analysis = LazyAnalysis::new(executable);
                 if trace_option == "stdout" {

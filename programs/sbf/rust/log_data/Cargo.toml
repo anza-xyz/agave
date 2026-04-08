@@ -17,7 +17,6 @@ solana-program = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-error = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-sysvar = { workspace = true }
 
 [lints]
 workspace = true

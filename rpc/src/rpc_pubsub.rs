@@ -605,7 +605,7 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
         let version = solana_version::Version::default();
         Ok(RpcVersionInfo {
             solana_core: version.to_string(),
-            feature_set: Some(version.feature_set),
+            feature_set: Some(version.feature_set()),
         })
     }
 }
@@ -634,7 +634,7 @@ mod tests {
             ProcessedSignatureResult, ReceivedSignatureResult, RpcSignatureResult, SlotInfo,
         },
         solana_runtime::{
-            bank::Bank,
+            bank::{Bank, SlotLeader},
             bank_forks::BankForks,
             commitment::{BlockCommitmentCache, CommitmentSlots},
             genesis_utils::{
@@ -881,7 +881,7 @@ mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let rpc_subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
@@ -997,7 +997,7 @@ mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let rpc_subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
@@ -1180,7 +1180,7 @@ mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bob = Keypair::new();
 
@@ -1397,6 +1397,6 @@ mod tests {
         let version = rpc.get_version().unwrap();
         let expected_version = solana_version::Version::default();
         assert_eq!(version.to_string(), expected_version.to_string());
-        assert_eq!(version.feature_set.unwrap(), expected_version.feature_set);
+        assert_eq!(version.feature_set.unwrap(), expected_version.feature_set());
     }
 }

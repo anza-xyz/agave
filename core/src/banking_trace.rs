@@ -301,8 +301,8 @@ impl BankingTracer {
         let (gossip_vote_sender, gossip_vote_receiver) = Self::channel(
             ChannelLabel::GossipVote,
             self.active_tracer.as_ref().cloned(),
-            Some(unified_sender.clone()),
-            Some(is_unified.clone()),
+            Some(unified_sender),
+            Some(is_unified),
         );
 
         Channels {
@@ -414,6 +414,7 @@ impl BankingTracer {
 /// and the flag are expected to be shared among all of traced sender instances, which will be used
 /// by the trio of sources respectively. This routing functionality is needed for unified scheduler
 /// and its runtime switching.
+#[derive(Clone)]
 pub struct TracedSender {
     label: ChannelLabel,
     sender: Sender<BankingPacketBatch>,

@@ -113,7 +113,6 @@ impl CheckResponsesPtr {
     ///
     /// If you are trying to construct a pointer for use by Agave, you almost certainly want to use
     /// [`Self::from_transaction_response_region`].
-    #[cfg(feature = "dev-context-only-utils")]
     pub unsafe fn from_raw_parts(ptr: NonNull<CheckResponse>, count: usize) -> Self {
         Self { ptr, count }
     }
@@ -184,7 +183,6 @@ impl ExecutionResponsesPtr {
     ///
     /// If you are trying to construct a pointer for use by Agave, you almost certainly want to use
     /// [`Self::from_transaction_response_region`].
-    #[cfg(feature = "dev-context-only-utils")]
     pub unsafe fn from_raw_parts(ptr: NonNull<ExecutionResponse>, count: usize) -> Self {
         Self { ptr, count }
     }

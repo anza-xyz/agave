@@ -85,7 +85,7 @@ use {
         rc::Rc,
         result::Result,
         sync::{
-            Arc, Mutex, RwLock, RwLockReadGuard,
+            Arc, Mutex, OnceLock, RwLock, RwLockReadGuard,
             atomic::{AtomicBool, Ordering},
         },
         thread::{Builder, JoinHandle, sleep},
@@ -154,6 +154,8 @@ pub struct ClusterInfo {
     keypair: ArcSwap<Keypair>,
     /// Network entrypoints
     entrypoints: RwLock<Vec<ContactInfo>>,
+    /// Additional pubkeys to preserve during CRDS table trimming.
+    known_validators: OnceLock<HashSet<Pubkey>>,
     outbound_budget: DataBudget,
     my_contact_info: RwLock<ContactInfo>,
     ping_cache: Mutex<PingCache>,
@@ -177,6 +179,7 @@ impl ClusterInfo {
             gossip: CrdsGossip::default(),
             keypair: ArcSwap::from(keypair),
             entrypoints: RwLock::default(),
+            known_validators: OnceLock::new(),
             outbound_budget: DataBudget::default(),
             my_contact_info: RwLock::new(contact_info),
             ping_cache: Mutex::new(PingCache::new(
@@ -255,6 +258,16 @@ impl ClusterInfo {
 
     pub fn set_entrypoints(&self, entrypoints: Vec<ContactInfo>) {
         *self.entrypoints.write().unwrap() = entrypoints;
+    }
+
+    /// Pubkeys that should be preserved during CRDS trim.
+    /// Returns `Err` when called more than once.
+    pub fn set_trim_keep_pubkeys(
+        &self,
+        pubkeys: impl IntoIterator<Item = Pubkey>,
+    ) -> Result<(), HashSet<Pubkey>> {
+        let pubkeys = pubkeys.into_iter().collect();
+        self.known_validators.set(pubkeys)
     }
 
     pub fn save_contact_info(&self) {
@@ -494,6 +507,35 @@ impl ClusterInfo {
     }
 
     pub fn rpc_info_trace(&self) -> String {
+        // This sets the format string for the table, defining the columns and their widths
+        // For reference, this is the header of the table:
+        // RPC Address       |Age(ms)|               Node identifier                |       Version       | RPC  |PubSub|ShredVer
+        macro_rules! format_string {
+            () => {
+                "{:15} {:2}|{:^7}| {:^44} |{:^21}|{:^6}|{:^6}|{:^8}\n"
+            };
+        }
+        // Make sure format_string above has enough room for each column's title
+        let header = format!(
+            format_string!(),
+            "RPC Address",
+            "", // this is for "me" marker
+            "Age(ms)",
+            "Node identifier",
+            "Version",
+            "RPC",
+            "PubSub",
+            "ShredVer"
+        );
+        // header_bottom is a String representing the separator between header and data
+        let header_bottom: String = header
+            .chars()
+            .map(|s| match s {
+                '|' => '+',
+                '\n' => '\n',
+                _ => '-',
+            })
+            .collect();
         let now = timestamp();
         let my_pubkey = self.id();
         let my_shred_version = self.my_shred_version();
@@ -510,7 +552,7 @@ impl ClusterInfo {
                 }
                 let rpc_addr = node_rpc.ip();
                 Some(format!(
-                    "{:15} {:2}| {:5} | {:44} |{:^21}| {:5}| {:5}| {}\n",
+                    format_string!(),
                     rpc_addr.to_string(),
                     if node.pubkey() == &my_pubkey {
                         "me"
@@ -532,18 +574,50 @@ impl ClusterInfo {
             .collect();
 
         format!(
-            "RPC Address       |Age(ms)| Node identifier                              \
-             |       Version       | RPC  |PubSub|ShredVer\n\
-             ------------------+-------+----------------------------------------------\
-             +---------------------+------+------+--------\n\
-             {}\
-             RPC Enabled Nodes: {}",
+            "{}{}{}\nRPC Enabled Nodes: {}\n",
+            header,
+            header_bottom,
             nodes.join(""),
             nodes.len(),
         )
     }
 
     pub fn contact_info_trace(&self) -> String {
+        // This sets the format string for the table, defining the columns and their widths
+        // For reference, this is the header of the table:
+        // IP Address        |Age(ms)|               Node identifier                |       Version       |Gossip|TPUvote| TPU |TPUfwd| TVU |ServeR|Alpeng|ShredVer
+        macro_rules! format_string {
+            () => {
+                "{:15} {:2}|{:^7}| {:^44} |{:^21}|{:^6}|{:^7}|{:^5}|{:^6}|{:^5}|{:^6}|{:^6}|{:^8}\n"
+            };
+        }
+        // Make sure format_string above has enough room for each column's title
+        let header = format!(
+            format_string!(),
+            "IP Address",
+            "", // this is for "me" marker
+            "Age(ms)",
+            "Node identifier",
+            "Version",
+            "Gossip",
+            "TPUvote",
+            "TPU",
+            "TPUfwd",
+            "TVU",
+            "ServeR",
+            "Alpeng",
+            "ShredVer"
+        );
+        // header_bottom is a String representing the separator between header and data
+        let header_bottom: String = header
+            .chars()
+            .map(|s| match s {
+                '|' => '+',
+                '\n' => '\n',
+                _ => '-',
+            })
+            .collect();
+
         let now = timestamp();
         let mut shred_spy_nodes = 0usize;
         let mut total_spy_nodes = 0usize;
@@ -569,8 +643,7 @@ impl ClusterInfo {
                     }
                     let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
                     Some(format!(
-                        "{:15} {:2}| {:5} | {:44} |{:^21}| {:5}|  {:5} | {:5}| {:5}| {:5}| {:5}| \
-                         {:5}| {}\n",
+                        format_string!(),
                         node.gossip()
                             .filter(|addr| self.socket_addr_space.check(addr))
                             .as_ref()
@@ -610,10 +683,7 @@ impl ClusterInfo {
             .collect();
 
         format!(
-            // this is using an oversized raw string to simplify lining up the columns
-            r#"IP Address        |Age(ms)| Node identifier                              |       Version       |Gossip|TPUvote | TPU  |TPUfwd| TVU  |ServeR|Alpeng|ShredVer
-------------------+-------+----------------------------------------------+---------------------+------+--------+------+------+------+------+------+----------
-{}Nodes: {}{}{}"#,
+            "{header}{header_bottom}{}Nodes: {}{}{}",
             nodes.join(""),
             nodes.len().saturating_sub(shred_spy_nodes),
             if total_spy_nodes > 0 {
@@ -938,16 +1008,10 @@ impl ClusterInfo {
     }
 
     /// Returns epoch-slots inserted since the given cursor.
-    /// Excludes entries from nodes with unknown or different shred version.
     pub fn get_epoch_slots(&self, cursor: &mut Cursor) -> Vec<EpochSlots> {
-        let self_shred_version = Some(self.my_shred_version());
         let gossip_crds = self.gossip.crds.read().unwrap();
         gossip_crds
             .get_epoch_slots(cursor)
-            .filter(|entry| {
-                let origin = entry.value.pubkey();
-                gossip_crds.get_shred_version(&origin) == self_shred_version
-            })
             .map(|entry| match entry.value.data() {
                 CrdsData::EpochSlots(_, slots) => slots.clone(),
                 _ => panic!("this should not happen!"),
@@ -1358,7 +1422,7 @@ impl ClusterInfo {
         if !self.gossip.crds.read().unwrap().should_trim(cap) {
             return;
         }
-        let keep: Vec<_> = self
+        let keep: HashSet<_> = self
             .entrypoints
             .read()
             .unwrap()
@@ -1366,22 +1430,14 @@ impl ClusterInfo {
             .map(ContactInfo::pubkey)
             .copied()
             .chain(std::iter::once(self.id()))
+            .chain(self.known_validators.get().into_iter().flatten().copied())
             .collect();
         self.stats.trim_crds_table.add_relaxed(1);
         let mut gossip_crds = self.gossip.crds.write().unwrap();
-        match gossip_crds.trim(cap, &keep, stakes, timestamp()) {
-            Err(err) => {
-                self.stats.trim_crds_table_failed.add_relaxed(1);
-                // TODO: Stakes are coming from the root-bank. Debug why/when
-                // they are empty/zero.
-                debug!("crds table trim failed: {err:?}");
-            }
-            Ok(num_purged) => {
-                self.stats
-                    .trim_crds_table_purged_values_count
-                    .add_relaxed(num_purged as u64);
-            }
-        }
+        let num_purged = gossip_crds.trim(cap, &keep, stakes, timestamp());
+        self.stats
+            .trim_crds_table_purged_values_count
+            .add_relaxed(num_purged as u64);
     }
 
     /// randomly pick a node and ask them for updates asynchronously
@@ -1630,7 +1686,6 @@ impl ClusterInfo {
                         GossipFilterDirection::EgressPullResponse,
                     )
                 },
-                self.my_shred_version(),
                 &self.stats,
             )
         };
@@ -1752,7 +1807,7 @@ impl ClusterInfo {
             .add_relaxed(pull_stats.success as u64);
 
         (
-            pull_stats.failed_insert + pull_stats.failed_timeout,
+            pull_stats.failed_insert,
             pull_stats.failed_timeout,
             pull_stats.success,
         )
@@ -2391,7 +2446,9 @@ fn discard_different_shred_version(
     let num_values = values.len();
     values.retain(|value| match value.data() {
         CrdsData::ContactInfo(ci) => ci.shred_version() == self_shred_version,
-        _ => crds.get_shred_version(&value.pubkey()) == Some(self_shred_version),
+        // for any other CRDS types we check if we store anything already
+        // for this pubkey, if we do we allow more values in
+        _ => crds.get_records(&value.pubkey()).next().is_some(),
     });
     let num_skipped = num_values - values.len();
     if num_skipped != 0 {
@@ -2568,8 +2625,6 @@ mod tests {
             let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
             ClusterInfo::new(node.info, keypair, SocketAddrSpace::Unspecified)
         });
-        let entrypoint_pubkey = solana_pubkey::new_rand();
-        let data = test_crds_values(entrypoint_pubkey);
         let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
         let timeouts = CrdsTimeouts::new(
             cluster_info.id(),
@@ -2577,10 +2632,27 @@ mod tests {
             Duration::from_secs(48 * 3600),   // epoch_duration
             &stakes,
         );
+
+        // Generate CRDS value w/ expired timestamp.
+        let entrypoint_pubkey = solana_pubkey::new_rand();
+        let entrypoint_ci = ContactInfo::new_localhost(&entrypoint_pubkey, 0);
+        let entrypoint_crdsvalue = CrdsValue::new_unsigned(CrdsData::from(entrypoint_ci));
+        let data = vec![entrypoint_crdsvalue];
+
+        // Should fail for expired timestamp.
+        assert_eq!(
+            (1, 1, 0),
+            cluster_info.handle_pull_response(data, &timeouts)
+        );
+
+        // Expect pull response to be successfully inserted.
+        let data = test_crds_values(entrypoint_pubkey);
         assert_eq!(
             (0, 0, 1),
             cluster_info.handle_pull_response(data.clone(), &timeouts)
         );
+
+        // Should fail insertion because it was already inserted.
         assert_eq!(
             (1, 0, 0),
             cluster_info.handle_pull_response(data, &timeouts)
@@ -2914,7 +2986,7 @@ mod tests {
         let max_vote_slot = lowest_vote_slot + MAX_LOCKOUT_HISTORY as Slot;
         let mut first_vote = None;
         let mut prev_votes = vec![];
-        for slot in 1..max_vote_slot {
+        for slot in lowest_vote_slot..max_vote_slot {
             prev_votes.push(slot);
             let unrefresh_vote = Vote::new(vec![slot], Hash::new_unique());
             let vote_ix = vote_instruction::vote(
@@ -2930,8 +3002,16 @@ mod tests {
                 first_vote = Some(vote_tx.clone());
             }
             cluster_info.push_vote(&prev_votes, vote_tx);
+            // Sleep to avoid votes with same timestamp causing the insert to
+            // fail when wallclocks collide (find_vote_index_to_evict breaks
+            // ties by ms timestamp during eviction).
+            // Since we only store MAX_VOTES, when conflict occurs we may end up evicting
+            // the newer votes if all timestamps are the same.
+            std::thread::sleep(Duration::from_millis(2));
         }
 
+        // We should now have the MAX_VOTES most recent votes in CRDS, for slots
+        // [max_vote_slot - MAX_VOTES, max_vote_slot)
         let initial_votes = cluster_info.get_votes(&mut Cursor::default());
         assert_eq!(initial_votes.len(), MAX_VOTES as usize);
 
@@ -2950,7 +3030,10 @@ mod tests {
         cluster_info.refresh_vote(refresh_tx.clone(), refresh_slot);
         let current_votes = cluster_info.get_votes(&mut Cursor::default());
         assert_eq!(initial_votes, current_votes);
-        assert!(!current_votes.contains(&refresh_tx));
+        assert!(
+            !current_votes.contains(&refresh_tx),
+            "Refresh on outdated vote should fail"
+        );
 
         // Trying to refresh a vote should evict the first slot less than the refreshed vote slot
         let refresh_slot = max_vote_slot + 1;
@@ -2969,7 +3052,7 @@ mod tests {
         // This should evict the latest vote since it's for a slot less than refresh_slot
         let votes = cluster_info.get_votes(&mut Cursor::default());
         assert_eq!(votes.len(), MAX_VOTES as usize);
-        assert!(votes.contains(&refresh_tx));
+        assert!(votes.contains(&refresh_tx), "Refresh vote not found");
         assert!(!votes.contains(&first_vote.unwrap()));
     }
 
@@ -3173,44 +3256,6 @@ mod tests {
 
         let slots = cluster_info.get_epoch_slots(&mut cursor);
         assert!(slots.is_empty());
-
-        // Test with different shred versions.
-        let mut rng = rand::rng();
-        let node_pubkey = Pubkey::new_unique();
-        let mut node = ContactInfo::new_rand(&mut rng, Some(node_pubkey));
-        node.set_shred_version(42);
-        let epoch_slots = EpochSlots::new_rand(&mut rng, Some(node_pubkey));
-        let entries = vec![
-            CrdsValue::new_unsigned(CrdsData::from(node)),
-            CrdsValue::new_unsigned(CrdsData::EpochSlots(0, epoch_slots)),
-        ];
-        {
-            let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
-            for entry in entries {
-                assert!(
-                    gossip_crds
-                        .insert(entry, /*now=*/ 0, GossipRoute::LocalMessage)
-                        .is_ok()
-                );
-            }
-        }
-        // Should exclude other node's epoch-slot because of different
-        // shred-version.
-        let slots = cluster_info.get_epoch_slots(&mut Cursor::default());
-        assert_eq!(slots.len(), 1);
-        assert_eq!(slots[0].from, cluster_info.id());
-        // Match shred versions.
-        {
-            let mut node = cluster_info.my_contact_info.write().unwrap();
-            node.set_shred_version(42);
-        }
-        cluster_info.refresh_my_gossip_contact_info();
-        cluster_info.flush_push_queue();
-        // Should now include both epoch slots.
-        let slots = cluster_info.get_epoch_slots(&mut Cursor::default());
-        assert_eq!(slots.len(), 2);
-        assert_eq!(slots[0].from, cluster_info.id());
-        assert_eq!(slots[1].from, node_pubkey);
     }
 
     #[test]
@@ -3452,47 +3497,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: debug why this is flaky on buildkite!
-    fn test_pull_request_time_pruning() {
-        let node = Node::new_localhost();
-        let cluster_info = Arc::new(ClusterInfo::new(
-            node.info,
-            Arc::new(Keypair::new()),
-            SocketAddrSpace::Unspecified,
-        ));
-        let entrypoint_pubkey = solana_pubkey::new_rand();
-        let entrypoint = ContactInfo::new_localhost(&entrypoint_pubkey, timestamp());
-        cluster_info.set_entrypoint(entrypoint);
-
-        let mut rng = rand::rng();
-        let shred_version = cluster_info.my_shred_version();
-        let mut peers: Vec<Pubkey> = vec![];
-
-        const NO_ENTRIES: usize = CRDS_UNIQUE_PUBKEY_CAPACITY + 128;
-        let data: Vec<_> = repeat_with(|| {
-            let keypair = Keypair::new();
-            peers.push(keypair.pubkey());
-            let mut rand_ci = ContactInfo::new_rand(&mut rng, Some(keypair.pubkey()));
-            rand_ci.set_shred_version(shred_version);
-            rand_ci.set_wallclock(timestamp());
-            CrdsValue::new(CrdsData::from(rand_ci), &keypair)
-        })
-        .take(NO_ENTRIES)
-        .collect();
-        let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
-        let timeouts = CrdsTimeouts::new(
-            cluster_info.id(),
-            CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS * 4, // default_timeout
-            Duration::from_secs(48 * 3600),       // epoch_duration
-            &stakes,
-        );
-        assert_eq!(
-            (0, 0, NO_ENTRIES),
-            cluster_info.handle_pull_response(data, &timeouts)
-        );
-    }
-
-    #[test]
     fn test_get_duplicate_shreds() {
         let host1_key = Arc::new(Keypair::new());
         let node = Node::new_localhost_with_pubkey(&host1_key.pubkey());
@@ -3550,22 +3554,6 @@ mod tests {
     #[test]
     fn test_contact_trace() {
         agave_logger::setup();
-        // If you change the format of cluster_info_trace or rpc_info_trace, please make sure
-        // you read the actual output so the headers line up with the output.
-        const CLUSTER_INFO_TRACE_LENGTH: usize = 472;
-        const RPC_INFO_TRACE_LENGTH: usize = 371;
-        let keypair43 = Arc::new(
-            Keypair::try_from(
-                [
-                    198, 203, 8, 178, 196, 71, 119, 152, 31, 96, 221, 142, 115, 224, 45, 34, 173,
-                    138, 254, 39, 181, 238, 168, 70, 183, 47, 210, 91, 221, 179, 237, 153, 14, 58,
-                    154, 59, 67, 220, 235, 106, 241, 99, 4, 72, 60, 245, 53, 30, 225, 122, 145,
-                    225, 8, 40, 30, 174, 26, 228, 125, 127, 125, 21, 96, 28,
-                ]
-                .as_ref(),
-            )
-            .unwrap(),
-        );
         let keypair44 = Arc::new(
             Keypair::try_from(
                 [
@@ -3581,32 +3569,26 @@ mod tests {
 
         let cluster_info44 = Arc::new({
             let node = Node::new_localhost_with_pubkey(&keypair44.pubkey());
-            info!("{node:?}");
             ClusterInfo::new(node.info, keypair44.clone(), SocketAddrSpace::Unspecified)
         });
-        let cluster_info43 = Arc::new({
-            let node = Node::new_localhost_with_pubkey(&keypair43.pubkey());
-            ClusterInfo::new(node.info, keypair43.clone(), SocketAddrSpace::Unspecified)
-        });
 
-        assert_eq!(keypair43.pubkey().to_string().len(), 43);
-        assert_eq!(keypair44.pubkey().to_string().len(), 44);
+        fn check_table_layout(trace: String) {
+            let line_lengths = trace.lines().map(|l| l.len()).collect::<Vec<_>>();
+            for &ll in line_lengths.iter().take(3) {
+                assert_eq!(
+                    ll, line_lengths[0],
+                    "Line length mismatch, check table layout!"
+                );
+            }
+        }
 
         let trace = cluster_info44.contact_info_trace();
         info!("cluster:\n{trace}");
-        assert_eq!(trace.len(), CLUSTER_INFO_TRACE_LENGTH);
+        check_table_layout(trace);
 
         let trace = cluster_info44.rpc_info_trace();
         info!("rpc:\n{trace}");
-        assert_eq!(trace.len(), RPC_INFO_TRACE_LENGTH);
-
-        let trace = cluster_info43.contact_info_trace();
-        info!("cluster:\n{trace}");
-        assert_eq!(trace.len(), CLUSTER_INFO_TRACE_LENGTH);
-
-        let trace = cluster_info43.rpc_info_trace();
-        info!("rpc:\n{trace}");
-        assert_eq!(trace.len(), RPC_INFO_TRACE_LENGTH);
+        check_table_layout(trace);
     }
 
     #[test]

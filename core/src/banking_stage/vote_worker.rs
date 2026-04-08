@@ -26,7 +26,7 @@ use {
     solana_poh::poh_recorder::PohRecorderError,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
         transaction_with_meta::TransactionWithMeta,
     },
     solana_svm::{
@@ -583,19 +583,16 @@ mod tests {
         solana_perf::packet::BytesPacket,
         solana_poh::record_channels::record_channels,
         solana_runtime::genesis_utils::ValidatorVoteKeypairs,
-        solana_runtime_transaction::transaction_meta::StaticMeta,
+        solana_runtime_transaction::transaction_meta::TransactionMeta,
         solana_svm::account_loader::CheckedTransactionDetails,
         solana_system_transaction as system_transaction,
         std::collections::HashSet,
     };
 
     fn to_runtime_transaction_view(packet: BytesPacket) -> RuntimeTransactionView {
-        let tx = SanitizedTransactionView::try_new_sanitized(
-            Arc::new(packet.buffer().to_vec()),
-            false,
-            true,
-        )
-        .unwrap();
+        let tx =
+            SanitizedTransactionView::try_new_sanitized(Arc::new(packet.buffer().to_vec()), true)
+                .unwrap();
         let tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             tx,
             MessageHash::Compute,
@@ -739,7 +736,7 @@ mod tests {
     #[test]
     fn test_has_reached_end_of_slot() {
         let GenesisConfigInfo { genesis_config, .. } = create_slow_genesis_config(10_000);
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         assert!(!has_reached_end_of_slot(false, &bank));
         assert!(has_reached_end_of_slot(true, &bank));
@@ -758,7 +755,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         // Sanity.
         assert!(!bank.is_complete());

@@ -274,22 +274,22 @@ impl SimulatorLoopLogger {
 
     fn log_frozen_bank_cost(&self, bank: &Bank, bank_elapsed: Duration) {
         info!(
-            "simulated bank slot+delta: {}+{}ms costs: {:?} fees: {} txs: {} (frozen)",
+            "simulated bank slot+delta: {}+{}ms costs: {:?} fees: {:?} txs: {} (frozen)",
             bank.slot(),
             bank_elapsed.as_millis(),
             Self::bank_costs(bank),
-            bank.collector_fees(),
+            bank.get_collector_fee_details(),
             bank.executed_transaction_count(),
         );
     }
 
     fn log_ongoing_bank_cost(&self, bank: &Bank, bank_elapsed: Duration) {
         info!(
-            "simulated bank slot+delta: {}+{}ms costs: {:?} fees: {} txs: {} (ongoing)",
+            "simulated bank slot+delta: {}+{}ms costs: {:?} fees: {:?} txs: {} (ongoing)",
             bank.slot(),
             bank_elapsed.as_millis(),
             Self::bank_costs(bank),
-            bank.collector_fees(),
+            bank.get_collector_fee_details(),
             bank.executed_transaction_count(),
         );
     }
@@ -481,10 +481,9 @@ impl SimulatorLoop {
                 let new_leader = self
                     .leader_schedule_cache
                     .slot_leader_at(new_slot, None)
-                    .unwrap()
-                    .id;
-                if new_leader != self.simulated_leader {
-                    logger.on_new_leader(&bank, bank_created.elapsed(), new_slot, new_leader);
+                    .unwrap();
+                if new_leader.id != self.simulated_leader {
+                    logger.on_new_leader(&bank, bank_created.elapsed(), new_slot, new_leader.id);
                     break;
                 } else if sender_thread.is_finished() {
                     warn!("sender thread existed maybe due to completion of sending traced events");
@@ -492,11 +491,8 @@ impl SimulatorLoop {
                 } else {
                     info!("new leader bank slot: {new_slot}");
                 }
-                let new_bank = Bank::new_from_parent(
-                    bank.clone_without_scheduler(),
-                    &self.simulated_leader,
-                    new_slot,
-                );
+                let new_bank =
+                    Bank::new_from_parent(bank.clone_without_scheduler(), new_leader, new_slot);
                 // make sure parent is frozen for finalized hashes via the above
                 // new()-ing of its child bank
                 self.retracer
@@ -843,7 +839,7 @@ impl BankingSimulator {
         .expect("should bind");
         let broadcast_stage = BroadcastStageType::Standard.new_broadcast_stage(
             vec![socket],
-            cluster_info_for_broadcast.clone(),
+            cluster_info_for_broadcast,
             entry_receiver,
             retransmit_slots_receiver,
             exit.clone(),
@@ -856,7 +852,7 @@ impl BankingSimulator {
 
         info!("Start banking stage!...");
         let banking_stage = BankingStage::new_num_threads(
-            block_production_method.clone(),
+            block_production_method,
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,

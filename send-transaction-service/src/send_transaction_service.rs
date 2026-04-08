@@ -541,7 +541,7 @@ mod test {
         solana_account::AccountSharedData,
         solana_genesis_config::create_genesis_config,
         solana_nonce::{self as nonce, state::DurableNonce},
-        solana_pubkey::Pubkey,
+        solana_runtime::bank::SlotLeader,
         solana_signer::Signer,
         solana_system_interface::program as system_program,
         solana_system_transaction as system_transaction,
@@ -634,7 +634,7 @@ mod test {
 
         let root_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().working_bank(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             1,
         );
         let root_bank = bank_forks
@@ -655,14 +655,11 @@ mod test {
             (transaction, signature)
         };
 
+        let working_child = Bank::new_from_parent(root_bank.clone(), SlotLeader::default(), 2);
         let working_bank = bank_forks
             .write()
             .unwrap()
-            .insert(Bank::new_from_parent(
-                root_bank.clone(),
-                &Pubkey::default(),
-                2,
-            ))
+            .insert(working_child)
             .clone_without_scheduler();
 
         let (non_rooted_transaction, non_rooted_signature) = {
@@ -916,7 +913,7 @@ mod test {
 
         let root_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().working_bank(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             1,
         );
         let root_bank = bank_forks
@@ -946,14 +943,11 @@ mod test {
             AccountSharedData::new_data(43, &nonce_state, &system_program::id()).unwrap();
         root_bank.store_account(&nonce_address, &nonce_account);
 
+        let working_child = Bank::new_from_parent(root_bank.clone(), SlotLeader::default(), 2);
         let working_bank = bank_forks
             .write()
             .unwrap()
-            .insert(Bank::new_from_parent(
-                root_bank.clone(),
-                &Pubkey::default(),
-                2,
-            ))
+            .insert(working_child)
             .clone_without_scheduler();
 
         let (non_rooted_transaction, non_rooted_signature) = {

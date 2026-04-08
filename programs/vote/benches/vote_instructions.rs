@@ -7,8 +7,9 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_instruction::{AccountMeta, error::InstructionError},
-    solana_program_runtime::invoke_context::{
-        mock_process_instruction, mock_process_instruction_with_feature_set,
+    solana_program_runtime::{
+        invoke_context::{mock_process_instruction, mock_process_instruction_with_feature_set},
+        solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -179,12 +180,11 @@ fn process_instruction(
 ) -> Vec<AccountSharedData> {
     mock_process_instruction(
         &id(),
-        None,
         instruction_data,
         transaction_accounts,
         instruction_accounts,
         expected_result,
-        Entrypoint::vm,
+        Entrypoint::register,
         |_invoke_context| {},
         |_invoke_context| {},
     )
@@ -200,12 +200,11 @@ fn process_deprecated_instruction(
     deprecated_feature_set.deactivate(&deprecate_legacy_vote_ixs::id());
     mock_process_instruction_with_feature_set(
         &id(),
-        None,
         instruction_data,
         transaction_accounts,
         instruction_accounts,
         expected_result,
-        Entrypoint::vm,
+        Entrypoint::register,
         |_invoke_context| {},
         |_invoke_context| {},
         &deprecated_feature_set.runtime_features(),
@@ -387,7 +386,7 @@ impl BenchWithdraw {
         let (vote_pubkey, vote_account) = create_test_account();
         let authorized_withdrawer_pubkey = solana_pubkey::new_rand();
         let transaction_accounts = vec![
-            (vote_pubkey, vote_account.clone()),
+            (vote_pubkey, vote_account),
             (sysvar::clock::id(), create_default_clock_account()),
             (sysvar::rent::id(), create_default_rent_account()),
             (authorized_withdrawer_pubkey, AccountSharedData::default()),
@@ -939,8 +938,8 @@ impl BenchCompactUpdateVoteState {
         };
 
         let transaction_accounts = vec![
-            (vote_pubkey, vote_account.clone()),
-            (sysvar::slot_hashes::id(), slot_hashes_account.clone()),
+            (vote_pubkey, vote_account),
+            (sysvar::slot_hashes::id(), slot_hashes_account),
             (sysvar::clock::id(), create_default_clock_account()),
         ];
 
@@ -1002,8 +1001,8 @@ impl BenchTowerSync {
         };
 
         let transaction_accounts = vec![
-            (vote_pubkey, vote_account.clone()),
-            (sysvar::slot_hashes::id(), slot_hashes_account.clone()),
+            (vote_pubkey, vote_account),
+            (sysvar::slot_hashes::id(), slot_hashes_account),
             (sysvar::clock::id(), create_default_clock_account()),
         ];
 

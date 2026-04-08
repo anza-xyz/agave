@@ -22,16 +22,16 @@ use {
     crossbeam_channel::{RecvTimeoutError, TryRecvError},
     solana_accounts_db::account_locks::validate_account_locks,
     solana_address_lookup_table_interface::state::estimate_last_valid_slot,
-    solana_clock::{Epoch, MAX_PROCESSING_AGE, Slot},
+    solana_clock::{Epoch, Slot},
     solana_cost_model::cost_model::CostModel,
-    solana_fee_structure::FeeBudgetLimits,
     solana_message::v0::LoadedAddresses,
     solana_runtime::{
         bank::Bank,
         bank_forks::{BankPair, SharableBanks},
     },
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
+        runtime_transaction::RuntimeTransaction,
+        transaction_meta::{TransactionConfiguration, TransactionMeta},
         transaction_with_meta::TransactionWithMeta,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
@@ -178,9 +178,10 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
 
         if !timed_out {
             while start.elapsed() < TIMEOUT && stats.num_received < PACKET_BURST_LIMIT {
+                let receive_start = Instant::now();
                 match self.receiver.try_recv() {
                     Ok(packet_batch_message) => {
-                        stats.receive_time_us += start.elapsed().as_micros() as u64;
+                        stats.receive_time_us += receive_start.elapsed().as_micros() as u64;
                         received_message = true;
                         let batch_stats = self.handle_packet_batch_message(
                             container,
@@ -241,12 +242,8 @@ impl TransactionViewReceiveAndBuffer {
         // If outside holding window, do not parse.
         let should_parse = !matches!(decision, BufferedPacketsDecision::Forward);
 
-        let enable_static_instruction_limit = root_bank
-            .feature_set
-            .is_active(&agave_feature_set::static_instruction_limit::ID);
-        let enable_instruction_accounts_limit = root_bank
-            .feature_set
-            .is_active(&agave_feature_set::limit_instruction_accounts::ID);
+        let enable_instruction_accounts_limit =
+            root_bank.feature_set.snapshot().limit_instruction_accounts;
         let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
 
         // Create temporary batches of transactions to be age-checked.
@@ -274,7 +271,7 @@ impl TransactionViewReceiveAndBuffer {
                     working_bank.check_transactions::<RuntimeTransaction<_>>(
                         &transactions,
                         &lock_results[..transactions.len()],
-                        MAX_PROCESSING_AGE,
+                        working_bank.max_processing_age(),
                         &mut error_counters,
                     )
                 };
@@ -348,7 +345,6 @@ impl TransactionViewReceiveAndBuffer {
                             bytes,
                             root_bank,
                             working_bank,
-                            enable_static_instruction_limit,
                             transaction_account_lock_limit,
                             enable_instruction_accounts_limit,
                         ) {
@@ -409,28 +405,25 @@ impl TransactionViewReceiveAndBuffer {
         bytes: SharedBytes,
         root_bank: &Bank,
         working_bank: &Bank,
-        enable_static_instruction_limit: bool,
         transaction_account_lock_limit: usize,
         enable_instruction_accounts_limit: bool,
     ) -> Result<TransactionViewState, PacketHandlingError> {
         let (view, deactivation_slot) = translate_to_runtime_view(
             bytes,
             root_bank,
-            enable_static_instruction_limit,
             transaction_account_lock_limit,
             enable_instruction_accounts_limit,
         )?;
 
-        let Ok(compute_budget_limits) = view
-            .compute_budget_instruction_details()
-            .sanitize_and_convert_to_compute_budget_limits(&working_bank.feature_set)
+        let Ok(transaction_configuration) =
+            view.transaction_configuration(&working_bank.feature_set)
         else {
             return Err(PacketHandlingError::ComputeBudget);
         };
 
         let max_age = calculate_max_age(root_bank.epoch(), deactivation_slot, root_bank.slot());
-        let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
-        let (priority, cost) = calculate_priority_and_cost(&view, &fee_budget_limits, working_bank);
+        let (priority, cost) =
+            calculate_priority_and_cost(&view, &transaction_configuration, working_bank);
 
         Ok(TransactionState::new(view, max_age, priority, cost))
     }
@@ -442,16 +435,13 @@ impl TransactionViewReceiveAndBuffer {
 pub(crate) fn translate_to_runtime_view<D: TransactionData>(
     data: D,
     bank: &Bank,
-    enable_static_instruction_limit: bool,
     transaction_account_lock_limit: usize,
     enable_instruction_accounts_limit: bool,
 ) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
     // Parsing and basic sanitization checks
-    let Ok(view) = SanitizedTransactionView::try_new_sanitized(
-        data,
-        enable_static_instruction_limit,
-        enable_instruction_accounts_limit,
-    ) else {
+    let Ok(view) =
+        SanitizedTransactionView::try_new_sanitized(data, enable_instruction_accounts_limit)
+    else {
         return Err(PacketHandlingError::Sanitization);
     };
 
@@ -527,11 +517,11 @@ pub(crate) fn load_addresses_for_view<D: TransactionData>(
 /// the current transaction costs.
 pub(crate) fn calculate_priority_and_cost(
     transaction: &impl TransactionWithMeta,
-    fee_budget_limits: &FeeBudgetLimits,
+    transaction_configuration: &TransactionConfiguration,
     bank: &Bank,
 ) -> (u64, u64) {
     let cost = CostModel::calculate_cost(transaction, &bank.feature_set).sum();
-    let reward = bank.calculate_reward_for_transaction(transaction, fee_budget_limits);
+    let reward = bank.calculate_reward_for_transaction(transaction, transaction_configuration);
 
     // We need a multiplier here to avoid rounding down too aggressively.
     // For many transactions, the cost will be greater than the fees in terms of raw lamports.
@@ -604,7 +594,7 @@ mod tests {
             ..
         } = create_slow_genesis_config(u64::MAX);
 
-        let (_bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         (bank_forks, mint_keypair)
     }
 

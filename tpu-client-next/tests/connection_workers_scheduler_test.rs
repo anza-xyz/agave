@@ -68,6 +68,7 @@ fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerCon
             send: 1,
             connect: 1,
         },
+        override_initial_congestion_window: None,
     }
 }
 
@@ -868,7 +869,6 @@ async fn test_client_builder() {
     );
 
     let _drop_guard = cancel.clone().drop_guard();
-
     let successfully_sent = Arc::new(AtomicU64::new(0));
 
     let port_range = localhost_port_range_for_tests();
@@ -897,6 +897,9 @@ async fn test_client_builder() {
                         }
                     })
                     .await;
+                // update right after the cancel
+                let view = stats.read_and_reset();
+                successfully_sent.fetch_add(view.successfully_sent, Ordering::Relaxed);
             }
         });
 

@@ -33,7 +33,6 @@ use {
         blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
         entry_notifier_service::EntryNotifierSender,
     },
-    solana_perf::data_budget::DataBudget,
     solana_poh::{
         poh_recorder::{PohRecorder, WorkingBankEntry},
         transaction_recorder::TransactionRecorder,
@@ -51,13 +50,14 @@ use {
     solana_streamer::{
         quic::{
             SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
-            spawn_simple_qos_server, spawn_stake_wighted_qos_server,
+            spawn_simple_qos_server, spawn_stake_weighted_qos_server,
         },
+        quic_socket::QuicSocket,
         streamer::StakedNodes,
     },
     solana_turbine::{
+        XdpSender,
         broadcast_stage::{BroadcastStage, BroadcastStageType},
-        xdp::XdpSender,
     },
     std::{
         collections::HashMap,
@@ -118,7 +118,7 @@ impl Tpu {
         entry_notification_sender: Option<EntryNotifierSender>,
         blockstore: Arc<Blockstore>,
         broadcast_type: &BroadcastStageType,
-        xdp_sender: Option<XdpSender>,
+        turbine_xdp_sender: Option<XdpSender>,
         exit: Arc<AtomicBool>,
         shred_version: u16,
         vote_tracker: Arc<VoteTracker>,
@@ -191,14 +191,19 @@ impl Tpu {
         } = banking_tracer_channels;
 
         // Streamer for Votes:
-        let SpawnServerResult {
-            endpoints: _,
-            thread: tpu_vote_quic_t,
-            key_updater: vote_streamer_key_updater,
-        } = spawn_simple_qos_server(
+        let quic_vote_sockets: Vec<QuicSocket> =
+            tpu_vote_quic_sockets.into_iter().map(Into::into).collect();
+        let (
+            SpawnServerResult {
+                endpoints: _,
+                thread: tpu_vote_quic_t,
+                key_updater: vote_streamer_key_updater,
+            },
+            _banlist,
+        ) = spawn_simple_qos_server(
             "solQuicTVo",
             "quic_streamer_tpu_vote",
-            tpu_vote_quic_sockets,
+            quic_vote_sockets,
             keypair,
             vote_packet_sender,
             staked_nodes.clone(),
@@ -209,11 +214,15 @@ impl Tpu {
         .unwrap();
 
         // Streamer for TPU
+        let transactions_quic_sockets: Vec<QuicSocket> = transactions_quic_sockets
+            .into_iter()
+            .map(Into::into)
+            .collect();
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_quic_t,
             key_updater,
-        } = spawn_stake_wighted_qos_server(
+        } = spawn_stake_weighted_qos_server(
             "solQuicTpu",
             "quic_streamer_tpu",
             transactions_quic_sockets,
@@ -227,11 +236,16 @@ impl Tpu {
         .unwrap();
 
         // Streamer for TPU forward
+        let transactions_forwards_quic_sockets: Vec<QuicSocket> =
+            transactions_forwards_quic_sockets
+                .into_iter()
+                .map(Into::into)
+                .collect();
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_forwards_quic_t,
             key_updater: forwards_key_updater,
-        } = spawn_stake_wighted_qos_server(
+        } = spawn_stake_weighted_qos_server(
             "solQuicTpuFwd",
             "quic_streamer_tpu_forwards",
             transactions_forwards_quic_sockets,
@@ -326,7 +340,6 @@ impl Tpu {
             vote_forwarding_client_socket,
             bank_forks.read().unwrap().sharable_banks(),
             ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
-            DataBudget::default(),
         );
 
         let (entry_receiver, tpu_entry_notifier) =
@@ -352,7 +365,7 @@ impl Tpu {
             blockstore,
             bank_forks,
             shred_version,
-            xdp_sender,
+            turbine_xdp_sender,
             votor_event_sender,
         );
 

@@ -73,6 +73,8 @@ pub struct CostTracker {
     account_cost_limit: u64,
     block_cost_limit: u64,
     vote_cost_limit: u64,
+    // Maximum new account allocation data per block in bytes.
+    allocated_data_size_limit: u64,
     cost_by_writable_accounts: HashMap<Pubkey, u64, ahash::RandomState>,
     block_cost: SharedBlockCost,
     vote_cost: u64,
@@ -90,9 +92,6 @@ pub struct CostTracker {
 
 impl Default for CostTracker {
     fn default() -> Self {
-        // Clippy doesn't like asserts in const contexts, so need to explicitly allow them.  For
-        // more info, see this issue: https://github.com/rust-lang/rust-clippy/issues/8159
-        #![allow(clippy::assertions_on_constants)]
         const _: () = assert!(MAX_WRITABLE_ACCOUNT_UNITS <= MAX_BLOCK_UNITS);
         const _: () = assert!(MAX_VOTE_UNITS <= MAX_BLOCK_UNITS);
 
@@ -100,6 +99,7 @@ impl Default for CostTracker {
             account_cost_limit: MAX_WRITABLE_ACCOUNT_UNITS,
             block_cost_limit: MAX_BLOCK_UNITS,
             vote_cost_limit: MAX_VOTE_UNITS,
+            allocated_data_size_limit: MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA,
             cost_by_writable_accounts: HashMap::with_capacity_and_hasher(
                 WRITABLE_ACCOUNTS_PER_BLOCK,
                 ahash::RandomState::new(),
@@ -124,6 +124,7 @@ impl CostTracker {
             self.account_cost_limit,
             self.block_cost_limit,
             self.vote_cost_limit,
+            self.allocated_data_size_limit,
         );
         new
     }
@@ -143,16 +144,27 @@ impl CostTracker {
         self.vote_cost_limit
     }
 
+    /// Get the overall allocated account data size limit.
+    pub fn get_allocated_data_size_limit(&self) -> u64 {
+        self.allocated_data_size_limit
+    }
+
     /// allows to adjust limits initiated during construction
     pub fn set_limits(
         &mut self,
         account_cost_limit: u64,
         block_cost_limit: u64,
         vote_cost_limit: u64,
+        allocated_data_size_limit: u64,
     ) {
         self.account_cost_limit = account_cost_limit;
         self.block_cost_limit = block_cost_limit;
         self.vote_cost_limit = vote_cost_limit;
+        self.allocated_data_size_limit = allocated_data_size_limit;
+    }
+
+    pub fn set_limits_max(&mut self) {
+        self.set_limits(u64::MAX, u64::MAX, u64::MAX, u64::MAX);
     }
 
     pub fn in_flight_transaction_count(&self) -> usize {
@@ -315,7 +327,7 @@ impl CostTracker {
     ) -> Result<(), CostTrackerError> {
         let cost: u64 = tx_cost.sum();
 
-        if tx_cost.is_simple_vote() {
+        if tx_cost.should_track_as_simple_vote() {
             // if vote transaction, check if it exceeds vote_transaction_limit
             if self.vote_cost.saturating_add(cost) > self.vote_cost_limit {
                 return Err(CostTrackerError::WouldExceedVoteMaxLimit);
@@ -335,7 +347,7 @@ impl CostTracker {
         let allocated_accounts_data_size =
             self.allocated_accounts_data_size + Saturating(tx_cost.allocated_accounts_data_size());
 
-        if allocated_accounts_data_size.0 > MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA {
+        if allocated_accounts_data_size.0 > self.allocated_data_size_limit {
             return Err(CostTrackerError::WouldExceedAccountDataBlockLimit);
         }
 
@@ -399,7 +411,7 @@ impl CostTracker {
             costliest_account_cost = costliest_account_cost.max(*account_cost);
         }
         self.block_cost.fetch_add(adjustment);
-        if tx_cost.is_simple_vote() {
+        if tx_cost.should_track_as_simple_vote() {
             self.vote_cost = self.vote_cost.saturating_add(adjustment);
         }
 
@@ -420,7 +432,7 @@ impl CostTracker {
             *account_cost = account_cost.saturating_sub(adjustment);
         }
         self.block_cost.fetch_sub(adjustment);
-        if tx_cost.is_simple_vote() {
+        if tx_cost.should_track_as_simple_vote() {
             self.vote_cost = self.vote_cost.saturating_sub(adjustment);
         }
     }
@@ -474,6 +486,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_signer::Signer,
         std::cmp,
+        test_case::test_case,
     };
 
     impl CostTracker {
@@ -532,16 +545,21 @@ mod tests {
 
     fn simple_vote_transaction_cost(
         transaction: &WritableKeysTransaction,
+        remove_simple_vote_from_cost_model: bool,
     ) -> TransactionCost<'_, WritableKeysTransaction> {
-        TransactionCost::Transaction(UsageCostDetails {
-            transaction,
-            signature_cost: 1,
-            write_lock_cost: 2,
-            data_bytes_cost: 0,
-            programs_execution_cost: solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
-            loaded_accounts_data_size_cost: 8,
-            allocated_accounts_data_size: 0,
-        })
+        if !remove_simple_vote_from_cost_model {
+            TransactionCost::SimpleVote { transaction }
+        } else {
+            TransactionCost::Transaction(UsageCostDetails {
+                transaction,
+                signature_cost: 1,
+                write_lock_cost: 2,
+                data_bytes_cost: 0,
+                programs_execution_cost: solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
+                loaded_accounts_data_size_cost: 8,
+                allocated_accounts_data_size: 0,
+            })
+        }
     }
 
     #[test]
@@ -571,11 +589,12 @@ mod tests {
         assert_eq!(cost, costliest_account_cost);
     }
 
-    #[test]
-    fn test_cost_tracker_ok_add_one_vote() {
+    #[test_case(false; "remove_simple_vote_from_cost_model not activated")]
+    #[test_case(true; "remove_simple_vote_from_cost_model activated")]
+    fn test_cost_tracker_ok_add_one_vote(remove_simple_vote_from_cost_model: bool) {
         let mint_keypair = test_setup();
         let tx = build_simple_vote_transaction(&mint_keypair);
-        let tx_cost = simple_vote_transaction_cost(&tx);
+        let tx_cost = simple_vote_transaction_cost(&tx, remove_simple_vote_from_cost_model);
         let cost = tx_cost.sum();
 
         // build testee to have capacity for one simple transaction
@@ -583,7 +602,12 @@ mod tests {
         assert!(testee.would_fit(&tx_cost).is_ok());
         testee.add_transaction_cost(&tx_cost);
         assert_eq!(cost, testee.block_cost());
-        assert_eq!(cost, testee.vote_cost);
+        if !remove_simple_vote_from_cost_model {
+            assert_eq!(cost, testee.vote_cost);
+        } else {
+            // not trackijng vote cu after feature activation
+            assert_eq!(0, testee.vote_cost);
+        }
         let (_costliest_account, costliest_account_cost) = testee.find_costliest_account();
         assert_eq!(cost, costliest_account_cost);
     }
@@ -714,16 +738,17 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_cost_tracker_reach_vote_limit() {
+    #[test_case(false; "remove_simple_vote_from_cost_model not activated")]
+    #[test_case(true; "remove_simple_vote_from_cost_model activated")]
+    fn test_cost_tracker_reach_vote_limit(remove_simple_vote_from_cost_model: bool) {
         let mint_keypair = test_setup();
         // build two mocking vote transactions with diff accounts
         let second_account = Keypair::new();
         let tx1 = build_simple_vote_transaction(&mint_keypair);
-        let tx_cost1 = simple_vote_transaction_cost(&tx1);
+        let tx_cost1 = simple_vote_transaction_cost(&tx1, remove_simple_vote_from_cost_model);
         let cost1 = tx_cost1.sum();
         let tx2 = build_simple_vote_transaction(&second_account);
-        let tx_cost2 = simple_vote_transaction_cost(&tx2);
+        let tx_cost2 = simple_vote_transaction_cost(&tx2, remove_simple_vote_from_cost_model);
         let cost2 = tx_cost2.sum();
 
         // build testee to have capacity for each chain, but not enough room for both votes
@@ -733,9 +758,12 @@ mod tests {
             assert!(testee.would_fit(&tx_cost1).is_ok());
             testee.add_transaction_cost(&tx_cost1);
         }
-        // but no more room for package as whole
-        {
+        if !remove_simple_vote_from_cost_model {
+            // but no more room for package as whole
             assert!(testee.would_fit(&tx_cost2).is_err());
+        } else {
+            // no more vote cu limit if feature activated
+            assert!(testee.would_fit(&tx_cost2).is_ok());
         }
         // however there is room for none-vote tx3
         {
@@ -774,6 +802,30 @@ mod tests {
         // data is too big
         assert_eq!(
             testee.would_fit(&tx_cost2),
+            Err(CostTrackerError::WouldExceedAccountDataBlockLimit),
+        );
+    }
+
+    #[test]
+    fn test_cost_tracker_respects_custom_allocated_data_size_limit() {
+        // Setup transaction that allocates 2 bytes.
+        let mint_keypair = test_setup();
+        let tx = build_simple_transaction(&mint_keypair);
+        let mut tx_cost = simple_transaction_cost(&tx, 5);
+        if let TransactionCost::Transaction(ref mut usage_cost) = tx_cost {
+            usage_cost.allocated_accounts_data_size = 2;
+        } else {
+            unreachable!();
+        }
+
+        // Transaction fits with default limit.
+        let mut testee = CostTracker::new(u64::MAX, u64::MAX, u64::MAX);
+        assert_eq!(testee.would_fit(&tx_cost), Ok(()),);
+
+        // Transaction does not fit with 1B limit.
+        testee.allocated_data_size_limit = 1;
+        assert_eq!(
+            testee.would_fit(&tx_cost),
             Err(CostTrackerError::WouldExceedAccountDataBlockLimit),
         );
     }

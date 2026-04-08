@@ -10,14 +10,13 @@ use {
         logger,
     },
     agave_precompiles::{get_precompile, is_precompile},
-    agave_syscalls::create_program_runtime_environment_v1,
     prost::Message,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_precompile_error::PrecompileError,
-    solana_program_runtime::loaded_programs::ProgramRuntimeEnvironments,
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,
-    std::{env, ffi::c_int, sync::Arc},
+    solana_syscalls::create_program_runtime_environment,
+    std::{env, ffi::c_int},
 };
 
 /// Callback with full precompile support for fuzz testing.
@@ -72,10 +71,9 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
 
     let feature_set = &instr_context.feature_set;
     let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
-    let simd_0339_active = feature_set.increase_cpi_account_info_limit;
 
     let compute_budget = {
-        let mut budget = ComputeBudget::new_with_defaults(simd_0268_active, simd_0339_active);
+        let mut budget = ComputeBudget::new_with_defaults(simd_0268_active);
         budget.compute_unit_limit = cu_avail;
         budget
     };
@@ -90,23 +88,18 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
     // When testing with protobuf, we fill the program cache from input accounts.
     let mut program_cache = {
         let slot = sysvar_cache.get_clock().unwrap().slot;
-        let environments = ProgramRuntimeEnvironments {
-            program_runtime_v1: Arc::new(
-                create_program_runtime_environment_v1(
-                    &instr_context.feature_set,
-                    &compute_budget.to_budget(),
-                    false, /* deployment */
-                    false, /* debugging_features */
-                )
-                .unwrap(),
-            ),
-            ..ProgramRuntimeEnvironments::default()
-        };
+        let environment = create_program_runtime_environment(
+            &instr_context.feature_set,
+            &compute_budget.to_budget(),
+            false, /* deployment */
+            false, /* debugging_features */
+        )
+        .unwrap();
 
         let mut cache = crate::program_cache::new_with_builtins(slot);
         crate::program_cache::fill_from_accounts(
             &mut cache,
-            &environments,
+            &environment,
             &instr_context.accounts,
             slot,
         )

@@ -1,5 +1,5 @@
 use {
-    solana_ledger::{blockstore::Blockstore, blockstore_meta::PerfSampleV2},
+    solana_ledger::{blockstore::Blockstore, blockstore_meta::PerfSample},
     solana_runtime::bank_forks::BankForks,
     std::{
         sync::{
@@ -54,7 +54,7 @@ impl SamplePerformanceService {
                 // Store the new snapshot to compare against in the next iteration of the loop.
                 snapshot = new_snapshot;
 
-                let perf_sample = PerfSampleV2 {
+                let perf_sample = PerfSample {
                     // Note: since num_slots is computed from the highest slot and not the bank
                     // slot, this value should not be used in conjunction with num_transactions or
                     // num_non_vote_transactions to draw any conclusions about number of

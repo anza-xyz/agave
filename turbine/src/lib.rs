@@ -11,7 +11,9 @@ pub mod retransmit_stage;
 
 pub mod sigverify_shreds;
 
-pub mod xdp;
+pub mod xdp_sender;
+
+pub use crate::xdp_sender::XdpSender;
 
 #[macro_use]
 extern crate log;

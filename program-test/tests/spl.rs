@@ -15,13 +15,22 @@ use {
 async fn programs_present() {
     let (banks_client, _, _) = ProgramTest::default().start().await;
     let rent = banks_client.get_rent().await.unwrap();
+
+    let token_id = spl_generic_token::token::id();
+    let (token_programdata_id, _) =
+        Pubkey::find_program_address(&[token_id.as_ref()], &bpf_loader_upgradeable::id());
+
     let token_2022_id = spl_generic_token::token_2022::id();
     let (token_2022_programdata_id, _) =
         Pubkey::find_program_address(&[token_2022_id.as_ref()], &bpf_loader_upgradeable::id());
 
     for (program_id, _) in spl_programs(&rent) {
         let program_account = banks_client.get_account(program_id).await.unwrap().unwrap();
-        if program_id == token_2022_id || program_id == token_2022_programdata_id {
+        if program_id == token_id
+            || program_id == token_programdata_id
+            || program_id == token_2022_id
+            || program_id == token_2022_programdata_id
+        {
             assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
         } else {
             assert_eq!(program_account.owner, bpf_loader::id());

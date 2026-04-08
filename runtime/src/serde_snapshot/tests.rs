@@ -22,7 +22,7 @@ mod serde_snapshot_tests {
             accounts::Accounts,
             accounts_db::{
                 ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig, AtomicAccountsFileId,
-                MarkObsoleteAccounts, get_temp_accounts_paths,
+                get_temp_accounts_paths,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
             ancestors::Ancestors,
@@ -44,9 +44,9 @@ mod serde_snapshot_tests {
     };
 
     fn linear_ancestors(end_slot: u64) -> Ancestors {
-        let mut ancestors: Ancestors = vec![(0, 0)].into_iter().collect();
+        let mut ancestors = Ancestors::from(vec![0]);
         for i in 1..end_slot {
-            ancestors.insert(i, (i - 1) as usize);
+            ancestors.insert(i);
         }
         ancestors
     }
@@ -190,7 +190,7 @@ mod serde_snapshot_tests {
     fn check_accounts_local(accounts: &Accounts, pubkeys: &[Pubkey], num: usize) {
         for _ in 1..num {
             let idx = rng().random_range(0..num - 1);
-            let ancestors = vec![(0, 0)].into_iter().collect();
+            let ancestors = Ancestors::from(vec![0]);
             let account = accounts.load_without_fixed_root(&ancestors, &pubkeys[idx]);
             let account1 = Some((
                 AccountSharedData::new((idx + 1) as u64, 0, AccountSharedData::default().owner()),
@@ -290,34 +290,16 @@ mod serde_snapshot_tests {
         db.assert_load_account(new_root, key2, 1);
 
         // Check purged account stays gone
-        let unrooted_slot_ancestors = vec![(unrooted_slot, 1)].into_iter().collect();
-        assert!(
-            db.load_without_fixed_root(&unrooted_slot_ancestors, &key)
-                .is_none()
-        );
+        db.assert_not_load_account(unrooted_slot, key);
     }
 
     #[test_matrix(
-        [StorageAccess::File, #[allow(deprecated)] StorageAccess::Mmap],
-        [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled],
-        [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled]
+        [StorageAccess::File, #[allow(deprecated)] StorageAccess::Mmap]
     )]
-    fn test_accounts_db_serialize1(
-        storage_access: StorageAccess,
-        mark_obsolete_accounts_initial: MarkObsoleteAccounts,
-        mark_obsolete_accounts_restore: MarkObsoleteAccounts,
-    ) {
+    fn test_accounts_db_serialize1(storage_access: StorageAccess) {
         for pass in 0..2 {
             agave_logger::setup();
-            let accounts = AccountsDb::new_with_config(
-                Vec::new(),
-                AccountsDbConfig {
-                    mark_obsolete_accounts: mark_obsolete_accounts_initial,
-                    ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-                },
-                None,
-                Arc::default(),
-            );
+            let accounts = AccountsDb::new_single_for_tests();
             let mut pubkeys: Vec<Pubkey> = vec![];
 
             // Create 100 accounts in slot 0
@@ -387,15 +369,11 @@ mod serde_snapshot_tests {
             accounts.check_storage(1, 11, 21);
             accounts.check_storage(2, 31, 31);
 
-            let accounts_db_config = AccountsDbConfig {
-                mark_obsolete_accounts: mark_obsolete_accounts_restore,
-                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            };
             let daccounts = reconstruct_accounts_db_via_serialization(
                 &accounts,
                 latest_slot,
                 storage_access,
-                accounts_db_config,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING,
             );
 
             assert_eq!(
@@ -409,21 +387,8 @@ mod serde_snapshot_tests {
             daccounts.check_accounts(&pubkeys[35..], 0, 65, 37);
             daccounts.check_accounts(&pubkeys1, 1, 10, 1);
 
-            // If accounts are marked obsolete at initial save time, then the accounts will be
-            // shrunk during snapshot archive
-            if mark_obsolete_accounts_initial == MarkObsoleteAccounts::Enabled {
-                daccounts.check_storage(0, 78, 78);
-                daccounts.check_storage(1, 11, 11);
-            // If accounts are marked obsolete at restore time, then the accounts will be marked
-            // obsolete and cleaned during snapshot restore but not removed from the storages until
-            // the next shrink
-            } else if mark_obsolete_accounts_restore == MarkObsoleteAccounts::Enabled {
-                daccounts.check_storage(0, 78, 100);
-                daccounts.check_storage(1, 11, 21);
-            } else {
-                daccounts.check_storage(0, 100, 100);
-                daccounts.check_storage(1, 21, 21);
-            }
+            daccounts.check_storage(0, 78, 78);
+            daccounts.check_storage(1, 11, 11);
 
             daccounts.check_storage(2, 31, 31);
 
@@ -699,25 +664,25 @@ mod serde_snapshot_tests {
         current_slot += 1;
         assert_eq!(0, accounts.alive_account_count_in_slot(current_slot));
         accounts.add_root_and_flush_write_cache(current_slot - 1);
-        accounts.assert_ref_count(&pubkey1, 1);
+        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
         accounts.store_for_tests((current_slot, [(&pubkey1, &account2)].as_slice()));
         accounts.store_for_tests((current_slot, [(&pubkey1, &account2)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
         assert_eq!(1, accounts.alive_account_count_in_slot(current_slot));
-        // Stores to same pubkey, same slot only count once towards the
-        accounts.assert_ref_count(&pubkey1, 2);
+        // Ref count is 1 as the older version in the previous slot was marked obsolete
+        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
 
         // C: Yet more update to trigger lazy clean of step A
         current_slot += 1;
-        accounts.assert_ref_count(&pubkey1, 2);
+        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
         accounts.store_for_tests((current_slot, [(&pubkey1, &account3)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
-        accounts.assert_ref_count(&pubkey1, 3);
+        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
         accounts.add_root_and_flush_write_cache(current_slot);
 
         // D: Make pubkey1 0-lamport; also triggers clean of step B
         current_slot += 1;
-        accounts.assert_ref_count(&pubkey1, 3);
+        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
         accounts.store_for_tests((current_slot, [(&pubkey1, &zero_lamport_account)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
         // had to be a root to flush, but clean won't work as this test expects if it is a root
@@ -738,9 +703,8 @@ mod serde_snapshot_tests {
             .alive_roots
             .insert(current_slot);
 
-        // Removed one reference from the dead slot (reference only counted once
-        // even though there were two stores to the pubkey in that slot)
-        accounts.assert_ref_count(&pubkey1, 3);
+        // Ref count is 1 as the older versions were marked obsolete
+        assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
         accounts.add_root(current_slot);
 
         // E: Avoid missing bank hash error

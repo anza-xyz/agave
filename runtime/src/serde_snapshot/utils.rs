@@ -6,7 +6,6 @@ use serde::{
 use solana_frozen_abi::abi_example::TransparentAsHelper;
 
 // consumes an iterator and returns an object that will serialize as a serde seq
-#[allow(dead_code)]
 pub fn serialize_iter_as_seq<I>(iter: I) -> impl Serialize
 where
     I: IntoIterator,
@@ -45,7 +44,7 @@ where
 }
 
 // consumes an iterator and returns an object that will serialize as a serde tuple
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub fn serialize_iter_as_tuple<I>(iter: I) -> impl Serialize
 where
     I: IntoIterator,
@@ -84,7 +83,6 @@ where
 }
 
 // consumes a 2-tuple iterator and returns an object that will serialize as a serde map
-#[allow(dead_code)]
 pub fn serialize_iter_as_map<K, V, I>(iter: I) -> impl Serialize
 where
     K: Serialize,

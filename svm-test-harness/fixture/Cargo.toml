@@ -8,10 +8,12 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+workspace = "../../dev-bins"
 publish = false
 
 [features]
 agave-unstable-api = []
+dev-context-only-utils = []
 dummy-for-ci-check = ["fuzz"]
 fuzz = [
     "dep:agave-feature-set",

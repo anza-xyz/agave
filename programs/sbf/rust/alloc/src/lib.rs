@@ -11,7 +11,7 @@ use {
     std::{alloc::Layout, mem},
 };
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     unsafe {
         // Test modest allocation and de-allocation

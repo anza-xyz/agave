@@ -9,19 +9,18 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
     packet_container::PacketContainer,
     solana_cost_model::cost_model::CostModel,
-    solana_fee_structure::{FeeBudgetLimits, FeeDetails},
+    solana_fee_structure::FeeDetails,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, node::NodeMultihoming},
     solana_keypair::Keypair,
-    solana_net_utils::multihomed_sockets::BindIpAddrs,
+    solana_net_utils::{multihomed_sockets::BindIpAddrs, token_bucket::TokenBucket},
     solana_packet as packet,
-    solana_perf::data_budget::DataBudget,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::{
         bank::{Bank, CollectorFeeDetails},
         bank_forks::SharableBanks,
     },
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
     },
     solana_streamer::sendmmsg::{SendPktsError, batch_send},
     solana_tls_utils::NotifyKeyUpdate,
@@ -58,6 +57,9 @@ pub struct ForwardingClientConfig<'a> {
     pub cancel: CancellationToken,
     pub node_multihoming: Arc<NodeMultihoming>,
 }
+
+/// Maximum forwarding rate in bytes per second.
+const MAX_BYTES_PER_SECOND: u64 = 12_000_000;
 
 /// Value chosen because it was used historically, at some point
 /// was found to be optimal. If we need to improve performance
@@ -125,7 +127,6 @@ pub(crate) fn spawn_forwarding_stage(
     vote_client_udp_socket: UdpSocket,
     sharable_banks: SharableBanks,
     forward_address_getter: ForwardAddressGetter,
-    data_budget: DataBudget,
 ) -> SpawnForwardingStageResult {
     let vote_client = VoteClient::new(vote_client_udp_socket, forward_address_getter.clone());
 
@@ -157,7 +158,6 @@ pub(crate) fn spawn_forwarding_stage(
         vote_client,
         non_vote_clients.clone(),
         sharable_banks,
-        data_budget,
         Some(node_multihoming.bind_ip_addrs.clone()),
     );
     SpawnForwardingStageResult {
@@ -184,7 +184,7 @@ struct ForwardingStage<VoteClient: ForwardingClient, NonVoteClient: ForwardingCl
     sharable_banks: SharableBanks,
     vote_client: VoteClient,
     non_vote_clients: Box<[NonVoteClient]>,
-    data_budget: DataBudget,
+    data_budget: TokenBucket,
     metrics: ForwardingStageMetrics,
     bind_ip_addrs: Option<Arc<BindIpAddrs>>,
 }
@@ -197,9 +197,13 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         vote_client: VoteClient,
         non_vote_clients: Box<[NonVoteClient]>,
         sharable_banks: SharableBanks,
-        data_budget: DataBudget,
         bind_ip_addrs: Option<Arc<BindIpAddrs>>,
     ) -> Self {
+        let data_budget = TokenBucket::new(
+            MAX_BYTES_PER_SECOND,
+            MAX_BYTES_PER_SECOND,
+            MAX_BYTES_PER_SECOND as f64,
+        );
         Self {
             receiver,
             packet_container: PacketContainer::with_capacity(4 * 4096),
@@ -260,12 +264,8 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         is_tpu_vote_batch: bool,
         bank: &Bank,
     ) {
-        let enable_static_instruction_limit = bank
-            .feature_set
-            .is_active(&agave_feature_set::static_instruction_limit::id());
-        let enable_instruction_accounts_limit = bank
-            .feature_set
-            .is_active(&agave_feature_set::limit_instruction_accounts::id());
+        let enable_instruction_accounts_limit =
+            bank.feature_set.snapshot().limit_instruction_accounts;
         for batch in packet_batches.iter() {
             for packet in batch
                 .iter()
@@ -288,7 +288,6 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 // If any steps fail, drop the packet.
                 let Some(priority) = SanitizedTransactionView::try_new_sanitized(
                     packet_data,
-                    enable_static_instruction_limit,
                     enable_instruction_accounts_limit,
                 )
                 .map_err(|_| ())
@@ -336,7 +335,6 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
     /// dropped.
     fn forward_buffered_packets(&mut self) {
         self.metrics.did_something |= !self.packet_container.is_empty();
-        self.refresh_data_budget();
 
         let mut non_vote_batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
         let mut vote_batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
@@ -354,7 +352,11 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         // Loop through packets creating batches of packets to forward.
         while let Some(packet) = self.packet_container.pop_max() {
             // If it exceeds our data-budget, drop.
-            if !self.data_budget.take(packet.meta().size) {
+            if self
+                .data_budget
+                .consume_tokens(packet.meta().size as u64)
+                .is_err()
+            {
                 self.metrics.votes_dropped_on_data_budget +=
                     usize::from(packet.meta().is_simple_vote_tx());
                 self.metrics.non_votes_dropped_on_data_budget +=
@@ -405,21 +407,6 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 self.metrics.non_votes_dropped_on_send += num_non_votes;
             }
         }
-    }
-
-    /// Re-fill the data budget if enough time has passed
-    fn refresh_data_budget(&self) {
-        const INTERVAL_MS: u64 = 100;
-        // 12 MB outbound limit per second
-        const MAX_BYTES_PER_SECOND: usize = 12_000_000;
-        const MAX_BYTES_PER_INTERVAL: usize = MAX_BYTES_PER_SECOND * INTERVAL_MS as usize / 1000;
-        const MAX_BYTES_BUDGET: usize = MAX_BYTES_PER_INTERVAL * 5;
-        self.data_budget.update(INTERVAL_MS, |bytes| {
-            std::cmp::min(
-                bytes.saturating_add(MAX_BYTES_PER_INTERVAL),
-                MAX_BYTES_BUDGET,
-            )
-        });
     }
 }
 
@@ -563,6 +550,7 @@ impl TpuClientNextClient {
                 send: 1,
                 connect: 4,
             },
+            override_initial_congestion_window: None,
         }
     }
 }
@@ -605,15 +593,13 @@ fn calculate_priority(
     transaction: &RuntimeTransaction<SanitizedTransactionView<&[u8]>>,
     bank: &Bank,
 ) -> Option<u64> {
-    let compute_budget_limits = transaction
-        .compute_budget_instruction_details()
-        .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)
+    let transaction_configuration = transaction
+        .transaction_configuration(&bank.feature_set)
         .ok()?;
-    let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
 
     // Manually estimate fee here since currently interface doesn't allow a on SVM type.
     // Doesn't need to be 100% accurate so long as close and consistent.
-    let prioritization_fee = fee_budget_limits.prioritization_fee;
+    let prioritization_fee = transaction_configuration.priority_fee_lamports;
     let signature_details = transaction.signature_details();
     let signature_fee = signature_details
         .total_signatures()
@@ -867,7 +853,6 @@ mod tests {
             vote_mock_client.clone(),
             Box::new([non_vote_mock_client.clone()]),
             sharable_banks,
-            DataBudget::default(),
             None,
         );
 

@@ -100,9 +100,10 @@ use {
     crate::utils::{ShortCounter, Token, TokenCell},
     assert_matches::assert_matches,
     solana_clock::{Epoch, Slot},
+    solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_transaction::{Hash, sanitized::SanitizedTransaction},
+    solana_transaction::sanitized::SanitizedTransaction,
     static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,

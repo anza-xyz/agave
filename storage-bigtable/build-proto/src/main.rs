@@ -16,11 +16,12 @@ fn main() -> Result<(), std::io::Error> {
     println!("Google API directory: {}", googleapis.display());
     println!("output directory: {}", out_dir.display());
 
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .build_client(true)
         .build_server(false)
         .out_dir(&out_dir)
-        .compile(
+        .type_attribute("ProtoRows", "#[allow(dead_code)]")
+        .compile_protos(
             &[googleapis.join("google/bigtable/v2/bigtable.proto")],
             &[googleapis],
         )

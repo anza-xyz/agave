@@ -4,6 +4,7 @@ use {
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaAccountInfoV3, ReplicaAccountInfoVersions,
     },
+    arc_swap::ArcSwap,
     log::*,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::accounts_update_notifier_interface::{
@@ -12,11 +13,11 @@ use {
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_transaction::sanitized::SanitizedTransaction,
-    std::sync::{Arc, RwLock},
+    std::sync::Arc,
 };
 #[derive(Debug)]
 pub(crate) struct AccountsUpdateNotifierImpl {
-    plugin_manager: Arc<RwLock<GeyserPluginManager>>,
+    plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
     snapshot_notifications_enabled: bool,
 }
 
@@ -50,7 +51,7 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
     }
 
     fn notify_end_of_restore_from_snapshot(&self) {
-        let plugin_manager = self.plugin_manager.read().unwrap();
+        let plugin_manager = self.plugin_manager.load();
         if plugin_manager.plugins.is_empty() {
             return;
         }
@@ -77,7 +78,7 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
 
 impl AccountsUpdateNotifierImpl {
     pub fn new(
-        plugin_manager: Arc<RwLock<GeyserPluginManager>>,
+        plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
         snapshot_notifications_enabled: bool,
     ) -> Self {
         AccountsUpdateNotifierImpl {
@@ -127,12 +128,15 @@ impl AccountsUpdateNotifierImpl {
         slot: Slot,
         is_startup: bool,
     ) {
-        let plugin_manager = self.plugin_manager.read().unwrap();
+        let plugin_manager = self.plugin_manager.load();
 
         if plugin_manager.plugins.is_empty() {
             return;
         }
         for plugin in plugin_manager.plugins.iter() {
+            if !plugin.account_data_notifications_enabled() {
+                continue;
+            }
             match plugin.update_account(
                 ReplicaAccountInfoVersions::V0_0_3(&account),
                 slot,
@@ -157,5 +161,91 @@ impl AccountsUpdateNotifierImpl {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::geyser_plugin_manager::{GeyserPluginManager, LoadedGeyserPlugin},
+        agave_geyser_plugin_interface::geyser_plugin_interface::{
+            GeyserPlugin, ReplicaAccountInfoVersions,
+        },
+        arc_swap::ArcSwap,
+        libloading::Library,
+        solana_accounts_db::accounts_update_notifier_interface::AccountsUpdateNotifierInterface,
+        std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+
+    #[derive(Debug)]
+    struct TestAccountPlugin {
+        name: &'static str,
+        account_updates_enabled: bool,
+        account_update_count: Arc<AtomicUsize>,
+    }
+
+    impl GeyserPlugin for TestAccountPlugin {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn update_account(
+            &self,
+            _account: ReplicaAccountInfoVersions,
+            _slot: Slot,
+            _is_startup: bool,
+        ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
+            self.account_update_count.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn account_data_notifications_enabled(&self) -> bool {
+            self.account_updates_enabled
+        }
+    }
+
+    fn loaded_test_plugin(plugin: TestAccountPlugin) -> Arc<LoadedGeyserPlugin> {
+        #[cfg(unix)]
+        let library = libloading::os::unix::Library::this();
+        #[cfg(windows)]
+        let library = libloading::os::windows::Library::this().unwrap();
+
+        Arc::new(LoadedGeyserPlugin::new(
+            Library::from(library),
+            Box::new(plugin),
+            None,
+        ))
+    }
+
+    #[test]
+    fn test_notify_account_update_skips_plugins_with_account_notifications_disabled() {
+        let enabled_count = Arc::new(AtomicUsize::new(0));
+        let disabled_count = Arc::new(AtomicUsize::new(0));
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
+            plugins: vec![
+                loaded_test_plugin(TestAccountPlugin {
+                    name: "enabled",
+                    account_updates_enabled: true,
+                    account_update_count: enabled_count.clone(),
+                }),
+                loaded_test_plugin(TestAccountPlugin {
+                    name: "disabled",
+                    account_updates_enabled: false,
+                    account_update_count: disabled_count.clone(),
+                }),
+            ],
+        })));
+        let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, false);
+        let account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+        let pubkey = Pubkey::new_unique();
+
+        notifier.notify_account_update(42, &account, &None, &pubkey, 7);
+
+        assert_eq!(enabled_count.load(Ordering::Relaxed), 1);
+        assert_eq!(disabled_count.load(Ordering::Relaxed), 0);
     }
 }

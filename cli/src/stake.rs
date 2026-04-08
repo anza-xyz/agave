@@ -817,7 +817,7 @@ pub fn parse_create_stake_account(
         )
     };
 
-    let amount = SpendAmount::new_from_matches(matches, "amount");
+    let amount = SpendAmount::new_from_matches(matches, "amount")?;
     let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
     let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
     let blockhash_query = BlockhashQuery::new_from_matches(matches);
@@ -1206,7 +1206,7 @@ pub fn parse_stake_withdraw_stake(
         pubkey_of_signer(matches, "stake_account_pubkey", wallet_manager)?.unwrap();
     let destination_account_pubkey =
         pubkey_of_signer(matches, "destination_account_pubkey", wallet_manager)?.unwrap();
-    let amount = SpendAmount::new_from_matches(matches, "amount");
+    let amount = SpendAmount::new_from_matches(matches, "amount")?;
     let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
     let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
     let blockhash_query = BlockhashQuery::new_from_matches(matches);
@@ -1499,15 +1499,24 @@ pub async fn process_create_stake_account(
             return Err(CliError::BadParameter(err_msg).into());
         }
 
-        let minimum_balance = rpc_client
+        let rent_exempt_balance = rpc_client
             .get_minimum_balance_for_rent_exemption(StakeStateV2::size_of())
             .await?;
-        if lamports < minimum_balance {
+        if lamports < rent_exempt_balance {
             return Err(CliError::BadParameter(format!(
-                "need at least {minimum_balance} lamports for stake account to be rent exempt, \
-                 provided lamports: {lamports}"
+                "need at least {rent_exempt_balance} lamports for stake account to be rent \
+                 exempt, provided lamports: {lamports}"
             ))
             .into());
+        }
+
+        let minimum_delegation = rpc_client.get_stake_minimum_delegation().await?;
+        let minimum_total_lamports = rent_exempt_balance.saturating_add(minimum_delegation);
+        if lamports < minimum_total_lamports {
+            eprintln!(
+                "Warning: need at least {minimum_total_lamports} lamports to delegate this stake \
+                 account, provided lamports: {lamports}"
+            );
         }
 
         if let Some(nonce_account) = &nonce_account {
@@ -2860,6 +2869,31 @@ pub async fn process_delegate_stake(
                 sanity_check_result?;
             } else {
                 println!("--force supplied, ignoring: {err}");
+            }
+        }
+
+        if !force {
+            let stake_account = rpc_client.get_account(stake_account_pubkey).await?;
+            if stake_account.owner != stake::program::id() {
+                return Err(CliError::BadParameter(format!(
+                    "{stake_account_pubkey} is not a stake account",
+                ))
+                .into());
+            }
+
+            let rent_exempt_balance = rpc_client
+                .get_minimum_balance_for_rent_exemption(stake_account.data.len())
+                .await?;
+            let minimum_delegation = rpc_client.get_stake_minimum_delegation().await?;
+            let minimum_total_lamports = rent_exempt_balance.saturating_add(minimum_delegation);
+            let stake_account_lamports = stake_account.lamports;
+
+            if stake_account_lamports < minimum_total_lamports {
+                return Err(CliError::BadParameter(format!(
+                    "need at least {minimum_total_lamports} lamports to delegate this stake \
+                     account, available lamports: {stake_account_lamports}"
+                ))
+                .into());
             }
         }
     }

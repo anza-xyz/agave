@@ -8,6 +8,7 @@ pub mod bank;
 pub mod bank_client;
 pub mod bank_forks;
 pub mod bank_utils;
+pub mod block_component_processor;
 pub mod commitment;
 pub mod dependency_tracker;
 pub mod epoch_stakes;
@@ -36,8 +37,10 @@ pub mod stake_weighted_timestamp;
 pub mod stakes;
 pub mod static_ids;
 pub mod status_cache;
+pub mod test_utils;
 pub mod transaction_batch;
 pub mod validated_block_finalization;
+pub mod validated_reward_certificate;
 pub mod vote_sender_types;
 
 #[macro_use]

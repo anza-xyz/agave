@@ -12,17 +12,19 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
     },
     agave_votor::vote_history_storage,
+    agave_xdp::{set_cpu_affinity, transmitter::XdpConfig},
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
     rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
-        accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
+        accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
         accounts_file::StorageAccess,
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
             DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold, ScanFilter,
         },
+        partitioned_rewards::PartitionedEpochRewardsConfig,
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
@@ -68,10 +70,7 @@ use {
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
     },
     solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
-    solana_turbine::{
-        broadcast_stage::BroadcastStageType,
-        xdp::{XdpConfig, set_cpu_affinity},
-    },
+    solana_turbine::broadcast_stage::BroadcastStageType,
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
@@ -95,6 +94,7 @@ pub fn execute(
     matches: &ArgMatches,
     solana_version: &str,
     operation: Operation,
+    config: super::Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Debugging panics is easier with a backtrace
     if env::var_os("RUST_BACKTRACE").is_none() {
@@ -120,6 +120,7 @@ pub fn execute(
         tvu_receive_threads,
         tvu_retransmit_threads,
         tvu_sigverify_threads,
+        tvu_bls_sigverify_threads,
     } = cli::thread_args::parse_num_threads_args(matches);
 
     let identity_keypair = Arc::new(run_args.identity_keypair);
@@ -130,6 +131,7 @@ pub fn execute(
     }
     let use_progress_bar = logfile.is_none();
     agave_logger::initialize_logging(logfile.clone());
+    cli::warn_for_deprecated_arguments(matches);
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
@@ -261,25 +263,35 @@ pub fn execute(
 
     let exit = Arc::new(AtomicBool::new(false));
 
+    #[cfg(not(target_os = "linux"))]
+    let _ = config;
+
     #[cfg(target_os = "linux")]
-    let maybe_xdp_retransmit_builder = {
+    let xdp_builder_with_src_addr = {
         use {
+            agave_xdp::transmitter::TransmitterBuilder,
             caps::{
                 CapSet,
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
             },
-            solana_turbine::xdp::{XdpRetransmitBuilder, master_ip_if_bonded},
         };
+
+        let super::Config { primordial_caps } = config;
 
         let mut required_caps = HashSet::new();
         let mut retained_caps = HashSet::new();
-        let supported_caps = HashSet::from_iter([
+        let mut supported_caps = HashSet::from_iter([
             CAP_BPF,
             CAP_NET_ADMIN,
             CAP_NET_RAW,
             CAP_PERFMON,
             CAP_SYS_NICE,
         ]);
+
+        // make sure we keep any primordial caps
+        supported_caps.extend(primordial_caps.clone());
+        required_caps.extend(primordial_caps.clone());
+        retained_caps.extend(primordial_caps.clone());
 
         if let Some(xdp_config) = retransmit_xdp.as_ref() {
             required_caps.insert(CAP_NET_ADMIN);
@@ -327,39 +339,59 @@ pub fn execute(
                  consider removing them from your operational configuration.",
             );
         }
+
         // drop all caps that the current configuration does not require
+        caps::set(None, CapSet::Effective, &required_caps)
+            .expect("linux allows effective capset to be set");
         caps::set(None, CapSet::Permitted, &required_caps)
-            .expect("permitted capset to be writable");
+            .expect("linux allows permitted capset to be set");
 
         // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
         // capabilities do not leak, leaving the process in a state where it could
         // potentially be used as a privilege escalation gadget
-        let maybe_xdp_retransmit_builder = retransmit_xdp.clone().map(|xdp_config| {
+        let xdp_builder_with_src_addr = retransmit_xdp.clone().map(|xdp_config| {
+            use {
+                agave_xdp::{default_device_ipv4, interface_ipv4},
+                std::net::SocketAddrV4,
+            };
+
             let src_port = node.sockets.retransmit_sockets[0]
                 .local_addr()
                 .expect("failed to get local address")
                 .port();
             let src_ip = match node.bind_ip_addrs.active() {
-                IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
-                IpAddr::V4(_unspecified) => xdp_config
-                    .interface
-                    .as_ref()
-                    .and_then(|iface| master_ip_if_bonded(iface)),
+                IpAddr::V4(ip) if !ip.is_unspecified() => ip,
+                IpAddr::V4(_unspecified) => {
+                    if let Some(interface) = xdp_config.interface.as_ref() {
+                        interface_ipv4(interface).expect(
+                            "configured interface should exist and have an IPv4 address assigned",
+                        )
+                    } else {
+                        default_device_ipv4().expect(
+                            "default route device should exist and have an IPv4 address assigned",
+                        )
+                    }
+                }
                 _ => panic!("IPv6 not supported"),
             };
-            XdpRetransmitBuilder::new(xdp_config, src_port, src_ip, exit.clone())
-                .expect("failed to create xdp retransmitter")
+            (
+                TransmitterBuilder::new(xdp_config, exit.clone())
+                    .expect("failed to create xdp transmitter"),
+                SocketAddrV4::new(src_ip, src_port),
+            )
         });
 
         // we're done with caps needed to init xdp now. remove them from our process
+        caps::set(None, CapSet::Effective, &retained_caps)
+            .expect("linux allows effective capset to be set");
         caps::set(None, CapSet::Permitted, &retained_caps)
             .expect("linux allows permitted capset to be set");
 
-        maybe_xdp_retransmit_builder
+        xdp_builder_with_src_addr
     };
 
     #[cfg(not(target_os = "linux"))]
-    let maybe_xdp_retransmit_builder = None;
+    let xdp_builder_with_src_addr = None;
 
     let reserved = retransmit_xdp
         .map(|xdp| xdp.cpus.clone())
@@ -533,12 +565,16 @@ pub fn execute(
         value_t!(matches, "accounts_index_limit", String).unwrap_or_else(|err| err.exit());
     let index_limit = {
         enum CliIndexLimit {
+            // deprecated in v4.1.0
             Minimal,
             Unlimited,
             Threshold(u64),
         }
         let cli_index_limit = match accounts_index_limit.as_str() {
-            "minimal" => CliIndexLimit::Minimal,
+            "minimal" => {
+                warn!("Using `minimal` for `--accounts-index-limit` is deprecated.");
+                CliIndexLimit::Minimal
+            }
             "unlimited" => CliIndexLimit::Unlimited,
             "25GB" => CliIndexLimit::Threshold(25_000_000_000),
             "50GB" => CliIndexLimit::Threshold(50_000_000_000),
@@ -598,10 +634,6 @@ pub fn execute(
     }
 
     const MB: usize = 1_024 * 1_024;
-    accounts_index_config.scan_results_limit_bytes =
-        value_t!(matches, "accounts_index_scan_results_limit_mb", usize)
-            .ok()
-            .map(|mb| mb * MB);
 
     let account_shrink_paths: Option<Vec<PathBuf>> =
         values_t!(matches, "account_shrink_path", String)
@@ -663,20 +695,6 @@ pub fn execute(
         })
         .unwrap_or_default();
 
-    let mark_obsolete_accounts = matches
-        .value_of("accounts_db_mark_obsolete_accounts")
-        .map(|mark_obsolete_accounts| {
-            match mark_obsolete_accounts {
-                "enabled" => MarkObsoleteAccounts::Enabled,
-                "disabled" => MarkObsoleteAccounts::Disabled,
-                _ => {
-                    // clap will enforce one of the above values is given
-                    unreachable!("invalid value given to accounts_db_mark_obsolete_accounts")
-                }
-            }
-        })
-        .unwrap_or_default();
-
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
         account_indexes: Some(account_indexes.clone()),
@@ -684,6 +702,7 @@ pub fn execute(
         shrink_paths: account_shrink_run_paths,
         shrink_ratio,
         read_cache_limit_bytes,
+        read_cache_evict_sample_size: None,
         write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
             .ok()
             .map(|mb| mb * MB as u64),
@@ -695,16 +714,17 @@ pub fn execute(
         )
         .ok(),
         max_ancient_storages: value_t!(matches, "accounts_db_max_ancient_storages", usize).ok(),
+        skip_initial_hash_calc: false,
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
+        partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
         storage_access,
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
-        mark_obsolete_accounts,
         use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
             solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
         ),
-        ..AccountsDbConfig::default()
+        snapshots_use_direct_io: !matches.is_present("no_accounts_db_snapshots_direct_io"),
     };
 
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
@@ -838,6 +858,7 @@ pub fn execute(
         replay_forks_threads,
         replay_transactions_threads,
         tvu_shred_sigverify_threads: tvu_sigverify_threads,
+        tvu_bls_sigverify_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
         turbine_disabled: Arc::<AtomicBool>::default(),
@@ -896,17 +917,6 @@ pub fn execute(
         value_t_or_exit!(matches, "minimal_snapshot_download_speed", f32);
     let maximum_snapshot_download_abort =
         value_t_or_exit!(matches, "maximum_snapshot_download_abort", u64);
-
-    if matches!(
-        validator_config.block_production_method,
-        BlockProductionMethod::UnifiedScheduler
-    ) {
-        warn!(
-            "Currently, the unified-scheduler method is experimental for block-production. It has \
-             known security issues and should be used only for developing and benchmarking \
-             purposes"
-        );
-    }
 
     let public_rpc_addr = matches
         .value_of("public_rpc_addr")
@@ -1131,7 +1141,7 @@ pub fn execute(
             sigverify_threads: tpu_sigverify_threads,
         },
         admin_service_post_init,
-        maybe_xdp_retransmit_builder,
+        xdp_builder_with_src_addr,
         exit,
     )
     .map_err(|err| format!("{err:?}"))?;

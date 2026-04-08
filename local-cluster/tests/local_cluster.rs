@@ -31,7 +31,7 @@ use {
     },
     solana_download_utils::download_snapshot_archive,
     solana_entry::entry::create_ticks,
-    solana_epoch_schedule::{MAX_LEADER_SCHEDULE_EPOCH_OFFSET, MINIMUM_SLOTS_PER_EPOCH},
+    solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_genesis_utils::open_genesis_config,
     solana_gossip::{crds_data::MAX_VOTES, gossip_service::discover_validators},
     solana_hard_forks::HardForks,
@@ -77,7 +77,7 @@ use {
     },
     solana_runtime::{commitment::VOTE_THRESHOLD_SIZE, snapshot_bank_utils, snapshot_utils},
     solana_signer::Signer,
-    solana_stake_interface::{self as stake, state::NEW_WARMUP_COOLDOWN_RATE},
+    solana_stake_interface as stake,
     solana_system_interface::program as system_program,
     solana_system_transaction as system_transaction,
     solana_transaction_error::TransportError,
@@ -93,7 +93,7 @@ use {
         fs,
         io::Read,
         iter,
-        num::NonZeroU64,
+        num::{NonZeroU64, NonZeroUsize},
         path::Path,
         sync::{
             Arc, Mutex,
@@ -156,54 +156,10 @@ fn test_local_cluster_start_and_exit_with_config() {
 
 #[test]
 #[serial]
-fn test_spend_and_verify_all_nodes_1() {
+fn test_spend_and_verify_all_nodes() {
     agave_logger::setup_with_default(RUST_LOG_FILTER);
-    error!("test_spend_and_verify_all_nodes_1");
-    let num_nodes = 1;
-    let local = LocalCluster::new_with_equal_stakes(
-        num_nodes,
-        DEFAULT_MINT_LAMPORTS,
-        DEFAULT_NODE_STAKE,
-        SocketAddrSpace::Unspecified,
-    );
-    cluster_tests::spend_and_verify_all_nodes(
-        &local.entry_point_info,
-        &local.funding_keypair,
-        num_nodes,
-        HashSet::new(),
-        SocketAddrSpace::Unspecified,
-        &local.connection_cache,
-    );
-}
-
-#[test]
-#[serial]
-fn test_spend_and_verify_all_nodes_2() {
-    agave_logger::setup_with_default(RUST_LOG_FILTER);
-    error!("test_spend_and_verify_all_nodes_2");
-    let num_nodes = 2;
-    let local = LocalCluster::new_with_equal_stakes(
-        num_nodes,
-        DEFAULT_MINT_LAMPORTS,
-        DEFAULT_NODE_STAKE,
-        SocketAddrSpace::Unspecified,
-    );
-    cluster_tests::spend_and_verify_all_nodes(
-        &local.entry_point_info,
-        &local.funding_keypair,
-        num_nodes,
-        HashSet::new(),
-        SocketAddrSpace::Unspecified,
-        &local.connection_cache,
-    );
-}
-
-#[test]
-#[serial]
-fn test_spend_and_verify_all_nodes_3() {
-    agave_logger::setup_with_default(RUST_LOG_FILTER);
-    error!("test_spend_and_verify_all_nodes_3");
     let num_nodes = 3;
+    info!("test_spend_and_verify_all_nodes with {num_nodes} nodes");
     let local = LocalCluster::new_with_equal_stakes(
         num_nodes,
         DEFAULT_MINT_LAMPORTS,
@@ -1566,62 +1522,6 @@ fn test_fake_shreds_broadcast_leader() {
 
 #[test]
 #[serial]
-fn test_wait_for_max_stake() {
-    agave_logger::setup_with_default(RUST_LOG_FILTER);
-    let validator_config = ValidatorConfig::default_for_test();
-    let slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH;
-    // Set this large enough to allow for skipped slots but still be able to
-    // make a root and derive the new leader schedule in time.
-    let stakers_slot_offset = slots_per_epoch.saturating_mul(MAX_LEADER_SCHEDULE_EPOCH_OFFSET);
-    // Reduce this so that we can complete the test faster by advancing through
-    // slots/epochs faster. But don't make it too small because it can cause the
-    // test to fail in two important ways:
-    // 1. Increase likelihood of skipped slots, which can prevent rooting and
-    //    lead to not generating leader schedule in time and cluster getting
-    //    stuck.
-    // 2. Make the cluster advance through too many epochs before all the
-    //    validators spin up, which can lead to not properly observing gossip
-    //    votes, not repairing missing slots, and some subset of nodes getting
-    //    stuck.
-    let ticks_per_slot = 32;
-    let num_validators = 4;
-    let mut config = ClusterConfig {
-        node_stakes: vec![DEFAULT_NODE_STAKE; num_validators],
-        validator_configs: make_identical_validator_configs(&validator_config, num_validators),
-        slots_per_epoch,
-        stakers_slot_offset,
-        ticks_per_slot,
-        ..ClusterConfig::default()
-    };
-    let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-    let client = RpcClient::new_socket(cluster.entry_point_info.rpc().unwrap());
-
-    let num_validators_activating_stake = num_validators - 1;
-    // Number of epochs it is expected to take to completely activate the stake
-    // for all the validators.
-    let num_expected_epochs = (num_validators_activating_stake as f64)
-        .log(1. + NEW_WARMUP_COOLDOWN_RATE)
-        .ceil() as u32
-        + 1;
-    let expected_test_duration = config.poh_config.target_tick_duration
-        * ticks_per_slot as u32
-        * slots_per_epoch as u32
-        * num_expected_epochs;
-    // Make the timeout double the expected duration to provide some margin.
-    // Especially considering tests may be running in parallel.
-    let timeout = expected_test_duration * 2;
-    if let Err(err) = client.wait_for_max_stake_below_threshold_with_timeout(
-        CommitmentConfig::default(),
-        (100 / num_validators_activating_stake) as f32,
-        timeout,
-    ) {
-        panic!("wait_for_max_stake failed: {err:?}");
-    }
-    assert!(client.get_slot().unwrap() > 10);
-}
-
-#[test]
-#[serial]
 // Test that when a leader is leader for banks B_i..B_{i+n}, and B_i is not
 // votable, then B_{i+1} still chains to B_i
 fn test_no_voting() {
@@ -2059,12 +1959,12 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
 
     let validator_keypairs = match cluster_mode {
         ClusterMode::MasterOnly => vec![
-        "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
-    ],
+            "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
+        ],
         ClusterMode::MasterSlave => vec![
-        "4qhhXNTbKD1a5vxDDLZcHKj7ELNeiivtUBxn3wUK1F5VRsQVP89VUhfXqSfgiFB14GfuBgtrQ96n9NvWQADVkcCg",
-        "3kHBzVwie5vTEaY6nFCPeFT8qDpoXzn7dCEioGRNBTnUDpvwnG85w8Wq63gVWpVTP8k2a8cgcWRjSXyUkEygpXWS",
-    ],
+            "4qhhXNTbKD1a5vxDDLZcHKj7ELNeiivtUBxn3wUK1F5VRsQVP89VUhfXqSfgiFB14GfuBgtrQ96n9NvWQADVkcCg",
+            "3kHBzVwie5vTEaY6nFCPeFT8qDpoXzn7dCEioGRNBTnUDpvwnG85w8Wq63gVWpVTP8k2a8cgcWRjSXyUkEygpXWS",
+        ],
     };
 
     let validator_keys = create_test_validator_keys(&validator_keypairs);
@@ -2652,10 +2552,6 @@ fn test_restart_tower_rollback() {
 #[test]
 #[serial]
 fn test_run_test_load_program_accounts_partition_root() {
-    run_test_load_program_accounts_partition(CommitmentConfig::finalized());
-}
-
-fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
     let num_slots_per_validator = 8;
     let partitions: [usize; 2] = [1, 1];
     let (leader_schedule, validator_keys) = create_custom_leader_schedule_with_random_keys(&[
@@ -2670,7 +2566,7 @@ fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
     let (t_update, t_scan, additional_accounts) = setup_transfer_scan_threads(
         100,
         exit.clone(),
-        scan_commitment,
+        CommitmentConfig::finalized(),
         update_client_receiver,
         scan_client_receiver,
     );
@@ -2714,80 +2610,6 @@ fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
 
 #[test]
 #[serial]
-fn test_rpc_block_subscribe() {
-    let leader_stake = 100 * DEFAULT_NODE_STAKE;
-    let rpc_stake = DEFAULT_NODE_STAKE;
-    let total_stake = leader_stake + rpc_stake;
-    let node_stakes = vec![leader_stake, rpc_stake];
-    let mut validator_config = ValidatorConfig::default_for_test();
-    validator_config.enable_default_rpc_block_subscribe();
-    validator_config.wait_for_supermajority = Some(0);
-
-    let validator_keys = create_test_validator_keys(&[
-        "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
-        "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
-    ]);
-    let rpc_node_pubkey = &validator_keys[1].0.node_keypair.pubkey();
-
-    let mut config = ClusterConfig {
-        mint_lamports: total_stake,
-        node_stakes,
-        validator_configs: make_identical_validator_configs(&validator_config, 2),
-        validator_keys: Some(validator_keys),
-        skip_warmup_slots: true,
-        ..ClusterConfig::default()
-    };
-    let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-    let rpc_node_contact_info = cluster.get_contact_info(rpc_node_pubkey).unwrap();
-    let (mut block_subscribe_client, receiver) = PubsubClient::block_subscribe(
-        format!(
-            "ws://{}",
-            // It is important that we subscribe to a non leader node as there
-            // is a race condition which can cause leader nodes to not send
-            // BlockUpdate notifications properly. See https://github.com/solana-labs/solana/pull/34421
-            &rpc_node_contact_info.rpc_pubsub().unwrap().to_string()
-        ),
-        RpcBlockSubscribeFilter::All,
-        Some(RpcBlockSubscribeConfig {
-            commitment: Some(CommitmentConfig::confirmed()),
-            encoding: None,
-            transaction_details: None,
-            show_rewards: None,
-            max_supported_transaction_version: None,
-        }),
-    )
-    .unwrap();
-
-    let mut received_block = false;
-    let max_wait = 10_000;
-    let start = Instant::now();
-    while !received_block {
-        assert!(
-            start.elapsed() <= Duration::from_millis(max_wait),
-            "Went too long {max_wait} ms without receiving a confirmed block",
-        );
-        let responses: Vec<_> = receiver.try_iter().collect();
-        // Wait for a response
-        if !responses.is_empty() {
-            for response in responses {
-                assert!(response.value.err.is_none());
-                assert!(response.value.block.is_some());
-                if response.value.slot > 1 {
-                    received_block = true;
-                }
-            }
-        }
-        sleep(Duration::from_millis(100));
-    }
-
-    // If we don't drop the cluster, the blocking web socket service
-    // won't return, and the `block_subscribe_client` won't shut down
-    drop(cluster);
-    block_subscribe_client.shutdown().unwrap();
-}
-
-#[test]
-#[serial]
 #[allow(unused_attributes)]
 fn test_oc_bad_signatures() {
     agave_logger::setup_with_default(RUST_LOG_FILTER);
@@ -2805,9 +2627,10 @@ fn test_oc_bad_signatures() {
     // to casting votes with invalid blockhash. This is not what is meant to be
     // test and only inflates test time.
     let fixed_schedule = FixedSchedule {
-        leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(vec![SlotLeader::from(
-            &validator_keys.first().unwrap().0,
-        )])),
+        leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(
+            vec![SlotLeader::from(&validator_keys.first().unwrap().0)],
+            NonZeroUsize::new(1).unwrap(),
+        )),
     };
 
     let mut validator_config = ValidatorConfig {
@@ -2820,7 +2643,7 @@ fn test_oc_bad_signatures() {
 
     let our_id = validator_keys.last().unwrap().0.node_keypair.pubkey();
     let mut config = ClusterConfig {
-        mint_lamports: total_stake,
+        mint_lamports: DEFAULT_MINT_LAMPORTS + node_stakes.iter().sum::<u64>(),
         node_stakes,
         validator_configs: make_identical_validator_configs(&validator_config, 2),
         validator_keys: Some(validator_keys),
@@ -4413,27 +4236,7 @@ fn find_latest_replayed_slot_from_ledger(
 
 #[test]
 #[serial]
-fn test_cluster_partition_1_1() {
-    let empty = |_: &mut LocalCluster, _: &mut ()| {};
-    let on_partition_resolved = |cluster: &mut LocalCluster, _: &mut ()| {
-        cluster.check_for_new_roots(16, "PARTITION_TEST", SocketAddrSpace::Unspecified);
-    };
-    run_cluster_partition(
-        &[1, 1],
-        None,
-        (),
-        empty,
-        empty,
-        on_partition_resolved,
-        None,
-        false,
-        vec![],
-    )
-}
-
-#[test]
-#[serial]
-fn test_cluster_partition_1_1_1() {
+fn test_cluster_partition() {
     let empty = |_: &mut LocalCluster, _: &mut ()| {};
     let on_partition_resolved = |cluster: &mut LocalCluster, _: &mut ()| {
         cluster.check_for_new_roots(16, "PARTITION_TEST", SocketAddrSpace::Unspecified);
@@ -6171,7 +5974,7 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
 
     // Cluster config
     let mut cluster_config = ClusterConfig {
-        mint_lamports: total_stake,
+        mint_lamports: DEFAULT_MINT_LAMPORTS + node_stakes.iter().sum::<u64>(),
         node_stakes: node_stakes.clone(),
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
         validator_keys: Some(
@@ -6269,10 +6072,7 @@ fn test_alpenglow_migration(num_nodes: usize) {
     };
 
     // Create local cluster with alpenglow accounts but feature not activated
-    let cluster = LocalCluster::new_pre_migration_alpenglow(
-        &mut cluster_config,
-        SocketAddrSpace::Unspecified,
-    );
+    let cluster = LocalCluster::new(&mut cluster_config, SocketAddrSpace::Unspecified);
 
     let validator_keys: Vec<Arc<Keypair>> = cluster
         .validators

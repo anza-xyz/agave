@@ -10,6 +10,7 @@ use {
         },
     },
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand, crate_description, crate_name},
+    log::warn,
     solana_accounts_db::accounts_db::{
         DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE, DEFAULT_ACCOUNTS_SHRINK_RATIO,
     },
@@ -74,7 +75,8 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::staked_nodes_overrides::command())
         .subcommand(commands::wait_for_restart_window::command())
         .subcommand(commands::set_public_address::command())
-        .subcommand(commands::manage_block_production::command(default_args));
+        .subcommand(commands::manage_block_production::command(default_args))
+        .subcommand(commands::blockstore::command());
 
     commands::run::add_args(app, default_args)
         .args(&thread_args(&default_args.thread_args))
@@ -127,6 +129,15 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
     }
 
     add_arg!(
+        // deprecated in v4.1.0
+        Arg::with_name("account_shrink_path")
+            .long("account-shrink-path")
+            .value_name("PATH")
+            .takes_value(true)
+            .multiple(true)
+            .help("Path to accounts shrink path which can hold a compacted account set."),
+    );
+    add_arg!(
         // deprecated in v4.0.0
         Arg::with_name("enable_accounts_disk_index")
             .long("enable-accounts-disk-index")
@@ -178,8 +189,7 @@ pub fn warn_for_deprecated_arguments(matches: &ArgMatches) {
                     msg.push('.');
                 }
             }
-            // this can not rely on logger since it is not initialized at the time of call
-            eprintln!("{msg}");
+            warn!("{msg}");
         }
     }
 }
@@ -607,7 +617,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .validator(solana_net_utils::is_host)
                 .default_value("127.0.0.1")
                 .help(
-                    "IP address to bind the validator ports. Can be repeated. The first \
+                    "IPv4 address to bind the validator ports. Can be repeated. The first \
                      --bind-address MUST be your public internet address. ALL protocols (gossip, \
                      repair, IP echo, TVU, TPU, etc.) bind to this address on startup. Additional \
                      --bind-address values enable multihoming for Gossip/TVU/TPU - these \

@@ -2,7 +2,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    agave_feature_set::{FEATURE_NAMES, vote_state_v4},
+    agave_feature_set::FEATURE_NAMES,
     base64::{Engine, prelude::BASE64_STANDARD},
     clap::{App, Arg, ArgMatches, crate_description, crate_name, value_t, value_t_or_exit},
     itertools::Itertools,
@@ -42,15 +42,14 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
     solana_runtime::{
+        bank::VAT_TO_BURN_PER_EPOCH,
         genesis_utils::{add_genesis_epoch_rewards_account, add_genesis_stake_config_account},
         stake_utils,
     },
     solana_sdk_ids::system_program,
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
-    solana_vote_program::vote_state::{
-        self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV3, VoteStateV4,
-    },
+    solana_vote_program::vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     std::{
         collections::HashMap,
         error,
@@ -63,6 +62,10 @@ use {
         time::Duration,
     },
 };
+
+/// In order to satisfy the VAT we need to fund all vote accounts
+/// This corresponds to 100 epochs worth of VAT
+const VAT_MINIMUM_LAMPORTS: u64 = VAT_TO_BURN_PER_EPOCH * 100;
 
 pub enum AccountFileFormat {
     Pubkey,
@@ -133,7 +136,6 @@ pub fn load_validator_accounts(
     commission: u8,
     rent: &Rent,
     genesis_config: &mut GenesisConfig,
-    vote_state_v4_enabled: bool,
 ) -> io::Result<()> {
     let accounts_file = File::open(file)?;
     let validator_genesis_accounts: Vec<StakedValidatorAccountInfo> =
@@ -182,7 +184,6 @@ pub fn load_validator_accounts(
             commission,
             rent,
             None,
-            vote_state_v4_enabled,
         )?;
     }
 
@@ -262,7 +263,6 @@ fn add_validator_accounts(
     commission: u8,
     rent: &Rent,
     authorized_pubkey: Option<&Pubkey>,
-    vote_state_v4_enabled: bool,
 ) -> io::Result<()> {
     rent_exempt_check(
         stake_lamports,
@@ -282,27 +282,20 @@ fn add_validator_accounts(
             .next()
             .map(|bls_pubkey| bls_pubkey.0)
             .unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]);
-        let vote_account = if vote_state_v4_enabled {
-            vote_state::create_v4_account_with_authorized(
-                identity_pubkey,
-                identity_pubkey,
-                bls_pubkey_compressed_bytes,
-                identity_pubkey,
-                u16::from(commission) * 100,
-                identity_pubkey,
-                0,
-                identity_pubkey,
-                rent.minimum_balance(VoteStateV4::size_of()).max(1),
-            )
-        } else {
-            vote_state::create_v3_account_with_authorized(
-                identity_pubkey,
-                identity_pubkey,
-                identity_pubkey,
-                commission,
-                rent.minimum_balance(VoteStateV3::size_of()).max(1),
-            )
-        };
+        // Vote account needs enough lamports for rent exemption plus VAT
+        let vote_account_lamports =
+            rent.minimum_balance(VoteStateV4::size_of()) + VAT_MINIMUM_LAMPORTS;
+        let vote_account = vote_state::create_v4_account_with_authorized(
+            identity_pubkey,
+            identity_pubkey,
+            bls_pubkey_compressed_bytes,
+            identity_pubkey,
+            u16::from(commission) * 100,
+            identity_pubkey,
+            0,
+            identity_pubkey,
+            vote_account_lamports,
+        );
 
         genesis_config.add_account(
             *stake_pubkey,
@@ -330,6 +323,7 @@ fn rent_exempt_check(stake_lamports: u64, exempt: u64) -> io::Result<()> {
     }
 }
 
+#[allow(deprecated)]
 #[allow(clippy::cognitive_complexity)]
 fn main() -> Result<(), Box<dyn error::Error>> {
     let default_faucet_pubkey = solana_cli_config::Config::default().keypair_path;
@@ -347,14 +341,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     };
 
     let rent = Rent::default();
-    let (
-        default_lamports_per_byte_year,
-        default_rent_exemption_threshold,
-        default_rent_burn_percentage,
-    ) = {
+    let (default_lamports_per_byte, default_rent_exemption_threshold, default_rent_burn_percentage) = {
         (
-            &rent.lamports_per_byte_year.to_string(),
-            &rent.exemption_threshold.to_string(),
+            &rent.lamports_per_byte.to_string(),
+            &f64::from_le_bytes(rent.exemption_threshold).to_string(),
             &rent.burn_percent.to_string(),
         )
     };
@@ -475,15 +465,27 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 ),
         )
         .arg(
+            Arg::with_name("lamports_per_byte")
+                .long("lamports-per-byte")
+                .value_name("LAMPORTS")
+                .takes_value(true)
+                .default_value(default_lamports_per_byte)
+                .help(
+                    "The cost in lamports that the cluster will charge per byte for accounts with \
+                     data",
+                ),
+        )
+        .arg(
             Arg::with_name("lamports_per_byte_year")
                 .long("lamports-per-byte-year")
                 .value_name("LAMPORTS")
                 .takes_value(true)
-                .default_value(default_lamports_per_byte_year)
+                .default_value(default_lamports_per_byte)
                 .help(
-                    "The cost in lamports that the cluster will charge per byte per year for \
-                     accounts with data",
-                ),
+                    "The cost in lamports that the cluster will charge per byte for accounts with \
+                     data",
+                )
+                .conflicts_with("lamports_per_byte"),
         )
         .arg(
             Arg::with_name("rent_exemption_threshold")
@@ -678,9 +680,24 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 
+    if matches.is_present("lamports_per_byte_year") {
+        eprintln!("lamports_per_byte_year is deprecated and will be removed in a future release");
+    }
+    if matches.is_present("rent_exemption_threshold") {
+        eprintln!("rent_exemption_threshold is deprecated and will be removed in a future release");
+    }
+    if matches.is_present("rent_burn_percentage") {
+        eprintln!("rent_burn_percentage is deprecated and will be removed in a future release");
+    }
+
     let rent = Rent {
-        lamports_per_byte_year: value_t_or_exit!(matches, "lamports_per_byte_year", u64),
-        exemption_threshold: value_t_or_exit!(matches, "rent_exemption_threshold", f64),
+        lamports_per_byte: if matches.is_present("lamports_per_byte_year") {
+            value_t_or_exit!(matches, "lamports_per_byte_year", u64)
+        } else {
+            value_t_or_exit!(matches, "lamports_per_byte", u64)
+        },
+        exemption_threshold: value_t_or_exit!(matches, "rent_exemption_threshold", f64)
+            .to_le_bytes(),
         burn_percent: value_t_or_exit!(matches, "rent_burn_percentage", u8),
     };
 
@@ -838,22 +855,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
     }
 
-    // After primordial accounts are read in, check to see if vote state v4
-    // was manually deactivated by providing an inactive Feature account.
-    let vote_state_v4_enabled = {
-        use solana_feature_gate_interface::from_account;
-
-        let is_primordial_inactive_feature = genesis_config
-            .accounts
-            .iter()
-            .find(|(key, _)| key.eq(&&vote_state_v4::id()))
-            .is_some_and(|(_, acct)| from_account(acct).is_none());
-
-        let is_explicitly_deactivated = features_to_deactivate.contains(&vote_state_v4::id());
-
-        !is_primordial_inactive_feature && !is_explicitly_deactivated
-    };
-
     add_validator_accounts(
         &mut genesis_config,
         &mut bootstrap_validator_pubkeys.iter(),
@@ -863,18 +864,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         commission,
         &rent,
         bootstrap_stake_authorized_pubkey.as_ref(),
-        vote_state_v4_enabled,
     )?;
 
     if let Some(files) = matches.values_of("validator_accounts_file") {
         for file in files {
-            load_validator_accounts(
-                file,
-                commission,
-                &rent,
-                &mut genesis_config,
-                vote_state_v4_enabled,
-            )?;
+            load_validator_accounts(file, commission, &rent, &mut genesis_config)?;
         }
     }
 
@@ -1367,7 +1361,6 @@ mod tests {
                 100,
                 &Rent::default(),
                 &mut GenesisConfig::default(),
-                true, // vote_state_v4_enabled
             )
             .is_err()
         );
@@ -1431,14 +1424,8 @@ mod tests {
         file.write_all(b"validator_accounts:\n").unwrap();
         file.write_all(serialized.as_bytes()).unwrap();
 
-        load_validator_accounts(
-            &filename,
-            100,
-            &Rent::default(),
-            &mut genesis_config,
-            true, // vote_state_v4_enabled
-        )
-        .expect("Failed to load validator accounts");
+        load_validator_accounts(&filename, 100, &Rent::default(), &mut genesis_config)
+            .expect("Failed to load validator accounts");
 
         remove_file(path).unwrap();
 

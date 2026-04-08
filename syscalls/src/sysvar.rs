@@ -21,7 +21,7 @@ fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
     if var_addr >= ebpf::MM_INPUT_START
         && invoke_context
             .get_feature_set()
-            .stricter_abi_and_runtime_constraints
+            .syscall_parameter_address_restrictions
     {
         return Err(SyscallError::InvalidPointer.into());
     }
@@ -45,7 +45,7 @@ declare_builtin_function!(
     /// Get a Clock sysvar
     SyscallGetClockSysvar,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -67,7 +67,7 @@ declare_builtin_function!(
     /// Get a EpochSchedule sysvar
     SyscallGetEpochScheduleSysvar,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -89,7 +89,7 @@ declare_builtin_function!(
     /// Get a EpochRewards sysvar
     SyscallGetEpochRewardsSysvar,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -111,7 +111,7 @@ declare_builtin_function!(
     /// Get a Fees sysvar
     SyscallGetFeesSysvar,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -119,7 +119,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         {
             get_sysvar(
                 invoke_context.get_sysvar_cache().get_fees(),
@@ -136,7 +136,7 @@ declare_builtin_function!(
     /// Get a Rent sysvar
     SyscallGetRentSysvar,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -158,7 +158,7 @@ declare_builtin_function!(
     /// Get a Last Restart Slot sysvar
     SyscallGetLastRestartSlotSysvar,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -185,7 +185,7 @@ declare_builtin_function!(
     /// Get a slice of a Sysvar in-memory representation
     SyscallGetSysvar,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         sysvar_id_addr: u64,
         var_addr: u64,
         offset: u64,
@@ -214,7 +214,7 @@ declare_builtin_function!(
         if var_addr >= ebpf::MM_INPUT_START
             && invoke_context
                 .get_feature_set()
-                .stricter_abi_and_runtime_constraints
+                .syscall_parameter_address_restrictions
         {
             return Err(SyscallError::InvalidPointer.into());
         }

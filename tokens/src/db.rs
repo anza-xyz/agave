@@ -7,7 +7,7 @@ use {
     solana_signature::Signature,
     solana_transaction::Transaction,
     solana_transaction_status::TransactionStatus,
-    std::{cmp::Ordering, fs, io, path::Path},
+    std::{cmp::Ordering, collections::HashMap, fs, io, path::Path},
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -50,21 +50,42 @@ impl Default for TransactionInfo {
 }
 
 pub fn open_db(path: &str, dry_run: bool) -> Result<PickleDb, Error> {
-    let policy = if dry_run {
-        PickleDbDumpPolicy::NeverDump
-    } else {
-        PickleDbDumpPolicy::DumpUponRequest
+    let policy = || {
+        if dry_run {
+            PickleDbDumpPolicy::NeverDump
+        } else {
+            PickleDbDumpPolicy::DumpUponRequest
+        }
     };
     let path = Path::new(path);
     let db = if path.exists() {
-        PickleDb::load_yaml(path, policy)?
+        match PickleDb::load_json(path, policy()) {
+            Ok(db) => db,
+            Err(err) => {
+                // Legacy DBs were YAML-backed; migrate them to JSON on read.
+                if migrate_legacy_yaml_db(path).is_ok() {
+                    PickleDb::load_json(path, policy())?
+                } else {
+                    return Err(err);
+                }
+            }
+        }
     } else {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).unwrap();
         }
-        PickleDb::new_yaml(path, policy)
+        PickleDb::new_json(path, policy())
     };
     Ok(db)
+}
+
+fn migrate_legacy_yaml_db(path: &Path) -> io::Result<()> {
+    let file = fs::read_to_string(path)?;
+    let db: (HashMap<String, String>, HashMap<String, Vec<String>>) =
+        serde_yaml::from_str(&file).map_err(io::Error::other)?;
+    let json = serde_json::to_string(&db).map_err(io::Error::other)?;
+    fs::write(path, json)?;
+    Ok(())
 }
 
 pub fn compare_transaction_infos(a: &TransactionInfo, b: &TransactionInfo) -> Ordering {
@@ -249,7 +270,7 @@ mod tests {
     #[test]
     fn test_write_transaction_log() {
         let mut db =
-            PickleDb::new_yaml(NamedTempFile::new().unwrap(), PickleDbDumpPolicy::NeverDump);
+            PickleDb::new_json(NamedTempFile::new().unwrap(), PickleDbDumpPolicy::NeverDump);
         let signature = Signature::default();
         let transaction_info = TransactionInfo::default();
         db.set(&signature.to_string(), &transaction_info).unwrap();
@@ -273,7 +294,7 @@ mod tests {
     fn test_update_finalized_transaction_not_landed() {
         // Keep waiting for a transaction that hasn't landed yet.
         let mut db =
-            PickleDb::new_yaml(NamedTempFile::new().unwrap(), PickleDbDumpPolicy::NeverDump);
+            PickleDb::new_json(NamedTempFile::new().unwrap(), PickleDbDumpPolicy::NeverDump);
         let signature = Signature::default();
         let transaction_info = TransactionInfo::default();
         db.set(&signature.to_string(), &transaction_info).unwrap();
@@ -305,7 +326,7 @@ mod tests {
     fn test_update_finalized_transaction_confirming() {
         // Keep waiting for a transaction that is still being confirmed.
         let mut db =
-            PickleDb::new_yaml(NamedTempFile::new().unwrap(), PickleDbDumpPolicy::NeverDump);
+            PickleDb::new_json(NamedTempFile::new().unwrap(), PickleDbDumpPolicy::NeverDump);
         let signature = Signature::default();
         let transaction_info = TransactionInfo::default();
         db.set(&signature.to_string(), &transaction_info).unwrap();
@@ -333,7 +354,7 @@ mod tests {
     fn test_update_finalized_transaction_failed() {
         // Don't wait if the transaction failed to execute.
         let mut db =
-            PickleDb::new_yaml(NamedTempFile::new().unwrap(), PickleDbDumpPolicy::NeverDump);
+            PickleDb::new_json(NamedTempFile::new().unwrap(), PickleDbDumpPolicy::NeverDump);
         let signature = Signature::default();
         let transaction_info = TransactionInfo::default();
         db.set(&signature.to_string(), &transaction_info).unwrap();
@@ -358,7 +379,7 @@ mod tests {
     fn test_update_finalized_transaction_finalized() {
         // Don't wait once the transaction has been finalized.
         let mut db =
-            PickleDb::new_yaml(NamedTempFile::new().unwrap(), PickleDbDumpPolicy::NeverDump);
+            PickleDb::new_json(NamedTempFile::new().unwrap(), PickleDbDumpPolicy::NeverDump);
         let signature = Signature::default();
         let transaction_info = TransactionInfo::default();
         db.set(&signature.to_string(), &transaction_info).unwrap();

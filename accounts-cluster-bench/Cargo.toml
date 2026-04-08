@@ -21,7 +21,6 @@ clap = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
-solana-account-decoder = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-client = { workspace = true }
@@ -32,7 +31,7 @@ solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
-solana-message = { workspace = true, features = ["serde", "bincode", "blake3"] }
+solana-message = { workspace = true, features = ["serde", "blake3", "wincode"] }
 solana-net-utils = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -51,11 +50,11 @@ spl-token-interface = { workspace = true }
 jemallocator = { workspace = true }
 
 [dev-dependencies]
-solana-accounts-db = { workspace = true }
-solana-core = { workspace = true, features = ["dev-context-only-utils"] }
-solana-faucet = { workspace = true, features = ["dev-context-only-utils"] }
-solana-local-cluster = { workspace = true, features = ["dev-context-only-utils"] }
+solana-accounts-db = { path = "../accounts-db", features = ["agave-unstable-api"] }
+solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-faucet = { path = "../faucet", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-local-cluster = { path = "../local-cluster", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-native-token = { workspace = true }
 solana-poh-config = { workspace = true }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-test-validator = { workspace = true }
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-test-validator = { path = "../test-validator" }

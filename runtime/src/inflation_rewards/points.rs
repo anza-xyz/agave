@@ -29,12 +29,21 @@ pub(crate) struct CalculatedStakePoints {
     pub(crate) force_credits_update_with_skipped_reward: bool,
 }
 
+/// Combination of info needed to calculate rewards
+pub(crate) struct CalculationEnvironment<'a> {
+    pub(crate) rewarded_epoch: Epoch,
+    pub(crate) point_value: &'a PointValue,
+    pub(crate) stake_history: &'a StakeHistory,
+    pub(crate) new_rate_activation_epoch: Option<Epoch>,
+    pub(crate) commission_rate_in_basis_points: bool,
+}
+
 #[derive(Debug)]
 pub enum InflationPointCalculationEvent {
     CalculatedPoints(u64, u128, u128, u128),
     SplitRewards(u64, u64, u64, PointValue),
     EffectiveStakeAtRewardedEpoch(u64),
-    RentExemptReserve(u64),
+    PriorTotalLamports(u64),
     Delegation(Delegation, Pubkey),
     /// Commission as a percentage (0-100).
     Commission(u8),

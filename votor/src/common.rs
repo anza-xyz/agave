@@ -11,7 +11,11 @@ pub type Stake = u64;
 
 pub const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
     match vote_type {
-        VoteType::Finalize => &[VoteType::NotarizeFallback, VoteType::Skip],
+        VoteType::Finalize => &[
+            VoteType::NotarizeFallback,
+            VoteType::Skip,
+            VoteType::SkipFallback,
+        ],
         VoteType::Notarize => &[VoteType::Skip, VoteType::NotarizeFallback],
         VoteType::NotarizeFallback => &[VoteType::Finalize, VoteType::Notarize],
         VoteType::Skip => &[
@@ -19,7 +23,7 @@ pub const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
             VoteType::Notarize,
             VoteType::SkipFallback,
         ],
-        VoteType::SkipFallback => &[VoteType::Skip],
+        VoteType::SkipFallback => &[VoteType::Skip, VoteType::Finalize],
         VoteType::Genesis => &[
             VoteType::Finalize,
             VoteType::Notarize,

@@ -571,7 +571,8 @@ mod tests {
         bincode::serialize,
         solana_nonce_account::{SystemAccountKind, get_system_account_kind},
         solana_program_runtime::{
-            invoke_context::mock_process_instruction, with_mock_invoke_context,
+            invoke_context::mock_process_instruction,
+            solana_sbpf::program::BuiltinFunctionDefinition, with_mock_invoke_context,
         },
         std::collections::BinaryHeap,
     };
@@ -616,12 +617,11 @@ mod tests {
     ) -> Vec<AccountSharedData> {
         mock_process_instruction(
             &system_program::id(),
-            None,
             instruction_data,
             transaction_accounts,
             instruction_accounts,
             expected_result,
-            Entrypoint::vm,
+            Entrypoint::register,
             |_invoke_context| {},
             |_invoke_context| {},
         )
@@ -1613,7 +1613,6 @@ mod tests {
             ]);
         mock_process_instruction(
             &system_program::id(),
-            None,
             &serialize(&SystemInstruction::AdvanceNonceAccount).unwrap(),
             vec![
                 (nonce_address, accounts[0].clone()),
@@ -1632,7 +1631,7 @@ mod tests {
                 },
             ],
             Ok(()),
-            Entrypoint::vm,
+            Entrypoint::register,
             |invoke_context: &mut InvokeContext| {
                 invoke_context.environment_config.blockhash = hash(&serialize(&0).unwrap());
             },
@@ -1909,7 +1908,6 @@ mod tests {
         let new_recent_blockhashes_account = create_recent_blockhashes_account_for_test(vec![]);
         mock_process_instruction(
             &system_program::id(),
-            None,
             &serialize(&SystemInstruction::AdvanceNonceAccount).unwrap(),
             vec![
                 (nonce_address, accounts[0].clone()),
@@ -1928,7 +1926,7 @@ mod tests {
                 },
             ],
             Err(SystemError::NonceNoRecentBlockhashes.into()),
-            Entrypoint::vm,
+            Entrypoint::register,
             |invoke_context: &mut InvokeContext| {
                 invoke_context.environment_config.blockhash = hash(&serialize(&0).unwrap());
             },
@@ -2166,7 +2164,6 @@ mod tests {
         use solana_program_runtime::invoke_context::mock_process_instruction_with_feature_set;
         mock_process_instruction_with_feature_set(
             &system_program::id(),
-            None,
             &bincode::serialize(&SystemInstruction::CreateAccountAllowPrefund {
                 lamports: 50,
                 space: 0,
@@ -2179,7 +2176,7 @@ mod tests {
             ],
             vec![AccountMeta::new(to, true), AccountMeta::new(from, true)],
             Err(InstructionError::InvalidInstructionData),
-            Entrypoint::vm,
+            Entrypoint::register,
             |_| {},
             |_| {},
             &solana_svm_feature_set::SVMFeatureSet::default(),

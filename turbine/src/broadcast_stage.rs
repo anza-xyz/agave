@@ -9,8 +9,8 @@ use {
         standard_broadcast_run::StandardBroadcastRun,
     },
     crate::{
+        XdpSender,
         cluster_nodes::{ClusterNodes, ClusterNodesCache},
-        xdp::XdpSender,
     },
     agave_votor::event::VotorEventSender,
     crossbeam_channel::{Receiver, RecvError, RecvTimeoutError, Sender, unbounded},
@@ -518,7 +518,7 @@ pub fn broadcast_shreds(
                 let addr = cluster_nodes
                     .get_broadcast_peer(&key)?
                     .tvu(Protocol::UDP)
-                    .filter(|addr| socket_addr_space.check(addr))?;
+                    .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))?;
 
                 Some((shred.payload(), addr))
             })
@@ -544,7 +544,7 @@ pub fn broadcast_shreds(
         BroadcastSocket::Xdp(s) => {
             let mut send_xdp_time = Measure::start("send_xdp");
             for (idx, (payload, addr)) in packets.into_iter().enumerate() {
-                if let Err(e) = s.try_send(idx, addr, payload.clone()) {
+                if let Err(e) = s.try_send(idx, addr, payload.bytes.clone()) {
                     log::warn!("xdp channel full: {e:?}");
                     transmit_stats.dropped_packets_xdp += 1;
                     result = Err(Error::XdpChannelFull);

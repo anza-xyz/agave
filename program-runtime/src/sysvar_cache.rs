@@ -1,4 +1,4 @@
-#[allow(deprecated)]
+#[expect(deprecated)]
 use solana_sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes};
 use {
     crate::invoke_context::InvokeContext,
@@ -45,9 +45,9 @@ pub struct SysvarCache {
     stake_history_obj: Option<Arc<StakeHistory>>,
 
     // deprecated sysvars, these should be removed once practical
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     fees: Option<Fees>,
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     recent_blockhashes: Option<RecentBlockhashes>,
 }
 
@@ -59,7 +59,7 @@ const RECENT_BLOCKHASHES_ID: Pubkey =
 
 impl SysvarCache {
     /// Overwrite a sysvar. For testing purposes only.
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     pub fn set_sysvar_for_tests<T: SysvarSerialize + SysvarId>(&mut self, sysvar: &T) {
         let data = bincode::serialize(sysvar).expect("Failed to serialize sysvar.");
         let sysvar_id = T::id();
@@ -174,7 +174,7 @@ impl SysvarCache {
     }
 
     #[deprecated]
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     pub fn get_fees(&self) -> Result<Arc<Fees>, InstructionError> {
         self.fees
             .clone()
@@ -183,7 +183,7 @@ impl SysvarCache {
     }
 
     #[deprecated]
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     pub fn get_recent_blockhashes(&self) -> Result<Arc<RecentBlockhashes>, InstructionError> {
         self.recent_blockhashes
             .clone()
@@ -253,7 +253,7 @@ impl SysvarCache {
             });
         }
 
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         if self.fees.is_none() {
             get_account_data(&Fees::id(), &mut |data: &[u8]| {
                 if let Ok(fees) = bincode::deserialize(data) {
@@ -262,7 +262,7 @@ impl SysvarCache {
             });
         }
 
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         if self.recent_blockhashes.is_none() {
             get_account_data(&RecentBlockhashes::id(), &mut |data: &[u8]| {
                 if let Ok(recent_blockhashes) = bincode::deserialize(data) {
@@ -323,7 +323,7 @@ pub mod get_sysvar_with_account_check {
         invoke_context.get_sysvar_cache().get_slot_hashes()
     }
 
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     pub fn recent_blockhashes(
         invoke_context: &InvokeContext,
         instruction_context: &InstructionContext,

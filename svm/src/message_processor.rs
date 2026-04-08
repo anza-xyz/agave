@@ -3,7 +3,6 @@ use {
     solana_svm_measure::measure_us,
     solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_transaction_context::IndexOfAccount,
     solana_transaction_error::TransactionError,
 };
 
@@ -14,28 +13,17 @@ use {
 /// The accounts are committed back to the bank only if every instruction succeeds.
 pub(crate) fn process_message<'ix_data>(
     message: &'ix_data impl SVMMessage,
-    program_indices: &[IndexOfAccount],
     invoke_context: &mut InvokeContext<'_, 'ix_data>,
     execute_timings: &mut ExecuteTimings,
     accumulated_consumed_units: &mut u64,
 ) -> Result<(), TransactionError> {
-    debug_assert_eq!(program_indices.len(), message.num_instructions());
-    for (top_level_instruction_index, ((program_id, instruction), program_account_index)) in message
-        .program_instructions_iter()
-        .zip(program_indices.iter())
-        .enumerate()
-    {
-        invoke_context
-            .prepare_next_top_level_instruction(
-                message,
-                &instruction,
-                *program_account_index,
-                instruction.data,
-            )
-            .map_err(|err| {
-                TransactionError::InstructionError(top_level_instruction_index as u8, err)
-            })?;
+    invoke_context
+        .prepare_top_level_instructions(message)
+        .map_err(|(ix_idx, err)| TransactionError::InstructionError(ix_idx, err))?;
 
+    for (top_level_instruction_index, (program_id, instruction)) in
+        message.program_instructions_iter().enumerate()
+    {
         let mut compute_units_consumed = 0;
         let (result, process_instruction_us) = measure_us!({
             if invoke_context.is_precompile(program_id) {
@@ -81,12 +69,10 @@ pub(crate) fn process_message<'ix_data>(
 mod tests {
     use {
         super::*,
-        ed25519_dalek::ed25519::signature::Signer,
         openssl::{
             ec::{EcGroup, EcKey},
             nid::Nid,
         },
-        rand0_7::thread_rng,
         solana_account::{
             Account, AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS, ReadableAccount,
             WritableAccount,
@@ -94,28 +80,33 @@ mod tests {
         solana_ed25519_program::new_ed25519_instruction_with_signature,
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction, error::InstructionError},
+        solana_keypair::{Address, Keypair},
         solana_message::{AccountKeys, Message, SanitizedMessage},
         solana_precompile_error::PrecompileError,
         solana_program_runtime::{
             declare_process_instruction,
             execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
             invoke_context::EnvironmentConfig,
-            loaded_programs::{
-                ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
-            },
+            loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+            program_cache_entry::ProgramCacheEntry,
             sysvar_cache::SysvarCache,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
+        solana_sbpf::program::BuiltinFunctionDefinition,
         solana_sdk_ids::{ed25519_program, native_loader, secp256k1_program, system_program},
         solana_secp256k1_program::{
             eth_address_from_pubkey, new_secp256k1_instruction_with_signature,
         },
         solana_secp256r1_program::{new_secp256r1_instruction_with_signature, sign_message},
+        solana_signer::Signer,
         solana_svm_callback::InvokeContextCallback,
         solana_svm_feature_set::SVMFeatureSet,
         solana_transaction_context::transaction::TransactionContext,
-        std::{collections::HashSet, sync::Arc},
+        std::{
+            collections::{HashMap, HashSet},
+            sync::Arc,
+        },
     };
 
     struct MockCallback {}
@@ -193,11 +184,10 @@ mod tests {
         ];
         let mut transaction_context =
             TransactionContext::new(accounts.clone(), Rent::default(), 1, 3, 1);
-        let program_indices = vec![2];
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             mock_system_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register)),
         );
         let account_keys = (0..transaction_context.get_number_of_accounts())
             .map(|index| {
@@ -227,13 +217,13 @@ mod tests {
         ));
         let sysvar_cache = SysvarCache::default();
         let feature_set = SVMFeatureSet::all_enabled();
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
             &program_runtime_environments,
             &sysvar_cache,
         );
@@ -247,7 +237,6 @@ mod tests {
         );
         let result = process_message(
             &message,
-            &program_indices,
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
@@ -284,13 +273,13 @@ mod tests {
                 ),
             ]),
         ));
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
             &program_runtime_environments,
             &sysvar_cache,
         );
@@ -306,7 +295,6 @@ mod tests {
         );
         let result = process_message(
             &message,
-            &program_indices,
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
@@ -333,13 +321,13 @@ mod tests {
                 ),
             ]),
         ));
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
             &program_runtime_environments,
             &sysvar_cache,
         );
@@ -354,7 +342,6 @@ mod tests {
         );
         let result = process_message(
             &message,
-            &program_indices,
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
@@ -439,11 +426,10 @@ mod tests {
         ];
         let mut transaction_context =
             TransactionContext::new(accounts.clone(), Rent::default(), 1, 3, 1);
-        let program_indices = vec![2];
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             mock_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register)),
         );
         let account_metas = vec![
             AccountMeta::new(
@@ -471,13 +457,13 @@ mod tests {
         ));
         let sysvar_cache = SysvarCache::default();
         let feature_set = SVMFeatureSet::all_enabled();
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
             &program_runtime_environments,
             &sysvar_cache,
         );
@@ -491,7 +477,6 @@ mod tests {
         );
         let result = process_message(
             &message,
-            &program_indices,
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
@@ -513,13 +498,13 @@ mod tests {
             )],
             Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
         ));
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
             &program_runtime_environments,
             &sysvar_cache,
         );
@@ -535,7 +520,6 @@ mod tests {
         );
         let result = process_message(
             &message,
-            &program_indices,
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
@@ -554,13 +538,13 @@ mod tests {
             )],
             Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
         ));
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
             &program_runtime_environments,
             &sysvar_cache,
         );
@@ -575,7 +559,6 @@ mod tests {
         );
         let result = process_message(
             &message,
-            &program_indices,
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
@@ -605,7 +588,8 @@ mod tests {
 
     fn secp256k1_instruction_for_test() -> Instruction {
         let message = b"hello";
-        let secret_key = libsecp256k1::SecretKey::random(&mut thread_rng());
+        let bytes: [u8; 32] = rand::random();
+        let secret_key = libsecp256k1::SecretKey::parse(&bytes).unwrap();
         let pubkey = libsecp256k1::PublicKey::from_secret_key(&secret_key);
         let eth_address = eth_address_from_pubkey(&pubkey.serialize()[1..].try_into().unwrap());
         let (signature, recovery_id) =
@@ -619,10 +603,10 @@ mod tests {
     }
 
     fn ed25519_instruction_for_test() -> Instruction {
-        let secret_key = ed25519_dalek::Keypair::generate(&mut thread_rng());
-        let signature = secret_key.sign(b"hello").to_bytes();
-        let pubkey = secret_key.public.to_bytes();
-        new_ed25519_instruction_with_signature(b"hello", &signature, &pubkey)
+        let keypair = Keypair::new();
+        let signature = keypair.sign_message(b"hello");
+        let pubkey = keypair.pubkey().to_bytes();
+        new_ed25519_instruction_with_signature(b"hello", signature.as_array(), &pubkey)
     }
 
     fn secp256r1_instruction_for_test() -> Instruction {
@@ -656,17 +640,18 @@ mod tests {
         secp256r1_account.set_executable(true);
         let mut mock_program_account = AccountSharedData::new(1, 0, &native_loader::id());
         mock_program_account.set_executable(true);
-        let accounts = vec![
+
+        let fee_payer = Pubkey::new_unique();
+        let accounts_map: HashMap<Address, AccountSharedData> = HashMap::from([
             (
-                Pubkey::new_unique(),
+                fee_payer,
                 AccountSharedData::new(1, 0, &system_program::id()),
             ),
             (secp256k1_program::id(), secp256k1_account),
             (ed25519_program::id(), ed25519_account),
             (solana_secp256r1_program::id(), secp256r1_account),
             (mock_program_id, mock_program_account),
-        ];
-        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 4, 4);
+        ]);
 
         let message = new_sanitized_message(Message::new(
             &[
@@ -675,13 +660,21 @@ mod tests {
                 secp256r1_instruction_for_test(),
                 Instruction::new_with_bytes(mock_program_id, &[], vec![]),
             ],
-            Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
+            Some(&fee_payer),
         ));
+
+        let accounts = message
+            .account_keys()
+            .iter()
+            .map(|key| (*key, accounts_map.get(key).unwrap().clone()))
+            .collect();
+        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 4, 4);
+
         let sysvar_cache = SysvarCache::default();
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             mock_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register)),
         );
 
         struct MockCallback {}
@@ -706,13 +699,13 @@ mod tests {
             }
         }
         let feature_set = SVMFeatureSet::all_enabled();
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
             &program_runtime_environments,
             &sysvar_cache,
         );
@@ -726,7 +719,6 @@ mod tests {
         );
         let result = process_message(
             &message,
-            &[1, 2, 3, 4],
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
@@ -739,6 +731,9 @@ mod tests {
                 InstructionError::Custom(0xbabb1e)
             ))
         );
-        assert_eq!(transaction_context.get_instruction_trace_length(), 4);
+        assert_eq!(
+            transaction_context.number_of_called_instructions_in_trace(),
+            4
+        );
     }
 }

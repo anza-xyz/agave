@@ -17,6 +17,7 @@ agave-unstable-api = []
 
 [dependencies]
 agave-geyser-plugin-interface = { workspace = true }
+arc-swap.workspace = true
 bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
 json5 = { workspace = true }
@@ -30,6 +31,9 @@ solana-clock = { workspace = true }
 solana-entry = { workspace = true }
 solana-hash = { workspace = true }
 solana-ledger = { workspace = true }
+solana-measure = { workspace = true }
+solana-message = { workspace = true }
+solana-metrics = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rpc = { workspace = true }
 solana-runtime = { workspace = true }

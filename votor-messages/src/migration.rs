@@ -277,6 +277,11 @@ impl MigrationPhase {
         self.is_alpenglow_block(slot)
     }
 
+    /// Should this block use the double merkle root as the block id (instead of chained merkle root)?
+    fn should_use_double_merkle_block_id(&self, slot: Slot) -> bool {
+        self.is_alpenglow_block(slot)
+    }
+
     /// Should this block allow the UpdateParent marker, i.e., support fast leader handover?
     fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool {
         self.is_alpenglow_block(slot)
@@ -419,6 +424,7 @@ impl MigrationStatus {
     dispatch!(pub fn should_have_alpenglow_ticks(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_allow_block_markers(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool);
+    dispatch!(pub fn should_use_double_merkle_block_id(&self, slot: Slot) -> bool);
 
     /// The alpenglow feature flag has been activated in slot `slot`.
     /// This should only be called using the feature account of a *rooted* slot,
@@ -475,22 +481,29 @@ impl MigrationStatus {
     /// received a genesis certificate and it matches.
     pub fn set_genesis_block(&self, discovered_genesis_block @ (slot, _): Block) {
         let mut phase = self.phase.write().unwrap();
+        if phase.is_pre_feature_activation() {
+            unreachable!(
+                "{}: Programmer error, attempting to set genesis cert while pre migration",
+                self.my_pubkey()
+            );
+        }
+
         let MigrationPhase::Migration {
             migration_slot,
             genesis_block,
             genesis_cert,
         } = &mut *phase
         else {
-            unreachable!(
-                "{}: Programmer error, attempting to set genesis block while not in migration",
-                self.my_pubkey()
-            );
+            // We've already transitioned to `ReadyToEnable` or further, no action needed
+            return;
         };
-        assert!(
-            genesis_block.is_none(),
-            "Attempting to overwrite genesis block to {discovered_genesis_block:?}. Programmer \
-             error"
-        );
+
+        if let Some(prev_genesis_block) = genesis_block {
+            assert_eq!(
+                *prev_genesis_block, discovered_genesis_block,
+                "We have discovered two different alpenglow genesis blocks. Something is wrong",
+            );
+        }
 
         assert!(
             slot < *migration_slot,
@@ -534,17 +547,23 @@ impl MigrationStatus {
     /// Transitions to `ReadyToEnable` if we have already received a genesis block and it matches.
     pub fn set_genesis_certificate(&self, cert: Arc<Certificate>) {
         let mut phase = self.phase.write().unwrap();
+        if phase.is_pre_feature_activation() {
+            unreachable!(
+                "{}: Programmer error, attempting to set genesis cert while pre migration",
+                self.my_pubkey()
+            );
+        }
+
         let MigrationPhase::Migration {
             migration_slot,
             genesis_block,
             genesis_cert,
         } = &mut *phase
         else {
-            unreachable!(
-                "{}: Programmer error, attempting to set genesis cert while not in migration",
-                self.my_pubkey()
-            );
+            // We've already transitioned to `ReadyToEnable` or further, no action needed
+            return;
         };
+
         let CertificateType::Genesis(slot, block_id) = cert.cert_type else {
             unreachable!("Programmer error adding invalid genesis certificate");
         };

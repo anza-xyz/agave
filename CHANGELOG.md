@@ -8,15 +8,35 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v4.0](#edge-channel)
-* [beta - v3.1](https://github.com/anza-xyz/agave/blob/v3.1/CHANGELOG.md)
-* [stable - v3.0](https://github.com/anza-xyz/agave/blob/v3.0/CHANGELOG.md)
+* [edge - v4.1](#edge-channel)
+* [beta - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
+* [stable - v3.1](https://github.com/anza-xyz/agave/blob/v3.1/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## 4.0.0-Unreleased
+## 4.1.0-Unreleased
+### RPC
+#### Breaking
+#### Changes
+### Validator
+#### Breaking
+#### Deprecations
+* Using `minimal` for `--accounts-index-limit` is now deprecated.
+* `--account-shrink-path` is now deprecated.
+* `sbf-sdk.tar.bz2` is not included anymore in the Agave release tarball. The file will be made available in the new
+  [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
+#### Changes
+
+## 4.0.0
 ### RPC
 #### Breaking
 * `--public-tpu-address` and `--public-tpu-forwards-address` CLI arguments and `setPublicTpuForwardsAddress`, `setPublicTpuAddress` RPC methods now specify QUIC ports, not UDP.
+* Blockstore `PerfSamples` column legacy format removed.
+  * The `PerfSamples` column format was updated in agave v1.15 to write `PerfSampleV2`. The old format, `PerfSampleV1`, will no longer be supported for fallback reads as of v4.0.
+* Blockstore transaction metadata column legacy format support removed.
+  * The `TransactionStatus`, `TransactionMemos`, and `AddressSignatures` columns
+  were updated in v1.18 to write a new key format. The old key format will no
+  no longer be supported for fallback reads as of v4.0
+* `getSignaturesForAddress` returns an error with code `-32020` if the `before` or `until` signatures are not found, rather than a successful response with an empty array
 #### Changes
 * Added `--enable-scheduler-bindings` which binds an IPC server at `<ledger-path>/scheduler_bindings.ipc` for external schedulers to connect to.
 * Added `clientId` field to each node in `getClusterNodes` response
@@ -27,10 +47,13 @@ Release channels have their own copy of this changelog:
   * `--accounts-db-hash-threads`
   * `--accounts-db-read-cache-limit-mb`
   * `--accounts-hash-cache-path`
+  * `--cuda`
   * `--disable-accounts-disk-index`
   * `--dev-halt-at-slot`
   * `--monitor` (`exit` subcommand)
+  * `--transaction-struct`
   * `--wait-for-exit` (`exit` subcommand)
+  * `--tpu-coalesce-ms`
   * `--tpu-disable-quic`
   * `--tpu-enable-udp`
 * `--block-verification-method blockstore-processor` is no longer supported. Remove the argument or switch to `--block-verification-method unified-scheduler` instead.
@@ -71,6 +94,25 @@ without warning.
         ```
         sudo setcap cap_net_raw,cap_net_admin,cap_bpf,cap_perfmon=p /path/to/agave-validator
         ```
+* Interpretation of the `Version` struct fields in gossip `ContactInfo` has been
+[changed](https://github.com/anza-xyz/agave/pull/10286) to support communicating
+[semver prerelease notation](https://semver.org/#spec-item-9). Implementations lacking this
+support will observe a larger than expected _`min` version_ field from node publishing from a
+prerelease version. The new interpretation is as follows:
+  * The top two bits (14 and 15) of the `minor` field are now reserved for prerelease status
+  * Prerelease status bit values are;
+    3 - alpha, 2 - beta, 1 - release candidate (rc), 0 - stable
+  * When prerelease status bits are non-zero, the `Version::patch` field is interpreted as
+    the prerelease number and the actual `patch` value is implicitly zero
+  * Examples:
+    * { min: 0x0001, patch: 0x0003 } -> X.1.3
+    * { min: 0x4002, patch: 0x0002 } -> X.2.0-rc.2
+    * { min: 0x8003, patch: 0x0001 } -> X.3.0-beta.1
+    * { min: 0xC004, patch: 0x0000 } -> X.4.0-alpha.0
+* Blockstore `SlotMeta` and `Index` columns legacy format removed.
+  * The `Index` column was updated in v2.2 to write `IndexV2`.
+  * The `SlotMeta` column format was updated in v3.1 to write `SlotMetaV2`.
+  * The old formats, `SlotMetaV1` and `IndexV1`, will no longer be supported for fallback reads as of v4.0
 
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
@@ -78,6 +120,7 @@ without warning.
 #### Changes
 * `agave-validator exit` now saves bank state before exiting. This enables restarts from local state when snapshot generation is disabled.
 * Added `--accounts-index-limit` to specify the memory limit of the accounts index.
+* Snapshot archive unpacking now uses direct I/O by default to improve performance by bypassing the OS page cache. Use `--no-accounts-db-snapshots-direct-io` to opt out if your file system does not support `O_DIRECT`. Direct I/O will be extended to snapshot creation in a future release.
 ### CLI
 #### Breaking
 * Removed deprecated arguments

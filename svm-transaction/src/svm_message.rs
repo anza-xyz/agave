@@ -96,7 +96,7 @@ pub trait SVMMessage: Debug + SVMStaticMessage {
     }
 
     /// If the message uses a durable nonce, return the pubkey of the nonce account
-    fn get_durable_nonce(&self, require_static_nonce_account: bool) -> Option<&Pubkey> {
+    fn get_durable_nonce(&self) -> Option<&Pubkey> {
         let account_keys = self.account_keys();
         self.instructions_iter()
             .nth(usize::from(NONCED_TX_MARKER_IX_INDEX))
@@ -119,9 +119,7 @@ pub trait SVMMessage: Debug + SVMStaticMessage {
             .and_then(|ix| {
                 ix.accounts.first().and_then(|idx| {
                     let index = usize::from(*idx);
-                    if (require_static_nonce_account && index >= self.static_account_keys().len())
-                        || !self.is_writable(index)
-                    {
+                    if index >= self.static_account_keys().len() || !self.is_writable(index) {
                         None
                     } else {
                         account_keys.get(index)

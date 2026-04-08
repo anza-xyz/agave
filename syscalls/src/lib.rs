@@ -11,8 +11,6 @@ pub use self::{
         SyscallGetSysvar,
     },
 };
-use solana_program_runtime::memory::translate_vm_slice;
-#[allow(deprecated)]
 use {
     crate::mem_ops::is_nonoverlapping,
     solana_big_mod_exp::{BigModExpParams, big_mod_exp},
@@ -26,14 +24,15 @@ use {
         cpi::CpiError,
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
-        memory::MemoryTranslationError,
+        loaded_programs::ProgramRuntimeEnvironment,
+        memory::{MemoryTranslationError, translate_vm_slice},
         stable_log, translate_inner, translate_slice_inner, translate_type_inner,
     },
     solana_pubkey::{MAX_SEED_LEN, MAX_SEEDS, PUBKEY_BYTES, Pubkey, PubkeyError},
     solana_sbpf::{
         declare_builtin_function,
         memory_region::{AccessType, MemoryMapping},
-        program::{BuiltinProgram, SBPFVersion},
+        program::{BuiltinFunctionDefinition, BuiltinProgram, SBPFVersion},
         vm::Config,
     },
     solana_secp256k1_recover::{
@@ -281,21 +280,21 @@ fn consume_compute_meter(invoke_context: &InvokeContext, amount: u64) -> Result<
 // syscalls. If this macro name is changed, or if a new one is added, then
 // gen-syscall-list/build.rs must also be updated.
 macro_rules! register_feature_gated_function {
-    ($result:expr, $is_feature_active:expr, $name:expr, $call:expr $(,)?) => {
+    ($result:expr, $is_feature_active:expr, $name:expr, $call:ty $(,)?) => {
         if $is_feature_active {
-            $result.register_function($name, $call)
+            <$call>::register(&mut $result, $name)
         } else {
             Ok(())
         }
     };
 }
 
-pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
+pub fn create_program_runtime_environment(
     feature_set: &SVMFeatureSet,
     compute_budget: &SVMTransactionExecutionBudget,
     reject_deployment_of_broken_elfs: bool,
     debugging_features: bool,
-) -> Result<BuiltinProgram<InvokeContext<'a, 'ix_data>>, Error> {
+) -> Result<ProgramRuntimeEnvironment, Error> {
     let enable_alt_bn128_syscall = feature_set.enable_alt_bn128_syscall;
     let enable_alt_bn128_compression_syscall = feature_set.enable_alt_bn128_compression_syscall;
     let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall;
@@ -303,8 +302,6 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
     let curve25519_syscall_enabled = feature_set.curve25519_syscall_enabled;
     let enable_bls12_381_syscall = feature_set.enable_bls12_381_syscall;
     let disable_fees_sysvar = feature_set.disable_fees_sysvar;
-    let disable_deploy_of_alloc_free_syscall =
-        reject_deployment_of_broken_elfs && feature_set.disable_deploy_of_alloc_free_syscall;
     let last_restart_slot_syscall_enabled = feature_set.last_restart_slot_sysvar;
     let enable_poseidon_syscall = feature_set.enable_poseidon_syscall;
     let remaining_compute_units_syscall_enabled =
@@ -332,7 +329,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
         enable_address_translation: true,
-        enable_stack_frame_gaps: true,
+        enable_stack_frame_gaps: !feature_set.virtual_address_space_adjustments,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
         enable_register_tracing: debugging_features,
@@ -342,53 +339,47 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         sanitize_user_provided_values: true,
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
-        aligned_memory_mapping: !feature_set.stricter_abi_and_runtime_constraints,
+        aligned_memory_mapping: !feature_set.virtual_address_space_adjustments,
         allow_memory_region_zero: feature_set.enable_sbpf_v3_deployment_and_execution,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
 
-    // NOTE: `register_function` calls are checked by gen-syscall-list to create
+    // NOTE: `register` calls are checked by gen-syscall-list to create
     // the list of syscalls. If this function name is changed, or if a new one
     // is added, then gen-syscall-list/build.rs must also be updated.
     let mut result = BuiltinProgram::new_loader(config);
 
     // Abort
-    result.register_function("abort", SyscallAbort::vm)?;
+    SyscallAbort::register(&mut result, "abort")?;
 
     // Panic
-    result.register_function("sol_panic_", SyscallPanic::vm)?;
+    SyscallPanic::register(&mut result, "sol_panic_")?;
 
     // Logging
-    result.register_function("sol_log_", SyscallLog::vm)?;
-    result.register_function("sol_log_64_", SyscallLogU64::vm)?;
-    result.register_function("sol_log_pubkey", SyscallLogPubkey::vm)?;
-    result.register_function("sol_log_compute_units_", SyscallLogBpfComputeUnits::vm)?;
+    SyscallLog::register(&mut result, "sol_log_")?;
+    SyscallLogU64::register(&mut result, "sol_log_64_")?;
+    SyscallLogPubkey::register(&mut result, "sol_log_pubkey")?;
+    SyscallLogBpfComputeUnits::register(&mut result, "sol_log_compute_units_")?;
 
     // Program defined addresses (PDA)
-    result.register_function(
-        "sol_create_program_address",
-        SyscallCreateProgramAddress::vm,
-    )?;
-    result.register_function(
-        "sol_try_find_program_address",
-        SyscallTryFindProgramAddress::vm,
-    )?;
+    SyscallCreateProgramAddress::register(&mut result, "sol_create_program_address")?;
+    SyscallTryFindProgramAddress::register(&mut result, "sol_try_find_program_address")?;
 
     // Sha256
-    result.register_function("sol_sha256", SyscallHash::vm::<Sha256Hasher>)?;
+    SyscallHash::<Sha256Hasher>::register(&mut result, "sol_sha256")?;
 
     // Keccak256
-    result.register_function("sol_keccak256", SyscallHash::vm::<Keccak256Hasher>)?;
+    SyscallHash::<Keccak256Hasher>::register(&mut result, "sol_keccak256")?;
 
     // Secp256k1 Recover
-    result.register_function("sol_secp256k1_recover", SyscallSecp256k1Recover::vm)?;
+    SyscallSecp256k1Recover::register(&mut result, "sol_secp256k1_recover")?;
 
     // Blake3
     register_feature_gated_function!(
         result,
         blake3_syscall_enabled,
         "sol_blake3",
-        SyscallHash::vm::<Blake3Hasher>,
+        SyscallHash::<Blake3Hasher>
     )?;
 
     // Elliptic Curve Operations
@@ -396,88 +387,82 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         curve25519_syscall_enabled,
         "sol_curve_validate_point",
-        SyscallCurvePointValidation::vm,
+        SyscallCurvePointValidation
     )?;
     register_feature_gated_function!(
         result,
         curve25519_syscall_enabled,
         "sol_curve_group_op",
-        SyscallCurveGroupOps::vm,
+        SyscallCurveGroupOps
     )?;
     register_feature_gated_function!(
         result,
         curve25519_syscall_enabled,
         "sol_curve_multiscalar_mul",
-        SyscallCurveMultiscalarMultiplication::vm,
+        SyscallCurveMultiscalarMultiplication
     )?;
     register_feature_gated_function!(
         result,
         enable_bls12_381_syscall,
         "sol_curve_decompress",
-        SyscallCurveDecompress::vm,
+        SyscallCurveDecompress
     )?;
     register_feature_gated_function!(
         result,
         enable_bls12_381_syscall,
         "sol_curve_pairing_map",
-        SyscallCurvePairingMap::vm,
+        SyscallCurvePairingMap
     )?;
 
     // Sysvars
-    result.register_function("sol_get_clock_sysvar", SyscallGetClockSysvar::vm)?;
-    result.register_function(
-        "sol_get_epoch_schedule_sysvar",
-        SyscallGetEpochScheduleSysvar::vm,
-    )?;
+    SyscallGetClockSysvar::register(&mut result, "sol_get_clock_sysvar")?;
+    SyscallGetEpochScheduleSysvar::register(&mut result, "sol_get_epoch_schedule_sysvar")?;
     register_feature_gated_function!(
         result,
         !disable_fees_sysvar,
         "sol_get_fees_sysvar",
-        SyscallGetFeesSysvar::vm,
+        SyscallGetFeesSysvar
     )?;
-    result.register_function("sol_get_rent_sysvar", SyscallGetRentSysvar::vm)?;
+    SyscallGetRentSysvar::register(&mut result, "sol_get_rent_sysvar")?;
 
     register_feature_gated_function!(
         result,
         last_restart_slot_syscall_enabled,
         "sol_get_last_restart_slot",
-        SyscallGetLastRestartSlotSysvar::vm,
+        SyscallGetLastRestartSlotSysvar
     )?;
 
-    result.register_function(
-        "sol_get_epoch_rewards_sysvar",
-        SyscallGetEpochRewardsSysvar::vm,
-    )?;
+    SyscallGetEpochRewardsSysvar::register(&mut result, "sol_get_epoch_rewards_sysvar")?;
 
     // Memory ops
-    result.register_function("sol_memcpy_", SyscallMemcpy::vm)?;
-    result.register_function("sol_memmove_", SyscallMemmove::vm)?;
-    result.register_function("sol_memset_", SyscallMemset::vm)?;
-    result.register_function("sol_memcmp_", SyscallMemcmp::vm)?;
+    SyscallMemcpy::register(&mut result, "sol_memcpy_")?;
+    SyscallMemmove::register(&mut result, "sol_memmove_")?;
+    SyscallMemset::register(&mut result, "sol_memset_")?;
+    SyscallMemcmp::register(&mut result, "sol_memcmp_")?;
 
     // Processed sibling instructions
-    result.register_function(
+    SyscallGetProcessedSiblingInstruction::register(
+        &mut result,
         "sol_get_processed_sibling_instruction",
-        SyscallGetProcessedSiblingInstruction::vm,
     )?;
 
     // Stack height
-    result.register_function("sol_get_stack_height", SyscallGetStackHeight::vm)?;
+    SyscallGetStackHeight::register(&mut result, "sol_get_stack_height")?;
 
     // Return data
-    result.register_function("sol_set_return_data", SyscallSetReturnData::vm)?;
-    result.register_function("sol_get_return_data", SyscallGetReturnData::vm)?;
+    SyscallSetReturnData::register(&mut result, "sol_set_return_data")?;
+    SyscallGetReturnData::register(&mut result, "sol_get_return_data")?;
 
     // Cross-program invocation
-    result.register_function("sol_invoke_signed_c", SyscallInvokeSignedC::vm)?;
-    result.register_function("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)?;
+    SyscallInvokeSignedC::register(&mut result, "sol_invoke_signed_c")?;
+    SyscallInvokeSignedRust::register(&mut result, "sol_invoke_signed_rust")?;
 
     // Memory allocator
     register_feature_gated_function!(
         result,
-        !disable_deploy_of_alloc_free_syscall,
+        !reject_deployment_of_broken_elfs,
         "sol_alloc_free_",
-        SyscallAllocFree::vm,
+        SyscallAllocFree
     )?;
 
     // Alt_bn128
@@ -485,7 +470,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         enable_alt_bn128_syscall,
         "sol_alt_bn128_group_op",
-        SyscallAltBn128::vm,
+        SyscallAltBn128
     )?;
 
     // Big_mod_exp
@@ -493,7 +478,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         enable_big_mod_exp_syscall,
         "sol_big_mod_exp",
-        SyscallBigModExp::vm,
+        SyscallBigModExp
     )?;
 
     // Poseidon
@@ -501,7 +486,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         enable_poseidon_syscall,
         "sol_poseidon",
-        SyscallPoseidon::vm,
+        SyscallPoseidon
     )?;
 
     // Accessing remaining compute units
@@ -509,7 +494,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         remaining_compute_units_syscall_enabled,
         "sol_remaining_compute_units",
-        SyscallRemainingComputeUnits::vm
+        SyscallRemainingComputeUnits
     )?;
 
     // Alt_bn128_compression
@@ -517,7 +502,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         enable_alt_bn128_compression_syscall,
         "sol_alt_bn128_compression",
-        SyscallAltBn128Compression::vm,
+        SyscallAltBn128Compression
     )?;
 
     // Sysvar getter
@@ -525,7 +510,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         get_sysvar_syscall_enabled,
         "sol_get_sysvar",
-        SyscallGetSysvar::vm,
+        SyscallGetSysvar
     )?;
 
     // Get Epoch Stake
@@ -533,38 +518,13 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         result,
         enable_get_epoch_stake_syscall,
         "sol_get_epoch_stake",
-        SyscallGetEpochStake::vm,
+        SyscallGetEpochStake
     )?;
 
     // Log data
-    result.register_function("sol_log_data", SyscallLogData::vm)?;
+    SyscallLogData::register(&mut result, "sol_log_data")?;
 
-    Ok(result)
-}
-
-pub fn create_program_runtime_environment_v2<'a, 'ix_data>(
-    compute_budget: &SVMTransactionExecutionBudget,
-    debugging_features: bool,
-) -> BuiltinProgram<InvokeContext<'a, 'ix_data>> {
-    let config = Config {
-        max_call_depth: compute_budget.max_call_depth,
-        stack_frame_size: compute_budget.stack_frame_size,
-        enable_address_translation: true, // To be deactivated once we have BTF inference and verification
-        enable_stack_frame_gaps: false,
-        instruction_meter_checkpoint_distance: 10000,
-        enable_instruction_meter: true,
-        enable_register_tracing: debugging_features,
-        enable_symbol_and_section_labels: debugging_features,
-        reject_broken_elfs: true,
-        noop_instruction_rate: 256,
-        sanitize_user_provided_values: true,
-        enabled_sbpf_versions: SBPFVersion::Reserved..=SBPFVersion::Reserved,
-        optimize_rodata: true,
-        aligned_memory_mapping: true,
-        allow_memory_region_zero: true,
-        // Warning, do not use `Config::default()` so that configuration here is explicit.
-    };
-    BuiltinProgram::new_loader(config)
+    Ok(ProgramRuntimeEnvironment::from(result))
 }
 
 fn translate_type<T>(
@@ -609,7 +569,7 @@ fn translate_string_and_do(
 }
 
 // Do not use this directly
-#[allow(clippy::mut_from_ref)]
+#[expect(clippy::mut_from_ref)]
 fn translate_type_mut<T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
@@ -618,7 +578,7 @@ fn translate_type_mut<T>(
     translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
 }
 // Do not use this directly
-#[allow(clippy::mut_from_ref)]
+#[expect(clippy::mut_from_ref)]
 fn translate_slice_mut<T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
@@ -727,7 +687,7 @@ declare_builtin_function!(
     /// Causes the SBF program to be halted immediately
     SyscallAbort,
     fn rust(
-        _invoke_context: &mut InvokeContext,
+        _invoke_context: &mut InvokeContext<'_, '_>,
         _arg1: u64,
         _arg2: u64,
         _arg3: u64,
@@ -744,7 +704,7 @@ declare_builtin_function!(
     /// Causes the SBF program to be halted immediately
     SyscallPanic,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         file: u64,
         len: u64,
         line: u64,
@@ -773,7 +733,7 @@ declare_builtin_function!(
     /// to the VM to use for enforcement.
     SyscallAllocFree,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         size: u64,
         free_addr: u64,
         _arg3: u64,
@@ -789,7 +749,7 @@ declare_builtin_function!(
         let Ok(layout) = Layout::from_size_align(size as usize, align) else {
             return Ok(0);
         };
-        let allocator = &mut invoke_context.get_syscall_context_mut()?.allocator;
+        let allocator = &mut invoke_context.get_memory_context_mut()?.allocator;
         if free_addr == 0 {
             match allocator.alloc(layout) {
                 Ok(addr) => Ok(addr),
@@ -831,7 +791,7 @@ declare_builtin_function!(
     /// Create a program address
     SyscallCreateProgramAddress,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         seeds_addr: u64,
         seeds_len: u64,
         program_id_addr: u64,
@@ -869,7 +829,7 @@ declare_builtin_function!(
     /// Create a program address
     SyscallTryFindProgramAddress,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         seeds_addr: u64,
         seeds_len: u64,
         program_id_addr: u64,
@@ -921,7 +881,7 @@ declare_builtin_function!(
     /// secp256k1_recover
     SyscallSecp256k1Recover,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         hash_addr: u64,
         recovery_id_val: u64,
         signature_addr: u64,
@@ -983,7 +943,7 @@ declare_builtin_function!(
     // - BLS12-381
     SyscallCurvePointValidation,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
         point_addr: u64,
         _arg3: u64,
@@ -1049,20 +1009,20 @@ declare_builtin_function!(
                     .bls12_381_g1_validate_cost;
                 consume_compute_meter(invoke_context, cost)?;
 
-                let point = translate_type::<agave_bls12_381::PodG1Point>(
+                let point = translate_type::<solana_bls12_381_syscall::PodG1Point>(
                     memory_mapping,
                     point_addr,
                     invoke_context.get_check_aligned(),
                 )?;
 
                 let endianness = if curve_id == BLS12_381_G1_LE {
-                    agave_bls12_381::Endianness::LE
+                    solana_bls12_381_syscall::Endianness::LE
                 } else {
-                    agave_bls12_381::Endianness::BE
+                    solana_bls12_381_syscall::Endianness::BE
                 };
 
-                if agave_bls12_381::bls12_381_g1_point_validation(
-                    agave_bls12_381::Version::V0,
+                if solana_bls12_381_syscall::bls12_381_g1_point_validation(
+                    solana_bls12_381_syscall::Version::V0,
                     point,
                     endianness,
                 ) {
@@ -1077,20 +1037,20 @@ declare_builtin_function!(
                     .bls12_381_g2_validate_cost;
                 consume_compute_meter(invoke_context, cost)?;
 
-                let point = translate_type::<agave_bls12_381::PodG2Point>(
+                let point = translate_type::<solana_bls12_381_syscall::PodG2Point>(
                     memory_mapping,
                     point_addr,
                     invoke_context.get_check_aligned(),
                 )?;
 
                 let endianness = if curve_id == BLS12_381_G2_LE {
-                    agave_bls12_381::Endianness::LE
+                    solana_bls12_381_syscall::Endianness::LE
                 } else {
-                    agave_bls12_381::Endianness::BE
+                    solana_bls12_381_syscall::Endianness::BE
                 };
 
-                if agave_bls12_381::bls12_381_g2_point_validation(
-                    agave_bls12_381::Version::V0,
+                if solana_bls12_381_syscall::bls12_381_g2_point_validation(
+                    solana_bls12_381_syscall::Version::V0,
                     point,
                     endianness,
                 ) {
@@ -1117,7 +1077,7 @@ declare_builtin_function!(
     // - BLS12-381
     SyscallCurveDecompress,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
         point_addr: u64,
         result_addr: u64,
@@ -1127,7 +1087,7 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         use {
             crate::bls12_381_curve_id::*,
-            agave_bls12_381::{
+            solana_bls12_381_syscall::{
                 PodG1Compressed as PodBLSG1Compressed, PodG1Point as PodBLSG1Point,
                 PodG2Compressed as PodBLSG2Compressed, PodG2Point as PodBLSG2Point,
             },
@@ -1147,13 +1107,13 @@ declare_builtin_function!(
                 )?;
 
                 let endianness = if curve_id == BLS12_381_G1_LE {
-                    agave_bls12_381::Endianness::LE
+                    solana_bls12_381_syscall::Endianness::LE
                 } else {
-                    agave_bls12_381::Endianness::BE
+                    solana_bls12_381_syscall::Endianness::BE
                 };
 
-                if let Some(affine_point) = agave_bls12_381::bls12_381_g1_decompress(
-                    agave_bls12_381::Version::V0,
+                if let Some(affine_point) = solana_bls12_381_syscall::bls12_381_g1_decompress(
+                    solana_bls12_381_syscall::Version::V0,
                     compressed_point,
                     endianness,
                 ) {
@@ -1181,13 +1141,13 @@ declare_builtin_function!(
                 )?;
 
                 let endianness = if curve_id == BLS12_381_G2_LE {
-                    agave_bls12_381::Endianness::LE
+                    solana_bls12_381_syscall::Endianness::LE
                 } else {
-                    agave_bls12_381::Endianness::BE
+                    solana_bls12_381_syscall::Endianness::BE
                 };
 
-                if let Some(affine_point) = agave_bls12_381::bls12_381_g2_decompress(
-                    agave_bls12_381::Version::V0,
+                if let Some(affine_point) = solana_bls12_381_syscall::bls12_381_g2_decompress(
+                    solana_bls12_381_syscall::Version::V0,
                     compressed_point,
                     endianness,
                 ) {
@@ -1215,7 +1175,7 @@ declare_builtin_function!(
     // - BLS12-381
     SyscallCurveGroupOps,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
         group_op: u64,
         left_input_addr: u64,
@@ -1225,7 +1185,7 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         use {
             crate::bls12_381_curve_id::*,
-            agave_bls12_381::{
+            solana_bls12_381_syscall::{
                 PodG1Point as PodBLSG1Point, PodG2Point as PodBLSG2Point, PodScalar as PodBLSScalar,
             },
             solana_curve25519::{
@@ -1444,9 +1404,9 @@ declare_builtin_function!(
 
             BLS12_381_G1_LE | BLS12_381_G1_BE => {
                 let endianness = if curve_id == BLS12_381_G1_LE {
-                    agave_bls12_381::Endianness::LE
+                    solana_bls12_381_syscall::Endianness::LE
                 } else {
-                    agave_bls12_381::Endianness::BE
+                    solana_bls12_381_syscall::Endianness::BE
                 };
 
                 match group_op {
@@ -1465,12 +1425,14 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                         )?;
 
-                        if let Some(result_point) = agave_bls12_381::bls12_381_g1_addition(
-                            agave_bls12_381::Version::V0,
-                            left_point,
-                            right_point,
-                            endianness,
-                        ) {
+                        if let Some(result_point) =
+                            solana_bls12_381_syscall::bls12_381_g1_addition_unchecked(
+                                solana_bls12_381_syscall::Version::V0,
+                                left_point,
+                                right_point,
+                                endianness,
+                            )
+                        {
                             translate_mut!(
                                 memory_mapping,
                                 invoke_context.get_check_aligned(),
@@ -1499,12 +1461,14 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                         )?;
 
-                        if let Some(result_point) = agave_bls12_381::bls12_381_g1_subtraction(
-                            agave_bls12_381::Version::V0,
-                            left_point,
-                            right_point,
-                            endianness,
-                        ) {
+                        if let Some(result_point) =
+                            solana_bls12_381_syscall::bls12_381_g1_subtraction_unchecked(
+                                solana_bls12_381_syscall::Version::V0,
+                                left_point,
+                                right_point,
+                                endianness,
+                            )
+                        {
                             translate_mut!(
                                 memory_mapping,
                                 invoke_context.get_check_aligned(),
@@ -1533,12 +1497,14 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                         )?;
 
-                        if let Some(result_point) = agave_bls12_381::bls12_381_g1_multiplication(
-                            agave_bls12_381::Version::V0,
-                            point,
-                            scalar,
-                            endianness,
-                        ) {
+                        if let Some(result_point) =
+                            solana_bls12_381_syscall::bls12_381_g1_multiplication(
+                                solana_bls12_381_syscall::Version::V0,
+                                point,
+                                scalar,
+                                endianness,
+                            )
+                        {
                             translate_mut!(
                                 memory_mapping,
                                 invoke_context.get_check_aligned(),
@@ -1557,9 +1523,9 @@ declare_builtin_function!(
             // New BLS12-381 G2 Implementation
             BLS12_381_G2_LE | BLS12_381_G2_BE => {
                 let endianness = if curve_id == BLS12_381_G2_LE {
-                    agave_bls12_381::Endianness::LE
+                    solana_bls12_381_syscall::Endianness::LE
                 } else {
-                    agave_bls12_381::Endianness::BE
+                    solana_bls12_381_syscall::Endianness::BE
                 };
 
                 match group_op {
@@ -1578,12 +1544,14 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                         )?;
 
-                        if let Some(result_point) = agave_bls12_381::bls12_381_g2_addition(
-                            agave_bls12_381::Version::V0,
-                            left_point,
-                            right_point,
-                            endianness,
-                        ) {
+                        if let Some(result_point) =
+                            solana_bls12_381_syscall::bls12_381_g2_addition_unchecked(
+                                solana_bls12_381_syscall::Version::V0,
+                                left_point,
+                                right_point,
+                                endianness,
+                            )
+                        {
                             translate_mut!(
                                 memory_mapping,
                                 invoke_context.get_check_aligned(),
@@ -1612,12 +1580,14 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                         )?;
 
-                        if let Some(result_point) = agave_bls12_381::bls12_381_g2_subtraction(
-                            agave_bls12_381::Version::V0,
-                            left_point,
-                            right_point,
-                            endianness,
-                        ) {
+                        if let Some(result_point) =
+                            solana_bls12_381_syscall::bls12_381_g2_subtraction_unchecked(
+                                solana_bls12_381_syscall::Version::V0,
+                                left_point,
+                                right_point,
+                                endianness,
+                            )
+                        {
                             translate_mut!(
                                 memory_mapping,
                                 invoke_context.get_check_aligned(),
@@ -1646,12 +1616,14 @@ declare_builtin_function!(
                             invoke_context.get_check_aligned(),
                         )?;
 
-                        if let Some(result_point) = agave_bls12_381::bls12_381_g2_multiplication(
-                            agave_bls12_381::Version::V0,
-                            point,
-                            scalar,
-                            endianness,
-                        ) {
+                        if let Some(result_point) =
+                            solana_bls12_381_syscall::bls12_381_g2_multiplication(
+                                solana_bls12_381_syscall::Version::V0,
+                                point,
+                                scalar,
+                                endianness,
+                            )
+                        {
                             translate_mut!(
                                 memory_mapping,
                                 invoke_context.get_check_aligned(),
@@ -1685,7 +1657,7 @@ declare_builtin_function!(
     // - Curve25519 Edwards and Ristretto representations
     SyscallCurveMultiscalarMultiplication,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
         scalars_addr: u64,
         points_addr: u64,
@@ -1803,7 +1775,7 @@ declare_builtin_function!(
     // - BLS12-381
     SyscallCurvePairingMap,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         curve_id: u64,
         num_pairs: u64,
         g1_points_addr: u64,
@@ -1813,7 +1785,7 @@ declare_builtin_function!(
     ) -> Result<u64, Error> {
         use {
             crate::bls12_381_curve_id::*,
-            agave_bls12_381::{
+            solana_bls12_381_syscall::{
                 PodG1Point as PodBLSG1Point, PodG2Point as PodBLSG2Point,
                 PodGtElement as PodBLSGtElement,
             },
@@ -1846,13 +1818,13 @@ declare_builtin_function!(
                 )?;
 
                 let endianness = if curve_id == BLS12_381_LE {
-                    agave_bls12_381::Endianness::LE
+                    solana_bls12_381_syscall::Endianness::LE
                 } else {
-                    agave_bls12_381::Endianness::BE
+                    solana_bls12_381_syscall::Endianness::BE
                 };
 
-                if let Some(gt_element) = agave_bls12_381::bls12_381_pairing_map(
-                    agave_bls12_381::Version::V0,
+                if let Some(gt_element) = solana_bls12_381_syscall::bls12_381_pairing_map(
+                    solana_bls12_381_syscall::Version::V0,
                     g1_points,
                     g2_points,
                     endianness,
@@ -1879,7 +1851,7 @@ declare_builtin_function!(
     /// Set return data
     SyscallSetReturnData,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         addr: u64,
         len: u64,
         _arg3: u64,
@@ -1927,7 +1899,7 @@ declare_builtin_function!(
     /// Get return data
     SyscallGetReturnData,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         return_data_addr: u64,
         length: u64,
         program_id_addr: u64,
@@ -1975,7 +1947,7 @@ declare_builtin_function!(
     /// Get a processed sigling instruction
     SyscallGetProcessedSiblingInstruction,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         index: u64,
         meta_addr: u64,
         program_id_addr: u64,
@@ -1987,18 +1959,30 @@ declare_builtin_function!(
 
         consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
-        // Reverse iterate through the instruction trace,
-        // ignoring anything except instructions on the same level
         let stack_height = invoke_context.get_stack_height();
-        let instruction_trace_length = invoke_context
-            .transaction_context
-            .get_instruction_trace_length();
         let mut reverse_index_at_stack_height = 0;
         let mut found_instruction_context = None;
-        for index_in_trace in (0..instruction_trace_length).rev() {
+        let current_ix_caller = invoke_context.transaction_context.get_current_instruction_context()?.get_index_of_caller();
+
+        // Either we only search for top level instructions or CPIs, depending on the stack height.
+        let range = if stack_height == 1 {
+            0..invoke_context.transaction_context.next_top_level_instruction_index()
+        } else {
+            let end = invoke_context.transaction_context.get_instruction_trace_length();
+            let start = end.saturating_sub(invoke_context.transaction_context.number_of_cpis_in_trace());
+            start..end
+        };
+
+        for index_in_trace in range.rev() {
             let instruction_context = invoke_context
                 .transaction_context
                 .get_instruction_context_at_index_in_trace(index_in_trace)?;
+            // If we are searching through CPIs, sibling instructions must have the same caller
+            // but instructions from different callers are interspaced in the frame.
+            if instruction_context.get_index_of_caller() != current_ix_caller {
+                continue;
+            }
+
             if instruction_context.get_stack_height() < stack_height {
                 break;
             }
@@ -2063,7 +2047,7 @@ declare_builtin_function!(
     /// Get current call stack height
     SyscallGetStackHeight,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         _arg1: u64,
         _arg2: u64,
         _arg3: u64,
@@ -2083,7 +2067,7 @@ declare_builtin_function!(
     /// alt_bn128 group operations
     SyscallAltBn128,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         group_op: u64,
         input_addr: u64,
         input_size: u64,
@@ -2223,14 +2207,7 @@ declare_builtin_function!(
                 )
             }
             ALT_BN128_PAIRING_BE => {
-                let version = if invoke_context
-                    .get_feature_set()
-                    .fix_alt_bn128_pairing_length_check {
-                    VersionedPairing::V1
-                } else {
-                    VersionedPairing::V0
-                };
-                alt_bn128_versioned_pairing(version, input, Endianness::BE)
+                alt_bn128_versioned_pairing(VersionedPairing::V1, input, Endianness::BE)
             }
             ALT_BN128_PAIRING_LE => {
                 alt_bn128_versioned_pairing(VersionedPairing::V1, input, Endianness::LE)
@@ -2256,7 +2233,7 @@ declare_builtin_function!(
     /// Big integer modular exponentiation
     SyscallBigModExp,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         params: u64,
         return_value: u64,
         _arg3: u64,
@@ -2331,7 +2308,7 @@ declare_builtin_function!(
     // Poseidon
     SyscallPoseidon,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         parameters: u64,
         endianness: u64,
         vals_addr: u64,
@@ -2397,7 +2374,7 @@ declare_builtin_function!(
     /// Read remaining compute units
     SyscallRemainingComputeUnits,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         _arg1: u64,
         _arg2: u64,
         _arg3: u64,
@@ -2417,7 +2394,7 @@ declare_builtin_function!(
     /// alt_bn128 g1 and g2 compression and decompression
     SyscallAltBn128Compression,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         op: u64,
         input_addr: u64,
         input_size: u64,
@@ -2549,7 +2526,7 @@ declare_builtin_function!(
     // Generic Hashing Syscall
     SyscallHash<H: HasherImpl>,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         vals_addr: u64,
         vals_len: u64,
         result_addr: u64,
@@ -2611,7 +2588,7 @@ declare_builtin_function!(
     // Get Epoch Stake Syscall
     SyscallGetEpochStake,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'_, '_>,
         var_addr: u64,
         _arg2: u64,
         _arg3: u64,
@@ -2697,7 +2674,7 @@ mod tests {
         solana_program::program::check_type_assumptions,
         solana_program_runtime::{
             execution_budget::MAX_HEAP_FRAME_BYTES,
-            invoke_context::{BpfAllocator, InvokeContext, SyscallContext},
+            invoke_context::{BpfAllocator, InvokeContext, MemoryContext},
             memory::address_is_aligned,
             with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
         },
@@ -3179,12 +3156,7 @@ mod tests {
     macro_rules! setup_alloc_test {
         ($invoke_context:ident, $memory_mapping:ident, $heap:ident) => {
             prepare_mockup!($invoke_context, program_id, bpf_loader::id());
-            $invoke_context
-                .set_syscall_context(SyscallContext {
-                    allocator: BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
-                    accounts_metadata: Vec::new(),
-                })
-                .unwrap();
+            use solana_sbpf::vm::ContextObject;
             let config = Config {
                 aligned_memory_mapping: false,
                 ..Config::default()
@@ -3195,8 +3167,15 @@ mod tests {
                 $heap.as_slice_mut(),
                 ebpf::MM_HEAP_START,
             )];
-            let mut $memory_mapping =
-                MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap();
+            let mapping = MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap();
+            $invoke_context
+                .set_memory_context(MemoryContext::new(
+                    BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
+                    Vec::new(),
+                    mapping,
+                ))
+                .unwrap();
+            let $memory_mapping = unsafe { $invoke_context.active_mapping_ptr().as_mut() };
         };
     }
 
@@ -3212,7 +3191,7 @@ mod tests {
                 0,
                 0,
                 0,
-                &mut memory_mapping,
+                memory_mapping,
             );
             assert_ne!(result.unwrap(), 0);
             let result = SyscallAllocFree::rust(
@@ -3222,18 +3201,11 @@ mod tests {
                 0,
                 0,
                 0,
-                &mut memory_mapping,
+                memory_mapping,
             );
             assert_eq!(result.unwrap(), 0);
-            let result = SyscallAllocFree::rust(
-                &mut invoke_context,
-                u64::MAX,
-                0,
-                0,
-                0,
-                0,
-                &mut memory_mapping,
-            );
+            let result =
+                SyscallAllocFree::rust(&mut invoke_context, u64::MAX, 0, 0, 0, 0, memory_mapping);
             assert_eq!(result.unwrap(), 0);
         }
 
@@ -3242,7 +3214,7 @@ mod tests {
             setup_alloc_test!(invoke_context, memory_mapping, heap);
             for _ in 0..100 {
                 let result =
-                    SyscallAllocFree::rust(&mut invoke_context, 1, 0, 0, 0, 0, &mut memory_mapping);
+                    SyscallAllocFree::rust(&mut invoke_context, 1, 0, 0, 0, 0, memory_mapping);
                 assert_ne!(result.unwrap(), 0);
             }
             let result = SyscallAllocFree::rust(
@@ -3252,7 +3224,7 @@ mod tests {
                 0,
                 0,
                 0,
-                &mut memory_mapping,
+                memory_mapping,
             );
             assert_eq!(result.unwrap(), 0);
         }
@@ -3262,7 +3234,7 @@ mod tests {
             setup_alloc_test!(invoke_context, memory_mapping, heap);
             for _ in 0..12 {
                 let result =
-                    SyscallAllocFree::rust(&mut invoke_context, 1, 0, 0, 0, 0, &mut memory_mapping);
+                    SyscallAllocFree::rust(&mut invoke_context, 1, 0, 0, 0, 0, memory_mapping);
                 assert_ne!(result.unwrap(), 0);
             }
             let result = SyscallAllocFree::rust(
@@ -3272,7 +3244,7 @@ mod tests {
                 0,
                 0,
                 0,
-                &mut memory_mapping,
+                memory_mapping,
             );
             assert_eq!(result.unwrap(), 0);
         }
@@ -3288,7 +3260,7 @@ mod tests {
                 0,
                 0,
                 0,
-                &mut memory_mapping,
+                memory_mapping,
             );
             let address = result.unwrap();
             assert_ne!(address, 0);
@@ -3345,7 +3317,7 @@ mod tests {
                 * 4,
         );
 
-        let result = SyscallHash::rust::<Sha256Hasher>(
+        let result = SyscallHash::<Sha256Hasher>::rust(
             &mut invoke_context,
             ro_va,
             ro_len,
@@ -3358,7 +3330,7 @@ mod tests {
 
         let hash_local = hashv(&[bytes1.as_ref(), bytes2.as_ref()]).to_bytes();
         assert_eq!(hash_result, hash_local);
-        let result = SyscallHash::rust::<Sha256Hasher>(
+        let result = SyscallHash::<Sha256Hasher>::rust(
             &mut invoke_context,
             ro_va - 1, // AccessViolation
             ro_len,
@@ -3368,7 +3340,7 @@ mod tests {
             &mut memory_mapping,
         );
         assert_access_violation!(result, ro_va - 1, 32);
-        let result = SyscallHash::rust::<Sha256Hasher>(
+        let result = SyscallHash::<Sha256Hasher>::rust(
             &mut invoke_context,
             ro_va,
             ro_len + 1, // AccessViolation
@@ -3378,7 +3350,7 @@ mod tests {
             &mut memory_mapping,
         );
         assert_access_violation!(result, ro_va, 48);
-        let result = SyscallHash::rust::<Sha256Hasher>(
+        let result = SyscallHash::<Sha256Hasher>::rust(
             &mut invoke_context,
             ro_va,
             ro_len,
@@ -3388,7 +3360,7 @@ mod tests {
             &mut memory_mapping,
         );
         assert_access_violation!(result, rw_va - 1, HASH_BYTES as u64);
-        let result = SyscallHash::rust::<Sha256Hasher>(
+        let result = SyscallHash::<Sha256Hasher>::rust(
             &mut invoke_context,
             ro_va,
             ro_len,
@@ -4132,8 +4104,8 @@ mod tests {
         };
 
         let mut src_rent = create_filled_type::<Rent>(false);
-        src_rent.lamports_per_byte_year = 1;
-        src_rent.exemption_threshold = 2.0;
+        src_rent.lamports_per_byte = 1;
+        src_rent.exemption_threshold = 1.0f64.to_le_bytes();
         src_rent.burn_percent = 3;
 
         let mut src_rewards = create_filled_type::<EpochRewards>(false);
@@ -4376,7 +4348,7 @@ mod tests {
             assert_eq!(got_rent_obj, src_rent);
 
             let mut clean_rent = create_filled_type::<Rent>(true);
-            clean_rent.lamports_per_byte_year = src_rent.lamports_per_byte_year;
+            clean_rent.lamports_per_byte = src_rent.lamports_per_byte;
             clean_rent.exemption_threshold = src_rent.exemption_threshold;
             clean_rent.burn_percent = src_rent.burn_percent;
             assert!(are_bytes_equal(&got_rent_obj, &clean_rent));
@@ -5250,17 +5222,16 @@ mod tests {
         */
 
         let top_level = [b'A', b'B', b'C'];
-        // To be uncommented when we reoder the instruction trace
-        // for (idx, ix) in top_level.iter().enumerate() {
-        //     invoke_context
-        //         .transaction_context
-        //         .configure_top_level_instruction_for_tests(
-        //             0,
-        //             vec![InstructionAccount::new(idx as u16, false, false)],
-        //             vec![*ix],
-        //         )
-        //         .unwrap();
-        // }
+        for (idx, ix) in top_level.iter().enumerate() {
+            invoke_context
+                .transaction_context
+                .configure_top_level_instruction_for_tests(
+                    0,
+                    vec![InstructionAccount::new(idx as u16, false, false)],
+                    vec![*ix],
+                )
+                .unwrap();
+        }
 
         /*
         The trace looks like this:
@@ -5269,25 +5240,9 @@ mod tests {
          */
 
         // Execute Instr A
-        invoke_context
-            .transaction_context
-            .configure_top_level_instruction_for_tests(
-                0,
-                vec![InstructionAccount::new(0, false, false)],
-                vec![*top_level.first().unwrap()],
-            )
-            .unwrap();
         invoke_context.transaction_context.push().unwrap();
         invoke_context.transaction_context.pop().unwrap();
         // Execute Instr B
-        invoke_context
-            .transaction_context
-            .configure_top_level_instruction_for_tests(
-                0,
-                vec![InstructionAccount::new(1, false, false)],
-                vec![*top_level.get(1).unwrap()],
-            )
-            .unwrap();
         invoke_context.transaction_context.push().unwrap();
         // CPI into B1
         invoke_context
@@ -5587,14 +5542,6 @@ mod tests {
         invoke_context.transaction_context.pop().unwrap();
 
         // Execute C
-        invoke_context
-            .transaction_context
-            .configure_top_level_instruction_for_tests(
-                0,
-                vec![InstructionAccount::new(2, false, false)],
-                vec![*top_level.get(2).unwrap()],
-            )
-            .unwrap();
         invoke_context.transaction_context.push().unwrap();
 
         // Invoking the syscall from B with index zero should return ix C
@@ -6067,13 +6014,13 @@ mod tests {
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
         let feature_set = SVMFeatureSet::default();
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
             &program_runtime_environments,
             &sysvar_cache,
         );
@@ -6133,13 +6080,13 @@ mod tests {
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
         let feature_set = SVMFeatureSet::default();
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockCallback {},
             &feature_set,
-            &program_runtime_environments,
             &program_runtime_environments,
             &sysvar_cache,
         );
@@ -7776,5 +7723,43 @@ mod tests {
         );
 
         assert_eq!(0, result.unwrap());
+    }
+
+    #[test]
+    fn test_sol_alloc_free_registration() {
+        let feature_set = SVMFeatureSet::all_enabled();
+        let compute_budget = SVMTransactionExecutionBudget::default();
+
+        // Execution environment: sol_alloc_free_ should be registered.
+        {
+            let env = create_program_runtime_environment(
+                &feature_set,
+                &compute_budget,
+                /* reject_deployment_of_broken_elfs */ false,
+                /* debugging_features */ false,
+            )
+            .unwrap();
+            assert!(
+                env.get_function_registry()
+                    .lookup_by_name(b"sol_alloc_free_")
+                    .is_some()
+            );
+        }
+
+        // Deployment environment: sol_alloc_free_ should NOT be registered.
+        {
+            let env = create_program_runtime_environment(
+                &feature_set,
+                &compute_budget,
+                /* reject_deployment_of_broken_elfs */ true,
+                /* debugging_features */ false,
+            )
+            .unwrap();
+            assert!(
+                env.get_function_registry()
+                    .lookup_by_name(b"sol_alloc_free_")
+                    .is_none()
+            );
+        }
     }
 }

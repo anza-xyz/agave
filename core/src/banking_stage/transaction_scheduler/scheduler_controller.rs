@@ -21,7 +21,6 @@ use {
         },
         validator::SchedulerPacing,
     },
-    solana_clock::MAX_PROCESSING_AGE,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
@@ -226,18 +225,15 @@ where
                 let scheduling_budget = cost_pacer
                     .expect("cost pacer must be set for Consume")
                     .scheduling_budget(now);
-                let (scheduling_summary, schedule_time_us) = measure_us!(
-                    self.scheduler.schedule(
-                        &mut self.container,
-                        scheduling_budget,
-                        bank.feature_set
-                            .is_active(&agave_feature_set::relax_intrabatch_account_locks::ID),
-                        |txs, results| {
-                            Self::pre_graph_filter(txs, results, bank, MAX_PROCESSING_AGE)
-                        },
-                        |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
-                    )?
-                );
+                let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
+                    &mut self.container,
+                    scheduling_budget,
+                    bank.feature_set.snapshot().relax_intrabatch_account_locks,
+                    |txs, results| {
+                        Self::pre_graph_filter(txs, results, bank, bank.max_processing_age())
+                    },
+                    |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
+                )?);
 
                 self.count_metrics.update(|count_metrics| {
                     count_metrics.num_scheduled += scheduling_summary.num_scheduled;
@@ -359,7 +355,7 @@ where
         let results = bank.check_transactions::<R::Transaction>(
             &txs,
             &lock_results,
-            MAX_PROCESSING_AGE,
+            bank.max_processing_age(),
             &mut error_counters,
         );
 
@@ -493,7 +489,7 @@ mod tests {
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
-        solana_runtime_transaction::transaction_meta::StaticMeta,
+        solana_runtime_transaction::transaction_meta::TransactionMeta,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::Transaction,
@@ -541,7 +537,7 @@ mod tests {
             ..
         } = create_slow_genesis_config(u64::MAX);
         genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
-        let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let shared_leader_state = SharedLeaderState::new(0, None, None);
 

@@ -4,10 +4,11 @@ use {
     log::debug,
     solana_account::{ReadableAccount, WritableAccount},
     solana_fee::FeeFeatures,
-    solana_fee_structure::FeeBudgetLimits,
     solana_pubkey::Pubkey,
     solana_reward_info::RewardType,
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_runtime_transaction::{
+        transaction_meta::TransactionConfiguration, transaction_with_meta::TransactionWithMeta,
+    },
     solana_svm::rent_calculator::{get_account_rent_state, transition_allowed},
     solana_system_interface::program as system_program,
     std::{result::Result, sync::atomic::Ordering::Relaxed},
@@ -37,13 +38,13 @@ impl FeeDistribution {
 }
 
 impl Bank {
-    // Distribute collected transaction fees for this slot to leader_id (= current leader).
+    // Distribute collected transaction fees for this slot to leader.id (= current leader).
     //
     // Each validator is incentivized to process more transactions to earn more transaction fees.
     // Transaction fees are rewarded for the computing resource utilization cost, directly
     // proportional to their actual processing power.
     //
-    // leader_id is rotated according to stake-weighted leader schedule. So the opportunity of
+    // leader.id is rotated according to stake-weighted leader schedule. So the opportunity of
     // earning transaction fees are fairly distributed by stake. And missing the opportunity
     // (not producing a block as a leader) earns nothing. So, being online is incentivized as a
     // form of transaction fees as well.
@@ -64,15 +65,12 @@ impl Bank {
     pub fn calculate_reward_for_transaction(
         &self,
         transaction: &impl TransactionWithMeta,
-        fee_budget_limits: &FeeBudgetLimits,
+        transaction_configuration: &TransactionConfiguration,
     ) -> u64 {
-        let (_last_hash, last_lamports_per_signature) =
-            self.last_blockhash_and_lamports_per_signature();
         let fee_details = solana_fee::calculate_fee_details(
             transaction,
-            last_lamports_per_signature == 0,
             self.fee_structure().lamports_per_signature,
-            fee_budget_limits.prioritization_fee,
+            transaction_configuration.priority_fee_lamports,
             FeeFeatures::from(self.feature_set.as_ref()),
         );
         let FeeDistribution {
@@ -114,10 +112,10 @@ impl Bank {
             return 0;
         }
 
-        match self.deposit_fees(&self.leader_id, deposit) {
+        match self.deposit_fees(&self.leader.id, deposit) {
             Ok(post_balance) => {
                 self.rewards.write().unwrap().push((
-                    self.leader_id,
+                    self.leader.id,
                     RewardInfo {
                         reward_type: RewardType::Fee,
                         lamports: deposit as i64,
@@ -130,7 +128,7 @@ impl Bank {
             Err(err) => {
                 debug!(
                     "Burned {} lamport tx fee instead of sending to {} due to {}",
-                    deposit, self.leader_id, err
+                    deposit, self.leader.id, err
                 );
                 datapoint_warn!(
                     "bank-burned_fee",

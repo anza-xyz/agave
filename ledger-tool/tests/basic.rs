@@ -1,5 +1,4 @@
 use {
-    assert_cmd::prelude::*,
     solana_ledger::{
         blockstore, blockstore::Blockstore, create_new_tmp_ledger_auto_delete,
         genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete,
@@ -11,8 +10,7 @@ use {
 };
 
 fn run_ledger_tool(args: &[&str]) -> Output {
-    Command::cargo_bin(env!("CARGO_PKG_NAME"))
-        .unwrap()
+    Command::new(assert_cmd::cargo::cargo_bin!(env!("CARGO_PKG_NAME")))
         .args(args)
         .output()
         .unwrap()

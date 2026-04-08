@@ -229,6 +229,7 @@ impl RpcSender for MockSender {
                                         stack_height: Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32),
                                     }],
                                     address_table_lookups: None,
+                                    transaction_config: None,
                                 })
                         }),
                     meta: Some(UiTransactionStatusMeta {
@@ -326,7 +327,8 @@ impl RpcSender for MockSender {
                         vote_pubkey: PUBKEY.to_string(),
                         node_pubkey: PUBKEY.to_string(),
                         activated_stake: 0,
-                        commission: 0,
+                        commission: 100,
+                        inflation_rewards_commission_bps: Some(10_000), // 100 * 100
                         epoch_vote_account: false,
                         epoch_credits: vec![],
                         last_vote: 0,
@@ -369,7 +371,7 @@ impl RpcSender for MockSender {
                 let version = Version::default();
                 json!(RpcVersionInfo {
                     solana_core: version.to_string(),
-                    feature_set: Some(version.feature_set),
+                    feature_set: Some(version.feature_set()),
                 })
             }
             "getLatestBlockhash" => serde_json::to_value(Response {
@@ -396,7 +398,7 @@ impl RpcSender for MockSender {
                 rpc: Some(SocketAddr::from(([10, 239, 6, 48], 8899))),
                 pubsub: Some(SocketAddr::from(([10, 239, 6, 48], 8900))),
                 version: Some("1.0.0 c375ce1f".to_string()),
-                client_id: Some(0),
+                client_id: Some("Agave".to_string()),
                 feature_set: None,
                 shred_version: None,
             }])?,

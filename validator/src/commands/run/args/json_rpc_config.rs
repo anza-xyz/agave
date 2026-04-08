@@ -18,6 +18,7 @@ static DEFAULT_RPC_BLOCKING_THREADS: LazyLock<String> =
 const DEFAULT_RPC_NICENESS_ADJ: &str = "0";
 static DEFAULT_RPC_MAX_REQUEST_BODY_SIZE: LazyLock<String> =
     LazyLock::new(|| solana_rpc::rpc::MAX_REQUEST_BODY_SIZE.to_string());
+const MB: usize = 1_024 * 1_024;
 
 impl FromClapArgMatches for JsonRpcConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -54,6 +55,13 @@ impl FromClapArgMatches for JsonRpcConfig {
             full_api: matches.is_present("full_rpc_api"),
             rpc_scan_and_fix_roots: matches.is_present("rpc_scan_and_fix_roots"),
             max_request_body_size: Some(value_t!(matches, "rpc_max_request_body_size", usize)?),
+            scan_results_limit_bytes: value_t!(
+                matches,
+                "accounts_index_scan_results_limit_mb",
+                usize
+            )
+            .ok()
+            .map(|mb| mb * MB),
             disable_health_check: false,
         })
     }
@@ -168,6 +176,15 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .validator(is_parsable::<usize>)
             .default_value(&DEFAULT_RPC_MAX_REQUEST_BODY_SIZE)
             .help("The maximum request body size accepted by rpc service"),
+        Arg::with_name("accounts_index_scan_results_limit_mb")
+            .long("accounts-index-scan-results-limit-mb")
+            .value_name("MEGABYTES")
+            .validator(is_parsable::<usize>)
+            .takes_value(true)
+            .help(
+                "How large accumulated results from an accounts index scan can become. If this is \
+                 exceeded, the scan aborts.",
+            ),
     ]
 }
 

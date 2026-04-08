@@ -39,7 +39,7 @@ use {
             UninstalledScheduler, UninstalledSchedulerBox, initialized_result_with_timings,
         },
         prioritization_fee_cache::PrioritizationFeeCache,
-        vote_sender_types::ReplayVoteSender,
+        vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_svm::transaction_processing_result::ProcessedTransaction,
@@ -56,7 +56,6 @@ use {
         fmt::Debug,
         marker::PhantomData,
         mem,
-        ops::DerefMut,
         sync::{
             Arc, Mutex, MutexGuard, OnceLock, Weak,
             atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
@@ -66,7 +65,6 @@ use {
     },
     trait_set::trait_set,
     unwrap_none::UnwrapNone,
-    vec_extract_if_polyfill::MakeExtractIf,
 };
 
 // For now, cap bandwidth use to just half of 1 Gbps link, which should be pretty conservative
@@ -586,17 +584,11 @@ where
                     let Ok(mut scheduler_inners) = scheduler_pool.scheduler_inners.lock() else {
                         break;
                     };
-                    // Use the still-unstable Vec::extract_if() even on stable rust toolchain by
-                    // using a polyfill and allowing unstable_name_collisions, because it's
-                    // simplest to code and fastest to run (= O(n); single linear pass and no
-                    // reallocation).
-                    //
                     // Note that this critical section could block the latency-sensitive replay
                     // code-path via ::take_scheduler().
-                    idle_inners.extend(MakeExtractIf::extract_if(
-                        scheduler_inners.deref_mut(),
-                        |(_inner, pooled_at)| now.duration_since(*pooled_at) > max_pooling_duration,
-                    ));
+                    idle_inners.extend(scheduler_inners.extract_if(.., |(_inner, pooled_at)| {
+                        now.duration_since(*pooled_at) > max_pooling_duration
+                    }));
                     drop(scheduler_inners);
 
                     let idle_inner_count = idle_inners.len();
@@ -686,8 +678,8 @@ where
                     let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock() else {
                         break;
                     };
-                    expired_listeners.extend(MakeExtractIf::extract_if(
-                        timeout_listeners.deref_mut(),
+                    expired_listeners.extend(timeout_listeners.extract_if(
+                        ..,
                         |(_callback, registered_at)| {
                             now.duration_since(*registered_at) > timeout_duration
                         },
@@ -1291,6 +1283,13 @@ impl TaskHandler for DefaultTaskHandler {
             bank,
             handler_context.transaction_status_sender.as_ref(),
             handler_context.replay_vote_sender.as_ref(),
+            match scheduling_context.mode() {
+                BlockVerification => ReplayVoteSendType::Executed {
+                    replay_bank_id: bank.bank_id(),
+                    replay_slot: bank.slot(),
+                },
+                BlockProduction => ReplayVoteSendType::VerifiedExecuted,
+            },
             timings,
             handler_context.log_messages_bytes_limit,
             handler_context.prioritization_fee_cache.as_deref(),
@@ -2932,14 +2931,14 @@ mod tests {
         super::*,
         crate::sleepless_testing,
         assert_matches::assert_matches,
-        solana_clock::{MAX_PROCESSING_AGE, Slot},
+        solana_clock::Slot,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
         solana_poh::record_channels::record_channels,
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::Bank,
+            bank::{Bank, SlotLeader},
             bank_forks::BankForks,
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             installed_scheduler_pool::{
@@ -3697,31 +3696,34 @@ mod tests {
     fn test_scheduler_install_into_bank() {
         agave_logger::setup();
 
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
-        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let child_bank = Bank::new_from_parent(bank, &Pubkey::default(), 1);
-
         let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
 
-        let bank = Bank::default_for_tests();
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
-        let mut bank_forks = bank_forks.write().unwrap();
+        let bank = bank_forks.read().unwrap().root_bank();
 
         // existing banks in bank_forks shouldn't process transactions anymore in general, so
         // shouldn't be touched
-        assert!(
-            !bank_forks
-                .working_bank_with_scheduler()
-                .has_installed_scheduler()
-        );
-        bank_forks.install_scheduler_pool(pool);
-        assert!(
-            !bank_forks
-                .working_bank_with_scheduler()
-                .has_installed_scheduler()
-        );
+        {
+            let mut bank_forks_w = bank_forks.write().unwrap();
+            assert!(
+                !bank_forks_w
+                    .working_bank_with_scheduler()
+                    .has_installed_scheduler()
+            );
+            bank_forks_w.install_scheduler_pool(pool);
+            assert!(
+                !bank_forks_w
+                    .working_bank_with_scheduler()
+                    .has_installed_scheduler()
+            );
+        }
 
-        let mut child_bank = bank_forks.insert(child_bank);
+        // child_bank inserted after pool so it gets a scheduler
+        Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, SlotLeader::default(), 1);
+        let mut bank_forks = bank_forks.write().unwrap();
+        let mut child_bank = bank_forks.get_with_scheduler(1).unwrap();
         assert!(child_bank.has_installed_scheduler());
         bank_forks.remove(child_bank.slot());
         child_bank.drop_scheduler();
@@ -4164,7 +4166,7 @@ mod tests {
         // Create new bank to observe behavior difference around session ending
         let bank = Arc::new(Bank::new_from_parent(
             bank.clone_without_scheduler(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             bank.slot().checked_add(1).unwrap(),
         ));
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
@@ -4245,11 +4247,11 @@ mod tests {
 
         let bank = Arc::new(Bank::new_from_parent(
             bank.clone(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             bank.slot().checked_add(1).unwrap(),
         ));
         // Immediately trigger WouldExceedMaxBlockCostLimit by setting all cost limits to 0
-        bank.write_cost_tracker().unwrap().set_limits(0, 0, 0);
+        bank.write_cost_tracker().unwrap().set_limits(0, 0, 0, 0);
 
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
@@ -4272,13 +4274,11 @@ mod tests {
         record_receiver.shutdown();
         let bank = Arc::new(Bank::new_from_parent(
             bank.clone_without_scheduler(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             bank.slot().checked_add(1).unwrap(),
         ));
         // Revert the block cost limit
-        bank.write_cost_tracker()
-            .unwrap()
-            .set_limits(u64::MAX, u64::MAX, u64::MAX);
+        bank.write_cost_tracker().unwrap().set_limits_max();
 
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
@@ -4324,10 +4324,10 @@ mod tests {
 
         // Create two banks for two contexts
         let bank0 = Bank::new_for_tests(&genesis_config);
-        let bank0 = setup_dummy_fork_graph(bank0).0;
+        let (bank0, _bank_forks) = setup_dummy_fork_graph(bank0);
         let bank1 = Arc::new(Bank::new_from_parent(
             bank0.clone(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             bank0.slot().checked_add(1).unwrap(),
         ));
 
@@ -4544,18 +4544,18 @@ mod tests {
                 2,
                 genesis_config.hash(),
             ));
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        for _ in 0..MAX_PROCESSING_AGE {
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (mut bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        for _ in 0..bank.max_processing_age() {
             bank.fill_bank_with_ticks_for_tests();
             bank.freeze();
             let slot = bank.slot();
-            bank = Bank::new_from_parent(
-                Arc::new(bank),
-                &Pubkey::default(),
+            bank = Arc::new(Bank::new_from_parent(
+                bank,
+                SlotLeader::default(),
                 slot.checked_add(1).unwrap(),
-            );
+            ));
         }
-        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let context = SchedulingContext::for_verification(bank.clone());
 
         let pool =

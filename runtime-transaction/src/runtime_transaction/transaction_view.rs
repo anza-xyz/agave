@@ -2,7 +2,7 @@ use {
     super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
     crate::{
         instruction_meta::InstructionMeta,
-        transaction_meta::{StaticMeta, TransactionMeta},
+        transaction_meta::{CachedTransactionMeta, TransactionMeta},
         transaction_with_meta::TransactionWithMeta,
     },
     agave_transaction_view::{
@@ -14,6 +14,7 @@ use {
         VersionedMessage,
         compiled_instruction::CompiledInstruction,
         v0::{LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
+        v1,
     },
     solana_pubkey::Pubkey,
     solana_svm_transaction::svm_message::SVMMessage,
@@ -64,7 +65,7 @@ fn from_sanitized_transaction_view<D>(
     transaction: &SanitizedTransactionView<D>,
     message_hash: MessageHash,
     is_simple_vote_tx: Option<bool>,
-) -> Result<TransactionMeta>
+) -> Result<CachedTransactionMeta>
 where
     D: TransactionData,
 {
@@ -89,7 +90,7 @@ where
     let compute_budget_instruction_details =
         ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?;
 
-    Ok(TransactionMeta {
+    Ok(CachedTransactionMeta {
         message_hash,
         is_simple_vote_transaction: is_simple_vote_tx,
         signature_details,
@@ -145,6 +146,10 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
             VersionedMessage::V0(message) => SanitizedMessage::V0(LoadedMessage {
                 message: Cow::Owned(message),
                 loaded_addresses: Cow::Owned(self.loaded_addresses().unwrap().clone()),
+                is_writable_account_cache,
+            }),
+            VersionedMessage::V1(message) => SanitizedMessage::V1(v1::CachedMessage {
+                message: Cow::Owned(message),
                 is_writable_account_cache,
             }),
         };
@@ -240,8 +245,7 @@ mod tests {
 
         let hash = Hash::new_unique();
         let transaction =
-            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true, true)
-                .unwrap();
+            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true).unwrap();
         let static_runtime_transaction =
             RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction,
@@ -274,7 +278,7 @@ mod tests {
         ) {
             let bytes = bincode::serialize(&original_transaction).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], true, true).unwrap();
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
@@ -341,7 +345,7 @@ mod tests {
             let bytes =
                 bincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], true, true).unwrap();
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,

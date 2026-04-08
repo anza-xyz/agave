@@ -42,7 +42,7 @@ use {
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
     },
     solana_svm_transaction::{
         message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
@@ -130,12 +130,10 @@ pub(crate) fn ensure_banking_stage_setup(
                     .ok()?;
 
                     // Determine priority.
-                    let compute_budget_limits = tx
-                        .compute_budget_instruction_details()
-                        .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)
-                        .ok()?;
+                    let transaction_configuration =
+                        tx.transaction_configuration(&bank.feature_set).ok()?;
                     let (priority, _cost) =
-                        calculate_priority_and_cost(&tx, &compute_budget_limits.into(), &bank);
+                        calculate_priority_and_cost(&tx, &transaction_configuration, &bank);
                     let task_id = BankingStageHelper::new_task_id(task_id_base + i, priority);
 
                     Some(helper.create_new_task(

@@ -5,34 +5,183 @@ use {
         iter::Sum,
         num::Saturating,
         sync::atomic::{AtomicU64, AtomicUsize, Ordering},
+        time::Duration,
     },
 };
 
 #[derive(Debug, Default)]
 pub struct AccountsStats {
     pub last_store_report: AtomicInterval,
-    pub store_accounts_to_cache_us: AtomicU64,
-    pub store_accounts_to_storage_us: AtomicU64,
-    pub store_update_index: AtomicU64,
-    pub store_handle_reclaims: AtomicU64,
-    pub store_append_accounts: AtomicU64,
     pub stakes_cache_check_and_store_us: AtomicU64,
-    pub num_store_accounts_to_cache: AtomicU64,
-    pub num_store_accounts_to_storage: AtomicU64,
-    pub store_total_data: AtomicU64,
-    pub num_reclaims: AtomicU64,
     pub create_store_count: AtomicU64,
     pub dropped_stores: AtomicU64,
     pub handle_dead_keys_us: AtomicU64,
     pub purge_exact_us: AtomicU64,
     pub purge_exact_count: AtomicU64,
+}
+
+/// Stats from storing accounts unfrozen (i.e. to the write cache)
+#[derive(Debug, Default)]
+pub struct StoreAccountsUnfrozenStats {
+    pub last_report: AtomicInterval,
+    /// time spent writing accounts to the write cache
+    pub write_to_cache_us: AtomicU64,
+    /// time spend updating the accounts index
+    pub update_index_us: AtomicU64,
+    /// initial number of accounts to be stored
+    pub num_initial_accounts_to_store: AtomicU64,
+    /// number of accounts actually stored
+    pub num_accounts_stored: AtomicU64,
+    /// number of accounts *not* stored because they were duplicates
+    pub num_duplicate_accounts_skipped: AtomicU64,
+    /// number of accounts *not* stored because they were ephemeral
+    pub num_ephemeral_accounts_skipped: AtomicU64,
+    /// number of accounts *not* stored because they had an ancestor with zero lamports
+    pub num_ancestors_zero_lamport_skipped: AtomicU64,
+    /// number of bytes stored, from only account data
+    pub account_data_bytes_stored: AtomicU64,
+}
+
+impl StoreAccountsUnfrozenStats {
+    const REPORT_INTERVAL_MS: u64 = Duration::from_secs(1).as_millis() as u64;
+
+    pub fn report(&self) {
+        let should_report = self.last_report.should_update(Self::REPORT_INTERVAL_MS);
+        if !should_report {
+            return;
+        }
+
+        datapoint_info!(
+            "accounts_db_store_accounts_unfrozen",
+            (
+                "write_to_cache_us",
+                self.write_to_cache_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "update_index_us",
+                self.update_index_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_initial_accounts_to_store",
+                self.num_initial_accounts_to_store
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_accounts_stored",
+                self.num_accounts_stored.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_duplicate_accounts_skipped",
+                self.num_duplicate_accounts_skipped
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_ephemeral_accounts_skipped",
+                self.num_ephemeral_accounts_skipped
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_ancestors_zero_lamport_skipped",
+                self.num_ancestors_zero_lamport_skipped
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "account_data_bytes_stored",
+                self.account_data_bytes_stored.swap(0, Ordering::Relaxed),
+                i64
+            ),
+        );
+    }
+}
+
+/// Stats from storing accounts frozen (i.e. to an account storage file)
+#[derive(Debug, Default)]
+pub struct StoreAccountsFrozenStats {
+    pub last_report: AtomicInterval,
+    pub flush_read_cache_us: AtomicU64,
+    pub write_to_storage_us: AtomicU64,
+    pub update_index_us: AtomicU64,
+    pub mark_zero_lamport_single_ref_accounts_us: AtomicU64,
+    pub handle_reclaims_us: AtomicU64,
+    pub num_accounts_stored: AtomicU64,
+    pub num_zero_lamport_single_ref_accounts_marked: AtomicU64,
+    pub num_reclaims: AtomicU64,
     pub num_obsolete_slots_removed: AtomicUsize,
     pub num_obsolete_bytes_removed: AtomicU64,
-    pub add_zero_lamport_accounts_us: AtomicU64,
-    pub num_zero_lamport_accounts_added: AtomicU64,
-    pub num_ephemeral_accounts_skipped: AtomicU64,
-    pub num_duplicate_accounts_skipped: AtomicU64,
-    pub num_ancestors_zero_lamport_skipped: AtomicU64,
+}
+
+impl StoreAccountsFrozenStats {
+    const REPORT_INTERVAL_MS: u64 = Duration::from_secs(1).as_millis() as u64;
+
+    pub fn report(&self) {
+        let should_report = self.last_report.should_update(Self::REPORT_INTERVAL_MS);
+        if !should_report {
+            return;
+        }
+
+        datapoint_info!(
+            "accounts_db_store_accounts_frozen",
+            (
+                "flush_read_cache_us",
+                self.flush_read_cache_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "write_to_storage_us",
+                self.write_to_storage_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "update_index_us",
+                self.update_index_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "mark_zero_lamport_single_ref_accounts_us",
+                self.mark_zero_lamport_single_ref_accounts_us
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "handle_reclaims_us",
+                self.handle_reclaims_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_accounts_stored",
+                self.num_accounts_stored.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_zero_lamport_single_ref_accounts_marked",
+                self.num_zero_lamport_single_ref_accounts_marked
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_reclaims",
+                self.num_reclaims.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_obsolete_slots_removed",
+                self.num_obsolete_slots_removed.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_obsolete_bytes_removed",
+                self.num_obsolete_bytes_removed.swap(0, Ordering::Relaxed),
+                i64
+            ),
+        );
+    }
 }
 
 #[derive(Debug, Default)]
@@ -333,7 +482,6 @@ pub struct ShrinkStats {
     pub last_report: AtomicInterval,
     pub num_slots_shrunk: AtomicUsize,
     pub storage_read_elapsed: AtomicU64,
-    pub num_duplicated_accounts: AtomicU64,
     pub index_read_elapsed: AtomicU64,
     pub create_and_insert_store_elapsed: AtomicU64,
     pub store_accounts_elapsed: AtomicU64,
@@ -406,11 +554,6 @@ impl ShrinkStats {
                 (
                     "storage_read_elapsed",
                     self.storage_read_elapsed.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "num_duplicated_accounts",
-                    self.num_duplicated_accounts.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -567,13 +710,6 @@ impl ShrinkAncientStats {
                 "storage_read_elapsed",
                 self.shrink_stats
                     .storage_read_elapsed
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "num_duplicated_accounts",
-                self.shrink_stats
-                    .num_duplicated_accounts
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -787,10 +923,52 @@ impl Sum<Self> for ObsoleteAccountsStats {
     }
 }
 
+/// Stats from calling write_accounts_to_cache()
+///
+/// Refer to StoreAccountsUnfrozenStats for docs on each field.
 #[derive(Debug, Default)]
-pub struct CacheAccountStoreStats {
+pub struct WriteAccountsToCacheStats {
+    pub num_initial_accounts_to_store: u64,
     pub num_accounts_stored: u64,
-    pub num_ephemeral_accounts_skipped: u64,
     pub num_duplicate_accounts_skipped: u64,
+    pub num_ephemeral_accounts_skipped: u64,
     pub num_ancestors_zero_lamport_skipped: u64,
+    pub account_data_bytes_stored: u64,
+}
+
+#[derive(Debug, Default)]
+pub struct LoadAccountsStats {
+    pub num_loaded_from_write_cache: AtomicU64,
+    pub num_loaded_from_read_cache: AtomicU64,
+    pub num_loaded_from_index_cache: AtomicU64,
+    pub num_loaded_from_index_storage: AtomicU64,
+}
+
+impl LoadAccountsStats {
+    pub fn report(&self) {
+        datapoint_info!(
+            "accounts_db_load_accounts",
+            (
+                "num_loaded_from_write_cache",
+                self.num_loaded_from_write_cache.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_loaded_from_read_cache",
+                self.num_loaded_from_read_cache.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_loaded_from_index_cache",
+                self.num_loaded_from_index_cache.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_loaded_from_index_storage",
+                self.num_loaded_from_index_storage
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+        );
+    }
 }

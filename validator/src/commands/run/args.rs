@@ -254,14 +254,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("account_shrink_path")
-            .long("account-shrink-path")
-            .value_name("PATH")
-            .takes_value(true)
-            .multiple(true)
-            .help("Path to accounts shrink path which can hold a compacted account set."),
-    )
-    .arg(
         Arg::with_name("snapshots")
             .long("snapshots")
             .value_name("DIR")
@@ -1015,27 +1007,14 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced()),
     )
     .arg(
-        Arg::with_name("accounts_db_mark_obsolete_accounts")
-            .long("accounts-db-mark-obsolete-accounts")
-            .help("Controls obsolete account tracking")
-            .takes_value(true)
-            .possible_values(&["enabled", "disabled"])
+        Arg::with_name("no_accounts_db_snapshots_direct_io")
+            .long("no-accounts-db-snapshots-direct-io")
+            .help("Disable direct I/O use for accounts-db snapshot operations")
             .long_help(
-                "Controls obsolete account tracking. This feature tracks obsolete accounts in the \
-                 account storage entry allowing for earlier cleaning of obsolete accounts in the \
-                 storages and index. This value is currently enabled by default.",
-            )
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
-        Arg::with_name("accounts_index_scan_results_limit_mb")
-            .long("accounts-index-scan-results-limit-mb")
-            .value_name("MEGABYTES")
-            .validator(is_parsable::<usize>)
-            .takes_value(true)
-            .help(
-                "How large accumulated results from an accounts index scan can become. If this is \
-                 exceeded, the scan aborts.",
+                "Do *not* use direct I/O for accounts-db file operations related to snapshot \
+                 processsing. Direct I/O can improve performance by bypassing OS page cache, but \
+                 requires the file systems hosting snapshots and accounts-db directories to \
+                 support files opened with the O_DIRECT flag.",
             ),
     )
     .arg(
@@ -1067,9 +1046,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "Sets the memory limit for the accounts index. The size options will limit the \
                  accounts index memory to the specified value. E.g. \"50GB\" means the accounts \
                  index may use up to 50 GB of memory. The \"unlimited\" option keeps the entire \
-                 accounts index in memory. The \"minimal\" option reduces memory usage as much as \
-                 possible. All index entries that are not in memory are kept in the disk-backed \
-                 index. The disk-backed index has lower performance; prefer higher limits here.",
+                 accounts index in memory. All index entries that are not in memory are kept in \
+                 the disk-backed index. The disk-backed index has lower performance; prefer \
+                 higher explicit limits here.",
             ),
     )
     .arg(

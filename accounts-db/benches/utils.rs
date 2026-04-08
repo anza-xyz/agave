@@ -9,7 +9,6 @@ use {
     },
     rand_chacha::ChaChaRng,
     solana_account::AccountSharedData,
-    solana_accounts_db::tiered_storage::hot::RENT_EXEMPT_RENT_EPOCH,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     std::iter,
@@ -32,12 +31,7 @@ pub fn accounts<'a>(
         let owner = Pubkey::new_from_array(owner);
         (
             owner,
-            AccountSharedData::new_rent_epoch(
-                rent.minimum_balance(data_size),
-                data_size,
-                &owner,
-                RENT_EXEMPT_RENT_EPOCH,
-            ),
+            AccountSharedData::new(rent.minimum_balance(data_size), data_size, &owner),
         )
     })
 }
@@ -72,12 +66,7 @@ pub fn accounts_with_size_limit<'a>(
 
             Some((
                 owner,
-                AccountSharedData::new_rent_epoch(
-                    rent.minimum_balance(data_size),
-                    data_size,
-                    &owner,
-                    RENT_EXEMPT_RENT_EPOCH,
-                ),
+                AccountSharedData::new(rent.minimum_balance(data_size), data_size, &owner),
             ))
         }
     })

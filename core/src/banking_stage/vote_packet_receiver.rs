@@ -107,9 +107,6 @@ impl VotePacketReceiver {
             .filter_map(|pkt| {
                 match SanitizedTransactionView::try_new_sanitized(
                     Arc::new(pkt.data(..)?.to_vec()),
-                    // NB: It's safe to always pass false in here as simple vote
-                    // transactions are guaranteed to be a single instruction.
-                    false,
                     // Vote instructions are created in the validator code, and they are not
                     // referencing more than 255 accounts, so it is safe to set this to true.
                     true,

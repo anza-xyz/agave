@@ -26,7 +26,6 @@ crossbeam-channel = { workspace = true }
 futures = { workspace = true }
 solana-account = { workspace = true }
 solana-banks-interface = { workspace = true }
-solana-client = { workspace = true }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-hash = { workspace = true }
@@ -37,7 +36,6 @@ solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-send-transaction-service = { workspace = true }
 solana-signature = { workspace = true }
-solana-svm = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 tarpc = { workspace = true, features = ["full"] }

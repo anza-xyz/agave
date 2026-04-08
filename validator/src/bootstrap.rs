@@ -133,9 +133,11 @@ fn is_known_validator(id: &Pubkey, known_validators: &Option<HashSet<Pubkey>>) -
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn start_gossip_node(
     identity_keypair: Arc<Keypair>,
     cluster_entrypoints: &[ContactInfo],
+    known_validators: Option<HashSet<Pubkey>>,
     ledger_path: &Path,
     gossip_addr: &SocketAddr,
     gossip_sockets: Arc<[UdpSocket]>,
@@ -150,6 +152,11 @@ fn start_gossip_node(
         expected_shred_version,
     );
     let mut cluster_info = ClusterInfo::new(contact_info, identity_keypair, socket_addr_space);
+    if let Some(known_validators) = known_validators {
+        cluster_info
+            .set_trim_keep_pubkeys(known_validators)
+            .expect("set_trim_keep_pubkeys should succeed as ClusterInfo was just created");
+    }
     cluster_info.set_entrypoints(cluster_entrypoints.to_vec());
     cluster_info.restore_contact_info(ledger_path, 0);
     let cluster_info = Arc::new(cluster_info);
@@ -592,6 +599,7 @@ pub fn rpc_bootstrap(
             gossip = Some(start_gossip_node(
                 identity_keypair.clone(),
                 cluster_entrypoints,
+                validator_config.known_validators.clone(),
                 ledger_path,
                 &node
                     .info

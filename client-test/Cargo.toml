@@ -24,14 +24,10 @@ solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
-solana-measure = { workspace = true }
-solana-merkle-tree = { workspace = true }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
-solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
-solana-rayon-threadlimit = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
@@ -47,7 +43,7 @@ tokio = { workspace = true, features = ["full"] }
 tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
-solana-net-utils = { workspace = true }
-solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
+solana-rpc = { path = "../rpc", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }

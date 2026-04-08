@@ -10,6 +10,7 @@ use {
     log::*,
     solana_accounts_db::utils::{
         create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents,
+        validate_account_paths_for_direct_io,
     },
     solana_clock::Slot,
     solana_core::validator::{
@@ -106,6 +107,9 @@ pub(crate) enum LoadAndProcessLedgerError {
 
     #[error("failed to process blockstore from root: {0}")]
     ProcessBlockstoreFromRoot(#[source] BlockstoreProcessorError),
+
+    #[error("failed to validate account paths: {0}")]
+    ValidateAccountPaths(#[source] std::io::Error),
 }
 
 pub fn load_and_process_ledger_or_exit(
@@ -253,6 +257,13 @@ pub fn load_and_process_ledger(
     // From now on, use run/ paths in the same way as the previous account_paths.
     let account_paths = account_run_paths;
 
+    validate_account_paths_for_direct_io(
+        &process_options.accounts_db_config,
+        &account_paths,
+        &account_snapshot_paths,
+    )
+    .map_err(LoadAndProcessLedgerError::ValidateAccountPaths)?;
+
     let (_, measure_clean_account_paths) = measure_time!(
         account_paths.iter().for_each(|path| {
             if path.exists() {
@@ -374,15 +385,6 @@ pub fn load_and_process_ledger(
         "block_production_method",
         BlockProductionMethod
     )
-    .inspect(|method| {
-        if matches!(method, BlockProductionMethod::UnifiedScheduler) {
-            warn!(
-                "Currently, the unified-scheduler method is experimental for block-production. It \
-                 has known security issues and should be used only for developing and \
-                 benchmarking purposes"
-            );
-        }
-    })
     .unwrap_or_default();
     info!(
         "Using: block-verification-method: {block_verification_method}, block-production-method: \

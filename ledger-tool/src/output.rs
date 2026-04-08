@@ -11,10 +11,7 @@ use {
         ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
     },
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_accounts_db::{
-        accounts_index::{ScanConfig, ScanOrder},
-        is_loadable::IsLoadable as _,
-    },
+    solana_accounts_db::is_loadable::IsLoadable as _,
     solana_cli_output::{
         CliAccount, CliAccountNewConfig, OutputFormat, QuietDisplay, VerboseDisplay,
         display::{build_balance_message, writeln_transaction},
@@ -307,7 +304,7 @@ impl fmt::Display for CliBlockWithEntries {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliDuplicateSlotProof {
     shred1: CliDuplicateShred,
@@ -357,7 +354,7 @@ impl From<DuplicateSlotProof> for CliDuplicateSlotProof {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliDuplicateShred {
     fec_set_index: u32,
@@ -908,7 +905,7 @@ impl AccountsScanner {
 
         match &self.config.mode {
             AccountsOutputMode::All => {
-                self.bank.scan_all_accounts(scan_func, true).unwrap();
+                self.bank.scan_all_accounts(scan_func).unwrap();
             }
             AccountsOutputMode::Individual(pubkeys) => pubkeys.iter().for_each(|pubkey| {
                 if let Some((account, _slot)) = self
@@ -922,7 +919,7 @@ impl AccountsScanner {
             }),
             AccountsOutputMode::Program(program_pubkey) => self
                 .bank
-                .get_program_accounts(program_pubkey, &ScanConfig::new(ScanOrder::Sorted))
+                .get_program_accounts(program_pubkey)
                 .unwrap()
                 .iter()
                 .filter(|(_, account)| self.should_process_account(account))

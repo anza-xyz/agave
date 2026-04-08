@@ -1,51 +1,62 @@
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    crate::program_cache_entry::ProgramCacheEntry,
+    solana_account::{AccountSharedData, WritableAccount, create_account_shared_data_for_test},
+    solana_epoch_schedule::EpochSchedule,
+    solana_instruction::AccountMeta,
+    solana_message::{LegacyMessage, Message, SanitizedMessage},
+    solana_sdk_ids::sysvar,
+    solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
+    std::collections::{HashMap, HashSet},
+};
 use {
     crate::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         loaded_programs::{
-            ProgramCacheEntry, ProgramCacheEntryType, ProgramCacheForTxBatch,
-            ProgramRuntimeEnvironments,
+            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
         },
+        program_cache_entry::ProgramCacheEntryType,
         stable_log,
         sysvar_cache::SysvarCache,
     },
-    solana_account::{AccountSharedData, create_account_shared_data_for_test},
-    solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
+    solana_instruction::{Instruction, error::InstructionError},
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
-        elf::Executable as GenericExecutable,
+        elf::{ElfError, Executable as GenericExecutable},
         error::{EbpfError, ProgramResult},
         memory_region::MemoryMapping,
-        program::{BuiltinFunction, SBPFVersion},
+        program::{BuiltinProgram, SBPFVersion},
         vm::{Config, ContextObject, EbpfVm},
     },
     solana_sdk_ids::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader, sysvar,
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
     solana_svm_callback::InvokeContextCallback,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::{LogCollector, ic_msg},
     solana_svm_measure::measure::Measure,
     solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
-    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{
         IndexOfAccount, MAX_ACCOUNTS_PER_TRANSACTION, instruction::InstructionContext,
         instruction_accounts::InstructionAccount, transaction::TransactionContext,
-        transaction_accounts::KeyedAccountSharedData,
     },
     std::{
         alloc::Layout,
         borrow::Cow,
         cell::RefCell,
         fmt::{self, Debug},
+        ptr,
         rc::Rc,
+        time::Duration,
     },
 };
 
-pub type BuiltinFunctionWithContext = BuiltinFunction<InvokeContext<'static, 'static>>;
+pub type BuiltinFunctionRegisterer =
+    fn(&mut BuiltinProgram<InvokeContext<'static, 'static>>, &str) -> Result<(), ElfError>;
 pub type Executable = GenericExecutable<InvokeContext<'static, 'static>>;
 pub type RegisterTrace<'a> = &'a [[u64; 12]];
 
@@ -56,14 +67,14 @@ macro_rules! declare_process_instruction {
         $crate::solana_sbpf::declare_builtin_function!(
             $process_instruction,
             fn rust(
-                invoke_context: &mut $crate::invoke_context::InvokeContext,
+                invoke_context: &mut $crate::invoke_context::InvokeContext<'_, '_>,
                 _arg0: u64,
                 _arg1: u64,
                 _arg2: u64,
                 _arg3: u64,
                 _arg4: u64,
                 _memory_mapping: &mut $crate::solana_sbpf::memory_region::MemoryMapping,
-            ) -> std::result::Result<u64, Box<dyn std::error::Error>> {
+            ) -> Result<u64, Box<dyn std::error::Error>> {
                 fn process_instruction_inner(
                     $invoke_context: &mut $crate::invoke_context::InvokeContext,
                 ) -> std::result::Result<(), $crate::__private::InstructionError>
@@ -97,6 +108,13 @@ impl ContextObject for InvokeContext<'_, '_> {
 
     fn get_remaining(&self) -> u64 {
         *self.compute_meter.borrow()
+    }
+
+    fn active_mapping_ptr(&mut self) -> ptr::NonNull<MemoryMapping> {
+        let last_context = self
+            .get_memory_context_mut()
+            .expect("The memory context must have been set for the current instruction");
+        ptr::NonNull::from_mut(&mut last_context.memory_mapping)
     }
 }
 
@@ -139,37 +157,66 @@ impl BpfAllocator {
 pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
+    alpenglow_migration_succeeded: bool,
     epoch_stake_callback: &'a dyn InvokeContextCallback,
     feature_set: &'a SVMFeatureSet,
-    pub program_runtime_environments_for_execution: &'a ProgramRuntimeEnvironments,
-    pub program_runtime_environments_for_deployment: &'a ProgramRuntimeEnvironments,
+    program_runtime_environments: &'a ProgramRuntimeEnvironments,
     sysvar_cache: &'a SysvarCache,
 }
 impl<'a> EnvironmentConfig<'a> {
     pub fn new(
         blockhash: Hash,
         blockhash_lamports_per_signature: u64,
+        alpenglow_migration_succeeded: bool,
         epoch_stake_callback: &'a dyn InvokeContextCallback,
         feature_set: &'a SVMFeatureSet,
-        program_runtime_environments_for_execution: &'a ProgramRuntimeEnvironments,
-        program_runtime_environments_for_deployment: &'a ProgramRuntimeEnvironments,
+        program_runtime_environments: &'a ProgramRuntimeEnvironments,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
         Self {
             blockhash,
             blockhash_lamports_per_signature,
+            alpenglow_migration_succeeded,
             epoch_stake_callback,
             feature_set,
-            program_runtime_environments_for_execution,
-            program_runtime_environments_for_deployment,
+            program_runtime_environments,
             sysvar_cache,
         }
     }
 }
 
-pub struct SyscallContext {
+/// This structure contains metadata about the memory for each instruction under execution.
+/// The BpfAllocator, accounts addresses in the guest and the memory mapping.
+pub struct MemoryContext {
     pub allocator: BpfAllocator,
     pub accounts_metadata: Vec<SerializedAccountMetadata>,
+    memory_mapping: Box<MemoryMapping>,
+}
+
+impl MemoryContext {
+    /// Creates a new memory context
+    pub fn new(
+        allocator: BpfAllocator,
+        accounts_metadata: Vec<SerializedAccountMetadata>,
+        memory_mapping: MemoryMapping,
+    ) -> Self {
+        Self {
+            allocator,
+            accounts_metadata,
+            memory_mapping: Box::new(memory_mapping),
+        }
+    }
+
+    /// Returns an empty dummy context used for builtin functions
+    pub(crate) fn empty() -> Self {
+        Self {
+            allocator: BpfAllocator::new(0),
+            accounts_metadata: Vec::new(),
+            memory_mapping: Box::new(
+                MemoryMapping::new(Vec::new(), &Config::default(), SBPFVersion::Reserved).unwrap(),
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -197,10 +244,10 @@ pub struct InvokeContext<'a, 'ix_data> {
     /// the designated compute budget during program execution.
     compute_meter: RefCell<u64>,
     log_collector: Option<Rc<RefCell<LogCollector>>>,
-    /// Latest measurement not yet accumulated in [ExecuteDetailsTimings::execute_us]
-    pub execute_time: Option<Measure>,
+    /// Time spent so far executing nested program calls.
+    pub total_nested_exec_time: Duration,
     pub timings: ExecuteDetailsTimings,
-    pub syscall_context: Vec<Option<SyscallContext>>,
+    pub memory_context: Vec<MemoryContext>,
     /// Pairs of index in TX instruction trace and VM register trace
     register_traces: Vec<(usize, Vec<[u64; 12]>)>,
     /// Debug port to use for this executing transaction.
@@ -209,7 +256,6 @@ pub struct InvokeContext<'a, 'ix_data> {
 }
 
 impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         transaction_context: &'a mut TransactionContext<'ix_data>,
         program_cache_for_tx_batch: &'a mut ProgramCacheForTxBatch,
@@ -226,9 +272,9 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             compute_budget,
             execution_cost,
             compute_meter: RefCell::new(compute_budget.compute_unit_limit),
-            execute_time: None,
+            total_nested_exec_time: Duration::ZERO,
             timings: ExecuteDetailsTimings::default(),
-            syscall_context: Vec::new(),
+            memory_context: Vec::new(),
             register_traces: Vec::new(),
             #[cfg(feature = "sbpf-debugger")]
             debug_port: None,
@@ -237,11 +283,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
 
     /// Push a stack frame onto the invocation stack
     pub fn push(&mut self) -> Result<(), InstructionError> {
-        let instruction_context = self
-            .transaction_context
-            .get_instruction_context_at_index_in_trace(
-                self.transaction_context.get_instruction_trace_length(),
-            )?;
+        let instruction_context = self.transaction_context.get_next_instruction_context()?;
         let program_id = instruction_context
             .get_program_key()
             .map_err(|_| InstructionError::UnsupportedProgramId)?;
@@ -266,13 +308,13 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             }
         }
 
-        self.syscall_context.push(None);
+        self.memory_context.push(MemoryContext::empty());
         self.transaction_context.push()
     }
 
     /// Pop a stack frame from the invocation stack
-    fn pop(&mut self) -> Result<(), InstructionError> {
-        self.syscall_context.pop();
+    pub(crate) fn pop(&mut self) -> Result<(), InstructionError> {
+        self.memory_context.pop();
         self.transaction_context.pop()
     }
 
@@ -282,13 +324,29 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         self.transaction_context.get_instruction_stack_height()
     }
 
-    /// Entrypoint for a cross-program invocation from a builtin program
-    pub fn native_invoke(
+    /// Entrypoint for a cross-program invocation from a builtin program.
+    ///
+    /// Takes signer seeds and derives PDAs internally via
+    /// `create_program_address`, mirroring the SBF CPI path. This makes
+    /// it structurally impossible for a builtin to vouch for a non-PDA
+    /// address (e.g. a user wallet) as a signer.
+    pub fn native_invoke_signed(
         &mut self,
         instruction: Instruction,
-        signers: &[Pubkey],
+        signer_seeds: &[&[&[u8]]],
     ) -> Result<(), InstructionError> {
-        self.prepare_next_cpi_instruction(instruction, signers)?;
+        let caller_program_id = *self
+            .transaction_context
+            .get_current_instruction_context()?
+            .get_program_key()?;
+        // The conversion from `PubkeyError` to `InstructionError` through
+        // num-traits is incorrect, but it's the existing behavior.
+        let signers = signer_seeds
+            .iter()
+            .map(|seeds| Pubkey::create_program_address(seeds, &caller_program_id))
+            .collect::<Result<Vec<Pubkey>, solana_pubkey::PubkeyError>>()
+            .map_err(|e| e as u64)?;
+        self.prepare_next_cpi_instruction(instruction, &signers)?;
         let mut compute_units_consumed = 0;
         self.process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())?;
         Ok(())
@@ -442,47 +500,46 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         Ok(())
     }
 
-    /// Helper to prepare for process_instruction()/process_precompile() when the instruction is
-    /// a top level one
-    pub fn prepare_next_top_level_instruction(
+    /// Prepare the instruction trace with all the top level instructions
+    pub fn prepare_top_level_instructions(
         &mut self,
-        message: &impl SVMMessage,
-        instruction: &SVMInstruction,
-        program_account_index: IndexOfAccount,
-        data: &'ix_data [u8],
-    ) -> Result<(), InstructionError> {
-        // We reference accounts by an u8 index, so we have a total of 256 accounts.
-        let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
+        message: &'ix_data impl SVMMessage,
+    ) -> Result<(), (u8, InstructionError)> {
+        for (top_level_instruction_index, (_, instruction)) in
+            message.program_instructions_iter().enumerate()
+        {
+            let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
 
-        let mut instruction_accounts: Vec<InstructionAccount> =
-            Vec::with_capacity(instruction.accounts.len());
-        for index_in_transaction in instruction.accounts.iter() {
-            debug_assert!((*index_in_transaction as usize) < transaction_callee_map.len());
+            let mut instruction_accounts: Vec<InstructionAccount> =
+                Vec::with_capacity(instruction.accounts.len());
+            for index_in_transaction in instruction.accounts.iter() {
+                let index_in_callee = transaction_callee_map
+                    .get_mut(*index_in_transaction as usize)
+                    .expect("Invalid index in transaction");
 
-            let index_in_callee = transaction_callee_map
-                .get_mut(*index_in_transaction as usize)
-                .unwrap();
+                if (*index_in_callee as usize) > instruction_accounts.len() {
+                    *index_in_callee = instruction_accounts.len() as u16;
+                }
 
-            if (*index_in_callee as usize) > instruction_accounts.len() {
-                *index_in_callee = instruction_accounts.len() as u16;
+                let index_in_transaction = *index_in_transaction as usize;
+                instruction_accounts.push(InstructionAccount::new(
+                    index_in_transaction as IndexOfAccount,
+                    message.is_signer(index_in_transaction),
+                    message.is_writable(index_in_transaction),
+                ));
             }
 
-            let index_in_transaction = *index_in_transaction as usize;
-            instruction_accounts.push(InstructionAccount::new(
-                index_in_transaction as IndexOfAccount,
-                message.is_signer(index_in_transaction),
-                message.is_writable(index_in_transaction),
-            ));
+            self.transaction_context
+                .configure_instruction_at_index(
+                    top_level_instruction_index,
+                    instruction.program_id_index as u16,
+                    instruction_accounts,
+                    transaction_callee_map,
+                    Cow::Borrowed(instruction.data),
+                    None,
+                )
+                .map_err(|err| (top_level_instruction_index as u8, err))?;
         }
-
-        self.transaction_context.configure_instruction_at_index(
-            self.transaction_context.get_instruction_trace_length(),
-            program_account_index,
-            instruction_accounts,
-            transaction_callee_map,
-            Cow::Borrowed(data),
-            None,
-        )?;
         Ok(())
     }
 
@@ -550,7 +607,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             ProgramCacheEntryType::Builtin(program) => program
                 .get_function_registry()
                 .lookup_by_key(ENTRYPOINT_KEY)
-                .map(|(_name, function)| function),
+                .map(|(_name, (function, _codegen))| function),
             _ => None,
         }
         .ok_or(InstructionError::UnsupportedProgramId)?;
@@ -561,21 +618,17 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         let logger = self.get_log_collector();
         stable_log::program_invoke(&logger, &program_id, self.get_stack_height());
         let pre_remaining_units = self.get_remaining();
-        // In program-runtime v2 we will create this VM instance only once per transaction.
-        // `program_runtime_environment_v2.get_config()` will be used instead of `mock_config`.
         // For now, only built-ins are invoked from here, so the VM and its Config are irrelevant.
-        let mock_config = Config::default();
-        let empty_memory_mapping =
-            MemoryMapping::new(Vec::new(), &mock_config, SBPFVersion::V0).unwrap();
         let mut vm = EbpfVm::new(
-            self.environment_config
-                .program_runtime_environments_for_execution
-                .program_runtime_v2
-                .clone(),
+            Arc::clone(
+                &**self
+                    .environment_config
+                    .program_runtime_environments
+                    .get_env_for_execution(),
+            ),
             SBPFVersion::V0,
             // Removes lifetime tracking
             unsafe { std::mem::transmute::<&mut InvokeContext, &mut InvokeContext>(self) },
-            empty_memory_mapping,
             0,
         );
         vm.invoke_function(function);
@@ -637,6 +690,11 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         *self.compute_meter.borrow_mut() = remaining;
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn set_alpenglow_migration_succeeded_for_tests(&mut self, succeeded: bool) {
+        self.environment_config.alpenglow_migration_succeeded = succeeded;
+    }
+
     /// Get this invocation's compute budget
     pub fn get_compute_budget(&self) -> &SVMTransactionExecutionBudget {
         &self.compute_budget
@@ -652,21 +710,20 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         self.environment_config.feature_set
     }
 
-    pub fn get_program_runtime_environments_for_deployment(&self) -> &ProgramRuntimeEnvironments {
+    pub fn get_program_runtime_environment_for_deployment(&self) -> &ProgramRuntimeEnvironment {
         self.environment_config
-            .program_runtime_environments_for_deployment
-    }
-
-    pub fn is_stake_raise_minimum_delegation_to_1_sol_active(&self) -> bool {
-        self.environment_config
-            .feature_set
-            .stake_raise_minimum_delegation_to_1_sol
+            .program_runtime_environments
+            .get_env_for_deployment()
     }
 
     pub fn is_deprecate_legacy_vote_ixs_active(&self) -> bool {
         self.environment_config
             .feature_set
             .deprecate_legacy_vote_ixs
+    }
+
+    pub fn is_alpenglow_migration_succeeded(&self) -> bool {
+        self.environment_config.alpenglow_migration_succeeded
     }
 
     /// Get cached sysvars
@@ -707,31 +764,29 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .unwrap_or(true)
     }
 
-    // Set this instruction syscall context
-    pub fn set_syscall_context(
+    // Set this instruction memory context
+    pub fn set_memory_context(
         &mut self,
-        syscall_context: SyscallContext,
+        memory_context: MemoryContext,
     ) -> Result<(), InstructionError> {
         *self
-            .syscall_context
+            .memory_context
             .last_mut()
-            .ok_or(InstructionError::CallDepth)? = Some(syscall_context);
+            .ok_or(InstructionError::CallDepth)? = memory_context;
         Ok(())
     }
 
-    // Get this instruction's SyscallContext
-    pub fn get_syscall_context(&self) -> Result<&SyscallContext, InstructionError> {
-        self.syscall_context
+    // Get this instruction's MemoryContext
+    pub fn get_memory_context(&self) -> Result<&MemoryContext, InstructionError> {
+        self.memory_context
             .last()
-            .and_then(std::option::Option::as_ref)
             .ok_or(InstructionError::CallDepth)
     }
 
-    // Get this instruction's SyscallContext
-    pub fn get_syscall_context_mut(&mut self) -> Result<&mut SyscallContext, InstructionError> {
-        self.syscall_context
+    // Get this instruction's MemoryContext
+    pub fn get_memory_context_mut(&mut self) -> Result<&mut MemoryContext, InstructionError> {
+        self.memory_context
             .last_mut()
-            .and_then(|syscall_context| syscall_context.as_mut())
             .ok_or(InstructionError::CallDepth)
     }
 
@@ -774,6 +829,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 #[macro_export]
 macro_rules! with_mock_invoke_context_with_feature_set {
     (
@@ -781,7 +837,8 @@ macro_rules! with_mock_invoke_context_with_feature_set {
         $transaction_context:ident,
         $feature_set:ident,
         $top_level_instructions:literal,
-        $transaction_accounts:expr $(,)?
+        $transaction_accounts:expr,
+        $all_accounts:expr $(,)?
     ) => {
         use {
             solana_svm_callback::InvokeContextCallback,
@@ -801,6 +858,14 @@ macro_rules! with_mock_invoke_context_with_feature_set {
         let compute_budget = SVMTransactionExecutionBudget::new_with_defaults(
             $feature_set.raise_cpi_nesting_limit_to_8,
         );
+        let mut sysvar_cache = SysvarCache::default();
+        sysvar_cache.fill_missing_entries(|pubkey, callback| {
+            for (key, account) in $all_accounts.iter() {
+                if key == pubkey {
+                    callback(account.data());
+                }
+            }
+        });
         let mut $transaction_context = TransactionContext::new(
             $transaction_accounts,
             Rent::default(),
@@ -808,31 +873,13 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             compute_budget.max_instruction_trace_length,
             $top_level_instructions,
         );
-        let mut sysvar_cache = SysvarCache::default();
-        sysvar_cache.fill_missing_entries(|pubkey, callback| {
-            for index in 0..$transaction_context.get_number_of_accounts() {
-                if $transaction_context
-                    .get_key_of_account_at_index(index)
-                    .unwrap()
-                    == pubkey
-                {
-                    callback(
-                        $transaction_context
-                            .accounts()
-                            .try_borrow(index)
-                            .unwrap()
-                            .data(),
-                    );
-                }
-            }
-        });
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
+        let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
+            false,
             &MockInvokeContextCallback {},
             $feature_set,
-            &program_runtime_environments,
             &program_runtime_environments,
             &sysvar_cache,
         );
@@ -843,9 +890,25 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             environment_config,
             Some(LogCollector::new_ref()),
             compute_budget,
-            SVMTransactionExecutionCost::new_with_defaults(
-                $feature_set.increase_cpi_account_info_limit,
-            ),
+            SVMTransactionExecutionCost::default(),
+        );
+    };
+    (
+        $invoke_context:ident,
+        $transaction_context:ident,
+        $feature_set:ident,
+        $top_level_instructions:literal,
+        $transaction_accounts:expr $(,)?
+    ) => {
+        let transaction_accounts: Vec<(solana_pubkey::Pubkey, solana_account::AccountSharedData)> =
+            $transaction_accounts;
+        $crate::with_mock_invoke_context_with_feature_set!(
+            $invoke_context,
+            $transaction_context,
+            $feature_set,
+            $top_level_instructions,
+            transaction_accounts,
+            &transaction_accounts
         );
     };
     (
@@ -854,7 +917,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
         $feature_set:ident,
         $transaction_accounts:expr $(,)?
     ) => {
-        with_mock_invoke_context_with_feature_set!(
+        $crate::with_mock_invoke_context_with_feature_set!(
             $invoke_context,
             $transaction_context,
             $feature_set,
@@ -864,6 +927,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
     };
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 #[macro_export]
 macro_rules! with_mock_invoke_context {
     (
@@ -895,66 +959,99 @@ macro_rules! with_mock_invoke_context {
     };
 }
 
-#[allow(clippy::too_many_arguments)]
+#[cfg(feature = "dev-context-only-utils")]
+pub fn mock_compile_message<A>(
+    instruction: &Instruction,
+    accounts: &[(Pubkey, A)],
+    program_id: &Pubkey,
+    loader_key: &Pubkey,
+) -> Option<(SanitizedMessage, Vec<(Pubkey, AccountSharedData)>)>
+where
+    AccountSharedData: From<A>,
+    A: Clone,
+{
+    let message = Message::new(std::slice::from_ref(instruction), None);
+    let transaction_accounts: Vec<_> = message
+        .account_keys
+        .iter()
+        .map(|key| {
+            let account = accounts
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, a)| AccountSharedData::from(a.clone()))
+                .unwrap_or_else(|| {
+                    if key == program_id {
+                        let mut account = AccountSharedData::new(0, 0, loader_key);
+                        account.set_executable(true);
+                        account
+                    } else {
+                        AccountSharedData::default()
+                    }
+                });
+            (*key, account)
+        })
+        .collect();
+
+    let sanitized_message = SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()));
+
+    Some((sanitized_message, transaction_accounts))
+}
+
+#[cfg(feature = "dev-context-only-utils")]
 pub fn mock_process_instruction_with_feature_set<
     F: FnMut(&mut InvokeContext),
     G: FnMut(&mut InvokeContext),
 >(
-    loader_id: &Pubkey,
-    program_index: Option<IndexOfAccount>,
+    program_id: &Pubkey,
     instruction_data: &[u8],
-    mut transaction_accounts: Vec<KeyedAccountSharedData>,
+    mut accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     expected_result: Result<(), InstructionError>,
-    builtin_function: BuiltinFunctionWithContext,
+    builtin: BuiltinFunctionRegisterer,
     mut pre_adjustments: F,
     mut post_adjustments: G,
     feature_set: &SVMFeatureSet,
 ) -> Vec<AccountSharedData> {
-    let mut instruction_accounts: Vec<InstructionAccount> =
-        Vec::with_capacity(instruction_account_metas.len());
-    for account_meta in instruction_account_metas.iter() {
-        let index_in_transaction = transaction_accounts
-            .iter()
-            .position(|(key, _account)| *key == account_meta.pubkey)
-            .unwrap_or(transaction_accounts.len())
-            as IndexOfAccount;
-        instruction_accounts.push(InstructionAccount::new(
-            index_in_transaction,
-            account_meta.is_signer,
-            account_meta.is_writable,
-        ));
-    }
-
-    let program_index = if let Some(index) = program_index {
-        index
-    } else {
-        let processor_account = AccountSharedData::new(0, 0, &native_loader::id());
-        transaction_accounts.push((*loader_id, processor_account));
-        transaction_accounts.len().saturating_sub(1) as IndexOfAccount
-    };
-    let pop_epoch_schedule_account = if !transaction_accounts
+    let original_len = accounts.len();
+    if !accounts
         .iter()
         .any(|(key, _)| *key == sysvar::epoch_schedule::id())
     {
-        transaction_accounts.push((
+        accounts.push((
             sysvar::epoch_schedule::id(),
             create_account_shared_data_for_test(&EpochSchedule::default()),
         ));
-        true
-    } else {
-        false
-    };
+    }
+
+    let instruction =
+        Instruction::new_with_bytes(*program_id, instruction_data, instruction_account_metas);
+    let (sanitized_message, transaction_accounts) =
+        mock_compile_message(&instruction, &accounts, program_id, &native_loader::id()).unwrap();
+
+    let program_owner = accounts
+        .iter()
+        .find(|(key, _)| key == program_id)
+        .map(|(_, acct)| *acct.owner())
+        .unwrap_or_else(native_loader::id);
+    let is_builtin = native_loader::check_id(&program_owner);
+
     with_mock_invoke_context_with_feature_set!(
         invoke_context,
         transaction_context,
         feature_set,
-        transaction_accounts
+        1,
+        transaction_accounts,
+        &accounts
     );
+
     let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
     program_cache_for_tx_batch.replenish(
-        *loader_id,
-        Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin_function)),
+        if is_builtin {
+            *program_id
+        } else {
+            program_owner
+        },
+        Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin)),
     );
     program_cache_for_tx_batch.set_slot_for_tests(
         invoke_context
@@ -964,45 +1061,51 @@ pub fn mock_process_instruction_with_feature_set<
             .unwrap_or(1),
     );
     invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
+
     pre_adjustments(&mut invoke_context);
+
     invoke_context
-        .transaction_context
-        .configure_top_level_instruction_for_tests(
-            program_index,
-            instruction_accounts,
-            instruction_data.to_vec(),
-        )
+        .prepare_top_level_instructions(&sanitized_message)
         .unwrap();
+
     let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
     assert_eq!(result, expected_result);
     post_adjustments(&mut invoke_context);
-    let mut transaction_accounts = transaction_context.deconstruct_without_keys().unwrap();
-    if pop_epoch_schedule_account {
-        transaction_accounts.pop();
-    }
-    transaction_accounts.pop();
-    transaction_accounts
+
+    let txn_result_keys: Vec<_> = (0..transaction_context.get_number_of_accounts())
+        .map(|i| *transaction_context.get_key_of_account_at_index(i).unwrap())
+        .collect();
+    let txn_result_accounts = transaction_context.deconstruct_without_keys().unwrap();
+    let txn_result_map = txn_result_keys
+        .into_iter()
+        .zip(txn_result_accounts)
+        .collect::<HashMap<Pubkey, AccountSharedData>>();
+
+    accounts
+        .into_iter()
+        .take(original_len)
+        .map(|(key, original)| txn_result_map.get(&key).cloned().unwrap_or(original))
+        .collect()
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut InvokeContext)>(
-    loader_id: &Pubkey,
-    program_index: Option<IndexOfAccount>,
+    program_id: &Pubkey,
     instruction_data: &[u8],
-    transaction_accounts: Vec<KeyedAccountSharedData>,
+    accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     expected_result: Result<(), InstructionError>,
-    builtin_function: BuiltinFunctionWithContext,
+    builtin: BuiltinFunctionRegisterer,
     pre_adjustments: F,
     post_adjustments: G,
 ) -> Vec<AccountSharedData> {
     mock_process_instruction_with_feature_set(
-        loader_id,
-        program_index,
+        program_id,
         instruction_data,
-        transaction_accounts,
+        accounts,
         instruction_account_metas,
         expected_result,
-        builtin_function,
+        builtin,
         pre_adjustments,
         post_adjustments,
         &SVMFeatureSet::all_enabled(),
@@ -1013,16 +1116,20 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
 mod tests {
     use {
         super::*,
-        crate::execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+        crate::execution_budget::{
+            DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_INSTRUCTION_STACK_DEPTH,
+            MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268,
+        },
         serde::{Deserialize, Serialize},
-        solana_account::WritableAccount,
-        solana_instruction::Instruction,
+        solana_account::Account,
         solana_keypair::Keypair,
         solana_rent::Rent,
+        solana_sbpf::program::BuiltinFunctionDefinition,
+        solana_sdk_ids::system_program,
         solana_signer::Signer,
+        solana_svm_feature_set::SVMFeatureSet,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION,
-        std::collections::HashSet,
         test_case::test_case,
     };
 
@@ -1117,7 +1224,7 @@ mod tests {
                         assert_eq!(result, Err(InstructionError::UnbalancedInstruction));
                         result?;
                         invoke_context
-                            .native_invoke(inner_instruction, &[])
+                            .native_invoke_signed(inner_instruction, &[])
                             .and(invoke_context.pop())?;
                     }
                     MockInstruction::UnbalancedPop => instruction_context
@@ -1146,18 +1253,32 @@ mod tests {
     #[test_case(false; "SIMD-0268 disabled")]
     #[test_case(true; "SIMD-0268 enabled")]
     fn test_instruction_stack_height(simd_0268_active: bool) {
-        let one_more_than_max_depth =
-            SVMTransactionExecutionBudget::new_with_defaults(simd_0268_active)
-                .max_instruction_stack_depth
-                .saturating_add(1);
+        let feature_set = &SVMFeatureSet {
+            raise_cpi_nesting_limit_to_8: simd_0268_active,
+            ..SVMFeatureSet::all_enabled()
+        };
+        let max_depth = SVMTransactionExecutionBudget::new_with_defaults(simd_0268_active)
+            .max_instruction_stack_depth;
+        assert_eq!(
+            max_depth,
+            if simd_0268_active {
+                MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268
+            } else {
+                MAX_INSTRUCTION_STACK_DEPTH
+            },
+        );
+
+        // Set up max_depth + 1 accounts (one extra to trigger the failing push)
+        // and a matching program account for each.
         let mut invoke_stack = vec![];
         let mut transaction_accounts = vec![];
         let mut instruction_accounts = vec![];
-        for index in 0..one_more_than_max_depth {
-            invoke_stack.push(solana_pubkey::new_rand());
+        for index in 0..max_depth.saturating_add(1) {
+            let program_id = solana_pubkey::new_rand();
+            invoke_stack.push(program_id);
             transaction_accounts.push((
                 solana_pubkey::new_rand(),
-                AccountSharedData::new(index as u64, 1, invoke_stack.get(index).unwrap()),
+                AccountSharedData::new(1, 1, &program_id),
             ));
             instruction_accounts.push(InstructionAccount::new(
                 index as IndexOfAccount,
@@ -1165,6 +1286,10 @@ mod tests {
                 true,
             ));
         }
+
+        // Append program accounts after the regular accounts so that
+        // `first_program_account + depth` indexes the right program.
+        let first_program_account = transaction_accounts.len();
         for (index, program_id) in invoke_stack.iter().enumerate() {
             transaction_accounts.push((
                 *program_id,
@@ -1176,26 +1301,44 @@ mod tests {
                 false,
             ));
         }
-        with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+        with_mock_invoke_context_with_feature_set!(
+            invoke_context,
+            transaction_context,
+            feature_set,
+            transaction_accounts,
+        );
 
-        // Check call depth increases and has a limit
-        let mut depth_reached: usize = 0;
-        for _ in 0..invoke_stack.len() {
+        // Each push must succeed and the stack height must track.
+        for depth in 0..max_depth {
+            assert_eq!(invoke_context.get_stack_height(), depth);
             invoke_context
                 .transaction_context
                 .configure_top_level_instruction_for_tests(
-                    one_more_than_max_depth.saturating_add(depth_reached) as IndexOfAccount,
+                    (first_program_account.saturating_add(depth)) as IndexOfAccount,
                     instruction_accounts.clone(),
                     vec![],
                 )
                 .unwrap();
-            if Err(InstructionError::CallDepth) == invoke_context.push() {
-                break;
-            }
-            depth_reached = depth_reached.saturating_add(1);
+            assert!(
+                invoke_context.push().is_ok(),
+                "push at depth {depth} should succeed (max_depth={max_depth})",
+            );
         }
-        assert_ne!(depth_reached, 0);
-        assert!(depth_reached < one_more_than_max_depth);
+
+        // At exactly max_depth, one more push must fail with CallDepth.
+        assert_eq!(invoke_context.get_stack_height(), max_depth);
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(
+                (first_program_account.saturating_add(max_depth)) as IndexOfAccount,
+                instruction_accounts.clone(),
+                vec![],
+            )
+            .unwrap();
+        assert_eq!(invoke_context.push(), Err(InstructionError::CallDepth),);
+
+        // Stack height must not have changed after the rejected push.
+        assert_eq!(invoke_context.get_stack_height(), max_depth);
     }
 
     #[test]
@@ -1243,28 +1386,27 @@ mod tests {
             2,
         );
 
-        // To be uncommented when we reorder the trace
-        // transaction_context
-        //     .configure_instruction_at_index(
-        //         0,
-        //         0,
-        //         vec![InstructionAccount::new(0, false, false)],
-        //         vec![u16::MAX; 256],
-        //         Cow::Owned(Vec::new()),
-        //         None,
-        //     )
-        //     .unwrap();
-        //
-        // transaction_context
-        //     .configure_instruction_at_index(
-        //         1,
-        //         0,
-        //         vec![InstructionAccount::new(0, false, false)],
-        //         vec![u16::MAX; 256],
-        //         Cow::Owned(Vec::new()),
-        //         None,
-        //     )
-        //     .unwrap();
+        transaction_context
+            .configure_instruction_at_index(
+                0,
+                0,
+                vec![InstructionAccount::new(0, false, false)],
+                vec![u16::MAX; 256],
+                Cow::Owned(Vec::new()),
+                None,
+            )
+            .unwrap();
+
+        transaction_context
+            .configure_instruction_at_index(
+                1,
+                0,
+                vec![InstructionAccount::new(0, false, false)],
+                vec![u16::MAX; 256],
+                Cow::Owned(Vec::new()),
+                None,
+            )
+            .unwrap();
 
         for _ in 0..MAX_INSTRUCTIONS {
             transaction_context.push().unwrap();
@@ -1326,7 +1468,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             callee_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::register)),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
@@ -1339,7 +1481,7 @@ mod tests {
         let inner_instruction =
             Instruction::new_with_bincode(callee_program_id, &instruction, metas);
         let result = invoke_context
-            .native_invoke(inner_instruction, &[])
+            .native_invoke_signed(inner_instruction, &[])
             .and(invoke_context.pop());
         assert_eq!(result, expected_result);
     }
@@ -1381,7 +1523,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             callee_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::register)),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
@@ -1465,7 +1607,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             program_key,
-            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register)),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
@@ -1600,30 +1742,14 @@ mod tests {
             }
         }
 
-        let svm_instruction =
-            SVMInstruction::from(sanitized.message().instructions().first().unwrap());
         invoke_context
-            .prepare_next_top_level_instruction(
-                &sanitized,
-                &svm_instruction,
-                90,
-                svm_instruction.data,
-            )
+            .prepare_top_level_instructions(&sanitized)
             .unwrap();
 
         test_case_1(&invoke_context);
 
         invoke_context.transaction_context.push().unwrap();
-        let svm_instruction =
-            SVMInstruction::from(sanitized.message().instructions().get(1).unwrap());
-        invoke_context
-            .prepare_next_top_level_instruction(
-                &sanitized,
-                &svm_instruction,
-                90,
-                svm_instruction.data,
-            )
-            .unwrap();
+        invoke_context.transaction_context.pop().unwrap();
 
         test_case_2(&invoke_context);
 
@@ -1682,16 +1808,9 @@ mod tests {
         let sanitized =
             SanitizedTransaction::try_from_legacy_transaction(transaction, &HashSet::new())
                 .unwrap();
-        let svm_instruction =
-            SVMInstruction::from(sanitized.message().instructions().first().unwrap());
 
         invoke_context
-            .prepare_next_top_level_instruction(
-                &sanitized,
-                &svm_instruction,
-                90,
-                svm_instruction.data,
-            )
+            .prepare_top_level_instructions(&sanitized)
             .unwrap();
 
         {
@@ -1736,5 +1855,184 @@ mod tests {
                 assert_eq!(is_duplicate, Some(index_in_instruction.saturating_sub(1)));
             }
         }
+    }
+
+    // Used for native_invoke_signed tests below.
+    const TEST_CALLER_PROGRAM_ID: Pubkey = Pubkey::new_from_array([1u8; 32]);
+    const TEST_CALLEE_PROGRAM_ID: Pubkey = Pubkey::new_from_array([2u8; 32]);
+    const TEST_WRONG_PROGRAM_ID: Pubkey = Pubkey::new_from_array([3u8; 32]);
+    const TEST_MOCK_EXTRA_KEY: Pubkey = Pubkey::new_from_array([4u8; 32]);
+    const TEST_ACCOUNT_KEY: Pubkey = Pubkey::new_from_array([5u8; 32]);
+
+    /// Runs a `native_invoke_signed` call with the standard test setup and returns
+    /// the result.
+    ///
+    /// Same layout for all tests:
+    ///   0: target account (writable, signer iff `target_is_signer`)
+    ///   1: caller program (executable)
+    ///   2: mock extra (satisfies MockBuiltin's 2-account requirement)
+    ///   3: callee program (executable)
+    fn run_native_invoke_signed_test(
+        target_key: Pubkey,
+        target_is_signer: bool,
+        inner_instruction: Instruction,
+        signer_seeds: &[&[&[u8]]],
+    ) -> Result<(), InstructionError> {
+        let target_account = AccountSharedData::new(100, 0, &TEST_CALLEE_PROGRAM_ID);
+        let mock_extra_account = AccountSharedData::new(0, 1, &system_program::id());
+        let mut caller_program_account = AccountSharedData::new(1, 1, &native_loader::id());
+        caller_program_account.set_executable(true);
+        let mut callee_program_account = AccountSharedData::new(1, 1, &native_loader::id());
+        callee_program_account.set_executable(true);
+        let transaction_accounts = vec![
+            (target_key, target_account),
+            (TEST_CALLER_PROGRAM_ID, caller_program_account),
+            (TEST_MOCK_EXTRA_KEY, mock_extra_account),
+            (TEST_CALLEE_PROGRAM_ID, callee_program_account),
+        ];
+
+        with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
+        program_cache_for_tx_batch.replenish(
+            TEST_CALLEE_PROGRAM_ID,
+            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::register)),
+        );
+        invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
+
+        let instruction_accounts = (0..4)
+            .map(|i| InstructionAccount::new(i, i == 0 && target_is_signer, i < 2))
+            .collect::<Vec<_>>();
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(1, instruction_accounts, vec![])
+            .unwrap();
+        invoke_context.push().unwrap();
+
+        let result = invoke_context.native_invoke_signed(inner_instruction, signer_seeds);
+        invoke_context.pop().unwrap();
+        result
+    }
+
+    // Valid PDA seeds grant signer privilege to the derived address.
+    #[test]
+    fn test_native_invoke_signed_with_valid_pda_signer() {
+        let (pda_key, bump_seed) =
+            Pubkey::find_program_address(&[b"seed"], &TEST_CALLER_PROGRAM_ID);
+        let instruction = Instruction::new_with_bincode(
+            TEST_CALLEE_PROGRAM_ID,
+            &MockInstruction::NoopSuccess,
+            vec![
+                AccountMeta::new(pda_key, true),
+                AccountMeta::new_readonly(TEST_MOCK_EXTRA_KEY, false),
+            ],
+        );
+        let result =
+            run_native_invoke_signed_test(pda_key, false, instruction, &[&[b"seed", &[bump_seed]]]);
+        assert!(
+            result.is_ok(),
+            "valid PDA signer should succeed: {result:?}"
+        );
+    }
+
+    // Oversized seeds (>MAX_SEED_LEN) hit `MaxSeedLengthExceeded`
+    // (discriminant 0) which the broken `as u64` num-traits conversion
+    // maps to `Custom(0)`.
+    #[test]
+    fn test_native_invoke_signed_with_invalid_seeds() {
+        let instruction = Instruction::new_with_bincode(
+            TEST_CALLEE_PROGRAM_ID,
+            &MockInstruction::NoopSuccess,
+            vec![AccountMeta::new(TEST_ACCOUNT_KEY, true)],
+        );
+        let oversized_seed = [0u8; 33];
+        let result = run_native_invoke_signed_test(
+            TEST_ACCOUNT_KEY,
+            false,
+            instruction,
+            &[&[&oversized_seed]],
+        );
+        assert_eq!(result, Err(InstructionError::Custom(0)));
+    }
+
+    // CPI marks an account as signer but caller provides no seeds —
+    // signer privilege escalation.
+    #[test]
+    fn test_native_invoke_signed_pda_privilege_escalation_without_seeds() {
+        let (pda_key, _bump_seed) =
+            Pubkey::find_program_address(&[b"seed"], &TEST_CALLER_PROGRAM_ID);
+        let instruction = Instruction::new_with_bincode(
+            TEST_CALLEE_PROGRAM_ID,
+            &MockInstruction::NoopSuccess,
+            vec![AccountMeta::new(pda_key, true)],
+        );
+        let result = run_native_invoke_signed_test(pda_key, false, instruction, &[]);
+        assert_eq!(result, Err(InstructionError::PrivilegeEscalation));
+    }
+
+    // Seeds valid for a different program ID don't grant signer privilege
+    // because native_invoke_signed derives against the caller's own program ID.
+    #[test]
+    fn test_native_invoke_signed_uses_caller_program_id_for_pda() {
+        let (pda_key, bump_seed) = Pubkey::find_program_address(&[b"seed"], &TEST_WRONG_PROGRAM_ID);
+        let instruction = Instruction::new_with_bincode(
+            TEST_CALLEE_PROGRAM_ID,
+            &MockInstruction::NoopSuccess,
+            vec![AccountMeta::new(pda_key, true)],
+        );
+        let result =
+            run_native_invoke_signed_test(pda_key, false, instruction, &[&[b"seed", &[bump_seed]]]);
+        assert_eq!(result, Err(InstructionError::PrivilegeEscalation));
+    }
+
+    // Top-level signer privilege carries through CPI without needing seeds.
+    #[test]
+    fn test_native_invoke_signed_top_level_signer_needs_no_seeds() {
+        let (pda_key, _bump_seed) =
+            Pubkey::find_program_address(&[b"seed"], &TEST_CALLER_PROGRAM_ID);
+        let instruction = Instruction::new_with_bincode(
+            TEST_CALLEE_PROGRAM_ID,
+            &MockInstruction::NoopSuccess,
+            vec![
+                AccountMeta::new(pda_key, true),
+                AccountMeta::new_readonly(TEST_MOCK_EXTRA_KEY, false),
+            ],
+        );
+        let result = run_native_invoke_signed_test(pda_key, true, instruction, &[]);
+        assert!(
+            result.is_ok(),
+            "top-level signer should not need seeds: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_compile_message() {
+        let program_id = Pubkey::new_from_array([1u8; 32]);
+        let writable = Pubkey::new_from_array([2u8; 32]);
+        let loader_key = Pubkey::new_from_array([3u8; 32]);
+
+        let instruction = Instruction {
+            program_id,
+            accounts: vec![AccountMeta::new(writable, false)],
+            data: vec![1, 2, 3],
+        };
+
+        let accounts = vec![(
+            writable,
+            Account {
+                lamports: 100,
+                ..Account::default()
+            },
+        )];
+
+        let (message, tx_accounts) =
+            mock_compile_message(&instruction, &accounts, &program_id, &loader_key).unwrap();
+
+        assert_eq!(message.instructions().len(), 1);
+        assert_eq!(tx_accounts.len(), 2);
+        assert_eq!(tx_accounts.first().unwrap().0, writable);
+        assert_eq!(tx_accounts.get(1).unwrap().0, program_id);
+
+        // Verify the writable account is NOT promoted to signer.
+        assert!(!message.is_signer(0));
     }
 }

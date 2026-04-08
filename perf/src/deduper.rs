@@ -123,6 +123,8 @@ mod tests {
         test_case::test_case,
     };
 
+    const NUM_BITS: u64 = 63_999_979;
+
     #[test]
     fn test_dedup_same() {
         let tx = test_tx();
@@ -131,7 +133,7 @@ mod tests {
             to_packet_batches(&std::iter::repeat_n(tx, 1024).collect::<Vec<_>>(), 128);
         let packet_count = sigverify::count_packets_in_batches(&batches);
         let mut rng = rand::rng();
-        let filter = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);
+        let filter = Deduper::<2, [u8]>::new(&mut rng, NUM_BITS);
         let discard = dedup_packets_and_count_discards(&filter, &mut batches) as usize;
         assert_eq!(packet_count, discard + 1);
     }
@@ -139,7 +141,7 @@ mod tests {
     #[test]
     fn test_dedup_diff() {
         let mut rng = rand::rng();
-        let mut filter = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);
+        let mut filter = Deduper::<2, [u8]>::new(&mut rng, NUM_BITS);
         let mut batches = to_packet_batches(&(0..1024).map(|_| test_tx()).collect::<Vec<_>>(), 128);
         let discard = dedup_packets_and_count_discards(&filter, &mut batches) as usize;
         // because dedup uses a threadpool, there maybe up to N threads of txs that go through
@@ -159,9 +161,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_dedup_saturated() {
-        const NUM_BITS: u64 = 63_999_979;
+        // Use smaller value to saturate the deduper quicker.
+        const NUM_BITS: u64 = 1_000_000;
         const FALSE_POSITIVE_RATE: f64 = 0.001;
         let mut rng = rand::rng();
         let mut filter = Deduper::<2, [u8]>::new(&mut rng, NUM_BITS);
@@ -189,7 +191,7 @@ mod tests {
     #[test]
     fn test_dedup_false_positive() {
         let mut rng = rand::rng();
-        let filter = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);
+        let filter = Deduper::<2, [u8]>::new(&mut rng, NUM_BITS);
         let mut discard = 0;
         for i in 0..10 {
             let mut batches =

@@ -9,20 +9,13 @@ use {
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
-        account_info::{AccountInfo, StorageLocation},
         accounts::{AccountAddressFilter, Accounts},
-        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, AccountFromStorage, AccountsDb},
-        accounts_index::ScanConfig,
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, AccountsDb},
         ancestors::Ancestors,
     },
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    std::{
-        collections::{HashMap, HashSet},
-        path::PathBuf,
-        sync::{Arc, RwLock},
-        thread::Builder,
-    },
+    std::{collections::HashSet, path::PathBuf, sync::Arc, thread::Builder},
     test::Bencher,
 };
 
@@ -142,64 +135,9 @@ fn bench_concurrent_scan_write(bencher: &mut Bencher) {
                         &Ancestors::default(),
                         0,
                         AccountSharedData::default().owner(),
-                        &ScanConfig::default(),
                     )
                     .unwrap(),
             );
-        }
-    })
-}
-
-#[bench]
-#[ignore]
-fn bench_dashmap_single_reader_with_n_writers(bencher: &mut Bencher) {
-    let num_readers = 5;
-    let num_keys = 10000;
-    let map = Arc::new(DashMap::new());
-    for i in 0..num_keys {
-        map.insert(i, i);
-    }
-    for _ in 0..num_readers {
-        let map = map.clone();
-        Builder::new()
-            .name("readers".to_string())
-            .spawn(move || {
-                loop {
-                    test::black_box(map.entry(5).or_insert(2));
-                }
-            })
-            .unwrap();
-    }
-    bencher.iter(|| {
-        for _ in 0..num_keys {
-            test::black_box(map.get(&5).unwrap().value());
-        }
-    })
-}
-
-#[bench]
-#[ignore]
-fn bench_rwlock_hashmap_single_reader_with_n_writers(bencher: &mut Bencher) {
-    let num_readers = 5;
-    let num_keys = 10000;
-    let map = Arc::new(RwLock::new(HashMap::new()));
-    for i in 0..num_keys {
-        map.write().unwrap().insert(i, i);
-    }
-    for _ in 0..num_readers {
-        let map = map.clone();
-        Builder::new()
-            .name("readers".to_string())
-            .spawn(move || {
-                loop {
-                    test::black_box(map.write().unwrap().get(&5));
-                }
-            })
-            .unwrap();
-    }
-    bencher.iter(|| {
-        for _ in 0..num_keys {
-            test::black_box(map.read().unwrap().get(&5));
         }
     })
 }
@@ -279,54 +217,6 @@ fn bench_load_largest_accounts(b: &mut Bencher) {
             20,
             &HashSet::new(),
             AccountAddressFilter::Exclude,
-            false,
         )
     });
-}
-
-#[bench]
-fn bench_sort_and_remove_dups(b: &mut Bencher) {
-    fn generate_sample_account_from_storage(i: u8) -> AccountFromStorage {
-        // offset has to be 8 byte aligned
-        let offset = (i as usize) * std::mem::size_of::<u64>();
-        AccountFromStorage {
-            index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i == 0),
-            data_len: i as u64,
-            pubkey: Pubkey::new_from_array([i; 32]),
-        }
-    }
-
-    use rand::prelude::*;
-    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234);
-    let accounts: Vec<_> =
-        std::iter::repeat_with(|| generate_sample_account_from_storage(rng.random::<u8>()))
-            .take(1000)
-            .collect();
-
-    b.iter(|| AccountsDb::sort_and_remove_dups(&mut accounts.clone()));
-}
-
-#[bench]
-fn bench_sort_and_remove_dups_no_dups(b: &mut Bencher) {
-    fn generate_sample_account_from_storage(i: u8) -> AccountFromStorage {
-        // offset has to be 8 byte aligned
-        let offset = (i as usize) * std::mem::size_of::<u64>();
-        AccountFromStorage {
-            index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i == 0),
-            data_len: i as u64,
-            pubkey: Pubkey::new_unique(),
-        }
-    }
-
-    use rand::prelude::*;
-
-    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234);
-    let mut accounts: Vec<_> =
-        std::iter::repeat_with(|| generate_sample_account_from_storage(rng.random::<u8>()))
-            .take(1000)
-            .collect();
-
-    accounts.shuffle(&mut rng);
-
-    b.iter(|| AccountsDb::sort_and_remove_dups(&mut accounts.clone()));
 }

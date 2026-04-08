@@ -7,7 +7,9 @@ use {
     },
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_ledger::blockstore_processor::{ConfirmationProgress, ReplaySlotStats},
+    solana_ledger::blockstore_processor::{
+        AsyncVerificationProgress, ConfirmationProgress, ReplaySlotStats,
+    },
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_vote::vote_account::VoteAccountsHashMap,
@@ -101,6 +103,7 @@ impl ForkProgress {
         validator_stake_info: Option<ValidatorStakeInfo>,
         num_blocks_on_fork: u64,
         num_dropped_blocks_on_fork: u64,
+        async_verification: Option<AsyncVerificationProgress>,
     ) -> Self {
         let (
             is_leader_slot,
@@ -131,7 +134,9 @@ impl ForkProgress {
             is_dead: false,
             fork_stats: ForkStats::default(),
             replay_stats: Arc::new(RwLock::new(ReplaySlotStats::default())),
-            replay_progress: Arc::new(RwLock::new(ConfirmationProgress::new(last_entry))),
+            replay_progress: Arc::new(RwLock::new(
+                ConfirmationProgress::new_with_async_verification(last_entry, async_verification),
+            )),
             num_blocks_on_fork,
             num_dropped_blocks_on_fork,
             propagated_stats: PropagatedStats {
@@ -157,6 +162,7 @@ impl ForkProgress {
         prev_leader_slot: Option<Slot>,
         num_blocks_on_fork: u64,
         num_dropped_blocks_on_fork: u64,
+        async_verification: Option<AsyncVerificationProgress>,
     ) -> Self {
         let validator_stake_info = {
             if bank.leader_id() == validator_identity {
@@ -176,6 +182,7 @@ impl ForkProgress {
             validator_stake_info,
             num_blocks_on_fork,
             num_dropped_blocks_on_fork,
+            async_verification,
         );
 
         if bank.is_frozen() {
@@ -515,7 +522,7 @@ mod test {
     fn test_is_propagated_status_on_construction() {
         // If the given ValidatorStakeInfo == None, then this is not
         // a leader slot and is_propagated == false
-        let progress = ForkProgress::new(Hash::default(), Some(9), None, 0, 0);
+        let progress = ForkProgress::new(Hash::default(), Some(9), None, 0, 0, None);
         assert!(!progress.propagated_stats.is_propagated);
 
         // If the stake is zero, then threshold is always achieved
@@ -528,6 +535,7 @@ mod test {
             }),
             0,
             0,
+            None,
         );
         assert!(progress.propagated_stats.is_propagated);
 
@@ -542,6 +550,7 @@ mod test {
             }),
             0,
             0,
+            None,
         );
         assert!(!progress.propagated_stats.is_propagated);
 
@@ -556,6 +565,7 @@ mod test {
             }),
             0,
             0,
+            None,
         );
         assert!(progress.propagated_stats.is_propagated);
 
@@ -568,6 +578,7 @@ mod test {
             Some(ValidatorStakeInfo::default()),
             0,
             0,
+            None,
         );
         assert!(!progress.propagated_stats.is_propagated);
     }
@@ -578,7 +589,10 @@ mod test {
 
         // Insert new ForkProgress for slot 10 (not a leader slot) and its
         // previous leader slot 9 (leader slot)
-        progress_map.insert(10, ForkProgress::new(Hash::default(), Some(9), None, 0, 0));
+        progress_map.insert(
+            10,
+            ForkProgress::new(Hash::default(), Some(9), None, 0, 0, None),
+        );
         progress_map.insert(
             9,
             ForkProgress::new(
@@ -587,6 +601,7 @@ mod test {
                 Some(ValidatorStakeInfo::default()),
                 0,
                 0,
+                None,
             ),
         );
 
@@ -598,7 +613,10 @@ mod test {
         // The previous leader before 8, slot 7, does not exist in
         // progress map, so is_propagated(8) should return true as
         // this implies the parent is rooted
-        progress_map.insert(8, ForkProgress::new(Hash::default(), Some(7), None, 0, 0));
+        progress_map.insert(
+            8,
+            ForkProgress::new(Hash::default(), Some(7), None, 0, 0, None),
+        );
         assert!(progress_map.get_leader_propagation_slot_must_exist(8).0);
 
         // If we set the is_propagated = true, is_propagated should return true

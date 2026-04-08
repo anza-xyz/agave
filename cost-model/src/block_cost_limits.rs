@@ -30,7 +30,7 @@ pub const MAX_BLOCK_UNITS_SIMD_0286: u64 = 100_000_000;
 /// Number of compute units that a writable account in a block is allowed. The
 /// limit is to prevent too many transactions write to same account, therefore
 /// reduce block's parallelism.
-pub const MAX_WRITABLE_ACCOUNT_UNITS: u64 = 12_000_000;
+pub const MAX_WRITABLE_ACCOUNT_UNITS: u64 = 24_000_000;
 
 /// Number of compute units that a block can have for vote transactions,
 /// set to less than MAX_BLOCK_UNITS to leave room for non-vote transactions
@@ -41,6 +41,6 @@ pub const MAX_VOTE_UNITS: u64 = 36_000_000;
 pub const MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA: u64 = 100_000_000;
 
 /// Return the block limits that will be used upon activation of SIMD-0286.
-pub const fn simd_0286_block_limits() -> u64 {
+pub const fn simd_0286_block_limit() -> u64 {
     MAX_BLOCK_UNITS_SIMD_0286
 }

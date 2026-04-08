@@ -18,17 +18,7 @@ fn get_max_instruction_stack_depth(simd_0268_active: bool) -> usize {
 }
 
 //Default CPI invocation cost
-pub const DEFAULT_INVOCATION_COST: u64 = 1000;
-//CPI Invocation cost with SIMD-0339 active
-pub const INVOKE_UNITS_COST_SIMD_0339: u64 = 946;
-
-fn get_invoke_unit_cost(simd_0339_active: bool) -> u64 {
-    if simd_0339_active {
-        INVOKE_UNITS_COST_SIMD_0339
-    } else {
-        DEFAULT_INVOCATION_COST
-    }
-}
+pub const DEFAULT_INVOCATION_COST: u64 = 946;
 
 /// Max call depth. This is the maximum nesting of SBF to SBF call that can happen within a program.
 pub const MAX_CALL_DEPTH: usize = 64;
@@ -217,16 +207,10 @@ pub struct SVMTransactionExecutionCost {
 
 impl Default for SVMTransactionExecutionCost {
     fn default() -> Self {
-        Self::new_with_defaults(/* simd_0339_active */ false)
-    }
-}
-
-impl SVMTransactionExecutionCost {
-    pub fn new_with_defaults(simd_0339_active: bool) -> Self {
         SVMTransactionExecutionCost {
             log_64_units: 100,
             create_program_address_units: 1500,
-            invoke_units: get_invoke_unit_cost(simd_0339_active),
+            invoke_units: DEFAULT_INVOCATION_COST,
             sha256_base_cost: 85,
             sha256_byte_cost: 1,
             log_pubkey_units: 100,
@@ -277,7 +261,9 @@ impl SVMTransactionExecutionCost {
             bls12_381_additional_pair_cost: 13_023,
         }
     }
+}
 
+impl SVMTransactionExecutionCost {
     /// Returns cost of the Poseidon hash function for the given number of
     /// inputs is determined by the following quadratic function:
     ///

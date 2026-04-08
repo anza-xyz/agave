@@ -34,5 +34,8 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-sanitize = { workspace = true }
 solana-serde-varint = { workspace = true }
 
+[dev-dependencies]
+bincode = { workspace = true }
+
 [lints]
 workspace = true

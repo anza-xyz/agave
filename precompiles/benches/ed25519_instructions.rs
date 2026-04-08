@@ -2,13 +2,10 @@
 
 extern crate test;
 use {
-    agave_feature_set::FeatureSet,
-    agave_precompiles::ed25519::verify,
-    ed25519_dalek::ed25519::signature::Signer,
-    rand0_7::{Rng, thread_rng},
+    agave_feature_set::FeatureSet, agave_precompiles::ed25519::verify,
+    ed25519_dalek::ed25519::signature::Signer, rand::Rng,
     solana_ed25519_program::new_ed25519_instruction_with_signature,
-    solana_instruction::Instruction,
-    test::Bencher,
+    solana_instruction::Instruction, test::Bencher,
 };
 
 // 5K instructions should be enough for benching loop
@@ -16,11 +13,16 @@ const IX_COUNT: u16 = 5120;
 
 // prepare a bunch of unique txs
 fn create_test_instructions(message_length: u16) -> Vec<Instruction> {
+    let mut rng = rand::rng();
     (0..IX_COUNT)
         .map(|_| {
-            let mut rng = thread_rng();
-            let privkey = ed25519_dalek::Keypair::generate(&mut rng);
-            let message: Vec<u8> = (0..message_length).map(|_| rng.gen_range(0, 255)).collect();
+            let secret_bytes: [u8; 32] = rand::random();
+            let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
+            let public: ed25519_dalek::PublicKey = (&secret).into();
+            let privkey = ed25519_dalek::Keypair { secret, public };
+            let message: Vec<u8> = (0..message_length)
+                .map(|_| rng.random_range(0..255))
+                .collect();
             let signature = privkey.sign(&message).to_bytes();
             let pubkey = privkey.public.to_bytes();
             new_ed25519_instruction_with_signature(&message, &signature, &pubkey)

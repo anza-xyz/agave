@@ -735,6 +735,7 @@ mod test {
             v0::{self, LoadedAddresses},
         },
         solana_pubkey::Pubkey,
+        solana_seed_derivable::SeedDerivable,
         solana_signer::Signer,
         solana_transaction::Transaction,
         solana_transaction_context::transaction::TransactionReturnData,
@@ -742,15 +743,8 @@ mod test {
         std::io::BufWriter,
     };
 
-    fn new_test_keypair() -> Keypair {
-        let secret = ed25519_dalek::SecretKey::from_bytes(&[0u8; 32]).unwrap();
-        let public = ed25519_dalek::PublicKey::from(&secret);
-        let keypair = ed25519_dalek::Keypair { secret, public };
-        Keypair::try_from(keypair.to_bytes().as_ref()).unwrap()
-    }
-
     fn new_test_v0_transaction() -> VersionedTransaction {
-        let keypair = new_test_keypair();
+        let keypair = Keypair::from_seed(&[0u8; 32]).unwrap();
         let account_key = Pubkey::new_from_array([1u8; 32]);
         let address_table_key = Pubkey::new_from_array([2u8; 32]);
         VersionedTransaction::try_new(
@@ -780,7 +774,7 @@ mod test {
 
     #[test]
     fn test_write_legacy_transaction() {
-        let keypair = new_test_keypair();
+        let keypair = Keypair::from_seed(&[0u8; 32]).unwrap();
         let account_key = Pubkey::new_from_array([1u8; 32]);
         let transaction = VersionedTransaction::from(Transaction::new(
             &[&keypair],

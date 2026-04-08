@@ -1,8 +1,6 @@
-#[cfg(feature = "dev-context-only-utils")]
-use solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails;
 use {
     crate::block_cost_limits, solana_pubkey::Pubkey,
-    solana_runtime_transaction::transaction_meta::StaticMeta,
+    solana_runtime_transaction::transaction_meta::TransactionMeta,
     solana_svm_transaction::svm_message::SVMMessage,
 };
 
@@ -26,7 +24,7 @@ pub enum TransactionCost<'a, Tx> {
     Transaction(UsageCostDetails<'a, Tx>),
 }
 
-impl<Tx: StaticMeta> TransactionCost<'_, Tx> {
+impl<Tx: TransactionMeta> TransactionCost<'_, Tx> {
     pub fn sum(&self) -> u64 {
         #![allow(clippy::assertions_on_constants)]
         match self {
@@ -52,12 +50,10 @@ impl<Tx: StaticMeta> TransactionCost<'_, Tx> {
         }
     }
 
-    pub fn is_simple_vote(&self) -> bool {
+    pub fn should_track_as_simple_vote(&self) -> bool {
         match self {
             Self::SimpleVote { .. } => true,
-            Self::Transaction(usage_details) => {
-                usage_details.transaction.is_simple_vote_transaction()
-            }
+            Self::Transaction(_) => false,
         }
     }
 
@@ -112,7 +108,7 @@ impl<Tx: SVMMessage> TransactionCost<'_, Tx> {
     }
 }
 
-impl<Tx: StaticMeta> TransactionCost<'_, Tx> {
+impl<Tx: TransactionMeta> TransactionCost<'_, Tx> {
     pub fn num_transaction_signatures(&self) -> u64 {
         match self {
             Self::SimpleVote { .. } => 1,
@@ -282,7 +278,7 @@ impl solana_svm_transaction::svm_transaction::SVMTransaction for WritableKeysTra
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTransaction {
+impl solana_runtime_transaction::transaction_meta::TransactionMeta for WritableKeysTransaction {
     fn message_hash(&self) -> &solana_hash::Hash {
         unimplemented!("WritableKeysTransaction::message_hash")
     }
@@ -297,8 +293,14 @@ impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTr
         &DUMMY
     }
 
-    fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails {
-        unimplemented!("WritableKeysTransaction::compute_budget_instruction_details")
+    fn transaction_configuration(
+        &self,
+        _feature_set: &agave_feature_set::FeatureSet,
+    ) -> Result<
+        solana_runtime_transaction::transaction_meta::TransactionConfiguration,
+        solana_transaction::TransactionError,
+    > {
+        unimplemented!("WritableKeysTransaction::transaction_configuration")
     }
 
     fn instruction_data_len(&self) -> u16 {
@@ -360,11 +362,11 @@ mod tests {
         [false, true]
     )]
     fn test_vote_transaction_cost(
-        stop_use_static_simple_vote_tx_cost: bool,
+        remove_simple_vote_from_cost_model: bool,
         simd_0387_enabled: bool,
     ) {
-        // SIMD-0387 requires `stop_use_static_simple_vote_tx_cost`.
-        if simd_0387_enabled && !stop_use_static_simple_vote_tx_cost {
+        // SIMD-0387 requires `remove_simple_vote_from_cost_model`.
+        if simd_0387_enabled && !remove_simple_vote_from_cost_model {
             return;
         }
 
@@ -386,20 +388,19 @@ mod tests {
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
             true,
-            true,
         )
         .unwrap();
 
         let mut feature_set = FeatureSet::all_enabled();
-        if !stop_use_static_simple_vote_tx_cost {
-            feature_set.deactivate(&agave_feature_set::stop_use_static_simple_vote_tx_cost::id());
+        if !remove_simple_vote_from_cost_model {
+            feature_set.deactivate(&agave_feature_set::remove_simple_vote_from_cost_model::id());
         }
         if !simd_0387_enabled {
             feature_set.deactivate(&bls_pubkey_management_in_vote_account::id());
         }
 
         // Verify actual cost matches expected.
-        let expected_cost = if !stop_use_static_simple_vote_tx_cost {
+        let expected_cost = if !remove_simple_vote_from_cost_model {
             SIMPLE_VOTE_USAGE_COST
         } else {
             // when feature `stop-use-static-simple-vote-tx-cost` is enabled, vote transaction
@@ -452,7 +453,6 @@ mod tests {
             Some(false),
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
-            true,
             true,
         )
         .unwrap();

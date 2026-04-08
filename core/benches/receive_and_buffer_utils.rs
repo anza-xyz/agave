@@ -183,7 +183,7 @@ pub fn setup_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
 
     let txs = generate_transactions(
         num_txs,
-        bank.clone(),
+        bank,
         &fee_payers,
         num_instructions_per_tx,
         probability_invalid_blockhash,
