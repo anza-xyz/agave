@@ -1355,7 +1355,7 @@ fn main() {
             info!("Finding cluster entry: {entrypoint_addr:?}");
             let (gossip_nodes, _validators) = discover_peers(
                 None,
-                &vec![entrypoint_addr],
+                &[entrypoint_addr],
                 None,
                 Duration::from_secs(60),
                 None,

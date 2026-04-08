@@ -527,7 +527,7 @@ impl LocalCluster {
 
         discover_peers(
             None,
-            &vec![cluster.entry_point_info.gossip().unwrap()],
+            &[cluster.entry_point_info.gossip().unwrap()],
             Some(config.node_stakes.len() + config.num_listeners as usize),
             Duration::from_secs(120),
             None,

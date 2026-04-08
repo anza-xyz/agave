@@ -148,7 +148,7 @@ pub fn discover_validators(
     const DISCOVER_CLUSTER_TIMEOUT: Duration = Duration::from_secs(120);
     let (_all_peers, validators) = discover_peers(
         None,
-        &vec![*entrypoint],
+        &[*entrypoint],
         Some(num_nodes),
         DISCOVER_CLUSTER_TIMEOUT,
         None,
@@ -162,7 +162,7 @@ pub fn discover_validators(
 
 pub fn discover_peers(
     keypair: Option<Keypair>,
-    entrypoints: &Vec<SocketAddr>,
+    entrypoints: &[SocketAddr],
     num_nodes: Option<usize>, // num_nodes only counts validators, excludes spy nodes
     timeout: Duration,
     find_nodes_by_pubkey: Option<&[Pubkey]>,
