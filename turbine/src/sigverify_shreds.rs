@@ -427,8 +427,7 @@ fn verify_packets(
             .filter_map(|(slot, pubkey)| Some((slot, pubkey?)))
             .chain(std::iter::once((Slot::MAX, Pubkey::default())))
             .collect();
-    let out = verify_shreds(thread_pool, packets, &leader_slots, cache);
-    solana_perf::sigverify::mark_disabled(packets, &out);
+    verify_shreds(thread_pool, packets, &leader_slots, cache);
 }
 
 // Returns pubkey of leaders for shred slots referenced in the packets.
