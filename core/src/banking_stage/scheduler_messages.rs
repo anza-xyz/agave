@@ -49,5 +49,6 @@ pub struct ConsumeWork<Tx> {
 /// Processed transactions.
 pub struct FinishedConsumeWork<Tx> {
     pub work: ConsumeWork<Tx>,
+    pub attempted_slot: Option<Slot>,
     pub retryable_indexes: Vec<RetryableIndex>,
 }

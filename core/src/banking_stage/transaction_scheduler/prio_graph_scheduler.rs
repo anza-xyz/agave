@@ -761,6 +761,7 @@ mod tests {
         finished_work_sender
             .send(FinishedConsumeWork {
                 work: thread_0_work.into_iter().next().unwrap(),
+                attempted_slot: None,
                 retryable_indexes: vec![],
             })
             .unwrap();

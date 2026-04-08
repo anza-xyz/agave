@@ -680,6 +680,7 @@ mod tests {
                     transactions: vec![],
                     max_ages: vec![],
                 },
+                attempted_slot: None,
                 retryable_indexes: vec![],
             })
             .unwrap();
@@ -1008,6 +1009,7 @@ mod tests {
         finished_consume_work_sender
             .send(FinishedConsumeWork {
                 work: consume_work,
+                attempted_slot: None,
                 retryable_indexes: vec![RetryableIndex::new(1, true)],
             })
             .unwrap();
