@@ -2,6 +2,7 @@ use {
     crate::{
         result::{Result, TransactionViewError},
         transaction_data::TransactionData,
+        transaction_version::TransactionVersion,
         transaction_view::UnsanitizedTransactionView,
     },
     solana_program_runtime::execution_budget::{MAX_HEAP_FRAME_BYTES, MIN_HEAP_FRAME_BYTES},
@@ -97,12 +98,16 @@ fn sanitize_signatures(view: &UnsanitizedTransactionView<impl TransactionData>) 
 }
 
 /// Accounts (aka Addresses) Constraints:
-/// * 1 <= NumAddresses <= 64
-///   * or as current limits of: num_accounts <= 255 (u8 bound)
+/// * for v1: 1 <= NumAddresses <= 64
+///   * legacy/v0 uses current limits of: num_accounts <= 255 (u8 bound)
 /// * No duplicate addresses
 fn sanitize_account_access(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
-    // Check there are not more than 256 accounts.
-    if total_number_of_accounts(view) > 256 {
+    let addresses_limit = match view.version() {
+        TransactionVersion::Legacy | TransactionVersion::V0 => 255,
+        _ => 64,
+    };
+
+    if total_number_of_accounts(view) >= addresses_limit {
         return Err(TransactionViewError::SanitizeError);
     }
 
