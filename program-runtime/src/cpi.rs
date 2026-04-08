@@ -1967,7 +1967,9 @@ mod tests {
 
         let account_info = translate_type::<AccountInfo>(&memory_mapping, vm_addr, false).unwrap();
 
-        invoke_context.memory_contexts.mock_set_mapping(memory_mapping);
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
         let caller_account = CallerAccount::from_account_info(
             &invoke_context,
             vm_addr,
