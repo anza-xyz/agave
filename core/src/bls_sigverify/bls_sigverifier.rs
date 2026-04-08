@@ -462,7 +462,7 @@ mod tests {
         rank: usize,
     ) -> VoteMessage {
         let bls_keypair = &validator_keypairs[rank].bls_keypair;
-        let payload = bincode::serialize(&vote).expect("Failed to serialize vote");
+        let payload = wincode::serialize(&vote).expect("Failed to serialize vote");
         let signature: BLSSignature = bls_keypair.sign(&payload).into();
         VoteMessage {
             vote,
@@ -716,7 +716,7 @@ mod tests {
         let num_votes = 5;
         let mut packets = Vec::with_capacity(num_votes);
         let vote = Vote::new_skip_vote(42);
-        let vote_payload = bincode::serialize(&vote).expect("Failed to serialize vote");
+        let vote_payload = wincode::serialize(&vote).expect("Failed to serialize vote");
 
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
@@ -751,9 +751,9 @@ mod tests {
         let mut packets = Vec::with_capacity(num_votes);
 
         let vote1 = Vote::new_skip_vote(42);
-        let _vote1_payload = bincode::serialize(&vote1).expect("Failed to serialize vote");
+        let _vote1_payload = wincode::serialize(&vote1).expect("Failed to serialize vote");
         let vote2 = Vote::new_notarization_vote(43, Hash::new_unique());
-        let _vote2_payload = bincode::serialize(&vote2).expect("Failed to serialize vote");
+        let _vote2_payload = wincode::serialize(&vote2).expect("Failed to serialize vote");
 
         // Group 1 votes
         for (i, _) in ctx
@@ -819,11 +819,11 @@ mod tests {
         let mut packets = Vec::with_capacity(num_votes);
 
         let vote1 = Vote::new_skip_vote(42);
-        let vote1_payload = bincode::serialize(&vote1).expect("Failed to serialize vote");
+        let vote1_payload = wincode::serialize(&vote1).expect("Failed to serialize vote");
         let vote2 = Vote::new_skip_vote(43);
-        let vote2_payload = bincode::serialize(&vote2).expect("Failed to serialize vote");
+        let vote2_payload = wincode::serialize(&vote2).expect("Failed to serialize vote");
         let invalid_payload =
-            bincode::serialize(&Vote::new_skip_vote(99)).expect("Failed to serialize vote");
+            wincode::serialize(&Vote::new_skip_vote(99)).expect("Failed to serialize vote");
 
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
@@ -879,9 +879,9 @@ mod tests {
         let mut consensus_messages = Vec::with_capacity(num_votes); // ADDED: To hold messages for later comparison.
 
         let vote = Vote::new_skip_vote(42);
-        let valid_vote_payload = bincode::serialize(&vote).expect("Failed to serialize vote");
+        let valid_vote_payload = wincode::serialize(&vote).expect("Failed to serialize vote");
         let invalid_vote_payload =
-            bincode::serialize(&Vote::new_skip_vote(99)).expect("Failed to serialize vote");
+            wincode::serialize(&Vote::new_skip_vote(99)).expect("Failed to serialize vote");
 
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
@@ -1172,7 +1172,7 @@ mod tests {
         let num_votes = 2;
 
         let vote = Vote::new_skip_vote(42);
-        let vote_payload = bincode::serialize(&vote).unwrap();
+        let vote_payload = wincode::serialize(&vote).unwrap();
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
             let bls_keypair = &validator_keypair.bls_keypair;
@@ -1189,7 +1189,7 @@ mod tests {
         let num_signers = (ctx.validator_keypairs.len() * 7).div_ceil(10);
         let cert_type = CertificateType::Notarize(10, Hash::new_unique());
         let cert_original_vote = Vote::new_notarization_vote(10, cert_type.to_block().unwrap().1);
-        let cert_payload = bincode::serialize(&cert_original_vote).unwrap();
+        let cert_payload = wincode::serialize(&cert_original_vote).unwrap();
 
         let cert_vote_messages: Vec<VoteMessage> = (0..num_signers)
             .map(|i| {
@@ -1231,7 +1231,7 @@ mod tests {
 
         let invalid_rank = 999;
         let vote = Vote::new_skip_vote(42);
-        let vote_payload = bincode::serialize(&vote).unwrap();
+        let vote_payload = wincode::serialize(&vote).unwrap();
         let bls_keypair = &ctx.validator_keypairs[0].bls_keypair;
         let signature: BLSSignature = bls_keypair.sign(&vote_payload).into();
 
@@ -1303,7 +1303,7 @@ mod tests {
         );
 
         let vote = Vote::new_skip_vote(2);
-        let vote_payload = bincode::serialize(&vote).unwrap();
+        let vote_payload = wincode::serialize(&vote).unwrap();
         let bls_keypair = &validator_keypairs[0].bls_keypair;
         let signature: BLSSignature = bls_keypair.sign(&vote_payload).into();
         let consensus_message_vote = ConsensusMessage::Vote(VoteMessage {
@@ -1345,7 +1345,7 @@ mod tests {
         let block_hash = Hash::new_unique();
         let cert_type = CertificateType::Notarize(slot, block_hash);
         let original_vote = Vote::new_notarization_vote(slot, block_hash);
-        let signed_payload = bincode::serialize(&original_vote).unwrap();
+        let signed_payload = wincode::serialize(&original_vote).unwrap();
         let mut vote_messages: Vec<VoteMessage> = (0..num_signers)
             .map(|i| {
                 let signature = ctx.validator_keypairs[i].bls_keypair.sign(&signed_payload);
@@ -1425,8 +1425,8 @@ mod tests {
         let mut ctx = TestContext::new();
 
         let vote = Vote::new_skip_vote(42);
-        let valid_payload = bincode::serialize(&vote).unwrap();
-        let invalid_payload = bincode::serialize(&Vote::new_skip_vote(999)).unwrap();
+        let valid_payload = wincode::serialize(&vote).unwrap();
+        let invalid_payload = wincode::serialize(&Vote::new_skip_vote(999)).unwrap();
         let invalid_indexes = [1usize, 3usize];
         let messages: Vec<_> = ctx
             .validator_keypairs
