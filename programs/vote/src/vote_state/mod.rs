@@ -4333,6 +4333,152 @@ mod tests {
         transaction_context
     }
 
+    #[test]
+    fn test_new_commission_collector_validate_and_resolve_key() {
+        let rent = Rent::default();
+        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let vote_pubkey = solana_pubkey::new_rand();
+        let vote_account = AccountSharedData::new(1, 0, &id());
+        let collector_pubkey = solana_pubkey::new_rand();
+        let valid_collector =
+            || AccountSharedData::new(rent.minimum_balance(0), 0, &system_program::id());
+
+        // Success: VoteAccount variant returns the vote account's key.
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, vote_account.clone()),
+                ],
+                vec![InstructionAccount::new(1, false, true)],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let borrowed_vote = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            assert_eq!(
+                NewCommissionCollector::VoteAccount.validate_and_resolve_key(&borrowed_vote, &rent),
+                Ok(vote_pubkey),
+            );
+        }
+
+        // Success: NewAccount (happy) path returns the collector's key.
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, vote_account.clone()),
+                    (collector_pubkey, valid_collector()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let borrowed_vote = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            let borrowed_collector = instruction_context
+                .try_borrow_instruction_account(1)
+                .unwrap();
+            assert_eq!(
+                NewCommissionCollector::NewAccount(borrowed_collector)
+                    .validate_and_resolve_key(&borrowed_vote, &rent),
+                Ok(collector_pubkey),
+            );
+        }
+
+        // Fail: Collector account not system-owned.
+        {
+            let bad_owner =
+                AccountSharedData::new(rent.minimum_balance(0), 0, &solana_pubkey::new_rand());
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, vote_account.clone()),
+                    (collector_pubkey, bad_owner),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let borrowed_vote = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            let borrowed_collector = instruction_context
+                .try_borrow_instruction_account(1)
+                .unwrap();
+            assert_eq!(
+                NewCommissionCollector::NewAccount(borrowed_collector)
+                    .validate_and_resolve_key(&borrowed_vote, &rent),
+                Err(InstructionError::InvalidAccountOwner),
+            );
+        }
+
+        // Fail: Collector account not rent-exempt.
+        {
+            let underfunded = AccountSharedData::new(0, 0, &system_program::id());
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, vote_account.clone()),
+                    (collector_pubkey, underfunded),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let borrowed_vote = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            let borrowed_collector = instruction_context
+                .try_borrow_instruction_account(1)
+                .unwrap();
+            assert_eq!(
+                NewCommissionCollector::NewAccount(borrowed_collector)
+                    .validate_and_resolve_key(&borrowed_vote, &rent),
+                Err(InstructionError::InsufficientFunds),
+            );
+        }
+
+        // Fail: Collector account not writable (reserved account check).
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account),
+                    (vote_pubkey, vote_account),
+                    (collector_pubkey, valid_collector()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, false), // <-- Not writable
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let borrowed_vote = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+            let borrowed_collector = instruction_context
+                .try_borrow_instruction_account(1)
+                .unwrap();
+            assert_eq!(
+                NewCommissionCollector::NewAccount(borrowed_collector)
+                    .validate_and_resolve_key(&borrowed_vote, &rent),
+                Err(InstructionError::InvalidArgument),
+            );
+        }
+    }
+
     /// Test update_commission_collector (SIMD-0232).
     ///
     /// This test only uses V4 since SIMD-0232 depends on SIMD-0185 (VoteStateV4).
@@ -4726,6 +4872,604 @@ mod tests {
                 get_commission_collector(&borrowed_vote_account, CommissionKind::BlockRevenue),
                 original_block_revenue_collector, // Unchanged
             );
+        }
+    }
+
+    #[test]
+    fn test_initialize_account_v2() {
+        let target_version = VoteStateTargetVersion::V4;
+        let rent = Rent::default();
+        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+
+        let vote_pubkey = solana_pubkey::new_rand();
+        let node_pubkey = solana_pubkey::new_rand();
+        let authorized_voter = solana_pubkey::new_rand();
+        let authorized_withdrawer = solana_pubkey::new_rand();
+        let inflation_collector_pubkey = solana_pubkey::new_rand();
+        let block_revenue_collector_pubkey = solana_pubkey::new_rand();
+
+        let (bls_pubkey, bls_proof_of_possession) =
+            create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+        let vote_init = VoteInitV2 {
+            node_pubkey,
+            authorized_voter,
+            authorized_voter_bls_pubkey: bls_pubkey,
+            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
+            authorized_withdrawer,
+            inflation_rewards_commission_bps: 1_234,
+            block_revenue_commission_bps: 5_678,
+        };
+
+        let signers: HashSet<Pubkey> = vec![node_pubkey].into_iter().collect();
+        let clock = Clock::default();
+
+        let v4_size = VoteStateV4::size_of();
+        let lamports = rent.minimum_balance(v4_size);
+        let make_uninit_vote_account = || AccountSharedData::new(lamports, v4_size, &id());
+        let valid_collector_account =
+            || AccountSharedData::new(rent.minimum_balance(0), 0, &system_program::id());
+
+        let assert_v4_fields =
+            |vote_account: &BorrowedInstructionAccount,
+             expected_inflation_rewards_collector: Pubkey,
+             expected_block_revenue_collector: Pubkey| {
+                let VoteStateVersions::V4(v4) =
+                    vote_account.get_state::<VoteStateVersions>().unwrap()
+                else {
+                    panic!("expected v4");
+                };
+                assert_eq!(v4.node_pubkey, node_pubkey);
+                assert_eq!(
+                    v4.authorized_voters.get_authorized_voter(clock.epoch),
+                    Some(authorized_voter),
+                );
+                assert_eq!(v4.authorized_withdrawer, authorized_withdrawer);
+                assert_eq!(v4.bls_pubkey_compressed, Some(bls_pubkey));
+                assert_eq!(v4.inflation_rewards_commission_bps, 1_234);
+                assert_eq!(v4.block_revenue_commission_bps, 5_678);
+                assert_eq!(
+                    v4.inflation_rewards_collector,
+                    expected_inflation_rewards_collector
+                );
+                assert_eq!(v4.block_revenue_collector, expected_block_revenue_collector);
+                assert_eq!(v4.pending_delegator_rewards, 0);
+                assert!(v4.votes.is_empty());
+                assert_eq!(v4.root_slot, None);
+                assert!(v4.epoch_credits.is_empty());
+            };
+
+        let assert_still_uninitialized = |vote_account: &BorrowedInstructionAccount| {
+            assert!(
+                vote_account
+                    .get_state::<VoteStateVersions>()
+                    .unwrap()
+                    .is_uninitialized()
+            );
+        };
+
+        // Should pass - both collectors are separate accounts.
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, make_uninit_vote_account()),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                    (block_revenue_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(3, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let mut borrowed_vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+
+            initialize_account_v2(
+                &mut borrowed_vote_account,
+                target_version,
+                &vote_init,
+                NewCommissionCollector::NewAccount(
+                    instruction_context
+                        .try_borrow_instruction_account(1)
+                        .unwrap(),
+                ),
+                NewCommissionCollector::NewAccount(
+                    instruction_context
+                        .try_borrow_instruction_account(2)
+                        .unwrap(),
+                ),
+                &signers,
+                &clock,
+                &rent,
+                || Ok(()),
+            )
+            .unwrap();
+
+            assert_v4_fields(
+                &borrowed_vote_account,
+                inflation_collector_pubkey,
+                block_revenue_collector_pubkey,
+            );
+        }
+
+        // Should pass - inflation collector aliased to vote account.
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, make_uninit_vote_account()),
+                    (block_revenue_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let mut borrowed_vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+
+            initialize_account_v2(
+                &mut borrowed_vote_account,
+                target_version,
+                &vote_init,
+                NewCommissionCollector::VoteAccount,
+                NewCommissionCollector::NewAccount(
+                    instruction_context
+                        .try_borrow_instruction_account(1)
+                        .unwrap(),
+                ),
+                &signers,
+                &clock,
+                &rent,
+                || Ok(()),
+            )
+            .unwrap();
+
+            assert_v4_fields(
+                &borrowed_vote_account,
+                vote_pubkey,
+                block_revenue_collector_pubkey,
+            );
+        }
+
+        // Should pass - block revenue collector aliased to vote account.
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, make_uninit_vote_account()),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let mut borrowed_vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+
+            initialize_account_v2(
+                &mut borrowed_vote_account,
+                target_version,
+                &vote_init,
+                NewCommissionCollector::NewAccount(
+                    instruction_context
+                        .try_borrow_instruction_account(1)
+                        .unwrap(),
+                ),
+                NewCommissionCollector::VoteAccount,
+                &signers,
+                &clock,
+                &rent,
+                || Ok(()),
+            )
+            .unwrap();
+
+            assert_v4_fields(
+                &borrowed_vote_account,
+                inflation_collector_pubkey,
+                vote_pubkey,
+            );
+        }
+
+        // Should pass - both collectors aliased to vote account.
+        {
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, make_uninit_vote_account()),
+                ],
+                vec![InstructionAccount::new(1, false, true)],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let mut borrowed_vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+
+            initialize_account_v2(
+                &mut borrowed_vote_account,
+                target_version,
+                &vote_init,
+                NewCommissionCollector::VoteAccount,
+                NewCommissionCollector::VoteAccount,
+                &signers,
+                &clock,
+                &rent,
+                || Ok(()),
+            )
+            .unwrap();
+
+            assert_v4_fields(&borrowed_vote_account, vote_pubkey, vote_pubkey);
+        }
+
+        // Should fail - vote account is the wrong size.
+        {
+            let oversized_vote_account =
+                AccountSharedData::new(rent.minimum_balance(2 * v4_size), 2 * v4_size, &id());
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, oversized_vote_account),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                    (block_revenue_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(3, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let mut borrowed_vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+
+            assert_eq!(
+                initialize_account_v2(
+                    &mut borrowed_vote_account,
+                    target_version,
+                    &vote_init,
+                    NewCommissionCollector::NewAccount(
+                        instruction_context
+                            .try_borrow_instruction_account(1)
+                            .unwrap(),
+                    ),
+                    NewCommissionCollector::NewAccount(
+                        instruction_context
+                            .try_borrow_instruction_account(2)
+                            .unwrap(),
+                    ),
+                    &signers,
+                    &clock,
+                    &rent,
+                    || Ok(()),
+                ),
+                Err(InstructionError::InvalidAccountData),
+            );
+        }
+
+        // Should fail - not a valid vote state.
+        {
+            let mut invalid_vote_account = AccountSharedData::new(lamports, v4_size, &id());
+            invalid_vote_account.set_data_from_slice(&vec![0xFFu8; v4_size]);
+
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, invalid_vote_account),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                    (block_revenue_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(3, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let mut borrowed_vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+
+            assert_eq!(
+                initialize_account_v2(
+                    &mut borrowed_vote_account,
+                    target_version,
+                    &vote_init,
+                    NewCommissionCollector::NewAccount(
+                        instruction_context
+                            .try_borrow_instruction_account(1)
+                            .unwrap(),
+                    ),
+                    NewCommissionCollector::NewAccount(
+                        instruction_context
+                            .try_borrow_instruction_account(2)
+                            .unwrap(),
+                    ),
+                    &signers,
+                    &clock,
+                    &rent,
+                    || Ok(()),
+                ),
+                Err(InstructionError::InvalidAccountData),
+            );
+        }
+
+        // Should fail - vote account already initialized.
+        {
+            let preexisting_handler = vote_state_new_for_test(&vote_pubkey, target_version);
+            let preexisting_state = preexisting_handler.as_ref_v4().clone();
+            let serialized = preexisting_handler.serialize();
+            let serialized_len = serialized.len();
+            let mut initialized_vote_account =
+                AccountSharedData::new(rent.minimum_balance(serialized_len), serialized_len, &id());
+            initialized_vote_account.set_data_from_slice(&serialized);
+
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, initialized_vote_account),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                    (block_revenue_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(3, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let mut borrowed_vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+
+            assert_eq!(
+                initialize_account_v2(
+                    &mut borrowed_vote_account,
+                    target_version,
+                    &vote_init,
+                    NewCommissionCollector::NewAccount(
+                        instruction_context
+                            .try_borrow_instruction_account(1)
+                            .unwrap(),
+                    ),
+                    NewCommissionCollector::NewAccount(
+                        instruction_context
+                            .try_borrow_instruction_account(2)
+                            .unwrap(),
+                    ),
+                    &signers,
+                    &clock,
+                    &rent,
+                    || Ok(()),
+                ),
+                Err(InstructionError::AccountAlreadyInitialized),
+            );
+
+            // Pre-existing state must be untouched - the new init payload must
+            // not have been written.
+            let handler =
+                get_vote_state_handler_checked(&borrowed_vote_account, target_version).unwrap();
+            assert_eq!(*handler.as_ref_v4(), preexisting_state);
+        }
+
+        // Should fail - node_pubkey didn't sign.
+        {
+            let non_signers: HashSet<Pubkey> = HashSet::new();
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account.clone()),
+                    (vote_pubkey, make_uninit_vote_account()),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                    (block_revenue_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(3, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let mut borrowed_vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+
+            assert_eq!(
+                initialize_account_v2(
+                    &mut borrowed_vote_account,
+                    target_version,
+                    &vote_init,
+                    NewCommissionCollector::NewAccount(
+                        instruction_context
+                            .try_borrow_instruction_account(1)
+                            .unwrap(),
+                    ),
+                    NewCommissionCollector::NewAccount(
+                        instruction_context
+                            .try_borrow_instruction_account(2)
+                            .unwrap(),
+                    ),
+                    &non_signers,
+                    &clock,
+                    &rent,
+                    || Ok(()),
+                ),
+                Err(InstructionError::MissingRequiredSignature),
+            );
+            assert_still_uninitialized(&borrowed_vote_account);
+        }
+
+        // Should fail - SIMD-0232 collector account checks, applied to both
+        // account indices.
+        {
+            #[derive(Clone, Copy)]
+            enum CollectorSlot {
+                Inflation,
+                BlockRevenue,
+            }
+
+            let test_bad_collector =
+                |slot: CollectorSlot,
+                 bad_collector: AccountSharedData,
+                 bad_collector_is_writable: bool,
+                 expected_error: InstructionError| {
+                    let (
+                        inflation_account,
+                        inflation_writable,
+                        block_revenue_account,
+                        block_revenue_writable,
+                    ) = match slot {
+                        CollectorSlot::Inflation => (
+                            bad_collector,
+                            bad_collector_is_writable,
+                            valid_collector_account(),
+                            true,
+                        ),
+                        CollectorSlot::BlockRevenue => (
+                            valid_collector_account(),
+                            true,
+                            bad_collector,
+                            bad_collector_is_writable,
+                        ),
+                    };
+
+                    let transaction_context = new_transaction_context(
+                        vec![
+                            (id(), processor_account.clone()),
+                            (vote_pubkey, make_uninit_vote_account()),
+                            (inflation_collector_pubkey, inflation_account),
+                            (block_revenue_collector_pubkey, block_revenue_account),
+                        ],
+                        vec![
+                            InstructionAccount::new(1, false, true),
+                            InstructionAccount::new(2, false, inflation_writable),
+                            InstructionAccount::new(3, false, block_revenue_writable),
+                        ],
+                        &rent,
+                    );
+                    let instruction_context =
+                        transaction_context.get_next_instruction_context().unwrap();
+                    let mut borrowed_vote_account = instruction_context
+                        .try_borrow_instruction_account(0)
+                        .unwrap();
+
+                    assert_eq!(
+                        initialize_account_v2(
+                            &mut borrowed_vote_account,
+                            target_version,
+                            &vote_init,
+                            NewCommissionCollector::NewAccount(
+                                instruction_context
+                                    .try_borrow_instruction_account(1)
+                                    .unwrap(),
+                            ),
+                            NewCommissionCollector::NewAccount(
+                                instruction_context
+                                    .try_borrow_instruction_account(2)
+                                    .unwrap(),
+                            ),
+                            &signers,
+                            &clock,
+                            &rent,
+                            || Ok(()),
+                        ),
+                        Err(expected_error),
+                    );
+                    assert_still_uninitialized(&borrowed_vote_account);
+                };
+
+            for slot in [CollectorSlot::Inflation, CollectorSlot::BlockRevenue] {
+                // 1. Not system-owned.
+                test_bad_collector(
+                    slot,
+                    AccountSharedData::new(rent.minimum_balance(0), 0, &solana_pubkey::new_rand()),
+                    true,
+                    InstructionError::InvalidAccountOwner,
+                );
+
+                // 2. Not rent-exempt.
+                test_bad_collector(
+                    slot,
+                    AccountSharedData::new(0, 0, &system_program::id()),
+                    true,
+                    InstructionError::InsufficientFunds,
+                );
+
+                // 3. Not writable.
+                test_bad_collector(
+                    slot,
+                    valid_collector_account(),
+                    false,
+                    InstructionError::InvalidArgument,
+                );
+            }
+        }
+
+        // Should fail - BLS proof of possession does not verify.
+        {
+            let bad_vote_init = VoteInitV2 {
+                authorized_voter_bls_pubkey: [1u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                authorized_voter_bls_proof_of_possession: [2u8;
+                    BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+                ..vote_init
+            };
+            let transaction_context = new_transaction_context(
+                vec![
+                    (id(), processor_account),
+                    (vote_pubkey, make_uninit_vote_account()),
+                    (inflation_collector_pubkey, valid_collector_account()),
+                    (block_revenue_collector_pubkey, valid_collector_account()),
+                ],
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(2, false, true),
+                    InstructionAccount::new(3, false, true),
+                ],
+                &rent,
+            );
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let mut borrowed_vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+
+            assert_eq!(
+                initialize_account_v2(
+                    &mut borrowed_vote_account,
+                    target_version,
+                    &bad_vote_init,
+                    NewCommissionCollector::NewAccount(
+                        instruction_context
+                            .try_borrow_instruction_account(1)
+                            .unwrap(),
+                    ),
+                    NewCommissionCollector::NewAccount(
+                        instruction_context
+                            .try_borrow_instruction_account(2)
+                            .unwrap(),
+                    ),
+                    &signers,
+                    &clock,
+                    &rent,
+                    || Ok(()),
+                ),
+                Err(InstructionError::InvalidArgument),
+            );
+            assert_still_uninitialized(&borrowed_vote_account);
         }
     }
 
