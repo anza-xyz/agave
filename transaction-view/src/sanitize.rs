@@ -1,19 +1,82 @@
-use crate::{
-    result::{Result, TransactionViewError},
-    transaction_data::TransactionData,
-    transaction_view::UnsanitizedTransactionView,
+use {
+    crate::{
+        result::{Result, TransactionViewError},
+        transaction_data::TransactionData,
+        transaction_view::UnsanitizedTransactionView,
+    },
+    solana_program_runtime::execution_budget::{MAX_HEAP_FRAME_BYTES, MIN_HEAP_FRAME_BYTES},
+    std::collections::HashSet,
 };
 
 pub(crate) fn sanitize(
     view: &UnsanitizedTransactionView<impl TransactionData>,
     enable_instruction_accounts_limit: bool,
 ) -> Result<()> {
+    sanitize_transaction(view)?;
+    sanitize_message_header(view)?;
+    sanitize_config(view)?;
     sanitize_signatures(view)?;
     sanitize_account_access(view)?;
     sanitize_instructions(view, enable_instruction_accounts_limit)?;
     sanitize_address_table_lookups(view)
 }
 
+/// Transaction constraints:
+/// * size <= 4096 bytes
+fn sanitize_transaction(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
+    if view.data().len() > 4096 {
+        return Err(TransactionViewError::SanitizeError);
+    }
+    Ok(())
+}
+
+/// message header constraints:
+/// * num_required_signatures >= 1
+/// * num_readonly_signed_accounts < num_required_signatures (fee payer must be writable)
+/// * num_readonly_unsigned_accounts <= (num_addresses - num_required_signatures)
+fn sanitize_message_header(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
+    if view.num_required_signatures() < 1 {
+        return Err(TransactionViewError::SanitizeError);
+    }
+
+    if view.num_readonly_signed_static_accounts() >= view.num_required_signatures() {
+        return Err(TransactionViewError::SanitizeError);
+    }
+
+    // Check there is no overlap of signing area and readonly non-signing area.
+    // We have already checked that `num_required_signatures` is less than or equal to `num_static_account_keys`,
+    // so it is safe to use wrapping arithmetic.
+    if view.num_readonly_unsigned_static_accounts()
+        > view
+            .num_static_account_keys()
+            .wrapping_sub(view.num_required_signatures())
+    {
+        return Err(TransactionViewError::SanitizeError);
+    }
+
+    Ok(())
+}
+
+/// Config Constraints:
+/// * heap_size must be multiples of 1024, if specified
+fn sanitize_config(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
+    if let Some(requested_heap_bytes) = view
+        .transaction_config()
+        .and_then(|config| config.requested_heap_size())
+    {
+        if !(MIN_HEAP_FRAME_BYTES..=MAX_HEAP_FRAME_BYTES).contains(&requested_heap_bytes)
+            || !requested_heap_bytes.is_multiple_of(1024)
+        {
+            return Err(TransactionViewError::SanitizeError);
+        }
+    }
+
+    Ok(())
+}
+
+/// Sigantures Constraint:
+/// * Number of signatures must equal: num_required_signatures
+/// * Max signatures <= 12
 fn sanitize_signatures(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
     // Check the required number of signatures matches the number of signatures.
     if view.num_signatures() != view.num_required_signatures() {
@@ -29,31 +92,33 @@ fn sanitize_signatures(view: &UnsanitizedTransactionView<impl TransactionData>) 
     Ok(())
 }
 
+/// Accounts (aka Addresses) Constraints:
+/// * 1 <= NumAddresses <= 64
+///   * or as current limits of: num_accounts <= 255 (u8 bound)
+/// * No duplicate addresses
 fn sanitize_account_access(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
-    // Check there is no overlap of signing area and readonly non-signing area.
-    // We have already checked that `num_required_signatures` is less than or equal to `num_static_account_keys`,
-    // so it is safe to use wrapping arithmetic.
-    if view.num_readonly_unsigned_static_accounts()
-        > view
-            .num_static_account_keys()
-            .wrapping_sub(view.num_required_signatures())
-    {
-        return Err(TransactionViewError::SanitizeError);
-    }
-
-    // Check there is at least 1 writable fee-payer account.
-    if view.num_readonly_signed_static_accounts() >= view.num_required_signatures() {
-        return Err(TransactionViewError::SanitizeError);
-    }
-
     // Check there are not more than 256 accounts.
     if total_number_of_accounts(view) > 256 {
         return Err(TransactionViewError::SanitizeError);
     }
 
+    // no duplicated accounts
+    let accounts = view.static_account_keys();
+    let mut seen = HashSet::with_capacity(accounts.len());
+    for account in accounts {
+        if !seen.insert(account) {
+            return Err(TransactionViewError::SanitizeError);
+        }
+    }
+
     Ok(())
 }
 
+/// Instructions Constraints
+/// * NumInstructions <= 64
+/// * Per instruction:
+///   * 0 < program_id_index < MaxProgramIdIndex
+///   * all account indices < MaxAccountIndex
 fn sanitize_instructions(
     view: &UnsanitizedTransactionView<impl TransactionData>,
     enable_instruction_accounts_limit: bool,
@@ -299,7 +364,7 @@ mod tests {
             let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
-                sanitize_account_access(&view),
+                sanitize_message_header(&view),
                 Err(TransactionViewError::SanitizeError)
             );
         }
@@ -319,7 +384,7 @@ mod tests {
             let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
-                sanitize_account_access(&view),
+                sanitize_message_header(&view),
                 Err(TransactionViewError::SanitizeError)
             );
         }

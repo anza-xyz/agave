@@ -238,6 +238,7 @@ dependencies = [
  "solana-hash 4.3.0",
  "solana-message",
  "solana-packet 4.1.0",
+ "solana-program-runtime",
  "solana-pubkey 4.2.0",
  "solana-sdk-ids",
  "solana-short-vec",
