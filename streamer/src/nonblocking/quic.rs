@@ -17,7 +17,7 @@ use {
     smallvec::SmallVec,
     solana_keypair::Keypair,
     solana_net_utils::token_bucket::TokenBucket,
-    solana_packet::{Meta, PACKET_DATA_SIZE},
+    solana_packet::Meta,
     solana_perf::packet::{BytesPacket, PacketBatch},
     solana_pubkey::Pubkey,
     solana_tls_utils::get_pubkey_from_tls_certificate,
@@ -725,9 +725,9 @@ fn handle_chunks(
     let n_chunks = chunks.len();
     for chunk in chunks {
         accum.meta.size += chunk.len();
-        if accum.meta.size > PACKET_DATA_SIZE {
-            // The stream window size is set to PACKET_DATA_SIZE, so one individual chunk can
-            // never exceed this size. A peer can send two chunks that together exceed the size
+        if accum.meta.size > solana_message::v1::MAX_TRANSACTION_SIZE {
+            // The stream window size is set to PACKET_DATA_SIZE;
+            // A peer can send multiple chunks that together exceed the max transaction size
             // tho, in which case we report the error.
             stats.invalid_stream_size.fetch_add(1, Ordering::Relaxed);
             debug!("invalid stream size {}", accum.meta.size);
@@ -1124,6 +1124,7 @@ pub mod test {
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
         solana_net_utils::sockets::bind_to_localhost_unique,
+        solana_packet::PACKET_DATA_SIZE,
         solana_signer::Signer,
         std::collections::HashMap,
         tokio::time::sleep,

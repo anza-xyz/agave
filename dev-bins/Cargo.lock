@@ -9063,6 +9063,7 @@ dependencies = [
  "rustls",
  "smallvec",
  "solana-keypair",
+ "solana-message",
  "solana-metrics",
  "solana-net-utils",
  "solana-packet 4.1.0",
