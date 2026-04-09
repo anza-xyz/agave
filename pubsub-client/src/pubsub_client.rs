@@ -696,7 +696,7 @@ impl PubsubClient {
 
     /// Subscribe to slot events.
     ///
-    /// Receives messages of type [`SlotInfo`] when a slot is processed.
+    /// Receives messages of type [`SlotInfo`] when processing of a slot begins.
     ///
     /// # RPC Reference
     ///
