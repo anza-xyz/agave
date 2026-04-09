@@ -14,8 +14,7 @@
 use {
     agave_feature_set::FeatureSet,
     solana_compute_budget::compute_budget_limits::{
-        MAX_COMPUTE_UNIT_LIMIT, MAX_HEAP_FRAME_BYTES, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
-        MIN_HEAP_FRAME_BYTES,
+        MAX_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
     },
     solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
     solana_hash::Hash, solana_message::TransactionSignatureDetails,
@@ -92,15 +91,7 @@ impl VersionedTransactionConfiguration {
                 })
             }
             Self::V1(transaction_configuration) => {
-                if !(MIN_HEAP_FRAME_BYTES..=MAX_HEAP_FRAME_BYTES)
-                    .contains(&transaction_configuration.updated_heap_bytes)
-                    || !transaction_configuration
-                        .updated_heap_bytes
-                        .is_multiple_of(1024)
-                {
-                    return Err(TransactionError::SanitizeFailure);
-                }
-
+                // NOTE: transaction_configuration is already sanitized in View
                 Ok(TransactionConfiguration {
                     updated_heap_bytes: transaction_configuration.updated_heap_bytes,
                     compute_unit_limit: transaction_configuration
