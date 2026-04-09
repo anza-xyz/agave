@@ -3458,7 +3458,7 @@ impl AccountsDb {
             }
             self.accounts_index.get_with_and_then(
                 &pubkey,
-                Some(ancestors),
+                ancestors,
                 Some(max_root),
                 true,
                 |(slot, account_info)| {
@@ -3605,7 +3605,7 @@ impl AccountsDb {
         let max_root_slot = ancestors.min_slot();
         self.accounts_index.get_with_and_then(
             pubkey,
-            Some(ancestors),
+            ancestors,
             max_root_slot,
             true,
             |(slot, account_info)| {
@@ -4823,7 +4823,7 @@ impl AccountsDb {
                             .accounts_index
                             .get_with_and_then(
                                 &pubkey,
-                                Some(ancestors),
+                                ancestors,
                                 Some(startup_slot),
                                 false,
                                 |(slot, account_info)| {
@@ -4882,7 +4882,7 @@ impl AccountsDb {
                         self.accounts_index
                             .get_with_and_then(
                                 &pubkey,
-                                Some(ancestors),
+                                ancestors,
                                 Some(startup_slot),
                                 false,
                                 |(slot, account_info)| {
@@ -5625,7 +5625,7 @@ impl AccountsDb {
                     return;
                 }
                 if account.is_zero_lamport() {
-                    if ancestors.is_some() {
+                    if let Some(ancestors) = ancestors {
                         if let Some(is_zero_lamport) = self.accounts_index.get_with_and_then(
                             pubkey,
                             ancestors,
