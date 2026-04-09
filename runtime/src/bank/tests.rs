@@ -9183,17 +9183,16 @@ fn test_call_precomiled_program() {
 }
 
 fn calculate_test_fee(message: &impl SVMMessage, fee_structure: &FeeStructure) -> u64 {
-    let fee_budget_limits = FeeBudgetLimits::from(
-        process_compute_budget_instructions(
-            message.program_instructions_iter(),
-            &FeatureSet::default(),
-        )
-        .unwrap_or_default(),
-    );
+    let prioritization_fee = process_compute_budget_instructions(
+        message.program_instructions_iter(),
+        &FeatureSet::default(),
+    )
+    .unwrap_or_default()
+    .get_prioritization_fee();
     solana_fee::calculate_fee(
         message,
         fee_structure.lamports_per_signature,
-        fee_budget_limits.prioritization_fee,
+        prioritization_fee,
         FeeFeatures {},
     )
 }
@@ -9295,15 +9294,13 @@ fn test_calculate_fee_compute_units() {
             Some(&Pubkey::new_unique()),
         ));
         let fee = calculate_test_fee(&message, &fee_structure);
-        let fee_budget_limits = FeeBudgetLimits::from(ComputeBudgetLimits {
+        let prioritization_fee = ComputeBudgetLimits {
             compute_unit_price: PRIORITIZATION_FEE_RATE,
             compute_unit_limit: requested_compute_units,
             ..ComputeBudgetLimits::default()
-        });
-        assert_eq!(
-            fee,
-            lamports_per_signature + fee_budget_limits.prioritization_fee
-        );
+        }
+        .get_prioritization_fee();
+        assert_eq!(fee, lamports_per_signature + prioritization_fee);
     }
 }
 
@@ -9316,11 +9313,12 @@ fn test_calculate_prioritization_fee() {
 
     let request_units = 1_000_000_u32;
     let request_unit_price = 2_000_000_000_u64;
-    let fee_budget_limits = FeeBudgetLimits::from(ComputeBudgetLimits {
+    let prioritization_fee = ComputeBudgetLimits {
         compute_unit_price: request_unit_price,
         compute_unit_limit: request_units,
         ..ComputeBudgetLimits::default()
-    });
+    }
+    .get_prioritization_fee();
 
     let message = new_sanitized_message(Message::new(
         &[
@@ -9333,7 +9331,7 @@ fn test_calculate_prioritization_fee() {
     let fee = calculate_test_fee(&message, &fee_structure);
     assert_eq!(
         fee,
-        fee_structure.lamports_per_signature + fee_budget_limits.prioritization_fee
+        fee_structure.lamports_per_signature + prioritization_fee
     );
 }
 

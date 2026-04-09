@@ -114,7 +114,7 @@ use {
     solana_feature_gate_interface as feature,
     solana_fee::FeeFeatures,
     solana_fee_calculator::FeeRateGovernor,
-    solana_fee_structure::{FeeBudgetLimits, FeeDetails, FeeStructure},
+    solana_fee_structure::{FeeDetails, FeeStructure},
     solana_genesis_config::GenesisConfig,
     solana_hard_forks::HardForks,
     solana_hash::Hash,
@@ -2978,17 +2978,16 @@ impl Bank {
         &self,
         message: &impl SVMMessage,
     ) -> u64 {
-        let fee_budget_limits = FeeBudgetLimits::from(
-            process_compute_budget_instructions(
-                message.program_instructions_iter(),
-                &self.feature_set,
-            )
-            .unwrap_or_default(),
-        );
+        let prioritization_fee = process_compute_budget_instructions(
+            message.program_instructions_iter(),
+            &self.feature_set,
+        )
+        .unwrap_or_default()
+        .get_prioritization_fee();
         solana_fee::calculate_fee(
             message,
             self.fee_structure().lamports_per_signature,
-            fee_budget_limits.prioritization_fee,
+            prioritization_fee,
             FeeFeatures::from(self.feature_set.as_ref()),
         )
     }
