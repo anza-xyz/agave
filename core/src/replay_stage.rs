@@ -1785,7 +1785,7 @@ impl ReplayStage {
             let bank_forks = bank_forks.read().unwrap();
             slot_descendants
                 .iter()
-                .chain(std::iter::once(&slot_to_purge))
+                .chain(std::iter::once(&duplicate_slot))
                 .filter_map(|slot| bank_forks.get_with_scheduler(*slot))
                 .collect()
         };
