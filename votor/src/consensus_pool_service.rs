@@ -333,14 +333,8 @@ impl ConsensusPoolService {
         votor_events: &mut Vec<VotorEvent>,
         commitment_sender: &Sender<CommitmentAggregationData>,
     ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), AddVoteError> {
-        let (new_finalized_slot, new_certificates_to_send) = consensus_pool.add_message(
-            root_bank.epoch_schedule(),
-            root_bank.epoch_stakes_map(),
-            root_bank.slot(),
-            my_vote_pubkey,
-            message,
-            votor_events,
-        )?;
+        let (new_finalized_slot, new_certificates_to_send) =
+            consensus_pool.add_message(root_bank, my_vote_pubkey, message, votor_events)?;
         let Some(new_finalized_slot) = new_finalized_slot else {
             return Ok((None, new_certificates_to_send));
         };

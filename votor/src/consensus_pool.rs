@@ -24,17 +24,11 @@ use {
     certificate_builder::{BuildError as CertificateBuildError, CertificateBuilder},
     log::trace,
     solana_clock::{Epoch, Slot},
-    solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, epoch_stakes::VersionedEpochStakes},
-    std::{
-        cmp::Ordering,
-        collections::{BTreeMap, HashMap},
-        num::NonZeroU64,
-        sync::Arc,
-    },
+    solana_runtime::bank::Bank,
+    std::{cmp::Ordering, collections::BTreeMap, num::NonZeroU64, sync::Arc},
     thiserror::Error,
 };
 
@@ -78,28 +72,24 @@ impl From<CommitmentError> for AddVoteError {
 }
 
 fn get_key_and_stakes(
-    epoch_schedule: &EpochSchedule,
-    epoch_stakes_map: &HashMap<Epoch, VersionedEpochStakes>,
+    root_bank: &Bank,
     slot: Slot,
     rank: u16,
 ) -> Result<(Pubkey, Stake, Stake), AddVoteError> {
-    let epoch = epoch_schedule.get_epoch(slot);
-    let epoch_stakes = epoch_stakes_map
-        .get(&epoch)
-        .ok_or(AddVoteError::EpochStakesNotFound(epoch))?;
+    let epoch_stakes = root_bank
+        .epoch_stakes_from_slot(slot)
+        .ok_or(AddVoteError::EpochStakesNotFound(0))?;
     let Some(entry) = epoch_stakes
         .bls_pubkey_to_rank_map()
         .get_pubkey_stake_entry(rank as usize)
     else {
         return Err(AddVoteError::InvalidRank(rank));
     };
-    let vote_key = &entry.pubkey;
-    let stake = epoch_stakes.vote_account_stake(vote_key);
-    if stake == 0 {
+    if entry.stake == 0 {
         // Since we have a valid rank, this should never happen, there is no rank for zero stake.
-        panic!("Validator stake is zero for pubkey: {vote_key}");
+        panic!("Validator stake is zero for pubkey: {}", entry.pubkey);
     }
-    Ok((*vote_key, stake, epoch_stakes.total_stake()))
+    Ok((entry.pubkey, entry.stake, epoch_stakes.total_stake()))
 }
 
 /// Container to store received votes and certificates.
@@ -387,24 +377,19 @@ impl ConsensusPool {
     /// return the slot
     pub(crate) fn add_message(
         &mut self,
-        epoch_schedule: &EpochSchedule,
-        epoch_stakes_map: &HashMap<Epoch, VersionedEpochStakes>,
-        root_slot: Slot,
+        root_bank: &Bank,
         my_vote_pubkey: &Pubkey,
         message: ConsensusMessage,
         events: &mut Vec<VotorEvent>,
     ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), AddVoteError> {
         let current_highest_finalized_slot = self.highest_finalized_slot;
         let new_certficates_to_send = match message {
-            ConsensusMessage::Vote(vote_message) => self.add_vote(
-                epoch_schedule,
-                epoch_stakes_map,
-                root_slot,
-                my_vote_pubkey,
-                vote_message,
-                events,
-            )?,
-            ConsensusMessage::Certificate(cert) => self.add_certificate(root_slot, cert, events)?,
+            ConsensusMessage::Vote(vote_message) => {
+                self.add_vote(root_bank, my_vote_pubkey, vote_message, events)?
+            }
+            ConsensusMessage::Certificate(cert) => {
+                self.add_certificate(root_bank.slot(), cert, events)?
+            }
         };
         // If we have a new highest finalized slot, return it
         let new_finalized_slot = if self.highest_finalized_slot > current_highest_finalized_slot {
@@ -417,9 +402,7 @@ impl ConsensusPool {
 
     fn add_vote(
         &mut self,
-        epoch_schedule: &EpochSchedule,
-        epoch_stakes_map: &HashMap<Epoch, VersionedEpochStakes>,
-        root_slot: Slot,
+        root_bank: &Bank,
         my_vote_pubkey: &Pubkey,
         vote_message: VoteMessage,
         events: &mut Vec<VotorEvent>,
@@ -428,7 +411,7 @@ impl ConsensusPool {
         let rank = vote_message.rank;
         let vote_slot = vote.slot();
         let (validator_vote_key, validator_stake, total_stake) =
-            get_key_and_stakes(epoch_schedule, epoch_stakes_map, vote_slot, rank)?;
+            get_key_and_stakes(root_bank, vote_slot, rank)?;
 
         // Since we have a valid rank, this should never happen, there is no rank for zero stake.
         assert_ne!(
@@ -437,7 +420,7 @@ impl ConsensusPool {
         );
 
         self.stats.incoming_votes = self.stats.incoming_votes.saturating_add(1);
-        if vote_slot < root_slot {
+        if vote_slot < root_bank.slot() {
             self.stats.out_of_range_votes = self.stats.out_of_range_votes.saturating_add(1);
             return Err(AddVoteError::UnrootedSlot);
         }
@@ -739,14 +722,7 @@ mod tests {
         ) -> (Option<Slot>, Vec<Arc<Certificate>>) {
             let root_bank = self.bank_forks.read().unwrap().root_bank();
             self.pool
-                .add_message(
-                    root_bank.epoch_schedule(),
-                    root_bank.epoch_stakes_map(),
-                    root_bank.slot(),
-                    &Pubkey::new_unique(),
-                    message,
-                    &mut vec![],
-                )
+                .add_message(&root_bank, &Pubkey::new_unique(), message, &mut vec![])
                 .unwrap()
         }
 
@@ -806,9 +782,7 @@ mod tests {
         for slot in start..=end {
             let vote = Vote::new_skip_vote(slot);
             pool.add_message(
-                root_bank.epoch_schedule(),
-                root_bank.epoch_stakes_map(),
-                root_bank.slot(),
+                root_bank,
                 &Pubkey::new_unique(),
                 dummy_vote_message(keypairs, &vote, rank),
                 &mut vec![],
@@ -1162,9 +1136,7 @@ mod tests {
         let bank = ctx.bank_forks.read().unwrap().root_bank();
         assert_eq!(
             ctx.pool.add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
+                &bank,
                 &Pubkey::new_unique(),
                 ConsensusMessage::Vote(VoteMessage {
                     vote: Vote::new_skip_vote(5),
@@ -1456,8 +1428,7 @@ mod tests {
         agave_logger::setup();
         let mut ctx = TestContext::new();
         let bank = ctx.bank_forks.read().unwrap().root_bank();
-        let (my_vote_key, _, _) =
-            get_key_and_stakes(bank.epoch_schedule(), bank.epoch_stakes_map(), 0, 0).unwrap();
+        let (my_vote_key, _, _) = get_key_and_stakes(&bank, 0, 0).unwrap();
 
         // Create bank 2
         let slot = 2;
@@ -1468,9 +1439,7 @@ mod tests {
         let mut new_events = vec![];
         ctx.pool
             .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
+                &bank,
                 &my_vote_key,
                 dummy_vote_message(&ctx.validators, &vote, 0),
                 &mut new_events,
@@ -1483,9 +1452,7 @@ mod tests {
             let vote = Vote::new_notarization_vote(2, block_id);
             ctx.pool
                 .add_message(
-                    bank.epoch_schedule(),
-                    bank.epoch_stakes_map(),
-                    bank.slot(),
+                    &bank,
                     &Pubkey::new_unique(),
                     dummy_vote_message(&ctx.validators, &vote, rank),
                     &mut new_events,
@@ -1516,9 +1483,7 @@ mod tests {
         let vote = Vote::new_notarization_vote(3, Hash::new_unique());
         ctx.pool
             .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
+                &bank,
                 &my_vote_key,
                 dummy_vote_message(&ctx.validators, &vote, 0),
                 &mut new_events,
@@ -1532,9 +1497,7 @@ mod tests {
             let vote = Vote::new_skip_vote(3);
             ctx.pool
                 .add_message(
-                    bank.epoch_schedule(),
-                    bank.epoch_stakes_map(),
-                    bank.slot(),
+                    &bank,
                     &Pubkey::new_unique(),
                     dummy_vote_message(&ctx.validators, &vote, rank),
                     &mut new_events,
@@ -1562,9 +1525,7 @@ mod tests {
             let vote = Vote::new_notarization_vote(3, duplicate_block_id);
             ctx.pool
                 .add_message(
-                    bank.epoch_schedule(),
-                    bank.epoch_stakes_map(),
-                    bank.slot(),
+                    &bank,
                     &Pubkey::new_unique(),
                     dummy_vote_message(&ctx.validators, &vote, rank),
                     &mut new_events,
@@ -1585,8 +1546,7 @@ mod tests {
     fn test_safe_to_skip() {
         let mut ctx = TestContext::new();
         let bank = ctx.bank_forks.read().unwrap().root_bank();
-        let (my_vote_key, _, _) =
-            get_key_and_stakes(bank.epoch_schedule(), bank.epoch_stakes_map(), 0, 0).unwrap();
+        let (my_vote_key, _, _) = get_key_and_stakes(&bank, 0, 0).unwrap();
         let slot = 2;
         let mut new_events = vec![];
 
@@ -1595,9 +1555,7 @@ mod tests {
         let vote = Vote::new_notarization_vote(2, block_id);
         ctx.pool
             .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
+                &bank,
                 &my_vote_key,
                 dummy_vote_message(&ctx.validators, &vote, 0),
                 &mut new_events,
@@ -1610,9 +1568,7 @@ mod tests {
             let vote = Vote::new_skip_vote(2);
             ctx.pool
                 .add_message(
-                    bank.epoch_schedule(),
-                    bank.epoch_stakes_map(),
-                    bank.slot(),
+                    &bank,
                     &Pubkey::new_unique(),
                     dummy_vote_message(&ctx.validators, &vote, rank),
                     &mut new_events,
@@ -1630,9 +1586,7 @@ mod tests {
         let vote = Vote::new_notarization_vote(2, block_id);
         ctx.pool
             .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
+                &bank,
                 &Pubkey::new_unique(),
                 dummy_vote_message(&ctx.validators, &vote, 6),
                 &mut new_events,
@@ -1665,18 +1619,14 @@ mod tests {
         let vote_1 = create_new_vote(vote_type_1, slot);
         let vote_2 = create_new_vote(vote_type_2, slot);
         pool.add_message(
-            bank.epoch_schedule(),
-            bank.epoch_stakes_map(),
-            bank.slot(),
+            &bank,
             &Pubkey::new_unique(),
             dummy_vote_message(validators, &vote_1, 0),
             &mut vec![],
         )
         .unwrap();
         pool.add_message(
-            bank.epoch_schedule(),
-            bank.epoch_stakes_map(),
-            bank.slot(),
+            &bank,
             &Pubkey::new_unique(),
             dummy_vote_message(validators, &vote_2, 0),
             &mut vec![],
@@ -1723,9 +1673,7 @@ mod tests {
         };
         ctx.pool
             .add_message(
-                root_bank.epoch_schedule(),
-                root_bank.epoch_stakes_map(),
-                root_bank.slot(),
+                &root_bank,
                 &Pubkey::new_unique(),
                 ConsensusMessage::Certificate(cert_1),
                 &mut vec![],
@@ -1738,9 +1686,7 @@ mod tests {
         };
         ctx.pool
             .add_message(
-                root_bank.epoch_schedule(),
-                root_bank.epoch_stakes_map(),
-                root_bank.slot(),
+                &root_bank,
                 &Pubkey::new_unique(),
                 ConsensusMessage::Certificate(cert_2),
                 &mut vec![],
@@ -1764,9 +1710,7 @@ mod tests {
         assert!(
             ctx.pool
                 .add_message(
-                    new_bank.epoch_schedule(),
-                    new_bank.epoch_stakes_map(),
-                    new_bank.slot(),
+                    &new_bank,
                     &Pubkey::new_unique(),
                     dummy_vote_message(&ctx.validators, &vote, 0),
                     &mut vec![]
@@ -1783,14 +1727,7 @@ mod tests {
         });
         assert!(
             ctx.pool
-                .add_message(
-                    new_bank.epoch_schedule(),
-                    new_bank.epoch_stakes_map(),
-                    new_bank.slot(),
-                    &Pubkey::new_unique(),
-                    cert,
-                    &mut vec![]
-                )
+                .add_message(&new_bank, &Pubkey::new_unique(), cert, &mut vec![])
                 .is_err()
         );
     }
@@ -1950,9 +1887,7 @@ mod tests {
             };
             ctx.pool
                 .add_message(
-                    bank.epoch_schedule(),
-                    bank.epoch_stakes_map(),
-                    bank.slot(),
+                    &bank,
                     &Pubkey::new_unique(),
                     ConsensusMessage::Certificate(cert),
                     &mut events,
@@ -1980,9 +1915,7 @@ mod tests {
             };
             ctx.pool
                 .add_message(
-                    bank.epoch_schedule(),
-                    bank.epoch_stakes_map(),
-                    bank.slot(),
+                    &bank,
                     &Pubkey::new_unique(),
                     ConsensusMessage::Certificate(cert),
                     &mut events,
@@ -2017,9 +1950,7 @@ mod tests {
         };
         ctx.pool
             .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
+                &bank,
                 &Pubkey::new_unique(),
                 ConsensusMessage::Certificate(cert),
                 &mut events,
