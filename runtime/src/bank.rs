@@ -3363,7 +3363,10 @@ impl Bank {
             // no writable keys are reserved.
             self.check_reserved_keys(transaction)?;
 
-            if self.feature_set.snapshot().limit_instruction_accounts {
+            if self
+                .feature_set
+                .is_active(&agave_feature_set::limit_instruction_accounts::ID)
+            {
                 for instr in transaction.instructions_iter() {
                     if instr.accounts.len()
                         > solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION
