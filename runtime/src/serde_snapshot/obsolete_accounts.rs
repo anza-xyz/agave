@@ -43,7 +43,7 @@ impl SerdeObsoleteAccounts {
         }
     }
 
-    pub(crate) fn into_tuple(self) -> (ObsoleteAccounts, u32, usize) {
+    pub(crate) fn into_tuple(self) -> (ObsoleteAccounts, AccountsFileId, usize) {
         let accounts = self
             .accounts
             .into_iter()
