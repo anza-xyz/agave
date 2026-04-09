@@ -1,7 +1,7 @@
 use {
     crate::execution_budget::{
         MAX_CALL_DEPTH, MAX_HEAP_FRAME_BYTES, MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268,
-        MIN_HEAP_FRAME_BYTES, STACK_FRAME_SIZE,
+        MIN_HEAP_FRAME_BYTES, get_stack_frame_size,
     },
     solana_sbpf::{aligned_memory::AlignedMemory, ebpf::HOST_ALIGN, vm::CallFrame},
     std::{
@@ -103,7 +103,7 @@ impl VmMemoryPool {
     pub fn new() -> Self {
         Self {
             stack: Pool::new(array::from_fn(|_| {
-                AlignedMemory::zero_filled(STACK_FRAME_SIZE * MAX_CALL_DEPTH)
+                AlignedMemory::zero_filled(get_stack_frame_size() * MAX_CALL_DEPTH)
             })),
             heap: Pool::new(array::from_fn(|_| {
                 AlignedMemory::zero_filled(MAX_HEAP_FRAME_BYTES as usize)
@@ -121,7 +121,7 @@ impl VmMemoryPool {
     }
 
     pub fn get_stack(&mut self, size: usize) -> AlignedMemory<{ HOST_ALIGN }> {
-        debug_assert!(size == STACK_FRAME_SIZE * MAX_CALL_DEPTH);
+        debug_assert!(size == get_stack_frame_size() * MAX_CALL_DEPTH);
         self.stack
             .get()
             .unwrap_or_else(|| AlignedMemory::zero_filled(size))
