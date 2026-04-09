@@ -1950,6 +1950,18 @@ impl ReplayStage {
         let slot_descendants = slot_descendants.unwrap();
         Self::purge_ancestors_descendants(slot_to_purge, &slot_descendants, ancestors, descendants);
 
+        let banks_to_remove: Vec<_> = {
+            let bank_forks = bank_forks.read().unwrap();
+            slot_descendants
+                .iter()
+                .chain(std::iter::once(&slot_to_purge))
+                .filter_map(|slot| bank_forks.get_with_scheduler(*slot))
+                .collect()
+        };
+        for bank in banks_to_remove {
+            let _ = bank.wait_for_completed_scheduler();
+        }
+
         // Grab the Slot and BankId's of the banks we need to purge, then clear the banks
         // from BankForks
         let (slots_to_purge, removed_banks): (Vec<(Slot, BankId)>, Vec<BankWithScheduler>) = {
