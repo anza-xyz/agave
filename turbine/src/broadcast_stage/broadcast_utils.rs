@@ -137,6 +137,7 @@ fn recv_slot_components_maybe_empty(
         if try_bank.slot() != bank.slot() {
             warn!("Broadcast for slot: {} interrupted", bank.slot());
             entries.clear();
+            last_tick_height = 0;
             bank = try_bank.clone();
         }
         // If we hit a block marker, save it for next time and stop draining
@@ -193,6 +194,7 @@ fn recv_slot_components_maybe_empty(
             warn!("Broadcast for slot: {} interrupted", bank.slot());
             entries.clear();
             serialized_batch_byte_count = 8; // Vec len
+            last_tick_height = 0;
             bank = try_bank.clone();
             coalesce_start = Instant::now();
         }
@@ -347,7 +349,8 @@ mod tests {
 
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
-        while let Ok(result) = recv_slot_components(&r, &mut None, &mut ProcessShredsStats::default())
+        while let Ok(result) =
+            recv_slot_components(&r, &mut None, &mut ProcessShredsStats::default())
         {
             assert_eq!(result.bank.slot(), bank1.slot());
             last_tick_height = result.last_tick_height;
@@ -406,7 +409,8 @@ mod tests {
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
         let mut bank_slot = 0;
-        while let Ok(result) = recv_slot_components(&r, &mut None, &mut ProcessShredsStats::default())
+        while let Ok(result) =
+            recv_slot_components(&r, &mut None, &mut ProcessShredsStats::default())
         {
             bank_slot = result.bank.slot();
             last_tick_height = result.last_tick_height;
@@ -548,9 +552,12 @@ mod tests {
         // Ensure that the inner function returns None when the channel has no more items after the
         // bank change + marker.
         let mut carryover = None;
-        let result =
-            recv_slot_components_maybe_empty(&r, &mut carryover, &mut ProcessShredsStats::default())
-                .unwrap();
+        let result = recv_slot_components_maybe_empty(
+            &r,
+            &mut carryover,
+            &mut ProcessShredsStats::default(),
+        )
+        .unwrap();
         assert!(result.is_none());
         assert!(carryover.is_some());
 
