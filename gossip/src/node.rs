@@ -388,6 +388,10 @@ impl Node {
             .unwrap();
         info.set_serve_repair(UDP, (advertised_ip, serve_repair_port))
             .unwrap();
+        // placeholder to prevent legacy agave nodes from assuming we do not have open repair ports
+        // see https://github.com/anza-xyz/agave/pull/10460#discussion_r3054463946 for context and
+        // cleanup timing.
+        info.set_serve_repair(QUIC, (advertised_ip, 1)).unwrap();
         info.set_alpenglow((advertised_ip, alpenglow_port)).unwrap();
 
         trace!("new ContactInfo: {info:?}");
