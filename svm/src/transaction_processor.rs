@@ -234,11 +234,7 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
             epoch_boundary_preparation: Arc::new(RwLock::new(EpochBoundaryPreparation::default())),
             global_program_cache: Arc::new(RwLock::new(ProgramCache::new(Slot::default()))),
             program_runtime_environment: ProgramRuntimeEnvironment::from(
-                BuiltinProgram::new_loader(VmConfig {
-                    stack_frame_size:
-                        solana_program_runtime::execution_budget::get_stack_frame_size(),
-                    ..VmConfig::default()
-                }),
+                BuiltinProgram::new_loader(VmConfig::default()),
             ),
             builtin_program_ids: RwLock::new(HashSet::new()),
             builtin_program_cache: RwLock::new(ProgramCacheForTxBatch::new(Slot::default())),
