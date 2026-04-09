@@ -5198,31 +5198,32 @@ impl Blockstore {
         new_chained_slots: &mut HashMap<u64, Rc<RefCell<SlotMeta>>>,
     ) -> Result<()> {
         // Process only existing slots in Original whose parent was updated by UpdateParent.
-        for (slot, old_parent_slot, new_parent_slot) in working_set
-            .iter()
-            .filter_map(|(&(location, slot), slot_meta_entry)| {
-                if !matches!(location, BlockLocation::Original) {
-                    return None;
-                }
+        for (slot, old_parent_slot, new_parent_slot) in
+            working_set
+                .iter()
+                .filter_map(|(&(location, slot), slot_meta_entry)| {
+                    if !matches!(location, BlockLocation::Original) {
+                        return None;
+                    }
 
-                let old_slot_meta = slot_meta_entry.old_slot_meta.as_ref()?;
-                if old_slot_meta.is_orphan() {
-                    return None;
-                }
+                    let old_slot_meta = slot_meta_entry.old_slot_meta.as_ref()?;
+                    if old_slot_meta.is_orphan() {
+                        return None;
+                    }
 
-                let new_slot_meta = slot_meta_entry.new_slot_meta.borrow();
-                if new_slot_meta.replay_fec_set_index == 0 {
-                    return None;
-                }
+                    let new_slot_meta = slot_meta_entry.new_slot_meta.borrow();
+                    if new_slot_meta.replay_fec_set_index == 0 {
+                        return None;
+                    }
 
-                let new_parent_slot = new_slot_meta.parent_slot?;
-                let old_parent_slot = old_slot_meta.parent_slot?;
-                (old_parent_slot != new_parent_slot).then_some((
-                    slot,
-                    old_parent_slot,
-                    new_parent_slot,
-                ))
-            })
+                    let new_parent_slot = new_slot_meta.parent_slot?;
+                    let old_parent_slot = old_slot_meta.parent_slot?;
+                    (old_parent_slot != new_parent_slot).then_some((
+                        slot,
+                        old_parent_slot,
+                        new_parent_slot,
+                    ))
+                })
         {
             let slot_meta =
                 self.find_slot_meta_else_create(working_set, new_chained_slots, slot)?;
