@@ -618,13 +618,21 @@ pub fn translate_accounts_rust<'a>(
     account_infos_len: u64,
     invoke_context: &InvokeContext,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
-    translate_accounts_common(
+    translate_account_infos(
         account_infos_addr,
         account_infos_len,
-        invoke_context,
-        CallerAccount::from_account_info,
         |account_info: &AccountInfo| account_info.key as *const _ as u64,
-    )
+        invoke_context,
+        |account_infos, account_info_keys| {
+            translate_accounts_common(
+                &account_info_keys,
+                account_infos,
+                account_infos_addr,
+                invoke_context,
+                CallerAccount::from_account_info,
+            )
+        },
+    )?
 }
 
 pub fn translate_signers_rust(
@@ -745,13 +753,21 @@ pub fn translate_accounts_c<'a>(
     account_infos_len: u64,
     invoke_context: &InvokeContext,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
-    translate_accounts_common(
+    translate_account_infos(
         account_infos_addr,
         account_infos_len,
-        invoke_context,
-        CallerAccount::from_sol_account_info,
         |account_info: &SolAccountInfo| account_info.key_addr,
-    )
+        invoke_context,
+        |account_infos, account_info_keys| {
+            translate_accounts_common(
+                &account_info_keys,
+                account_infos,
+                account_infos_addr,
+                invoke_context,
+                CallerAccount::from_sol_account_info,
+            )
+        },
+    )?
 }
 
 pub fn translate_signers_c(
@@ -922,17 +938,69 @@ pub struct TranslatedAccount<'a> {
     pub update_caller_account_info: bool,
 }
 
-// Finish translating accounts and build TranslatedAccount from CallerAccount.
-fn translate_accounts_common<'a, T, F, KF>(
+fn translate_account_infos<T, R>(
     account_infos_addr: u64,
     account_infos_len: u64,
+    key_addr: impl Fn(&T) -> u64,
+    invoke_context: &InvokeContext,
+    cb: impl FnOnce(&[T], Vec<&Pubkey>) -> R,
+) -> Result<R, Error> {
+    let syscall_parameter_address_restrictions = invoke_context
+        .get_feature_set()
+        .syscall_parameter_address_restrictions;
+    let check_aligned = invoke_context.get_check_aligned();
+    let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
+
+    // In the same vein as the other check_account_info_pointer() checks, we don't lock
+    // this pointer to a specific address but we don't want it to be inside accounts, or
+    // callees might be able to write to the pointed memory.
+    if syscall_parameter_address_restrictions
+        && account_infos_addr
+            .saturating_add(account_infos_len.saturating_mul(std::mem::size_of::<T>() as u64))
+            >= ebpf::MM_INPUT_START
+    {
+        return Err(CpiError::InvalidPointer.into());
+    }
+
+    let account_infos = translate_slice::<T>(
+        memory_mapping,
+        account_infos_addr,
+        account_infos_len,
+        check_aligned,
+    )?;
+    check_account_infos(account_infos.len())?;
+
+    let account_infos_bytes = account_infos.len().saturating_mul(ACCOUNT_INFO_BYTE_SIZE);
+
+    let amount = (account_infos_bytes as u64)
+        .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+        .unwrap_or(u64::MAX);
+    invoke_context.compute_meter.consume_checked(amount)?;
+
+    let mut account_info_keys = Vec::with_capacity(account_infos_len as usize);
+    #[expect(clippy::needless_range_loop)]
+    for account_index in 0..account_infos_len as usize {
+        #[expect(clippy::indexing_slicing)]
+        let account_info = &account_infos[account_index];
+        account_info_keys.push(translate_type::<Pubkey>(
+            memory_mapping,
+            key_addr(account_info),
+            check_aligned,
+        )?);
+    }
+    Ok(cb(account_infos, account_info_keys))
+}
+
+// Finish translating accounts and build TranslatedAccount from CallerAccount.
+fn translate_accounts_common<'a, T, F>(
+    account_info_keys: &[&Pubkey],
+    account_infos: &[T],
+    account_infos_addr: u64,
     invoke_context: &InvokeContext,
     do_translate: F,
-    key_addr: KF,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error>
 where
     F: Fn(&InvokeContext, u64, &T, &SerializedAccountMetadata) -> Result<CallerAccount<'a>, Error>,
-    KF: Fn(&T) -> u64,
 {
     let transaction_context = &invoke_context.transaction_context;
     let next_instruction_context = transaction_context.get_next_instruction_context()?;
@@ -972,46 +1040,6 @@ where
         let account_key = invoke_context
             .transaction_context
             .get_key_of_account_at_index(instruction_account.index_in_transaction)?;
-
-        // In the same vein as the other check_account_info_pointer() checks, we don't lock
-        // this pointer to a specific address but we don't want it to be inside accounts, or
-        // callees might be able to write to the pointed memory.
-        if syscall_parameter_address_restrictions
-            && account_infos_addr
-                .saturating_add(account_infos_len.saturating_mul(std::mem::size_of::<T>() as u64))
-                >= ebpf::MM_INPUT_START
-        {
-            return Err(CpiError::InvalidPointer.into());
-        }
-
-        let check_aligned = invoke_context.get_check_aligned();
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-        let account_infos = translate_slice::<T>(
-            memory_mapping,
-            account_infos_addr,
-            account_infos_len,
-            check_aligned,
-        )?;
-        check_account_infos(account_infos.len())?;
-
-        let account_infos_bytes = account_infos.len().saturating_mul(ACCOUNT_INFO_BYTE_SIZE);
-
-        let amount = (account_infos_bytes as u64)
-            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-            .unwrap_or(u64::MAX);
-        invoke_context.compute_meter.consume_checked(amount)?;
-
-        let mut account_info_keys = Vec::with_capacity(account_infos_len as usize);
-        #[expect(clippy::needless_range_loop)]
-        for account_index in 0..account_infos_len as usize {
-            #[expect(clippy::indexing_slicing)]
-            let account_info = &account_infos[account_index];
-            account_info_keys.push(translate_type::<Pubkey>(
-                memory_mapping,
-                key_addr(account_info),
-                check_aligned,
-            )?);
-        }
 
         #[expect(deprecated)]
         if callee_account.is_executable() {
