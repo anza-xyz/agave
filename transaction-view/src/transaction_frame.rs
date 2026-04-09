@@ -34,8 +34,8 @@ pub(crate) struct TransactionFrame {
     address_table_lookup: AddressTableLookupFrame,
     /// Transaction config framing data
     transaction_config_frame: TransactionConfigFrame,
-    /// The end of data
-    end_offset: u16,
+    /// The data length in bytes
+    data_len: u16,
 }
 
 impl TransactionFrame {
@@ -86,7 +86,7 @@ impl TransactionFrame {
             instructions,
             address_table_lookup,
             transaction_config_frame: TransactionConfigFrame::not_applicable(),
-            end_offset: offset as u16,
+            data_len: offset as u16,
         })
     }
 
@@ -180,7 +180,7 @@ impl TransactionFrame {
                 total_readonly_lookup_accounts: 0,
             },
             transaction_config_frame,
-            end_offset: offset as u16,
+            data_len: offset as u16,
         };
 
         Ok(frame)
@@ -262,7 +262,7 @@ impl TransactionFrame {
     pub(crate) fn message_range(&self) -> (u16, u16) {
         let end = match self.version() {
             TransactionVersion::V1 => self.signature.offset,
-            _ => self.end_offset,
+            _ => self.data_len,
         };
         (self.message_header.offset, end)
     }

@@ -491,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn test_v1_signatures_still_accessible() {
+    fn test_v1_signatures_accessible() {
         let tx = simple_v1_transaction();
         let bytes = wincode::serialize(&tx).unwrap();
         let view = TransactionView::try_new_unsanitized(bytes.as_ref()).unwrap();
