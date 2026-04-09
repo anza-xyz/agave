@@ -2356,11 +2356,8 @@ declare_builtin_function!(
             })
             .collect::<Result<Vec<_>, Error>>()?;
 
-        let result = if invoke_context.get_feature_set().poseidon_enforce_padding {
-            poseidon::hashv(parameters, endianness, inputs.as_slice())
-        } else {
-            poseidon::legacy::hashv(parameters, endianness, inputs.as_slice())
-        };
+        let result = poseidon::hashv(parameters, endianness, inputs.as_slice());
+
         let Ok(hash) = result else {
             return Ok(1);
         };
