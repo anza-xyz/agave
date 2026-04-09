@@ -1619,14 +1619,14 @@ mod tests {
         let vote_1 = create_new_vote(vote_type_1, slot);
         let vote_2 = create_new_vote(vote_type_2, slot);
         pool.add_message(
-            &bank,
+            bank,
             &Pubkey::new_unique(),
             dummy_vote_message(validators, &vote_1, 0),
             &mut vec![],
         )
         .unwrap();
         pool.add_message(
-            &bank,
+            bank,
             &Pubkey::new_unique(),
             dummy_vote_message(validators, &vote_2, 0),
             &mut vec![],
