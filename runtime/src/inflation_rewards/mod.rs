@@ -35,7 +35,7 @@ pub(crate) fn redeem_rewards<'a>(
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     stake_account_lamports_for_trace: u64,
-    alpenglow_feature: bool,
+    is_alpenglow_active: bool,
 ) -> Result<(u64, u64, Stake), InstructionError> {
     if let StakeStateV2::Stake(_meta, stake, _stake_flags) = stake_state {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
@@ -75,7 +75,7 @@ pub(crate) fn redeem_rewards<'a>(
             vote_state,
             calculation_environment,
             inflation_point_calc_tracer,
-            alpenglow_feature,
+            is_alpenglow_active,
         ) {
             Ok((stakers_reward, voters_reward, stake))
         } else {
@@ -92,7 +92,7 @@ fn redeem_stake_rewards<'a>(
     vote_state: DelegatedVoteState,
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
-    alpenglow_feature: bool,
+    is_alpenglow_active: bool,
 ) -> Option<(u64, u64)> {
     if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
         inflation_point_calc_tracer(&InflationPointCalculationEvent::CreditsObserved(
@@ -106,7 +106,7 @@ fn redeem_stake_rewards<'a>(
         vote_state,
         calculation_environment,
         inflation_point_calc_tracer.as_ref(),
-        alpenglow_feature,
+        is_alpenglow_active,
     )
     .map(|calculated_stake_rewards| {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer {
@@ -137,7 +137,7 @@ fn calculate_stake_rewards<'a>(
     vote_state: DelegatedVoteState,
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
-    alpenglow_feature: bool,
+    is_alpenglow_active: bool,
 ) -> Option<CalculatedStakeRewards> {
     let CalculationEnvironment {
         stake_history,
@@ -157,7 +157,7 @@ fn calculate_stake_rewards<'a>(
         stake_history,
         inflation_point_calc_tracer.as_ref(),
         new_rate_activation_epoch,
-        alpenglow_feature,
+        is_alpenglow_active,
     );
 
     // Drive credits_observed forward unconditionally when rewards are disabled
@@ -196,7 +196,7 @@ fn calculate_stake_rewards<'a>(
         return None;
     }
 
-    let rewards = if alpenglow_feature {
+    let rewards = if is_alpenglow_active {
         // In alpenglow, `points` represents the actual reward that this `vote_state` earned.
         points
     } else {
