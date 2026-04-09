@@ -237,6 +237,8 @@ pub(crate) fn calculate_stake_points_and_credits(
         }
     }
 
+    println!("total points earned = {points}");
+
     CalculatedStakePoints {
         points,
         new_credits_observed,
