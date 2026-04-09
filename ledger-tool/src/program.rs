@@ -25,8 +25,12 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_sbpf::{
-        assembler::assemble, ebpf::MM_INPUT_START, elf::Executable, static_analysis::Analysis,
-        verifier::RequisiteVerifier, vm::ExecutionMode,
+        assembler::assemble,
+        ebpf::MM_INPUT_START,
+        elf::Executable,
+        static_analysis::Analysis,
+        verifier::RequisiteVerifier,
+        vm::{CallFrame, ExecutionMode},
     },
     solana_sdk_ids::{bpf_loader_upgradeable, sysvar},
     solana_syscalls::create_program_runtime_environment,
@@ -530,10 +534,17 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     } else {
         ExecutionMode::Interpreted
     };
+    let mut call_frames = match execution_mode {
+        ExecutionMode::Jit => vec![],
+        ExecutionMode::Interpreted | ExecutionMode::PreferJit => {
+            vec![CallFrame::default(); verified_executable.get_config().max_call_depth]
+        }
+    };
     vm.registers[1] = MM_INPUT_START;
     vm.registers[2] = instruction_data_offset as u64;
 
-    let (instruction_count, result) = vm.execute_program(&verified_executable, &mut execution_mode);
+    let (instruction_count, result) =
+        vm.execute_program(&verified_executable, &mut execution_mode, &mut call_frames);
     let duration = Instant::now() - start_time;
     if let Some(trace_option) = matches.value_of("trace") {
         vm.context()

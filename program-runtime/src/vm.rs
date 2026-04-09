@@ -261,11 +261,15 @@ pub fn execute<'a, 'b: 'a>(
 
         vm.registers[1] = ebpf::MM_INPUT_START;
         vm.registers[2] = instruction_data_offset as u64;
-        let (compute_units_consumed, result) = vm.execute_program(executable, &mut execution_mode);
+        let mut call_frames =
+            MEMORY_POOL.with_borrow_mut(|memory_pool| memory_pool.get_call_frames());
+        let (compute_units_consumed, result) =
+            vm.execute_program(executable, &mut execution_mode, &mut call_frames);
         let register_trace = std::mem::take(&mut vm.register_trace);
         MEMORY_POOL.with_borrow_mut(|memory_pool| {
             memory_pool.put_stack(stack);
             memory_pool.put_heap(heap);
+            memory_pool.put_call_frames(call_frames);
             debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268);
             debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268);
         });
