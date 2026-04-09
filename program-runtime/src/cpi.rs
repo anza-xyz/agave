@@ -282,6 +282,8 @@ impl<'a> CallerAccount<'a> {
     // Create a CallerAccount given an AccountInfo.
     pub fn from_account_info(
         invoke_context: &InvokeContext,
+        memory_mapping: &MemoryMapping,
+        check_aligned: bool,
         _vm_addr: u64,
         account_info: &solana_account_info::AccountInfo,
         account_metadata: &crate::invoke_context::SerializedAccountMetadata,
@@ -314,8 +316,6 @@ impl<'a> CallerAccount<'a> {
 
         // account_info points to host memory. The addresses used internally are
         // in vm space so they need to be translated.
-        let check_aligned = invoke_context.get_check_aligned();
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
         let lamports = {
             // Double translate lamports out of RefCell
             let ptr = translate_type::<u64>(
@@ -416,6 +416,8 @@ impl<'a> CallerAccount<'a> {
     // Create a CallerAccount given a SolAccountInfo.
     fn from_sol_account_info(
         invoke_context: &InvokeContext,
+        memory_mapping: &MemoryMapping,
+        check_aligned: bool,
         vm_addr: u64,
         account_info: &SolAccountInfo,
         account_metadata: &crate::invoke_context::SerializedAccountMetadata,
@@ -461,8 +463,6 @@ impl<'a> CallerAccount<'a> {
             )?;
         }
 
-        let check_aligned = invoke_context.get_check_aligned();
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
         // account_info points to host memory. The addresses used internally are
         // in vm space so they need to be translated.
         let lamports = translate_type_mut_for_cpi::<u64>(
@@ -618,17 +618,23 @@ pub fn translate_accounts_rust<'a>(
     account_infos_len: u64,
     invoke_context: &InvokeContext,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
+    let check_aligned = invoke_context.get_check_aligned();
+    let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
     translate_account_infos(
         account_infos_addr,
         account_infos_len,
         |account_info: &AccountInfo| account_info.key as *const _ as u64,
         invoke_context,
+        memory_mapping,
+        check_aligned,
         |account_infos, account_info_keys| {
             translate_accounts_common(
                 &account_info_keys,
                 account_infos,
                 account_infos_addr,
                 invoke_context,
+                memory_mapping,
+                check_aligned,
                 CallerAccount::from_account_info,
             )
         },
@@ -753,17 +759,23 @@ pub fn translate_accounts_c<'a>(
     account_infos_len: u64,
     invoke_context: &InvokeContext,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
+    let check_aligned = invoke_context.get_check_aligned();
+    let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
     translate_account_infos(
         account_infos_addr,
         account_infos_len,
         |account_info: &SolAccountInfo| account_info.key_addr,
         invoke_context,
+        memory_mapping,
+        check_aligned,
         |account_infos, account_info_keys| {
             translate_accounts_common(
                 &account_info_keys,
                 account_infos,
                 account_infos_addr,
                 invoke_context,
+                memory_mapping,
+                check_aligned,
                 CallerAccount::from_sol_account_info,
             )
         },
@@ -943,13 +955,13 @@ fn translate_account_infos<T, R>(
     account_infos_len: u64,
     key_addr: impl Fn(&T) -> u64,
     invoke_context: &InvokeContext,
+    memory_mapping: &MemoryMapping,
+    check_aligned: bool,
     cb: impl FnOnce(&[T], Vec<&Pubkey>) -> R,
 ) -> Result<R, Error> {
     let syscall_parameter_address_restrictions = invoke_context
         .get_feature_set()
         .syscall_parameter_address_restrictions;
-    let check_aligned = invoke_context.get_check_aligned();
-    let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
 
     // In the same vein as the other check_account_info_pointer() checks, we don't lock
     // this pointer to a specific address but we don't want it to be inside accounts, or
@@ -997,10 +1009,19 @@ fn translate_accounts_common<'a, T, F>(
     account_infos: &[T],
     account_infos_addr: u64,
     invoke_context: &InvokeContext,
+    memory_mapping: &MemoryMapping,
+    check_aligned: bool,
     do_translate: F,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error>
 where
-    F: Fn(&InvokeContext, u64, &T, &SerializedAccountMetadata) -> Result<CallerAccount<'a>, Error>,
+    F: Fn(
+        &InvokeContext,
+        &MemoryMapping,
+        bool,
+        u64,
+        &T,
+        &SerializedAccountMetadata,
+    ) -> Result<CallerAccount<'a>, Error>,
 {
     let transaction_context = &invoke_context.transaction_context;
     let next_instruction_context = transaction_context.get_next_instruction_context()?;
@@ -1071,6 +1092,8 @@ where
             let caller_account =
                 do_translate(
                     invoke_context,
+                    memory_mapping,
+                    check_aligned,
                     account_infos_addr.saturating_add(
                         caller_account_index.saturating_mul(mem::size_of::<T>()) as u64,
                     ),
@@ -1093,8 +1116,6 @@ where
                 // account (caller_account). We need to update the corresponding
                 // BorrowedAccount (callee_account) so the callee can see the
                 // changes.
-                let check_aligned = invoke_context.get_check_aligned();
-                let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
                 update_callee_account(
                     memory_mapping,
                     check_aligned,
@@ -1998,8 +2019,12 @@ mod tests {
         invoke_context
             .memory_contexts
             .mock_set_mapping(memory_mapping);
+        let check_aligned = invoke_context.get_check_aligned();
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
         let caller_account = CallerAccount::from_account_info(
             &invoke_context,
+            memory_mapping,
+            check_aligned,
             vm_addr,
             account_info,
             &account_metadata,
