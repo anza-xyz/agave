@@ -2039,6 +2039,26 @@ define_accounts_db_test!(test_full_clean_refcount_first, |accounts| {
     do_full_clean_refcount(accounts, true);
 });
 
+define_accounts_db_test!(
+    test_exhaustively_verify_refcounts_small_dataset_detects_mismatch,
+    panic = "exhaustively_verify_refcounts failed",
+    |accounts| {
+        let slot = 0;
+        let pubkey = Pubkey::new_unique();
+        let account = AccountSharedData::new(1, 0, &Pubkey::default());
+
+        accounts.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
+        accounts.add_root_and_flush_write_cache(slot);
+
+        accounts.accounts_index.get_and_then(&pubkey, |entry| {
+            entry.unwrap().addref();
+            (false, ())
+        });
+
+        accounts.exhaustively_verify_refcounts(Some(slot));
+    }
+);
+
 #[test]
 fn test_clean_stored_dead_slots_empty() {
     let accounts = AccountsDb::new_single_for_tests();

@@ -1649,9 +1649,12 @@ impl AccountsDb {
             },
         );
         let total = pubkey_refcount.len();
+        if total == 0 {
+            return;
+        }
         let failed = AtomicBool::default();
         let threads = quarter_thread_count();
-        let per_batch = total / threads;
+        let per_batch = total.div_ceil(threads);
         (0..=threads).into_par_iter().for_each(|attempt| {
             pubkey_refcount
                 .iter()
