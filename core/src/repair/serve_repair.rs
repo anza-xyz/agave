@@ -220,7 +220,7 @@ impl solana_frozen_abi::rand::prelude::Distribution<RepairRequestHeader>
 {
     fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> RepairRequestHeader {
         RepairRequestHeader {
-            signature: Signature::from(rng.random::<[u8; 64]>()),
+            signature: Signature::from(rng.random::<[u8; SIGNATURE_BYTES]>()),
             sender: Pubkey::new_from_array(rng.random()),
             recipient: Pubkey::new_from_array(rng.random()),
             timestamp: rng.random(),
