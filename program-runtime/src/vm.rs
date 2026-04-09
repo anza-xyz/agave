@@ -68,8 +68,10 @@ fn configure_program_regions<'a, C: ContextObject>(
     stack: &'a mut [u8],
     heap: &'a mut [u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let memory_context = invoke_context.get_memory_context_mut()?;
-    let regions = memory_context.get_memory_regions_mut();
+    let mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
+    let regions = mapping
+        .get_regions_mut()
+        .expect("The memory mapping should not have been initialized");
 
     let ro_area = regions
         .get_mut(0)
@@ -96,7 +98,9 @@ fn configure_program_regions<'a, C: ContextObject>(
         .expect("The regions vector must have at least three entries");
     *heap_area = MemoryRegion::new_writable(heap, MM_HEAP_START);
 
-    memory_context.initialize()
+    mapping
+        .initialize()
+        .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
 }
 
 /// Create the SBF virtual machine
@@ -156,6 +160,7 @@ fn set_memory_context<'b>(
     );
 
     invoke_context
+        .memory_contexts
         .set_memory_context(MemoryContext::new(
             BpfAllocator::new(heap_size as u64),
             accounts_metadata,
