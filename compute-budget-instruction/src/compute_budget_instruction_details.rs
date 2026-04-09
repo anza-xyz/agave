@@ -137,6 +137,9 @@ impl ComputeBudgetInstructionDetails {
             if let Some((_index, requested_loaded_accounts_data_size_limit)) =
                 self.requested_loaded_accounts_data_size_limit
             {
+                if requested_loaded_accounts_data_size_limit < 1 {
+                    return Err(TransactionError::InvalidLoadedAccountsDataSizeLimit);
+                }
                 requested_loaded_accounts_data_size_limit
             } else {
                 MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES
