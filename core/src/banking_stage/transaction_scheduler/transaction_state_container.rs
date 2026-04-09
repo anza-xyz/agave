@@ -213,17 +213,17 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
     }
 
     fn flush_held_transactions(&mut self, slot: Option<Slot>) {
+        // Take temporary ownership of the held transactions to avoid borrowing issues when
+        // reinserting into the queue.
         let mut held_transactions = core::mem::take(&mut self.held_transactions);
-        let mut held_ids = Vec::with_capacity(held_transactions.len());
-        held_transactions.retain(|held| {
-            if Some(held.attempted_slot) != slot {
-                held_ids.push(held.priority_id);
-                false
-            } else {
-                true
-            }
-        });
-        self.push_ids_into_queue(held_ids.into_iter());
+
+        self.push_ids_into_queue(
+            held_transactions
+                .extract_if(.., |held| Some(held.attempted_slot) != slot)
+                .map(|held| held.priority_id),
+        );
+
+        // Replace the held transactions with the remaining transactions that were not flushed.
         self.held_transactions = held_transactions;
     }
 
