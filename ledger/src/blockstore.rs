@@ -1712,11 +1712,11 @@ impl Blockstore {
     ) -> Result<Option<(Option<Slot>, Hash)>> {
         if let Some(working_entry) = slot_metas.and_then(|sm| sm.get(&(location, slot))) {
             // First check the tracker if available
-            let parent_slot = RefCell::borrow(&*working_entry.new_slot_meta).parent_slot;
-            Ok(Some((parent_slot, Hash::default())))
+            let entry = RefCell::borrow(&*working_entry.new_slot_meta);
+            Ok(Some((entry.parent_slot, entry.parent_block_id)))
         } else if let Some(meta) = self.meta_from_location(slot, location)? {
             // Fall back to DB
-            Ok(Some((meta.parent_slot, Hash::default())))
+            Ok(Some((meta.parent_slot, meta.parent_block_id)))
         } else {
             Ok(None)
         }
@@ -5198,7 +5198,7 @@ impl Blockstore {
         new_chained_slots: &mut HashMap<u64, Rc<RefCell<SlotMeta>>>,
     ) -> Result<()> {
         // Process only existing slots in Original whose parent was updated by UpdateParent.
-        let update_parent_entries: Vec<_> = working_set
+        for (slot, old_parent_slot, new_parent_slot) in working_set
             .iter()
             .filter_map(|(&(location, slot), slot_meta_entry)| {
                 if !matches!(location, BlockLocation::Original) {
@@ -5223,9 +5223,7 @@ impl Blockstore {
                     new_parent_slot,
                 ))
             })
-            .collect();
-
-        for (slot, old_parent_slot, new_parent_slot) in update_parent_entries {
+        {
             let slot_meta =
                 self.find_slot_meta_else_create(working_set, new_chained_slots, slot)?;
             slot_meta.borrow_mut().parent_slot = Some(new_parent_slot);
