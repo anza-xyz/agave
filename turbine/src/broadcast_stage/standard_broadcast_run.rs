@@ -520,7 +520,7 @@ impl BroadcastRun for StandardBroadcastRun {
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
         let mut process_stats = ProcessShredsStats::default();
-        let receive_results = broadcast_utils::recv_slot_entries(
+        let receive_results = broadcast_utils::recv_slot_components(
             receiver,
             &mut self.carryover_entry,
             &mut process_stats,

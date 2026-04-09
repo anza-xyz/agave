@@ -80,21 +80,21 @@ fn keep_coalescing_entries(
     true
 }
 
-pub(super) fn recv_slot_entries(
+pub(super) fn recv_slot_components(
     receiver: &Receiver<WorkingBankEntryMarker>,
     carryover_entry: &mut Option<WorkingBankEntryMarker>,
     process_stats: &mut ProcessShredsStats,
 ) -> Result<ReceiveResults> {
     loop {
         if let Some(result) =
-            recv_slot_entries_maybe_empty(receiver, carryover_entry, process_stats)?
+            recv_slot_components_maybe_empty(receiver, carryover_entry, process_stats)?
         {
             return Ok(result);
         }
     }
 }
 
-fn recv_slot_entries_maybe_empty(
+fn recv_slot_components_maybe_empty(
     receiver: &Receiver<WorkingBankEntryMarker>,
     carryover_entry: &mut Option<WorkingBankEntryMarker>,
     process_stats: &mut ProcessShredsStats,
@@ -127,6 +127,7 @@ fn recv_slot_entries_maybe_empty(
     ];
 
     // Drain the channel of entries until we hit a marker or the slot ends
+    let mut hit_marker = false;
     while last_tick_height != bank.max_tick_height() {
         let Ok((try_bank, (next_marker, tick_height))) = receiver.try_recv() else {
             break;
@@ -141,6 +142,7 @@ fn recv_slot_entries_maybe_empty(
         // If we hit a block marker, save it for next time and stop draining
         if next_marker.as_marker().is_some() {
             *carryover_entry = Some((try_bank, (next_marker, tick_height)));
+            hit_marker = true;
             break;
         }
 
@@ -170,13 +172,15 @@ fn recv_slot_entries_maybe_empty(
     // 3. We're over the max data target.
     // 4. We hit a block marker.
     let mut coalesce_start = Instant::now();
-    while keep_coalescing_entries(
-        last_tick_height,
-        bank.max_tick_height(),
-        serialized_batch_byte_count,
-        max_batch_byte_count,
-        process_stats,
-    ) {
+    while !hit_marker
+        && keep_coalescing_entries(
+            last_tick_height,
+            bank.max_tick_height(),
+            serialized_batch_byte_count,
+            max_batch_byte_count,
+            process_stats,
+        )
+    {
         let Ok((try_bank, (entry_marker, tick_height))) =
             receiver.recv_deadline(coalesce_start + ENTRY_COALESCE_DURATION)
         else {
@@ -318,7 +322,7 @@ mod tests {
     const MAX_TICK_HEIGHT: u64 = 10;
 
     #[test]
-    fn test_recv_slot_entries_1() {
+    fn test_recv_slot_components_1() {
         let (genesis_config, bank0, bank_forks, tx) = setup_test();
 
         let bank1 = Bank::new_from_parent_with_bank_forks(
@@ -343,7 +347,7 @@ mod tests {
 
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
-        while let Ok(result) = recv_slot_entries(&r, &mut None, &mut ProcessShredsStats::default())
+        while let Ok(result) = recv_slot_components(&r, &mut None, &mut ProcessShredsStats::default())
         {
             assert_eq!(result.bank.slot(), bank1.slot());
             last_tick_height = result.last_tick_height;
@@ -356,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn test_recv_slot_entries_2() {
+    fn test_recv_slot_components_2() {
         let (genesis_config, bank0, bank_forks, tx) = setup_test();
 
         let bank1 = Bank::new_from_parent_with_bank_forks(
@@ -402,7 +406,7 @@ mod tests {
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
         let mut bank_slot = 0;
-        while let Ok(result) = recv_slot_entries(&r, &mut None, &mut ProcessShredsStats::default())
+        while let Ok(result) = recv_slot_components(&r, &mut None, &mut ProcessShredsStats::default())
         {
             bank_slot = result.bank.slot();
             last_tick_height = result.last_tick_height;
@@ -441,16 +445,69 @@ mod tests {
 
         let mut carryover = None;
         let result =
-            recv_slot_entries(&r, &mut carryover, &mut ProcessShredsStats::default()).unwrap();
+            recv_slot_components(&r, &mut carryover, &mut ProcessShredsStats::default()).unwrap();
 
         assert!(matches!(result.component, BlockComponent::EntryBatch(ref e) if e.len() == 2));
         assert_eq!(result.last_tick_height, 2);
         assert!(carryover.is_some());
 
         let result =
-            recv_slot_entries(&r, &mut carryover, &mut ProcessShredsStats::default()).unwrap();
+            recv_slot_components(&r, &mut carryover, &mut ProcessShredsStats::default()).unwrap();
         assert!(matches!(result.component, BlockComponent::BlockMarker(_)));
         assert_eq!(result.last_tick_height, max_tick);
+    }
+
+    #[test]
+    fn test_marker_preserves_entry_ordering() {
+        let (genesis_config, bank0, _bank_forks, tx) = setup_test();
+        let bank1 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 1));
+        let (s, r) = unbounded();
+
+        let mut last_hash = genesis_config.hash();
+
+        let entry1 = Entry::new(&last_hash, 1, vec![tx.clone()]);
+        last_hash = entry1.hash;
+        s.send((bank1.clone(), (EntryMarker::Entry(entry1.clone()), 1)))
+            .unwrap();
+
+        let marker = solana_entry::block_component::VersionedBlockMarker::new_block_header(
+            solana_entry::block_component::BlockHeaderV1 {
+                parent_slot: 0,
+                parent_block_id: Hash::default(),
+            },
+        );
+        s.send((bank1.clone(), (EntryMarker::Marker(marker), 2)))
+            .unwrap();
+
+        let entry2 = Entry::new(&last_hash, 1, vec![tx.clone()]);
+        s.send((bank1.clone(), (EntryMarker::Entry(entry2.clone()), 3)))
+            .unwrap();
+
+        let mut carryover = None;
+
+        // First call should return only entry1
+        let result =
+            recv_slot_components(&r, &mut carryover, &mut ProcessShredsStats::default()).unwrap();
+        assert!(matches!(result.component, BlockComponent::EntryBatch(ref e) if e.len() == 1));
+        if let BlockComponent::EntryBatch(ref entries) = result.component {
+            assert_eq!(entries[0], entry1);
+        }
+        assert_eq!(result.last_tick_height, 1);
+
+        // Second call should return the marker
+        let result =
+            recv_slot_components(&r, &mut carryover, &mut ProcessShredsStats::default()).unwrap();
+        assert!(matches!(result.component, BlockComponent::BlockMarker(_)));
+        assert_eq!(result.last_tick_height, 2);
+
+        // Third call should return entry2
+        let result =
+            recv_slot_components(&r, &mut carryover, &mut ProcessShredsStats::default()).unwrap();
+        assert!(matches!(result.component, BlockComponent::EntryBatch(ref e) if e.len() == 1));
+        if let BlockComponent::EntryBatch(ref entries) = result.component {
+            assert_eq!(entries[0], entry2);
+        }
+        assert_eq!(result.last_tick_height, 3);
     }
 
     #[test]
@@ -492,12 +549,12 @@ mod tests {
         // bank change + marker.
         let mut carryover = None;
         let result =
-            recv_slot_entries_maybe_empty(&r, &mut carryover, &mut ProcessShredsStats::default())
+            recv_slot_components_maybe_empty(&r, &mut carryover, &mut ProcessShredsStats::default())
                 .unwrap();
         assert!(result.is_none());
         assert!(carryover.is_some());
 
-        // Now send a real entry for bank2 so recv_slot_entries has something to return after
+        // Now send a real entry for bank2 so recv_slot_components has something to return after
         // skipping the empty batch.
         let entry2 = Entry::new(&last_hash, 1, vec![tx.clone()]);
         s.send((bank2.clone(), (EntryMarker::Entry(entry2.clone()), 2)))
@@ -506,7 +563,7 @@ mod tests {
         // Verify that the outer function skips the empty batch and returns the carried-over marker.
         // last_tick_height must be 3 (from the marker), not 5 (stale value from bank1).
         let result =
-            recv_slot_entries(&r, &mut carryover, &mut ProcessShredsStats::default()).unwrap();
+            recv_slot_components(&r, &mut carryover, &mut ProcessShredsStats::default()).unwrap();
         assert!(matches!(result.component, BlockComponent::BlockMarker(_)));
         assert_eq!(result.last_tick_height, 3);
     }
