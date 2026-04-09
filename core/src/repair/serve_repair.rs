@@ -44,7 +44,7 @@ use {
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::{
-        BytesPacket, Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch,
+        BytesPacket, Packet, PacketBatch, PacketBatchRecycler, PacketRef, RecycledPacketBatch,
     },
     solana_poh::poh_recorder::SharedLeaderState,
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
@@ -505,14 +505,14 @@ impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
 const REPAIR_REQUEST_PONG_SERIALIZED_BYTES: usize = PUBKEY_BYTES + HASH_BYTES + SIGNATURE_BYTES;
 const REPAIR_REQUEST_MIN_BYTES: usize = REPAIR_REQUEST_PONG_SERIALIZED_BYTES;
 
-fn discard_malformed_repair_requests(
-    requests: &mut Vec<BytesPacket>,
-    stats: &mut ServeRepairStats,
-) -> usize {
-    let num_requests = requests.len();
-    requests.retain(|request| request.buffer().len() >= REPAIR_REQUEST_MIN_BYTES);
-    stats.err_malformed += num_requests - requests.len();
-    requests.len()
+fn is_well_formed_repair_request(packet: &PacketRef, stats: &mut ServeRepairStats) -> bool {
+    let well_formed = packet
+        .data(..)
+        .is_some_and(|data| data.len() >= REPAIR_REQUEST_MIN_BYTES);
+    if !well_formed {
+        stats.err_malformed += 1;
+    }
+    well_formed
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1008,13 +1008,10 @@ impl ServeRepair {
         /// How much more expensive it is to serve bytes if we are a leader
         const LEADER_BYTE_COST_MULTIPLIER: usize = 10;
         const TIMEOUT: Duration = Duration::from_secs(1);
-        let mut requests = Vec::with_capacity(64);
-        for packet in requests_receiver.recv_timeout(TIMEOUT)?.into_iter() {
-            requests.push(packet.to_bytes_packet());
-        }
+        let initial_batch = requests_receiver.recv_timeout(TIMEOUT)?;
 
         const MAX_REQUESTS_PER_ITERATION: usize = 1024;
-        let mut total_requests = requests.len();
+        let mut total_requests = initial_batch.len();
 
         let socket_addr_space = *self.cluster_info.socket_addr_space();
         let root_bank = self.sharable_banks.root();
@@ -1022,35 +1019,36 @@ impl ServeRepair {
         let identity_keypair = self.cluster_info.keypair();
         let my_id = identity_keypair.pubkey();
 
-        let max_buffered_packets = if !self.repair_whitelist.read().unwrap().is_empty() {
+        let target_max_buffered_packets = if !self.repair_whitelist.read().unwrap().is_empty() {
             4 * MAX_REQUESTS_PER_ITERATION
         } else {
             2 * MAX_REQUESTS_PER_ITERATION
         };
 
-        let mut dropped_requests = 0;
-        let mut well_formed_requests = discard_malformed_repair_requests(&mut requests, stats);
-        loop {
-            let Ok(more) = requests_receiver.try_recv() else {
-                break;
-            };
-            let mut more: Vec<_> = more.into_iter().map(|p| p.to_bytes_packet()).collect();
-            total_requests += more.len();
-            if well_formed_requests > max_buffered_packets {
-                // Already exceeded max. Don't waste time discarding
-                dropped_requests += more.len();
-                continue;
+        let mut requests = Vec::<BytesPacket>::with_capacity(64);
+        for packet in initial_batch.iter() {
+            if is_well_formed_repair_request(&packet, stats) {
+                requests.push(packet.to_bytes_packet());
             }
-            let retained = discard_malformed_repair_requests(&mut more, stats);
-            well_formed_requests += retained;
-            if retained > 0 && well_formed_requests <= max_buffered_packets {
-                requests.extend(more);
-            } else {
-                dropped_requests += more.len();
+        }
+        while let Ok(batch) = requests_receiver.try_recv() {
+            total_requests += batch.len();
+            for packet in batch.into_iter() {
+                if is_well_formed_repair_request(&packet, stats) {
+                    requests.push(packet.to_bytes_packet());
+                }
+            }
+
+            if requests.len() > target_max_buffered_packets {
+                // Already exceeded max_buffered_packets. We must be under extreme load.
+                // Don't waste time on stale requests and eradicate all buffered packets.
+                let drained: usize = requests_receiver.try_iter().map(|batch| batch.len()).sum();
+                total_requests += drained;
+                stats.dropped_requests_load_shed += drained;
+                break;
             }
         }
 
-        stats.dropped_requests_load_shed += dropped_requests;
         stats.total_requests += total_requests;
 
         // Check if we are currently a leader, so we can limit the service rate
@@ -1440,10 +1438,13 @@ impl ServeRepair {
             // refund unused tokens if we can only serve the request partially
             let actually_used_cost = num_response_bytes * byte_cost_multiplier;
             debug_assert!(max_response_cost >= actually_used_cost);
+            // We try to refund all tokens we have not used to actually serve request here.
+            // We can theoretically still drop responses in outbound channel, but such drops
+            // are unlikely unless we are severely overloaded, and thus not accounted for here.
             data_budget.add_tokens(max_response_cost.saturating_sub(actually_used_cost) as u64);
 
             // send the responses to the socket
-            if packet_batch_sender.send(rsp).is_ok() {
+            if packet_batch_sender.try_send(rsp).is_ok() {
                 stats.total_response_packets += num_response_packets;
                 match stake > 0 {
                     true => stats.total_response_bytes_staked += num_response_bytes,
@@ -1456,9 +1457,13 @@ impl ServeRepair {
         }
 
         if !pending_pings.is_empty() {
-            stats.pings_sent += pending_pings.len();
+            let num_pings_to_send = pending_pings.len();
             let batch = RecycledPacketBatch::new(pending_pings);
-            let _ = packet_batch_sender.send(batch.into());
+            if packet_batch_sender.try_send(batch.into()).is_ok() {
+                stats.pings_sent += num_pings_to_send;
+            } else {
+                stats.total_dropped_response_packets += num_pings_to_send;
+            }
         }
     }
 
@@ -1834,6 +1839,14 @@ mod tests {
         solana_time_utils::timestamp,
         std::{io::Cursor, net::Ipv4Addr},
     };
+
+    fn discard_malformed_repair_requests(
+        requests: &mut Vec<BytesPacket>,
+        stats: &mut ServeRepairStats,
+    ) -> usize {
+        requests.retain(|request| is_well_formed_repair_request(&PacketRef::from(request), stats));
+        requests.len()
+    }
 
     #[test]
     fn test_serialized_ping_size() {
