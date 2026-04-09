@@ -35,6 +35,9 @@ pub enum VotorEvent {
     /// The block has received a notarization certificate
     BlockNotarized(Block),
 
+    /// The block has received a notar-fallback certificate
+    BlockNotarFallback(Block),
+
     /// Received the first shred for the slot.
     FirstShred(Slot),
 
@@ -82,6 +85,7 @@ impl VotorEvent {
             | VotorEvent::SafeToNotar((s, _))
             | VotorEvent::Finalized((s, _), _)
             | VotorEvent::BlockNotarized((s, _))
+            | VotorEvent::BlockNotarFallback((s, _))
             | VotorEvent::ParentReady {
                 slot: s,
                 parent_block: _,

@@ -314,6 +314,10 @@ impl EventHandler {
                 Self::try_final(my_pubkey, block, vctx, &mut votes)?;
             }
 
+            VotorEvent::BlockNotarFallback(block) => {
+                info!("{my_pubkey}: Block notar-fallback {block:?}");
+            }
+
             VotorEvent::FirstShred(slot) => {
                 info!("{my_pubkey}: First shred {slot}");
                 received_shred.insert(slot);
