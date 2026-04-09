@@ -185,7 +185,7 @@ impl CostModel {
                 Ok(config) => (
                     u64::from(config.compute_unit_limit),
                     Self::calculate_loaded_accounts_data_size_cost(
-                        config.loaded_accounts_data_size_limit.get(),
+                        config.loaded_accounts_data_size_limit,
                         feature_set,
                     ),
                 ),
@@ -821,7 +821,7 @@ mod tests {
         let expected_execution_cost = u64::from(MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT);
         const DEFAULT_PAGE_COST: u64 = 8;
         let expected_loaded_accounts_data_size_cost =
-            solana_compute_budget::compute_budget_limits::MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get()
+            solana_compute_budget::compute_budget_limits::MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES
                 as u64
                 / ACCOUNT_DATA_COST_PAGE_SIZE
                 * DEFAULT_PAGE_COST;

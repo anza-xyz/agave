@@ -372,7 +372,6 @@ mod tests {
                 loaded_accounts_bytes,
                 transaction_configuration
                     .loaded_accounts_data_size_limit
-                    .get()
             );
         }
     }

@@ -59,7 +59,7 @@ use {
     solana_transaction::{Transaction, sanitized::SanitizedTransaction},
     solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionError,
-    std::{collections::HashMap, num::NonZeroU32, slice, sync::atomic::Ordering},
+    std::{collections::HashMap, slice, sync::atomic::Ordering},
     test_case::test_case,
 };
 
@@ -91,8 +91,7 @@ fn process_test_compute_budget_instructions<'a>(
 
     let loaded_accounts_bytes =
         if let Some(requested_loaded_accounts_data_size_limit) = loaded_accounts_data_size_limit {
-            NonZeroU32::new(requested_loaded_accounts_data_size_limit)
-                .ok_or(TransactionError::InvalidLoadedAccountsDataSizeLimit)?
+            requested_loaded_accounts_data_size_limit
         } else {
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES
         }

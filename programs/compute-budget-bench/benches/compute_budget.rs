@@ -6,7 +6,7 @@ use {
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_message::compiled_instruction::CompiledInstruction,
     solana_svm_transaction::instruction::SVMInstruction,
-    std::{hint::black_box, num::NonZero},
+    std::hint::black_box,
 };
 
 const ONE_PAGE: u32 = 32 * 1024;
@@ -38,7 +38,7 @@ fn bench_request_heap_frame(c: &mut Criterion) {
                     updated_heap_bytes: ONE_PAGE,
                     compute_unit_limit: 0,
                     compute_unit_price: 0,
-                    loaded_accounts_bytes: NonZero::new(SIXTY_FOUR_MB).unwrap()
+                    loaded_accounts_bytes: SIXTY_FOUR_MB,
                 })
             )
         })
@@ -71,7 +71,7 @@ fn bench_set_compute_unit_limit(c: &mut Criterion) {
                     updated_heap_bytes: ONE_PAGE,
                     compute_unit_limit: 1024,
                     compute_unit_price: 0,
-                    loaded_accounts_bytes: NonZero::new(SIXTY_FOUR_MB).unwrap()
+                    loaded_accounts_bytes: SIXTY_FOUR_MB,
                 })
             )
         })
@@ -104,7 +104,7 @@ fn bench_set_compute_unit_price(c: &mut Criterion) {
                     updated_heap_bytes: ONE_PAGE,
                     compute_unit_limit: 0,
                     compute_unit_price: 1,
-                    loaded_accounts_bytes: NonZero::new(SIXTY_FOUR_MB).unwrap()
+                    loaded_accounts_bytes: SIXTY_FOUR_MB,
                 })
             )
         })
@@ -137,7 +137,7 @@ fn bench_set_loaded_accounts_data_size_limit(c: &mut Criterion) {
                     updated_heap_bytes: ONE_PAGE,
                     compute_unit_limit: 0,
                     compute_unit_price: 0,
-                    loaded_accounts_bytes: NonZero::new(1).unwrap()
+                    loaded_accounts_bytes: 1,
                 })
             )
         })
