@@ -897,20 +897,22 @@ impl Blockstore {
     fn mark_slot_dead_if_not_full(
         &self,
         slot: Slot,
-        location: BlockLocation,
         shred_insertion_tracker: &mut ShredInsertionTracker,
     ) {
         if shred_insertion_tracker
             .slot_meta_working_set
-            .get(&(location, slot))
+            .get(&slot)
             .is_none_or(|meta| !meta.new_slot_meta.borrow().is_full())
         {
             // If the slot is already full there is no reason to mark as dead
-            self.dead_slots_cf.put_bytes_in_batch(
-                &mut shred_insertion_tracker.write_batch,
-                slot,
-                &[true as u8],
-            );
+            self.dead_slots_cf
+                .put_bytes_in_batch(
+                    &mut shred_insertion_tracker.write_batch,
+                    slot,
+                    &[true as u8],
+                )
+                .inspect_err(|e| error!("Failed to mark slot as dead {slot}: {e:?}"))
+                .unwrap();
         }
     }
 
@@ -930,12 +932,8 @@ impl Blockstore {
         let shreds = shreds.into_iter();
         metrics.num_shreds += shreds.len();
         let mut start = Measure::start("Shred insertion");
-<<<<<<< HEAD
         for (shred, is_repaired) in shreds {
-=======
-        for (shred, is_repaired, location) in shreds {
             let slot = shred.slot();
->>>>>>> ed322a935 (blockstore: refactor error handling / dead in shred insertion path (#11175))
             let shred_source = if is_repaired {
                 ShredSource::Repaired
             } else {
@@ -958,11 +956,7 @@ impl Blockstore {
                             }
                         }
                         Err(InsertDataShredError::InvalidShred) => {
-                            self.mark_slot_dead_if_not_full(
-                                slot,
-                                location,
-                                shred_insertion_tracker,
-                            );
+                            self.mark_slot_dead_if_not_full(slot, shred_insertion_tracker);
                             metrics.num_data_shreds_invalid += 1
                         }
                         Err(InsertDataShredError::BlockstoreError(err)) => {
@@ -978,14 +972,7 @@ impl Blockstore {
                     };
                 }
                 ShredType::Code => {
-<<<<<<< HEAD
-                    self.check_insert_coding_shred(
-=======
-                    // Block id based repair (the source for populating the Alternate column) cannot receive
-                    // coding shreds. Thus if we receive a coding shred, it must be for `BlockLocation::Original`
-                    debug_assert_matches!(location, BlockLocation::Original);
                     match self.check_insert_coding_shred(
->>>>>>> ed322a935 (blockstore: refactor error handling / dead in shred insertion path (#11175))
                         shred,
                         shred_insertion_tracker,
                         is_trusted,
@@ -995,19 +982,11 @@ impl Blockstore {
                             metrics.num_coding_shreds_exists += 1;
                         }
                         Err(InsertCodingShredError::InvalidShred) => {
-                            self.mark_slot_dead_if_not_full(
-                                slot,
-                                location,
-                                shred_insertion_tracker,
-                            );
+                            self.mark_slot_dead_if_not_full(slot, shred_insertion_tracker);
                             metrics.num_coding_shreds_invalid += 1;
                         }
                         Err(InsertCodingShredError::InvalidErasureConfig) => {
-                            self.mark_slot_dead_if_not_full(
-                                slot,
-                                location,
-                                shred_insertion_tracker,
-                            );
+                            self.mark_slot_dead_if_not_full(slot, shred_insertion_tracker);
                             metrics.num_coding_shreds_invalid_erasure_config += 1;
                         }
                         Err(InsertCodingShredError::BlockstoreError(err)) => {
@@ -1117,11 +1096,7 @@ impl Blockstore {
             ) {
                 Err(InsertDataShredError::Exists) => &mut metrics.num_recovered_exists,
                 Err(InsertDataShredError::InvalidShred) => {
-                    self.mark_slot_dead_if_not_full(
-                        slot,
-                        BlockLocation::Original,
-                        shred_insertion_tracker,
-                    );
+                    self.mark_slot_dead_if_not_full(slot, shred_insertion_tracker);
                     &mut metrics.num_recovered_failed_invalid
                 }
                 Err(InsertDataShredError::BlockstoreError(err)) => {
@@ -1528,9 +1503,6 @@ impl Blockstore {
         insert_results.duplicate_shreds
     }
 
-<<<<<<< HEAD
-    #[allow(clippy::too_many_arguments)]
-=======
     /// Create an entry to the specified `write_batch` that performs coding shred
     /// insertion and associated metadata update. The function also updates
     /// in-memory copies of the associated metadata.
@@ -1552,7 +1524,6 @@ impl Blockstore {
     /// - `is_trusted`: if false, duplicate and integrity checks are applied.
     /// - `shred_source`: the source of the shred.
     /// - `metrics`: insertion metrics to update.
->>>>>>> ed322a935 (blockstore: refactor error handling / dead in shred insertion path (#11175))
     fn check_insert_coding_shred<'a>(
         &self,
         shred: Cow<'a, Shred>,
@@ -1574,23 +1545,8 @@ impl Blockstore {
             ..
         } = shred_insertion_tracker;
 
-<<<<<<< HEAD
         let index_meta_working_set_entry =
-            match self.get_index_meta_entry(slot, index_working_set, index_meta_time_us) {
-                Ok(entry) => entry,
-                Err(err) => {
-                    error!("blockstore error during coding shred insertion: {err}");
-                    return false;
-                }
-            };
-=======
-        let index_meta_working_set_entry = self.get_index_meta_entry(
-            slot,
-            BlockLocation::Original,
-            index_working_set,
-            index_meta_time_us,
-        )?;
->>>>>>> ed322a935 (blockstore: refactor error handling / dead in shred insertion path (#11175))
+            self.get_index_meta_entry(slot, index_working_set, index_meta_time_us)?;
 
         let index_meta = &mut index_meta_working_set_entry.index;
         let erasure_set = shred.erasure_set();
@@ -1692,23 +1648,11 @@ impl Blockstore {
 
         index_meta_working_set_entry.did_insert_occur = true;
 
-<<<<<<< HEAD
-            merkle_root_metas
-                .entry(erasure_set)
-                .or_insert(WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
-        }
-
-        if let HashMapEntry::Vacant(entry) = just_inserted_shreds.entry(shred.id()) {
-            metrics.num_coding_shreds_inserted += 1;
-=======
         merkle_root_metas
-            .entry((BlockLocation::Original, erasure_set))
+            .entry(erasure_set)
             .or_insert(WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
 
-        if let HashMapEntry::Vacant(entry) =
-            just_inserted_shreds.entry((BlockLocation::Original, shred.id()))
-        {
->>>>>>> ed322a935 (blockstore: refactor error handling / dead in shred insertion path (#11175))
+        if let HashMapEntry::Vacant(entry) = just_inserted_shreds.entry(shred.id()) {
             entry.insert(shred);
         }
 
@@ -7505,26 +7449,12 @@ pub mod tests {
         let mut shred_insertion_tracker =
             ShredInsertionTracker::new(data_shreds.len(), blockstore.get_write_batch().unwrap());
 
-<<<<<<< HEAD
-        assert!(
-            blockstore
-                .check_insert_data_shred(
-                    Cow::Owned(new_data_shred),
-                    &mut shred_insertion_tracker,
-                    false,
-                    None,
-                    ShredSource::Turbine,
-                )
-                .is_err()
-=======
         let insert_result = blockstore.check_insert_data_shred(
             Cow::Owned(new_data_shred),
-            BlockLocation::Original,
             &mut shred_insertion_tracker,
             false,
             None,
             ShredSource::Turbine,
->>>>>>> ed322a935 (blockstore: refactor error handling / dead in shred insertion path (#11175))
         );
         assert_matches!(
             insert_result.unwrap_err(),
