@@ -10,7 +10,6 @@ use {
     agave_feature_set::FeatureSet,
     solana_bincode::limited_deserialize,
     solana_compute_budget::compute_budget_limits::DEFAULT_HEAP_COST,
-    solana_fee_structure::FeeStructure,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_meta::TransactionMeta,
     solana_sdk_ids::system_program,
@@ -204,7 +203,11 @@ impl CostModel {
         loaded_accounts_data_size: u32,
         _feature_set: &FeatureSet,
     ) -> u64 {
-        FeeStructure::calculate_memory_usage_cost(loaded_accounts_data_size, DEFAULT_HEAP_COST)
+        u64::from(loaded_accounts_data_size)
+            .saturating_add(solana_fee_structure::ACCOUNT_DATA_COST_PAGE_SIZE.saturating_sub(1))
+            .saturating_div(solana_fee_structure::ACCOUNT_DATA_COST_PAGE_SIZE)
+            .max(1)
+            .saturating_mul(DEFAULT_HEAP_COST)
     }
 
     fn calculate_account_data_size_on_deserialized_system_instruction(
