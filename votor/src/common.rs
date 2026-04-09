@@ -76,18 +76,6 @@ pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 /// Timeout for standstill detection mechanism.
 pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
-/// Returns the Duration for when the `SkipTimer` should be set for for the given slot in the leader window.
-#[inline]
-pub fn skip_timeout(leader_block_index: usize) -> Duration {
-    DELTA_TIMEOUT
-        .saturating_add(
-            DELTA_BLOCK
-                .saturating_mul(leader_block_index as u32)
-                .saturating_add(DELTA_TIMEOUT),
-        )
-        .saturating_add(DELTA)
-}
-
 /// Block timeout, when we should publish the final shred for the leader block index
 /// within the leader window
 #[inline]
