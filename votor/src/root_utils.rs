@@ -210,6 +210,17 @@ pub fn set_bank_forks_root<CB>(
 ) where
     CB: FnOnce(&BankForks),
 {
+    let banks_to_remove: Vec<_> = {
+        let bank_forks = bank_forks.read().unwrap();
+        bank_forks
+            .get_non_rooted(new_root, highest_super_majority_root)
+            .filter_map(|slot| bank_forks.get_with_scheduler(slot))
+            .collect()
+    };
+    for bank in banks_to_remove {
+        let _ = bank.wait_for_completed_scheduler();
+    }
+
     bank_forks.read().unwrap().prune_program_cache(new_root);
     let removed_banks = bank_forks.write().unwrap().set_root(
         new_root,

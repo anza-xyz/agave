@@ -621,19 +621,8 @@ impl BankForks {
         // We want to collect timing separately, and the 2nd collect requires
         // a unique borrow to self which is already borrowed by self.banks
         let mut prune_slots_time = Measure::start("prune_slots");
-        let highest_super_majority_root = highest_super_majority_root.unwrap_or(root);
         let prune_slots: Vec<_> = self
-            .banks
-            .keys()
-            .copied()
-            .filter(|slot| {
-                let keep = *slot == root
-                    || self.descendants[&root].contains(slot)
-                    || (*slot < root
-                        && *slot >= highest_super_majority_root
-                        && self.descendants[slot].contains(&root));
-                !keep
-            })
+            .get_non_rooted(root, highest_super_majority_root)
             .collect();
         prune_slots_time.stop();
 
@@ -649,6 +638,22 @@ impl BankForks {
             prune_slots_time.as_ms(),
             prune_remove_time.as_ms(),
         )
+    }
+
+    pub fn get_non_rooted(
+        &self,
+        root: Slot,
+        highest_super_majority_root: Option<Slot>,
+    ) -> impl Iterator<Item = Slot> + '_ {
+        let highest_super_majority_root = highest_super_majority_root.unwrap_or(root);
+        self.banks.keys().copied().filter(move |slot| {
+            let keep = *slot == root
+                || self.descendants[&root].contains(slot)
+                || (*slot < root
+                    && *slot >= highest_super_majority_root
+                    && self.descendants[slot].contains(&root));
+            !keep
+        })
     }
 }
 
