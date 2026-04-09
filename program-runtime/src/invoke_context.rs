@@ -209,6 +209,7 @@ impl ComputeMeter {
     /// Set compute units
     ///
     /// Only use for tests and benchmarks
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn mock_set_remaining(&self, remaining: u64) {
         self.0.set(remaining);
     }
