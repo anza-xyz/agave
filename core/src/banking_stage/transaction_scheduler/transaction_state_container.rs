@@ -114,7 +114,10 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     /// Remove transaction by id.
     fn remove_by_id(&mut self, id: TransactionId);
 
-    fn flush_held_transactions(&mut self, slot: Slot);
+    /// Release held transactions whose attempted slot no longer matches the
+    /// current leader slot. If there is no leader slot, release all held
+    /// transactions.
+    fn flush_held_transactions(&mut self, slot: Option<Slot>);
 
     fn get_min_max_priority(&self) -> Option<(u64, u64)>;
 
@@ -209,11 +212,11 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
             .remove(&TransactionPriorityId::new(state.priority(), id));
     }
 
-    fn flush_held_transactions(&mut self, slot: Slot) {
+    fn flush_held_transactions(&mut self, slot: Option<Slot>) {
         let mut held_transactions = core::mem::take(&mut self.held_transactions);
         let mut held_ids = Vec::with_capacity(held_transactions.len());
         held_transactions.retain(|held| {
-            if held.attempted_slot != slot {
+            if Some(held.attempted_slot) != slot {
                 held_ids.push(held.priority_id);
                 false
             } else {
@@ -391,7 +394,7 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
     }
 
     #[inline]
-    fn flush_held_transactions(&mut self, slot: Slot) {
+    fn flush_held_transactions(&mut self, slot: Option<Slot>) {
         self.inner.flush_held_transactions(slot);
     }
 
@@ -590,7 +593,7 @@ mod tests {
             .0;
         container.retry_transaction(held_b.id, transaction_b, false, Some(41), Some(41));
 
-        container.flush_held_transactions(42);
+        container.flush_held_transactions(Some(42));
 
         assert_eq!(
             container.held_transactions,
@@ -617,11 +620,32 @@ mod tests {
             .0;
         container.retry_transaction(priority_id.id, transaction, false, Some(42), Some(42));
 
-        container.flush_held_transactions(42);
+        container.flush_held_transactions(Some(42));
         assert_eq!(container.queue_size(), 0);
         assert_eq!(container.held_transactions.len(), 1);
 
-        container.flush_held_transactions(43);
+        container.flush_held_transactions(Some(43));
+        assert!(container.held_transactions.is_empty());
+        assert_eq!(container.queue_size(), 1);
+        assert_eq!(container.pop(), Some(priority_id));
+    }
+
+    #[test]
+    fn test_flush_held_transactions_releases_all_without_leader_slot() {
+        let mut container = TransactionStateContainer::with_capacity(5);
+        let (transaction, max_age, priority, cost) = test_transaction(10);
+        container.insert_new_transaction(transaction, max_age, priority, cost);
+
+        let priority_id = container.pop().unwrap();
+        let transaction = container
+            .get_mut_transaction_state(priority_id.id)
+            .unwrap()
+            .take_transaction_for_scheduling()
+            .0;
+        container.retry_transaction(priority_id.id, transaction, false, Some(42), Some(42));
+
+        container.flush_held_transactions(None);
+
         assert!(container.held_transactions.is_empty());
         assert_eq!(container.queue_size(), 1);
         assert_eq!(container.pop(), Some(priority_id));

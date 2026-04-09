@@ -150,9 +150,7 @@ where
                 .maybe_report_and_reset_slot(new_leader_slot);
 
             if most_recent_leader_slot != new_leader_slot {
-                if let Some(new_leader_slot) = new_leader_slot {
-                    self.container.flush_held_transactions(new_leader_slot);
-                }
+                self.container.flush_held_transactions(new_leader_slot);
                 most_recent_leader_slot = new_leader_slot;
                 cost_pacer = decision.bank().map(|b| {
                     let cost_tracker = b.read_cost_tracker().unwrap();
