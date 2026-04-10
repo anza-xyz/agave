@@ -1,6 +1,9 @@
-pub use solana_program_runtime::execution_budget::{
-    MAX_CALL_DEPTH, MAX_INSTRUCTION_STACK_DEPTH, STACK_FRAME_SIZE, SVMTransactionExecutionBudget,
-    SVMTransactionExecutionCost,
+pub use solana_program_runtime::{
+    execution_budget::{
+        MAX_CALL_DEPTH, MAX_INSTRUCTION_STACK_DEPTH, SVMTransactionExecutionBudget,
+        SVMTransactionExecutionCost,
+    },
+    solana_sbpf::vm::get_stack_frame_size,
 };
 use {
     solana_fee_structure::FeeDetails,

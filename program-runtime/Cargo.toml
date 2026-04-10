@@ -25,6 +25,7 @@ metrics = []
 sbpf-debugger = ["solana-sbpf/debugger"]
 shuttle-test = ["solana-sbpf/shuttle-test", "solana-svm-type-overrides/shuttle-test"]
 svm-internal = ["dep:qualifier_attr"]
+conf-stack-frame-size = ["solana-sbpf/conf-stack-frame-size"]
 
 [dependencies]
 base64 = { workspace = true }
