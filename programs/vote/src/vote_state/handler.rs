@@ -10,6 +10,8 @@
 //! getter and setter API around vote state, for all operations required by the
 //! vote program.
 
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     solana_clock::{Clock, Epoch, Slot, UnixTimestamp},
     solana_instruction::error::InstructionError,
@@ -105,159 +107,6 @@ pub trait VoteStateHandle {
     ) -> Result<(), InstructionError>;
 
     fn has_bls_pubkey(&self) -> bool;
-
-    fn credits_for_vote_at_index(&self, index: usize) -> u64 {
-        let latency = self
-            .votes()
-            .get(index)
-            .map_or(0, |landed_vote| landed_vote.latency);
-
-        // If latency is 0, this means that the Lockout was created and stored from a software version that did not
-        // store vote latencies; in this case, 1 credit is awarded
-        if latency == 0 {
-            1
-        } else {
-            match latency.checked_sub(VOTE_CREDITS_GRACE_SLOTS) {
-                None | Some(0) => {
-                    // latency was <= VOTE_CREDITS_GRACE_SLOTS, so maximum credits are awarded
-                    VOTE_CREDITS_MAXIMUM_PER_SLOT as u64
-                }
-
-                Some(diff) => {
-                    // diff = latency - VOTE_CREDITS_GRACE_SLOTS, and diff > 0
-                    // Subtract diff from VOTE_CREDITS_MAXIMUM_PER_SLOT which is the number of credits to award
-                    match VOTE_CREDITS_MAXIMUM_PER_SLOT.checked_sub(diff) {
-                        // If diff >= VOTE_CREDITS_MAXIMUM_PER_SLOT, 1 credit is awarded
-                        None | Some(0) => 1,
-
-                        Some(credits) => credits as u64,
-                    }
-                }
-            }
-        }
-    }
-
-    fn increment_credits(&mut self, epoch: Epoch, credits: u64) {
-        // increment credits, record by epoch
-
-        // never seen a credit
-        if self.epoch_credits().is_empty() {
-            self.epoch_credits_mut().push((epoch, 0, 0));
-        } else if epoch != self.epoch_credits().last().unwrap().0 {
-            let (_, credits, prev_credits) = *self.epoch_credits().last().unwrap();
-
-            if credits != prev_credits {
-                // if credits were earned previous epoch
-                // append entry at end of list for the new epoch
-                self.epoch_credits_mut().push((epoch, credits, credits));
-            } else {
-                // else just move the current epoch
-                self.epoch_credits_mut().last_mut().unwrap().0 = epoch;
-            }
-
-            // Remove too old epoch_credits
-            if self.epoch_credits().len() > MAX_EPOCH_CREDITS_HISTORY {
-                self.epoch_credits_mut().remove(0);
-            }
-        }
-
-        self.epoch_credits_mut().last_mut().unwrap().1 = self
-            .epoch_credits()
-            .last()
-            .unwrap()
-            .1
-            .saturating_add(credits);
-    }
-
-    fn process_timestamp(&mut self, slot: Slot, timestamp: UnixTimestamp) -> Result<(), VoteError> {
-        let last_timestamp = self.last_timestamp();
-        if (slot < last_timestamp.slot || timestamp < last_timestamp.timestamp)
-            || (slot == last_timestamp.slot
-                && &BlockTimestamp { slot, timestamp } != last_timestamp
-                && last_timestamp.slot != 0)
-        {
-            return Err(VoteError::TimestampTooOld);
-        }
-        self.set_last_timestamp(BlockTimestamp { slot, timestamp });
-        Ok(())
-    }
-
-    fn pop_expired_votes(&mut self, next_vote_slot: Slot) {
-        while let Some(vote) = self.last_lockout() {
-            if !vote.is_locked_out_at_slot(next_vote_slot) {
-                self.votes_mut().pop_back();
-            } else {
-                break;
-            }
-        }
-    }
-
-    fn double_lockouts(&mut self) {
-        let stack_depth = self.votes().len();
-        for (i, v) in self.votes_mut().iter_mut().enumerate() {
-            // Don't increase the lockout for this vote until we get more confirmations
-            // than the max number of confirmations this vote has seen
-            if stack_depth
-                > i.checked_add(v.confirmation_count() as usize).expect(
-                    "`confirmation_count` and tower_size should be bounded by \
-                     `MAX_LOCKOUT_HISTORY`",
-                )
-            {
-                v.lockout.increase_confirmation_count(1);
-            }
-        }
-    }
-
-    fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot) {
-        // Ignore votes for slots earlier than we already have votes for
-        if self
-            .last_voted_slot()
-            .is_some_and(|last_voted_slot| next_vote_slot <= last_voted_slot)
-        {
-            return;
-        }
-
-        self.pop_expired_votes(next_vote_slot);
-
-        let landed_vote = LandedVote {
-            latency: compute_vote_latency(next_vote_slot, current_slot),
-            lockout: Lockout::new(next_vote_slot),
-        };
-
-        // Once the stack is full, pop the oldest lockout and distribute rewards
-        if self.votes().len() == MAX_LOCKOUT_HISTORY {
-            let credits = self.credits_for_vote_at_index(0);
-            let landed_vote = self.votes_mut().pop_front().unwrap();
-            self.set_root_slot(Some(landed_vote.slot()));
-
-            self.increment_credits(epoch, credits);
-        }
-        self.votes_mut().push_back(landed_vote);
-        self.double_lockouts();
-    }
-
-    #[cfg(test)]
-    fn credits(&self) -> u64 {
-        if self.epoch_credits().is_empty() {
-            0
-        } else {
-            self.epoch_credits().last().unwrap().1
-        }
-    }
-
-    #[cfg(test)]
-    fn nth_recent_lockout(&self, position: usize) -> Option<&Lockout> {
-        if position < self.votes().len() {
-            let pos = self
-                .votes()
-                .len()
-                .checked_sub(position)
-                .and_then(|pos| pos.checked_sub(1))?;
-            self.votes().get(pos).map(|vote| &vote.lockout)
-        } else {
-            None
-        }
-    }
 }
 
 impl VoteStateHandle for VoteStateV3 {
@@ -963,20 +812,192 @@ impl VoteStateHandler {
         }
     }
 
+    pub(crate) fn credits_for_vote_at_index(&self, index: usize) -> u64 {
+        let latency = self
+            .votes()
+            .get(index)
+            .map_or(0, |landed_vote| landed_vote.latency);
+
+        // If latency is 0, this means that the Lockout was created and stored from a software version that did not
+        // store vote latencies; in this case, 1 credit is awarded
+        if latency == 0 {
+            1
+        } else {
+            match latency.checked_sub(VOTE_CREDITS_GRACE_SLOTS) {
+                None | Some(0) => {
+                    // latency was <= VOTE_CREDITS_GRACE_SLOTS, so maximum credits are awarded
+                    VOTE_CREDITS_MAXIMUM_PER_SLOT as u64
+                }
+
+                Some(diff) => {
+                    // diff = latency - VOTE_CREDITS_GRACE_SLOTS, and diff > 0
+                    // Subtract diff from VOTE_CREDITS_MAXIMUM_PER_SLOT which is the number of credits to award
+                    match VOTE_CREDITS_MAXIMUM_PER_SLOT.checked_sub(diff) {
+                        // If diff >= VOTE_CREDITS_MAXIMUM_PER_SLOT, 1 credit is awarded
+                        None | Some(0) => 1,
+
+                        Some(credits) => credits as u64,
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    pub(crate) fn increment_credits(&mut self, epoch: Epoch, credits: u64) {
+        // increment credits, record by epoch
+
+        // never seen a credit
+        if self.epoch_credits().is_empty() {
+            self.epoch_credits_mut().push((epoch, 0, 0));
+        } else if epoch != self.epoch_credits().last().unwrap().0 {
+            let (_, credits, prev_credits) = *self.epoch_credits().last().unwrap();
+
+            if credits != prev_credits {
+                // if credits were earned previous epoch
+                // append entry at end of list for the new epoch
+                self.epoch_credits_mut().push((epoch, credits, credits));
+            } else {
+                // else just move the current epoch
+                self.epoch_credits_mut().last_mut().unwrap().0 = epoch;
+            }
+
+            // Remove too old epoch_credits
+            if self.epoch_credits().len() > MAX_EPOCH_CREDITS_HISTORY {
+                self.epoch_credits_mut().remove(0);
+            }
+        }
+
+        self.epoch_credits_mut().last_mut().unwrap().1 = self
+            .epoch_credits()
+            .last()
+            .unwrap()
+            .1
+            .saturating_add(credits);
+    }
+
+    pub(crate) fn process_timestamp(
+        &mut self,
+        slot: Slot,
+        timestamp: UnixTimestamp,
+    ) -> Result<(), VoteError> {
+        let last_timestamp = self.last_timestamp();
+        if (slot < last_timestamp.slot || timestamp < last_timestamp.timestamp)
+            || (slot == last_timestamp.slot
+                && &BlockTimestamp { slot, timestamp } != last_timestamp
+                && last_timestamp.slot != 0)
+        {
+            return Err(VoteError::TimestampTooOld);
+        }
+        self.set_last_timestamp(BlockTimestamp { slot, timestamp });
+        Ok(())
+    }
+
+    fn pop_expired_votes(&mut self, next_vote_slot: Slot) {
+        while let Some(vote) = self.last_lockout() {
+            if !vote.is_locked_out_at_slot(next_vote_slot) {
+                self.votes_mut().pop_back();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn double_lockouts(&mut self) {
+        let stack_depth = self.votes().len();
+        for (i, v) in self.votes_mut().iter_mut().enumerate() {
+            // Don't increase the lockout for this vote until we get more confirmations
+            // than the max number of confirmations this vote has seen
+            if stack_depth
+                > i.checked_add(v.confirmation_count() as usize).expect(
+                    "`confirmation_count` and tower_size should be bounded by \
+                     `MAX_LOCKOUT_HISTORY`",
+                )
+            {
+                v.lockout.increase_confirmation_count(1);
+            }
+        }
+    }
+
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    pub(crate) fn process_next_vote_slot(
+        &mut self,
+        next_vote_slot: Slot,
+        epoch: Epoch,
+        current_slot: Slot,
+    ) {
+        // Ignore votes for slots earlier than we already have votes for
+        if self
+            .last_voted_slot()
+            .is_some_and(|last_voted_slot| next_vote_slot <= last_voted_slot)
+        {
+            return;
+        }
+
+        self.pop_expired_votes(next_vote_slot);
+
+        let landed_vote = LandedVote {
+            latency: compute_vote_latency(next_vote_slot, current_slot),
+            lockout: Lockout::new(next_vote_slot),
+        };
+
+        // Once the stack is full, pop the oldest lockout and distribute rewards
+        if self.votes().len() == MAX_LOCKOUT_HISTORY {
+            let credits = self.credits_for_vote_at_index(0);
+            let landed_vote = self.votes_mut().pop_front().unwrap();
+            self.set_root_slot(Some(landed_vote.slot()));
+
+            self.increment_credits(epoch, credits);
+        }
+        self.votes_mut().push_back(landed_vote);
+        self.double_lockouts();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn credits(&self) -> u64 {
+        if self.epoch_credits().is_empty() {
+            0
+        } else {
+            self.epoch_credits().last().unwrap().1
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn nth_recent_lockout(&self, position: usize) -> Option<&Lockout> {
+        if position < self.votes().len() {
+            let pos = self
+                .votes()
+                .len()
+                .checked_sub(position)
+                .and_then(|pos| pos.checked_sub(1))?;
+            self.votes().get(pos).map(|vote| &vote.lockout)
+        } else {
+            None
+        }
+    }
+
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new_v4(vote_state: VoteStateV4) -> Self {
         Self {
             target_state: TargetVoteState::V4(vote_state),
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn default_v4() -> Self {
         Self::new_v4(VoteStateV4::default())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn as_ref_v4(&self) -> &VoteStateV4 {
         match &self.target_state {
+            TargetVoteState::V4(v4) => v4,
+        }
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub fn unwrap_v4(self) -> VoteStateV4 {
+        match self.target_state {
             TargetVoteState::V4(v4) => v4,
         }
     }
@@ -1574,9 +1595,8 @@ mod tests {
         }
     }
 
-    #[test_case(VoteStateV3::default() ; "VoteStateV3")]
-    #[test_case(VoteStateV4::default() ; "VoteStateV4")]
-    fn test_vote_state_epoch_credits<T: VoteStateHandle>(mut vote_state: T) {
+    #[test_case(VoteStateHandler::new_v4(VoteStateV4::default()) ; "VoteStateV4")]
+    fn test_vote_state_epoch_credits(mut vote_state: VoteStateHandler) {
         assert_eq!(vote_state.credits(), 0);
         assert_eq!(vote_state.epoch_credits().clone(), vec![]);
 
@@ -1599,9 +1619,8 @@ mod tests {
         assert_eq!(vote_state.epoch_credits().clone(), expected);
     }
 
-    #[test_case(VoteStateV3::default() ; "VoteStateV3")]
-    #[test_case(VoteStateV4::default() ; "VoteStateV4")]
-    fn test_vote_state_epoch0_no_credits<T: VoteStateHandle>(mut vote_state: T) {
+    #[test_case(VoteStateHandler::new_v4(VoteStateV4::default()) ; "VoteStateV4")]
+    fn test_vote_state_epoch0_no_credits(mut vote_state: VoteStateHandler) {
         assert_eq!(vote_state.epoch_credits().len(), 0);
         vote_state.increment_credits(1, 1);
         assert_eq!(vote_state.epoch_credits().len(), 1);
@@ -1610,9 +1629,8 @@ mod tests {
         assert_eq!(vote_state.epoch_credits().len(), 2);
     }
 
-    #[test_case(VoteStateV3::default() ; "VoteStateV3")]
-    #[test_case(VoteStateV4::default() ; "VoteStateV4")]
-    fn test_vote_state_increment_credits<T: VoteStateHandle>(mut vote_state: T) {
+    #[test_case(VoteStateHandler::new_v4(VoteStateV4::default()) ; "VoteStateV4")]
+    fn test_vote_state_increment_credits(mut vote_state: VoteStateHandler) {
         let credits = (MAX_EPOCH_CREDITS_HISTORY + 2) as u64;
         for i in 0..credits {
             vote_state.increment_credits(i, 1);
@@ -1621,9 +1639,8 @@ mod tests {
         assert!(vote_state.epoch_credits().len() <= MAX_EPOCH_CREDITS_HISTORY);
     }
 
-    #[test_case(VoteStateV3::default() ; "VoteStateV3")]
-    #[test_case(VoteStateV4::default() ; "VoteStateV4")]
-    fn test_vote_process_timestamp<T: VoteStateHandle>(mut vote_state: T) {
+    #[test_case(VoteStateHandler::new_v4(VoteStateV4::default()) ; "VoteStateV4")]
+    fn test_vote_process_timestamp(mut vote_state: VoteStateHandler) {
         let (slot, timestamp) = (15, 1_575_412_285);
         vote_state.set_last_timestamp(BlockTimestamp { slot, timestamp });
 
@@ -2276,51 +2293,5 @@ mod tests {
         ] {
             assert_eq!(compute_vote_latency(voted_for_slot, current_slot), expected);
         }
-    }
-
-    #[test]
-    fn test_process_timestamp_v3_v4_parity() {
-        let mut v3 = VoteStateV3::default();
-        let mut v4 = VoteStateV4::default();
-
-        let timestamps = [
-            (10, 1_000_000),
-            (11, 1_000_001),
-            (15, 1_000_005),
-            (20, 1_000_010),
-        ];
-        for (slot, ts) in timestamps {
-            assert_eq!(
-                v3.process_timestamp(slot, ts),
-                v4.process_timestamp(slot, ts)
-            );
-            assert_eq!(v3.last_timestamp(), v4.last_timestamp());
-        }
-    }
-
-    #[test]
-    fn test_process_next_vote_slot_v3_v4_parity() {
-        let voter = Pubkey::new_unique();
-        let mut v3 = VoteStateV3 {
-            authorized_voters: AuthorizedVoters::new(0, voter),
-            ..Default::default()
-        };
-        let mut v4 = VoteStateV4 {
-            authorized_voters: AuthorizedVoters::new(0, voter),
-            ..Default::default()
-        };
-
-        for slot in [5, 10, 15, 20] {
-            v3.process_next_vote_slot(slot, 0, 20);
-            v4.process_next_vote_slot(slot, 0, 20);
-        }
-
-        // Both should have identical vote state after processing.
-        assert_eq!(v3.votes().len(), v4.votes().len());
-        for (lv3, lv4) in v3.votes().iter().zip(v4.votes().iter()) {
-            assert_eq!(lv3.slot(), lv4.slot());
-            assert_eq!(lv3.confirmation_count(), lv4.confirmation_count());
-        }
-        assert_eq!(v3.root_slot(), v4.root_slot());
     }
 }

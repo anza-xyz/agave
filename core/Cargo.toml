@@ -204,6 +204,7 @@ solana-signer-store = { workspace = true }
 solana-system-program = { path = "../programs/system", features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-vote-program = { path = "../programs/vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 spl-memo-interface = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }

@@ -440,7 +440,10 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
         solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
-        solana_vote_program::vote_state::{self, TowerSync, handler::VoteStateHandle},
+        solana_vote_program::vote_state::{
+            self, TowerSync,
+            handler::{VoteStateHandle, VoteStateHandler},
+        },
         std::sync::{Arc, RwLock},
     };
 
@@ -645,23 +648,14 @@ mod tests {
             let mut vote_account = bank
                 .get_account(&vote_pubkey)
                 .unwrap_or_else(|| panic!("missing vote account {vote_pubkey:?}"));
-            let mut vote_state =
-                Some(VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap());
-            if let Some(state) = vote_state.as_mut() {
-                state.set_commission(commission);
-            }
+            let mut vote_state = VoteStateHandler::new_v4(
+                VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
+            );
+            vote_state.set_commission(commission);
             for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-                if let Some(state) = vote_state.as_mut() {
-                    vote_state::process_slot_vote_unchecked(state, i as u64);
-                }
-                let versioned = VoteStateVersions::V4(Box::new(vote_state.take().unwrap()));
+                vote_state::process_slot_vote_unchecked(&mut vote_state, i as u64);
+                let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
                 vote_account.set_state(&versioned).unwrap();
-                match versioned {
-                    VoteStateVersions::V4(v) => {
-                        vote_state = Some(*v);
-                    }
-                    _ => panic!("Has to be of type V4"),
-                };
             }
             bank.store_account_and_update_capitalization(&vote_pubkey, &vote_account);
         }
