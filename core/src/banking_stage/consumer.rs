@@ -12,12 +12,12 @@ use {
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
-        transaction_recorder::{
-            RecordTransactionsSummary, RecordTransactionsTimings, TransactionRecorder,
-        },
+        transaction_recorder::{RecordTransactionsTimings, TransactionRecorder},
     },
     solana_runtime::{
-        bank::{Bank, LoadAndExecuteTransactionsOutput},
+        bank::{
+            Bank, LoadAndExecuteTransactionsOutput, entry_bytes_budget::EntryBytesReserveError,
+        },
         transaction_batch::TransactionBatch,
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -34,6 +34,11 @@ use {
 
 /// Consumer will create chunks of transactions from buffer with up to this size.
 pub const TARGET_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
+
+const SERIALIZED_ENTRIES_OVERHEAD: u64 = {
+    48  // Entry Header
+    + 8 // Vec<Entry> length
+};
 
 #[derive(Debug)]
 pub struct ExecutionFlags {
@@ -389,12 +394,14 @@ impl Consumer {
             attempted_processing_count: processing_results.len() as u64,
         };
 
+        let mut entry_bytes = SERIALIZED_ENTRIES_OVERHEAD;
         let (processed_transactions, processing_results_to_transactions_us) = measure_us!(
             processing_results
                 .iter()
                 .zip(batch.sanitized_transactions())
                 .filter_map(|(processing_result, tx)| {
                     if processing_result.was_processed() {
+                        entry_bytes += tx.serialized_size() as u64;
                         Some(tx.to_versioned_transaction())
                     } else {
                         None
@@ -406,25 +413,33 @@ impl Consumer {
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
 
-        let (record_transactions_summary, record_us) = measure_us!(
+        let reserved_bytes =
+            bank.entry_bytes_budget()
+                .reserve(entry_bytes)
+                .map_err(|err| match err {
+                    EntryBytesReserveError::ExceedsSlotLimit => PohRecorderError::MaxHeightReached,
+                });
+        let (record_transactions_summary, record_us) = measure_us!(reserved_bytes.map(|_| {
             self.transaction_recorder
                 .record_transactions(bank.bank_id(), processed_transactions)
-        );
+        }));
         execute_and_commit_timings.record_us = record_us;
 
-        let RecordTransactionsSummary {
-            result: record_transactions_result,
-            record_transactions_timings,
-            starting_transaction_index,
-        } = record_transactions_summary;
-        execute_and_commit_timings.record_transactions_timings = RecordTransactionsTimings {
-            processing_results_to_transactions_us: Saturating(
-                processing_results_to_transactions_us,
-            ),
-            ..record_transactions_timings
+        let (recording_result, starting_transaction_index) = match record_transactions_summary {
+            Ok(summary) => {
+                execute_and_commit_timings.record_transactions_timings =
+                    RecordTransactionsTimings {
+                        processing_results_to_transactions_us: Saturating(
+                            processing_results_to_transactions_us,
+                        ),
+                        ..summary.record_transactions_timings
+                    };
+                (summary.result, summary.starting_transaction_index)
+            }
+            Err(err) => (Err(err), None),
         };
 
-        if let Err(recorder_err) = record_transactions_result {
+        if let Err(recorder_err) = recording_result {
             retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
                 |(index, processing_result)| {
                     processing_result.was_processed().then_some(RetryableIndex {

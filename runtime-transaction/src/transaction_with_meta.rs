@@ -14,4 +14,8 @@ pub trait TransactionWithMeta: StaticMeta + SVMTransaction {
     /// `VersionedTransaction`. This should not be used unless necessary, as it
     /// performs numerous allocations that negatively impact performance.
     fn to_versioned_transaction(&self) -> VersionedTransaction;
+
+    /// Returns the serialized transaction size in bytes.
+    /// Runtime metadata is not included.
+    fn serialized_size(&self) -> usize;
 }

@@ -153,6 +153,11 @@ impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
     fn to_versioned_transaction(&self) -> VersionedTransaction {
         self.transaction.to_versioned_transaction()
     }
+
+    fn serialized_size(&self) -> usize {
+        bincode::serialized_size(&self.to_versioned_transaction())
+            .expect("versioned transaction serialization should succeed") as usize
+    }
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -367,6 +372,24 @@ mod tests {
                 compute_budget_limits.loaded_accounts_bytes.get()
             );
         }
+    }
+
+    #[test]
+    fn test_serialized_size() {
+        let transaction = RuntimeTransaction::<SanitizedTransaction>::try_from(
+            RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
+                non_vote_sanitized_versioned_transaction(),
+                MessageHash::Compute,
+                None,
+            )
+            .unwrap(),
+            SimpleAddressLoader::Disabled,
+            &ReservedAccountKeys::empty_key_set(),
+        )
+        .unwrap();
+
+        let expected = bincode::serialized_size(&transaction.to_versioned_transaction()).unwrap();
+        assert_eq!(transaction.serialized_size(), expected as usize);
     }
 
     #[test]
