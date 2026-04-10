@@ -812,15 +812,14 @@ impl TestValidator {
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
-        let test_validator = TestValidatorGenesis::default()
+        TestValidatorGenesis::default()
             .rent(Rent {
                 lamports_per_byte: 1,
                 ..Rent::default()
             })
             .faucet_addr(faucet_addr)
             .start_with_mint_address(mint_address, socket_addr_space)
-            .expect("validator start failed");
-        test_validator
+            .expect("validator start failed")
     }
 
     /// Create a configured genesis and start validator (async version)
