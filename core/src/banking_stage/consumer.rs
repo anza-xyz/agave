@@ -16,7 +16,7 @@ use {
     },
     solana_runtime::{
         bank::{
-            Bank, LoadAndExecuteTransactionsOutput, entry_bytes_budget::EntryBytesReserveError,
+            entry_bytes_budget::EntryBytesReserveError, Bank, LoadAndExecuteTransactionsOutput,
         },
         transaction_batch::TransactionBatch,
     },
@@ -34,30 +34,11 @@ use {
 /// Consumer will create chunks of transactions from buffer with up to this size.
 pub const TARGET_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
 
-<<<<<<< HEAD
-=======
 const SERIALIZED_ENTRIES_OVERHEAD: u64 = {
     48  // Entry Header
     + 8 // Vec<Entry> length
 };
 
-#[derive(Debug)]
-pub struct ExecutionFlags {
-    /// Should failing transactions within the batch be dropped (no fee charged
-    /// & not committed).
-    pub drop_on_failure: bool,
-    /// If any transaction in the batch is not committed then the entire batch
-    /// should not be committed.
-    ///
-    /// # Note
-    ///
-    /// Without `drop_on_failure` this flag will still allow processed but
-    /// failing transactions to be committed. If both flags are set then any
-    /// failing transaction will cause all transactions to be aborted.
-    pub all_or_nothing: bool,
-}
-
->>>>>>> 60fcf9097 (EntryBytesBudget (#11865))
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RetryableIndex {
     pub index: usize,
@@ -389,14 +370,9 @@ impl Consumer {
             attempted_processing_count: processing_results.len() as u64,
         };
 
-<<<<<<< HEAD
+        let mut entry_bytes = SERIALIZED_ENTRIES_OVERHEAD;
         let (processed_transactions, processing_results_to_transactions_us) =
             measure_us!(processing_results
-=======
-        let mut entry_bytes = SERIALIZED_ENTRIES_OVERHEAD;
-        let (processed_transactions, processing_results_to_transactions_us) = measure_us!(
-            processing_results
->>>>>>> 60fcf9097 (EntryBytesBudget (#11865))
                 .iter()
                 .zip(batch.sanitized_transactions())
                 .filter_map(|(processing_result, tx)| {
@@ -412,11 +388,6 @@ impl Consumer {
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
 
-<<<<<<< HEAD
-        let (record_transactions_summary, record_us) = measure_us!(self
-            .transaction_recorder
-            .record_transactions(bank.bank_id(), processed_transactions));
-=======
         let reserved_bytes =
             bank.entry_bytes_budget()
                 .reserve(entry_bytes)
@@ -427,7 +398,6 @@ impl Consumer {
             self.transaction_recorder
                 .record_transactions(bank.bank_id(), processed_transactions)
         }));
->>>>>>> 60fcf9097 (EntryBytesBudget (#11865))
         execute_and_commit_timings.record_us = record_us;
 
         let (recording_result, starting_transaction_index) = match record_transactions_summary {

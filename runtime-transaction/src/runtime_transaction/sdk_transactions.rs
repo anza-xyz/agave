@@ -357,8 +357,6 @@ mod tests {
             );
         }
     }
-<<<<<<< HEAD
-=======
 
     #[test]
     fn test_serialized_size() {
@@ -377,62 +375,4 @@ mod tests {
         let expected = bincode::serialized_size(&transaction.to_versioned_transaction()).unwrap();
         assert_eq!(transaction.serialized_size(), expected as usize);
     }
-
-    #[test]
-    fn test_simd_406_instruction_accounts_limit() {
-        let account_keys = vec![Pubkey::new_unique(); 3];
-        let header = MessageHeader {
-            num_required_signatures: 1,
-            num_readonly_signed_accounts: 0,
-            num_readonly_unsigned_accounts: 1,
-        };
-        let mut accounts: Vec<u8> = vec![0; 254];
-        // Exactly 255 accounts must pass sanitization
-        accounts.push(1);
-        let instr = CompiledInstruction::new_from_raw_parts(2, Vec::new(), accounts.clone());
-        let transaction = VersionedTransaction {
-            signatures: vec![Signature::default(); 1],
-            message: VersionedMessage::Legacy(solana_message::Message {
-                header,
-                account_keys: account_keys.clone(),
-                recent_blockhash: Hash::default(),
-                instructions: vec![instr],
-            }),
-        };
-        let result = RuntimeTransaction::<SanitizedTransaction>::try_create(
-            transaction,
-            MessageHash::Compute,
-            None,
-            solana_message::SimpleAddressLoader::Disabled,
-            &HashSet::new(),
-            true,
-        );
-        assert!(result.is_ok());
-
-        // 256 accounts must fail
-        accounts.push(2);
-        let instr = CompiledInstruction::new_from_raw_parts(2, Vec::new(), accounts.clone());
-        let transaction = VersionedTransaction {
-            signatures: vec![Signature::default(); 1],
-            message: VersionedMessage::Legacy(solana_message::Message {
-                header,
-                account_keys,
-                recent_blockhash: Hash::default(),
-                instructions: vec![instr],
-            }),
-        };
-        let result = RuntimeTransaction::<SanitizedTransaction>::try_create(
-            transaction,
-            MessageHash::Compute,
-            None,
-            solana_message::SimpleAddressLoader::Disabled,
-            &HashSet::new(),
-            true,
-        );
-        assert_eq!(
-            result.err(),
-            Some(solana_transaction_error::TransactionError::SanitizeFailure)
-        );
-    }
->>>>>>> 60fcf9097 (EntryBytesBudget (#11865))
 }

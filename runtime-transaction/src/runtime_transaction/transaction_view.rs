@@ -413,13 +413,13 @@ mod tests {
             .unwrap();
         let transaction_view =
             SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true).unwrap();
-        let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+        let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
             transaction_view,
             MessageHash::Compute,
             None,
         )
         .unwrap();
-        let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+        let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
             runtime_transaction,
             None,
             &ReservedAccountKeys::empty_key_set(),
