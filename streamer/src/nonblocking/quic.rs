@@ -101,7 +101,7 @@ struct PacketAccumulator {
     pub meta: Meta,
     // the capacity here should match or exceed the capacity of the chunks
     // array used by handle_connection()
-    pub chunks: SmallVec<[Bytes; 4]>,
+    pub chunks: SmallVec<[Bytes; 4 * 4]>,
     pub start_time: Instant,
 }
 
@@ -623,7 +623,10 @@ async fn handle_connection<Q, C>(
         // Bytes values are small, so overall the array takes only 128 bytes, and the "cost" of
         // overallocating a few bytes is negligible compared to the cost of having to do multiple
         // read_chunks() calls.
-        let mut chunks: [Bytes; 4] = array::from_fn(|_| Bytes::new());
+        //
+        // With V1 transaction size is over 3 times larger than legacy transaction, adding a
+        // multiplier of 4 to avoid excessive heap allocation when handling V1 transactions.
+        let mut chunks: [Bytes; 4 * 4] = array::from_fn(|_| Bytes::new());
 
         loop {
             // Read the next chunks, waiting up to `wait_for_chunk_timeout`. If we don't get chunks
