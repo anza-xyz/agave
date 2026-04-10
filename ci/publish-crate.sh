@@ -73,6 +73,11 @@ for Cargo_toml in $Cargo_tomls; do
         break
       fi
 
+      if grep -q "already exists on crates.io index" <<< "$output"; then
+        echo "${crate_name} version already published, skipping"
+        break
+      fi
+
       if [ "$i" -lt "$numRetries" ]; then
         retry_after=$(sed -n 's/.*Please try again after \(.*\) or email.*/\1/p' <<< "$output")
         if [[ -n "$retry_after" ]]; then
