@@ -120,9 +120,7 @@ impl Bank {
         // schedule for the current epoch, which *DOES NOT* correspond to
         // `Bank::current_epoch_stakes()`.
         let feature_snapshot = self.feature_set.snapshot();
-        let collector_id = if feature_snapshot.custom_commission_collector
-            && feature_snapshot.vote_state_v4
-        {
+        let collector_id = if feature_snapshot.custom_commission_collector {
             self.epoch_stakes
                 .get(&self.epoch)
                 .and_then(|stakes| {
