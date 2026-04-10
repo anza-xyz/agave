@@ -31,7 +31,7 @@ use {
         collections::{HashMap, HashSet},
         iter::repeat_with,
         marker::PhantomData,
-        net::SocketAddr,
+        net::{SocketAddr, SocketAddrV4},
         sync::{Arc, OnceLock, RwLock},
         time::{Duration, Instant},
     },
@@ -68,7 +68,7 @@ enum NodeId {
 pub(crate) struct ContactInfo {
     pubkey: Pubkey,
     wallclock: u64,
-    tvu_udp: Option<SocketAddr>,
+    tvu_udp: Option<SocketAddrV4>,
 }
 
 pub struct Node {
@@ -137,7 +137,7 @@ impl ContactInfo {
     }
 
     #[inline]
-    pub(crate) fn tvu(&self, protocol: Protocol) -> Option<SocketAddr> {
+    pub(crate) fn tvu(&self, protocol: Protocol) -> Option<SocketAddrV4> {
         match protocol {
             Protocol::QUIC => None,
             Protocol::UDP => self.tvu_udp,
@@ -265,7 +265,7 @@ impl ClusterNodes<RetransmitStage> {
         shred: &ShredId,
         fanout: usize,
         socket_addr_space: &SocketAddrSpace,
-    ) -> Result<(/*root_distance:*/ u8, Vec<SocketAddr>), Error> {
+    ) -> Result<(/*root_distance:*/ u8, Vec<SocketAddrV4>), Error> {
         // Exclude slot leader from list of nodes.
         if slot_leader == &self.pubkey {
             return Err(Error::Loopback {
@@ -287,7 +287,7 @@ impl ClusterNodes<RetransmitStage> {
             let protocol = get_broadcast_protocol(shred);
             let peers = peers
                 .filter_map(|k| self.nodes[k].contact_info()?.tvu(protocol))
-                .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))
+                .filter(|addr| socket_addr_space.check_v4(addr))
                 .collect();
             let root_distance = get_root_distance(index, fanout);
             Ok((root_distance, peers))
@@ -450,7 +450,7 @@ const MAX_NUM_NODES_PER_IP_ADDRESS: usize = 1;
 fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
     const TVU_PROTOCOLS: [Protocol; 1] = [Protocol::UDP];
     let capacity = nodes.len().saturating_mul(2);
-    // Tracks (Protocol, SocketAddr) tuples already observed.
+    // Tracks (Protocol, SocketAddrV4) tuples already observed.
     let mut addrs = HashSet::with_capacity(capacity);
     // Maps IP addresses to number of nodes at that IP address.
     let mut counts = HashMap::with_capacity(capacity);
@@ -467,7 +467,7 @@ fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
                 continue;
             };
             let count: usize = *counts
-                .entry((protocol, addr.ip()))
+                .entry((protocol, *addr.ip()))
                 .and_modify(|count| *count += 1)
                 .or_insert(1);
             if !addrs.insert((protocol, addr)) || count > MAX_NUM_NODES_PER_IP_ADDRESS {
@@ -644,7 +644,10 @@ impl From<&GossipContactInfo> for ContactInfo {
         Self {
             pubkey: *node.pubkey(),
             wallclock: node.wallclock(),
-            tvu_udp: node.tvu(Protocol::UDP),
+            tvu_udp: match node.tvu(Protocol::UDP) {
+                Some(SocketAddr::V4(addr)) => Some(addr),
+                Some(SocketAddr::V6(_)) | None => None,
+            },
         }
     }
 }

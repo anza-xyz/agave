@@ -33,12 +33,12 @@ use {
         bank::{Bank, MAX_LEADER_SCHEDULE_STAKES},
         bank_forks::BankForks,
     },
-    solana_streamer::sendmmsg::{SendPktsError, multi_target_send},
+    solana_streamer::sendmmsg::{SendPktsError, batch_send},
     solana_time_utils::timestamp,
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
-        net::{SocketAddr, UdpSocket},
+        net::{SocketAddr, SocketAddrV4, UdpSocket},
         ops::AddAssign,
         sync::{
             Arc, RwLock,
@@ -77,7 +77,7 @@ struct RetransmitShredOutput {
     // Number of nodes the shred was retransmitted to.
     num_nodes: usize,
     // Addresses the shred was sent to if there was a cache miss.
-    addrs: Option<Box<[SocketAddr]>>,
+    addrs: Option<Box<[SocketAddrV4]>>,
 }
 
 #[derive(Default)]
@@ -95,7 +95,7 @@ pub(crate) struct RetransmitSlotStats {
     num_shreds_sent: [usize; MAX_NUM_TURBINE_HOPS],
     // Root distance and socket-addresses the shreds were sent to if there was
     // a cache miss.
-    pub(crate) addrs: Vec<(ShredId, /*root_distance:*/ u8, Box<[SocketAddr]>)>,
+    pub(crate) addrs: Vec<(ShredId, /*root_distance:*/ u8, Box<[SocketAddrV4]>)>,
 }
 
 struct RetransmitStats {
@@ -485,7 +485,8 @@ fn retransmit_shred(
         RetransmitSocket::Xdp(sender) => {
             let mut sent = num_addrs;
             if num_addrs > 0
-                && let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred.bytes)
+                && let Err(e) =
+                    sender.try_send(key.index() as usize, addrs.as_ref().to_vec(), shred.bytes)
             {
                 log::warn!("xdp channel full: {e:?}");
                 stats
@@ -497,7 +498,8 @@ fn retransmit_shred(
         }
         RetransmitSocket::Socket(_) | RetransmitSocket::Multihomed { .. } => {
             let socket = socket.get_socket();
-            match multi_target_send(socket, shred, &addrs) {
+            let packets = addrs.iter().map(|addr| (&shred, SocketAddr::V4(*addr)));
+            match batch_send(socket, packets) {
                 Ok(()) => num_addrs,
                 Err(SendPktsError::IoError(ioerr, num_failed)) => {
                     error!(
@@ -535,7 +537,7 @@ fn get_retransmit_addrs<'a>(
     addr_cache: &'a AddrCache,
     socket_addr_space: &SocketAddrSpace,
     stats: &RetransmitStats,
-) -> Option<(/*root_distance:*/ u8, Cow<'a, [SocketAddr]>)> {
+) -> Option<(/*root_distance:*/ u8, Cow<'a, [SocketAddrV4]>)> {
     if let Some((root_distance, addrs)) = addr_cache.get(shred) {
         stats.addr_cache_hit.fetch_add(1, Ordering::Relaxed);
         return Some((root_distance, Cow::Borrowed(addrs)));

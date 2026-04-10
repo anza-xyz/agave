@@ -8,7 +8,7 @@ use {
     std::{
         cmp::Reverse,
         collections::{HashMap, VecDeque, hash_map::Entry},
-        net::SocketAddr,
+        net::SocketAddrV4,
     },
 };
 
@@ -51,8 +51,8 @@ pub(crate) struct AddrCache {
 struct CacheEntry {
     // Root distance and socket addresses cached either speculatively or when
     // retransmitting incoming shreds.
-    code: Vec<Option<(/*root_distance:*/ u8, Box<[SocketAddr]>)>>,
-    data: Vec<Option<(/*root_distance:*/ u8, Box<[SocketAddr]>)>>,
+    code: Vec<Option<(/*root_distance:*/ u8, Box<[SocketAddrV4]>)>>,
+    data: Vec<Option<(/*root_distance:*/ u8, Box<[SocketAddrV4]>)>>,
     // Code and data indices where [..index] are fully populated.
     index_code: usize,
     index_data: usize,
@@ -81,7 +81,7 @@ impl AddrCache {
 
     // Returns (root-distance, socket-addresses) cached for the given shred-id.
     #[inline]
-    pub(crate) fn get(&self, shred: &ShredId) -> Option<(/*root_distance:*/ u8, &[SocketAddr])> {
+    pub(crate) fn get(&self, shred: &ShredId) -> Option<(/*root_distance:*/ u8, &[SocketAddrV4])> {
         self.cache
             .get(&shred.slot())?
             .get(shred.shred_type(), shred.index())
@@ -92,7 +92,7 @@ impl AddrCache {
     pub(crate) fn put(
         &mut self,
         shred: &ShredId,
-        entry: (/*root_distance:*/ u8, Box<[SocketAddr]>),
+        entry: (/*root_distance:*/ u8, Box<[SocketAddrV4]>),
     ) {
         self.get_cache_entry_mut(shred.slot())
             .put(shred.shred_type(), shred.index(), entry);
@@ -266,7 +266,7 @@ impl CacheEntry {
         &self,
         shred_type: ShredType,
         shred_index: u32,
-    ) -> Option<(/*root_distance:*/ u8, &[SocketAddr])> {
+    ) -> Option<(/*root_distance:*/ u8, &[SocketAddrV4])> {
         match shred_type {
             ShredType::Code => &self.code,
             ShredType::Data => &self.data,
@@ -283,7 +283,7 @@ impl CacheEntry {
         &mut self,
         shred_type: ShredType,
         shred_index: u32,
-        entry: (/*root_distance:*/ u8, Box<[SocketAddr]>),
+        entry: (/*root_distance:*/ u8, Box<[SocketAddrV4]>),
     ) {
         let cache = match shred_type {
             ShredType::Code => &mut self.code,
