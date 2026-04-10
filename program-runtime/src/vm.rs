@@ -72,16 +72,11 @@ fn configure_program_regions<'a, C: ContextObject>(
     let regions = mapping
         .get_regions_mut()
         .expect("The memory mapping should not have been initialized");
-
-    let ro_area = regions
-        .get_mut(0)
-        .expect("The regions vector must have at least three entries");
+    let [ro_area, stack_area, heap_area, ..] = regions else {
+        panic!("the regions vector must have at least three entries")
+    };
     *ro_area = executable.get_ro_region();
-
     let sbpf_version = executable.get_sbpf_version();
-    let stack_area = regions
-        .get_mut(1)
-        .expect("The regions vector must have at least three entries");
     let config = executable.get_config();
     *stack_area = MemoryRegion::new_writable_gapped(
         stack,
@@ -92,12 +87,7 @@ fn configure_program_regions<'a, C: ContextObject>(
             0
         },
     );
-
-    let heap_area = regions
-        .get_mut(2)
-        .expect("The regions vector must have at least three entries");
     *heap_area = MemoryRegion::new_writable(heap, MM_HEAP_START);
-
     mapping
         .initialize()
         .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
