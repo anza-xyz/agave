@@ -1,5 +1,5 @@
 use {
-    solana_clock::{DEFAULT_MS_PER_SLOT, Epoch},
+    solana_clock::Epoch,
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::epoch_specs::EpochSpecs as EpochSpecsTrait,
     solana_pubkey::Pubkey,
@@ -92,7 +92,7 @@ impl From<Arc<RwLock<BankForks>>> for EpochSpecs {
 
 fn get_epoch_duration(bank: &Bank) -> Duration {
     let num_slots = bank.get_slots_in_epoch(bank.epoch());
-    Duration::from_millis(num_slots * DEFAULT_MS_PER_SLOT)
+    Duration::from_nanos_u128(num_slots as u128 * bank.ns_per_slot)
 }
 
 #[cfg(test)]
