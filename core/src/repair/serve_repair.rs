@@ -200,6 +200,8 @@ struct ServeRepairStats {
     err_sig_verify: usize,
     err_unsigned: usize,
     err_id_mismatch: usize,
+    max_request_channel_len: usize,
+    max_response_channel_len: usize,
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -696,6 +698,7 @@ impl ServeRepair {
             .map(|p| p.to_bytes_packet())
             .collect();
 
+        stats.max_request_channel_len = stats.max_request_channel_len.max(requests_receiver.len());
         const MAX_REQUESTS_PER_ITERATION: usize = 1024;
         let mut total_requests = requests.len();
 
@@ -893,6 +896,16 @@ impl ServeRepair {
             ("err_sig_verify", stats.err_sig_verify, i64),
             ("err_unsigned", stats.err_unsigned, i64),
             ("err_id_mismatch", stats.err_id_mismatch, i64),
+            (
+                "max_request_channel_len",
+                stats.max_request_channel_len,
+                i64
+            ),
+            (
+                "max_response_channel_len",
+                stats.max_response_channel_len,
+                i64
+            ),
         );
 
         *stats = ServeRepairStats::default();
@@ -1129,6 +1142,9 @@ impl ServeRepair {
                 stats.dropped_requests_outbound_bandwidth += 1;
                 stats.total_dropped_response_packets += num_response_packets;
             }
+            stats.max_response_channel_len = stats
+                .max_response_channel_len
+                .max(packet_batch_sender.len());
         }
 
         if !pending_pings.is_empty() {
@@ -1139,6 +1155,9 @@ impl ServeRepair {
             } else {
                 stats.total_dropped_response_packets += num_pings_to_send;
             }
+            stats.max_response_channel_len = stats
+                .max_response_channel_len
+                .max(packet_batch_sender.len());
         }
     }
 
