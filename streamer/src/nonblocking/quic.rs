@@ -729,7 +729,7 @@ fn handle_chunks(
     for chunk in chunks {
         accum.meta.size += chunk.len();
         if accum.meta.size > solana_message::v1::MAX_TRANSACTION_SIZE {
-            // The stream window size is set to PACKET_DATA_SIZE;
+            // The stream window size is set to V1 Transaction max size,
             // A peer can send multiple chunks that together exceed the max transaction size
             // tho, in which case we report the error.
             stats.invalid_stream_size.fetch_add(1, Ordering::Relaxed);
@@ -1114,20 +1114,22 @@ impl Future for EndpointAccept<'_> {
 pub mod test {
     use {
         super::*,
-        crate::nonblocking::{
-            qos::NullStreamerCounter,
-            swqos::SwQosConfig,
-            testing_utilities::{
-                SpawnTestServerResult, check_multiple_streams, get_client_config,
-                make_client_endpoint, setup_quic_server, spawn_stake_weighted_qos_server,
+        crate::{
+            nonblocking::{
+                qos::NullStreamerCounter,
+                swqos::SwQosConfig,
+                testing_utilities::{
+                    SpawnTestServerResult, check_multiple_streams, get_client_config,
+                    make_client_endpoint, setup_quic_server, spawn_stake_weighted_qos_server,
+                },
             },
+            packet::PACKET_DATA_SIZE,
         },
         assert_matches::assert_matches,
         crossbeam_channel::{Receiver, unbounded},
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
         solana_net_utils::sockets::bind_to_localhost_unique,
-        solana_packet::PACKET_DATA_SIZE,
         solana_signer::Signer,
         std::collections::HashMap,
         tokio::time::sleep,

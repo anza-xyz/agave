@@ -242,13 +242,12 @@ where
 mod tests {
     use {
         crate::{
-            packet::Packet,
+            packet::{PACKET_DATA_SIZE, Packet},
             recvmmsg::recv_mmsg,
             sendmmsg::{SendPktsError, batch_send, multi_target_send},
         },
         assert_matches::assert_matches,
         solana_net_utils::sockets::bind_to_localhost_unique,
-        solana_packet::PACKET_DATA_SIZE,
         std::{
             io::ErrorKind,
             net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},

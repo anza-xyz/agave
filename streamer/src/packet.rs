@@ -18,7 +18,8 @@ use {
     },
 };
 pub use {
-    solana_packet::{Meta, PACKET_DATA_SIZE, Packet},
+    solana_message::v1::MAX_TRANSACTION_SIZE as PACKET_DATA_SIZE,
+    solana_packet::{Meta, Packet},
     solana_perf::packet::{
         NUM_PACKETS, PACKETS_PER_BATCH, PacketBatch, PacketBatchRecycler, PacketRef, PacketRefMut,
         RecycledPacketBatch,
