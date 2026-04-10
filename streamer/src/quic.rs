@@ -17,7 +17,6 @@ use {
     },
     rustls::KeyLogFile,
     solana_keypair::Keypair,
-    solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::PacketBatch,
     solana_tls_utils::{NotifyKeyUpdate, new_dummy_x509_certificate, tls_server_config_builder},
     std::{
@@ -109,12 +108,12 @@ pub(crate) fn configure_server(
 
     let config = Arc::get_mut(&mut server_config.transport).unwrap();
 
-    // Set STREAM_MAX_DATA to fit at most 1 transaction.
+    // Set STREAM_MAX_DATA to fit at most 1 V1 transaction.
     // This should match the maximal TX size.
-    config.stream_receive_window((PACKET_DATA_SIZE as u32).into());
+    config.stream_receive_window((solana_message::v1::MAX_TRANSACTION_SIZE as u32).into());
     // set the receive window really small initially to prevent the fresh connections
     // from slamming us with traffic.
-    config.receive_window((PACKET_DATA_SIZE as u32).into());
+    config.receive_window((solana_message::v1::MAX_TRANSACTION_SIZE as u32).into());
     // disable uni_streams until handshake is complete
     config.max_concurrent_uni_streams(0u32.into());
     config.receive_window(CONNECTION_RECEIVE_WINDOW_BYTES);
