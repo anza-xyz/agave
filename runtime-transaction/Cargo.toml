@@ -22,12 +22,9 @@ dev-context-only-utils = ["solana-compute-budget-instruction/dev-context-only-ut
 
 [dependencies]
 agave-transaction-view = { workspace = true }
-<<<<<<< HEAD
+bincode = { workspace = true }
 log = { workspace = true }
 solana-compute-budget = { workspace = true }
-=======
-bincode = { workspace = true }
->>>>>>> 60fcf9097 (EntryBytesBudget (#11865))
 solana-compute-budget-instruction = { workspace = true }
 solana-hash = { workspace = true }
 solana-message = { workspace = true, features = ["blake3"] }

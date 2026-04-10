@@ -433,7 +433,8 @@ mod tests {
             )))
             .unwrap();
         let transaction_view =
-            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true).unwrap();
+            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true, true)
+                .unwrap();
         let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             transaction_view,
             MessageHash::Compute,
