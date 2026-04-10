@@ -23,6 +23,7 @@ dev-context-only-utils = ["solana-compute-budget-instruction/dev-context-only-ut
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-transaction-view = { workspace = true }
+bincode = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-hash = { workspace = true }
 solana-message = { workspace = true, features = ["blake3", "wincode"] }
@@ -30,14 +31,13 @@ solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
 solana-svm-transaction = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["serde"] }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 
 [dev-dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
-bincode = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
 solana-compute-budget-instruction = { path = "../compute-budget-instruction", features = ["agave-unstable-api", "dev-context-only-utils"] }
