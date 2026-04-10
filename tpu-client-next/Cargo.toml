@@ -31,7 +31,7 @@ solana-commitment-config = { workspace = true }
 solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true, optional = true }
-solana-packet = { workspace = true }
+solana-message = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true, optional = true }
 solana-rpc-client = { workspace = true }
