@@ -52,7 +52,6 @@ pub struct FeatureSnapshot {
     pub deplete_cu_meter_on_vm_failure: bool,
     pub fix_alt_bn128_multiplication_input_length: bool,
     pub relax_intrabatch_account_locks: bool,
-    pub enable_extend_program_checked: bool,
     pub formalize_loaded_transaction_data_size: bool,
     pub alpenglow: bool,
     pub disable_zk_elgamal_proof_program: bool,
@@ -153,7 +152,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &fix_alt_bn128_multiplication_input_length::ID,
             ),
             relax_intrabatch_account_locks: is_active(&relax_intrabatch_account_locks::ID),
-            enable_extend_program_checked: is_active(&enable_extend_program_checked::ID),
             formalize_loaded_transaction_data_size: is_active(
                 &formalize_loaded_transaction_data_size::ID,
             ),
@@ -339,7 +337,6 @@ impl FeatureSet {
             fix_alt_bn128_multiplication_input_length: snapshot
                 .fix_alt_bn128_multiplication_input_length,
             increase_tx_account_lock_limit: snapshot.increase_tx_account_lock_limit,
-            enable_extend_program_checked: snapshot.enable_extend_program_checked,
             formalize_loaded_transaction_data_size: snapshot.formalize_loaded_transaction_data_size,
             disable_zk_elgamal_proof_program: snapshot.disable_zk_elgamal_proof_program,
             reenable_zk_elgamal_proof_program: snapshot.reenable_zk_elgamal_proof_program,

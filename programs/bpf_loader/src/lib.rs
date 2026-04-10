@@ -756,26 +756,12 @@ fn process_loader_upgradeable_instruction(
             }
         }
         UpgradeableLoaderInstruction::ExtendProgram { additional_bytes } => {
-            if invoke_context
-                .get_feature_set()
-                .enable_extend_program_checked
-            {
-                ic_logger_msg!(
-                    log_collector,
-                    "ExtendProgram was superseded by ExtendProgramChecked"
-                );
-                return Err(InstructionError::InvalidInstructionData);
-            }
             common_extend_program(invoke_context, additional_bytes, false)?;
         }
-        UpgradeableLoaderInstruction::ExtendProgramChecked { additional_bytes } => {
-            if !invoke_context
-                .get_feature_set()
-                .enable_extend_program_checked
-            {
-                return Err(InstructionError::InvalidInstructionData);
-            }
-            common_extend_program(invoke_context, additional_bytes, true)?;
+        UpgradeableLoaderInstruction::ExtendProgramChecked { .. } => {
+            // ExtendProgramChecked has been removed.
+            // This variant will be removed from the next interface release.
+            return Err(InstructionError::InvalidInstructionData);
         }
         UpgradeableLoaderInstruction::Migrate => {
             // Loader V4 has been removed.
