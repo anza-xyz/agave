@@ -282,7 +282,7 @@ impl SigVerifier {
                 self.stats.discard_vote_invalid_rank += 1;
                 None
             })?;
-        let ret = Some((entry.pubkey, entry.bls_pubkey));
+        let ret = Some((entry.vote_account_pubkey, entry.bls_pubkey));
         if vote.vote.slot() > root_slot {
             return ret;
         }

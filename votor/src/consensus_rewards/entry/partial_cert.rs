@@ -64,7 +64,10 @@ impl PartialCert {
                 if *ind {
                     return Err(AddVoteError::Duplicate);
                 }
-                let pubkey = rank_map.get_pubkey_stake_entry(rank.into()).unwrap().pubkey;
+                let pubkey = rank_map
+                    .get_pubkey_stake_entry(rank.into())
+                    .unwrap()
+                    .vote_account_pubkey;
                 self.validators.push(pubkey);
                 self.signature.aggregate_with(std::iter::once(signature))?;
                 *ind = true;

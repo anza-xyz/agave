@@ -552,9 +552,9 @@ mod tests {
                 .bls_pubkey_to_rank_map();
             (0..rank_map.len())
                 .find_map(|rank| {
-                    rank_map
-                        .get_pubkey_stake_entry(rank)
-                        .and_then(|entry| (entry.pubkey == target_vote_pubkey).then_some(rank))
+                    rank_map.get_pubkey_stake_entry(rank).and_then(|entry| {
+                        (entry.vote_account_pubkey == target_vote_pubkey).then_some(rank)
+                    })
                 })
                 .unwrap()
         };
@@ -616,9 +616,9 @@ mod tests {
                 .bls_pubkey_to_rank_map();
             (0..rank_map.len())
                 .find_map(|rank| {
-                    rank_map
-                        .get_pubkey_stake_entry(rank)
-                        .and_then(|entry| (entry.pubkey == non_target_vote_pubkey).then_some(rank))
+                    rank_map.get_pubkey_stake_entry(rank).and_then(|entry| {
+                        (entry.vote_account_pubkey == non_target_vote_pubkey).then_some(rank)
+                    })
                 })
                 .unwrap()
         };

@@ -87,9 +87,16 @@ fn get_key_and_stakes(
     };
     if entry.stake == 0 {
         // Since we have a valid rank, this should never happen, there is no rank for zero stake.
-        panic!("Validator stake is zero for pubkey: {}", entry.pubkey);
+        panic!(
+            "Validator stake is zero for pubkey: {}",
+            entry.vote_account_pubkey
+        );
     }
-    Ok((entry.pubkey, entry.stake, epoch_stakes.total_stake()))
+    Ok((
+        entry.vote_account_pubkey,
+        entry.stake,
+        epoch_stakes.total_stake(),
+    ))
 }
 
 /// Container to store received votes and certificates.

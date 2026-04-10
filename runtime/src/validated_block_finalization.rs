@@ -389,7 +389,7 @@ impl ValidatedBlockFinalizationCert {
             .filter_map(|rank| {
                 rank_map
                     .get_pubkey_stake_entry(rank)
-                    .map(|entry| entry.pubkey)
+                    .map(|entry| entry.vote_account_pubkey)
             })
             .collect())
     }
