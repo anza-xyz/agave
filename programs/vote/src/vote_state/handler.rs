@@ -12,13 +12,14 @@
 
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+#[cfg(test)]
+use solana_vote_interface::authorized_voters::AuthorizedVoters;
 use {
     solana_clock::{Clock, Epoch, Slot, UnixTimestamp},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
     solana_transaction_context::instruction_accounts::BorrowedInstructionAccount,
     solana_vote_interface::{
-        authorized_voters::AuthorizedVoters,
         error::VoteError,
         state::{
             BLS_PUBLIC_KEY_COMPRESSED_SIZE, BlockTimestamp, LandedVote, Lockout,
@@ -36,6 +37,7 @@ pub trait VoteStateHandle {
 
     fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey);
 
+    #[cfg(test)]
     fn authorized_voters(&self) -> &AuthorizedVoters;
 
     fn set_new_authorized_voter<F>(
@@ -118,6 +120,7 @@ impl VoteStateHandle for VoteStateV3 {
         self.authorized_withdrawer = authorized_withdrawer;
     }
 
+    #[cfg(test)]
     fn authorized_voters(&self) -> &AuthorizedVoters {
         &self.authorized_voters
     }
@@ -342,6 +345,7 @@ impl VoteStateHandle for VoteStateV4 {
         self.authorized_withdrawer = authorized_withdrawer;
     }
 
+    #[cfg(test)]
     fn authorized_voters(&self) -> &AuthorizedVoters {
         &self.authorized_voters
     }
@@ -563,6 +567,7 @@ impl VoteStateHandle for VoteStateHandler {
         }
     }
 
+    #[cfg(test)]
     fn authorized_voters(&self) -> &AuthorizedVoters {
         match &self.target_state {
             TargetVoteState::V4(v4) => v4.authorized_voters(),
