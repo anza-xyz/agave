@@ -842,10 +842,10 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut looping_bank = bank;
-        for i in 0..10 {
+        for _ in 0..10 {
             calculate_and_pay_voting_reward_and_update_vote_state(
                 &looping_bank,
-                Some((looping_bank.slot() - 100 - i, validators_to_reward.clone())),
+                Some((looping_bank.slot() - 100, validators_to_reward.clone())),
                 None,
             )
             .unwrap();
@@ -1035,6 +1035,8 @@ mod tests {
             .into();
 
         let staker_keypairs = (0..5).map(|_| Keypair::new()).collect::<Vec<_>>();
+        // XXX
+        let stake = LAMPORTS_PER_SOL * 2;
         for keypair in &staker_keypairs {
             let stake_pubkey = keypair.pubkey();
             let account = Account::from(stake_utils::create_stake_account(
@@ -1042,7 +1044,7 @@ mod tests {
                 &validator_vote_key,
                 &vote_account,
                 &genesis_config.rent,
-                LAMPORTS_PER_SOL,
+                stake,
             ));
             genesis_config.accounts.insert(stake_pubkey, account);
         }
