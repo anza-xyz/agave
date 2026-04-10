@@ -6843,9 +6843,9 @@ dependencies = [
 
 [[package]]
 name = "solana-epoch-schedule"
-version = "3.0.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e5481e72cc4d52c169db73e4c0cd16de8bc943078aac587ec4817a75cc6388f"
+checksum = "9ce264b7b42322325947c4136a09460bf5c73d9aa8262c9b0a2064be63ba8639"
 dependencies = [
  "serde",
  "serde_derive",
