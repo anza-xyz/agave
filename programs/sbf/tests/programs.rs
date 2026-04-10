@@ -37,7 +37,7 @@ use {
         bank_forks::BankForks,
         genesis_utils::{
             GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
-            create_genesis_config_with_leader_ex,
+            create_genesis_config_with_leader, create_genesis_config_with_leader_ex,
         },
         loader_utils::{
             create_program, load_upgradeable_buffer, load_upgradeable_program_and_advance_slot,
@@ -3900,12 +3900,13 @@ fn test_program_fees() {
     agave_logger::setup();
 
     let congestion_multiplier = 1;
+    let initial_balance = 1000;
 
     let GenesisConfigInfo {
         mut genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(500_000_000);
+    } = create_genesis_config_with_leader(500_000_000, &Pubkey::new_unique(), initial_balance);
 
     genesis_config.fee_rate_governor = FeeRateGovernor::new(congestion_multiplier, 0);
     let mut bank = Bank::new_for_tests(&genesis_config);
