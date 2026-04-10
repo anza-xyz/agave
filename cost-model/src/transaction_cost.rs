@@ -302,6 +302,10 @@ impl solana_runtime_transaction::transaction_with_meta::TransactionWithMeta
     fn to_versioned_transaction(&self) -> solana_transaction::versioned::VersionedTransaction {
         unimplemented!("WritableKeysTransaction::to_versioned_transaction")
     }
+
+    fn serialized_size(&self) -> usize {
+        unimplemented!("WritableKeysTransaction::serialized_size")
+    }
 }
 
 #[cfg(test)]

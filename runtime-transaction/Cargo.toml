@@ -22,8 +22,12 @@ dev-context-only-utils = ["solana-compute-budget-instruction/dev-context-only-ut
 
 [dependencies]
 agave-transaction-view = { workspace = true }
+<<<<<<< HEAD
 log = { workspace = true }
 solana-compute-budget = { workspace = true }
+=======
+bincode = { workspace = true }
+>>>>>>> 60fcf9097 (EntryBytesBudget (#11865))
 solana-compute-budget-instruction = { workspace = true }
 solana-hash = { workspace = true }
 solana-message = { workspace = true, features = ["blake3"] }
@@ -31,7 +35,7 @@ solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
 solana-svm-transaction = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["serde"] }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
@@ -39,7 +43,6 @@ thiserror = { workspace = true }
 [dev-dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
-bincode = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
 solana-compute-budget-instruction = { workspace = true, features = ["dev-context-only-utils"] }
