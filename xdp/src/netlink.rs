@@ -3,7 +3,7 @@
 use {
     libc::{
         AF_INET, AF_INET6, AF_NETLINK, IFLA_INFO_DATA, IFLA_INFO_KIND, IFLA_LINKINFO, MSG_DONTWAIT,
-        NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE, NLA_ALIGNTO, NLA_TYPE_MASK,
+        MSG_TRUNC, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE, NLA_ALIGNTO, NLA_TYPE_MASK,
         NLM_F_DUMP, NLM_F_MULTI, NLM_F_REQUEST, NLMSG_DONE, NLMSG_ERROR, RTA_DST, RTA_GATEWAY,
         RTA_IIF, RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETLINK, RTM_GETNEIGH,
         RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW, SOL_NETLINK,
@@ -105,11 +105,10 @@ impl NetlinkSocket {
     }
 
     fn recv_with_flags(&self, flags: i32) -> Result<Vec<NetlinkMessage>, io::Error> {
-        // The theoretical max size of a single netlink message (including header) is 4GiB.
-        // See: https://elixir.bootlin.com/linux/v6.17.7/source/include/uapi/linux/netlink.h#L46
-        // However, in the kernel, the netlink message size is set to a page size.
-        // If the page size exceeds 8KiB, the netlink message size is capped to 8KiB
-        // See: https://elixir.bootlin.com/linux/v6.17.7/source/include/linux/netlink.h#L267
+        // The kernel returns NLMSG_GOODSIZE (8k) as the recommended max allocation for netlink
+        // responses. However that is not a hard cap, and netlink code can in theory return larger
+        // messages. Out of caution we allocate a larger buffer AND use MSG_TRUNC to detect if that
+        // is still not enough.
         let mut buf = [0u8; 8 * 1024]; // 8 KiB
         let mut messages = Vec::new();
         let mut multipart = true;
@@ -121,7 +120,7 @@ impl NetlinkSocket {
                     self.sock.as_raw_fd(),
                     buf.as_mut_ptr() as *mut _,
                     buf.len(),
-                    flags,
+                    flags | MSG_TRUNC,
                 )
             };
             if len < 0 {
@@ -132,6 +131,9 @@ impl NetlinkSocket {
             }
 
             let len = len as usize;
+            if len > buf.len() {
+                return Err(io::Error::other("netlink datagram truncated"));
+            }
             let mut offset = 0;
             while offset < len {
                 let message = NetlinkMessage::read(&buf[offset..])?;
