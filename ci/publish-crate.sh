@@ -76,6 +76,11 @@ for Cargo_toml in $Cargo_tomls; do
         break
       fi
 
+      if grep -q "already exists on crates.io index" <<< "$output"; then
+        echo "${crate_name} version already published, skipping"
+        break
+      fi
+
       if [ "$i" -lt "$numRetries" ]; then
         sleep 3
       else
