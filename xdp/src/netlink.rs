@@ -2,12 +2,12 @@
 
 use {
     libc::{
-        AF_INET, AF_INET6, AF_NETLINK, IFLA_INFO_DATA, IFLA_INFO_KIND, IFLA_LINKINFO, NDA_DST,
-        NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE, NLA_ALIGNTO, NLA_TYPE_MASK, NLM_F_DUMP,
-        NLM_F_MULTI, NLM_F_REQUEST, NLMSG_DONE, NLMSG_ERROR, RTA_DST, RTA_GATEWAY, RTA_IIF,
-        RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETLINK, RTM_GETNEIGH, RTM_GETROUTE,
-        RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW, SOL_NETLINK, SOL_SOCKET,
-        nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket,
+        AF_INET, AF_INET6, AF_NETLINK, IFLA_INFO_DATA, IFLA_INFO_KIND, IFLA_LINKINFO, MSG_DONTWAIT,
+        NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE, NLA_ALIGNTO, NLA_TYPE_MASK,
+        NLM_F_DUMP, NLM_F_MULTI, NLM_F_REQUEST, NLMSG_DONE, NLMSG_ERROR, RTA_DST, RTA_GATEWAY,
+        RTA_IIF, RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETLINK, RTM_GETNEIGH,
+        RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW, SOL_NETLINK,
+        SOL_SOCKET, nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket,
     },
     std::{
         collections::HashMap,
@@ -88,6 +88,23 @@ impl NetlinkSocket {
     }
 
     pub(crate) fn recv(&self) -> Result<Vec<NetlinkMessage>, io::Error> {
+        self.recv_with_flags(0)
+    }
+
+    pub(crate) fn recv_nonblocking(&self) -> Result<Option<Vec<NetlinkMessage>>, io::Error> {
+        match self.recv_with_flags(MSG_DONTWAIT) {
+            Ok(messages) => Ok(Some(messages)),
+            Err(e)
+                if e.raw_os_error()
+                    .is_some_and(|errno| errno == libc::EAGAIN || errno == libc::EWOULDBLOCK) =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn recv_with_flags(&self, flags: i32) -> Result<Vec<NetlinkMessage>, io::Error> {
         // The theoretical max size of a single netlink message (including header) is 4GiB.
         // See: https://elixir.bootlin.com/linux/v6.17.7/source/include/uapi/linux/netlink.h#L46
         // However, in the kernel, the netlink message size is set to a page size.
@@ -104,7 +121,7 @@ impl NetlinkSocket {
                     self.sock.as_raw_fd(),
                     buf.as_mut_ptr() as *mut _,
                     buf.len(),
-                    0,
+                    flags,
                 )
             };
             if len < 0 {

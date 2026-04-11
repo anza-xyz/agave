@@ -81,15 +81,23 @@ impl RouteMonitor {
                     if (ev & POLLIN) == 0 {
                         continue;
                     }
-                    // Drain channel
-                    match state.sock.recv() {
-                        Ok(msgs) => {
-                            state.dirty |= Self::process_netlink_updates(&mut state.tables, &msgs);
-                        }
-                        Err(e) => {
-                            error!("netlink recv error: {e}");
-                            state.reset(&atomic_router);
-                            continue;
+                    // drain the socket
+                    loop {
+                        match state.sock.recv_nonblocking() {
+                            Ok(Some(msgs)) => {
+                                if msgs.is_empty() {
+                                    warn!("netlink recv returned empty message list");
+                                    continue;
+                                }
+                                state.dirty |=
+                                    Self::process_netlink_updates(&mut state.tables, &msgs);
+                            }
+                            Ok(None) => break,
+                            Err(e) => {
+                                error!("netlink recv error: {e}");
+                                state.reset(&atomic_router);
+                                break;
+                            }
                         }
                     }
                 }
