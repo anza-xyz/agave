@@ -1047,7 +1047,7 @@ pub(crate) mod tests {
         // Epoch 1: A and B are both staked, and their current votes are valid
         let (bank_0, _bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        let mut bank = 
+        let mut bank =
             Bank::new_from_parent(bank_0, SlotLeader::new_unique(), MINIMUM_SLOTS_PER_EPOCH);
         assert_eq!(bank.epoch(), 1);
 
