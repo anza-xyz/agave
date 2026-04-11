@@ -210,7 +210,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         validator_pubkey,
     };
 
-    for (validator_voting_keypairs, stake) in voting_keypairs[1..].iter().zip(&stakes[1..]) {
+    for (validator_voting_keypairs, &stake) in voting_keypairs[1..].iter().zip(&stakes[1..]) {
         let node_pubkey = validator_voting_keypairs.borrow().node_keypair.pubkey();
         let vote_pubkey = validator_voting_keypairs.borrow().vote_keypair.pubkey();
         let stake_pubkey = validator_voting_keypairs.borrow().stake_keypair.pubkey();
@@ -218,10 +218,11 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         // Ensure minimum lamports for VAT filtering, but only when stake > 0.
         // When stake is explicitly 0, respect that (e.g., for testing unstaked validator filtering).
         let rent = &genesis_config_info.genesis_config.rent;
-        let (vote_account_lamports, stake_lamports) = if *stake > 0 {
+        let (vote_account_lamports, stake_lamports) = if stake > 0 {
             (
-                (*stake).max(minimum_vote_account_balance_for_vat(100)),
-                (*stake).max(minimum_stake_lamports_for_vat(rent)),
+                stake.max(minimum_vote_account_balance_for_vat(100)),
+                stake.max(minimum_stake_lamports_for_vat(rent))
+                    + rent.minimum_balance(StakeStateV2::size_of()),
             )
         } else {
             // Zero stake - just need rent exemption, no VAT minimums
@@ -420,7 +421,8 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     let (vote_account_lamports, stake_lamports) = if validator_stake_lamports > 0 {
         (
             validator_stake_lamports.max(minimum_vote_account_balance_for_vat(100)),
-            validator_stake_lamports.max(minimum_stake_lamports_for_vat(&rent)),
+            validator_stake_lamports.max(minimum_stake_lamports_for_vat(&rent))
+                + rent.minimum_balance(StakeStateV2::size_of()),
         )
     } else {
         // Zero stake - just need rent exemption, no VAT minimums
