@@ -205,8 +205,7 @@ impl VoteStorage {
         self.latest_vote_per_vote_pubkey
             .retain(|vote_pubkey, vote| {
                 let is_present = !vote.is_vote_taken();
-                let has_no_stake =
-                    self.cached_epoch_stakes.vote_account_stake(vote_pubkey) == 0;
+                let has_no_stake = self.cached_epoch_stakes.vote_account_stake(vote_pubkey) == 0;
                 let has_stale_authority = self
                     .cached_epoch_authorized_voters
                     .get(vote_pubkey)
@@ -228,7 +227,11 @@ impl VoteStorage {
             "latest_unprocessed_votes-epoch-boundary",
             ("epoch", bank.epoch(), i64),
             ("evicted_unstaked_votes", unstaked_votes, i64),
-            ("evicted_stale_authority_votes", evicted_stale_authority_votes, i64)
+            (
+                "evicted_stale_authority_votes",
+                evicted_stale_authority_votes,
+                i64
+            )
         );
     }
 
@@ -1044,11 +1047,8 @@ pub(crate) mod tests {
         // Epoch 1: A and B are both staked, and their current votes are valid
         let (bank_0, _bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        let mut bank = Bank::new_from_parent(
-            bank_0,
-            SlotLeader::new_unique(),
-            MINIMUM_SLOTS_PER_EPOCH,
-        );
+        let mut bank = 
+            Bank::new_from_parent(bank_0, SlotLeader::new_unique(), MINIMUM_SLOTS_PER_EPOCH);
         assert_eq!(bank.epoch(), 1);
 
         bank.set_epoch_stakes_for_test(
