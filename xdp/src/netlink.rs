@@ -4,10 +4,11 @@ use {
     libc::{
         AF_INET, AF_INET6, AF_NETLINK, IFLA_INFO_DATA, IFLA_INFO_KIND, IFLA_LINKINFO, MSG_DONTWAIT,
         MSG_TRUNC, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE, NLA_ALIGNTO, NLA_TYPE_MASK,
-        NLM_F_DUMP, NLM_F_MULTI, NLM_F_REQUEST, NLMSG_DONE, NLMSG_ERROR, RTA_DST, RTA_GATEWAY,
-        RTA_IIF, RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETLINK, RTM_GETNEIGH,
-        RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW, SOL_NETLINK,
-        SOL_SOCKET, nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket,
+        NLM_F_DUMP, NLM_F_DUMP_INTR, NLM_F_MULTI, NLM_F_REQUEST, NLMSG_DONE, NLMSG_ERROR, RTA_DST,
+        RTA_GATEWAY, RTA_IIF, RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETLINK,
+        RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW,
+        SOL_NETLINK, SOL_SOCKET, nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl,
+        socket,
     },
     std::{
         collections::HashMap,
@@ -138,6 +139,12 @@ impl NetlinkSocket {
                 let message = NetlinkMessage::read(&buf[offset..])?;
                 offset += align_to(message.header.nlmsg_len as usize, NLMSG_ALIGNTO as usize);
                 multipart = message.header.nlmsg_flags & NLM_F_MULTI as u16 != 0;
+                if message.header.nlmsg_flags & NLM_F_DUMP_INTR as u16 != 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "netlink dump interrupted",
+                    ));
+                }
                 match message.header.nlmsg_type as i32 {
                     NLMSG_ERROR => {
                         let err = message.error.unwrap();
