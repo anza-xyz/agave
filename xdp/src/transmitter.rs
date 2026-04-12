@@ -276,6 +276,11 @@ impl TransmitterBuilder {
 
         let tables = tables_result?;
         let router = Router::from_tables(tables)?;
+        info!(
+            "published router table {}:\n{}",
+            RouteTable::Main,
+            router.routing_table()
+        );
 
         // Use ArcSwap for lock-free updates of the routing table
         let atomic_router = Arc::new(ArcSwap::from_pointee(router));

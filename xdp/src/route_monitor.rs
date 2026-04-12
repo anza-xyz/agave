@@ -159,6 +159,7 @@ impl RouteMonitorState {
                 return;
             }
         };
+        log_router_publish(self.route_table, &router);
         atomic_router.store(Arc::new(router));
         self.dirty = false;
         self.last_publish = Instant::now();
@@ -174,6 +175,7 @@ impl RouteMonitorState {
         if self.dirty && self.last_publish.elapsed() >= update_interval {
             match rebuild_router(self.route_table) {
                 Ok(router) => {
+                    log_router_publish(self.route_table, &router);
                     atomic_router.store(Arc::new(router));
                     self.dirty = false;
                 }
@@ -182,6 +184,13 @@ impl RouteMonitorState {
             self.last_publish = Instant::now();
         }
     }
+}
+
+fn log_router_publish(route_table: RouteTable, router: &Router) {
+    debug!(
+        "published router table {route_table}:\n{}",
+        router.routing_table()
+    );
 }
 
 fn bind_socket() -> NetlinkSocket {
