@@ -108,8 +108,22 @@ impl RouteMonitor {
 struct RouteMonitorState {
     sock: NetlinkSocket,
     route_table: RouteTable,
-    dirty: bool,
+    pending_events: PendingEvents,
     last_publish: Instant,
+}
+
+#[derive(Default)]
+struct PendingEvents {
+    routes: usize,
+    neighbors: usize,
+    links: usize,
+    errors: usize,
+}
+
+impl PendingEvents {
+    fn is_empty(&self) -> bool {
+        self.routes == 0 && self.neighbors == 0 && self.links == 0 && self.errors == 0
+    }
 }
 
 impl RouteMonitorState {
@@ -118,22 +132,65 @@ impl RouteMonitorState {
         Self {
             sock: bind_socket(),
             route_table,
-            dirty: false,
+            pending_events: PendingEvents::default(),
             last_publish: Instant::now(),
         }
     }
 
     #[inline]
     fn update(&mut self, msgs: &[NetlinkMessage]) {
-        self.dirty |= msgs.iter().any(|message| match message.header.nlmsg_type {
-            RTM_NEWROUTE | RTM_DELROUTE => parse_rtm_newroute(message)
-                .and_then(|route| route.table)
-                .is_some_and(|table| self.route_table == table.into()),
-            RTM_NEWNEIGH | RTM_DELNEIGH => parse_rtm_newneigh(message, None)
-                .is_some_and(|neighbor| matches!(neighbor.destination, Some(IpAddr::V4(_)))),
-            RTM_NEWLINK | RTM_DELLINK => true,
-            _ => false,
-        });
+        for message in msgs {
+            match message.header.nlmsg_type {
+                RTM_NEWROUTE | RTM_DELROUTE => {
+                    let Some(route) = parse_rtm_newroute(message) else {
+                        continue;
+                    };
+                    if !route
+                        .table
+                        .is_some_and(|table| self.route_table == table.into())
+                    {
+                        continue;
+                    }
+                    self.pending_events.routes = self.pending_events.routes.saturating_add(1);
+                    debug!(
+                        "route monitor update {} table {} dst={:?}/{} gateway={:?} oif={:?} \
+                         priority={:?}",
+                        nlmsg_type_name(message.header.nlmsg_type),
+                        self.route_table,
+                        route.destination,
+                        route.dst_len,
+                        route.gateway,
+                        route.out_if_index,
+                        route.priority,
+                    );
+                }
+                RTM_NEWNEIGH | RTM_DELNEIGH => {
+                    let Some(neighbor) = parse_rtm_newneigh(message, None) else {
+                        continue;
+                    };
+                    if !matches!(neighbor.destination, Some(IpAddr::V4(_))) {
+                        continue;
+                    }
+                    self.pending_events.neighbors = self.pending_events.neighbors.saturating_add(1);
+                    debug!(
+                        "route monitor update {} neighbor={:?} ifindex={} state={} lladdr={:?}",
+                        nlmsg_type_name(message.header.nlmsg_type),
+                        neighbor.destination,
+                        neighbor.ifindex,
+                        neighbor.state,
+                        neighbor.lladdr,
+                    );
+                }
+                RTM_NEWLINK | RTM_DELLINK => {
+                    self.pending_events.links = self.pending_events.links.saturating_add(1);
+                    debug!(
+                        "route monitor update {}",
+                        nlmsg_type_name(message.header.nlmsg_type)
+                    );
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Resets the route monitor state by creating a new router and reinitializing
@@ -144,6 +201,8 @@ impl RouteMonitorState {
         // return POLLERR/ENOBUFS, we detect that and recover by reloading the socket and the
         // entire routing state.
         self.sock = bind_socket();
+        self.pending_events.errors = self.pending_events.errors.saturating_add(1);
+        log_router_rebuild(self.route_table, &self.pending_events);
         let router = match rebuild_router(self.route_table) {
             Ok(router) => router,
             Err(e) => {
@@ -154,14 +213,13 @@ impl RouteMonitorState {
                 //
                 // We don't update self.last_publish as rebuild_router() will sleep between retries
                 // so there's no risk of getting in a tight retry/publish loop.
-                self.dirty = true;
                 warn!("failed to rebuild router from netlink during reset: {e}");
                 return;
             }
         };
         log_router_publish(self.route_table, &router);
         atomic_router.store(Arc::new(router));
-        self.dirty = false;
+        self.pending_events = PendingEvents::default();
         self.last_publish = Instant::now();
     }
 
@@ -172,12 +230,13 @@ impl RouteMonitorState {
         atomic_router: &Arc<ArcSwap<Router>>,
         update_interval: Duration,
     ) {
-        if self.dirty && self.last_publish.elapsed() >= update_interval {
+        if !self.pending_events.is_empty() && self.last_publish.elapsed() >= update_interval {
+            log_router_rebuild(self.route_table, &self.pending_events);
             match rebuild_router(self.route_table) {
                 Ok(router) => {
                     log_router_publish(self.route_table, &router);
                     atomic_router.store(Arc::new(router));
-                    self.dirty = false;
+                    self.pending_events = PendingEvents::default();
                 }
                 Err(e) => warn!("failed to rebuild router from netlink: {e}"),
             }
@@ -191,6 +250,29 @@ fn log_router_publish(route_table: RouteTable, router: &Router) {
         "published router table {route_table}:\n{}",
         router.routing_table()
     );
+}
+
+fn log_router_rebuild(route_table: RouteTable, pending_rebuild: &PendingEvents) {
+    info!(
+        "rebuilding router table {route_table}: route_events={} neighbor_events={} link_events={} \
+         error_events={}",
+        pending_rebuild.routes,
+        pending_rebuild.neighbors,
+        pending_rebuild.links,
+        pending_rebuild.errors,
+    );
+}
+
+fn nlmsg_type_name(nlmsg_type: u16) -> &'static str {
+    match nlmsg_type {
+        RTM_NEWROUTE => "RTM_NEWROUTE",
+        RTM_DELROUTE => "RTM_DELROUTE",
+        RTM_NEWNEIGH => "RTM_NEWNEIGH",
+        RTM_DELNEIGH => "RTM_DELNEIGH",
+        RTM_NEWLINK => "RTM_NEWLINK",
+        RTM_DELLINK => "RTM_DELLINK",
+        _ => "RTM_UNKNOWN",
+    }
 }
 
 fn bind_socket() -> NetlinkSocket {
