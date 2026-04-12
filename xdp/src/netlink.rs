@@ -3,12 +3,12 @@
 use {
     libc::{
         AF_INET, AF_INET6, AF_NETLINK, IFLA_INFO_DATA, IFLA_INFO_KIND, IFLA_LINKINFO, MSG_DONTWAIT,
-        MSG_TRUNC, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE, NLA_ALIGNTO, NLA_TYPE_MASK,
-        NLM_F_DUMP, NLM_F_DUMP_INTR, NLM_F_MULTI, NLM_F_REQUEST, NLMSG_DONE, NLMSG_ERROR, RTA_DST,
-        RTA_GATEWAY, RTA_IIF, RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETLINK,
-        RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW,
-        SOL_NETLINK, SOL_SOCKET, nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl,
-        socket,
+        MSG_TRUNC, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_GET_STRICT_CHK, NETLINK_ROUTE,
+        NLA_ALIGNTO, NLA_TYPE_MASK, NLM_F_DUMP, NLM_F_DUMP_INTR, NLM_F_MULTI, NLM_F_REQUEST,
+        NLMSG_DONE, NLMSG_ERROR, RTA_DST, RTA_GATEWAY, RTA_IIF, RTA_OIF, RTA_PREFSRC, RTA_PRIORITY,
+        RTA_TABLE, RTM_GETLINK, RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH,
+        RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW, SOL_NETLINK, SOL_SOCKET, nlattr, nlmsgerr, nlmsghdr,
+        recv, send, setsockopt, sockaddr_nl, socket,
     },
     std::{
         collections::HashMap,
@@ -57,18 +57,20 @@ impl NetlinkSocket {
         let sock = unsafe { OwnedFd::from_raw_fd(sock) };
 
         let enable = 1i32;
-        // Safety: libc wrapper
-        if unsafe {
-            setsockopt(
-                sock.as_raw_fd(),
-                SOL_NETLINK,
-                NETLINK_EXT_ACK,
-                &enable as *const _ as *const _,
-                mem::size_of::<i32>() as u32,
-            )
-        } < 0
-        {
-            return Err(io::Error::last_os_error());
+        for opt in [NETLINK_EXT_ACK, NETLINK_GET_STRICT_CHK] {
+            // Safety: libc wrapper
+            if unsafe {
+                setsockopt(
+                    sock.as_raw_fd(),
+                    SOL_NETLINK,
+                    opt,
+                    &enable as *const _ as *const _,
+                    mem::size_of::<i32>() as u32,
+                )
+            } < 0
+            {
+                return Err(io::Error::last_os_error());
+            }
         }
         Ok(Self { sock, _nl_pid: 0 })
     }
@@ -699,12 +701,9 @@ pub fn netlink_get_routes(family: u8, table: u32) -> Result<Vec<RouteEntry>, io:
         }
 
         if let Some(route) = parse_rtm_newroute(&msg) {
-            // for compatibility reasons, it turns out the kernel ignores the rtm_table filter in
-            // the request unless NETLINK_GET_STRICT_CHK is set. Filter manually for now until we
-            // add support for strict checking and do enough testing.
-            if route.table == Some(table) {
-                routes.push(route);
-            }
+            // with strict checking, the kernel should return routes for the requested table only
+            debug_assert!(route.table == Some(table));
+            routes.push(route);
         }
     }
 
