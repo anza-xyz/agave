@@ -196,6 +196,7 @@ impl TransmitterBuilder {
                 CapSet,
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
             },
+            log::debug,
             std::collections::HashSet,
         };
         let XdpConfig {
@@ -276,6 +277,11 @@ impl TransmitterBuilder {
 
         let tables = tables_result?;
         let router = Router::from_tables(tables)?;
+        debug!(
+            "published router table {}:\n{}",
+            RouteTable::Main,
+            router.routing_table()
+        );
 
         // Use ArcSwap for lock-free updates of the routing table
         let atomic_router = Arc::new(ArcSwap::from_pointee(router));
