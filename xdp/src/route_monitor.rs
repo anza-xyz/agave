@@ -1,10 +1,7 @@
 use {
     crate::{
-        netlink::{
-            NetlinkMessage, NetlinkSocket, parse_rtm_ifinfomsg, parse_rtm_newneigh,
-            parse_rtm_newroute,
-        },
-        route::{Router, RoutingTables},
+        netlink::{NetlinkMessage, NetlinkSocket, parse_rtm_newneigh, parse_rtm_newroute},
+        route::{RouteTable, Router, RoutingTables},
     },
     arc_swap::ArcSwap,
     libc::{
@@ -33,7 +30,7 @@ impl RouteMonitor {
     /// Publishes the updated routing table every `update_interval` if needed
     pub fn start<F: FnOnce() + Send + Sync + 'static>(
         atomic_router: Arc<ArcSwap<Router>>,
-        tables: RoutingTables,
+        route_table: RouteTable,
         exit: Arc<AtomicBool>,
         update_interval: Duration,
         on_thread_start: F,
@@ -44,7 +41,7 @@ impl RouteMonitor {
                 // MUST remain first to run here
                 on_thread_start();
 
-                let mut state = RouteMonitorState::new(tables);
+                let mut state = RouteMonitorState::new(route_table);
 
                 let timeout = Duration::from_millis(10);
                 while !exit.load(Ordering::Relaxed) {
@@ -70,6 +67,7 @@ impl RouteMonitor {
                     debug_assert!(ev & POLLNVAL == 0);
 
                     if (ev & (POLLHUP | POLLERR)) != 0 {
+                        // we get POLLERR if the socket overflows
                         error!(
                             "netlink poll error (revents={}{})",
                             if ev & POLLERR != 0 { "POLLERR " } else { "" },
@@ -89,11 +87,12 @@ impl RouteMonitor {
                                     warn!("netlink recv returned empty message list");
                                     continue;
                                 }
-                                state.dirty |=
-                                    Self::process_netlink_updates(&mut state.tables, &msgs);
+                                state.update(&msgs);
                             }
                             Ok(None) => break,
                             Err(e) => {
+                                // we get here if recv() catches ENOBUFS or if the returned buffer
+                                // exceeds NLMSG_GOODSIZE
                                 error!("netlink recv error: {e}");
                                 state.reset(&atomic_router);
                                 break;
@@ -104,94 +103,65 @@ impl RouteMonitor {
             })
             .unwrap()
     }
-
-    #[inline]
-    fn process_netlink_updates(tables: &mut RoutingTables, msgs: &[NetlinkMessage]) -> bool {
-        let mut dirty = false;
-        for m in msgs {
-            match m.header.nlmsg_type {
-                RTM_NEWROUTE => {
-                    if let Some(r) = parse_rtm_newroute(m) {
-                        dirty |= tables.upsert_route(r);
-                    }
-                }
-                RTM_DELROUTE => {
-                    if let Some(r) = parse_rtm_newroute(m) {
-                        dirty |= tables.remove_route(r);
-                    }
-                }
-                RTM_NEWNEIGH => {
-                    if let Some(n) = parse_rtm_newneigh(m, None) {
-                        if let Some(IpAddr::V4(_)) = n.destination {
-                            dirty |= tables.upsert_neighbor(n);
-                        }
-                    }
-                }
-                RTM_DELNEIGH => {
-                    if let Some(n) = parse_rtm_newneigh(m, None) {
-                        if let Some(IpAddr::V4(ip)) = n.destination {
-                            dirty |= tables.remove_neighbor(ip, n.ifindex as u32);
-                        }
-                    }
-                }
-                RTM_NEWLINK => {
-                    if let Some(interface_info) = parse_rtm_ifinfomsg(m) {
-                        dirty |= tables.upsert_interface(interface_info);
-                    }
-                }
-                RTM_DELLINK => {
-                    if let Some(interface_info) = parse_rtm_ifinfomsg(m) {
-                        dirty |= tables.remove_interface(interface_info.if_index);
-                    }
-                }
-                _ => {}
-            }
-        }
-        dirty
-    }
 }
 
 struct RouteMonitorState {
     sock: NetlinkSocket,
-    tables: RoutingTables,
+    route_table: RouteTable,
     dirty: bool,
     last_publish: Instant,
 }
 
 impl RouteMonitorState {
     /// Creates a new RouteMonitorState with a bounded netlink socket
-    fn new(tables: RoutingTables) -> Self {
+    fn new(route_table: RouteTable) -> Self {
         Self {
-            sock: NetlinkSocket::bind((RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH | RTMGRP_LINK) as u32)
-                .expect("error creating netlink socket"),
-            tables,
+            sock: bind_socket(),
+            route_table,
             dirty: false,
             last_publish: Instant::now(),
         }
     }
 
-    /// Resets the route monitor state by creating a new router and reinitializing
-    /// the netlink socket. Used when errors occur to recover to a clean state
-    fn reset(&mut self, atomic_router: &Arc<ArcSwap<Router>>) {
-        let mut retries = 0;
-        let tables = loop {
-            if retries == 3 {
-                panic!("failed to build routing table after 3 attempts");
-            }
+    #[inline]
+    fn update(&mut self, msgs: &[NetlinkMessage]) {
+        self.dirty |= msgs.iter().any(|message| match message.header.nlmsg_type {
+            RTM_NEWROUTE | RTM_DELROUTE => parse_rtm_newroute(message)
+                .and_then(|route| route.table)
+                .is_some_and(|table| self.route_table == table.into()),
+            RTM_NEWNEIGH | RTM_DELNEIGH => parse_rtm_newneigh(message, None)
+                .is_some_and(|neighbor| matches!(neighbor.destination, Some(IpAddr::V4(_)))),
+            RTM_NEWLINK | RTM_DELLINK => true,
+            _ => false,
+        });
+    }
 
-            match RoutingTables::from_netlink(self.tables.routes.table) {
-                Ok(tables) => break tables,
-                Err(e) if e.kind() == ErrorKind::Interrupted => {
-                    warn!("interrupted while building routing table, retrying");
-                    thread::sleep(Duration::from_secs(1));
-                    retries += 1;
-                }
-                Err(e) => panic!("error creating RoutingTables: {e}"),
+    /// Resets the route monitor state by creating a new router and reinitializing
+    /// the netlink socket.
+    fn reset(&mut self, atomic_router: &Arc<ArcSwap<Router>>) {
+        // the most likely (albeit uncommon) way to get here is a huge burst of incoming
+        // notifications that causes the netlink socket to overflow. When that happens poll/recv
+        // return POLLERR/ENOBUFS, we detect that and recover by reloading the socket and the
+        // entire routing state.
+        self.sock = bind_socket();
+        let router = match rebuild_router(self.route_table) {
+            Ok(router) => router,
+            Err(e) => {
+                // If we fail to rebuild the router (unlikely but possible if route updates keep
+                // coming for more than 3s - see rebuild_router()), we don't reset
+                // self.pending_events so that we attempt to rebuild again on the next publish
+                // interval.
+                //
+                // We don't update self.last_publish as rebuild_router() will sleep between retries
+                // so there's no risk of getting in a tight retry/publish loop.
+                self.dirty = true;
+                warn!("failed to rebuild router from netlink during reset: {e}");
+                return;
             }
         };
-        let router = Router::from_tables(tables.clone()).expect("error creating Router");
         atomic_router.store(Arc::new(router));
-        *self = Self::new(tables);
+        self.dirty = false;
+        self.last_publish = Instant::now();
     }
 
     /// Publishes the updated router if there are new route/neighbor updates
@@ -202,12 +172,42 @@ impl RouteMonitorState {
         update_interval: Duration,
     ) {
         if self.dirty && self.last_publish.elapsed() >= update_interval {
-            match Router::from_tables(self.tables.clone()) {
-                Ok(router) => atomic_router.store(Arc::new(router)),
-                Err(e) => log::warn!("failed to build router before publish: {e:?}"),
+            match rebuild_router(self.route_table) {
+                Ok(router) => {
+                    atomic_router.store(Arc::new(router));
+                    self.dirty = false;
+                }
+                Err(e) => warn!("failed to rebuild router from netlink: {e}"),
             }
             self.last_publish = Instant::now();
-            self.dirty = false;
+        }
+    }
+}
+
+fn bind_socket() -> NetlinkSocket {
+    NetlinkSocket::bind((RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH | RTMGRP_LINK) as u32)
+        // this should never fail unless there's a configuration bug (eg no perms)
+        .expect("failed to bind netlink socket")
+}
+
+fn rebuild_router(route_table: RouteTable) -> Result<Router, Error> {
+    let mut retries = 0u8;
+    loop {
+        if retries == 10 {
+            return Err(Error::new(
+                ErrorKind::Interrupted,
+                "failed to build routing table after 10 attempts",
+            ));
+        }
+
+        match RoutingTables::from_netlink(route_table) {
+            Ok(tables) => return Router::from_tables(tables),
+            Err(e) if e.kind() == ErrorKind::Interrupted => {
+                warn!("interrupted while building routing table, retrying");
+                thread::sleep(Duration::from_secs(1));
+                retries = retries.saturating_add(1);
+            }
+            Err(e) => return Err(e),
         }
     }
 }
