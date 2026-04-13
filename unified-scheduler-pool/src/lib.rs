@@ -104,24 +104,17 @@ type AtomicSchedulerId = AtomicU64;
 
 #[derive(Debug)]
 pub enum SupportedSchedulingMode {
-    Either(SchedulingMode),
+    BlockVerification,
 }
 
 impl SupportedSchedulingMode {
     fn is_supported(&self, requested_mode: SchedulingMode) -> bool {
-        match (self, requested_mode) {
-            (Self::Either(supported), ref requested) => supported == requested,
-        }
+        matches!(requested_mode, SchedulingMode::BlockVerification)
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn with_verification() -> Self {
-        Self::Either(BlockVerification)
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    fn with_production() -> Self {
-        Self::Either(BlockProduction)
+        Self::BlockVerification
     }
 }
 
@@ -515,24 +508,6 @@ where
     ) -> Arc<Self> {
         Self::new(
             SupportedSchedulingMode::with_verification(),
-            block_verification_handler_count,
-            log_messages_bytes_limit,
-            transaction_status_sender,
-            replay_vote_sender,
-            prioritization_fee_cache,
-        )
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn new_for_production(
-        block_verification_handler_count: CountOrDefault,
-        log_messages_bytes_limit: Option<usize>,
-        transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: Option<ReplayVoteSender>,
-        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
-    ) -> Arc<Self> {
-        Self::new(
-            SupportedSchedulingMode::with_production(),
             block_verification_handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
@@ -987,14 +962,6 @@ where
         let ((result, _timings), inner) = scheduler.into_inner();
         assert_matches!(result, Ok(_));
         block_production_scheduler_inner.put_spawned(inner);
-    }
-
-    #[cfg(test)]
-    fn set_next_task_id_for_block_production(&self, next_task_id: usize) {
-        (*self.block_production_scheduler_inner.lock().unwrap())
-            .peek_pooled()
-            .unwrap()
-            .set_next_task_id_for_block_production(next_task_id);
     }
 
     pub fn default_handler_count() -> usize {
@@ -2947,9 +2914,6 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
-        solana_unified_scheduler_logic::{
-            MAX_ALT_INVALIDATION_SLOT, MAX_SANITIZED_EPOCH, NO_CONSUMED_BLOCK_SIZE,
-        },
         std::{
             num::Saturating,
             sync::{Arc, RwLock},
@@ -3011,12 +2975,9 @@ mod tests {
     #[derive(Debug)]
     enum TestCheckPoint {
         BeforeNewTask,
-        AfterNewBufferedTask,
         AfterBufferedTask,
         AfterTaskHandled,
-        AfterTaskAccumulated,
         AfterSessionEnding,
-        AfterSessionFinished,
         AfterSchedulerThreadAborted,
         BeforeIdleSchedulerCleaned,
         AfterIdleSchedulerCleaned,
@@ -3026,9 +2987,6 @@ mod tests {
         AfterTimeoutListenerTriggered,
         BeforeThreadManagerDrop,
         BeforeEndSession,
-        AfterSession,
-        AfterDiscarded,
-        BeforeDiscardRequested,
     }
 
     #[test]
@@ -4031,12 +3989,8 @@ mod tests {
         solana_ledger::genesis_utils::create_genesis_config(lamports)
     }
 
-    #[test_matrix(
-        [BlockVerification, BlockProduction]
-    )]
-    fn test_scheduler_schedule_execution_blocked_at_session_ending(
-        scheduling_mode: SchedulingMode,
-    ) {
+    #[test]
+    fn test_scheduler_schedule_execution_blocked_at_session_ending() {
         agave_logger::setup();
 
         const STALLED_TRANSACTION_INDEX: OrderedTaskId = 0;
@@ -4100,10 +4054,7 @@ mod tests {
 
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-        let supported_scheduling_mode = match scheduling_mode {
-            BlockVerification => SupportedSchedulingMode::with_verification(),
-            BlockProduction => SupportedSchedulingMode::with_production(),
-        };
+        let supported_scheduling_mode = SupportedSchedulingMode::with_verification();
         let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
             supported_scheduling_mode,
             None,
@@ -4112,33 +4063,16 @@ mod tests {
             None,
             None,
         );
-        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        if matches!(scheduling_mode, BlockProduction) {
-            pool.register_banking_stage(
-                None,
-                banking_packet_receiver,
-                Box::new(|_, _| unreachable!()),
-                transaction_recorder,
-                Box::new(DummyBankingMinitor),
-            );
-        }
 
         // This variable tracks the cumulative count of transactions since genesis, which is
         // incremented as test is progressed.
         let mut expected_transaction_count = Saturating(0);
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
-        let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
+        let context =
+            SchedulingContext::new_with_mode(SchedulingMode::BlockVerification, bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
         let old_scheduler_id = scheduler.id();
-        if matches!(scheduling_mode, BlockProduction) {
-            scheduler.unpause_after_taken();
-        }
 
         scheduler
             .schedule_execution(tx0, STALLED_TRANSACTION_INDEX)
@@ -4154,11 +4088,9 @@ mod tests {
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
 
         expected_transaction_count += 1;
-        if matches!(scheduling_mode, BlockVerification) {
-            // Block verification scheduler should fully clear its blocked transactions before
-            // finishing.
-            expected_transaction_count += 1;
-        }
+        // Block verification scheduler should fully clear its blocked transactions before
+        // finishing.
+        expected_transaction_count += 1;
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
         // Create new bank to observe behavior difference around session ending
@@ -4169,130 +4101,17 @@ mod tests {
         ));
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
-        // Update the slot so recording can succeed on new bank's slot.
-        record_receiver.shutdown();
-        for _ in record_receiver.drain() {}
-        record_receiver.restart(bank.bank_id());
-
-        let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
+        let context =
+            SchedulingContext::new_with_mode(SchedulingMode::BlockVerification, bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
         // make sure the same scheduler is used to test its internal cross-session behavior
         // regardless scheduling_mode.
         assert_eq!(scheduler.id(), old_scheduler_id);
-        if matches!(scheduling_mode, BlockProduction) {
-            scheduler.unpause_after_taken();
-        }
 
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
 
-        if matches!(scheduling_mode, BlockProduction) {
-            // Block production scheduler should carry over transactions from previous bank
-            expected_transaction_count += 1;
-        }
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
-    }
-
-    #[test]
-    fn test_block_production_scheduler_schedule_execution_retry() {
-        agave_logger::setup();
-
-        const ORIGINAL_TRANSACTION_INDEX: OrderedTaskId = 999;
-        // This is 0 because it's the first task id assigned internally by BankingStageHelper
-        const RETRIED_TRANSACTION_INDEX: OrderedTaskId = 0;
-        const FULL_BLOCK_SLOT: Slot = 1;
-
-        let _progress = sleepless_testing::setup(&[
-            &CheckPoint::TaskAccumulated(
-                ORIGINAL_TRANSACTION_INDEX,
-                &Err(TransactionError::WouldExceedMaxBlockCostLimit),
-            ),
-            &CheckPoint::SessionFinished(Some(FULL_BLOCK_SLOT)),
-            &TestCheckPoint::AfterSessionFinished,
-            &TestCheckPoint::AfterSession,
-            &CheckPoint::TaskAccumulated(RETRIED_TRANSACTION_INDEX, &Ok(())),
-            &TestCheckPoint::AfterTaskAccumulated,
-        ]);
-
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_for_block_production(10_000);
-
-        let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        ));
-        let bank = Bank::new_for_tests(&genesis_config);
-
-        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-        let pool = DefaultSchedulerPool::new_for_production(None, None, None, None, None);
-
-        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-
-        pool.register_banking_stage(
-            None,
-            banking_packet_receiver,
-            Box::new(|_, _| unreachable!()),
-            transaction_recorder,
-            Box::new(DummyBankingMinitor),
-        );
-
-        let bank = Arc::new(Bank::new_from_parent(
-            bank.clone(),
-            SlotLeader::default(),
-            bank.slot().checked_add(1).unwrap(),
-        ));
-        // Immediately trigger WouldExceedMaxBlockCostLimit by setting all cost limits to 0
-        bank.write_cost_tracker().unwrap().set_limits(0, 0, 0, 0);
-
-        let context = SchedulingContext::for_production(bank.clone());
-        let scheduler = pool.take_scheduler(context).unwrap();
-        let old_scheduler_id = scheduler.id();
-        let bank = BankWithScheduler::new(bank, Some(scheduler));
-        record_receiver.restart(bank.bank_id());
-        bank.schedule_transaction_executions([(tx, ORIGINAL_TRANSACTION_INDEX)].into_iter())
-            .unwrap();
-        bank.unpause_new_block_production_scheduler();
-
-        // Calling wait_for_completed_scheduler() for block production scheduler causes it to be
-        // interrupted immediately; so need to wait for failed landing of the original task.
-        sleepless_testing::at(&TestCheckPoint::AfterSessionFinished);
-        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
-        sleepless_testing::at(&TestCheckPoint::AfterSession);
-        // There should be no executed transaction yet.
-        assert_eq!(bank.transaction_count(), 0);
-
-        // Shutdown channel to observe behavior difference around session ending
-        record_receiver.shutdown();
-        let bank = Arc::new(Bank::new_from_parent(
-            bank.clone_without_scheduler(),
-            SlotLeader::default(),
-            bank.slot().checked_add(1).unwrap(),
-        ));
-        // Revert the block cost limit
-        bank.write_cost_tracker().unwrap().set_limits_max();
-
-        let context = SchedulingContext::for_production(bank.clone());
-        let scheduler = pool.take_scheduler(context).unwrap();
-        // Make sure the same scheduler is used to test its internal cross-session behavior
-        assert_eq!(scheduler.id(), old_scheduler_id);
-        let bank = BankWithScheduler::new(bank, Some(scheduler));
-        record_receiver.restart(bank.bank_id());
-        bank.unpause_new_block_production_scheduler();
-
-        // Calling wait_for_completed_scheduler() for block production scheduler causes it to be
-        // interrupted immediately; so need to wait for successful landing of the retried task.
-        sleepless_testing::at(&TestCheckPoint::AfterTaskAccumulated);
-        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
-        // Block production scheduler should carry over the temporarily-failed transaction itself
-        // and the transaction should now have been executed.
-        assert_eq!(bank.transaction_count(), 1);
     }
 
     #[test]
@@ -4785,589 +4604,5 @@ mod tests {
             assert_matches!(receiver.try_recv(), Err(_));
             assert!(record_receiver.try_recv().is_err());
         }
-    }
-
-    #[derive(Debug)]
-    struct DummyBankingMinitor;
-
-    impl BankingStageMonitor for DummyBankingMinitor {
-        fn status(&mut self) -> BankingStageStatus {
-            BankingStageStatus::Active
-        }
-    }
-
-    #[test]
-    fn test_block_production_scheduler_schedule_execution_success() {
-        agave_logger::setup();
-
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_for_block_production(10_000);
-
-        let bank = Bank::new_for_tests(&genesis_config);
-        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-
-        let pool = DefaultSchedulerPool::new_for_production(None, None, None, None, None);
-
-        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        pool.register_banking_stage(
-            None,
-            banking_packet_receiver,
-            // we don't use the banking packet channel in this test. so, pass panicking handler.
-            Box::new(|_, _| unreachable!()),
-            transaction_recorder,
-            Box::new(DummyBankingMinitor),
-        );
-
-        assert_eq!(bank.transaction_count(), 0);
-        let context = SchedulingContext::for_production(bank.clone());
-        let scheduler = pool.take_scheduler(context).unwrap();
-        scheduler.unpause_after_taken();
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        ));
-        scheduler.schedule_execution(tx0, 0).unwrap();
-        let bank = BankWithScheduler::new(bank, Some(scheduler));
-        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
-        assert_eq!(bank.transaction_count(), 1);
-    }
-
-    impl BankingStageHelper {
-        fn create_new_unconstrained_task(
-            &self,
-            transaction: RuntimeTransaction<SanitizedTransaction>,
-            task_id: OrderedTaskId,
-        ) -> Task {
-            self.create_new_task(
-                transaction,
-                task_id,
-                NO_CONSUMED_BLOCK_SIZE,
-                MAX_SANITIZED_EPOCH,
-                MAX_ALT_INVALIDATION_SLOT,
-            )
-        }
-    }
-
-    #[test]
-    fn test_block_production_scheduler_buffering_on_spawn() {
-        agave_logger::setup();
-
-        let _progress = sleepless_testing::setup(&[
-            &CheckPoint::NewBufferedOrDroppedTask(17),
-            &TestCheckPoint::AfterNewBufferedTask,
-        ]);
-
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_for_block_production(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-
-        let pool = DefaultSchedulerPool::new_for_production(None, None, None, None, None);
-
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        // send fake packet batch to trigger banking_packet_handler
-        let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        banking_packet_sender
-            .send(BankingPacketBatch::default())
-            .unwrap();
-        assert_eq!(banking_packet_sender.len(), 1);
-
-        // Create a dummy handler which unconditionally sends tx0 back to the scheduler thread
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        ));
-        let fixed_banking_packet_handler =
-            Box::new(move |helper: &BankingStageHelper, _banking_packet| {
-                helper.send_new_task(helper.create_new_unconstrained_task(tx0.clone(), 17))
-            });
-        pool.register_banking_stage(
-            None,
-            banking_packet_receiver,
-            fixed_banking_packet_handler,
-            transaction_recorder,
-            Box::new(DummyBankingMinitor),
-        );
-
-        // Confirm the banking packet channel is cleared, even before taking scheduler
-        sleepless_testing::at(TestCheckPoint::AfterNewBufferedTask);
-        assert_eq!(banking_packet_sender.len(), 0);
-
-        assert_eq!(bank.transaction_count(), 0);
-        let context = SchedulingContext::for_production(bank.clone());
-        let scheduler = pool.take_scheduler(context).unwrap();
-        scheduler.unpause_after_taken();
-        let bank = BankWithScheduler::new(bank, Some(scheduler));
-        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
-        assert_eq!(bank.transaction_count(), 1);
-    }
-
-    #[test]
-    fn test_block_production_scheduler_buffering_before_new_session() {
-        agave_logger::setup();
-
-        let _progress = sleepless_testing::setup(&[
-            &CheckPoint::NewBufferedOrDroppedTask(18),
-            &TestCheckPoint::AfterNewBufferedTask,
-        ]);
-
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_for_block_production(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-
-        let pool = DefaultSchedulerPool::new_for_production(None, None, None, None, None);
-
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        // Create a dummy handler which unconditionally sends tx0 back to the scheduler thread
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        ));
-        let fixed_banking_packet_handler =
-            Box::new(move |helper: &BankingStageHelper, _banking_packet| {
-                helper.send_new_task(helper.create_new_unconstrained_task(tx0.clone(), 18))
-            });
-
-        let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        pool.register_banking_stage(
-            None,
-            banking_packet_receiver,
-            fixed_banking_packet_handler,
-            transaction_recorder,
-            Box::new(DummyBankingMinitor),
-        );
-
-        // Quickly take and return the scheduler so that this test can test the behavior while
-        // waiting for new session...
-        let context = SchedulingContext::for_production(bank.clone());
-        let scheduler = pool.take_scheduler(context.clone()).unwrap();
-        scheduler.unpause_after_taken();
-        let bank_tmp = BankWithScheduler::new(bank.clone(), Some(scheduler));
-        assert_matches!(bank_tmp.wait_for_completed_scheduler(), Some((Ok(()), _)));
-
-        // Send fake packet batch to trigger banking_packet_handler
-        assert_eq!(banking_packet_sender.len(), 0);
-        banking_packet_sender
-            .send(BankingPacketBatch::default())
-            .unwrap();
-
-        // Confirm the banking packet channel is cleared, even before taking scheduler
-        sleepless_testing::at(TestCheckPoint::AfterNewBufferedTask);
-        assert_eq!(banking_packet_sender.len(), 0);
-
-        assert_eq!(bank.transaction_count(), 0);
-        let scheduler = pool.take_scheduler(context).unwrap();
-        scheduler.unpause_after_taken();
-        let bank = BankWithScheduler::new(bank, Some(scheduler));
-        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
-        assert_eq!(bank.transaction_count(), 1);
-    }
-
-    #[test]
-    #[should_panic(expected = "register_banking_stage() isn't called yet")]
-    fn test_block_production_scheduler_take_without_registering() {
-        agave_logger::setup();
-
-        let pool = DefaultSchedulerPool::new_for_production(None, None, None, None, None);
-        let bank = Arc::new(Bank::default_for_tests());
-        let context = &SchedulingContext::for_production(bank);
-        let scheduler = pool.do_take_scheduler(context.clone());
-        Box::new(scheduler.into_inner().1).return_to_pool();
-    }
-
-    #[test]
-    #[should_panic(expected = "cannot take: Taken(0)")]
-    fn test_block_production_scheduler_double_take_without_returning() {
-        agave_logger::setup();
-
-        let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_for_block_production(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-
-        let pool = DefaultSchedulerPool::new_for_production(None, None, None, None, None);
-
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        pool.register_banking_stage(
-            None,
-            banking_packet_receiver,
-            Box::new(|_, _| unreachable!()),
-            transaction_recorder,
-            Box::new(DummyBankingMinitor),
-        );
-
-        let context = SchedulingContext::for_production(bank.clone());
-        let scheduler1 = pool.do_take_scheduler(context.clone());
-        let scheduler2 = pool.do_take_scheduler(context);
-
-        Box::new(scheduler1.into_inner().1).return_to_pool();
-        Box::new(scheduler2.into_inner().1).return_to_pool();
-    }
-
-    #[test]
-    fn test_block_production_scheduler_drop_overgrown_on_returning() {
-        agave_logger::setup();
-
-        let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_for_block_production(10_000);
-
-        let _progress = sleepless_testing::setup(&[
-            &CheckPoint::ReturningSchedulerTrashed,
-            &CheckPoint::TrashedSchedulerCleaned(1),
-            &TestCheckPoint::AfterTrashedSchedulerCleaned,
-        ]);
-
-        let bank = Bank::new_for_tests(&genesis_config);
-        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-
-        const REDUCED_MAX_USAGE_QUEUE_COUNT: usize = 0;
-        let pool = DefaultSchedulerPool::do_new(
-            SupportedSchedulingMode::with_production(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            SHORTENED_POOL_CLEANER_INTERVAL,
-            DEFAULT_MAX_POOLING_DURATION,
-            REDUCED_MAX_USAGE_QUEUE_COUNT,
-            DEFAULT_TIMEOUT_DURATION,
-        );
-
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        pool.register_banking_stage(
-            None,
-            banking_packet_receiver,
-            Box::new(|_, _| unreachable!()),
-            transaction_recorder,
-            Box::new(DummyBankingMinitor),
-        );
-
-        let context = SchedulingContext::for_production(bank);
-        let scheduler = pool.do_take_scheduler(context.clone());
-        scheduler.unpause_after_taken();
-        let trashed_old_scheduler_id = scheduler.id();
-
-        // Make scheduler overgrown and trash it by returning
-        scheduler
-            .inner
-            .usage_queue_loader
-            .load(Pubkey::new_unique());
-        Box::new(scheduler.into_inner().1).return_to_pool();
-
-        // Re-take a brand-new one
-        let scheduler = pool.do_take_scheduler(context);
-        scheduler.unpause_after_taken();
-        let respawned_new_scheduler_id = scheduler.id();
-        Box::new(scheduler.into_inner().1).return_to_pool();
-
-        // id should be different
-        assert_ne!(trashed_old_scheduler_id, respawned_new_scheduler_id);
-
-        // Ensure the actual async trashing by solScCleaner
-        sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);
-    }
-
-    #[test]
-    fn test_block_production_scheduler_drop_overgrown_on_idling() {
-        #[derive(Debug)]
-        struct InactiveBankingMinitor;
-
-        impl BankingStageMonitor for InactiveBankingMinitor {
-            fn status(&mut self) -> BankingStageStatus {
-                BankingStageStatus::Inactive
-            }
-        }
-
-        agave_logger::setup();
-
-        let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_for_block_production(10_000);
-
-        let _progress = sleepless_testing::setup(&[
-            &CheckPoint::IdlingSchedulerTrashed,
-            &CheckPoint::TrashedSchedulerCleaned(1),
-            &TestCheckPoint::AfterTrashedSchedulerCleaned,
-        ]);
-
-        let bank = Bank::new_for_tests(&genesis_config);
-        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-
-        let pool = DefaultSchedulerPool::do_new(
-            SupportedSchedulingMode::with_production(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            SHORTENED_POOL_CLEANER_INTERVAL,
-            DEFAULT_MAX_POOLING_DURATION,
-            DEFAULT_MAX_USAGE_QUEUE_COUNT,
-            DEFAULT_TIMEOUT_DURATION,
-        );
-
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        pool.register_banking_stage(
-            None,
-            banking_packet_receiver,
-            Box::new(|_, _| unreachable!()),
-            transaction_recorder,
-            Box::new(InactiveBankingMinitor),
-        );
-
-        // Quickly take and return scheduler just to remember id
-        let context = SchedulingContext::for_production(bank);
-        let scheduler = pool.do_take_scheduler(context.clone());
-        let trashed_old_scheduler_id = scheduler.id();
-        scheduler.unpause_after_taken();
-        Box::new(scheduler.into_inner().1).return_to_pool();
-
-        pool.set_next_task_id_for_block_production(BANKING_STAGE_MAX_TASK_ID + 1);
-
-        // Re-take a brand-new one only after solScCleaner did its job...
-        sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);
-        let scheduler = pool.do_take_scheduler(context);
-        scheduler.unpause_after_taken();
-        let respawned_new_scheduler_id = scheduler.id();
-        Box::new(scheduler.into_inner().1).return_to_pool();
-
-        // id should be different
-        assert_ne!(trashed_old_scheduler_id, respawned_new_scheduler_id);
-    }
-
-    #[test]
-    fn test_block_production_scheduler_discard_on_reset() {
-        #[derive(Debug)]
-        struct SimpleBankingMinitor;
-        static START_DISCARD: Mutex<bool> = Mutex::new(false);
-
-        impl BankingStageMonitor for SimpleBankingMinitor {
-            fn status(&mut self) -> BankingStageStatus {
-                if *START_DISCARD.lock().unwrap() {
-                    BankingStageStatus::Inactive
-                } else {
-                    BankingStageStatus::Active
-                }
-            }
-        }
-
-        agave_logger::setup();
-
-        let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_for_block_production(10_000);
-
-        const DISCARDED_TASK_COUNT: OrderedTaskId = 3;
-        let _progress = sleepless_testing::setup(&[
-            &CheckPoint::NewBufferedOrDroppedTask(DISCARDED_TASK_COUNT - 1),
-            &TestCheckPoint::BeforeDiscardRequested,
-            &CheckPoint::DiscardRequested,
-            &CheckPoint::Discarded(DISCARDED_TASK_COUNT.try_into().unwrap()),
-            &TestCheckPoint::AfterDiscarded,
-        ]);
-
-        let bank = Bank::new_for_tests(&genesis_config);
-        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-
-        let pool = DefaultSchedulerPool::do_new(
-            SupportedSchedulingMode::with_production(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            SHORTENED_POOL_CLEANER_INTERVAL,
-            DEFAULT_MAX_POOLING_DURATION,
-            DEFAULT_MAX_USAGE_QUEUE_COUNT,
-            DEFAULT_TIMEOUT_DURATION,
-        );
-
-        let fixed_banking_packet_handler =
-            Box::new(move |helper: &BankingStageHelper, _banking_packet| {
-                for task_id in 0..DISCARDED_TASK_COUNT {
-                    let tx = RuntimeTransaction::from_transaction_for_tests(
-                        system_transaction::transfer(
-                            &Keypair::new(),
-                            &solana_pubkey::new_rand(),
-                            2,
-                            genesis_config.hash(),
-                        ),
-                    );
-                    helper.send_new_task(helper.create_new_unconstrained_task(tx, task_id))
-                }
-            });
-
-        let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        banking_packet_sender
-            .send(BankingPacketBatch::default())
-            .unwrap();
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        pool.register_banking_stage(
-            None,
-            banking_packet_receiver,
-            fixed_banking_packet_handler,
-            transaction_recorder,
-            Box::new(SimpleBankingMinitor),
-        );
-
-        sleepless_testing::at(TestCheckPoint::BeforeDiscardRequested);
-        // By now, there should be a buffered transaction. Let's discard it.
-        *START_DISCARD.lock().unwrap() = true;
-
-        sleepless_testing::at(TestCheckPoint::AfterDiscarded);
-    }
-
-    #[derive(Debug)]
-    struct DummyDisabledBankingMinitor(bool);
-
-    impl BankingStageMonitor for DummyDisabledBankingMinitor {
-        fn status(&mut self) -> BankingStageStatus {
-            if self.0 {
-                BankingStageStatus::Active
-            } else {
-                BankingStageStatus::Disabled
-            }
-        }
-
-        fn toggle_banking_packet_receiver(&mut self, enable: bool) {
-            self.0 = enable;
-        }
-    }
-
-    #[test]
-    fn test_block_production_scheduler_disable_while_taken() {
-        agave_logger::setup();
-
-        let _progress = sleepless_testing::setup(&[
-            &CheckPoint::TrashedSchedulerCleaned(1),
-            &TestCheckPoint::AfterTrashedSchedulerCleaned,
-        ]);
-
-        let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_for_block_production(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-
-        let pool = DefaultSchedulerPool::do_new(
-            SupportedSchedulingMode::with_production(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            SHORTENED_POOL_CLEANER_INTERVAL,
-            DEFAULT_MAX_POOLING_DURATION,
-            DEFAULT_MAX_USAGE_QUEUE_COUNT,
-            DEFAULT_TIMEOUT_DURATION,
-        );
-
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let monitor = Box::new(DummyDisabledBankingMinitor(false));
-        pool.register_banking_stage(
-            None,
-            banking_packet_receiver,
-            Box::new(|_, _| unreachable!()),
-            transaction_recorder,
-            monitor,
-        );
-
-        let context = SchedulingContext::for_production(bank.clone());
-        let scheduler = pool.do_take_scheduler(context.clone());
-        scheduler.unpause_after_taken();
-
-        assert!(pool.toggle_block_production_mode(false));
-
-        Box::new(scheduler.into_inner().1).return_to_pool();
-        sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);
-    }
-
-    #[test]
-    fn test_block_production_scheduler_disable_while_pooled() {
-        agave_logger::setup();
-
-        let _progress = sleepless_testing::setup(&[
-            &CheckPoint::TrashedSchedulerCleaned(1),
-            &TestCheckPoint::AfterTrashedSchedulerCleaned,
-        ]);
-
-        let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_for_block_production(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-
-        let pool = DefaultSchedulerPool::do_new(
-            SupportedSchedulingMode::with_production(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            SHORTENED_POOL_CLEANER_INTERVAL,
-            DEFAULT_MAX_POOLING_DURATION,
-            DEFAULT_MAX_USAGE_QUEUE_COUNT,
-            DEFAULT_TIMEOUT_DURATION,
-        );
-
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let monitor = Box::new(DummyDisabledBankingMinitor(false));
-        pool.register_banking_stage(
-            None,
-            banking_packet_receiver,
-            Box::new(|_, _| unreachable!()),
-            transaction_recorder,
-            monitor,
-        );
-
-        assert!(pool.toggle_block_production_mode(false));
-
-        sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);
     }
 }

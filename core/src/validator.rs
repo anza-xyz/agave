@@ -140,7 +140,6 @@ use {
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
     solana_turbine::{self, XdpSender, broadcast_stage::BroadcastStageType},
-    solana_unified_scheduler_logic::SchedulingMode,
     solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::VoteStateV4,
@@ -291,7 +290,7 @@ pub fn supported_scheduling_mode(
 ) -> SupportedSchedulingMode {
     match (verification, production) {
         (BlockVerificationMethod::UnifiedScheduler, _) => {
-            SupportedSchedulingMode::Either(SchedulingMode::BlockVerification)
+            SupportedSchedulingMode::BlockVerification
         }
     }
 }
