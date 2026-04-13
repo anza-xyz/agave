@@ -2978,9 +2978,12 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "histogram"
-version = "0.6.9"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12cb882ccb290b8646e554b157ab0b71e64e8d5bef775cd66b6531e52d302669"
+checksum = "12e53e81ca5f30edbe74ce380afa4c3572954aa615fd5b83b787b21f012743b8"
+dependencies = [
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "hmac"
