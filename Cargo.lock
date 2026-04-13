@@ -10092,7 +10092,6 @@ dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-transaction-view",
- "bincode",
  "criterion",
  "rand 0.9.4",
  "solana-compute-budget-instruction",
@@ -10113,6 +10112,7 @@ dependencies = [
  "solana-transaction-context",
  "solana-transaction-error",
  "solana-vote-interface",
+ "wincode",
 ]
 
 [[package]]

@@ -153,7 +153,7 @@ impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
     }
 
     fn serialized_size(&self) -> usize {
-        bincode::serialized_size(&self.to_versioned_transaction())
+        wincode::serialized_size(&self.to_versioned_transaction())
             .expect("versioned transaction serialization should succeed") as usize
     }
 }
@@ -391,8 +391,14 @@ mod tests {
         )
         .unwrap();
 
-        let expected = bincode::serialized_size(&transaction.to_versioned_transaction()).unwrap();
+        let expected = wincode::serialized_size(&transaction.to_versioned_transaction()).unwrap();
         assert_eq!(transaction.serialized_size(), expected as usize);
+        assert_eq!(
+            expected,
+            wincode::serialize(&transaction.to_versioned_transaction())
+                .unwrap()
+                .len() as u64
+        );
     }
 
     #[test]

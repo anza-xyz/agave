@@ -260,7 +260,7 @@ mod tests {
                 1,
                 Hash::new_unique(),
             ));
-            bincode::serialize(&transaction).unwrap()
+            wincode::serialize(&transaction).unwrap()
         };
 
         let hash = Hash::new_unique();
@@ -296,7 +296,7 @@ mod tests {
             loaded_addresses: Option<LoadedAddresses>,
             reserved_account_keys: &HashSet<Pubkey>,
         ) {
-            let bytes = bincode::serialize(&original_transaction).unwrap();
+            let bytes = wincode::serialize(&original_transaction).unwrap();
             let transaction_view =
                 SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
@@ -363,7 +363,7 @@ mod tests {
             reserved_account_keys: &HashSet<Pubkey>,
         ) {
             let bytes =
-                bincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
+                wincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
             let transaction_view =
                 SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
@@ -445,7 +445,7 @@ mod tests {
     #[test]
     fn test_serialized_size() {
         let serialized_transaction =
-            bincode::serialize(&VersionedTransaction::from(system_transaction::transfer(
+            wincode::serialize(&VersionedTransaction::from(system_transaction::transfer(
                 &Keypair::new(),
                 &Pubkey::new_unique(),
                 1,

@@ -8320,7 +8320,6 @@ version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-transaction-view",
- "bincode",
  "solana-compute-budget-instruction",
  "solana-hash 4.3.0",
  "solana-message",
@@ -8331,6 +8330,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
+ "wincode",
 ]
 
 [[package]]
