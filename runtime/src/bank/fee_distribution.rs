@@ -40,13 +40,14 @@ impl FeeDistribution {
 }
 
 impl Bank {
-    // Distribute collected transaction fees for this slot to leader.id (= current leader).
+    // Distribute collected transaction fees for this slot to the block revenue collector
+    // id for the current leader.
     //
     // Each validator is incentivized to process more transactions to earn more transaction fees.
     // Transaction fees are rewarded for the computing resource utilization cost, directly
     // proportional to their actual processing power.
     //
-    // leader.id is rotated according to stake-weighted leader schedule. So the opportunity of
+    // The leader is rotated according to stake-weighted leader schedule. So the opportunity of
     // earning transaction fees are fairly distributed by stake. And missing the opportunity
     // (not producing a block as a leader) earns nothing. So, being online is incentivized as a
     // form of transaction fees as well.
@@ -121,7 +122,8 @@ impl Bank {
         // `Bank::current_epoch_stakes()`.
         let feature_snapshot = self.feature_set.snapshot();
         let collector_id = if feature_snapshot.custom_commission_collector {
-            self.epoch_stakes
+            let vote_account = self
+                .epoch_stakes
                 .get(&self.epoch)
                 .and_then(|stakes| {
                     stakes
@@ -129,8 +131,14 @@ impl Bank {
                         .vote_accounts()
                         .get(&self.leader.vote_address)
                 })
-                .and_then(|vote_account| vote_account.vote_state_view().block_revenue_collector())
-                .expect("The vote state for the leader must exist with a block collector id")
+                .expect("The vote account for the leader must exist");
+            // Protection in case the leader is on a vote state without a
+            // collector id, which can happen if a dormant pre-v4 vote state
+            // accrues stake.
+            vote_account
+                .vote_state_view()
+                .block_revenue_collector()
+                .unwrap_or(&self.leader.id)
         } else {
             &self.leader.id
         };
@@ -151,7 +159,7 @@ impl Bank {
             Err(err) => {
                 debug!(
                     "Burned {} lamport tx fee instead of sending to {} due to {}",
-                    deposit, self.leader.id, err
+                    deposit, collector_id, err
                 );
                 datapoint_warn!(
                     "bank-burned_fee",
