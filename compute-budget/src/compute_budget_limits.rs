@@ -8,6 +8,7 @@ use {
     solana_program_runtime::execution_budget::{
         SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
     },
+    std::num::NonZeroU32,
 };
 
 type MicroLamports = u128;
@@ -20,7 +21,7 @@ pub struct ComputeBudgetLimits {
     pub updated_heap_bytes: u32,
     pub compute_unit_limit: u32,
     pub compute_unit_price: u64,
-    pub loaded_accounts_bytes: u32,
+    pub loaded_accounts_bytes: NonZeroU32,
 }
 
 impl Default for ComputeBudgetLimits {
@@ -37,7 +38,7 @@ impl Default for ComputeBudgetLimits {
 impl ComputeBudgetLimits {
     pub fn get_compute_budget_and_limits(
         &self,
-        loaded_accounts_data_size_limit: u32,
+        loaded_accounts_data_size_limit: NonZeroU32,
         fee_details: FeeDetails,
         simd_0268_active: bool,
     ) -> SVMTransactionExecutionAndFeeBudgetLimits {
@@ -47,7 +48,7 @@ impl ComputeBudgetLimits {
                 heap_size: self.updated_heap_bytes,
                 ..SVMTransactionExecutionBudget::new_with_defaults(simd_0268_active)
             },
-            loaded_accounts_data_size_limit,
+            loaded_accounts_data_size_limit: loaded_accounts_data_size_limit.get(),
             fee_details,
         }
     }

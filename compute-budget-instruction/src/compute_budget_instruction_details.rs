@@ -12,7 +12,7 @@ use {
     solana_pubkey::Pubkey,
     solana_svm_transaction::instruction::SVMInstruction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    std::num::Saturating,
+    std::num::{NonZeroU32, Saturating},
 };
 
 #[cfg_attr(test, derive(Eq, PartialEq))]
@@ -137,10 +137,8 @@ impl ComputeBudgetInstructionDetails {
             if let Some((_index, requested_loaded_accounts_data_size_limit)) =
                 self.requested_loaded_accounts_data_size_limit
             {
-                if requested_loaded_accounts_data_size_limit < 1 {
-                    return Err(TransactionError::InvalidLoadedAccountsDataSizeLimit);
-                }
-                requested_loaded_accounts_data_size_limit
+                NonZeroU32::new(requested_loaded_accounts_data_size_limit)
+                    .ok_or(TransactionError::InvalidLoadedAccountsDataSizeLimit)?
             } else {
                 MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES
             }
@@ -527,7 +525,7 @@ mod test {
                 updated_heap_bytes: val,
                 compute_unit_limit: val,
                 compute_unit_price: val as u64,
-                loaded_accounts_bytes: val,
+                loaded_accounts_bytes: NonZeroU32::new(val).unwrap(),
             })
         );
     }

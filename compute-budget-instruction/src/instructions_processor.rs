@@ -33,6 +33,7 @@ mod tests {
         solana_system_interface::instruction::transfer,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_error::TransactionError,
+        std::num::NonZeroU32,
     };
 
     macro_rules! test {
@@ -322,7 +323,7 @@ mod tests {
         let expected_result = Ok(ComputeBudgetLimits {
             compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
                 + MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
-            loaded_accounts_bytes: data_size,
+            loaded_accounts_bytes: NonZeroU32::new(data_size).unwrap(),
             ..ComputeBudgetLimits::default()
         });
         test!(
@@ -345,7 +346,7 @@ mod tests {
 
         // Assert when set_loaded_accounts_data_size_limit presents, with greater than max value
         // budget is set to max data size
-        let data_size = MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES + 1;
+        let data_size = MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get() + 1;
         let expected_result = Ok(ComputeBudgetLimits {
             compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
                 + MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
@@ -389,7 +390,7 @@ mod tests {
 
         // Assert when set_loaded_accounts_data_size_limit presents more than once,
         // return DuplicateInstruction
-        let data_size = MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES;
+        let data_size = MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get();
         let expected_result = Err(TransactionError::DuplicateInstruction(2));
 
         test!(

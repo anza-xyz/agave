@@ -1,6 +1,6 @@
 use {
     solana_fee_structure::FeeDetails, solana_program_entrypoint::HEAP_LENGTH,
-    solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH,
+    solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH, std::num::NonZeroU32,
 };
 
 /// Max instruction stack depth. This is the maximum nesting of instructions that can happen during
@@ -40,7 +40,8 @@ pub const MIN_HEAP_FRAME_BYTES: u32 = HEAP_LENGTH as u32;
 
 /// The total accounts data a transaction can load is limited to 64MiB to not break
 /// anyone in Mainnet-beta today. It can be set by set_loaded_accounts_data_size_limit instruction
-pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
+pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: NonZeroU32 =
+    NonZeroU32::new(64 * 1024 * 1024).unwrap();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SVMTransactionExecutionBudget {
@@ -305,7 +306,7 @@ impl Default for SVMTransactionExecutionAndFeeBudgetLimits {
     fn default() -> Self {
         Self {
             budget: SVMTransactionExecutionBudget::default(),
-            loaded_accounts_data_size_limit: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            loaded_accounts_data_size_limit: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
             fee_details: FeeDetails::default(),
         }
     }

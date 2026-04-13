@@ -115,7 +115,7 @@ impl Default for ValidatedTransactionDetails {
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_bytes_limit:
-                solana_program_runtime::execution_budget::MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+                solana_program_runtime::execution_budget::MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
             fee_details: FeeDetails::default(),
             loaded_fee_payer_account: LoadedTransactionAccount::default(),
         }
@@ -1329,7 +1329,11 @@ mod tests {
                 loaded_size: fee_payer_account.data().len(),
                 account: fee_payer_account.clone(),
             },
+<<<<<<< HEAD
             &mut loaded_transaction_data_size,
+=======
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+>>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1384,7 +1388,11 @@ mod tests {
                 account: fee_payer_account.clone(),
                 loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
+<<<<<<< HEAD
             &mut loaded_transaction_data_size,
+=======
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+>>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1434,7 +1442,11 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
+<<<<<<< HEAD
             &mut loaded_transaction_data_size,
+=======
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+>>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1481,7 +1493,11 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
+<<<<<<< HEAD
             &mut loaded_transaction_data_size,
+=======
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+>>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1543,7 +1559,11 @@ mod tests {
                 account: fee_payer_account.clone(),
                 loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
+<<<<<<< HEAD
             &mut loaded_transaction_data_size,
+=======
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+>>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1611,7 +1631,11 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
+<<<<<<< HEAD
             &mut loaded_transaction_data_size,
+=======
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+>>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1671,7 +1695,11 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
+<<<<<<< HEAD
             &mut loaded_transaction_data_size,
+=======
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+>>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1741,7 +1769,11 @@ mod tests {
                 account: fee_payer_account.clone(),
                 loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
+<<<<<<< HEAD
             &mut loaded_transaction_data_size,
+=======
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+>>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1831,7 +1863,11 @@ mod tests {
                 account: fee_payer_account.clone(),
                 loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
+<<<<<<< HEAD
             &mut loaded_transaction_data_size,
+=======
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+>>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -2463,7 +2499,7 @@ mod tests {
                 }
             }
 
-            assert!(expected_size <= MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES as usize);
+            assert!(expected_size <= MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get() as usize);
 
             let mut loaded_transaction_data_size =
                 LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
@@ -2475,7 +2511,11 @@ mod tests {
                     loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE + fee_payer_account.data().len(),
                     account: fee_payer_account,
                 },
+<<<<<<< HEAD
                 &mut loaded_transaction_data_size,
+=======
+                MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+>>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
                 &mut TransactionErrorMetrics::default(),
                 &Rent::default(),
             )
