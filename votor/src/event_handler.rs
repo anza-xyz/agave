@@ -956,7 +956,6 @@ mod tests {
             wait_to_vote_slot: None,
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(my_vote_keypair)])),
             derived_bls_keypairs: HashMap::new(),
-            has_new_vote_been_rooted: false,
             own_vote_sender,
             consensus_metrics_sender,
         };

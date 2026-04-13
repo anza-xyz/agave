@@ -453,7 +453,6 @@ impl Tvu {
             exit: exit.clone(),
             vote_account: *vote_account,
             wait_to_vote_slot,
-            wait_for_vote_to_start_leader: tvu_config.wait_for_vote_to_start_leader,
             vote_history,
             vote_history_storage: vote_history_storage.clone(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
