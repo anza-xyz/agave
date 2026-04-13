@@ -96,10 +96,8 @@ impl BankingStageMonitor for DecisionMakerWrapper {
     fn status(&mut self) -> BankingStageStatus {
         if self.is_exited.load(Relaxed) {
             BankingStageStatus::Exited
-        } else if !self.is_enabled.load(Relaxed) {
-            BankingStageStatus::Disabled
         } else {
-            BankingStageStatus::Inactive
+            BankingStageStatus::Disabled
         }
     }
 

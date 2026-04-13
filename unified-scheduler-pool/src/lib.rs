@@ -575,64 +575,6 @@ where
                     scheduler_pool.unregister_banking_stage();
                 }
 
-                if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
-                    let Ok(mut inner) = scheduler_pool.block_production_scheduler_inner.lock()
-                    else {
-                        break;
-                    };
-
-                    if let Some(pooled) = inner.peek_pooled() {
-                        if pooled.is_overgrown() {
-                            // This code path will be touched sometimes when a given inactive
-                            // idling scheduler becomes overgrown due to buffering, which
-                            // previously passed the overgrown check at the last scheduler
-                            // returning.
-                            //
-                            // At the same time, this code path addresses a theoretically-possible
-                            // attack vector of unbounded mem consumption, which is very unlikely
-                            // to mount a successful one as explained below:
-                            //
-                            // To make that happen, banking stage would need to be tricked into
-                            // returning BankingStageStatus::Active to start buffering on idling,
-                            // which also indicates imminent leader slots to the replay stage.
-                            // Contrary to that, the replay stage needs to be tricked into NOT
-                            // taking that idling-yet-buffering bp scheduler out of SchedulerPool
-                            // at all for the tpu bank at the upcoming leader slots, for quite
-                            // extended duration of time. In this way, it's possible to bypass the
-                            // overgrown check on scheduler returning altogether, resulting in no
-                            // discarding of buffered tasks at all.
-                            //
-                            // This code-path mitigates that possibility. That's because it's not
-                            // possible to see BankingStageStatus::Active at the every iteration of
-                            // cleaner_main_loop, unless the attacker controls near 100% stake.
-
-                            // The following steps are tightly in sync with the normal bp
-                            // spawning out of abundance of caution.
-                            let pooled = inner.take_and_trash_pooled();
-                            info!("idling BP scheduler ({}) is overgrown", pooled.id());
-                            scheduler_pool.spawn_block_production_scheduler(&mut inner);
-
-                            let Ok(mut trashed_inners) =
-                                scheduler_pool.trashed_scheduler_inners.lock()
-                            else {
-                                break;
-                            };
-                            trashed_inners.push(pooled);
-                            sleepless_testing::at(CheckPoint::IdlingSchedulerTrashed);
-                            drop(inner);
-                        } else {
-                            pooled.discard_buffer();
-                            // Prevent replay stage's OpenSubchannel from winning the race by
-                            // holding the inner lock for the duration of discard message sending
-                            // just above.  The message (internally SubchanneledPayload::Reset)
-                            // must be sent only during gaps of subchannels of the new task
-                            // channel.
-                            sleepless_testing::at(CheckPoint::DiscardRequested);
-                            drop(inner);
-                        }
-                    }
-                }
-
                 let trashed_inner_count = {
                     let Ok(mut trashed_inners) = scheduler_pool.trashed_scheduler_inners.lock()
                     else {
@@ -2776,7 +2718,6 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 
 #[derive(Debug)]
 pub enum BankingStageStatus {
-    Inactive,
     Disabled,
     Exited,
 }
