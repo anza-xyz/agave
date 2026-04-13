@@ -1,0 +1,46 @@
+[package]
+name = "agave-orchestrator-bin"
+readme = "../README.md"
+documentation = "https://docs.rs/agave-orchestrator-bin"
+version = { workspace = true }
+authors = { workspace = true }
+description = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[[bin]]
+name = "agave-orchestrator"
+path = "src/main.rs"
+
+[features]
+dev-context-only-utils = []
+
+[dependencies]
+
+[target."cfg(unix)".dependencies]
+agave-logger = { workspace = true }
+agave-orchestrator = { workspace = true }
+anyhow = { workspace = true }
+clap-v4 = { workspace = true, features = ["std", "derive"] }
+command-fds = { workspace = true }
+futures = { workspace = true }
+libc = { workspace = true }
+log = { workspace = true }
+nix = { workspace = true, features = ["fs", "signal"] }
+serde = { workspace = true }
+tokio = { workspace = true, features = [
+  "macros",
+  "net",
+  "process",
+  "rt",
+  "signal",
+  "time",
+  "io-util",
+] }
+toml = { workspace = true }
+
+[lints]
+workspace = true

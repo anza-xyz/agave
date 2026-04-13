@@ -1,9 +1,12 @@
 use {
     crate::{
         bridge::{KeyedTransactionMeta, ScheduleBatch, SchedulerBindingsBridge, TransactionKey},
-        handshake::{AgaveSession, ClientLogon, client, server::Server},
         responses_region::{execution_responses_from_iter, resolve_responses_from_iter},
         transaction_ptr::TransactionPtrBatch,
+    },
+    agave_orchestrator::scheduler::{
+        AgaveSession, SchedulerTopology, SessionHeader, create_session, join_agave_session,
+        join_client_session,
     },
     agave_scheduler_bindings::{
         ProgressMessage, SharablePubkeys, SharableTransactionBatchRegion,
@@ -58,19 +61,22 @@ where
             "shaq requires power of 2 queue sizes"
         );
 
-        let logon = ClientLogon {
+        let allocator_handles = 1;
+        let topology = SchedulerTopology {
             worker_count,
             allocator_size: 64 * 1024 * 1024,
-            allocator_handles: 1,
+            allocator_handles,
             tpu_to_pack_capacity: 1024,
             progress_tracker_capacity: 256,
             pack_to_worker_capacity: worker_req_cap,
             worker_to_pack_capacity: 1024,
             flags: 0,
         };
+        let header = SessionHeader::new(worker_count, allocator_handles, 0);
 
-        let (agave, files) = Server::setup_session(logon).unwrap();
-        let client_session = client::setup_session(&logon, files).unwrap();
+        let files = create_session(&topology);
+        let agave = join_agave_session(&header, &files);
+        let client_session = join_client_session(&header, &files);
 
         Self {
             bridge: SchedulerBindingsBridge::new(client_session),

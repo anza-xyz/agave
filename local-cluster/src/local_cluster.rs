@@ -465,6 +465,7 @@ impl LocalCluster {
                 ValidatorTpuConfig::new_for_tests(),
                 Arc::new(RwLock::new(None)),
                 None,
+                None, // orchestrator_stream
             )
             .expect("assume successful validator start");
 
@@ -675,6 +676,7 @@ impl LocalCluster {
             ValidatorTpuConfig::new_for_tests(),
             Arc::new(RwLock::new(None)),
             None,
+            None, // orchestrator_stream
         )
         .expect("assume successful validator start");
 
@@ -741,6 +743,7 @@ impl LocalCluster {
                 ValidatorTpuConfig::new_for_tests(),
                 Arc::new(RwLock::new(None)),
                 None,
+                None, // orchestrator_stream
             )
             .unwrap_or_else(|e| panic!("Cluster leader failed to start: {e:?}"));
 
@@ -805,6 +808,7 @@ impl LocalCluster {
                     ValidatorTpuConfig::new_for_tests(),
                     Arc::new(RwLock::new(None)),
                     None,
+                    None, // orchestrator_stream
                 )
                 .unwrap_or_else(|e| panic!("Validator {i} failed to start: {e:?}"));
 
@@ -1436,6 +1440,7 @@ impl Cluster for LocalCluster {
             ValidatorTpuConfig::new_for_tests(),
             Arc::new(RwLock::new(None)),
             None,
+            None, // orchestrator_stream
         )
         .expect("assume successful validator start");
         cluster_validator_info.validator = Some(restarted_node);

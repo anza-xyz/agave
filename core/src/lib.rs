@@ -28,13 +28,12 @@ pub mod forwarding_stage;
 pub mod gen_keys;
 pub mod next_leader;
 pub mod optimistic_confirmation_verifier;
+pub mod orchestrator_server;
 pub mod repair;
 pub mod replay_stage;
 pub mod resource_limits;
 mod result;
 pub mod sample_performance_service;
-#[cfg(unix)]
-mod scheduler_bindings_server;
 mod shred_fetch_stage;
 pub mod sigverify;
 pub mod sigverify_stage;

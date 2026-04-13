@@ -30,6 +30,7 @@ use {
         tpu::{Tpu, TpuSockets},
         tvu::{AlpenglowInitializationState, Tvu, TvuConfig, TvuSockets},
     },
+    agave_orchestrator::OrchestratorStream,
     agave_snapshots::{
         SnapshotInterval, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
         snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes,
@@ -366,7 +367,6 @@ pub struct ValidatorConfig {
     pub block_production_num_workers: NonZeroUsize,
     pub block_production_scheduler_config: SchedulerConfig,
     pub enable_block_production_forwarding: bool,
-    pub enable_scheduler_bindings: bool,
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
     pub unified_scheduler_handler_threads: Option<usize>,
@@ -446,7 +446,6 @@ impl ValidatorConfig {
             block_production_scheduler_config: SchedulerConfig::default(),
             // enable forwarding by default for tests
             enable_block_production_forwarding: true,
-            enable_scheduler_bindings: false,
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
             unified_scheduler_handler_threads: None,
@@ -669,6 +668,7 @@ impl Validator {
         tpu_config: ValidatorTpuConfig,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
         xdp_builder_with_src_addr: Option<(TransmitterBuilder, SocketAddrV4)>,
+        orchestrator_stream: Option<OrchestratorStream>,
     ) -> Result<Self> {
         let exit = Arc::new(AtomicBool::new(false));
         Self::new_with_exit(
@@ -686,6 +686,7 @@ impl Validator {
             tpu_config,
             admin_rpc_service_post_init,
             xdp_builder_with_src_addr,
+            orchestrator_stream,
             exit,
         )
     }
@@ -706,6 +707,7 @@ impl Validator {
         tpu_config: ValidatorTpuConfig,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
         xdp_builder_with_src_addr: Option<(TransmitterBuilder, SocketAddrV4)>,
+        orchestrator_stream: Option<OrchestratorStream>,
         exit: Arc<AtomicBool>,
     ) -> Result<Self> {
         #[cfg(debug_assertions)]
@@ -1691,15 +1693,15 @@ impl Validator {
             config.generator_config.clone(),
             key_notifiers.clone(),
             banking_control_receiver,
-            config.enable_scheduler_bindings.then(|| {
-                (
-                    ledger_path.join("scheduler_bindings.ipc"),
-                    banking_control_sender.clone(),
-                )
-            }),
             cancel,
             votor_event_sender,
         );
+
+        // Now that TPU is spawned, spawn orchestrator server & signal readiness.
+        #[cfg(unix)]
+        if let Some(stream) = orchestrator_stream {
+            crate::orchestrator_server::spawn(stream, banking_control_sender.clone());
+        };
 
         datapoint_info!(
             "validator-new",
@@ -2937,6 +2939,7 @@ mod tests {
             ValidatorTpuConfig::new_for_tests(),
             Arc::new(RwLock::new(None)),
             None,
+            None, // orchestrator_stream
         )
         .expect("assume successful validator start");
         assert_eq!(
@@ -3156,6 +3159,7 @@ mod tests {
                     ValidatorTpuConfig::new_for_tests(),
                     Arc::new(RwLock::new(None)),
                     None,
+                    None, // orchestrator_stream
                 )
                 .expect("assume successful validator start")
             })

@@ -1,10 +1,10 @@
 use {
     crate::{
-        handshake::{ClientSession, ClientWorkerSession},
         pubkeys_ptr::PubkeysPtr,
         transaction_ptr::{TransactionPtr, TransactionPtrBatch},
     },
     agave_feature_set::FeatureSet,
+    agave_orchestrator::scheduler::{ClientSession, ClientWorkerSession},
     agave_scheduler_bindings::{
         MAX_TRANSACTIONS_PER_MESSAGE, PackToWorkerMessage, ProgressMessage,
         SharableTransactionBatchRegion, SharableTransactionRegion, TpuToPackMessage,

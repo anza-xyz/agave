@@ -55,6 +55,8 @@ members = [
     "metrics",
     "net-utils",
     "notifier",
+    "orchestrator",
+    "orchestrator-bin",
     "perf",
     "poh",
     "poh-bench",
@@ -190,6 +192,7 @@ agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=
 agave-io-uring = { path = "io-uring", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-logger = { path = "logger", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-math-utils = { path = "math-utils", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
+agave-orchestrator = { path = "orchestrator", version = "=4.1.0-alpha.0" }
 agave-precompiles = { path = "precompiles", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-random = { path = "random", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
@@ -234,6 +237,8 @@ cfg-if = "1.0.4"
 chrono = { version = "0.4.44", default-features = false }
 chrono-humanize = "0.2.3"
 clap = { version = "2.33.1", default-features = false, features = ["suggestions"] }
+clap-v4 = { package = "clap", version = "4.0", default-features = false }
+command-fds = "0.3.2"
 console = "0.16.3"
 const_format = "0.2.35"
 core_affinity = "0.8.3"
@@ -564,6 +569,7 @@ tokio-serde = "0.8"
 tokio-stream = "0.1.18"
 tokio-tungstenite = "0.28.0"
 tokio-util = "0.7.18"
+toml = "1.1.2"
 tonic = "0.14.5"
 tonic-prost = "0.14.5"
 tonic-prost-build = "0.14.5"

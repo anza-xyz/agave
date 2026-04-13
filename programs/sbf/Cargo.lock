@@ -145,6 +145,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-orchestrator"
+version = "4.1.0-alpha.0"
+dependencies = [
+ "agave-scheduler-bindings",
+ "libc",
+ "nix 0.31.2",
+ "rts-alloc",
+ "serde",
+ "shaq",
+]
+
+[[package]]
 name = "agave-precompiles"
 version = "4.1.0-alpha.0"
 dependencies = [
@@ -188,11 +200,11 @@ name = "agave-scheduling-utils"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-orchestrator",
  "agave-scheduler-bindings",
  "agave-transaction-view",
  "ahash 0.8.12",
  "libc",
- "nix",
  "rts-alloc",
  "shaq",
  "slotmap",
@@ -251,12 +263,14 @@ name = "agave-validator"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-logger",
+ "agave-orchestrator",
  "agave-snapshots",
  "agave-votor",
  "agave-xdp",
  "caps",
  "chrono",
  "clap",
+ "command-fds",
  "console 0.16.3",
  "core_affinity",
  "crossbeam-channel",
@@ -324,6 +338,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tikv-jemallocator",
  "tokio",
+ "toml 1.1.2+spec-1.1.0",
 ]
 
 [[package]]
@@ -1517,6 +1532,16 @@ checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "command-fds"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f849b92c694fe237ecd8fafd1ba0df7ae0d45c1df6daeb7f68ed4220d51640bd"
+dependencies = [
+ "nix 0.30.1",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -4026,6 +4051,18 @@ dependencies = [
 
 [[package]]
 name = "nix"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
+dependencies = [
+ "bitflags 2.11.0",
+ "cfg-if 1.0.4",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
+name = "nix"
 version = "0.31.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d6d0705320c1e6ba1d912b5e37cf18071b6c2e9b7fa8215a1e8a7651966f5d3"
@@ -4590,7 +4627,7 @@ version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d6ea3c4595b96363c13943497db34af4460fb474a95c43f4446ad341b8c9785"
 dependencies = [
- "toml",
+ "toml 0.5.11",
 ]
 
 [[package]]
@@ -5536,6 +5573,15 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_spanned"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
+dependencies = [
+ "serde_core",
 ]
 
 [[package]]
@@ -6528,6 +6574,7 @@ dependencies = [
  "agave-feature-set",
  "agave-logger",
  "agave-math-utils",
+ "agave-orchestrator",
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
  "agave-snapshots",
@@ -7490,7 +7537,7 @@ dependencies = [
  "dashmap",
  "itertools 0.14.0",
  "log",
- "nix",
+ "nix 0.31.2",
  "rand 0.9.2",
  "serde",
  "socket2 0.6.3",
@@ -7594,7 +7641,7 @@ dependencies = [
  "caps",
  "libc",
  "log",
- "nix",
+ "nix 0.31.2",
  "num_cpus",
  "rand 0.9.2",
  "rayon",
@@ -9408,7 +9455,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
- "nix",
+ "nix 0.31.2",
  "num_cpus",
  "pem",
  "percentage",
@@ -11021,10 +11068,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "1.1.2+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81f3d15e84cbcd896376e6730314d59fb5a87f31e4b038454184435cd57defee"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime 1.1.1+spec-1.1.0",
+ "toml_parser",
+ "toml_writer",
+ "winnow 1.0.1",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3550f4e9685620ac18a50ed434eb3aec30db8ba93b0287467bca5826ea25baf1"
+
+[[package]]
+name = "toml_datetime"
+version = "1.1.1+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7"
+dependencies = [
+ "serde_core",
+]
 
 [[package]]
 name = "toml_edit"
@@ -11033,9 +11104,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8534fd7f78b5405e860340ad6575217ce99f38d4d5c8f2442cb5ecb50090e1"
 dependencies = [
  "indexmap",
- "toml_datetime",
- "winnow",
+ "toml_datetime 0.6.5",
+ "winnow 0.5.25",
 ]
+
+[[package]]
+name = "toml_parser"
+version = "1.1.2+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2abe9b86193656635d2411dc43050282ca48aa31c2451210f4202550afb7526"
+dependencies = [
+ "winnow 1.0.1",
+]
+
+[[package]]
+name = "toml_writer"
+version = "1.1.1+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
 
 [[package]]
 name = "tonic"
@@ -11993,6 +12079,12 @@ checksum = "b7e87b8dfbe3baffbe687eef2e164e32286eff31a5ee16463ce03d991643ec94"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "winnow"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09dac053f1cd375980747450bfc7250c264eaae0583872e845c0c7cd578872b5"
 
 [[package]]
 name = "wit-bindgen-rt"

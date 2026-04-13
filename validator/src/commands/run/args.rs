@@ -1182,10 +1182,14 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("enable_scheduler_bindings")
-            .long("enable-scheduler-bindings")
-            .takes_value(false)
-            .help("Enables external processes to connect and manage block production"),
+        Arg::with_name("orchestrator")
+            .long("orchestrator")
+            .takes_value(true)
+            .value_name("PATH")
+            .help(
+                "Path to orchestrator TOML config file. Spawns an orchestrator child process to \
+                 manage external scheduler lifecycle.",
+            ),
     )
     .arg(
         Arg::with_name("unified_scheduler_handler_threads")

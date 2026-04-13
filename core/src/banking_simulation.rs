@@ -2,7 +2,7 @@
 use {
     crate::{
         banking_stage::{
-            BankingStage, BankingStageHandle, LikeClusterInfo,
+            BankingControlMsg, BankingStage, BankingStageHandle, LikeClusterInfo,
             transaction_scheduler::scheduler_controller::SchedulerConfig,
             unified_scheduler::ensure_banking_stage_setup,
             update_bank_forks_and_poh_recorder_for_new_tpu_bank,
@@ -852,15 +852,17 @@ impl BankingSimulator {
 
         info!("Start banking stage!...");
         let banking_stage = BankingStage::new_num_threads(
-            block_production_method,
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
             mpsc::channel(1).1,
-            num_workers,
-            SchedulerConfig::default(),
+            BankingControlMsg::Internal {
+                block_production_method,
+                num_workers,
+                config: SchedulerConfig::default(),
+            },
             None,
             replay_vote_sender,
             None,

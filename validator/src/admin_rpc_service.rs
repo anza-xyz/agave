@@ -1273,6 +1273,7 @@ mod tests {
                 ValidatorTpuConfig::new_for_tests(),
                 post_init.clone(),
                 None,
+                None, // orchestrator_stream
             )
             .expect("assume successful validator start");
             assert_eq!(

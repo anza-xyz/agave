@@ -19,6 +19,7 @@ agave-unstable-api = []
 
 [dependencies]
 agave-logger = { workspace = true }
+agave-orchestrator = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor = { workspace = true }
 agave-xdp = { workspace = true }
@@ -90,6 +91,7 @@ solana-vote-program = { workspace = true }
 symlink = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+toml = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }
@@ -98,6 +100,7 @@ jemallocator = { workspace = true }
 caps = { workspace = true }
 
 [target."cfg(unix)".dependencies]
+command-fds = { workspace = true }
 libc = { workspace = true }
 
 [dev-dependencies]

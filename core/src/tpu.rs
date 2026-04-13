@@ -63,7 +63,6 @@ use {
         collections::HashMap,
         net::UdpSocket,
         num::NonZeroUsize,
-        path::PathBuf,
         sync::{Arc, RwLock, atomic::AtomicBool},
         thread::{self, JoinHandle},
     },
@@ -148,7 +147,6 @@ impl Tpu {
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
         key_notifiers: Arc<RwLock<KeyUpdaters>>,
         banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
-        scheduler_bindings: Option<(PathBuf, mpsc::Sender<BankingControlMsg>)>,
         cancel: CancellationToken,
         votor_event_sender: VotorEventSender,
     ) -> Self {
@@ -307,29 +305,27 @@ impl Tpu {
             duplicate_confirmed_slot_sender,
         );
 
-        let banking_stage = BankingStage::new_num_threads(
+        // Always start as internal until orchestrator signal us to switch.
+        let initial_scheduler_msg = BankingControlMsg::Internal {
             block_production_method,
+            num_workers: block_production_num_workers,
+            config: block_production_scheduler_config,
+        };
+
+        let banking_stage = BankingStage::new_num_threads(
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
             banking_control_receiver,
-            block_production_num_workers,
-            block_production_scheduler_config,
+            initial_scheduler_msg,
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,
             bank_forks.clone(),
             prioritization_fee_cache,
         );
-
-        #[cfg(unix)]
-        if let Some((path, banking_control_sender)) = scheduler_bindings {
-            super::scheduler_bindings_server::spawn(&path, banking_control_sender);
-        }
-        #[cfg(not(unix))]
-        assert!(scheduler_bindings.is_none());
 
         let SpawnForwardingStageResult {
             join_handle: forwarding_stage,

@@ -4,7 +4,9 @@
 use {
     agave_banking_stage_ingress_types::BankingPacketBatch,
     solana_core::{
-        banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
+        banking_stage::{
+            BankingControlMsg, transaction_scheduler::scheduler_controller::SchedulerConfig,
+        },
         banking_trace::Channels,
         validator::{BlockProductionMethod, SchedulerPacing},
     },
@@ -233,16 +235,18 @@ fn bench_banking(
         create_test_recorder(bank.clone(), blockstore, None, None);
     let (s, _r) = unbounded();
     let _banking_stage = BankingStage::new_num_threads(
-        block_production_method,
         poh_recorder,
         transaction_recorder,
         non_vote_receiver,
         tpu_vote_receiver,
         gossip_vote_receiver,
         mpsc::channel(1).1,
-        num_threads,
-        SchedulerConfig {
-            scheduler_pacing: SchedulerPacing::Disabled,
+        BankingControlMsg::Internal {
+            block_production_method,
+            num_workers: num_threads,
+            config: SchedulerConfig {
+                scheduler_pacing: SchedulerPacing::Disabled,
+            },
         },
         None,
         s,

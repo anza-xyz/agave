@@ -223,6 +223,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-orchestrator"
+version = "4.1.0-alpha.0"
+dependencies = [
+ "agave-scheduler-bindings",
+ "libc",
+ "nix",
+ "rts-alloc",
+ "serde",
+ "shaq",
+]
+
+[[package]]
 name = "agave-precompiles"
 version = "4.1.0-alpha.0"
 dependencies = [
@@ -266,11 +278,11 @@ name = "agave-scheduling-utils"
 version = "4.1.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-orchestrator",
  "agave-scheduler-bindings",
  "agave-transaction-view",
  "ahash 0.8.12",
  "libc",
- "nix",
  "rts-alloc",
  "shaq",
  "slotmap",
@@ -6856,6 +6868,7 @@ dependencies = [
  "agave-feature-set",
  "agave-logger",
  "agave-math-utils",
+ "agave-orchestrator",
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
  "agave-snapshots",

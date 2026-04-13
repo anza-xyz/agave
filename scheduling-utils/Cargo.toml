@@ -15,6 +15,7 @@ dev-context-only-utils = ["dep:wincode", "dep:solana-transaction"]
 
 [dependencies]
 agave-feature-set = { workspace = true, features = ["agave-unstable-api"] }
+agave-orchestrator = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
 agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
@@ -30,10 +31,6 @@ wincode = { workspace = true, optional = true }
 
 [target."cfg(unix)".dependencies]
 libc = { workspace = true }
-nix = { workspace = true, features = ["socket", "uio"] }
-
-[dev-dependencies]
-tempfile = { workspace = true }
 
 [target."cfg(unix)".dev-dependencies]
 agave-scheduler-bindings = { workspace = true }

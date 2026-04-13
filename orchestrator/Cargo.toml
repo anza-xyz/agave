@@ -1,0 +1,25 @@
+[package]
+name = "agave-orchestrator"
+readme = "../README.md"
+documentation = "https://docs.rs/agave-orchestrator"
+version = { workspace = true }
+authors = { workspace = true }
+description = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[dependencies]
+
+[target."cfg(unix)".dependencies]
+agave-scheduler-bindings = { workspace = true }
+libc = { workspace = true }
+nix = { workspace = true, features = ["socket", "uio"] }
+rts-alloc = { workspace = true }
+serde = { workspace = true }
+shaq = { workspace = true }
+
+[lints]
+workspace = true

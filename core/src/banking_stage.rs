@@ -385,15 +385,13 @@ pub struct BankingStage {
 impl BankingStage {
     #[allow(clippy::too_many_arguments)]
     pub fn new_num_threads(
-        block_production_method: BlockProductionMethod,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
         non_vote_receiver: BankingPacketReceiver,
         tpu_vote_receiver: BankingPacketReceiver,
         gossip_vote_receiver: BankingPacketReceiver,
         banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
-        num_workers: NonZeroUsize,
-        scheduler_config: SchedulerConfig,
+        initial_scheduler_msg: BankingControlMsg,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
@@ -431,11 +429,7 @@ impl BankingStage {
                     .enable_all()
                     .build()
                     .unwrap();
-                rt.block_on(manager.run(BankingControlMsg::Internal {
-                    block_production_method,
-                    num_workers,
-                    config: scheduler_config,
-                }))
+                rt.block_on(manager.run(initial_scheduler_msg))
             })
             .unwrap();
 
@@ -718,7 +712,7 @@ mod external {
     use {
         super::*,
         crate::banking_stage::consume_worker::external::ExternalWorker,
-        agave_scheduling_utils::handshake::{AgaveSession, AgaveWorkerSession},
+        agave_orchestrator::scheduler::{AgaveSession, AgaveWorkerSession},
         tpu_to_pack::BankingPacketReceivers,
     };
 
@@ -738,8 +732,7 @@ mod external {
             assert!(self.toggle_internal_unified(false));
 
             static_assertions::const_assert!(
-                agave_scheduling_utils::handshake::MAX_WORKERS
-                    == BankingStage::max_num_workers().get()
+                agave_orchestrator::scheduler::MAX_WORKERS == BankingStage::max_num_workers().get()
             );
             assert!(workers.len() <= BankingStage::max_num_workers().get());
 
@@ -836,7 +829,7 @@ pub enum BankingControlMsg {
     },
     #[cfg(unix)]
     External {
-        session: agave_scheduling_utils::handshake::AgaveSession,
+        session: agave_orchestrator::scheduler::AgaveSession,
     },
 }
 
@@ -975,16 +968,18 @@ mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new_num_threads(
-            BlockProductionMethod::CentralScheduler,
             poh_recorder,
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
             mpsc::channel(1).1,
-            DEFAULT_NUM_WORKERS,
-            SchedulerConfig {
-                scheduler_pacing: SchedulerPacing::Disabled,
+            BankingControlMsg::Internal {
+                block_production_method: BlockProductionMethod::CentralScheduler,
+                num_workers: DEFAULT_NUM_WORKERS,
+                config: SchedulerConfig {
+                    scheduler_pacing: SchedulerPacing::Disabled,
+                },
             },
             None,
             replay_vote_sender,
@@ -1035,16 +1030,18 @@ mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new_num_threads(
-            BlockProductionMethod::CentralScheduler,
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
             mpsc::channel(1).1,
-            DEFAULT_NUM_WORKERS,
-            SchedulerConfig {
-                scheduler_pacing: SchedulerPacing::Disabled,
+            BankingControlMsg::Internal {
+                block_production_method: BlockProductionMethod::CentralScheduler,
+                num_workers: DEFAULT_NUM_WORKERS,
+                config: SchedulerConfig {
+                    scheduler_pacing: SchedulerPacing::Disabled,
+                },
             },
             None,
             replay_vote_sender,
@@ -1189,16 +1186,18 @@ mod tests {
                 entry_receiver,
             ) = create_test_recorder(bank.clone(), blockstore, None, None);
             let banking_stage = BankingStage::new_num_threads(
-                BlockProductionMethod::CentralScheduler,
                 poh_recorder,
                 transaction_recorder,
                 non_vote_receiver,
                 tpu_vote_receiver,
                 gossip_vote_receiver,
                 mpsc::channel(1).1,
-                DEFAULT_NUM_WORKERS,
-                SchedulerConfig {
-                    scheduler_pacing: SchedulerPacing::Disabled,
+                BankingControlMsg::Internal {
+                    block_production_method: BlockProductionMethod::CentralScheduler,
+                    num_workers: DEFAULT_NUM_WORKERS,
+                    config: SchedulerConfig {
+                        scheduler_pacing: SchedulerPacing::Disabled,
+                    },
                 },
                 None,
                 replay_vote_sender,
@@ -1342,16 +1341,18 @@ mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new_num_threads(
-            BlockProductionMethod::CentralScheduler,
             poh_recorder,
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
             mpsc::channel(1).1,
-            DEFAULT_NUM_WORKERS,
-            SchedulerConfig {
-                scheduler_pacing: SchedulerPacing::Disabled,
+            BankingControlMsg::Internal {
+                block_production_method: BlockProductionMethod::CentralScheduler,
+                num_workers: DEFAULT_NUM_WORKERS,
+                config: SchedulerConfig {
+                    scheduler_pacing: SchedulerPacing::Disabled,
+                },
             },
             None,
             replay_vote_sender,
