@@ -1544,7 +1544,7 @@ impl ReplayStage {
 
         let vote = Vote::new_genesis_vote(slot, block_id);
         match voting_utils::generate_vote_tx(
-            &vote,
+            vote,
             bank_forks.read().unwrap().root_bank().as_ref(),
             vote_account,
             identity_keypair,
