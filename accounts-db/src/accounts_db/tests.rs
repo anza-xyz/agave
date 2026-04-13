@@ -3486,13 +3486,13 @@ fn test_accounts_db_cache_clean_dead_slots() {
     }
 
     // Before the flush, we can find entries in the database for slots < alive_slot if we specify
-    // a smaller max root
+    // an older ancestor set
     let ancestors = Ancestors::from(vec![last_dead_slot]);
     for key in &keys {
         assert!(
             accounts_db
                 .accounts_index
-                .get_with_and_then(key, &ancestors, Some(last_dead_slot), false, |_| {})
+                .get_with_and_then(key, &ancestors, None, false, |_| {})
                 .is_some()
         );
     }
