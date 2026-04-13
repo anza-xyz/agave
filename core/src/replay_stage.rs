@@ -4816,7 +4816,7 @@ pub(crate) mod tests {
             create_new_tmp_ledger,
             genesis_utils::{create_genesis_config, create_genesis_config_with_leader},
             get_tmp_ledger_path, get_tmp_ledger_path_auto_delete,
-            shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+            shred::{ProcessShredsStats, Shred, Shredder},
         },
         solana_net_utils::SocketAddrSpace,
         solana_poh::poh_recorder::create_test_recorder,
@@ -5467,7 +5467,6 @@ pub(crate) mod tests {
 
             let shredder = Shredder::new(bank.slot(), bank.parent_slot(), 0, 0).unwrap();
             let keypair = Keypair::new();
-            let reed_solomon_cache = ReedSolomonCache::default();
 
             shredder
                 .make_shreds_from_data_slice(
@@ -5477,7 +5476,6 @@ pub(crate) mod tests {
                     Hash::default(),
                     0,
                     0,
-                    &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 )
                 .unwrap()

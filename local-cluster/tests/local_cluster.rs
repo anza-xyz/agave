@@ -44,7 +44,7 @@ use {
         blockstore::{Blockstore, entries_to_test_shreds},
         blockstore_processor::{self, ProcessOptions},
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+        shred::{ProcessShredsStats, Shred, Shredder},
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_local_cluster::{
@@ -5746,7 +5746,6 @@ fn test_invalid_forks_persisted_on_restart() {
                 Hash::default(), // chained_merkle_root
                 0,               // next_shred_index,
                 0,               // next_code_index
-                &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )
             .0;

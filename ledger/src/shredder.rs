@@ -1,8 +1,5 @@
 use {
-    crate::shred::{
-        self, DATA_SHREDS_PER_FEC_BLOCK, Error, ProcessShredsStats, Shred, ShredData, ShredFlags,
-    },
-    lazy_lru::LruCache,
+    crate::shred::{self, Error, ProcessShredsStats, Shred, ShredData, ShredFlags},
     rayon::ThreadPool,
     reed_solomon_erasure::{Error::TooFewDataShards, galois_8::ReedSolomon},
     solana_clock::Slot,
@@ -12,7 +9,7 @@ use {
     solana_rayon_threadlimit::get_thread_count,
     std::{
         fmt::Debug,
-        sync::{Arc, OnceLock, RwLock},
+        sync::{Arc, OnceLock},
         time::Instant,
     },
 };
@@ -25,16 +22,13 @@ static PAR_THREAD_POOL: std::sync::LazyLock<ThreadPool> = std::sync::LazyLock::n
         .unwrap()
 });
 
-// Arc<...> wrapper so that cache entries can be initialized without locking
-// the entire cache.
-type LruCacheOnce<K, V> = RwLock<LruCache<K, Arc<OnceLock<V>>>>;
+pub struct ReedSolomonCache {
+    config_32_32: OnceLock<Arc<ReedSolomon>>,
+}
 
-pub struct ReedSolomonCache(
-    LruCacheOnce<
-        (usize, usize), // number of {data,parity} shards
-        Result<Arc<ReedSolomon>, reed_solomon_erasure::Error>,
-    >,
-);
+static REED_SOLOMON_CACHE: ReedSolomonCache = ReedSolomonCache {
+    config_32_32: OnceLock::new(),
+};
 
 #[derive(Debug)]
 pub struct Shredder {
@@ -72,7 +66,6 @@ impl Shredder {
         chained_merkle_root: Hash,
         next_shred_index: u32,
         next_code_index: u32,
-        reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> impl Iterator<Item = Shred> + use<> {
         let now = Instant::now();
@@ -86,7 +79,6 @@ impl Shredder {
             chained_merkle_root,
             next_shred_index,
             next_code_index,
-            reed_solomon_cache,
             stats,
         )
         .unwrap()
@@ -101,7 +93,6 @@ impl Shredder {
         chained_merkle_root: Hash,
         next_shred_index: u32,
         next_code_index: u32,
-        reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> impl Iterator<Item = Shred> + use<> {
         stats.num_entries += entries.len();
@@ -116,7 +107,6 @@ impl Shredder {
             chained_merkle_root,
             next_shred_index,
             next_code_index,
-            reed_solomon_cache,
             stats,
         )
         .unwrap()
@@ -131,7 +121,6 @@ impl Shredder {
         chained_merkle_root: Hash,
         next_shred_index: u32,
         next_code_index: u32,
-        reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> Result<impl Iterator<Item = Shred> + use<>, Error> {
         let thread_pool: &ThreadPool = &PAR_THREAD_POOL;
@@ -147,7 +136,6 @@ impl Shredder {
             is_last_in_slot,
             next_shred_index,
             next_code_index,
-            reed_solomon_cache,
             stats,
         )?;
         Ok(shreds.into_iter().map(Shred::from))
@@ -161,7 +149,6 @@ impl Shredder {
         chained_merkle_root: Hash,
         next_shred_index: u32,
         next_code_index: u32,
-        reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> (
         Vec<Shred>, // data shreds
@@ -174,7 +161,6 @@ impl Shredder {
             chained_merkle_root,
             next_shred_index,
             next_code_index,
-            reed_solomon_cache,
             stats,
         )
         .partition(Shred::is_data)
@@ -188,7 +174,6 @@ impl Shredder {
         chained_merkle_root: Hash,
         next_shred_index: u32,
         next_code_index: u32,
-        reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> (
         Vec<Shred>, // data shreds
@@ -201,7 +186,6 @@ impl Shredder {
             chained_merkle_root,
             next_shred_index,
             next_code_index,
-            reed_solomon_cache,
             stats,
         )
         .partition(Shred::is_data)
@@ -257,7 +241,6 @@ impl Shredder {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn single_shred_for_tests(slot: Slot, keypair: &Keypair) -> Shred {
         let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 42).unwrap();
-        let reed_solomon_cache = ReedSolomonCache::default();
         let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             keypair,
             &[],
@@ -265,7 +248,6 @@ impl Shredder {
             Hash::default(),
             0,
             0,
-            &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
         shreds.pop().unwrap()
@@ -273,35 +255,24 @@ impl Shredder {
 }
 
 impl ReedSolomonCache {
-    const CAPACITY: usize = 4 * DATA_SHREDS_PER_FEC_BLOCK;
+    pub fn global() -> &'static Self {
+        &REED_SOLOMON_CACHE
+    }
 
     pub(crate) fn get(
         &self,
         data_shards: usize,
         parity_shards: usize,
     ) -> Result<Arc<ReedSolomon>, reed_solomon_erasure::Error> {
-        let key = (data_shards, parity_shards);
-        // Read from the cache with a shared lock.
-        let entry = self.0.read().unwrap().get(&key).cloned();
-        // Fall back to exclusive lock if there is a cache miss.
-        let entry: Arc<OnceLock<Result<_, _>>> = entry.unwrap_or_else(|| {
-            let mut cache = self.0.write().unwrap();
-            cache.get(&key).cloned().unwrap_or_else(|| {
-                let entry = Arc::<OnceLock<Result<_, _>>>::default();
-                cache.put(key, Arc::clone(&entry));
-                entry
-            })
-        });
-        // Initialize if needed by only a single thread outside locks.
-        entry
-            .get_or_init(|| ReedSolomon::new(data_shards, parity_shards).map(Arc::new))
-            .clone()
-    }
-}
-
-impl Default for ReedSolomonCache {
-    fn default() -> Self {
-        Self(RwLock::new(LruCache::new(Self::CAPACITY)))
+        match (data_shards, parity_shards) {
+            (32, 32) => Ok(Arc::clone(self.config_32_32.get_or_init(|| {
+                Arc::new(ReedSolomon::new(32, 32).expect("valid config"))
+            }))),
+            #[cfg(test)]
+            _ => ReedSolomon::new(data_shards, parity_shards).map(Arc::new),
+            #[cfg(not(test))]
+            _ => Err(reed_solomon_erasure::Error::TooFewDataShards),
+        }
     }
 }
 
@@ -310,8 +281,8 @@ mod tests {
     use {
         super::*,
         crate::shred::{
-            self, CODING_SHREDS_PER_FEC_BLOCK, ShredType, max_ticks_per_n_shreds,
-            verify_test_data_shred,
+            self, CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, ShredType,
+            max_ticks_per_n_shreds, verify_test_data_shred,
         },
         assert_matches::assert_matches,
         itertools::Itertools,
@@ -369,7 +340,6 @@ mod tests {
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
             start_index,                                // next_shred_index
             start_index,                                // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         let next_index = data_shreds.last().unwrap().index() + 1;
@@ -455,7 +425,6 @@ mod tests {
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
             369,                                        // next_shred_index
             776,                                        // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         for shred in [data_shreds, coding_shreds].into_iter().flatten() {
@@ -487,7 +456,6 @@ mod tests {
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
             0,                                          // next_shred_index
             0,                                          // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         data_shreds.iter().for_each(|s| {
@@ -524,7 +492,6 @@ mod tests {
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
             0,                                          // next_shred_index
             0,                                          // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         data_shreds.iter().for_each(|s| {
@@ -571,7 +538,6 @@ mod tests {
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
             0,                                          // next_shred_index
             0,                                          // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         for (i, s) in data_shreds.iter().enumerate() {
@@ -621,7 +587,6 @@ mod tests {
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
             0,                                          // next_shred_index
             0,                                          // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         assert!(
@@ -660,7 +625,6 @@ mod tests {
                 chained_merkle_root,
                 next_shred_index,
                 next_code_index,
-                &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             );
 
@@ -674,7 +638,6 @@ mod tests {
                 chained_merkle_root,
                 next_shred_index,
                 next_code_index,
-                &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             );
 
@@ -722,7 +685,6 @@ mod tests {
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
             start_index,                                // next_shred_index
             start_index,                                // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         const MIN_CHUNK_SIZE: usize = DATA_SHREDS_PER_FEC_BLOCK;

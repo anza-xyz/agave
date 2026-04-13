@@ -19,7 +19,7 @@ use {
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
         blockstore_meta::BlockLocation,
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{self, ReedSolomonCache, Shred},
+        shred::{self, Shred},
     },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
@@ -179,7 +179,6 @@ fn run_insert<F>(
     ws_metrics: &mut WindowServiceMetrics,
     completed_data_sets_sender: Option<&CompletedDataSetsSender>,
     retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
-    reed_solomon_cache: &ReedSolomonCache,
 ) -> Result<()>
 where
     F: Fn(PossibleDuplicateShred),
@@ -214,7 +213,6 @@ where
         false, // is_trusted
         retransmit_sender,
         &handle_duplicate,
-        reed_solomon_cache,
         metrics,
     )?;
 
@@ -360,7 +358,6 @@ impl WindowService {
         let handle_error = || {
             inc_new_counter_error!("solana-window-insert-error", 1, 1);
         };
-        let reed_solomon_cache = ReedSolomonCache::default();
         Builder::new()
             .name("solWinInsert".to_string())
             .spawn(move || {
@@ -390,7 +387,6 @@ impl WindowService {
                         &mut ws_metrics,
                         completed_data_sets_sender.as_ref(),
                         &retransmit_sender,
-                        &reed_solomon_cache,
                     ) {
                         ws_metrics.record_error(&e);
                         if Self::should_exit_on_error(e, &handle_error) {
@@ -469,7 +465,6 @@ mod test {
             Hash::new_from_array(rand::rng().random()),
             0, // next_shred_index
             0, // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         data_shreds
@@ -594,7 +589,6 @@ mod test {
                     false, // is_trusted
                     &dummy_retransmit_sender,
                     &handle_duplicate,
-                    &ReedSolomonCache::default(),
                     &mut BlockstoreInsertionMetrics::default(),
                 )
                 .unwrap();

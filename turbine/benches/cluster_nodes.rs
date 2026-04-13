@@ -6,7 +6,7 @@ use {
     solana_gossip::contact_info::ContactInfo,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+    solana_ledger::shred::{ProcessShredsStats, Shredder},
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_turbine::{
@@ -37,7 +37,6 @@ fn get_retransmit_peers_deterministic(
     slot_leader: &Pubkey,
 ) {
     let keypair = Keypair::new();
-    let reed_solomon_cache = ReedSolomonCache::default();
     let mut stats = ProcessShredsStats::default();
     let parent_slot = if slot > 0 { slot - 1 } else { 0 };
     let shredder = Shredder::new(slot, parent_slot, 0, 0).unwrap();
@@ -49,7 +48,6 @@ fn get_retransmit_peers_deterministic(
         Hash::default(), // chained_merkle_root
         0,               // next_shred_index
         0,               // next_code_index
-        &reed_solomon_cache,
         &mut stats,
     );
 

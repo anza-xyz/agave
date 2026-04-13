@@ -8,7 +8,7 @@ use {
     solana_entry::entry::Entry,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+    solana_ledger::shred::{ProcessShredsStats, Shredder},
     solana_signature::Signature,
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
@@ -50,7 +50,6 @@ pub(super) struct BroadcastDuplicatesRun {
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
     original_last_data_shreds: Arc<Mutex<HashSet<Signature>>>,
     partition_last_data_shreds: Arc<Mutex<HashSet<Signature>>>,
-    reed_solomon_cache: Arc<ReedSolomonCache>,
     migration_status: Arc<MigrationStatus>,
     votor_event_sender: VotorEventSender,
 }
@@ -80,7 +79,6 @@ impl BroadcastDuplicatesRun {
             cluster_nodes_cache,
             original_last_data_shreds: Arc::<Mutex<HashSet<Signature>>>::default(),
             partition_last_data_shreds: Arc::<Mutex<HashSet<Signature>>>::default(),
-            reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
             migration_status,
             votor_event_sender,
         }
@@ -201,7 +199,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 self.chained_merkle_root,
                 self.next_shred_index,
                 self.next_code_index,
-                &self.reed_solomon_cache,
                 &mut stats,
             )
         } else {
@@ -223,7 +220,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     self.chained_merkle_root,
                     self.next_shred_index,
                     self.next_code_index,
-                    &self.reed_solomon_cache,
                     &mut stats,
                 );
                 // Don't mark the last shred as last so that validators won't
@@ -236,7 +232,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     self.chained_merkle_root,
                     self.next_shred_index,
                     self.next_code_index,
-                    &self.reed_solomon_cache,
                     &mut stats,
                 );
                 let sigs: Vec<_> = partition_last_data_shred

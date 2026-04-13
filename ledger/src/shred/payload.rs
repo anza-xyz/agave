@@ -280,11 +280,8 @@ mod test {
     #[test]
     fn test_to_bytes_packet_nonce_endianness() {
         use {
-            crate::shredder::{ReedSolomonCache, Shredder},
-            solana_entry::entry::Entry,
-            solana_hash::Hash,
-            solana_keypair::Keypair,
-            solana_perf::packet::PacketFlags,
+            crate::shredder::Shredder, solana_entry::entry::Entry, solana_hash::Hash,
+            solana_keypair::Keypair, solana_perf::packet::PacketFlags,
         };
 
         // Build a valid shred payload using the shredder helper.
@@ -300,7 +297,6 @@ mod test {
                 Hash::default(),
                 0,
                 0,
-                &ReedSolomonCache::default(),
                 &mut stats,
             )
             .collect();

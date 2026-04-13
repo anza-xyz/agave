@@ -667,7 +667,6 @@ fn get_merkle_node(shred: &[u8], offsets: Range<usize>) -> Result<Hash, Error> {
 
 pub(super) fn recover(
     mut shreds: Vec<Shred>,
-    reed_solomon_cache: &ReedSolomonCache,
 ) -> Result<impl Iterator<Item = Result<Shred, Error>> + use<>, Error> {
     // Sort shreds by their erasure shard index.
     // In particular this places all data shreds before coding shreds.
@@ -800,7 +799,7 @@ pub(super) fn recover(
         .zip(&mask)
         .map(|(shred, &mask)| Ok((shred.erasure_shard_mut()?, mask)))
         .collect::<Result<Vec<_>, Error>>()?;
-    reed_solomon_cache
+    ReedSolomonCache::global()
         .get(num_data_shreds, num_coding_shreds)?
         .reconstruct(&mut shards)?;
     // Drop the mut guards to allow further mutation below.
@@ -1026,7 +1025,6 @@ pub(crate) fn make_shreds_from_data(
     is_last_in_slot: bool,
     next_shred_index: u32,
     next_code_index: u32,
-    reed_solomon_cache: &ReedSolomonCache,
     stats: &mut ProcessShredsStats,
 ) -> Result<Vec<Shred>, Error> {
     let now = Instant::now();
@@ -1189,13 +1187,7 @@ pub(crate) fn make_shreds_from_data(
     // (and so the signature) cannot be computed without the Merkle root of
     // the previous erasure batch.
     batches.try_fold(chained_merkle_root, |chained_merkle_root, batch| {
-        finish_erasure_batch(
-            Some(thread_pool),
-            keypair,
-            batch,
-            chained_merkle_root,
-            reed_solomon_cache,
-        )
+        finish_erasure_batch(Some(thread_pool), keypair, batch, chained_merkle_root)
     })?;
     stats.gen_coding_elapsed += now.elapsed().as_micros() as u64;
     Ok(shreds)
@@ -1247,7 +1239,6 @@ fn finish_erasure_batch(
     shreds: &mut [Shred],
     // The Merkle root of the previous erasure batch if chained.
     chained_merkle_root: Hash,
-    reed_solomon_cache: &ReedSolomonCache,
 ) -> Result<Hash, Error> {
     debug_assert_eq!(shreds.iter().map(Shred::fec_set_index).dedup().count(), 1);
     // Write common and {data,coding} headers into shreds' payload.
@@ -1284,7 +1275,7 @@ fn finish_erasure_batch(
     let num_data_shreds = usize::from(num_data_shreds);
     let num_coding_shreds = usize::from(num_coding_shreds);
     let erasure_batch_size = num_data_shreds + num_coding_shreds;
-    reed_solomon_cache
+    ReedSolomonCache::global()
         .get(num_data_shreds, num_coding_shreds)?
         .encode(
             shreds
@@ -1448,16 +1439,9 @@ mod test {
     #[test_case(73, true)]
     fn test_recover_merkle_shreds(num_shreds: usize, resigned: bool) {
         let mut rng = rand::rng();
-        let reed_solomon_cache = ReedSolomonCache::default();
         for num_data_shreds in 1..num_shreds {
             let num_coding_shreds = num_shreds - num_data_shreds;
-            run_recover_merkle_shreds(
-                &mut rng,
-                resigned,
-                num_data_shreds,
-                num_coding_shreds,
-                &reed_solomon_cache,
-            );
+            run_recover_merkle_shreds(&mut rng, resigned, num_data_shreds, num_coding_shreds);
         }
     }
 
@@ -1466,7 +1450,6 @@ mod test {
         resigned: bool,
         num_data_shreds: usize,
         num_coding_shreds: usize,
-        reed_solomon_cache: &ReedSolomonCache,
     ) {
         let keypair = Keypair::new();
         let num_shreds = num_data_shreds + num_coding_shreds;
@@ -1523,7 +1506,7 @@ mod test {
             .collect::<Result<_, _>>()
             .unwrap();
         let mut parity = vec![vec![0u8; data[0].len()]; num_coding_shreds];
-        reed_solomon_cache
+        ReedSolomonCache::global()
             .get(num_data_shreds, num_coding_shreds)
             .unwrap()
             .encode_sep(&data, &mut parity[..])
@@ -1564,14 +1547,10 @@ mod test {
             assert!(shred.verify(&keypair.pubkey()));
             assert_matches!(shred.sanitize(), Ok(()));
         }
-        verify_erasure_recovery(rng, &shreds, reed_solomon_cache);
+        verify_erasure_recovery(rng, &shreds);
     }
 
-    fn verify_erasure_recovery<R: Rng>(
-        rng: &mut R,
-        shreds: &[Shred],
-        reed_solomon_cache: &ReedSolomonCache,
-    ) {
+    fn verify_erasure_recovery<R: Rng>(rng: &mut R, shreds: &[Shred]) {
         assert_eq!(shreds.iter().map(Shred::signature).dedup().count(), 1);
         assert_eq!(shreds.iter().map(Shred::fec_set_index).dedup().count(), 1);
         let num_shreds = shreds.len();
@@ -1591,22 +1570,19 @@ mod test {
                 )
             }) {
                 assert_matches!(
-                    recover(shreds, reed_solomon_cache).err(),
+                    recover(shreds).err(),
                     Some(Error::Erasure(TooFewParityShards))
                 );
                 continue;
             }
             if shreds.len() < num_data_shreds {
                 assert_matches!(
-                    recover(shreds, reed_solomon_cache).err(),
+                    recover(shreds).err(),
                     Some(Error::Erasure(TooFewShardsPresent))
                 );
                 continue;
             }
-            let recovered_shreds: Vec<_> = recover(shreds, reed_solomon_cache)
-                .unwrap()
-                .map(Result::unwrap)
-                .collect();
+            let recovered_shreds: Vec<_> = recover(shreds).unwrap().map(Result::unwrap).collect();
             assert_eq!(size + recovered_shreds.len(), num_shreds);
             assert_eq!(recovered_shreds.len(), removed_shreds.len());
             removed_shreds.sort_by(|a, b| {
@@ -1629,9 +1605,8 @@ mod test {
     fn test_make_shreds_from_data(data_size: usize, is_last_in_slot: bool) {
         let mut rng = rand::rng();
         let data_size = data_size.saturating_sub(16);
-        let reed_solomon_cache = ReedSolomonCache::default();
         for data_size in data_size..data_size + 32 {
-            run_make_shreds_from_data(&mut rng, data_size, is_last_in_slot, &reed_solomon_cache);
+            run_make_shreds_from_data(&mut rng, data_size, is_last_in_slot);
         }
     }
 
@@ -1639,10 +1614,9 @@ mod test {
     #[test_case(false)]
     fn test_make_shreds_from_data_rand(is_last_in_slot: bool) {
         let mut rng = rand::rng();
-        let reed_solomon_cache = ReedSolomonCache::default();
         for _ in 0..32 {
             let data_size = rng.random_range(0..31200 * 7);
-            run_make_shreds_from_data(&mut rng, data_size, is_last_in_slot, &reed_solomon_cache);
+            run_make_shreds_from_data(&mut rng, data_size, is_last_in_slot);
         }
     }
 
@@ -1651,18 +1625,12 @@ mod test {
     #[test_case(false)]
     fn test_make_shreds_from_data_paranoid(is_last_in_slot: bool) {
         let mut rng = rand::rng();
-        let reed_solomon_cache = ReedSolomonCache::default();
         for data_size in 0..=PACKET_DATA_SIZE * 4 * 64 {
-            run_make_shreds_from_data(&mut rng, data_size, is_last_in_slot, &reed_solomon_cache);
+            run_make_shreds_from_data(&mut rng, data_size, is_last_in_slot);
         }
     }
 
-    fn run_make_shreds_from_data<R: Rng>(
-        rng: &mut R,
-        data_size: usize,
-        is_last_in_slot: bool,
-        reed_solomon_cache: &ReedSolomonCache,
-    ) {
+    fn run_make_shreds_from_data<R: Rng>(rng: &mut R, data_size: usize, is_last_in_slot: bool) {
         let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let keypair = Keypair::new();
         let chained_merkle_root = Hash::new_from_array(rng.random());
@@ -1686,7 +1654,6 @@ mod test {
             is_last_in_slot,
             next_shred_index,
             next_code_index,
-            reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         )
         .unwrap();
@@ -1871,11 +1838,7 @@ mod test {
             })
             .chunk_by(|shred| shred.common_header().fec_set_index)
             .into_iter()
-            .flat_map(|(_, shreds)| {
-                recover(shreds.collect(), reed_solomon_cache)
-                    .unwrap()
-                    .map(Result::unwrap)
-            })
+            .flat_map(|(_, shreds)| recover(shreds.collect()).unwrap().map(Result::unwrap))
             .collect();
         assert_eq!(recovered_data_shreds.len(), data_shreds.len());
 
@@ -1891,7 +1854,7 @@ mod test {
             .into_group_map_by(Shred::fec_set_index)
             .values()
         {
-            verify_erasure_recovery(rng, shreds, reed_solomon_cache);
+            verify_erasure_recovery(rng, shreds);
         }
     }
 }
