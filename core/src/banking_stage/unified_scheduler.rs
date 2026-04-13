@@ -87,7 +87,6 @@ pub(crate) fn ensure_banking_stage_setup(
     let banking_stage_monitor = Box::new(DecisionMakerWrapper::new(
         channels.clone_is_unified_for_unified_scheduler(),
         is_exited,
-        decision_maker.clone(),
     ));
     let banking_packet_handler = Box::new(
         move |helper: &BankingStageHelper, batches: BankingPacketBatch| {
