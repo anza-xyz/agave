@@ -295,7 +295,7 @@ impl RpcRequestMiddleware {
                             .root_bank()
                             .ns_per_slot
                             .try_into()
-                            .unwrap_or(solana_clock::DEFAULT_MS_PER_SLOT);
+                            .unwrap_or(solana_clock::DEFAULT_MS_PER_SLOT * 1_000_000);
                         Duration::from_nanos(slots.get().saturating_mul(ns_per_slot))
                     }
                 };
