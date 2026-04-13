@@ -5,7 +5,7 @@ use {
         integration_tests::{DEFAULT_NODE_STAKE, ValidatorKeys},
         validator_configs::*,
     },
-    agave_feature_set::{FeatureSet, bls_pubkey_management_in_vote_account, vote_state_v4},
+    agave_feature_set::{FeatureSet, bls_pubkey_management_in_vote_account},
     agave_snapshots::{paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig},
     itertools::izip,
     log::*,
@@ -527,7 +527,7 @@ impl LocalCluster {
 
         discover_peers(
             None,
-            &vec![cluster.entry_point_info.gossip().unwrap()],
+            &[cluster.entry_point_info.gossip().unwrap()],
             Some(config.node_stakes.len() + config.num_listeners as usize),
             Duration::from_secs(120),
             None,
@@ -1086,7 +1086,6 @@ impl LocalCluster {
 
     fn is_bls_pubkey_feature_enabled(rpc_client: &RpcClient) -> bool {
         Self::is_feature_active(rpc_client, &bls_pubkey_management_in_vote_account::id())
-            && Self::is_feature_active(rpc_client, &vote_state_v4::id())
     }
 
     fn setup_vote_and_stake_accounts(

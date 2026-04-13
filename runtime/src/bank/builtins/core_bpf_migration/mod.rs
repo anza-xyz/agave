@@ -538,10 +538,7 @@ pub(crate) mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
             program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
-            solana_sbpf::{
-                self, memory_region::MemoryMapping, program::BuiltinFunctionDefinition,
-                vm::ContextObject,
-            },
+            solana_sbpf::{self, program::BuiltinFunctionDefinition, vm::ContextObject},
         },
         solana_pubkey::Pubkey,
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader, system_program},
@@ -561,7 +558,6 @@ pub(crate) mod tests {
             _: u64,
             _: u64,
             _: u64,
-            _: &mut MemoryMapping,
         ) -> Result<u64, Box<dyn std::error::Error>> {
             Ok(0)
         }

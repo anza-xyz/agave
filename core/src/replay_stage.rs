@@ -1544,7 +1544,7 @@ impl ReplayStage {
 
         let vote = Vote::new_genesis_vote(slot, block_id);
         match voting_utils::generate_vote_tx(
-            &vote,
+            vote,
             bank_forks.read().unwrap().root_bank().as_ref(),
             vote_account,
             identity_keypair,
@@ -2042,6 +2042,18 @@ impl ReplayStage {
         // consistent
         let slot_descendants = slot_descendants.unwrap();
         Self::purge_ancestors_descendants(slot_to_purge, &slot_descendants, ancestors, descendants);
+
+        let banks_to_remove: Vec<_> = {
+            let bank_forks = bank_forks.read().unwrap();
+            slot_descendants
+                .iter()
+                .chain(std::iter::once(&slot_to_purge))
+                .filter_map(|slot| bank_forks.get_with_scheduler(*slot))
+                .collect()
+        };
+        for bank in banks_to_remove {
+            let _ = bank.wait_for_completed_scheduler();
+        }
 
         // Grab the Slot and BankId's of the banks we need to purge, then clear the banks
         // from BankForks
@@ -3554,7 +3566,7 @@ impl ReplayStage {
                 let block_id = process_active_banks_context
                     .blockstore
                     .get_block_id(bank.slot(), &process_active_banks_context.migration_status)
-                    .ok();
+                    .expect("Blockstore operations must succeed");
                 debug_assert!(block_id.is_some() || is_leader_block);
                 if block_id.is_some() {
                     bank.set_block_id(block_id);
@@ -4827,7 +4839,9 @@ pub(crate) mod tests {
         solana_transaction_status::VersionedTransactionWithStatusMeta,
         solana_unified_scheduler_pool::DefaultSchedulerPool,
         solana_vote::vote_transaction,
-        solana_vote_program::vote_state::{self, TowerSync, VoteStateV4, VoteStateVersions},
+        solana_vote_program::vote_state::{
+            self, TowerSync, VoteStateV4, VoteStateVersions, handler::VoteStateHandler,
+        },
         std::{
             fs::remove_dir_all,
             iter,
@@ -5785,9 +5799,11 @@ pub(crate) mod tests {
     fn test_replay_commitment_cache() {
         fn leader_vote(vote_slot: Slot, bank: &Bank, pubkey: &Pubkey) -> (Pubkey, TowerVoteState) {
             let mut leader_vote_account = bank.get_account(pubkey).unwrap();
-            let mut vote_state =
-                VoteStateV4::deserialize(leader_vote_account.data(), pubkey).unwrap();
+            let mut vote_state = VoteStateHandler::new_v4(
+                VoteStateV4::deserialize(leader_vote_account.data(), pubkey).unwrap(),
+            );
             vote_state::process_slot_vote_unchecked(&mut vote_state, vote_slot);
+            let vote_state = vote_state.unwrap_v4();
             let versioned = VoteStateVersions::new_v4(vote_state.clone());
             leader_vote_account.set_state(&versioned).unwrap();
             bank.store_account(pubkey, &leader_vote_account);

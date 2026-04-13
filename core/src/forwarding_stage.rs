@@ -123,7 +123,7 @@ pub(crate) struct SpawnForwardingStageResult {
 
 pub(crate) fn spawn_forwarding_stage(
     receiver: Receiver<(BankingPacketBatch, bool)>,
-    tpu_forwaring_client_config: ForwardingClientConfig<'_>,
+    tpu_forwarding_client_config: ForwardingClientConfig<'_>,
     vote_client_udp_socket: UdpSocket,
     sharable_banks: SharableBanks,
     forward_address_getter: ForwardAddressGetter,
@@ -136,7 +136,7 @@ pub(crate) fn spawn_forwarding_stage(
         runtime_handle,
         cancel,
         node_multihoming,
-    } = tpu_forwaring_client_config;
+    } = tpu_forwarding_client_config;
 
     // Create TPU clients for each socket provided.
     // Number of clients is same as number of bind IP addresses.

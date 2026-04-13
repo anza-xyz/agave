@@ -3,8 +3,11 @@ use {
         MAX_CALL_DEPTH, MAX_HEAP_FRAME_BYTES, MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268,
         MIN_HEAP_FRAME_BYTES, STACK_FRAME_SIZE,
     },
-    solana_sbpf::{aligned_memory::AlignedMemory, ebpf::HOST_ALIGN},
-    std::array,
+    solana_sbpf::{aligned_memory::AlignedMemory, ebpf::HOST_ALIGN, vm::CallFrame},
+    std::{
+        array,
+        ops::{Deref, DerefMut},
+    },
 };
 
 trait Reset {
@@ -57,9 +60,43 @@ impl Reset for AlignedMemory<{ HOST_ALIGN }> {
     }
 }
 
+pub struct CallFrameBuffer(Box<[CallFrame; MAX_CALL_DEPTH]>);
+
+impl Default for CallFrameBuffer {
+    fn default() -> Self {
+        let mut mem = Box::<[CallFrame; MAX_CALL_DEPTH]>::new_uninit();
+        let ptr = mem.as_mut_ptr().cast::<CallFrame>();
+        for i in 0..MAX_CALL_DEPTH {
+            unsafe { ptr.add(i).write(CallFrame::default()) }
+        }
+        Self(unsafe { mem.assume_init() })
+    }
+}
+
+impl Reset for CallFrameBuffer {
+    fn reset(&mut self) {
+        self.fill(CallFrame::default())
+    }
+}
+
+impl Deref for CallFrameBuffer {
+    type Target = [CallFrame];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_slice()
+    }
+}
+
+impl DerefMut for CallFrameBuffer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut_slice()
+    }
+}
+
 pub struct VmMemoryPool {
     stack: Pool<AlignedMemory<{ HOST_ALIGN }>, MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268>,
     heap: Pool<AlignedMemory<{ HOST_ALIGN }>, MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268>,
+    call_frame: Pool<CallFrameBuffer, MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268>,
 }
 
 impl VmMemoryPool {
@@ -71,6 +108,7 @@ impl VmMemoryPool {
             heap: Pool::new(array::from_fn(|_| {
                 AlignedMemory::zero_filled(MAX_HEAP_FRAME_BYTES as usize)
             })),
+            call_frame: Pool::new(array::from_fn(|_| CallFrameBuffer::default())),
         }
     }
 
@@ -107,6 +145,14 @@ impl VmMemoryPool {
                 && heap_size <= MAX_HEAP_FRAME_BYTES as usize
         );
         self.heap.put(heap)
+    }
+
+    pub fn get_call_frames(&mut self) -> CallFrameBuffer {
+        self.call_frame.get().unwrap_or_default()
+    }
+
+    pub fn put_call_frames(&mut self, call_frame: CallFrameBuffer) -> bool {
+        self.call_frame.put(call_frame)
     }
 }
 

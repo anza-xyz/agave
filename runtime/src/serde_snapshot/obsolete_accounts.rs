@@ -1,19 +1,20 @@
 use {
     crate::serde_snapshot::SerializedAccountsFileId,
     dashmap::DashMap,
-    rayon::iter::{IntoParallelRefIterator, ParallelIterator},
-    serde::{Deserialize, Serialize},
+    rayon::iter::{IntoParallelIterator, ParallelIterator},
+    serde::Serialize,
     solana_accounts_db::{
         ObsoleteAccountItem, ObsoleteAccounts, account_info::Offset,
         account_storage_entry::AccountStorageEntry, accounts_db::AccountsFileId,
     },
     solana_clock::Slot,
     std::sync::Arc,
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct SerdeObsoleteAccounts {
+#[derive(Debug, Default, Serialize, SchemaRead, SchemaWrite)]
+pub(crate) struct SerdeObsoleteAccounts {
     /// The ID of the associated account file. Used for verification to ensure the restored
     /// obsolete accounts correspond to the correct account file
     pub id: SerializedAccountsFileId,
@@ -41,6 +42,24 @@ impl SerdeObsoleteAccounts {
             accounts,
         }
     }
+
+    pub(crate) fn into_tuple(self) -> (ObsoleteAccounts, AccountsFileId, usize) {
+        let accounts = self
+            .accounts
+            .into_iter()
+            .map(|(offset, data_len, slot)| ObsoleteAccountItem {
+                offset,
+                data_len,
+                slot,
+            })
+            .collect();
+
+        (
+            ObsoleteAccounts { accounts },
+            self.id as AccountsFileId,
+            self.bytes as usize,
+        )
+    }
 }
 
 /// Represents a map of obsolete accounts data for multiple slots.
@@ -49,11 +68,11 @@ impl SerdeObsoleteAccounts {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "12qimMBghYs9dL4nhws7Xe1B5MXWBV75VTMTGLHxevYE")
+    frozen_abi(digest = "7Hb4XtqaUBY27yyz7V1kVXZ9aTnary8GDroB12JRvGjz")
 )]
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug, SchemaRead, SchemaWrite)]
 pub(crate) struct SerdeObsoleteAccountsMap {
-    map: DashMap<Slot, SerdeObsoleteAccounts>,
+    map: Vec<(Slot, SerdeObsoleteAccounts)>,
 }
 
 impl SerdeObsoleteAccountsMap {
@@ -62,35 +81,20 @@ impl SerdeObsoleteAccountsMap {
         snapshot_storages: &[Arc<AccountStorageEntry>],
         snapshot_slot: Slot,
     ) -> Self {
-        let map = DashMap::with_capacity(snapshot_storages.len());
-        snapshot_storages.par_iter().for_each(|storage| {
-            map.insert(
-                storage.slot(),
-                SerdeObsoleteAccounts::new_from_storage_entry_at_slot(storage, snapshot_slot),
-            );
-        });
+        let map = snapshot_storages
+            .into_par_iter()
+            .map(|storage| {
+                (
+                    storage.slot(),
+                    SerdeObsoleteAccounts::new_from_storage_entry_at_slot(storage, snapshot_slot),
+                )
+            })
+            .collect();
         SerdeObsoleteAccountsMap { map }
     }
 
-    /// Removes and returns the obsolete accounts data for a given slot.
-    pub(crate) fn remove(&self, slot: &Slot) -> Option<(ObsoleteAccounts, AccountsFileId, usize)> {
-        self.map.remove(slot).map(|(_, entry)| {
-            let accounts = entry
-                .accounts
-                .into_iter()
-                .map(|(offset, data_len, slot)| ObsoleteAccountItem {
-                    offset,
-                    data_len,
-                    slot,
-                })
-                .collect();
-
-            (
-                ObsoleteAccounts { accounts },
-                entry.id as AccountsFileId,
-                entry.bytes as usize,
-            )
-        })
+    pub(crate) fn into_dashmap(self) -> DashMap<Slot, SerdeObsoleteAccounts> {
+        self.map.into_iter().collect()
     }
 }
 
@@ -98,8 +102,8 @@ impl SerdeObsoleteAccountsMap {
 mod test {
     use {
         super::*,
-        crate::serde_snapshot::{deserialize_from, serialize_into},
-        std::io::{BufReader, BufWriter, Cursor},
+        crate::serde_snapshot::{deserialize_wincode_from, serialize_into},
+        std::io::Cursor,
         test_case::test_case,
     };
 
@@ -149,26 +153,22 @@ mod test {
 
         // Serialize the obsolete accounts map
         let mut buf = Vec::new();
-        let cursor = Cursor::new(&mut buf);
-        let mut writer = BufWriter::new(cursor);
-        serialize_into(&mut writer, &obsolete_accounts_map).unwrap();
-        drop(writer);
+        serialize_into(Cursor::new(&mut buf), &obsolete_accounts_map).unwrap();
 
         // Deserialize the obsolete accounts map
         let cursor = Cursor::new(buf.as_slice());
-        let mut reader = BufReader::new(cursor);
         let deserialized_obsolete_accounts: SerdeObsoleteAccountsMap =
-            deserialize_from(&mut reader).unwrap();
+            deserialize_wincode_from(cursor).unwrap();
+        let map = deserialized_obsolete_accounts.into_dashmap();
 
         // Verify the deserialized data matches the original obsolete accounts
-        assert_eq!(
-            deserialized_obsolete_accounts.map.len(),
-            obsolete_accounts.len()
-        );
+        assert_eq!(map.len(), obsolete_accounts.len());
         for (slot, obsolete_accounts) in obsolete_accounts {
-            let deserialized_obsolete_accounts =
-                deserialized_obsolete_accounts.remove(&slot).unwrap();
-            assert_eq!(obsolete_accounts, deserialized_obsolete_accounts.0);
+            let deserialized_obsolete_accounts = map.remove(&slot).unwrap();
+            assert_eq!(
+                obsolete_accounts,
+                deserialized_obsolete_accounts.1.into_tuple().0
+            );
         }
     }
 }

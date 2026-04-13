@@ -1,7 +1,6 @@
 pub use crate::tpu_client::Result;
 use {
     crate::tpu_client::{MAX_FANOUT_SLOTS, RecentLeaderSlots, TpuClientConfig},
-    bincode::serialize,
     futures_util::{future::join_all, stream::StreamExt},
     log::*,
     solana_clock::{DEFAULT_MS_PER_SLOT, NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
@@ -396,7 +395,8 @@ where
     /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout
     /// size
     pub async fn send_transaction(&self, transaction: &Transaction) -> bool {
-        let wire_transaction = serialize(transaction).expect("serialization should succeed");
+        let wire_transaction =
+            wincode::serialize(transaction).expect("serialization should succeed");
         self.send_wire_transaction(wire_transaction).await
     }
 
@@ -414,7 +414,8 @@ where
         &self,
         transaction: &VersionedTransaction,
     ) -> TransportResult<()> {
-        let wire_transaction = serialize(transaction).expect("serialization should succeed");
+        let wire_transaction =
+            wincode::serialize(transaction).expect("serialization should succeed");
         self.try_send_wire_transaction(wire_transaction).await
     }
 
@@ -580,7 +581,7 @@ where
                     // Prepare futures for all transactions
                     let mut futures = vec![];
                     for (index, (_i, transaction)) in pending_transactions.values().enumerate() {
-                        let wire_transaction = serialize(transaction).unwrap();
+                        let wire_transaction = wincode::serialize(transaction).unwrap();
                         let leaders = self
                             .leader_tpu_service
                             .unique_leader_tpu_sockets(self.fanout_slots);

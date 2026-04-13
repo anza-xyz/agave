@@ -1150,7 +1150,7 @@ pub(crate) mod external {
 
         #[test]
         fn test_consume_response_iterator() {
-            let simple_tx = bincode::serialize(&transfer(
+            let simple_tx = wincode::serialize(&transfer(
                 &solana_keypair::Keypair::new(),
                 &solana_pubkey::Pubkey::new_unique(),
                 1,
@@ -1339,7 +1339,7 @@ pub(crate) mod external {
                 1,
                 recent_blockhash,
             );
-            bincode::serialize(&tx).unwrap()
+            wincode::serialize(&tx).unwrap()
         }
 
         #[test]
@@ -1431,7 +1431,7 @@ pub(crate) mod external {
                 &parsed_transactions[2].static_account_keys()[0],
                 &AccountSharedData::new(1_000_000_000, 0, &system_program::ID),
             );
-            bank.process_transaction(&bincode::deserialize(&tx3).unwrap())
+            bank.process_transaction(&wincode::deserialize(&tx3).unwrap())
                 .unwrap();
 
             // bank.store_account(

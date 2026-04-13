@@ -122,7 +122,7 @@ use {
         vote_state::{
             self, BlockTimestamp, MAX_LOCKOUT_HISTORY, VoteAuthorize, VoteInit, VoteStateV4,
             VoteStateVersions, VoterWithBLSArgs, create_bls_pubkey_and_proof_of_possession,
-            create_v4_account_with_authorized,
+            create_v4_account_with_authorized, handler::VoteStateHandler,
         },
     },
     spl_generic_token::token,
@@ -777,20 +777,13 @@ where
     bank0.store_account_and_update_capitalization(&stake_id, &stake_account);
 
     // generate some rewards
-    let mut vote_state = Some(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
+    let mut vote_state =
+        VoteStateHandler::new_v4(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
     for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-        if let Some(v) = vote_state.as_mut() {
-            vote_state::process_slot_vote_unchecked(v, i as u64)
-        }
-        let versioned = VoteStateVersions::V4(Box::new(vote_state.take().unwrap()));
+        vote_state::process_slot_vote_unchecked(&mut vote_state, i as u64);
+        let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
         vote_account.set_state(&versioned).unwrap();
         bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
-        match versioned {
-            VoteStateVersions::V4(v) => {
-                vote_state = Some(*v);
-            }
-            _ => panic!("Has to be of type V4"),
-        };
     }
     bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
     bank0.freeze();
@@ -948,20 +941,13 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
     bank.store_account_and_update_capitalization(&stake_id2, &stake_account2);
 
     // generate some rewards
-    let mut vote_state = Some(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
+    let mut vote_state =
+        VoteStateHandler::new_v4(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
     for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-        if let Some(v) = vote_state.as_mut() {
-            vote_state::process_slot_vote_unchecked(v, i as u64)
-        }
-        let versioned = VoteStateVersions::V4(Box::new(vote_state.take().unwrap()));
+        vote_state::process_slot_vote_unchecked(&mut vote_state, i as u64);
+        let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
         vote_account.set_state(&versioned).unwrap();
         bank.store_account_and_update_capitalization(&vote_id, &vote_account);
-        match versioned {
-            VoteStateVersions::V4(v) => {
-                vote_state = Some(*v);
-            }
-            _ => panic!("Has to be of type V4"),
-        };
     }
     bank.store_account_and_update_capitalization(&vote_id, &vote_account);
 
@@ -9183,17 +9169,16 @@ fn test_call_precomiled_program() {
 }
 
 fn calculate_test_fee(message: &impl SVMMessage, fee_structure: &FeeStructure) -> u64 {
-    let fee_budget_limits = FeeBudgetLimits::from(
-        process_compute_budget_instructions(
-            message.program_instructions_iter(),
-            &FeatureSet::default(),
-        )
-        .unwrap_or_default(),
-    );
+    let prioritization_fee = process_compute_budget_instructions(
+        message.program_instructions_iter(),
+        &FeatureSet::default(),
+    )
+    .unwrap_or_default()
+    .get_prioritization_fee();
     solana_fee::calculate_fee(
         message,
         fee_structure.lamports_per_signature,
-        fee_budget_limits.prioritization_fee,
+        prioritization_fee,
         FeeFeatures {},
     )
 }
@@ -9295,15 +9280,13 @@ fn test_calculate_fee_compute_units() {
             Some(&Pubkey::new_unique()),
         ));
         let fee = calculate_test_fee(&message, &fee_structure);
-        let fee_budget_limits = FeeBudgetLimits::from(ComputeBudgetLimits {
+        let prioritization_fee = ComputeBudgetLimits {
             compute_unit_price: PRIORITIZATION_FEE_RATE,
             compute_unit_limit: requested_compute_units,
             ..ComputeBudgetLimits::default()
-        });
-        assert_eq!(
-            fee,
-            lamports_per_signature + fee_budget_limits.prioritization_fee
-        );
+        }
+        .get_prioritization_fee();
+        assert_eq!(fee, lamports_per_signature + prioritization_fee);
     }
 }
 
@@ -9316,11 +9299,12 @@ fn test_calculate_prioritization_fee() {
 
     let request_units = 1_000_000_u32;
     let request_unit_price = 2_000_000_000_u64;
-    let fee_budget_limits = FeeBudgetLimits::from(ComputeBudgetLimits {
+    let prioritization_fee = ComputeBudgetLimits {
         compute_unit_price: request_unit_price,
         compute_unit_limit: request_units,
         ..ComputeBudgetLimits::default()
-    });
+    }
+    .get_prioritization_fee();
 
     let message = new_sanitized_message(Message::new(
         &[
@@ -9333,7 +9317,7 @@ fn test_calculate_prioritization_fee() {
     let fee = calculate_test_fee(&message, &fee_structure);
     assert_eq!(
         fee,
-        fee_structure.lamports_per_signature + fee_budget_limits.prioritization_fee
+        fee_structure.lamports_per_signature + prioritization_fee
     );
 }
 
@@ -11342,7 +11326,10 @@ fn test_failed_simulation_compute_units() {
         (bank.get_account(&program_id).unwrap().data().len() + TRANSACTION_ACCOUNT_BASE_SIZE * 2)
             as u32;
     declare_process_instruction!(MockBuiltin, MOCK_BUILTIN_UNITS, |invoke_context| {
-        invoke_context.consume_checked(TEST_UNITS).unwrap();
+        invoke_context
+            .compute_meter
+            .consume_checked(TEST_UNITS)
+            .unwrap();
         Err(InstructionError::InvalidInstructionData)
     });
 

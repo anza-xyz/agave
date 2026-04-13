@@ -7,7 +7,8 @@ use {
 };
 
 /// Performs point addition on G1: `P1 + P2`.
-pub fn bls12_381_g1_addition(
+/// Does not check if points are in the correct subgroup for efficiency.
+pub fn bls12_381_g1_addition_unchecked(
     _version: Version,
     p1: &PodG1Point,
     p2: &PodG1Point,
@@ -32,7 +33,7 @@ pub fn bls12_381_g1_addition(
 }
 
 /// Performs point addition on G2: `P1 + P2`.
-pub fn bls12_381_g2_addition(
+pub fn bls12_381_g2_addition_unchecked(
     _version: Version,
     p1: &PodG2Point,
     p2: &PodG2Point,
@@ -83,7 +84,8 @@ mod tests {
         let expected_be = to_pod_g1(output_be);
 
         // Test Big Endian
-        let result_be = bls12_381_g1_addition(Version::V0, &p1_be, &p2_be, Endianness::BE);
+        let result_be =
+            bls12_381_g1_addition_unchecked(Version::V0, &p1_be, &p2_be, Endianness::BE);
         assert_eq!(
             result_be,
             Some(expected_be),
@@ -96,7 +98,8 @@ mod tests {
         let p2_le = to_pod_g1(p2_le);
         let expected_le = to_pod_g1(output_le);
 
-        let result_le = bls12_381_g1_addition(Version::V0, &p1_le, &p2_le, Endianness::LE);
+        let result_le =
+            bls12_381_g1_addition_unchecked(Version::V0, &p1_le, &p2_le, Endianness::LE);
         assert_eq!(
             result_le,
             Some(expected_le),
@@ -118,7 +121,8 @@ mod tests {
         let expected_be = to_pod_g2(output_be);
 
         // Test Big Endian
-        let result_be = bls12_381_g2_addition(Version::V0, &p1_be, &p2_be, Endianness::BE);
+        let result_be =
+            bls12_381_g2_addition_unchecked(Version::V0, &p1_be, &p2_be, Endianness::BE);
         assert_eq!(
             result_be,
             Some(expected_be),
@@ -131,7 +135,8 @@ mod tests {
         let p2_le = to_pod_g2(p2_le);
         let expected_le = to_pod_g2(output_le);
 
-        let result_le = bls12_381_g2_addition(Version::V0, &p1_le, &p2_le, Endianness::LE);
+        let result_le =
+            bls12_381_g2_addition_unchecked(Version::V0, &p1_le, &p2_le, Endianness::LE);
         assert_eq!(
             result_le,
             Some(expected_le),

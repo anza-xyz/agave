@@ -314,6 +314,10 @@ impl EventHandler {
                 Self::try_final(my_pubkey, block, vctx, &mut votes)?;
             }
 
+            VotorEvent::BlockNotarFallback(block) => {
+                info!("{my_pubkey}: Block notar-fallback {block:?}");
+            }
+
             VotorEvent::FirstShred(slot) => {
                 info!("{my_pubkey}: First shred {slot}");
                 received_shred.insert(slot);
@@ -952,7 +956,6 @@ mod tests {
             wait_to_vote_slot: None,
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(my_vote_keypair)])),
             derived_bls_keypairs: HashMap::new(),
-            has_new_vote_been_rooted: false,
             own_vote_sender,
             consensus_metrics_sender,
         };

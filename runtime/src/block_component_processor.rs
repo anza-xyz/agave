@@ -14,7 +14,7 @@ use {
     },
     crossbeam_channel::Sender,
     log::*,
-    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
+    solana_clock::Slot,
     solana_entry::block_component::{
         BlockFooterV1, BlockMarkerV1, GenesisCertificate, VersionedBlockFooter,
         VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
@@ -350,9 +350,10 @@ impl BlockComponentProcessor {
         let parent_slot = parent_bank.slot();
         let current_time_nanos = footer.block_producer_time_nanos as i64;
         let current_slot = bank.slot();
+        let ns_per_slot = bank.ns_per_slot.try_into().expect("ns_per_slot overflow");
 
         let (lower_bound_nanos, upper_bound_nanos) =
-            Self::nanosecond_time_bounds(parent_slot, parent_time_nanos, current_slot);
+            Self::nanosecond_time_bounds(parent_slot, parent_time_nanos, current_slot, ns_per_slot);
 
         let is_valid =
             lower_bound_nanos <= current_time_nanos && current_time_nanos <= upper_bound_nanos;
@@ -363,24 +364,26 @@ impl BlockComponentProcessor {
         }
     }
 
-    /// Given the parent slot, parent time, and slot, calculate the lower and upper
-    /// bounds for the block producer time. We return (lower_bound, upper_bound), where both bounds
-    /// are inclusive. I.e., the working bank time is valid if
-    /// lower_bound <= working_bank_time <= upper_bound.
+    /// Given the parent slot, parent time, slot, and default nanoseconds per
+    /// slot, calculate the lower and upper bounds for the block producer time.
+    /// We return (lower_bound, upper_bound), where both bounds are inclusive.
+    /// I.e., the working bank time is valid if lower_bound <= working_bank_time
+    /// <= upper_bound.
     ///
-    /// Refer to https://github.com/solana-foundation/solana-improvement-documents/pull/363 for
-    /// details on the bounds calculation.
+    /// Refer to
+    /// https://github.com/solana-foundation/solana-improvement-documents/pull/363
+    /// for details on the bounds calculation.
     pub fn nanosecond_time_bounds(
         parent_slot: Slot,
         parent_time_nanos: i64,
         slot: Slot,
+        ns_per_slot: u64,
     ) -> (i64, i64) {
-        let default_ns_per_slot = DEFAULT_MS_PER_SLOT * 1_000_000;
         let diff_slots = slot.saturating_sub(parent_slot);
 
         let min_working_bank_time = parent_time_nanos.saturating_add(1);
         let max_working_bank_time =
-            parent_time_nanos.saturating_add((2 * diff_slots * default_ns_per_slot) as i64);
+            parent_time_nanos.saturating_add((2 * diff_slots * ns_per_slot) as i64);
 
         (min_working_bank_time, max_working_bank_time)
     }
@@ -415,12 +418,15 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{activate_all_features_alpenglow, create_genesis_config},
         },
+        solana_clock::DEFAULT_MS_PER_SLOT,
         solana_entry::block_component::{
             BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedUpdateParent,
         },
         solana_hash::Hash,
         std::sync::{Arc, RwLock},
     };
+
+    const DEFAULT_NS_PER_SLOT: u64 = DEFAULT_MS_PER_SLOT * 1_000_000;
 
     fn create_test_bank() -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
         let genesis_config_info = create_genesis_config(10_000);
@@ -905,12 +911,14 @@ mod tests {
         let parent_slot = parent.slot();
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
         let current_slot = bank.slot();
+        let ns_per_slot = bank.ns_per_slot.try_into().expect("ns_per_slot overflow");
 
         // Use a timestamp in the middle of the valid range
         let (lower_bound, upper_bound) = BlockComponentProcessor::nanosecond_time_bounds(
             parent_slot,
             parent_time_nanos,
             current_slot,
+            ns_per_slot,
         );
         let footer_time_nanos = (lower_bound + upper_bound) / 2;
         let expected_time_secs = footer_time_nanos / 1_000_000_000;
@@ -952,10 +960,15 @@ mod tests {
         // Set up clock on parent so validation doesn't skip bounds checking
         parent.update_clock_from_footer(parent_time_nanos);
 
-        let bank = create_child_bank(&bank_forks, &parent, slot_gap);
+        let bank: Arc<Bank> = create_child_bank(&bank_forks, &parent, slot_gap);
+        let ns_per_slot = bank.ns_per_slot.try_into().expect("ns_per_slot overflow");
 
-        let (lower_bound, upper_bound) =
-            BlockComponentProcessor::nanosecond_time_bounds(0, parent_time_nanos, slot_gap);
+        let (lower_bound, upper_bound) = BlockComponentProcessor::nanosecond_time_bounds(
+            0,
+            parent_time_nanos,
+            slot_gap,
+            ns_per_slot,
+        );
 
         let footer_time_nanos = timestamp_fn(parent_time_nanos, lower_bound, upper_bound);
 
@@ -1023,6 +1036,7 @@ mod tests {
         parent_slot: u64,
         parent_time_nanos: i64,
         working_slot: u64,
+        ns_per_slot: u64,
         expected_lower: i64,
         expected_upper: i64,
     ) {
@@ -1030,6 +1044,7 @@ mod tests {
             parent_slot,
             parent_time_nanos,
             working_slot,
+            ns_per_slot,
         );
 
         assert_eq!(lower, expected_lower);
@@ -1047,6 +1062,7 @@ mod tests {
             10,
             parent_time,
             15,
+            DEFAULT_NS_PER_SLOT,
             parent_time + 1,
             parent_time + 4_000_000_000,
         );
@@ -1061,7 +1077,14 @@ mod tests {
         // Note: In this case, lower > upper, so no timestamp would be valid
         // This is expected since we shouldn't have the same slot for parent and working bank
         let parent_time = 1_000_000_000_000;
-        test_nanosecond_time_bounds_helper(10, parent_time, 10, parent_time + 1, parent_time);
+        test_nanosecond_time_bounds_helper(
+            10,
+            parent_time,
+            10,
+            DEFAULT_NS_PER_SLOT,
+            parent_time + 1,
+            parent_time,
+        );
     }
 
     #[test]

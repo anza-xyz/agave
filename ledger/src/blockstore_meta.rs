@@ -654,7 +654,7 @@ impl MerkleRootMeta {
         }
     }
 
-    pub(crate) fn merkle_root(&self) -> Option<Hash> {
+    pub fn merkle_root(&self) -> Option<Hash> {
         self.merkle_root
     }
 
@@ -734,7 +734,7 @@ pub struct DoubleMerkleMeta {
     pub(crate) double_merkle_root: Hash,
 
     /// The number of fec sets in this block
-    pub(crate) fec_set_count: usize,
+    pub(crate) fec_set_count: u32,
 
     /// The merkle proofs.
     /// Each proof is of size `get_proof_size(fec_set_count + 1)`
@@ -748,18 +748,26 @@ pub struct DoubleMerkleMeta {
 }
 
 impl DoubleMerkleMeta {
+    /// Returns the number of fec sets in the block.
+    pub fn fec_set_count(&self) -> u32 {
+        self.fec_set_count
+    }
+
     /// Return the proof associated with the leaf of fec set `fec_set_index`
     /// Returns `None` if the proofs are yet to be populated or `fec_set_index` is out of bounds
-    pub fn get_fec_set_proof(&self, fec_set_index: usize) -> Option<&[u8]> {
+    pub fn get_fec_set_proof(&self, fec_set_index: u32) -> Option<&[u8]> {
         if fec_set_index >= self.fec_set_count {
             return None;
         }
         if self.proofs.is_empty() {
             return None;
         }
+        let fec_set_count =
+            usize::try_from(self.fec_set_count).expect("fec_set_count should fit in usize");
+        let fec_set_index = usize::try_from(fec_set_index).ok()?;
 
         let proof_size =
-            usize::from(get_proof_size(self.fec_set_count + 1)) * SIZE_OF_MERKLE_PROOF_ENTRY;
+            usize::from(get_proof_size(fec_set_count + 1)) * SIZE_OF_MERKLE_PROOF_ENTRY;
         Some(&self.proofs[fec_set_index * proof_size..(fec_set_index + 1) * proof_size])
     }
 
@@ -770,9 +778,11 @@ impl DoubleMerkleMeta {
             return None;
         }
 
+        let fec_set_count =
+            usize::try_from(self.fec_set_count).expect("fec_set_count should fit in usize");
         let proof_size =
-            usize::from(get_proof_size(self.fec_set_count + 1)) * SIZE_OF_MERKLE_PROOF_ENTRY;
-        Some(&self.proofs[self.fec_set_count * proof_size..])
+            usize::from(get_proof_size(fec_set_count + 1)) * SIZE_OF_MERKLE_PROOF_ENTRY;
+        Some(&self.proofs[fec_set_count * proof_size..])
     }
 }
 

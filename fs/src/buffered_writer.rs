@@ -1,24 +1,65 @@
 use {
     crate::FileSize,
-    std::{
-        fs,
-        io::{self, BufWriter},
-        path::Path,
-    },
+    std::{fs, io, path::Path},
 };
 
-/// Default buffer size for writing large files to disks. Since current implementation does not do
+/// Default buffer size for IO uring. This is a multiple of the default write size to allow
+/// multiple writes to be in flight at the same time.
+#[cfg(target_os = "linux")]
+const DEFAULT_IO_URING_BUFFER_SIZE: usize =
+    4 * crate::io_uring::file_creator::DEFAULT_WRITE_SIZE as usize;
+
+/// Default buffer size for writing large files to disks with `BufWriter`. Since `BufWriter` does not do
 /// background writing, this size is set above minimum reasonable SSD write sizes to also reduce
 /// number of syscalls.
-const DEFAULT_BUFFER_SIZE: usize = 2 * 1024 * 1024;
+#[cfg(not(target_os = "linux"))]
+const DEFAULT_BUF_WRITER_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 
 /// Return a buffered writer for creating a new file at `path`
 ///
 /// The returned writer is using a buffer size tuned for writing large files to disks.
 pub fn large_file_buf_writer(path: impl AsRef<Path>) -> io::Result<impl io::Write> {
-    let file = fs::File::create(path)?;
+    #[cfg(target_os = "linux")]
+    {
+        assert!(agave_io_uring::io_uring_supported());
+        use {
+            crate::{
+                io_setup::IoSetupState,
+                io_uring::{
+                    file_creator::IoUringFileCreatorBuilder, file_writer::IoUringFileWriter,
+                },
+            },
+            std::sync::Arc,
+        };
 
-    Ok(BufWriter::with_capacity(DEFAULT_BUFFER_SIZE, file))
+        let io_setup = IoSetupState::default();
+        let file_creator = IoUringFileCreatorBuilder::new()
+            .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
+            .write_with_direct_io(io_setup.use_direct_io)
+            .build(DEFAULT_IO_URING_BUFFER_SIZE, |_| None)?;
+
+        IoUringFileWriter::new(
+            file_creator,
+            path.as_ref().to_path_buf(),
+            0o666,
+            Arc::new(fs::File::open(path.as_ref().parent().ok_or(
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "expected path to an output file that has a parent directory",
+                ),
+            )?)?),
+        )
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let file = fs::File::create(path)?;
+
+        Ok(io::BufWriter::with_capacity(
+            DEFAULT_BUF_WRITER_BUFFER_SIZE,
+            file,
+        ))
+    }
 }
 
 /// A writer that enforces a hard byte-count limit on the wrapped writer.

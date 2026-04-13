@@ -13,7 +13,7 @@ use {
     solana_instruction::error::InstructionError,
     solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_sbpf::{
-        ebpf::{self, MM_HEAP_START},
+        ebpf::{self, MM_HEAP_START, MM_STACK_START},
         elf::Executable,
         error::{EbpfError, ProgramResult},
         memory_region::{AccessType, MemoryMapping, MemoryRegion},
@@ -22,7 +22,7 @@ use {
     solana_sdk_ids::bpf_loader_deprecated,
     solana_svm_log_collector::ic_logger_msg,
     solana_svm_measure::measure::Measure,
-    solana_transaction_context::{IndexOfAccount, transaction::TransactionContext},
+    solana_transaction_context::IndexOfAccount,
     std::{cell::RefCell, mem, time::Duration},
 };
 
@@ -48,30 +48,12 @@ pub fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 pub fn create_vm<'a, 'b>(
     program: &'a Executable<InvokeContext<'b, 'b>>,
-    regions: Vec<MemoryRegion>,
-    accounts_metadata: Vec<SerializedAccountMetadata>,
     invoke_context: &'a mut InvokeContext<'b, 'b>,
     stack: &mut [u8],
     heap: &mut [u8],
 ) -> Result<EbpfVm<'a, InvokeContext<'b, 'b>>, Box<dyn std::error::Error>> {
     let stack_size = stack.len();
-    let heap_size = heap.len();
-    let memory_mapping = create_memory_mapping(
-        program,
-        stack,
-        heap,
-        regions,
-        invoke_context.transaction_context,
-        invoke_context
-            .get_feature_set()
-            .virtual_address_space_adjustments,
-        invoke_context.get_feature_set().account_data_direct_mapping,
-    )?;
-    invoke_context.set_memory_context(MemoryContext::new(
-        BpfAllocator::new(heap_size as u64),
-        accounts_metadata,
-        memory_mapping,
-    ))?;
+    configure_program_regions(invoke_context, program, stack, heap)?;
     Ok(EbpfVm::new(
         program.get_loader().clone(),
         program.get_sbpf_version(),
@@ -80,64 +62,56 @@ pub fn create_vm<'a, 'b>(
     ))
 }
 
-fn create_memory_mapping<'a, C: ContextObject>(
+fn configure_program_regions<'a, C: ContextObject>(
+    invoke_context: &mut InvokeContext,
     executable: &Executable<C>,
     stack: &'a mut [u8],
     heap: &'a mut [u8],
-    additional_regions: Vec<MemoryRegion>,
-    transaction_context: &TransactionContext,
-    virtual_address_space_adjustments: bool,
-    account_data_direct_mapping: bool,
-) -> Result<MemoryMapping, Box<dyn std::error::Error>> {
-    let config = executable.get_config();
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
+    let regions = mapping
+        .get_regions_mut()
+        .expect("The memory mapping should not have been initialized");
+    let [ro_area, stack_area, heap_area, ..] = regions else {
+        panic!("the regions vector must have at least three entries")
+    };
+    *ro_area = executable.get_ro_region();
     let sbpf_version = executable.get_sbpf_version();
-    let regions: Vec<MemoryRegion> = vec![
-        executable.get_ro_region(),
-        MemoryRegion::new_writable_gapped(
-            stack,
-            ebpf::MM_STACK_START,
-            if sbpf_version.stack_frame_gaps() && config.enable_stack_frame_gaps {
-                config.stack_frame_size as u64
-            } else {
-                0
-            },
-        ),
-        MemoryRegion::new_writable(heap, MM_HEAP_START),
-    ]
-    .into_iter()
-    .chain(additional_regions)
-    .collect();
-
-    Ok(MemoryMapping::new_with_access_violation_handler(
-        regions,
-        config,
-        sbpf_version,
-        transaction_context.access_violation_handler(
-            virtual_address_space_adjustments,
-            account_data_direct_mapping,
-        ),
-    )?)
+    let config = executable.get_config();
+    *stack_area = MemoryRegion::new_writable_gapped(
+        stack,
+        MM_STACK_START,
+        if sbpf_version.stack_frame_gaps() && config.enable_stack_frame_gaps {
+            config.stack_frame_size as u64
+        } else {
+            0
+        },
+    );
+    *heap_area = MemoryRegion::new_writable(heap, MM_HEAP_START);
+    mapping
+        .initialize()
+        .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
 }
 
 /// Create the SBF virtual machine
 #[macro_export]
 macro_rules! create_vm {
-    ($vm:ident, $program:expr, $regions:expr, $accounts_metadata:expr, $invoke_context:expr $(,)?) => {
+    ($vm:ident, $program:expr, $invoke_context:expr $(,)?) => {
         let invoke_context = &*$invoke_context;
         let stack_size = $program.get_config().stack_size();
         let heap_size = invoke_context.get_compute_budget().heap_size;
         let heap_cost_result =
-            invoke_context.consume_checked($crate::__private::calculate_heap_cost(
-                heap_size,
-                invoke_context.get_execution_cost().heap_cost,
-            ));
+            invoke_context
+                .compute_meter
+                .consume_checked($crate::__private::calculate_heap_cost(
+                    heap_size,
+                    invoke_context.get_execution_cost().heap_cost,
+                ));
         let $vm = heap_cost_result.and_then(|_| {
             let (mut stack, mut heap) = $crate::__private::MEMORY_POOL
                 .with_borrow_mut(|pool| (pool.get_stack(stack_size), pool.get_heap(heap_size)));
             let vm = $crate::__private::create_vm(
                 $program,
-                $regions,
-                $accounts_metadata,
                 $invoke_context,
                 stack
                     .as_slice_mut()
@@ -150,6 +124,39 @@ macro_rules! create_vm {
             vm.map(|vm| (vm, stack, heap))
         });
     };
+}
+
+fn set_memory_context<'b>(
+    additional_initialized_regions: Vec<MemoryRegion>,
+    accounts_metadata: Vec<SerializedAccountMetadata>,
+    invoke_context: &mut InvokeContext<'b, 'b>,
+    executable: &Executable<InvokeContext<'b, 'b>>,
+    virtual_address_space_adjustments: bool,
+    account_data_direct_mapping: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let heap_size = invoke_context.get_compute_budget().heap_size;
+    let regions = vec![MemoryRegion::default(); 3]
+        .into_iter()
+        .chain(additional_initialized_regions)
+        .collect();
+    let memory_mapping = MemoryMapping::new_uninitialized(
+        regions,
+        executable.get_config(),
+        executable.get_sbpf_version(),
+        invoke_context.transaction_context.access_violation_handler(
+            virtual_address_space_adjustments,
+            account_data_direct_mapping,
+        ),
+    );
+
+    invoke_context
+        .memory_contexts
+        .set_memory_context(MemoryContext::new(
+            BpfAllocator::new(heap_size as u64),
+            accounts_metadata,
+            memory_mapping,
+        ))
+        .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
 }
 
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
@@ -207,37 +214,51 @@ pub fn execute<'a, 'b: 'a>(
         })
         .collect::<Vec<_>>();
 
+    #[cfg(feature = "sbpf-debugger")]
+    let (debug_port, debug_metadata) = if invoke_context.debug_port.is_some() {
+        (
+            invoke_context.debug_port,
+            Some(format!(
+                "program_id={};cpi_level={};caller={}",
+                program_id,
+                instruction_context.get_stack_height().saturating_sub(1),
+                invoke_context
+                    .get_stack_height()
+                    .checked_sub(2)
+                    .and_then(|nesting_level| {
+                        transaction_context
+                            .get_instruction_context_at_nesting_level(nesting_level)
+                            .ok()
+                    })
+                    .and_then(|ctx| ctx.get_program_key().ok())
+                    .map(|key| key.to_string())
+                    .unwrap_or_else(|| "none".into())
+            )),
+        )
+    } else {
+        (None, None)
+    };
+
     let mut create_vm_time = Measure::start("create_vm");
+    set_memory_context(
+        regions,
+        accounts_metadata,
+        invoke_context,
+        executable,
+        virtual_address_space_adjustments,
+        account_data_direct_mapping,
+    )?;
+
     let execution_result = {
         let mut execution_mode = ExecutionMode::PreferJit;
+
         #[cfg(feature = "sbpf-debugger")]
-        let (debug_port, debug_metadata) = if invoke_context.debug_port.is_some() {
+        if invoke_context.debug_port.is_some() {
             execution_mode = ExecutionMode::Interpreted;
-            (
-                invoke_context.debug_port,
-                Some(format!(
-                    "program_id={};cpi_level={};caller={}",
-                    program_id,
-                    instruction_context.get_stack_height().saturating_sub(1),
-                    invoke_context
-                        .get_stack_height()
-                        .checked_sub(2)
-                        .and_then(|nesting_level| {
-                            transaction_context
-                                .get_instruction_context_at_nesting_level(nesting_level)
-                                .ok()
-                        })
-                        .and_then(|ctx| ctx.get_program_key().ok())
-                        .map(|key| key.to_string())
-                        .unwrap_or_else(|| "none".into())
-                )),
-            )
-        } else {
-            (None, None)
-        };
+        }
 
         let compute_meter_prev = invoke_context.get_remaining();
-        create_vm!(vm, executable, regions, accounts_metadata, invoke_context);
+        create_vm!(vm, executable, invoke_context);
         let (mut vm, stack, heap) = match vm {
             Ok(info) => info,
             Err(e) => {
@@ -253,18 +274,19 @@ pub fn execute<'a, 'b: 'a>(
         }
 
         let execute_time = Measure::start("execute");
-
-        // SAFETY: VM is the only holder of the InvokeContext reference, as it carries its lifetime.
-        let prev_nested_exec_time =
-            unsafe { vm.context_object_pointer.as_ref().total_nested_exec_time };
+        let prev_nested_exec_time = vm.context().total_nested_exec_time;
 
         vm.registers[1] = ebpf::MM_INPUT_START;
         vm.registers[2] = instruction_data_offset as u64;
-        let (compute_units_consumed, result) = vm.execute_program(executable, &mut execution_mode);
+        let mut call_frames =
+            MEMORY_POOL.with_borrow_mut(|memory_pool| memory_pool.get_call_frames());
+        let (compute_units_consumed, result) =
+            vm.execute_program(executable, &mut execution_mode, &mut call_frames);
         let register_trace = std::mem::take(&mut vm.register_trace);
         MEMORY_POOL.with_borrow_mut(|memory_pool| {
             memory_pool.put_stack(stack);
             memory_pool.put_heap(heap);
+            memory_pool.put_call_frames(call_frames);
             debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268);
             debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268);
         });
@@ -412,7 +434,10 @@ pub fn execute<'a, 'b: 'a>(
             virtual_address_space_adjustments,
             account_data_direct_mapping,
             parameter_bytes,
-            &invoke_context.get_memory_context()?.accounts_metadata,
+            &invoke_context
+                .memory_contexts
+                .memory_context()?
+                .accounts_metadata,
         )
     }
 

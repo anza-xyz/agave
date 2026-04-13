@@ -42,7 +42,6 @@ pub struct FeatureSnapshot {
     pub get_sysvar_syscall_enabled: bool,
     pub enable_get_epoch_stake_syscall: bool,
     pub move_stake_and_move_lamports_ixs: bool,
-    pub vote_only_retransmitter_signed_fec_sets: bool,
     pub move_precompile_verification_to_svm: bool,
     pub deprecate_legacy_vote_ixs: bool,
     pub disable_sbpf_v0_execution: bool,
@@ -53,7 +52,6 @@ pub struct FeatureSnapshot {
     pub deplete_cu_meter_on_vm_failure: bool,
     pub fix_alt_bn128_multiplication_input_length: bool,
     pub relax_intrabatch_account_locks: bool,
-    pub enable_extend_program_checked: bool,
     pub formalize_loaded_transaction_data_size: bool,
     pub alpenglow: bool,
     pub disable_zk_elgamal_proof_program: bool,
@@ -62,7 +60,6 @@ pub struct FeatureSnapshot {
     pub raise_cpi_nesting_limit_to_8: bool,
     pub provide_instruction_data_offset_in_vm_r2: bool,
     pub create_account_allow_prefund: bool,
-    pub vote_state_v4: bool,
     pub delay_commission_updates: bool,
     pub increase_cpi_account_info_limit: bool,
     pub deprecate_rent_exemption_threshold: bool,
@@ -135,9 +132,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             get_sysvar_syscall_enabled: is_active(&get_sysvar_syscall_enabled::ID),
             enable_get_epoch_stake_syscall: is_active(&enable_get_epoch_stake_syscall::ID),
             move_stake_and_move_lamports_ixs: is_active(&move_stake_and_move_lamports_ixs::ID),
-            vote_only_retransmitter_signed_fec_sets: is_active(
-                &vote_only_retransmitter_signed_fec_sets::ID,
-            ),
             move_precompile_verification_to_svm: is_active(
                 &move_precompile_verification_to_svm::ID,
             ),
@@ -158,7 +152,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &fix_alt_bn128_multiplication_input_length::ID,
             ),
             relax_intrabatch_account_locks: is_active(&relax_intrabatch_account_locks::ID),
-            enable_extend_program_checked: is_active(&enable_extend_program_checked::ID),
             formalize_loaded_transaction_data_size: is_active(
                 &formalize_loaded_transaction_data_size::ID,
             ),
@@ -171,7 +164,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &provide_instruction_data_offset_in_vm_r2::ID,
             ),
             create_account_allow_prefund: is_active(&create_account_allow_prefund::ID),
-            vote_state_v4: is_active(&vote_state_v4::ID),
             delay_commission_updates: is_active(&delay_commission_updates::ID),
             increase_cpi_account_info_limit: is_active(&increase_cpi_account_info_limit::ID),
             deprecate_rent_exemption_threshold: is_active(&deprecate_rent_exemption_threshold::ID),
@@ -345,14 +337,12 @@ impl FeatureSet {
             fix_alt_bn128_multiplication_input_length: snapshot
                 .fix_alt_bn128_multiplication_input_length,
             increase_tx_account_lock_limit: snapshot.increase_tx_account_lock_limit,
-            enable_extend_program_checked: snapshot.enable_extend_program_checked,
             formalize_loaded_transaction_data_size: snapshot.formalize_loaded_transaction_data_size,
             disable_zk_elgamal_proof_program: snapshot.disable_zk_elgamal_proof_program,
             reenable_zk_elgamal_proof_program: snapshot.reenable_zk_elgamal_proof_program,
             delay_commission_updates: snapshot.delay_commission_updates,
             raise_cpi_nesting_limit_to_8: snapshot.raise_cpi_nesting_limit_to_8,
             increase_cpi_account_info_limit: snapshot.increase_cpi_account_info_limit,
-            vote_state_v4: snapshot.vote_state_v4,
             poseidon_enforce_padding: snapshot.poseidon_enforce_padding,
             fix_alt_bn128_pairing_length_check: snapshot.fix_alt_bn128_pairing_length_check,
             alt_bn128_little_endian: snapshot.alt_bn128_little_endian,
@@ -1309,7 +1299,7 @@ pub mod enshrine_slashing_program {
 }
 
 pub mod enable_extend_program_checked {
-    solana_pubkey::declare_id!("2oMRZEDWT2tqtYMofhmmfQ8SsjqUFzT6sYXppQDavxwz");
+    solana_pubkey::declare_id!("ExtendProgCheckedWi11BeDe1eted11111111111111");
 }
 
 pub mod formalize_loaded_transaction_data_size {
@@ -1381,7 +1371,7 @@ pub mod static_instruction_limit {
 }
 
 pub mod discard_unexpected_data_complete_shreds {
-    solana_pubkey::declare_id!("shredXP8xLjJWp1AWh3gAFsFn4GSH1vohhCMDHw5koU");
+    solana_pubkey::declare_id!("dcomRRWHXP1FVWPqi9Mm4oxJhF4ehC795SvAtUdA9os");
 }
 
 pub mod vote_state_v4 {

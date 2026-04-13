@@ -22,13 +22,13 @@ frozen-abi = [
     "solana-bloom/frozen-abi",
     "solana-ledger/frozen-abi",
     "solana-perf/frozen-abi",
-    "solana-runtime/frozen-abi",
     "solana-short-vec/frozen-abi",
     "solana-version/frozen-abi",
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
 agave-unstable-api = []
+dev-context-only-utils = []
 
 [dependencies]
 agave-logger = { workspace = true }
@@ -74,7 +74,6 @@ solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }
-solana-runtime = { workspace = true }
 solana-sanitize = { workspace = true }
 solana-serde-varint = { workspace = true }
 solana-sha256-hasher = { workspace = true }
@@ -97,7 +96,7 @@ bs58 = { workspace = true }
 criterion = { workspace = true }
 num_cpus = { workspace = true }
 serial_test = { workspace = true }
-solana-gossip = { path = ".", features = ["agave-unstable-api"] }
+solana-gossip = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }

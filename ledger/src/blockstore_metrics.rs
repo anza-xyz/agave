@@ -39,6 +39,7 @@ pub struct BlockstoreInsertionMetrics {
     pub num_coding_shreds_exists: usize,
     pub num_coding_shreds_invalid: usize,
     pub num_coding_shreds_invalid_erasure_config: usize,
+    pub num_coding_shreds_blockstore_error: usize,
     pub num_coding_shreds_inserted: usize,
 }
 
@@ -126,6 +127,11 @@ impl BlockstoreInsertionMetrics {
             (
                 "num_coding_shreds_invalid_erasure_config",
                 self.num_coding_shreds_invalid_erasure_config,
+                i64
+            ),
+            (
+                "num_coding_shreds_blockstore_error",
+                self.num_coding_shreds_blockstore_error,
                 i64
             ),
             (

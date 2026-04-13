@@ -208,12 +208,32 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
                     })
                     .collect(),
             }),
+            TransactionVersion::V1 => {
+                let config_view = self.transaction_config().expect("V1 must have config_view");
+                let config = solana_message::v1::TransactionConfig {
+                    priority_fee: config_view.priority_fee_lamports(),
+                    compute_unit_limit: config_view.compute_unit_limit(),
+                    loaded_accounts_data_size_limit: config_view.loaded_accounts_data_size_limit(),
+                    heap_size: config_view.requested_heap_size(),
+                };
+                VersionedMessage::V1(solana_message::v1::Message {
+                    header,
+                    config,
+                    lifetime_specifier: recent_blockhash,
+                    account_keys: static_account_keys,
+                    instructions,
+                })
+            }
         };
 
         VersionedTransaction {
             signatures: self.signatures().to_vec(),
             message,
         }
+    }
+
+    fn serialized_size(&self) -> usize {
+        self.transaction.data().len()
     }
 }
 
@@ -419,6 +439,37 @@ mod tests {
             sanitized_transaction,
             Some(loaded_addresses),
             &reserved_key_set,
+        );
+    }
+
+    #[test]
+    fn test_serialized_size() {
+        let serialized_transaction =
+            bincode::serialize(&VersionedTransaction::from(system_transaction::transfer(
+                &Keypair::new(),
+                &Pubkey::new_unique(),
+                1,
+                Hash::new_unique(),
+            )))
+            .unwrap();
+        let transaction_view =
+            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true).unwrap();
+        let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+            transaction_view,
+            MessageHash::Compute,
+            None,
+        )
+        .unwrap();
+        let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+            runtime_transaction,
+            None,
+            &ReservedAccountKeys::empty_key_set(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            runtime_transaction.serialized_size(),
+            serialized_transaction.len()
         );
     }
 }

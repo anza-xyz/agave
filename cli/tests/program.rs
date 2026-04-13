@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    agave_feature_set::enable_alt_bn128_syscall,
+    agave_feature_set::{enable_alt_bn128_syscall, enable_extend_program_checked},
     assert_matches::assert_matches,
     serde_json::Value,
     solana_account::{ReadableAccount, state_traits::StateMut},
@@ -59,7 +59,8 @@ fn test_validator_genesis(mint_keypair: &Keypair) -> TestValidatorGenesis {
         })
         .faucet_addr(Some(run_local_faucet_with_unique_port_for_tests(
             mint_keypair.insecure_clone(),
-        )));
+        )))
+        .deactivate_features(&[enable_extend_program_checked::id()]);
     genesis
 }
 
@@ -1516,10 +1517,9 @@ async fn test_cli_program_extend_program() {
     file.read_to_end(&mut new_program_data).unwrap();
     let new_max_len = new_program_data.len();
     let additional_bytes = (new_max_len - max_len) as u32;
-    config.signers = vec![&keypair, &upgrade_authority];
-    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
+    config.signers = vec![&keypair];
+    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgram {
         program_pubkey: program_keypair.pubkey(),
-        authority_signer_index: 1,
         payer_signer_index: 0,
         additional_bytes: additional_bytes - 1,
     });
@@ -1571,10 +1571,9 @@ async fn test_cli_program_extend_program() {
     wait_n_slots(&rpc_client, 1).await;
 
     // Extend 1 last byte
-    config.signers = vec![&keypair, &upgrade_authority];
-    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
+    config.signers = vec![&keypair];
+    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgram {
         program_pubkey: program_keypair.pubkey(),
-        authority_signer_index: 1,
         payer_signer_index: 0,
         additional_bytes: 1,
     });
@@ -1619,11 +1618,10 @@ async fn test_cli_program_extend_program() {
     let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     let prev_len = programdata_account.data.len();
 
-    config.signers = vec![&keypair, &upgrade_authority, &rent_payer];
-    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
+    config.signers = vec![&keypair, &rent_payer];
+    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgram {
         program_pubkey: program_keypair.pubkey(),
-        authority_signer_index: 1,
-        payer_signer_index: 2,
+        payer_signer_index: 1,
         additional_bytes: 1024,
     });
     process_command(&config).await.unwrap();

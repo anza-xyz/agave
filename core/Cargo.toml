@@ -15,6 +15,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
+    "solana-ledger/dev-context-only-utils",
     "solana-perf/dev-context-only-utils",
     "solana-runtime/dev-context-only-utils",
     "solana-streamer/dev-context-only-utils",
@@ -72,7 +73,6 @@ num_cpus = { workspace = true }
 num_enum = { workspace = true }
 prio-graph = { workspace = true }
 qualifier_attr = { workspace = true }
-quinn = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
@@ -191,6 +191,7 @@ solana-compute-budget-program = { path = "../programs/compute-budget", features 
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-core = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-cost-model = { path = "../cost-model", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-loader-v3-interface = { workspace = true }
@@ -204,6 +205,7 @@ solana-signer-store = { workspace = true }
 solana-system-program = { path = "../programs/system", features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-vote-program = { path = "../programs/vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 spl-memo-interface = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }

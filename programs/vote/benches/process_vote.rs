@@ -19,8 +19,8 @@ use {
     solana_vote_program::{
         vote_instruction::VoteInstruction,
         vote_state::{
-            MAX_LOCKOUT_HISTORY, TowerSync, Vote, VoteInit, VoteStateUpdate, VoteStateV3,
-            VoteStateVersions, handler::VoteStateHandle,
+            MAX_LOCKOUT_HISTORY, TowerSync, Vote, VoteInitV2, VoteStateUpdate, VoteStateV4,
+            VoteStateVersions, handler::VoteStateHandler,
         },
     },
     test::Bencher,
@@ -45,22 +45,22 @@ fn create_accounts() -> (
     let vote_pubkey = Pubkey::new_unique();
     let authority_pubkey = Pubkey::new_unique();
     let vote_account = {
-        let mut vote_state = VoteStateV3::new(
-            &VoteInit {
+        let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::new(
+            &VoteInitV2 {
                 node_pubkey: authority_pubkey,
                 authorized_voter: authority_pubkey,
                 authorized_withdrawer: authority_pubkey,
-                commission: 0,
+                ..Default::default()
             },
             &clock,
-        );
+        ));
 
         for next_vote_slot in 0..num_initial_votes {
             vote_state.process_next_vote_slot(next_vote_slot, 0, 0);
         }
-        let mut vote_account_data: Vec<u8> = vec![0; VoteStateV3::size_of()];
-        let versioned = VoteStateVersions::new_v3(vote_state);
-        VoteStateV3::serialize(&versioned, &mut vote_account_data).unwrap();
+        let mut vote_account_data: Vec<u8> = vec![0; VoteStateV4::size_of()];
+        let versioned = VoteStateVersions::new_v4(vote_state.unwrap_v4());
+        VoteStateV4::serialize(&versioned, &mut vote_account_data).unwrap();
 
         Account {
             lamports: 1,
