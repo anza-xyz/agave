@@ -127,7 +127,7 @@ macro_rules! create_vm {
 }
 
 fn set_memory_context<'b>(
-    regions: Vec<MemoryRegion>,
+    additional_initialized_regions: Vec<MemoryRegion>,
     accounts_metadata: Vec<SerializedAccountMetadata>,
     invoke_context: &mut InvokeContext<'b, 'b>,
     executable: &Executable<InvokeContext<'b, 'b>>,
@@ -137,7 +137,7 @@ fn set_memory_context<'b>(
     let heap_size = invoke_context.get_compute_budget().heap_size;
     let regions = vec![MemoryRegion::default(); 3]
         .into_iter()
-        .chain(regions)
+        .chain(additional_initialized_regions)
         .collect();
     let memory_mapping = MemoryMapping::new_uninitialized(
         regions,
