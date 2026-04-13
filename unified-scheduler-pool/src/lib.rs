@@ -105,13 +105,11 @@ type AtomicSchedulerId = AtomicU64;
 #[derive(Debug)]
 pub enum SupportedSchedulingMode {
     Either(SchedulingMode),
-    Both,
 }
 
 impl SupportedSchedulingMode {
     fn is_supported(&self, requested_mode: SchedulingMode) -> bool {
         match (self, requested_mode) {
-            (Self::Both, _requested) => true,
             (Self::Either(supported), ref requested) => supported == requested,
         }
     }
@@ -5173,46 +5171,6 @@ mod tests {
 
         // id should be different
         assert_ne!(trashed_old_scheduler_id, respawned_new_scheduler_id);
-    }
-
-    #[test]
-    fn test_block_production_scheduler_return_block_verification_scheduler_while_pooled() {
-        agave_logger::setup();
-
-        let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_for_block_production(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-
-        let pool = DefaultSchedulerPool::new(
-            // Both block verification and production scheduler are needed for this test.
-            SupportedSchedulingMode::Both,
-            None,
-            None,
-            None,
-            None,
-            None,
-        );
-
-        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        pool.register_banking_stage(
-            None,
-            banking_packet_receiver,
-            Box::new(|_, _| unreachable!()),
-            transaction_recorder,
-            Box::new(DummyBankingMinitor),
-        );
-
-        // Make sure the assertion in BlockProductionSchedulerInner::can_put() doesn't cause false
-        // positives...
-        let context = SchedulingContext::for_verification(bank.clone());
-        let scheduler = pool.take_scheduler(context).unwrap();
-        let bank_tmp = BankWithScheduler::new(bank, Some(scheduler));
-        assert_matches!(bank_tmp.wait_for_completed_scheduler(), Some((Ok(()), _)));
     }
 
     #[test]
