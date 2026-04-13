@@ -320,6 +320,7 @@ mod tests {
     use {
         super::*,
         crate::{
+            bank::VAT_TO_BURN_PER_EPOCH,
             bank_forks::BankForks,
             genesis_utils::{
                 ValidatorVoteKeypairs, activate_all_features_alpenglow,
@@ -1086,8 +1087,8 @@ mod tests {
                 );
             } else {
                 println!(
-                    "pubkey={pubkey} before={before} after={after} abnormal diff={}",
-                    before - after
+                    "pubkey={pubkey} before={before} after={after} VAT diff={}",
+                    after + VAT_TO_BURN_PER_EPOCH - before
                 );
             }
         }

@@ -12,7 +12,9 @@ use {
             RewardsMetrics, null_tracer,
         },
         inflation_rewards::{
-            points::{CalculationEnvironment, DelegatedVoteState, PointValue, calculate_points},
+            points::{
+                AgState, CalculationEnvironment, DelegatedVoteState, PointValue, calculate_points,
+            },
             redeem_rewards,
         },
         stake_account::StakeAccount,
@@ -479,6 +481,11 @@ impl Bank {
             vote_state.commission() as u16 * 100
         };
 
+        let ag_state = self.feature_set.snapshot().alpenglow.then_some(AgState {
+            vote_pubkey,
+            epoch_stakes: &self.epoch_stakes,
+        });
+
         match redeem_rewards(
             stake_state,
             commission_bps,
@@ -492,7 +499,7 @@ impl Bank {
             },
             reward_calc_tracer,
             stake_account.lamports(),
-            self.feature_set.snapshot().alpenglow,
+            ag_state,
         ) {
             Ok((stake_reward, commission_lamports, stake)) => {
                 let stake_reward = PartitionedStakeReward {

@@ -319,6 +319,11 @@ impl Stakes<StakeAccount> {
         new_rate_activation_epoch: Option<Epoch>,
         stake_delegations: &[(&Pubkey, &StakeAccount)],
     ) -> (StakeHistory, VoteAccounts) {
+        println!("\n\ncalculate_activated_stake\n");
+        for (pubkey, account) in stake_delegations {
+            println!("pubkey={pubkey} account={account:?}\n");
+        }
+        println!("calculate_activated_stake done\n\n");
         // Wrap up the prev epoch by adding new stake history entry for the
         // prev epoch.
         let stake_history_entry = thread_pool.install(|| {

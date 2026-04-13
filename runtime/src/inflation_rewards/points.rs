@@ -1,6 +1,7 @@
 //! Information about points calculation based on stake state.
 
 use {
+    crate::epoch_stakes::VersionedEpochStakes,
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
@@ -9,7 +10,7 @@ use {
         state::{Delegation, Stake, StakeStateV2},
     },
     solana_vote::vote_state_view::VoteStateView,
-    std::cmp::Ordering,
+    std::{cmp::Ordering, collections::HashMap},
 };
 
 /// captures a rewards round as lamports to be awarded
@@ -125,9 +126,15 @@ fn calculate_stake_points(
         stake_history,
         inflation_point_calc_tracer,
         new_rate_activation_epoch,
-        false,
+        None,
     )
     .points
+}
+
+#[derive(Clone)]
+pub(crate) struct AgState<'a> {
+    pub(crate) vote_pubkey: Pubkey,
+    pub(crate) epoch_stakes: &'a HashMap<Epoch, VersionedEpochStakes>,
 }
 
 /// for a given stake and vote_state, calculate how many
@@ -139,7 +146,7 @@ pub(crate) fn calculate_stake_points_and_credits(
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
-    is_alpenglow_active: bool,
+    ag_state: Option<AgState>,
 ) -> CalculatedStakePoints {
     let credits_in_stake = stake.credits_observed;
     let credits_in_vote = vote_state.credits;
@@ -217,14 +224,39 @@ pub(crate) fn calculate_stake_points_and_credits(
         new_credits_observed = new_credits_observed.max(final_epoch_credits);
 
         // finally calculate points for this epoch
-        let earned_points = if is_alpenglow_active {
-            // in alpenglow, points represent the total reward that this `vote_state` has earned.
-            // `earned_credits` has already taken the stake into account.
-            earned_credits
-        } else {
-            // in tower, the stake has to be included to calculate the total points this `vote_state` earned.
-            stake_amount * earned_credits
+        let earned_points = match &ag_state {
+            None => {
+                // in tower, the stake has to be included to calculate the total points this `vote_state` earned.
+                stake_amount * earned_credits
+            }
+            Some(state) => {
+                // in alpenglow, points represent the total reward that this `vote_state` has earned.
+                // `earned_credits` has already taken the stake into account.
+                // to account for multiple delegations, scale the earned credit.
+                if earned_credits == 0 {
+                    earned_credits
+                } else {
+                    let rank_map = state
+                        .epoch_stakes
+                        .get(&epoch)
+                        .unwrap()
+                        .bls_pubkey_to_rank_map();
+                    let &rank = rank_map
+                        .get_rank_for_vote_pubkey(&state.vote_pubkey)
+                        .unwrap();
+                    let total_stake = rank_map
+                        .get_pubkey_stake_entry(rank as usize)
+                        .unwrap()
+                        .stake;
+                    let earned_points = earned_credits * stake_amount / total_stake as u128;
+                    println!(
+                        "total_stake={total_stake} stake_amount={stake_amount} earned_points={earned_points}"
+                    );
+                    earned_points
+                }
+            }
         };
+
         points += earned_points;
 
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
@@ -236,8 +268,6 @@ pub(crate) fn calculate_stake_points_and_credits(
             ));
         }
     }
-
-    println!("total points earned = {points}");
 
     CalculatedStakePoints {
         points,
