@@ -3092,7 +3092,10 @@ impl Bank {
     /// Get the nanosecond clock value. Returns `None` if the nanosecond clock has not been
     /// populated (i.e., before Alpenglow migration completes).
     pub fn get_nanosecond_clock(&self) -> Option<i64> {
-        self.get_account(&NANOSECOND_CLOCK_ACCOUNT).map(|acct| {
+        let acct = self.get_account(&NANOSECOND_CLOCK_ACCOUNT)?;
+        (!acct.data().is_empty()).then(|| {
+            // This address is known in advance, so the account could already exist if it was prefunded.
+            // The deserialize is only safe when the account is non-empty
             wincode::deserialize(acct.data())
                 .expect("Couldn't deserialize nanosecond resolution clock")
         })
