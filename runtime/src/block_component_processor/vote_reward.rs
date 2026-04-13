@@ -990,13 +990,6 @@ mod tests {
         test_vote_reward_payout_impl(&validators, false, commission_bps, None);
     }
 
-    fn print_account_state(bank: &Bank, pubkeys: &[Pubkey]) {
-        for pubkey in pubkeys {
-            let account = bank.get_account(pubkey).unwrap();
-            println!("Pubkey={pubkey} lamport={}", account.lamports());
-        }
-    }
-
     #[test]
     fn test_real_multiple_delegators() {
         let commission_bps = 1_000;
@@ -1068,8 +1061,13 @@ mod tests {
         pubkeys.push(validator_stake_key);
         pubkeys.push(validator_node_key);
 
-        println!("before");
-        print_account_state(&initial_bank, &pubkeys);
+        let lamports = pubkeys
+            .iter()
+            .map(|pubkey| {
+                let account = initial_bank.get_account(pubkey).unwrap();
+                (pubkey, account.lamports())
+            })
+            .collect::<HashMap<_, _>>();
 
         let final_bank = test_vote_reward_payout_impl(
             &validators,
@@ -1077,7 +1075,21 @@ mod tests {
             commission_bps,
             Some((initial_bank, bank_forks)),
         );
-        println!("\n\nafter");
-        print_account_state(&final_bank, &pubkeys);
+
+        for (pubkey, before) in lamports {
+            let account = final_bank.get_account(pubkey).unwrap();
+            let after = account.lamports();
+            if after >= before {
+                println!(
+                    "pubkey={pubkey} before={before} after={after} diff={}",
+                    after - before
+                );
+            } else {
+                println!(
+                    "pubkey={pubkey} before={before} after={after} abnormal diff={}",
+                    before - after
+                );
+            }
+        }
     }
 }
