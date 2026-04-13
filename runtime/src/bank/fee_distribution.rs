@@ -158,8 +158,8 @@ impl Bank {
             }
             Err(err) => {
                 debug!(
-                    "Burned {} lamport tx fee instead of sending to {} due to {}",
-                    deposit, collector_id, err
+                    "Burned {deposit} lamport tx fee instead of sending to {collector_id} due to \
+                     {err}"
                 );
                 datapoint_warn!(
                     "bank-burned_fee",
