@@ -61,7 +61,6 @@ update_solana_dependencies() {
     solana-storage-bigtable
     solana-storage-proto
     solana-streamer
-    solana-svm-rent-calculator
     solana-svm-transaction
     solana-test-validator
     solana-tpu-client
