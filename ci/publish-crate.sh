@@ -72,7 +72,7 @@ for Cargo_toml in $Cargo_tomls; do
       echo "Attempt ${i} of ${numRetries}"
       # The rocksdb package does not build with the stock rust docker image so use
       # the solana rust docker image
-      if ci/docker-run-default-image.sh bash -exc "cd $crate; $cargoCommand"; then
+      if output=$(ci/docker-run-default-image.sh bash -exc "cd $crate; $cargoCommand" 2>&1 | tee /dev/fd/2); then
         break
       fi
 
