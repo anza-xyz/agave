@@ -5863,7 +5863,7 @@ dependencies = [
  "solana-slot-history",
  "solana-stake-interface",
  "solana-sysvar",
- "solana-vote-interface",
+ "solana-vote-interface 6.0.0",
  "spl-generic-token",
  "spl-token-2022-interface",
  "spl-token-group-interface",
@@ -8124,7 +8124,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-transaction-status-client-types",
  "solana-version",
- "solana-vote-interface",
+ "solana-vote-interface 6.0.0",
  "tokio",
 ]
 
@@ -8301,7 +8301,7 @@ dependencies = [
  "solana-unified-scheduler-logic",
  "solana-version",
  "solana-vote",
- "solana-vote-interface",
+ "solana-vote-interface 6.0.0",
  "solana-vote-program",
  "spl-generic-token",
  "static_assertions",
@@ -8386,7 +8386,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-error",
  "solana-vote",
- "solana-vote-interface",
+ "solana-vote-interface 5.1.1",
  "solana-vote-program",
  "test-case",
 ]
@@ -9923,7 +9923,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-error",
  "solana-transaction-status-client-types",
- "solana-vote-interface",
+ "solana-vote-interface 6.0.0",
  "spl-associated-token-account-interface",
  "spl-memo-interface",
  "spl-token-2022-interface",
@@ -10097,7 +10097,7 @@ dependencies = [
  "solana-signer",
  "solana-svm-transaction",
  "solana-transaction",
- "solana-vote-interface",
+ "solana-vote-interface 6.0.0",
  "thiserror 2.0.18",
 ]
 
@@ -10106,6 +10106,24 @@ name = "solana-vote-interface"
 version = "5.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d444ce30b6b4f9c281ba06061ea96638d063b53c2171b1e41ba02ebff79ed28f"
+dependencies = [
+ "num-derive",
+ "num-traits",
+ "solana-clock",
+ "solana-hash 4.3.0",
+ "solana-instruction",
+ "solana-instruction-error",
+ "solana-pubkey 4.2.0",
+ "solana-rent",
+ "solana-sdk-ids",
+ "solana-serialize-utils",
+]
+
+[[package]]
+name = "solana-vote-interface"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d495cb001d3373229ba523625783e5168707f70a9c38ddc90fbc5b0470d600ea"
 dependencies = [
  "bincode",
  "cfg_eval",
@@ -10149,7 +10167,7 @@ dependencies = [
  "solana-slot-hashes",
  "solana-system-interface 3.2.0",
  "solana-transaction-context",
- "solana-vote-interface",
+ "solana-vote-interface 6.0.0",
 ]
 
 [[package]]
