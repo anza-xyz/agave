@@ -276,10 +276,10 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
         .reset(bank.clone(), next_leader_slot);
 }
 
-// From the passed in bank (used for determining slot times) and leader block
-// index with the leader window, return the duration after which we should
-// publish the final shred for the block with starting point being the start of
-// the leader window.
+/// From the passed in bank (used for determining slot times) and leader block
+/// index within the leader window, returns the duration after which we should
+/// publish the final shred for the block with starting point being the start of
+/// the leader window.
 fn block_timeout(bank: &Bank, leader_block_index: usize) -> Duration {
     Duration::from_nanos_u128(bank.ns_per_slot)
         .saturating_mul((leader_block_index as u32).saturating_add(1))
@@ -301,16 +301,8 @@ fn produce_window(
     while !ctx.exit.load(Ordering::Relaxed) && slot <= end_slot {
         // Insert the bank. In case `replay_stage` is slow and `parent_slot` is not
         // yet frozen, we wait up until the timeout.
-        start_leader_wait_for_parent_replay(slot, parent_slot, skip_timer, ctx)?;
-
-        let timeout = block_timeout(
-            &ctx.poh_recorder
-                .read()
-                .unwrap()
-                .bank()
-                .expect("Bank must exist"),
-            leader_slot_index(slot),
-        );
+        let working_bank = start_leader_wait_for_parent_replay(slot, parent_slot, skip_timer, ctx)?;
+        let timeout = block_timeout(&working_bank, leader_slot_index(slot));
         trace!(
             "{my_pubkey}: waiting for leader bank {slot} to finish, remaining time: {}",
             timeout.saturating_sub(skip_timer.elapsed()).as_millis(),
@@ -419,7 +411,7 @@ fn start_leader_wait_for_parent_replay(
     parent_slot: Slot,
     skip_timer: Instant,
     ctx: &mut LeaderContext,
-) -> Result<(), StartLeaderError> {
+) -> Result<Arc<Bank>, StartLeaderError> {
     trace!(
         "{}: Attempting to start leader slot {slot} parent {parent_slot}",
         ctx.my_pubkey
@@ -463,7 +455,12 @@ fn start_leader_wait_for_parent_replay(
                         );
                     });
 
-                return Ok(());
+                return Ok(ctx
+                    .poh_recorder
+                    .read()
+                    .unwrap()
+                    .bank()
+                    .expect("We just started the leader, so the bank must exist"));
             }
             Err(StartLeaderError::ReplayIsBehind(_, _)) => {
                 trace!(
