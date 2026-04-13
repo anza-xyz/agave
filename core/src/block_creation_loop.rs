@@ -277,9 +277,10 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
 }
 
 // From the passed in bank (used for determining slot times) and leader block
-// index, return the block timeout from the start of the leader window.
+// index with the leader window, return the duration after which we should
+// publish the final shred for the block with starting point being the start of
+// the leader window.
 fn block_timeout(bank: &Bank, leader_block_index: usize) -> Duration {
-    // The block timeout is the time we expect to produce a block if we start producing immediately at the start of the slot
     Duration::from_nanos_u128(bank.ns_per_slot)
         .saturating_mul((leader_block_index as u32).saturating_add(1))
 }
