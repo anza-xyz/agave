@@ -61,6 +61,11 @@ fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool) -> bool {
             return false;
         };
 
+        // Discard v1 transactions until support is added.
+        if matches!(view.version(), TransactionVersion::V1) {
+            return false;
+        }
+
         let is_simple_vote_tx = is_simple_vote_transaction_view(&view);
         if reject_non_vote && !is_simple_vote_tx {
             (is_simple_vote_tx, false)
