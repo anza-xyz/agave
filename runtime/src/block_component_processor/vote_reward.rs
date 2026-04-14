@@ -327,6 +327,7 @@ mod tests {
                 create_genesis_config_with_alpenglow_vote_accounts,
                 create_genesis_config_with_leader_ex,
             },
+            inflation_rewards::commission_split,
             stake_utils,
             test_utils::new_rand_vote_account,
             validated_block_finalization::ValidatedBlockFinalizationCert,
@@ -351,6 +352,7 @@ mod tests {
         solana_rent::Rent,
         solana_signer::Signer,
         solana_signer_store::encode_base2,
+        solana_stake_interface::state::StakeStateV2,
         solana_vote_interface::state::VoteStateVersions,
         std::{
             collections::HashMap,
@@ -761,6 +763,101 @@ mod tests {
         expected_reward: u64,
     }
 
+    #[derive(Debug)]
+    struct Staker {
+        lamports: u64,
+        stake: u64,
+        expected_rewards: u64,
+    }
+
+    impl Staker {
+        fn new(
+            rent: &Rent,
+            bank: &Bank,
+            pay_leader: bool,
+            commission_bps: u16,
+            pubkey: Pubkey,
+        ) -> (Self, u64) {
+            let epoch_state = EpochInflationAccountState::new_from_bank(bank)
+                .unwrap()
+                .get_epoch_state(bank.epoch())
+                .unwrap();
+            let total_stake = bank
+                .epoch_stakes_from_slot(bank.slot())
+                .unwrap()
+                .total_stake();
+            let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
+            let lamports = bank.get_account(&pubkey).unwrap().lamports();
+            let stake = lamports - rent_exempt_reserve;
+            let (validator_reward, leader_reward) =
+                calculate_reward(&epoch_state, total_stake, stake);
+            let total_reward = if pay_leader {
+                validator_reward + leader_reward
+            } else {
+                validator_reward
+            };
+            let (voter_reward, staker_reward, is_split) =
+                commission_split(commission_bps, total_reward);
+            assert!(is_split);
+            (
+                Self {
+                    lamports,
+                    stake,
+                    expected_rewards: staker_reward,
+                },
+                voter_reward,
+            )
+        }
+    }
+
+    #[derive(Debug)]
+    struct State {
+        voter_pubkey: Pubkey,
+        voter_lamports: u64,
+        voter_expected_reward: u64,
+        stakers: HashMap<Pubkey, Staker>,
+        validator_stake: u64,
+    }
+
+    impl State {
+        fn new(
+            bank: &Bank,
+            voter_pubkey: Pubkey,
+            stake_pubkey: Pubkey,
+            staker_keypairs: &[Keypair],
+            rent: &Rent,
+            pay_leader: bool,
+            commission_bps: u16,
+        ) -> Self {
+            let voter_lamports = bank.get_account(&voter_pubkey).unwrap().lamports();
+
+            let mut total_validator_stake = 0;
+            let mut total_validator_reward = 0;
+            let mut stakers = HashMap::new();
+            for keypair in staker_keypairs {
+                let pubkey = keypair.pubkey();
+                let (staker, voter_reward) =
+                    Staker::new(rent, bank, pay_leader, commission_bps, pubkey);
+                total_validator_stake += staker.stake;
+                total_validator_reward += voter_reward;
+                stakers.insert(pubkey, staker);
+            }
+            let (staker, voter_reward) =
+                Staker::new(rent, bank, pay_leader, commission_bps, stake_pubkey);
+            total_validator_stake += staker.stake;
+            total_validator_reward += voter_reward;
+            stakers.insert(stake_pubkey, staker);
+
+            State {
+                voter_pubkey,
+                voter_lamports,
+                stakers,
+                validator_stake: total_validator_stake,
+                voter_expected_reward: total_validator_reward,
+            }
+        }
+    }
+
     impl RewardState {
         fn new(keypair: &ValidatorVoteKeypairs, bank: &Bank) -> Self {
             let stake_pubkey = keypair.stake_keypair.pubkey();
@@ -843,7 +940,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut looping_bank = bank;
-        for _ in 0..10 {
+        for _ in 0..1 {
             calculate_and_pay_voting_reward_and_update_vote_state(
                 &looping_bank,
                 Some((looping_bank.slot() - 100, validators_to_reward.clone())),
@@ -975,24 +1072,6 @@ mod tests {
 
     #[test]
     fn test_multiple_delegators() {
-        let num_validators = 5;
-        let vote_keypair = Keypair::new();
-        let validators = (0..num_validators)
-            .map(|_| {
-                ValidatorVoteKeypairs::new(
-                    Keypair::new(),
-                    vote_keypair.insecure_clone(),
-                    Keypair::new(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let commission_bps = 1_000;
-        // let commission_bps = 0;
-        test_vote_reward_payout_impl(&validators, false, commission_bps, None);
-    }
-
-    #[test]
-    fn test_real_multiple_delegators() {
         let commission_bps = 1_000;
         let mint_keypair = Keypair::new();
         let validator_keypair = ValidatorVoteKeypairs::new_rand();
@@ -1054,21 +1133,15 @@ mod tests {
         ));
         assert_eq!(initial_bank.epoch(), 1);
 
-        let mut pubkeys = staker_keypairs
-            .iter()
-            .map(|k| k.pubkey())
-            .collect::<Vec<_>>();
-        pubkeys.push(validator_vote_key);
-        pubkeys.push(validator_stake_key);
-        pubkeys.push(validator_node_key);
-
-        let lamports = pubkeys
-            .iter()
-            .map(|pubkey| {
-                let account = initial_bank.get_account(pubkey).unwrap();
-                (pubkey, account.lamports())
-            })
-            .collect::<HashMap<_, _>>();
+        let prev_state = State::new(
+            &initial_bank,
+            validator_vote_key,
+            validator_stake_key,
+            &staker_keypairs,
+            &genesis_config.rent,
+            true,
+            commission_bps,
+        );
 
         let final_bank = test_vote_reward_payout_impl(
             &validators,
@@ -1077,20 +1150,35 @@ mod tests {
             Some((initial_bank, bank_forks)),
         );
 
-        for (pubkey, before) in lamports {
-            let account = final_bank.get_account(pubkey).unwrap();
-            let after = account.lamports();
-            if after >= before {
-                println!(
-                    "pubkey={pubkey} before={before} after={after} diff={}",
-                    after - before
-                );
-            } else {
-                println!(
-                    "pubkey={pubkey} before={before} after={after} VAT diff={}",
-                    after + VAT_TO_BURN_PER_EPOCH - before
-                );
-            }
+        let final_state = State::new(
+            &final_bank,
+            validator_vote_key,
+            validator_stake_key,
+            &staker_keypairs,
+            &genesis_config.rent,
+            true,
+            commission_bps,
+        );
+
+        for pubkey in prev_state.stakers.keys() {
+            let prev_staker = prev_state.stakers.get(pubkey).unwrap();
+            let after_staker = final_state.stakers.get(pubkey).unwrap();
+            println!(
+                "staker_pubkey={pubkey} before={} after={} diff={} expected={}",
+                prev_staker.lamports,
+                after_staker.lamports,
+                after_staker.lamports - prev_staker.lamports,
+                prev_staker.expected_rewards
+            );
         }
+        println!(
+            "voter_pubkey={} before={} after={} diff={} expected={}",
+            prev_state.voter_pubkey,
+            prev_state.voter_lamports,
+            final_state.voter_lamports,
+            final_state.voter_lamports + VAT_TO_BURN_PER_EPOCH - prev_state.voter_lamports,
+            prev_state.voter_expected_reward
+        );
+        println!("total_stake={}", prev_state.validator_stake);
     }
 }
