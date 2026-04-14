@@ -38,6 +38,7 @@ jobs:
               draft: false,
               prerelease: true
             })
+<<<<<<< HEAD
 
   version-bump:
     if: github.repository == 'anza-xyz/agave'
@@ -93,3 +94,5 @@ jobs:
               head: 'version-bump-${{ steps.process.outputs.new_version }}',
               base: '${{ steps.process.outputs.target_branch }}'
             })
+=======
+>>>>>>> 08adbd16b (Decouple bumping the version from the release pipeline (#11718))
