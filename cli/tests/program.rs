@@ -1757,8 +1757,8 @@ async fn test_cli_program_extend_program_minimum_size() {
         &config,
         "extend below minimum must be rejected by the CLI",
         &format!(
-            "ExtendProgram requires a minimum of {MINIMUM_EXTEND_PROGRAM_BYTES} bytes, but only 1 \
-             were requested"
+            "ExtendProgram requires a minimum of {MINIMUM_EXTEND_PROGRAM_BYTES} additional bytes \
+             or to extend to maximum size, but only 1 were requested"
         ),
     )
     .await;
@@ -1816,8 +1816,8 @@ async fn test_cli_program_extend_program_minimum_size() {
         &config,
         "extend below headroom must be rejected by the CLI",
         &format!(
-            "Program's current length is {headroom} bytes away from {MAX_PERMITTED_DATA_LENGTH}, \
-             but 1 were requested. Please re-run the command with additional {headroom} bytes."
+            "Program is {headroom} bytes from maximum size, but 1 were requested. Please re-run \
+             the command with {headroom} additional bytes."
         ),
     )
     .await;

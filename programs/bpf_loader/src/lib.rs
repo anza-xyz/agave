@@ -865,8 +865,8 @@ fn common_extend_program(
         {
             ic_logger_msg!(
                 log_collector,
-                "ExtendProgram requires a minimum of {} bytes OR 10 MiB - current length, but \
-                 only {} were requested",
+                "ExtendProgram requires a minimum of {} additional bytes or to extend to maximum \
+                 size, but only {} were requested",
                 MINIMUM_EXTEND_PROGRAM_BYTES,
                 additional_bytes,
             );
