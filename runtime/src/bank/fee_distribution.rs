@@ -330,11 +330,7 @@ pub mod tests {
             }
             bank.feature_set = Arc::new(feature_set);
 
-            let collector_id = maybe_collector_id.unwrap_or(if custom_commission_collector {
-                bank.leader().vote_address
-            } else {
-                *bank.leader_id()
-            });
+            let collector_id = maybe_collector_id.unwrap_or(*bank.leader_id());
 
             let deposit = 100;
             let mut burn = 100;
@@ -492,11 +488,7 @@ pub mod tests {
         let expected_burn = transaction_fee * bank.burn_percent() / 100;
         let expected_rewards = transaction_fee - expected_burn + priority_fee;
 
-        let collector_id = if custom_commission_collector {
-            bank.leader().vote_address
-        } else {
-            *bank.leader_id()
-        };
+        let collector_id = *bank.leader_id();
 
         let initial_capitalization = bank.capitalization();
         let initial_collector_balance = bank.get_balance(&collector_id);
@@ -571,11 +563,7 @@ pub mod tests {
             priority_fee,
         });
 
-        let collector_id = if custom_commission_collector {
-            bank.leader().vote_address
-        } else {
-            *bank.leader_id()
-        };
+        let collector_id = *bank.leader_id();
 
         // ensure that account balance will overflow and fee distribution will fail
         let mut account = bank.get_account(&collector_id).unwrap_or_default();

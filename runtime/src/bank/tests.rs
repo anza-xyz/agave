@@ -1450,7 +1450,7 @@ fn test_bank_tx_fee() {
     bank.set_fee_structure(&fee_structure);
 
     let leader = *bank.leader();
-    let collector_id = leader.vote_address;
+    let collector_id = leader.id;
 
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
@@ -1554,7 +1554,7 @@ fn test_bank_tx_compute_unit_fee() {
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     let leader = *bank.leader();
-    let collector_id = leader.vote_address;
+    let collector_id = leader.id;
 
     let expected_fee_paid = calculate_test_fee(
         &new_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique()))),
