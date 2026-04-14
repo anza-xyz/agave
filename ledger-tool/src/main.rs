@@ -2392,7 +2392,7 @@ fn main() {
                                 [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                                 identity_pubkey,
                                 10000,
-                                identity_pubkey,
+                                vote_pubkey,
                                 0,
                                 identity_pubkey,
                                 rent.minimum_balance(VoteStateV4::size_of()).max(1),

@@ -219,7 +219,7 @@ mod tests {
                     0,
                     &vote_pubkey,
                     0,
-                    &vote_pubkey,
+                    &node_pubkey,
                     1_000_000_000,
                 ),
                 &Rent::default(),
@@ -281,7 +281,7 @@ mod tests {
                 commission_bps,
                 &vote_pubkey,
                 0,
-                &vote_pubkey,
+                &node_pubkey,
                 rng.random_range(0..1_000_000), // lamports
             );
             stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);

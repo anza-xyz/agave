@@ -4043,7 +4043,7 @@ mod tests {
             inflation_rewards_commission_bps,
             &authorized_withdrawer,
             0,
-            &authorized_withdrawer,
+            &node_pubkey,
             lamports,
         );
         assert_eq!(vote_account.lamports(), lamports);
@@ -4165,7 +4165,7 @@ mod tests {
             inflation_rewards_commission_bps,
             &authorized_withdrawer,
             0,
-            &authorized_withdrawer,
+            &node_pubkey,
             lamports,
         );
         assert_eq!(vote_account.lamports(), lamports);

@@ -133,24 +133,26 @@ fn create_accounts() -> (
 fn create_test_account() -> (Pubkey, AccountSharedData) {
     let rent = Rent::default();
     let balance = rent.minimum_balance(VoteStateV3::size_of());
+    let node_pubkey = solana_pubkey::new_rand();
     let vote_pubkey = solana_pubkey::new_rand();
     (
         vote_pubkey,
         create_v4_account_with_authorized(
-            &solana_pubkey::new_rand(),
+            &node_pubkey,
             &vote_pubkey,
             [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &vote_pubkey,
             0,
             &vote_pubkey,
             0,
-            &vote_pubkey,
+            &node_pubkey,
             balance,
         ),
     )
 }
 
 fn create_test_account_with_authorized() -> (Pubkey, Pubkey, Pubkey, AccountSharedData) {
+    let node_pubkey = solana_pubkey::new_rand();
     let vote_pubkey = solana_pubkey::new_rand();
     let authorized_voter = solana_pubkey::new_rand();
     let authorized_withdrawer = solana_pubkey::new_rand();
@@ -160,14 +162,14 @@ fn create_test_account_with_authorized() -> (Pubkey, Pubkey, Pubkey, AccountShar
         authorized_voter,
         authorized_withdrawer,
         create_v4_account_with_authorized(
-            &solana_pubkey::new_rand(),
+            &node_pubkey,
             &authorized_voter,
             [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &authorized_withdrawer,
             0,
             &authorized_withdrawer,
             0,
-            &authorized_withdrawer,
+            &node_pubkey,
             100,
         ),
     )
@@ -731,15 +733,16 @@ impl BenchAuthorizeWithSeed {
             &withdrawer_owner,
         )
         .unwrap();
+        let node_pubkey = Pubkey::new_unique();
         let vote_account = create_v4_account_with_authorized(
-            &Pubkey::new_unique(),
+            &node_pubkey,
             &authorized_voter,
             [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &authorized_withdrawer,
             0,
             &authorized_withdrawer,
             0,
-            &authorized_withdrawer,
+            &node_pubkey,
             100,
         );
         let clock_account = account::create_account_shared_data_for_test(&clock);
@@ -823,15 +826,16 @@ impl BenchAuthorizeCheckedWithSeed {
             &withdrawer_owner,
         )
         .unwrap();
+        let node_pubkey = Pubkey::new_unique();
         let vote_account = create_v4_account_with_authorized(
-            &Pubkey::new_unique(),
+            &node_pubkey,
             &authorized_voter,
             [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &authorized_withdrawer,
             0,
             &authorized_withdrawer,
             0,
-            &authorized_withdrawer,
+            &node_pubkey,
             100,
         );
         let new_authority_pubkey = Pubkey::new_unique();

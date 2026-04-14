@@ -291,7 +291,7 @@ fn add_validator_accounts(
             bls_pubkey_compressed_bytes,
             identity_pubkey,
             u16::from(commission) * 100,
-            identity_pubkey,
+            vote_pubkey,
             0,
             identity_pubkey,
             vote_account_lamports,

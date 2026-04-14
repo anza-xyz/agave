@@ -918,7 +918,7 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
         0,
         &vote_id,
         0,
-        &vote_id,
+        &node_pubkey,
         100,
     );
     let stake_id1 = solana_pubkey::new_rand();
@@ -1698,7 +1698,7 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
         0,
         &authorized_voter.pubkey(),
         0,
-        &authorized_voter.pubkey(),
+        &vote_pubkey0,
         100,
     );
     let vote_account1 = vote_state::create_v4_account_with_authorized(
@@ -1709,7 +1709,7 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
         0,
         &authorized_voter.pubkey(),
         0,
-        &authorized_voter.pubkey(),
+        &vote_pubkey1,
         100,
     );
     let vote_account2 = vote_state::create_v4_account_with_authorized(
@@ -1720,7 +1720,7 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
         0,
         &authorized_voter.pubkey(),
         0,
-        &authorized_voter.pubkey(),
+        &vote_pubkey2,
         100,
     );
     bank.store_account(&vote_pubkey0, &vote_account0);
@@ -9861,7 +9861,7 @@ fn test_rent_state_changes_sysvars() {
         0,
         &validator_voting_keypair.pubkey(),
         0,
-        &validator_voting_keypair.pubkey(),
+        &validator_pubkey,
         validator_stake_lamports,
     );
 
