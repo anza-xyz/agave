@@ -248,11 +248,7 @@ pub(crate) fn calculate_stake_points_and_credits(
                         .get_pubkey_stake_entry(rank as usize)
                         .unwrap()
                         .stake;
-                    let earned_points = earned_credits * stake_amount / total_stake as u128;
-                    println!(
-                        "total_stake={total_stake} stake_amount={stake_amount} earned_points={earned_points}"
-                    );
-                    earned_points
+                    earned_credits * stake_amount / total_stake as u128
                 }
             }
         };

@@ -1,13 +1,12 @@
 //! Information about stake and voter rewards based on stake state.
-use crate::inflation_rewards::points::AgState;
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
-
 use {
     self::points::{
         CalculatedStakePoints, CalculationEnvironment, DelegatedVoteState,
         InflationPointCalculationEvent, SkippedReason, calculate_stake_points_and_credits,
     },
+    crate::inflation_rewards::points::AgState,
     solana_instruction::error::InstructionError,
     solana_stake_interface::{
         error::StakeError,
@@ -230,8 +229,6 @@ fn calculate_stake_rewards<'a>(
             point_value.clone(),
         ));
     }
-
-    println!("splitting {rewards} into {voter_rewards} and {staker_rewards}");
 
     if (voter_rewards == 0 || staker_rewards == 0) && is_split {
         // don't collect if we lose a whole lamport somewhere
