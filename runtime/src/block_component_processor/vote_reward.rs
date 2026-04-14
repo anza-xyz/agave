@@ -773,30 +773,29 @@ mod tests {
         fn new(
             rent: &Rent,
             bank: &Bank,
-            pay_leader: bool,
             commission_bps: u16,
             pubkey: Pubkey,
+            validator_reward: u64,
         ) -> (Self, u64) {
-            let epoch_state = EpochInflationAccountState::new_from_bank(bank)
-                .unwrap()
-                .get_epoch_state(bank.epoch())
-                .unwrap();
+            let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
+            let lamports = bank.get_account(&pubkey).unwrap().lamports();
+            if lamports <= LAMPORTS_PER_SOL + rent_exempt_reserve {
+                return (
+                    Self {
+                        lamports,
+                        expected_rewards: 0,
+                    },
+                    0,
+                );
+            }
             let total_stake = bank
                 .epoch_stakes_from_slot(bank.slot())
                 .unwrap()
                 .total_stake();
-            let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
-            let lamports = bank.get_account(&pubkey).unwrap().lamports();
             let stake = lamports - rent_exempt_reserve;
-            let (validator_reward, leader_reward) =
-                calculate_reward(&epoch_state, total_stake, stake);
-            let total_reward = if pay_leader {
-                validator_reward + leader_reward
-            } else {
-                validator_reward
-            };
+            let stake_weighted_reward = validator_reward * stake / total_stake;
             let (voter_reward, staker_reward, is_split) =
-                commission_split(commission_bps, total_reward);
+                commission_split(commission_bps, stake_weighted_reward);
             assert!(is_split);
             (
                 Self {
@@ -823,14 +822,39 @@ mod tests {
             rent: &Rent,
             pay_leader: bool,
             commission_bps: u16,
+            num_reward_slots: u64,
         ) -> Self {
+            let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
             let voter_lamports = bank.get_account(&voter_pubkey).unwrap().lamports();
+            let validator_stake = staker_pubkeys
+                .iter()
+                .map(|pubkey| {
+                    let lamports = bank.get_account(pubkey).unwrap().lamports();
+                    lamports - rent_exempt_reserve
+                })
+                .sum::<u64>();
+            let epoch_state = EpochInflationAccountState::new_from_bank(bank)
+                .unwrap()
+                .get_epoch_state(bank.epoch())
+                .unwrap();
+            let total_stake = bank
+                .epoch_stakes_from_slot(bank.slot())
+                .unwrap()
+                .total_stake();
+            let (validator_reward, leader_reward) =
+                calculate_reward(&epoch_state, total_stake, validator_stake);
+            let total_reward = if pay_leader {
+                validator_reward + leader_reward
+            } else {
+                validator_reward
+            };
+            let total_reward = total_reward * num_reward_slots;
 
             let mut total_validator_reward = 0;
             let mut stakers = HashMap::new();
             for staker_pubkey in staker_pubkeys {
                 let (staker, voter_reward) =
-                    Staker::new(rent, bank, pay_leader, commission_bps, *staker_pubkey);
+                    Staker::new(rent, bank, commission_bps, *staker_pubkey, total_reward);
                 total_validator_reward += voter_reward;
                 stakers.insert(*staker_pubkey, staker);
             }
@@ -916,6 +940,7 @@ mod tests {
     fn reward_validators(
         bank: Arc<Bank>,
         validators: &[ValidatorVoteKeypairs],
+        num_reward_slots: u64,
     ) -> (Arc<Bank>, HashMap<Pubkey, RewardState>) {
         let validators_to_reward = validators
             .iter()
@@ -925,7 +950,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut looping_bank = bank;
-        for _ in 0..1 {
+        for _ in 0..num_reward_slots {
             calculate_and_pay_voting_reward_and_update_vote_state(
                 &looping_bank,
                 Some((looping_bank.slot() - 100, validators_to_reward.clone())),
@@ -954,6 +979,7 @@ mod tests {
         pay_leader: bool,
         commission_bps: u16,
         initial_bank: Option<(Arc<Bank>, Arc<RwLock<BankForks>>)>,
+        num_reward_slots: u64,
     ) -> (Arc<Bank>, HashMap<Pubkey, RewardState>) {
         let (initial_bank, _bank_forks) =
             initial_bank.unwrap_or(initial_state(validators, commission_bps));
@@ -974,7 +1000,8 @@ mod tests {
         ));
         assert_eq!(reward_bank.epoch(), reward_epoch);
 
-        let (reward_bank, rewarded_validators) = reward_validators(reward_bank, validators);
+        let (reward_bank, rewarded_validators) =
+            reward_validators(reward_bank, validators, num_reward_slots);
 
         let payout_epoch = reward_bank.epoch() + 1;
         let payout_epoch_slot = reward_bank
@@ -998,11 +1025,17 @@ mod tests {
     #[test_matrix([true, false], [1_000, 5_000])]
     fn test_vote_reward_payout(pay_leader: bool, commission_bps: u16) {
         let num_validators = 3;
+        let num_reward_slots = 10;
         let validators = (0..num_validators)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
-        let (final_bank, rewarded_validators) =
-            test_vote_reward_payout_impl(&validators, pay_leader, commission_bps, None);
+        let (final_bank, rewarded_validators) = test_vote_reward_payout_impl(
+            &validators,
+            pay_leader,
+            commission_bps,
+            None,
+            num_reward_slots,
+        );
         let mut voter_rewards = HashMap::new();
 
         for (stake_pubkey, reward_state) in rewarded_validators {
@@ -1051,10 +1084,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_multiple_delegators() {
-        let commission_bps = 1_000;
-        let pay_leader = true;
+    #[test_matrix([true, false], [1_000, 5_000])]
+    fn test_multiple_delegators(pay_leader: bool, commission_bps: u16) {
+        let num_reward_slots = 10;
         let mint_keypair = Keypair::new();
         let validator_keypair = ValidatorVoteKeypairs::new_rand();
         let validator_node_key = validator_keypair.node_keypair.pubkey();
@@ -1129,6 +1161,7 @@ mod tests {
             &genesis_config.rent,
             pay_leader,
             commission_bps,
+            num_reward_slots,
         );
 
         let (final_bank, _) = test_vote_reward_payout_impl(
@@ -1136,6 +1169,7 @@ mod tests {
             pay_leader,
             commission_bps,
             Some((initial_bank, bank_forks)),
+            num_reward_slots,
         );
 
         let final_state = State::new(
@@ -1145,23 +1179,25 @@ mod tests {
             &genesis_config.rent,
             pay_leader,
             commission_bps,
+            num_reward_slots,
         );
 
-        let rent_exempt_reserve = genesis_config.rent.minimum_balance(StakeStateV2::size_of());
         for pubkey in prev_state.stakers.keys() {
             let before = prev_state.stakers.get(pubkey).unwrap();
             let after = final_state.stakers.get(pubkey).unwrap();
             let diff = after.lamports - before.lamports;
-            if before.lamports <= LAMPORTS_PER_SOL + rent_exempt_reserve {
-                assert_eq!(before.lamports, after.lamports);
-            } else {
-                assert_eq!(diff, before.expected_rewards);
-            }
+            assert_eq!(diff, before.expected_rewards);
         }
 
         let voter_diff =
             final_state.voter_lamports + VAT_TO_BURN_PER_EPOCH - prev_state.voter_lamports;
         // Due to rounding issues, off by 1 errors are possible.
-        assert!(voter_diff.abs_diff(prev_state.voter_expected_reward) <= 1);
+        assert!(
+            voter_diff.abs_diff(prev_state.voter_expected_reward) <= 1,
+            "final_lamports={} prev_lamports={} diff={voter_diff} expected={}",
+            final_state.voter_lamports,
+            prev_state.voter_lamports,
+            prev_state.voter_expected_reward
+        );
     }
 }
