@@ -17,6 +17,7 @@ use {
         },
         streamer::StakedNodes,
     },
+    arc_swap::ArcSwap,
     percentage::Percentage,
     quinn::Connection,
     solana_net_utils::token_bucket::TokenBucket,
@@ -65,7 +66,7 @@ pub(crate) struct SwQosMaxStreamsStreamerCounter {
     /// Replaced with real rate params on first saturated on_new_stream call.
     /// Reset to permissive dummy on recovery so each congestion episode
     /// samples fresh stake state.
-    stream_rate_limiter: RwLock<TokenBucket>,
+    stream_rate_limiter: ArcSwap<TokenBucket>,
     /// True when stream_rate_limiter has real params for current episode.
     rate_limiter_active: AtomicBool,
 }
@@ -172,10 +173,10 @@ impl SwQosMaxStreams {
         }
     }
 
-    /// Permissive token bucket that never denies. Used as placeholder in
-    /// the RwLock until a real rate limiter is installed at saturation onset.
-    fn permissive_token_bucket() -> TokenBucket {
-        TokenBucket::new(u64::MAX / 2, u64::MAX / 2, 1e12)
+    /// Permissive token bucket that never denies. Used as placeholder
+    /// until a real rate limiter is installed at saturation onset.
+    fn permissive_token_bucket() -> Arc<TokenBucket> {
+        Arc::new(TokenBucket::new(u64::MAX / 2, u64::MAX / 2, 1e12))
     }
 
     /// Build a per-identity token bucket for rate-limited stream admission
@@ -185,7 +186,7 @@ impl SwQosMaxStreams {
     fn build_identity_rate_limiter(
         &self,
         context: &SwQosMaxStreamsConnectionContext,
-    ) -> TokenBucket {
+    ) -> Arc<TokenBucket> {
         let (rate_tps, max_tokens) = match context.peer_type {
             // Unstaked peers are dropped unconditionally when saturated;
             // bucket is never consulted. Use minimal valid params.
@@ -200,7 +201,7 @@ impl SwQosMaxStreams {
                 (share_tps, max_tokens.max(1))
             }
         };
-        TokenBucket::new(0, max_tokens, rate_tps)
+        Arc::new(TokenBucket::new(0, max_tokens, rate_tps))
     }
 
     /// Core MAX_STREAMS computation (testable without a quinn::Connection).
@@ -289,7 +290,7 @@ impl SwQosMaxStreams {
                 || {
                     Arc::new(SwQosMaxStreamsStreamerCounter {
                         connection_count: AtomicUsize::new(0),
-                        stream_rate_limiter: RwLock::new(Self::permissive_token_bucket()),
+                        stream_rate_limiter: ArcSwap::new(Self::permissive_token_bucket()),
                         rate_limiter_active: AtomicBool::new(false),
                     })
                 },
@@ -588,22 +589,18 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
                 }
                 ConnectionPeerType::Staked(_) => {
                     if let Some(ref counter) = context.stream_counter {
-                        // First saturated call this episode: replace dummy
-                        // with real rate limiter using current stake state.
-                        if !counter.rate_limiter_active.load(Ordering::Relaxed) {
-                            let mut guard = counter.stream_rate_limiter.write().unwrap();
-                            if !counter.rate_limiter_active.load(Ordering::Relaxed) {
-                                *guard = self.build_identity_rate_limiter(context);
-                                counter.rate_limiter_active.store(true, Ordering::Relaxed);
-                            }
-                        }
+                        // First saturated call this episode: CAS the flag
+                        // so exactly one thread swaps in the real bucket.
                         if counter
-                            .stream_rate_limiter
-                            .read()
-                            .unwrap()
-                            .consume_tokens(1)
+                            .rate_limiter_active
+                            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
                             .is_ok()
                         {
+                            counter
+                                .stream_rate_limiter
+                                .store(self.build_identity_rate_limiter(context));
+                        }
+                        if counter.stream_rate_limiter.load().consume_tokens(1).is_ok() {
                             true
                         } else {
                             self.stats
@@ -620,9 +617,14 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
             // Reset rate limiter to permissive dummy so next congestion
             // episode rebuilds with current stake distribution.
             if let Some(ref counter) = context.stream_counter {
-                if counter.rate_limiter_active.load(Ordering::Relaxed) {
-                    *counter.stream_rate_limiter.write().unwrap() = Self::permissive_token_bucket();
-                    counter.rate_limiter_active.store(false, Ordering::Relaxed);
+                if counter
+                    .rate_limiter_active
+                    .compare_exchange(true, false, Ordering::AcqRel, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    counter
+                        .stream_rate_limiter
+                        .store(Self::permissive_token_bucket());
                 }
             }
             true
@@ -666,7 +668,7 @@ pub mod test {
     ) -> SwQosMaxStreamsConnectionContext {
         let counter = Arc::new(SwQosMaxStreamsStreamerCounter {
             connection_count: AtomicUsize::new(num_connections),
-            stream_rate_limiter: RwLock::new(SwQosMaxStreams::permissive_token_bucket()),
+            stream_rate_limiter: ArcSwap::new(SwQosMaxStreams::permissive_token_bucket()),
             rate_limiter_active: AtomicBool::new(false),
         });
         SwQosMaxStreamsConnectionContext {

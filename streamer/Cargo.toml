@@ -23,6 +23,7 @@ shuttle-test = ["dep:shuttle", "solana-svm-type-overrides/shuttle-test"]
 
 [dependencies]
 agave-xdp = { workspace = true }
+arc-swap = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 futures = { workspace = true }

@@ -10534,6 +10534,7 @@ dependencies = [
  "agave-logger",
  "agave-xdp",
  "anyhow",
+ "arc-swap",
  "assert_matches",
  "bytes",
  "chrono",
