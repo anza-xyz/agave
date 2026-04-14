@@ -26,6 +26,7 @@ use {
         bank::{Bank, NewBankOptions},
         bank_forks::BankForks,
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
+        validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     stats::{LoopMetrics, SlotMetrics},
     std::{
@@ -83,6 +84,7 @@ pub struct BlockCreationLoopConfig {
     pub leader_window_info_receiver: Receiver<LeaderWindowInfo>,
     pub highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
+    pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 
     // Channel to receive RecordReceiver from PohService
     pub record_receiver_receiver: Receiver<RecordReceiver>,
@@ -93,6 +95,7 @@ struct LeaderContext {
     my_pubkey: Pubkey,
     leader_window_info_receiver: Receiver<LeaderWindowInfo>,
     highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
+    highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 
     blockstore: Arc<Blockstore>,
     record_receiver: RecordReceiver,
@@ -153,6 +156,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
         highest_parent_ready,
         replay_highest_frozen,
         record_receiver_receiver,
+        highest_finalized,
     } = config;
 
     // Similar to Votor, if this loop dies kill the validator
@@ -189,6 +193,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
         replay_highest_frozen,
         metrics: LoopMetrics::default(),
         slot_metrics: SlotMetrics::default(),
+        highest_finalized,
     };
 
     // Setup poh

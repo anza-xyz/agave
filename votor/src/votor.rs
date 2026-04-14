@@ -78,6 +78,7 @@ use {
     solana_runtime::{
         bank_forks::BankForks, installed_scheduler_pool::BankWithScheduler,
         snapshot_controller::SnapshotController,
+        validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     std::{
         collections::HashMap,
@@ -105,6 +106,7 @@ pub struct VotorConfig {
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     pub consensus_metrics_sender: ConsensusMetricsEventSender,
+    pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 
     // Senders / Notifiers
     pub snapshot_controller: Option<Arc<SnapshotController>>,
@@ -176,6 +178,7 @@ impl Votor {
             build_reward_certs_receiver,
             reward_certs_sender,
             generated_cert_types,
+            highest_finalized,
         } = config;
 
         let migration_status = bank_forks.read().unwrap().migration_status();
@@ -246,6 +249,7 @@ impl Votor {
             bls_sender,
             event_sender,
             commitment_sender,
+            highest_finalized,
         };
 
         let metrics = ConsensusMetrics::start_metrics_loop(

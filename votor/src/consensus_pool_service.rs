@@ -26,11 +26,12 @@ use {
     solana_runtime::{
         bank::Bank, bank_forks::SharableBanks,
         leader_schedule_utils::last_of_consecutive_leader_slots,
+        validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     stats::ConsensusPoolServiceStats,
     std::{
         sync::{
-            Arc,
+            Arc, RwLock,
             atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
@@ -59,6 +60,8 @@ pub(crate) struct ConsensusPoolContext {
     pub(crate) bls_sender: Sender<BLSOp>,
     pub(crate) event_sender: VotorEventSender,
     pub(crate) commitment_sender: Sender<CommitmentAggregationData>,
+
+    pub(crate) highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 }
 
 pub(crate) struct ConsensusPoolService {
@@ -87,12 +90,15 @@ impl ConsensusPoolService {
         new_certificates_to_send: Vec<Arc<Certificate>>,
         standstill_timer: &mut Instant,
         stats: &mut ConsensusPoolServiceStats,
+        highest_finalized: &RwLock<Option<ValidatedBlockFinalizationCert>>,
     ) -> Result<(), AddVoteError> {
         // If we have a new finalized slot, update the root and send new certificates
         if new_finalized_slot.is_some() {
             // Reset standstill timer
             *standstill_timer = Instant::now();
             stats.new_finalized_slot += 1;
+
+            *highest_finalized.write().unwrap() = consensus_pool.get_highest_finalization_certs();
         }
         let bank = sharable_banks.root();
         consensus_pool.maybe_prune(bank.slot());
@@ -164,6 +170,7 @@ impl ConsensusPoolService {
             new_certificates_to_send,
             standstill_timer,
             stats,
+            &ctx.highest_finalized,
         )
     }
 
@@ -250,7 +257,7 @@ impl ConsensusPoolService {
                 // Genesis cert though.
                 if kick_off_parent_ready {
                     events.push(VotorEvent::Standstill(
-                        consensus_pool.highest_finalized_slot(),
+                        consensus_pool.highest_finalized_slot().unwrap_or(0),
                     ));
                 }
                 stats.standstill = true;
@@ -475,6 +482,7 @@ mod tests {
         blockstore: Arc<Blockstore>,
         exit: Arc<AtomicBool>,
         cluster_info: Arc<ClusterInfo>,
+        highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
     }
 
     impl Default for TestContext {
@@ -530,6 +538,7 @@ mod tests {
                 blockstore,
                 exit: Arc::new(AtomicBool::new(false)),
                 cluster_info,
+                highest_finalized: Arc::new(RwLock::new(None)),
             }
         }
     }
@@ -591,6 +600,7 @@ mod tests {
                     new_certificates_to_send,
                     &mut standstill_timer,
                     &mut stats,
+                    &ctx.highest_finalized,
                 )
                 .unwrap();
             }
@@ -670,6 +680,7 @@ mod tests {
             new_certificates_to_send,
             &mut standstill_timer,
             &mut stats,
+            &ctx.highest_finalized,
         )
         .unwrap();
 
@@ -734,6 +745,7 @@ mod tests {
             bls_sender: ctx.bls_sender.clone(),
             event_sender: crossbeam_channel::unbounded().0,
             commitment_sender: ctx.commitment_sender.clone(),
+            highest_finalized: ctx.highest_finalized.clone(),
         };
         let mut stats = ConsensusPoolServiceStats::new();
 
@@ -845,6 +857,7 @@ mod tests {
             certificates,
             &mut standstill_timer,
             &mut stats,
+            &ctx.highest_finalized,
         );
 
         assert!(result.is_ok());
