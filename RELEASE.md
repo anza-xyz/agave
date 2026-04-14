@@ -130,7 +130,7 @@ Create a PR that makes the following updates to [CHANGELOG.md](https://github.co
 1. Dispatch [Bump Version](https://github.com/anza-xyz/agave/actions/workflows/bump-version.yml) pipeline to create the version bump PR.
 1. Verify CI checks pass. Verify that the change is correct: it only contains version bump changes and only expected version is changed. Approve it.
 1. Wait for approvals required to merge and merge it.
-1. Check out relevant branch, create release tag pointing to the commit right before the version bump change and push it. The release tag must exactly match the `version` field in `/Cargo.toml` prefixed by `v` that was before the version bump.
+1. Check out relevant branch, create release tag pointing to the version bump merge commit from the previous step. The release tag must exactly match the `version` field in `/Cargo.toml` prefixed by `v` from the version bump.
     ```
     git checkout v4.0
     git tag v4.0.1 123abc...
