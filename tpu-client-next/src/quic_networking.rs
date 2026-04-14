@@ -31,8 +31,7 @@ pub const QUIC_KEEP_ALIVE: Duration = Duration::from_secs(1);
 /// Modern CDNs routinely use much larger initial congestion windows to avoid slow start dominating
 /// transfer time. Allow bursting 128 transactions at connection start (subject to flow control
 /// restrictions).
-pub(crate) const INITIAL_CONGESTION_WINDOW: u64 =
-    128 * solana_message::v1::MAX_TRANSACTION_SIZE as u64;
+pub(crate) const INITIAL_CONGESTION_WINDOW: u64 = 128 * solana_packet::PACKET_DATA_SIZE as u64;
 
 pub(crate) fn create_client_config(
     client_certificate: &QuicClientCertificate,
