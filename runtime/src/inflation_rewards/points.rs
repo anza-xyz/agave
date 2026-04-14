@@ -131,10 +131,21 @@ fn calculate_stake_points(
     .points
 }
 
-#[derive(Clone)]
-pub(crate) struct AgState<'a> {
+/// State needed to compute rewards for alpenglow.
+pub(crate) struct AlpenglowStakeState<'a> {
+    /// Pubkey for the vote account of the validator that the stake is delegated to.
     pub(crate) vote_pubkey: Pubkey,
+    /// `epoch_stakes` from the current bank.
     pub(crate) epoch_stakes: &'a HashMap<Epoch, VersionedEpochStakes>,
+}
+
+impl<'a> AlpenglowStakeState<'a> {
+    /// Returns the total stake delegated to `self.vote_pubkey` in the given epoch.
+    fn get_total_stake(&self, epoch: Epoch) -> Option<u64> {
+        let rank_map = self.epoch_stakes.get(&epoch)?.bls_pubkey_to_rank_map();
+        let rank = *rank_map.get_rank_for_vote_pubkey(&self.vote_pubkey)? as usize;
+        rank_map.get_pubkey_stake_entry(rank).map(|e| e.stake)
+    }
 }
 
 /// for a given stake and vote_state, calculate how many
@@ -146,7 +157,7 @@ pub(crate) fn calculate_stake_points_and_credits(
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
-    ag_state: Option<AgState>,
+    ag_stake_state: Option<AlpenglowStakeState>,
 ) -> CalculatedStakePoints {
     let credits_in_stake = stake.credits_observed;
     let credits_in_vote = vote_state.credits;
@@ -224,7 +235,7 @@ pub(crate) fn calculate_stake_points_and_credits(
         new_credits_observed = new_credits_observed.max(final_epoch_credits);
 
         // finally calculate points for this epoch
-        let earned_points = match &ag_state {
+        let earned_points = match &ag_stake_state {
             None => {
                 // in tower, the stake has to be included to calculate the total points this `vote_state` earned.
                 stake_amount * earned_credits
@@ -236,18 +247,13 @@ pub(crate) fn calculate_stake_points_and_credits(
                 if earned_credits == 0 {
                     earned_credits
                 } else {
-                    let rank_map = state
-                        .epoch_stakes
-                        .get(&epoch)
-                        .unwrap()
-                        .bls_pubkey_to_rank_map();
-                    let &rank = rank_map
-                        .get_rank_for_vote_pubkey(&state.vote_pubkey)
-                        .unwrap();
-                    let total_stake = rank_map
-                        .get_pubkey_stake_entry(rank as usize)
-                        .unwrap()
-                        .stake;
+                    let Some(total_stake) = state.get_total_stake(epoch) else {
+                        return CalculatedStakePoints {
+                            points: 0,
+                            new_credits_observed,
+                            force_credits_update_with_skipped_reward: true,
+                        };
+                    };
                     earned_credits * stake_amount / total_stake as u128
                 }
             }

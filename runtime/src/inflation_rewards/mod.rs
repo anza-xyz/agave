@@ -6,7 +6,7 @@ use {
         CalculatedStakePoints, CalculationEnvironment, DelegatedVoteState,
         InflationPointCalculationEvent, SkippedReason, calculate_stake_points_and_credits,
     },
-    crate::inflation_rewards::points::AgState,
+    crate::inflation_rewards::points::AlpenglowStakeState,
     solana_instruction::error::InstructionError,
     solana_stake_interface::{
         error::StakeError,
@@ -36,7 +36,7 @@ pub(crate) fn redeem_rewards<'a>(
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     stake_account_lamports_for_trace: u64,
-    ag_state: Option<AgState>,
+    ag_stake_state: Option<AlpenglowStakeState>,
 ) -> Result<(u64, u64, Stake), InstructionError> {
     if let StakeStateV2::Stake(_meta, stake, _stake_flags) = stake_state {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
@@ -76,7 +76,7 @@ pub(crate) fn redeem_rewards<'a>(
             vote_state,
             calculation_environment,
             inflation_point_calc_tracer,
-            ag_state,
+            ag_stake_state,
         ) {
             Ok((stakers_reward, voters_reward, stake))
         } else {
@@ -93,7 +93,7 @@ fn redeem_stake_rewards<'a>(
     vote_state: DelegatedVoteState,
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
-    ag_state: Option<AgState>,
+    ag_stake_state: Option<AlpenglowStakeState>,
 ) -> Option<(u64, u64)> {
     if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
         inflation_point_calc_tracer(&InflationPointCalculationEvent::CreditsObserved(
@@ -107,7 +107,7 @@ fn redeem_stake_rewards<'a>(
         vote_state,
         calculation_environment,
         inflation_point_calc_tracer.as_ref(),
-        ag_state,
+        ag_stake_state,
     )
     .map(|calculated_stake_rewards| {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer {
@@ -138,7 +138,7 @@ fn calculate_stake_rewards<'a>(
     vote_state: DelegatedVoteState,
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
-    ag_state: Option<AgState>,
+    ag_stake_state: Option<AlpenglowStakeState>,
 ) -> Option<CalculatedStakeRewards> {
     let CalculationEnvironment {
         stake_history,
@@ -147,6 +147,9 @@ fn calculate_stake_rewards<'a>(
         rewarded_epoch,
         ..
     } = calculation_environment;
+
+    let is_alpenglow_enabled = ag_stake_state.is_some();
+
     // ensure to run to trigger (optional) inflation_point_calc_tracer
     let CalculatedStakePoints {
         points,
@@ -158,7 +161,7 @@ fn calculate_stake_rewards<'a>(
         stake_history,
         inflation_point_calc_tracer.as_ref(),
         new_rate_activation_epoch,
-        ag_state.clone(),
+        ag_stake_state,
     );
 
     // Drive credits_observed forward unconditionally when rewards are disabled
@@ -197,7 +200,7 @@ fn calculate_stake_rewards<'a>(
         return None;
     }
 
-    let rewards = if ag_state.is_some() {
+    let rewards = if is_alpenglow_enabled {
         // In alpenglow, `points` represents the actual reward that this `vote_state` earned.
         points
     } else {

@@ -13,7 +13,8 @@ use {
         },
         inflation_rewards::{
             points::{
-                AgState, CalculationEnvironment, DelegatedVoteState, PointValue, calculate_points,
+                AlpenglowStakeState, CalculationEnvironment, DelegatedVoteState, PointValue,
+                calculate_points,
             },
             redeem_rewards,
         },
@@ -481,10 +482,14 @@ impl Bank {
             vote_state.commission() as u16 * 100
         };
 
-        let ag_state = self.feature_set.snapshot().alpenglow.then_some(AgState {
-            vote_pubkey,
-            epoch_stakes: &self.epoch_stakes,
-        });
+        let ag_stake_state = self
+            .feature_set
+            .snapshot()
+            .alpenglow
+            .then_some(AlpenglowStakeState {
+                vote_pubkey,
+                epoch_stakes: &self.epoch_stakes,
+            });
 
         match redeem_rewards(
             stake_state,
@@ -499,7 +504,7 @@ impl Bank {
             },
             reward_calc_tracer,
             stake_account.lamports(),
-            ag_state,
+            ag_stake_state,
         ) {
             Ok((stake_reward, commission_lamports, stake)) => {
                 let stake_reward = PartitionedStakeReward {
