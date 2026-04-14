@@ -561,7 +561,7 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
                 let budget = self.compute_identity_stream_budget(context);
                 if count >= budget {
                     self.stats
-                        .streams_dropped_over_budget
+                        .streams_dropped_on_arrival
                         .fetch_add(1, Ordering::Relaxed);
                     false
                 } else {
