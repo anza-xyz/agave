@@ -229,6 +229,7 @@ dependencies = [
  "agave-feature-set",
  "bincode",
  "ed25519-dalek 1.0.1",
+ "k256",
  "libsecp256k1",
  "openssl",
  "solana-ed25519-program",
@@ -9235,6 +9236,7 @@ name = "solana-syscalls"
 version = "4.1.0-alpha.0"
 dependencies = [
  "bincode",
+ "k256",
  "libsecp256k1",
  "num-traits",
  "solana-account 4.2.0",

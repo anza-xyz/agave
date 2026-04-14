@@ -1,5 +1,6 @@
 use {
-    agave_feature_set::FeatureSet,
+    agave_feature_set::{FeatureSet, secp256k1_use_k256},
+    k256::ecdsa::{RecoveryId, Signature, VerifyingKey},
     solana_precompile_error::PrecompileError,
     solana_secp256k1_program::{
         HASHED_PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
@@ -23,7 +24,7 @@ use {
 pub fn verify(
     data: &[u8],
     instruction_datas: &[&[u8]],
-    _feature_set: &FeatureSet,
+    feature_set: &FeatureSet,
 ) -> Result<(), PrecompileError> {
     if data.is_empty() {
         return Err(PrecompileError::InvalidInstructionDataSize);
@@ -62,13 +63,8 @@ pub fn verify(
             return Err(PrecompileError::InvalidSignature);
         }
 
-        let signature = libsecp256k1::Signature::parse_standard_slice(
-            &signature_instruction[sig_start..sig_end],
-        )
-        .map_err(|_| PrecompileError::InvalidSignature)?;
-
-        let recovery_id = libsecp256k1::RecoveryId::parse(signature_instruction[sig_end])
-            .map_err(|_| PrecompileError::InvalidRecoveryId)?;
+        let signature = &signature_instruction[sig_start..sig_end];
+        let recovery_id = signature_instruction[sig_end];
 
         // Parse out pubkey
         let eth_address_slice = get_data_slice(
@@ -86,20 +82,70 @@ pub fn verify(
             offsets.message_data_size as usize,
         )?;
 
-        let message_hash: [u8; 32] = solana_keccak_hasher::hash(message_slice).to_bytes();
-        let pubkey = libsecp256k1::recover(
-            &libsecp256k1::Message::parse_slice(&message_hash).unwrap(),
-            &signature,
-            &recovery_id,
-        )
-        .map_err(|_| PrecompileError::InvalidSignature)?;
-        let eth_address = eth_address_from_pubkey(&pubkey.serialize()[1..].try_into().unwrap());
+        let message_hash = {
+            let mut hasher = solana_keccak_hasher::Hasher::default();
+            hasher.hash(message_slice);
+            hasher.result()
+        };
+
+        let pubkey = if feature_set.is_active(&secp256k1_use_k256::id()) {
+            recover_pubkey_k256(message_hash.as_bytes(), recovery_id, signature)?
+        } else {
+            recover_pubkey_legacy(message_hash.as_bytes(), recovery_id, signature)?
+        };
+        let eth_address = eth_address_from_pubkey(&pubkey);
 
         if eth_address_slice != eth_address {
             return Err(PrecompileError::InvalidSignature);
         }
     }
     Ok(())
+}
+
+// Recovers a public key with `libsecp256k1`, which accepts high-S signatures.
+// This is a legacy method as the `libsecp256k1` crate is no longer maintained.
+fn recover_pubkey_legacy(
+    message_hash: &[u8; 32],
+    recovery_id: u8,
+    signature: &[u8],
+) -> Result<[u8; 64], PrecompileError> {
+    let signature = libsecp256k1::Signature::parse_standard_slice(signature)
+        .map_err(|_| PrecompileError::InvalidSignature)?;
+    let recovery_id = libsecp256k1::RecoveryId::parse(recovery_id)
+        .map_err(|_| PrecompileError::InvalidRecoveryId)?;
+    let pubkey = libsecp256k1::recover(
+        &libsecp256k1::Message::parse_slice(message_hash).unwrap(),
+        &signature,
+        &recovery_id,
+    )
+    .map_err(|_| PrecompileError::InvalidSignature)?;
+    Ok(pubkey.serialize()[1..65].try_into().unwrap())
+}
+
+/// Recovers a public key with `k256` while preserving legacy high-S acceptance.
+///
+/// `k256` recovery requires low-S signatures. To match `libsecp256k1`
+/// semantics for malleable signatures, this normalizes high-S signatures to
+/// low-S and flips the recovery-id y-parity when normalization occurs.
+fn recover_pubkey_k256(
+    message_hash: &[u8; 32],
+    recovery_id: u8,
+    signature: &[u8],
+) -> Result<[u8; 64], PrecompileError> {
+    let mut signature =
+        Signature::try_from(signature).map_err(|_| PrecompileError::InvalidSignature)?;
+    let mut recovery_id =
+        RecoveryId::try_from(recovery_id).map_err(|_| PrecompileError::InvalidRecoveryId)?;
+
+    if let Some(normalized_signature) = signature.normalize_s() {
+        signature = normalized_signature;
+        recovery_id = RecoveryId::new(!recovery_id.is_y_odd(), recovery_id.is_x_reduced());
+    }
+
+    let pubkey = VerifyingKey::recover_from_prehash(message_hash, &signature, recovery_id)
+        .map_err(|_| PrecompileError::InvalidSignature)?;
+    let encoded = pubkey.to_encoded_point(false);
+    Ok(encoded.as_bytes()[1..65].try_into().unwrap())
 }
 
 fn get_data_slice<'a>(
@@ -133,6 +179,79 @@ pub mod tests {
             DATA_START, new_secp256k1_instruction_with_signature, sign_message,
         },
     };
+
+    const SECP256K1_ORDER: [u8; SIGNATURE_SERIALIZED_SIZE / 2] = [
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36,
+        0x41, 0x41,
+    ];
+
+    // Unit test.
+    // Remove this test when the legacy libsecp256k1 recovery path is deleted.
+    #[test]
+    fn test_recovery_backend_behavior_delta() {
+        let secret_bytes: [u8; 32] = rand::random();
+        let secret_key = libsecp256k1::SecretKey::parse(&secret_bytes).unwrap();
+        let message = b"hello";
+        let message_hash = {
+            let mut hasher = keccak::Hasher::default();
+            hasher.hash(message);
+            hasher.result()
+        };
+
+        let secp_message = libsecp256k1::Message::parse(message_hash.as_bytes());
+        let (signature, recovery_id) = libsecp256k1::sign(&secp_message, &secret_key);
+
+        let signature_bytes = signature.serialize();
+        let legacy_pubkey = recover_pubkey_legacy(
+            message_hash.as_bytes(),
+            recovery_id.serialize(),
+            &signature_bytes,
+        );
+        let k256_pubkey = recover_pubkey_k256(
+            message_hash.as_bytes(),
+            recovery_id.serialize(),
+            &signature_bytes,
+        );
+        assert_eq!(legacy_pubkey, k256_pubkey);
+
+        // Flip the S value in the signature to create another valid signature.
+        let mut alt_signature = signature;
+        alt_signature.s = -alt_signature.s;
+        let alt_recovery_id = libsecp256k1::RecoveryId::parse(recovery_id.serialize() ^ 1).unwrap();
+
+        let alt_signature_bytes = alt_signature.serialize();
+        let legacy_pubkey = recover_pubkey_legacy(
+            message_hash.as_bytes(),
+            alt_recovery_id.serialize(),
+            &alt_signature_bytes,
+        );
+        let k256_pubkey = recover_pubkey_k256(
+            message_hash.as_bytes(),
+            alt_recovery_id.serialize(),
+            &alt_signature_bytes,
+        );
+        assert!(legacy_pubkey.is_ok());
+        assert_eq!(legacy_pubkey, k256_pubkey);
+
+        let invalid_recovery_id = 4;
+        assert_eq!(
+            recover_pubkey_legacy(
+                message_hash.as_bytes(),
+                invalid_recovery_id,
+                &signature_bytes
+            ),
+            Err(PrecompileError::InvalidRecoveryId)
+        );
+        assert_eq!(
+            recover_pubkey_k256(
+                message_hash.as_bytes(),
+                invalid_recovery_id,
+                &signature_bytes
+            ),
+            Err(PrecompileError::InvalidRecoveryId)
+        );
+    }
 
     fn test_case(
         num_signatures: u8,
@@ -410,5 +529,188 @@ pub mod tests {
             &FeatureSet::all_enabled(),
         )
         .unwrap();
+    }
+
+    // Integration test.
+    // Remove this test when the legacy libsecp256k1 recovery path is deleted.
+    #[test]
+    fn test_high_s_malleability_parity_with_and_without_k256_feature() {
+        agave_logger::setup();
+
+        let secret_bytes: [u8; 32] = rand::random();
+        let secret_key = libsecp256k1::SecretKey::parse(&secret_bytes).unwrap();
+        let public_key = libsecp256k1::PublicKey::from_secret_key(&secret_key);
+        let eth_address = eth_address_from_pubkey(&public_key.serialize()[1..].try_into().unwrap());
+
+        let message = b"hello";
+        let message_hash = {
+            let mut hasher = keccak::Hasher::default();
+            hasher.hash(message);
+            hasher.result()
+        };
+
+        let secp_message = libsecp256k1::Message::parse(message_hash.as_bytes());
+        let (signature, recovery_id) = libsecp256k1::sign(&secp_message, &secret_key);
+
+        let mut alt_signature = signature;
+        alt_signature.s = -alt_signature.s;
+        let alt_recovery_id = libsecp256k1::RecoveryId::parse(recovery_id.serialize() ^ 1).unwrap();
+
+        let legacy_feature_set = FeatureSet::default();
+        let k256_feature_set = FeatureSet::all_enabled();
+
+        let valid_instruction = new_instruction_data(
+            &alt_signature.serialize(),
+            alt_recovery_id.serialize(),
+            &eth_address,
+            message,
+        );
+        assert_feature_parity(
+            &valid_instruction,
+            &legacy_feature_set,
+            &k256_feature_set,
+            Ok(()),
+        );
+
+        let mut zero_r_signature = signature.serialize();
+        zero_r_signature[..32].fill(0);
+        let zero_r_instruction = new_instruction_data(
+            &zero_r_signature,
+            recovery_id.serialize(),
+            &eth_address,
+            message,
+        );
+        assert_feature_parity(
+            &zero_r_instruction,
+            &legacy_feature_set,
+            &k256_feature_set,
+            Err(PrecompileError::InvalidSignature),
+        );
+
+        let mut zero_s_signature = signature.serialize();
+        zero_s_signature[32..].fill(0);
+        let zero_s_instruction = new_instruction_data(
+            &zero_s_signature,
+            recovery_id.serialize(),
+            &eth_address,
+            message,
+        );
+        assert_feature_parity(
+            &zero_s_instruction,
+            &legacy_feature_set,
+            &k256_feature_set,
+            Err(PrecompileError::InvalidSignature),
+        );
+
+        let mut overflow_r_signature = signature.serialize();
+        overflow_r_signature[..32].copy_from_slice(&SECP256K1_ORDER);
+        let overflow_r_instruction = new_instruction_data(
+            &overflow_r_signature,
+            recovery_id.serialize(),
+            &eth_address,
+            message,
+        );
+        assert_feature_parity(
+            &overflow_r_instruction,
+            &legacy_feature_set,
+            &k256_feature_set,
+            Err(PrecompileError::InvalidSignature),
+        );
+
+        let mut overflow_s_signature = signature.serialize();
+        overflow_s_signature[32..].copy_from_slice(&SECP256K1_ORDER);
+        let overflow_s_instruction = new_instruction_data(
+            &overflow_s_signature,
+            recovery_id.serialize(),
+            &eth_address,
+            message,
+        );
+        assert_feature_parity(
+            &overflow_s_instruction,
+            &legacy_feature_set,
+            &k256_feature_set,
+            Err(PrecompileError::InvalidSignature),
+        );
+
+        let x_reduced_even_instruction =
+            new_instruction_data(&signature.serialize(), 2, &eth_address, message);
+        assert_feature_parity(
+            &x_reduced_even_instruction,
+            &legacy_feature_set,
+            &k256_feature_set,
+            Err(PrecompileError::InvalidSignature),
+        );
+
+        let x_reduced_odd_instruction =
+            new_instruction_data(&signature.serialize(), 3, &eth_address, message);
+        assert_feature_parity(
+            &x_reduced_odd_instruction,
+            &legacy_feature_set,
+            &k256_feature_set,
+            Err(PrecompileError::InvalidSignature),
+        );
+    }
+
+    fn new_instruction_data(
+        signature: &[u8; SIGNATURE_SERIALIZED_SIZE],
+        recovery_id: u8,
+        eth_address: &[u8; HASHED_PUBKEY_SERIALIZED_SIZE],
+        message: &[u8],
+    ) -> Vec<u8> {
+        let mut data = Vec::new();
+        let signature_offset = data.len();
+        data.extend(signature);
+        data.push(recovery_id);
+        let eth_address_offset = data.len();
+        data.extend(eth_address);
+        let message_data_offset = data.len();
+        data.extend(message);
+
+        let data_start = 1usize
+            .checked_add(SIGNATURE_OFFSETS_SERIALIZED_SIZE)
+            .unwrap();
+        let offset = |relative_offset: usize| {
+            u16::try_from(relative_offset.checked_add(data_start).unwrap()).unwrap()
+        };
+        let offsets = SecpSignatureOffsets {
+            signature_offset: offset(signature_offset),
+            signature_instruction_index: 0,
+            eth_address_offset: offset(eth_address_offset),
+            eth_address_instruction_index: 0,
+            message_data_offset: offset(message_data_offset),
+            message_data_size: u16::try_from(message.len()).unwrap(),
+            message_instruction_index: 0,
+        };
+
+        let mut instruction_data = vec![1];
+        instruction_data.extend(bincode::serialize(&offsets).unwrap());
+        instruction_data.extend(data);
+        instruction_data
+    }
+
+    fn assert_feature_parity(
+        instruction_data: &[u8],
+        legacy_feature_set: &FeatureSet,
+        k256_feature_set: &FeatureSet,
+        expected: Result<(), PrecompileError>,
+    ) {
+        assert_eq!(
+            test_verify_with_alignment(
+                verify,
+                instruction_data,
+                &[instruction_data],
+                legacy_feature_set,
+            ),
+            expected
+        );
+        assert_eq!(
+            test_verify_with_alignment(
+                verify,
+                instruction_data,
+                &[instruction_data],
+                k256_feature_set,
+            ),
+            expected
+        );
     }
 }
