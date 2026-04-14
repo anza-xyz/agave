@@ -37,7 +37,9 @@ pub struct GreRouteInfo {
     pub mtu: u32,
     pub underlay_mtu: u32,
     pub tunnel_info: GreTunnelInfo,
-    pub mac_addr: MacAddress,
+    pub underlay_if_index: u32,
+    pub underlay_ip_addr: Ipv4Addr,
+    pub underlay_mac_addr: Option<MacAddress>,
 }
 
 /// VLAN encapsulation directive carried on a resolved NextHop.
@@ -500,7 +502,7 @@ impl Router {
     fn cached_gre_route_info(&self, if_index: u32) -> Option<&GreRouteInfo> {
         self.cached_gre_info
             .iter()
-            .find(|gre| gre.if_index == if_index)
+            .find(|gre| gre.gre_if_index == if_index)
     }
 
     fn gre_route_info(&self, if_index: u32) -> Option<GreRouteInfo> {
@@ -554,7 +556,7 @@ impl Router {
                 if_index,
                 mtu: gre.underlay_mtu,
                 ip_addr: next_hop_ip,
-                mac_addr: Some(gre.mac_addr),
+                mac_addr: gre.underlay_mac_addr,
                 preferred_src_ip,
                 gre: Some(gre),
                 vlan: None,
@@ -630,7 +632,6 @@ impl Router {
             IpAddr::V4(local) => local,
             IpAddr::V6(_) => return None,
         };
-        // Skip unconfigured tunnels (remote/local 0.0.0.0)
         if remote == Ipv4Addr::UNSPECIFIED || local == Ipv4Addr::UNSPECIFIED {
             return None;
         }
@@ -649,18 +650,20 @@ impl Router {
             );
             return None;
         }
-        let underlay_next_hop_ip = IpAddr::V4(underlay_route.gateway.unwrap_or(remote));
-        let mac_addr = self
+        let underlay_ip_addr = underlay_route.gateway.unwrap_or(remote);
+        let underlay_mac_addr = self
             .neighbors
-            .lookup(underlay_next_hop_ip, underlay_if_index)
-            .copied()?;
+            .lookup(IpAddr::V4(underlay_ip_addr), underlay_if_index)
+            .copied();
 
         Some(GreRouteInfo {
             if_index: interface.if_index,
             mtu: interface.mtu,
             underlay_mtu: underlay_interface.mtu,
             tunnel_info: tunnel_info.clone(),
-            mac_addr,
+            underlay_if_index,
+            underlay_ip_addr,
+            underlay_mac_addr,
         })
     }
 }
@@ -1163,6 +1166,9 @@ mod tests {
         assert_eq!(hop1_gre.mtu, DEFAULT_MTU_FOR_TESTS - 100);
         assert_eq!(hop1_gre.underlay_mtu, DEFAULT_MTU_FOR_TESTS);
         assert_eq!(hop1.mtu, hop1_gre.underlay_mtu);
+        assert_eq!(hop1_gre.underlay_if_index, if_index_underlay as u32);
+        assert_eq!(hop1_gre.underlay_ip_addr, remote1);
+        assert_eq!(hop1_gre.underlay_mac_addr, Some(mac1));
 
         let hop2 = router.route_v4(gre_dest2).unwrap();
         assert_eq!(hop2.if_index, if_index_gre2 as u32);
@@ -1174,6 +1180,9 @@ mod tests {
         assert_eq!(hop2_gre.mtu, DEFAULT_MTU_FOR_TESTS + 100);
         assert_eq!(hop2_gre.underlay_mtu, DEFAULT_MTU_FOR_TESTS);
         assert_eq!(hop2.mtu, hop2_gre.underlay_mtu);
+        assert_eq!(hop2_gre.underlay_if_index, if_index_underlay as u32);
+        assert_eq!(hop2_gre.underlay_ip_addr, remote2);
+        assert_eq!(hop2_gre.underlay_mac_addr, Some(mac2));
     }
 
     #[test]
@@ -1237,6 +1246,9 @@ mod tests {
         assert_eq!(hop_default_gre.mtu, DEFAULT_MTU_FOR_TESTS - 100);
         assert_eq!(hop_default_gre.underlay_mtu, DEFAULT_MTU_FOR_TESTS);
         assert_eq!(hop_default.mtu, hop_default_gre.underlay_mtu);
+        assert_eq!(hop_default_gre.underlay_if_index, if_index_underlay as u32);
+        assert_eq!(hop_default_gre.underlay_ip_addr, remote);
+        assert_eq!(hop_default_gre.underlay_mac_addr, Some(mac));
 
         let hop_route = router.route_v4(dest).unwrap();
         assert_eq!(hop_route.if_index, if_index_gre as u32);
@@ -1248,6 +1260,9 @@ mod tests {
         assert_eq!(hop_route_gre.mtu, DEFAULT_MTU_FOR_TESTS - 100);
         assert_eq!(hop_route_gre.underlay_mtu, DEFAULT_MTU_FOR_TESTS);
         assert_eq!(hop_route.mtu, hop_route_gre.underlay_mtu);
+        assert_eq!(hop_route_gre.underlay_if_index, if_index_underlay as u32);
+        assert_eq!(hop_route_gre.underlay_ip_addr, remote);
+        assert_eq!(hop_route_gre.underlay_mac_addr, Some(mac));
     }
 
     #[test]

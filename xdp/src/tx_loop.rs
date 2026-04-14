@@ -431,6 +431,17 @@ impl<U: Umem> TxLoop<U> {
                 };
 
                 if let Some(gre) = &next_hop.gre {
+                    let Some(dest_mac) = gre.underlay_mac_addr else {
+                        log::warn!(
+                            "dropping packet: GRE peer {addr} must be routed through {} on if{} \
+                             which has no known MAC address",
+                            gre.underlay_ip_addr,
+                            gre.underlay_if_index
+                        );
+                        umem.release(frame);
+                        continue;
+                    };
+
                     let l3_inner_packet_len = INNER_PACKET_HEADER_SIZE + len;
                     let l3_outer_gre_packet_len =
                         IP_HEADER_SIZE + GRE_HEADER_BASE_SIZE + l3_inner_packet_len;
@@ -468,7 +479,7 @@ impl<U: Umem> TxLoop<U> {
                     if let Err(err) = construct_gre_packet(
                         &mut packet,
                         &src_mac,
-                        &gre.mac_addr,
+                        &dest_mac,
                         inner_src_ip,
                         &dst_ip,
                         src_port,
