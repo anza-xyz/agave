@@ -237,6 +237,8 @@ pub struct StreamerStats {
     pub(crate) quic_endpoints_count: AtomicUsize,
     /// Streams accepted while the system was saturated (staked peers).
     pub(crate) saturated_staked_streams: AtomicUsize,
+    /// Streams dropped because the identity exceeded its saturated-mode budget.
+    pub(crate) streams_dropped_over_budget: AtomicUsize,
 }
 
 impl StreamerStats {
@@ -556,6 +558,11 @@ impl StreamerStats {
             (
                 "saturated_staked_streams",
                 self.saturated_staked_streams.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "streams_dropped_over_budget",
+                self.streams_dropped_over_budget.swap(0, Ordering::Relaxed),
                 i64
             ),
         );

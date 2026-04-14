@@ -659,8 +659,12 @@ async fn handle_connection<Q, C>(
             _ = cancel.cancelled() => break,
         };
 
-        qos.on_new_stream(&context).await;
-        qos.on_stream_accepted(&context);
+        if !qos.on_new_stream(&context).await {
+            // Stream budget exceeded or admission denied.
+            // Dropping the stream sends STOP_SENDING, freeing the slot.
+            drop(stream);
+            continue;
+        }
         stats.active_streams.fetch_add(1, Ordering::Relaxed);
         stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
 

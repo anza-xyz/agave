@@ -52,8 +52,14 @@ const DEFAULT_BASE_MAX_STREAMS_STAKED: u32 = 1024;
 const DEFAULT_BASE_MAX_STREAMS_UNSTAKED: u32 = 20;
 
 /// Per-key connection counter so compute_max_streams can divide quota evenly.
+/// Also tracks cumulative streams accepted, used to enforce per-identity budget
+/// when saturated.
 pub(crate) struct SwQosMaxStreamsStreamerCounter {
     connection_count: AtomicUsize,
+    /// Cumulative streams accepted across all connections for this identity.
+    /// Compared against the identity's saturated budget to drop excess streams
+    /// that arrived on stale MAX_STREAMS credit.
+    accepted_streams: AtomicUsize,
 }
 impl OpaqueStreamerCounter for SwQosMaxStreamsStreamerCounter {}
 
@@ -158,6 +164,23 @@ impl SwQosMaxStreams {
         }
     }
 
+    /// Compute the total stream budget for an identity (across all its connections).
+    /// Uses a fixed REFERENCE_RTT so high-RTT peers cannot inflate their budget window.
+    /// Returns the maximum cumulative streams this identity should be allowed when saturated.
+    fn compute_identity_stream_budget(&self, context: &SwQosMaxStreamsConnectionContext) -> usize {
+        match context.peer_type {
+            ConnectionPeerType::Unstaked => 0,
+            ConnectionPeerType::Staked(stake) => {
+                let share_tps = (self.capacity_tps as u128)
+                    .saturating_mul(stake as u128)
+                    .checked_div(context.total_stake as u128)
+                    .unwrap_or(0) as u64;
+                let quota = (share_tps as f64 * REFERENCE_RTT.as_secs_f64()) as usize;
+                quota.max(1)
+            }
+        }
+    }
+
     /// Core MAX_STREAMS computation (testable without a quinn::Connection).
     pub(crate) fn compute_max_streams_for_rtt(
         &self,
@@ -244,6 +267,7 @@ impl SwQosMaxStreams {
                 || {
                     Arc::new(SwQosMaxStreamsStreamerCounter {
                         connection_count: AtomicUsize::new(0),
+                        accepted_streams: AtomicUsize::new(0),
                     })
                 },
             )
@@ -478,17 +502,6 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
         }
     }
 
-    fn on_stream_accepted(&self, context: &SwQosMaxStreamsConnectionContext) {
-        self.load_tracker.acquire();
-        if matches!(context.peer_type, ConnectionPeerType::Staked(_))
-            && self.load_tracker.is_saturated()
-        {
-            self.stats
-                .saturated_staked_streams
-                .fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
     fn on_stream_error(&self, _conn_context: &SwQosMaxStreamsConnectionContext) {}
 
     fn on_stream_closed(&self, _conn_context: &SwQosMaxStreamsConnectionContext) {}
@@ -529,12 +542,39 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
             .store(timing::timestamp(), Ordering::Relaxed);
     }
 
-    #[allow(clippy::manual_async_fn)]
     fn on_new_stream(
         &self,
-        _context: &SwQosMaxStreamsConnectionContext,
-    ) -> impl Future<Output = ()> + Send {
-        async {}
+        context: &SwQosMaxStreamsConnectionContext,
+    ) -> impl Future<Output = bool> + Send {
+        self.load_tracker.acquire();
+        let saturated = self.load_tracker.is_saturated();
+
+        if matches!(context.peer_type, ConnectionPeerType::Staked(_)) && saturated {
+            self.stats
+                .saturated_staked_streams
+                .fetch_add(1, Ordering::Relaxed);
+        }
+
+        let accepted = if saturated {
+            if let Some(ref counter) = context.stream_counter {
+                let count = counter.accepted_streams.fetch_add(1, Ordering::Relaxed);
+                let budget = self.compute_identity_stream_budget(context);
+                if count >= budget {
+                    self.stats
+                        .streams_dropped_over_budget
+                        .fetch_add(1, Ordering::Relaxed);
+                    false
+                } else {
+                    true
+                }
+            } else {
+                true
+            }
+        } else {
+            true
+        };
+
+        std::future::ready(accepted)
     }
 
     fn max_concurrent_connections(&self) -> usize {
@@ -572,6 +612,7 @@ pub mod test {
     ) -> SwQosMaxStreamsConnectionContext {
         let counter = Arc::new(SwQosMaxStreamsStreamerCounter {
             connection_count: AtomicUsize::new(num_connections),
+            accepted_streams: AtomicUsize::new(0),
         });
         SwQosMaxStreamsConnectionContext {
             peer_type: ConnectionPeerType::Staked(stake),

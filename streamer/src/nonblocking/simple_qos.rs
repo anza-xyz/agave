@@ -357,8 +357,6 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         }
     }
 
-    fn on_stream_accepted(&self, _conn_context: &SimpleQosConnectionContext) {}
-
     fn on_stream_error(&self, _conn_context: &SimpleQosConnectionContext) {}
 
     fn on_stream_closed(&self, _conn_context: &SimpleQosConnectionContext) {}
@@ -394,7 +392,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
     fn on_new_stream(
         &self,
         context: &SimpleQosConnectionContext,
-    ) -> impl Future<Output = ()> + Send {
+    ) -> impl Future<Output = bool> + Send {
         async move {
             let peer_type = context.peer_type();
             let remote_addr = context.remote_address;
@@ -424,6 +422,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
                 );
                 sleep(Duration::from_micros(min_sleep)).await;
             }
+            true
         }
     }
 

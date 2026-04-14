@@ -444,17 +444,6 @@ impl QosController<SwQosConnectionContext> for SwQos {
         }
     }
 
-    fn on_stream_accepted(&self, conn_context: &SwQosConnectionContext) {
-        self.staked_stream_load_ema
-            .increment_load(conn_context.peer_type);
-        conn_context
-            .stream_counter
-            .as_ref()
-            .unwrap()
-            .stream_count
-            .fetch_add(1, Ordering::Relaxed);
-    }
-
     fn on_stream_error(&self, _conn_context: &SwQosConnectionContext) {
         self.staked_stream_load_ema.update_ema_if_needed();
     }
@@ -496,7 +485,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn on_new_stream(&self, context: &SwQosConnectionContext) -> impl Future<Output = ()> + Send {
+    fn on_new_stream(&self, context: &SwQosConnectionContext) -> impl Future<Output = bool> + Send {
         async move {
             let peer_type = context.peer_type();
             let remote_addr = context.remote_address;
@@ -514,6 +503,11 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 max_streams_per_throttling_interval,
             )
             .await;
+
+            self.staked_stream_load_ema
+                .increment_load(context.peer_type);
+            stream_counter.stream_count.fetch_add(1, Ordering::Relaxed);
+            true
         }
     }
 
