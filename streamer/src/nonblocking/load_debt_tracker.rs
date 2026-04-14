@@ -131,6 +131,13 @@ impl LoadDebtTracker {
         self.bucket.load(Ordering::Relaxed)
     }
 
+    /// Force recovery to unsaturated state (testing only).
+    #[cfg(test)]
+    pub fn force_recover(&self) {
+        self.bucket.store(self.burst_capacity, Ordering::Relaxed);
+        self.saturated.store(false, Ordering::Relaxed);
+    }
+
     /// Retrieves monotonic nanoseconds since epoch.
     fn nanos_since_epoch(&self) -> u64 {
         #[cfg(test)]

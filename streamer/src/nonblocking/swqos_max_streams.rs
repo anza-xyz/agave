@@ -19,12 +19,13 @@ use {
     },
     percentage::Percentage,
     quinn::Connection,
+    solana_net_utils::token_bucket::TokenBucket,
     solana_time_utils as timing,
     std::{
         future::Future,
         sync::{
             Arc, RwLock,
-            atomic::{AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         },
         time::Duration,
     },
@@ -51,15 +52,22 @@ const MIN_RTT_STAKED_UNSATURATED: Duration = Duration::from_millis(50);
 const DEFAULT_BASE_MAX_STREAMS_STAKED: u32 = 1024;
 const DEFAULT_BASE_MAX_STREAMS_UNSTAKED: u32 = 20;
 
+/// Maximum burst for the per-identity stream rate limiter. Sized to cover
+/// one expected congestion episode (~500ms). Bucket is created at episode
+/// start with zero tokens, so burst cap only limits accumulation if the
+/// identity doesn't consume tokens for a while mid-episode.
+const MAX_RATE_LIMITER_BURST: Duration = Duration::from_millis(500);
+
 /// Per-key connection counter so compute_max_streams can divide quota evenly.
-/// Also tracks cumulative streams accepted, used to enforce per-identity budget
-/// when saturated.
+/// Also holds a token bucket for rate-limited stream admission during saturation.
 pub(crate) struct SwQosMaxStreamsStreamerCounter {
     connection_count: AtomicUsize,
-    /// Cumulative streams accepted across all connections for this identity.
-    /// Compared against the identity's saturated budget to drop excess streams
-    /// that arrived on stale MAX_STREAMS credit.
-    accepted_streams: AtomicUsize,
+    /// Replaced with real rate params on first saturated on_new_stream call.
+    /// Reset to permissive dummy on recovery so each congestion episode
+    /// samples fresh stake state.
+    stream_rate_limiter: RwLock<TokenBucket>,
+    /// True when stream_rate_limiter has real params for current episode.
+    rate_limiter_active: AtomicBool,
 }
 impl OpaqueStreamerCounter for SwQosMaxStreamsStreamerCounter {}
 
@@ -164,21 +172,35 @@ impl SwQosMaxStreams {
         }
     }
 
-    /// Compute the total stream budget for an identity (across all its connections).
-    /// Uses a fixed REFERENCE_RTT so high-RTT peers cannot inflate their budget window.
-    /// Returns the maximum cumulative streams this identity should be allowed when saturated.
-    fn compute_identity_stream_budget(&self, context: &SwQosMaxStreamsConnectionContext) -> usize {
-        match context.peer_type {
-            ConnectionPeerType::Unstaked => 0,
+    /// Permissive token bucket that never denies. Used as placeholder in
+    /// the RwLock until a real rate limiter is installed at saturation onset.
+    fn permissive_token_bucket() -> TokenBucket {
+        TokenBucket::new(u64::MAX / 2, u64::MAX / 2, 1e12)
+    }
+
+    /// Build a per-identity token bucket for rate-limited stream admission
+    /// during saturation. Refill rate = identity's proportional share of
+    /// capacity, burst cap = rate * MAX_RATE_LIMITER_BURST. Starts with
+    /// zero tokens.
+    fn build_identity_rate_limiter(
+        &self,
+        context: &SwQosMaxStreamsConnectionContext,
+    ) -> TokenBucket {
+        let (rate_tps, max_tokens) = match context.peer_type {
+            // Unstaked peers are dropped unconditionally when saturated;
+            // bucket is never consulted. Use minimal valid params.
+            ConnectionPeerType::Unstaked => (1.0, 1),
             ConnectionPeerType::Staked(stake) => {
                 let share_tps = (self.capacity_tps as u128)
                     .saturating_mul(stake as u128)
                     .checked_div(context.total_stake as u128)
-                    .unwrap_or(0) as u64;
-                let quota = (share_tps as f64 * REFERENCE_RTT.as_secs_f64()) as usize;
-                quota.max(1)
+                    .unwrap_or(0) as f64;
+                let share_tps = share_tps.max(1.0);
+                let max_tokens = (share_tps * MAX_RATE_LIMITER_BURST.as_secs_f64()) as u64;
+                (share_tps, max_tokens.max(1))
             }
-        }
+        };
+        TokenBucket::new(0, max_tokens, rate_tps)
     }
 
     /// Core MAX_STREAMS computation (testable without a quinn::Connection).
@@ -267,7 +289,8 @@ impl SwQosMaxStreams {
                 || {
                     Arc::new(SwQosMaxStreamsStreamerCounter {
                         connection_count: AtomicUsize::new(0),
-                        accepted_streams: AtomicUsize::new(0),
+                        stream_rate_limiter: RwLock::new(Self::permissive_token_bucket()),
+                        rate_limiter_active: AtomicBool::new(false),
                     })
                 },
             )
@@ -556,21 +579,52 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
         }
 
         let accepted = if saturated {
-            if let Some(ref counter) = context.stream_counter {
-                let count = counter.accepted_streams.fetch_add(1, Ordering::Relaxed);
-                let budget = self.compute_identity_stream_budget(context);
-                if count >= budget {
+            match context.peer_type {
+                ConnectionPeerType::Unstaked => {
                     self.stats
                         .streams_dropped_on_arrival
                         .fetch_add(1, Ordering::Relaxed);
                     false
-                } else {
-                    true
                 }
-            } else {
-                true
+                ConnectionPeerType::Staked(_) => {
+                    if let Some(ref counter) = context.stream_counter {
+                        // First saturated call this episode: replace dummy
+                        // with real rate limiter using current stake state.
+                        if !counter.rate_limiter_active.load(Ordering::Relaxed) {
+                            let mut guard = counter.stream_rate_limiter.write().unwrap();
+                            if !counter.rate_limiter_active.load(Ordering::Relaxed) {
+                                *guard = self.build_identity_rate_limiter(context);
+                                counter.rate_limiter_active.store(true, Ordering::Relaxed);
+                            }
+                        }
+                        if counter
+                            .stream_rate_limiter
+                            .read()
+                            .unwrap()
+                            .consume_tokens(1)
+                            .is_ok()
+                        {
+                            true
+                        } else {
+                            self.stats
+                                .streams_dropped_on_arrival
+                                .fetch_add(1, Ordering::Relaxed);
+                            false
+                        }
+                    } else {
+                        true
+                    }
+                }
             }
         } else {
+            // Reset rate limiter to permissive dummy so next congestion
+            // episode rebuilds with current stake distribution.
+            if let Some(ref counter) = context.stream_counter {
+                if counter.rate_limiter_active.load(Ordering::Relaxed) {
+                    *counter.stream_rate_limiter.write().unwrap() = Self::permissive_token_bucket();
+                    counter.rate_limiter_active.store(false, Ordering::Relaxed);
+                }
+            }
             true
         };
 
@@ -612,7 +666,8 @@ pub mod test {
     ) -> SwQosMaxStreamsConnectionContext {
         let counter = Arc::new(SwQosMaxStreamsStreamerCounter {
             connection_count: AtomicUsize::new(num_connections),
-            accepted_streams: AtomicUsize::new(0),
+            stream_rate_limiter: RwLock::new(SwQosMaxStreams::permissive_token_bucket()),
+            rate_limiter_active: AtomicBool::new(false),
         });
         SwQosMaxStreamsConnectionContext {
             peer_type: ConnectionPeerType::Staked(stake),
@@ -903,6 +958,77 @@ pub mod test {
             q_large > q_small * 20,
             "large/small ratio={}, expected large staker to dominate",
             q_large / q_small
+        );
+    }
+
+    // -- Budget enforcement (on_new_stream drop path) --
+
+    /// Force saturation by draining load tracker below zero.
+    fn force_saturated(swqos: &SwQosMaxStreams) {
+        // burst_capacity = capacity_tps / 10. Drain well past zero.
+        let drain_count = (swqos.capacity_tps / 10) + 100;
+        for _ in 0..drain_count {
+            swqos.load_tracker().acquire();
+        }
+        assert!(swqos.load_tracker().is_saturated());
+    }
+
+    #[tokio::test]
+    async fn test_on_new_stream_rate_limiting_and_recovery() {
+        // 1K/s capacity, 1% stake → 10 tps, max_tokens = 5 (10 * 0.5s burst).
+        // Low capacity keeps force_saturated fast (burst_capacity = 100).
+        let config = SwQosMaxStreamsConfig {
+            max_streams_per_ms: 1,
+            ..SwQosMaxStreamsConfig::default()
+        };
+        let cancel = CancellationToken::new();
+        let stats = Arc::new(StreamerStats::default());
+        let staked_nodes = Arc::new(RwLock::new(crate::streamer::StakedNodes::default()));
+        let swqos = SwQosMaxStreams::new(config, stats.clone(), staked_nodes, cancel);
+
+        let ctx = staked_context(1_000, 100_000, 1);
+
+        // Bucket lazily created with 0 tokens — first stream dropped.
+        force_saturated(&swqos);
+        assert!(
+            !swqos.on_new_stream(&ctx).await,
+            "zero initial tokens at episode start"
+        );
+        assert!(
+            ctx.stream_counter
+                .as_ref()
+                .unwrap()
+                .rate_limiter_active
+                .load(Ordering::Relaxed),
+            "bucket should be initialized after first saturated call"
+        );
+        assert_eq!(stats.streams_dropped_on_arrival.load(Ordering::Relaxed), 1);
+
+        // Wait for tokens to refill (10 tps → 1 token per 100ms).
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        assert!(
+            swqos.on_new_stream(&ctx).await,
+            "should admit after token bucket refill"
+        );
+
+        // Recover — non-saturated always admits, resets bucket.
+        swqos.load_tracker().force_recover();
+        assert!(
+            !swqos.load_tracker().is_saturated(),
+            "should have recovered"
+        );
+        assert!(
+            swqos.on_new_stream(&ctx).await,
+            "non-saturated stream always admitted"
+        );
+        assert!(
+            !ctx.stream_counter
+                .as_ref()
+                .unwrap()
+                .rate_limiter_active
+                .load(Ordering::Relaxed),
+            "bucket should be reset on recovery"
         );
     }
 }
