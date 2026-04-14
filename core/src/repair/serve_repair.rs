@@ -354,6 +354,8 @@ struct ServeRepairStats {
     err_sig_verify: usize,
     err_unsigned: usize,
     err_id_mismatch: usize,
+    max_request_channel_len: usize,
+    max_response_channel_len: usize,
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi))]
@@ -1008,11 +1010,13 @@ impl ServeRepair {
         /// How much more expensive it is to serve bytes if we are a leader
         const LEADER_BYTE_COST_MULTIPLIER: usize = 10;
         const TIMEOUT: Duration = Duration::from_secs(1);
-        let mut requests = Vec::with_capacity(64);
-        for packet in requests_receiver.recv_timeout(TIMEOUT)?.into_iter() {
-            requests.push(packet.to_bytes_packet());
-        }
+        let mut requests: Vec<BytesPacket> = requests_receiver
+            .recv_timeout(TIMEOUT)?
+            .into_iter()
+            .map(|p| p.to_bytes_packet())
+            .collect();
 
+        stats.max_request_channel_len = stats.max_request_channel_len.max(requests_receiver.len());
         const MAX_REQUESTS_PER_ITERATION: usize = 1024;
         let mut total_requests = requests.len();
 
@@ -1031,22 +1035,34 @@ impl ServeRepair {
         let mut dropped_requests = 0;
         let mut well_formed_requests = discard_malformed_repair_requests(&mut requests, stats);
         loop {
-            let Ok(more) = requests_receiver.try_recv() else {
+            let mut more: Vec<BytesPacket> = requests_receiver
+                .try_iter()
+                .take(max_buffered_packets)
+                .flat_map(|batch| {
+                    batch
+                        .into_iter()
+                        .map(|p| p.to_bytes_packet())
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            if more.is_empty() {
                 break;
-            };
-            let mut more: Vec<_> = more.into_iter().map(|p| p.to_bytes_packet()).collect();
-            total_requests += more.len();
-            if well_formed_requests > max_buffered_packets {
-                // Already exceeded max. Don't waste time discarding
-                dropped_requests += more.len();
-                continue;
             }
+            total_requests += more.len();
             let retained = discard_malformed_repair_requests(&mut more, stats);
             well_formed_requests += retained;
             if retained > 0 && well_formed_requests <= max_buffered_packets {
                 requests.extend(more);
             } else {
                 dropped_requests += more.len();
+            }
+            if well_formed_requests > max_buffered_packets {
+                // Already exceeded max_buffered_packets. We must be under extreme load.
+                // Don't waste time on stale requests and eradicate all buffered packets.
+                let drained: usize = requests_receiver.try_iter().map(|batch| batch.len()).sum();
+                total_requests += drained;
+                dropped_requests += drained;
+                break;
             }
         }
 
@@ -1212,6 +1228,16 @@ impl ServeRepair {
             ("err_sig_verify", stats.err_sig_verify, i64),
             ("err_unsigned", stats.err_unsigned, i64),
             ("err_id_mismatch", stats.err_id_mismatch, i64),
+            (
+                "max_request_channel_len",
+                stats.max_request_channel_len,
+                i64
+            ),
+            (
+                "max_response_channel_len",
+                stats.max_response_channel_len,
+                i64
+            ),
         );
 
         *stats = ServeRepairStats::default();
@@ -1440,10 +1466,13 @@ impl ServeRepair {
             // refund unused tokens if we can only serve the request partially
             let actually_used_cost = num_response_bytes * byte_cost_multiplier;
             debug_assert!(max_response_cost >= actually_used_cost);
+            // We try to refund all tokens we have not used to actually serve request here.
+            // We can theoretically still drop responses in outbound channel, but such drops
+            // are unlikely unless we are severely overloaded, and thus not accounted for here.
             data_budget.add_tokens(max_response_cost.saturating_sub(actually_used_cost) as u64);
 
             // send the responses to the socket
-            if packet_batch_sender.send(rsp).is_ok() {
+            if packet_batch_sender.try_send(rsp).is_ok() {
                 stats.total_response_packets += num_response_packets;
                 match stake > 0 {
                     true => stats.total_response_bytes_staked += num_response_bytes,
@@ -1453,12 +1482,22 @@ impl ServeRepair {
                 stats.dropped_requests_outbound_bandwidth += 1;
                 stats.total_dropped_response_packets += num_response_packets;
             }
+            stats.max_response_channel_len = stats
+                .max_response_channel_len
+                .max(packet_batch_sender.len());
         }
 
         if !pending_pings.is_empty() {
-            stats.pings_sent += pending_pings.len();
+            let num_pings_to_send = pending_pings.len();
             let batch = RecycledPacketBatch::new(pending_pings);
-            let _ = packet_batch_sender.send(batch.into());
+            if packet_batch_sender.try_send(batch.into()).is_ok() {
+                stats.pings_sent += num_pings_to_send;
+            } else {
+                stats.total_dropped_response_packets += num_pings_to_send;
+            }
+            stats.max_response_channel_len = stats
+                .max_response_channel_len
+                .max(packet_batch_sender.len());
         }
     }
 
