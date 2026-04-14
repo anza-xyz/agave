@@ -12,7 +12,7 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError, Select, Sender, unbounded},
     log::*,
     rayon::ThreadPool,
-    solana_clock::{BankId, DEFAULT_MS_PER_SLOT, Slot},
+    solana_clock::{BankId, Slot},
     solana_gossip::{
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
         crds::Cursor,
@@ -576,7 +576,7 @@ impl ClusterInfoVoteListener {
             }
 
             let root_bank = sharable_banks.root();
-            if last_process_root.elapsed().as_millis() > DEFAULT_MS_PER_SLOT as u128 {
+            if last_process_root.elapsed().as_nanos() > root_bank.ns_per_slot {
                 let unrooted_optimistic_slots = confirmation_verifier
                     .verify_for_unrooted_optimistic_slots(&root_bank, &blockstore);
                 // SlotVoteTracker's for all `slots` in `unrooted_optimistic_slots`
