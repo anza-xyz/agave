@@ -298,6 +298,9 @@ pub struct SerializedAccountMetadata {
     pub vm_key_addr: u64,
     pub vm_lamports_addr: u64,
     pub vm_owner_addr: u64,
+    /// Address of the first byte of the serialized account record (the
+    /// `NON_DUP_MARKER`/duplicate-marker byte).
+    pub vm_addr: u64,
 }
 
 /// Main pipeline from runtime to program execution.
