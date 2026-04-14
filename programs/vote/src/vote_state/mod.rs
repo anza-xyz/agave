@@ -4216,9 +4216,13 @@ mod tests {
             )
             .is_ok()
         );
-        let vote_state =
-            VoteStateV4::deserialize(borrowed_account.get_data(), &new_node_pubkey).unwrap();
-        assert_eq!(vote_state.bls_pubkey_compressed, Some(bls_pubkey));
+        let vote_state = VoteStateHandler::new_v4(
+            VoteStateV4::deserialize(borrowed_account.get_data(), &new_node_pubkey).unwrap(),
+        );
+        assert_eq!(
+            vote_state.as_ref_v4().bls_pubkey_compressed,
+            Some(bls_pubkey)
+        );
         assert!(vote_state.has_bls_pubkey());
 
         // Test replay attack, can't use someone else's BLS pubkey and PoP
@@ -4276,9 +4280,13 @@ mod tests {
             ),
             Ok(())
         );
-        let vote_state =
-            VoteStateV4::deserialize(borrowed_account.get_data(), &new_authorized_voter).unwrap();
-        assert_eq!(vote_state.bls_pubkey_compressed, Some(new_bls_pubkey));
+        let vote_state = VoteStateHandler::new_v4(
+            VoteStateV4::deserialize(borrowed_account.get_data(), &new_authorized_voter).unwrap(),
+        );
+        assert_eq!(
+            vote_state.as_ref_v4().bls_pubkey_compressed,
+            Some(new_bls_pubkey)
+        );
         assert!(vote_state.has_bls_pubkey());
     }
 
@@ -5296,10 +5304,12 @@ mod tests {
             get_vote_state_handler_checked(&borrowed, VoteStateTargetVersion::V4).unwrap();
         vote_state.set_vote_account_state(&mut borrowed).unwrap();
 
-        let v4 = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
-        assert_eq!(v4.bls_pubkey_compressed, None);
+        let v4 = VoteStateHandler::new_v4(
+            VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap(),
+        );
+        assert_eq!(v4.as_ref_v4().bls_pubkey_compressed, None);
         assert!(!v4.has_bls_pubkey());
-        assert_eq!(v4.last_timestamp, last_timestamp);
+        assert_eq!(v4.as_ref_v4().last_timestamp, last_timestamp);
     }
 
     #[test]

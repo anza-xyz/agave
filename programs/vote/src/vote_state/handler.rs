@@ -1068,19 +1068,20 @@ mod tests {
 
         set_new_authorized_voter_and_assert(&mut vote_state, original_voter, epoch_offset);
 
-        // V4 removes the monotonicity constraint on target_epoch.
-        // V3 rejects non-monotonic target epochs; V4 allows them.
         {
             let voter_a = Pubkey::new_unique();
             let voter_b = Pubkey::new_unique();
 
-            let mut v4 = VoteStateV4 {
+            let v4 = VoteStateV4 {
                 authorized_voters: AuthorizedVoters::new(0, Pubkey::new_unique()),
                 ..Default::default()
             };
-            v4.set_new_authorized_voter(&voter_a, 0, 10, None, |_| Ok(()))
+            let mut handler = VoteStateHandler::new_v4(v4);
+            handler
+                .set_new_authorized_voter(&voter_a, 0, 10, None, |_| Ok(()))
                 .unwrap();
-            v4.set_new_authorized_voter(&voter_b, 0, 5, None, |_| Ok(()))
+            handler
+                .set_new_authorized_voter(&voter_b, 0, 5, None, |_| Ok(()))
                 .unwrap();
         }
     }
@@ -1144,7 +1145,7 @@ mod tests {
     fn test_get_and_update_authorized_voter() {
         let vote_pubkey = Pubkey::new_unique();
         let original_voter = Pubkey::new_unique();
-        let mut vote_state = VoteStateV4::new_with_defaults(
+        let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::new_with_defaults(
             &vote_pubkey,
             &VoteInit {
                 node_pubkey: original_voter,
@@ -1153,7 +1154,7 @@ mod tests {
                 commission: 0,
             },
             &Clock::default(),
-        );
+        ));
 
         // Run the same exercise as the v3 test to start.
 
@@ -1252,22 +1253,29 @@ mod tests {
             };
             v4.authorized_voters.insert(10, voter_10);
             v4.authorized_voters.insert(15, voter_15);
-            let v4_voter = v4.get_and_update_authorized_voter(11).unwrap();
+            let mut handler = VoteStateHandler::new_v4(v4);
+            let v4_voter = handler.get_and_update_authorized_voter(11).unwrap();
             assert_eq!(v4_voter, voter_10);
             // V4 purge range 0..10: epoch 10 retained.
-            assert!(v4.authorized_voters().get_authorized_voter(10).is_some());
+            assert!(
+                handler
+                    .authorized_voters()
+                    .get_authorized_voter(10)
+                    .is_some()
+            );
         }
 
         // Epoch 0: saturating_sub(1) = 0, purge range 0..0 is empty.
         {
             let voter = Pubkey::new_unique();
-            let mut v4 = VoteStateV4 {
+            let v4 = VoteStateV4 {
                 authorized_voters: AuthorizedVoters::new(0, voter),
                 ..Default::default()
             };
-            let result = v4.get_and_update_authorized_voter(0).unwrap();
+            let mut handler = VoteStateHandler::new_v4(v4);
+            let result = handler.get_and_update_authorized_voter(0).unwrap();
             assert_eq!(result, voter);
-            assert!(!v4.authorized_voters().is_empty());
+            assert!(!handler.authorized_voters().is_empty());
         }
     }
 
@@ -1806,13 +1814,28 @@ mod tests {
             voters
         };
 
-        let assert_purge = |v4: &mut VoteStateV4| {
+        let assert_purge = |handler: &mut VoteStateHandler| {
             // Advance to epoch 10. V4 purge range 0..9.
-            let voter = v4.get_and_update_authorized_voter(10).unwrap();
+            let voter = handler.get_and_update_authorized_voter(10).unwrap();
             assert_eq!(voter, voter_9);
-            assert!(v4.authorized_voters().get_authorized_voter(9).is_some());
-            assert!(v4.authorized_voters().get_authorized_voter(7).is_none());
-            assert!(v4.authorized_voters().get_authorized_voter(5).is_none());
+            assert!(
+                handler
+                    .authorized_voters()
+                    .get_authorized_voter(9)
+                    .is_some()
+            );
+            assert!(
+                handler
+                    .authorized_voters()
+                    .get_authorized_voter(7)
+                    .is_none()
+            );
+            assert!(
+                handler
+                    .authorized_voters()
+                    .get_authorized_voter(5)
+                    .is_none()
+            );
         };
 
         // V1_14_11 → V4
@@ -1822,8 +1845,9 @@ mod tests {
                 ..Default::default()
             };
             let versioned = VoteStateVersions::V1_14_11(Box::new(v1));
-            let mut v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
-            assert_purge(&mut v4);
+            let v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
+            let mut handler = VoteStateHandler::new_v4(v4);
+            assert_purge(&mut handler);
         }
 
         // V3 → V4
@@ -1833,8 +1857,9 @@ mod tests {
                 ..Default::default()
             };
             let versioned = VoteStateVersions::V3(Box::new(v3));
-            let mut v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
-            assert_purge(&mut v4);
+            let v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
+            let mut handler = VoteStateHandler::new_v4(v4);
+            assert_purge(&mut handler);
         }
     }
 
@@ -1910,7 +1935,7 @@ mod tests {
     fn test_get_and_update_authorized_voter_v4_with_bls() {
         let vote_pubkey = Pubkey::new_unique();
         let original_voter = Pubkey::new_unique();
-        let mut vote_state = VoteStateV4::new_with_defaults(
+        let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::new_with_defaults(
             &vote_pubkey,
             &VoteInit {
                 node_pubkey: original_voter,
@@ -1919,7 +1944,7 @@ mod tests {
                 commission: 0,
             },
             &Clock::default(),
-        );
+        ));
 
         // It has some initial authorized voter but no BLS pubkey.
         assert_eq!(vote_state.authorized_voters().len(), 1);
@@ -1938,7 +1963,7 @@ mod tests {
         assert_eq!(vote_state.authorized_voters().len(), 2);
         assert_eq!(*vote_state.authorized_voters().last().unwrap().1, new_voter);
         assert_eq!(
-            vote_state.bls_pubkey_compressed,
+            vote_state.as_ref_v4().bls_pubkey_compressed,
             Some(bls_pubkey_compressed)
         );
         assert!(vote_state.has_bls_pubkey());
@@ -1961,7 +1986,7 @@ mod tests {
             newer_voter
         );
         assert_eq!(
-            vote_state.bls_pubkey_compressed,
+            vote_state.as_ref_v4().bls_pubkey_compressed,
             Some(newer_bls_pubkey_compressed)
         );
         assert!(vote_state.has_bls_pubkey());
