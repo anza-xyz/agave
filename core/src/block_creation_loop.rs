@@ -226,7 +226,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
             start_slot,
             end_slot,
             parent_block: (parent_slot, _),
-            skip_timer,
+            block_timer,
         } = {
             // Drain all pending messages and keep the latest one
             let Some(info) = ctx
@@ -248,7 +248,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
         };
 
         trace!("Received window notification for {start_slot} to {end_slot} parent: {parent_slot}");
-        if let Err(e) = produce_window(start_slot, end_slot, parent_slot, skip_timer, &mut ctx) {
+        if let Err(e) = produce_window(start_slot, end_slot, parent_slot, block_timer, &mut ctx) {
             // Give up on this leader window
             error!(
                 "{my_pubkey}: Unable to produce window {start_slot}-{end_slot}, skipping window: \
@@ -296,7 +296,7 @@ fn produce_window(
     start_slot: Slot,
     end_slot: Slot,
     mut parent_slot: Slot,
-    skip_timer: Instant,
+    block_timer: Instant,
     ctx: &mut LeaderContext,
 ) -> Result<(), StartLeaderError> {
     let my_pubkey = ctx.my_pubkey;
@@ -306,18 +306,19 @@ fn produce_window(
     while !ctx.exit.load(Ordering::Relaxed) && slot <= end_slot {
         // Insert the bank. In case `replay_stage` is slow and `parent_slot` is not
         // yet frozen, we wait up until the timeout.
-        let working_bank = start_leader_wait_for_parent_replay(slot, parent_slot, skip_timer, ctx)?;
+        let working_bank =
+            start_leader_wait_for_parent_replay(slot, parent_slot, block_timer, ctx)?;
         let timeout = block_timeout(&working_bank, leader_slot_index(slot));
         trace!(
             "{my_pubkey}: waiting for leader bank {slot} to finish, remaining time: {}",
-            timeout.saturating_sub(skip_timer.elapsed()).as_millis(),
+            timeout.saturating_sub(block_timer.elapsed()).as_millis(),
         );
 
         let mut bank_completion_measure = Measure::start("bank_completion");
         if let Err(e) = record_and_complete_block(
             ctx.poh_recorder.as_ref(),
             &mut ctx.record_receiver,
-            skip_timer,
+            block_timer,
             timeout,
         ) {
             panic!("PohRecorder record failed: {e:?}");
@@ -414,7 +415,7 @@ fn record_and_complete_block(
 fn start_leader_wait_for_parent_replay(
     slot: Slot,
     parent_slot: Slot,
-    skip_timer: Instant,
+    block_timer: Instant,
     ctx: &mut LeaderContext,
 ) -> Result<Arc<Bank>, StartLeaderError> {
     trace!(
@@ -429,7 +430,7 @@ fn start_leader_wait_for_parent_replay(
     let end_slot = last_of_consecutive_leader_slots(slot);
 
     let mut slot_delay_start = Measure::start("slot_delay");
-    while !timeout.saturating_sub(skip_timer.elapsed()).is_zero() {
+    while !timeout.saturating_sub(block_timer.elapsed()).is_zero() {
         ctx.slot_metrics.attempt_start_leader_count += 1;
 
         // Check if the entire window is skipped.
@@ -471,7 +472,7 @@ fn start_leader_wait_for_parent_replay(
                 trace!(
                     "{my_pubkey}: Attempting to produce slot {slot}, however replay of the the \
                      parent {parent_slot} is not yet finished, waiting. Skip timer {}",
-                    skip_timer.elapsed().as_millis()
+                    block_timer.elapsed().as_millis()
                 );
                 let highest_frozen_slot = ctx
                     .replay_highest_frozen
@@ -486,7 +487,7 @@ fn start_leader_wait_for_parent_replay(
                     .freeze_notification
                     .wait_timeout_while(
                         highest_frozen_slot,
-                        timeout.saturating_sub(skip_timer.elapsed()),
+                        timeout.saturating_sub(block_timer.elapsed()),
                         |hfs| *hfs < parent_slot,
                     )
                     .unwrap();
