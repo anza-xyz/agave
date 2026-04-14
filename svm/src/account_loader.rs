@@ -450,7 +450,7 @@ impl LoadedTransactionDataSize {
     fn with_max_size(requested_loaded_accounts_data_size_limit: u32) -> Self {
         Self {
             loaded_accounts_data_size: 0,
-            requested_loaded_accounts_data_size_limit: requested_loaded_accounts_data_size_limit,
+            requested_loaded_accounts_data_size_limit,
         }
     }
 
@@ -1315,7 +1315,7 @@ mod tests {
         let mut error_metrics = TransactionErrorMetrics::default();
 
         let mut loaded_transaction_data_size =
-            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get());
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1329,11 +1329,7 @@ mod tests {
                 loaded_size: fee_payer_account.data().len(),
                 account: fee_payer_account.clone(),
             },
-<<<<<<< HEAD
             &mut loaded_transaction_data_size,
-=======
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
->>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1373,7 +1369,7 @@ mod tests {
         let mut error_metrics = TransactionErrorMetrics::default();
 
         let mut loaded_transaction_data_size =
-            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get());
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1388,11 +1384,7 @@ mod tests {
                 account: fee_payer_account.clone(),
                 loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
-<<<<<<< HEAD
             &mut loaded_transaction_data_size,
-=======
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
->>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1431,7 +1423,7 @@ mod tests {
         let mut error_metrics = TransactionErrorMetrics::default();
 
         let mut loaded_transaction_data_size =
-            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get());
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1442,11 +1434,7 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
-<<<<<<< HEAD
             &mut loaded_transaction_data_size,
-=======
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
->>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1482,7 +1470,7 @@ mod tests {
         let mut error_metrics = TransactionErrorMetrics::default();
 
         let mut loaded_transaction_data_size =
-            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get());
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1493,11 +1481,7 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
-<<<<<<< HEAD
             &mut loaded_transaction_data_size,
-=======
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
->>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1544,7 +1528,7 @@ mod tests {
         let mut error_metrics = TransactionErrorMetrics::default();
 
         let mut loaded_transaction_data_size =
-            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get());
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1559,11 +1543,7 @@ mod tests {
                 account: fee_payer_account.clone(),
                 loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
-<<<<<<< HEAD
             &mut loaded_transaction_data_size,
-=======
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
->>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1620,7 +1600,7 @@ mod tests {
         let mut error_metrics = TransactionErrorMetrics::default();
 
         let mut loaded_transaction_data_size =
-            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get());
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1631,11 +1611,7 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
-<<<<<<< HEAD
             &mut loaded_transaction_data_size,
-=======
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
->>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1683,7 +1659,7 @@ mod tests {
         let mut error_metrics = TransactionErrorMetrics::default();
 
         let mut loaded_transaction_data_size =
-            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get());
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1695,11 +1671,7 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
-<<<<<<< HEAD
             &mut loaded_transaction_data_size,
-=======
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
->>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1760,7 +1732,7 @@ mod tests {
         );
 
         let mut loaded_transaction_data_size =
-            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get());
 
         let result = load_transaction_accounts(
             &mut account_loader,
@@ -1769,11 +1741,7 @@ mod tests {
                 account: fee_payer_account.clone(),
                 loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
-<<<<<<< HEAD
             &mut loaded_transaction_data_size,
-=======
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
->>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1854,7 +1822,7 @@ mod tests {
         );
 
         let mut loaded_transaction_data_size =
-            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get());
 
         let result = load_transaction_accounts(
             &mut account_loader,
@@ -1863,11 +1831,7 @@ mod tests {
                 account: fee_payer_account.clone(),
                 loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
-<<<<<<< HEAD
             &mut loaded_transaction_data_size,
-=======
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
->>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
             &mut error_metrics,
             &Rent::default(),
         );
@@ -2502,7 +2466,7 @@ mod tests {
             assert!(expected_size <= MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get() as usize);
 
             let mut loaded_transaction_data_size =
-                LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+                LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get());
 
             load_transaction_accounts(
                 &mut account_loader,
@@ -2511,11 +2475,7 @@ mod tests {
                     loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE + fee_payer_account.data().len(),
                     account: fee_payer_account,
                 },
-<<<<<<< HEAD
                 &mut loaded_transaction_data_size,
-=======
-                MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
->>>>>>> 3e4c038927 (keep NonZero for ComputeBudgetLimit that exclusively used in legacy and v0)
                 &mut TransactionErrorMetrics::default(),
                 &Rent::default(),
             )
