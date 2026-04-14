@@ -386,12 +386,12 @@ fn serialize_parameters_for_abiv0(
                 let rent_epoch = u64::MAX;
                 s.write::<u64>(rent_epoch.to_le());
                 accounts_metadata.push(SerializedAccountMetadata {
+                    vm_addr,
                     original_data_len: account.get_data().len(),
                     vm_key_addr,
                     vm_lamports_addr,
                     vm_owner_addr,
                     vm_data_addr,
-                    vm_addr,
                 });
             }
         };
@@ -554,12 +554,12 @@ fn serialize_parameters_for_abiv1(
                 let rent_epoch = u64::MAX;
                 s.write::<u64>(rent_epoch.to_le());
                 accounts_metadata.push(SerializedAccountMetadata {
+                    vm_addr,
                     original_data_len: borrowed_account.get_data().len(),
                     vm_key_addr,
                     vm_owner_addr,
                     vm_lamports_addr,
                     vm_data_addr,
-                    vm_addr,
                 });
             }
             SerializeAccount::Duplicate(position) => {
