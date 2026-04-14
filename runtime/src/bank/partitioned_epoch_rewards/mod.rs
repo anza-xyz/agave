@@ -440,10 +440,7 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
         solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
-        solana_vote_program::vote_state::{
-            self, TowerSync,
-            handler::{VoteStateHandle, VoteStateHandler},
-        },
+        solana_vote_program::vote_state::{self, TowerSync, handler::VoteStateHandler},
         std::sync::{Arc, RwLock},
     };
 

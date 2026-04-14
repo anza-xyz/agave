@@ -430,7 +430,7 @@ mod tests {
                 self, Lockout, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
                 VoteAuthorizeWithSeedArgs, VoteInit, VoteInitV2, VoteStateUpdate, VoteStateV3,
                 VoteStateV4, VoteStateVersions, create_bls_pubkey_and_proof_of_possession,
-                handler::{VoteStateHandle, VoteStateHandler},
+                handler::VoteStateHandler,
             },
         },
         bincode::serialize,

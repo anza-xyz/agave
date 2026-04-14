@@ -8,7 +8,7 @@ pub(crate) mod handler;
 
 pub use solana_vote_interface::state::{vote_state_versions::*, *};
 use {
-    handler::{VoteStateHandle, VoteStateHandler, VoteStateTargetVersion},
+    handler::{VoteStateHandler, VoteStateTargetVersion},
     log::*,
     solana_account::{AccountSharedData, WritableAccount},
     solana_bls_signatures::{VerifiableProofOfPossession, keypair::Keypair as BLSKeypair},
@@ -299,8 +299,8 @@ fn check_and_filter_proposed_vote_state(
     Ok(())
 }
 
-fn check_slots_are_valid<T: VoteStateHandle>(
-    vote_state: &T,
+fn check_slots_are_valid(
+    vote_state: &VoteStateHandler,
     vote_slots: &[Slot],
     vote_hash: &Hash,
     slot_hashes: &[(Slot, Hash)],

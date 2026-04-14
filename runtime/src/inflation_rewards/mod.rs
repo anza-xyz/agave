@@ -279,10 +279,7 @@ mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         solana_stake_interface::{stake_history::StakeHistory, state::Delegation},
-        solana_vote_program::vote_state::{
-            VoteStateV4,
-            handler::{VoteStateHandle, VoteStateHandler},
-        },
+        solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
         test_case::test_case,
     };
 
