@@ -156,11 +156,6 @@ pub trait StorableAccounts<'a>: Sync {
     }
     /// # accounts to write
     fn len(&self) -> usize;
-    /// are there accounts from multiple slots
-    /// only used for an assert
-    fn contains_multiple_slots(&self) -> bool {
-        false
-    }
 }
 
 impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(&'a Pubkey, &'a AccountSharedData)]) {
@@ -250,8 +245,6 @@ pub struct StorableAccountsBySlot<'a> {
     /// starting_offsets[0] is the starting offset of slots_and_accounts[1]
     /// The starting offset of slots_and_accounts[0] is always 0
     starting_offsets_for_slots_accounts_slice: Vec<usize>,
-    /// true if there is more than 1 slot represented in slots_and_accounts
-    contains_multiple_slots: bool,
     /// total len of all accounts, across all slots_and_accounts
     len: usize,
     db: &'a AccountsDb,
@@ -268,21 +261,14 @@ impl<'a> StorableAccountsBySlot<'a> {
     ) -> Self {
         let mut cumulative_len = 0usize;
         let mut starting_offsets = Vec::with_capacity(slots_and_accounts.len());
-        let first_slot = slots_and_accounts
-            .first()
-            .map(|(slot, _)| *slot)
-            .unwrap_or_default();
-        let mut contains_multiple_slots = false;
-        for (slot, accounts) in slots_and_accounts {
+        for (_slot, accounts) in slots_and_accounts {
             cumulative_len = cumulative_len.saturating_add(accounts.len());
             starting_offsets.push(cumulative_len);
-            contains_multiple_slots |= &first_slot != slot;
         }
         Self {
             target_slot,
             slots_and_accounts,
             starting_offsets_for_slots_accounts_slice: starting_offsets,
-            contains_multiple_slots,
             len: cumulative_len,
             db,
             cached_storage: RwLock::default(),
@@ -393,9 +379,6 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
     }
     fn len(&self) -> usize {
         self.len
-    }
-    fn contains_multiple_slots(&self) -> bool {
-        self.contains_multiple_slots
     }
 }
 
@@ -579,27 +562,6 @@ mod tests {
     }
 
     #[test]
-    fn test_contains_multiple_slots() {
-        let db = AccountsDb::new_single_for_tests();
-        let slot = 0;
-        let storage_id = 0; // does not matter
-        let offset = 0; // does not matter
-        let account_from_storage = AccountFromStorage {
-            index_info: AccountInfo::new(
-                StorageLocation::AppendVec(storage_id, offset),
-                false, // does not matter
-            ),
-            data_len: 7, // does not matter
-            pubkey: Pubkey::new_unique(),
-        };
-
-        let accounts = [&account_from_storage, &account_from_storage];
-        let accounts2 = [(slot, &accounts[..])];
-        let test3 = StorableAccountsBySlot::new(slot, &accounts2[..], &db);
-        assert!(!test3.contains_multiple_slots());
-    }
-
-    #[test]
     fn test_storable_accounts() {
         let max_slots = 3_u64;
         for target_slot in 0..max_slots {
@@ -710,9 +672,6 @@ mod tests {
                     assert_eq!(target_slot, test3.target_slot());
                     assert_eq!(target_slot, test4.target_slot());
                     assert_eq!(target_slot, test_moving_slots2.target_slot());
-                    assert!(!test2.contains_multiple_slots());
-                    assert!(!test4.contains_multiple_slots());
-                    assert_eq!(test3.contains_multiple_slots(), entries > 1);
                 }
             }
         }
@@ -836,7 +795,6 @@ mod tests {
                         let storable =
                             StorableAccountsBySlot::new(99, &slots_and_accounts[..], &db);
                         assert_eq!(99, storable.target_slot());
-                        assert_eq!(entries0 != entries, storable.contains_multiple_slots());
                         (0..entries).for_each(|index| {
                             let index = index as usize;
                             let mut called = false;
