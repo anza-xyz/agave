@@ -241,6 +241,11 @@ pub(crate) mod external {
     type Tx = RuntimeTransaction<ResolvedTransactionView<TransactionPtr>>;
     type TxView = SanitizedTransactionView<TransactionPtr>;
 
+    enum IterationResult {
+        ProcessedMessage,
+        Idle,
+    }
+
     impl ExternalWorker {
         pub fn new(
             id: u32,
@@ -276,28 +281,11 @@ pub(crate) mod external {
             let mut sleep_duration = STARTING_SLEEP_DURATION;
 
             while !self.exit.load(Ordering::Relaxed) {
-                self.allocator.clean_remote_free_lists();
-                if receiver.is_empty() {
-                    receiver.sync();
-                    should_drain_executes = false;
-                }
-
-                match receiver.try_read() {
-                    Some(message) => {
+                match self.iterate(&mut receiver, &mut should_drain_executes)? {
+                    IterationResult::ProcessedMessage => {
                         did_work = true;
-                        self.sender.sync();
-
-                        // Process message, if bank is unavailable enable draining for the
-                        // remainder of the current batch (i.e. what our `receiver.sync()`
-                        // fetched).
-                        should_drain_executes |=
-                            self.process_message(message, should_drain_executes)?;
-
-                        // Publish our send & read offsets.
-                        self.sender.commit();
-                        receiver.finalize();
                     }
-                    None => {
+                    IterationResult::Idle => {
                         let now = Instant::now();
 
                         if did_work {
@@ -311,6 +299,37 @@ pub(crate) mod external {
             }
 
             Ok(())
+        }
+
+        fn iterate(
+            &mut self,
+            receiver: &mut shaq::spsc::Consumer<PackToWorkerMessage>,
+            should_drain_executes: &mut bool,
+        ) -> Result<IterationResult, ExternalConsumeWorkerError> {
+            self.allocator.clean_remote_free_lists();
+            if receiver.is_empty() {
+                receiver.sync();
+                *should_drain_executes = false;
+            }
+
+            match receiver.try_read() {
+                Some(message) => {
+                    self.sender.sync();
+
+                    // Process message, if bank is unavailable enable draining for the
+                    // remainder of the current batch (i.e. what our `receiver.sync()`
+                    // fetched).
+                    *should_drain_executes |=
+                        self.process_message(message, *should_drain_executes)?;
+
+                    // Publish our send & read offsets.
+                    self.sender.commit();
+                    receiver.finalize();
+
+                    Ok(IterationResult::ProcessedMessage)
+                }
+                None => Ok(IterationResult::Idle),
+            }
         }
 
         /// Return true if fetching a bank for execution timed out.
