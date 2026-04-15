@@ -8581,6 +8581,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-hash-512"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ce934b02bab639341f2fd62c3e7e3c39dcceb47f0196b7630ed1f82ecb704bd"
+
+[[package]]
 name = "solana-inflation"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10293,6 +10299,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-sha512-hasher"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34e2936d7788af54520a49b653d160237171b00b6da50319661fa209e1817d8c"
+dependencies = [
+ "sha2 0.10.9",
+ "solana-define-syscall 5.0.0",
+ "solana-hash-512",
+]
+
+[[package]]
 name = "solana-short-vec"
 version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10707,6 +10724,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-fee-calculator",
  "solana-hash 4.3.0",
+ "solana-hash-512",
  "solana-instruction",
  "solana-keccak-hasher",
  "solana-last-restart-slot",
@@ -10719,6 +10737,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-secp256k1-recover",
  "solana-sha256-hasher",
+ "solana-sha512-hasher",
  "solana-slot-hashes",
  "solana-stable-layout",
  "solana-stake-interface",

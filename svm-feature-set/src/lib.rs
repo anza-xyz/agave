@@ -50,6 +50,7 @@ pub struct SVMFeatureSet {
     pub vote_account_initialize_v2: bool,
     pub direct_account_pointers_in_program_input: bool,
     pub loader_v3_minimum_extend_program_size: bool,
+    pub enable_sha512_syscall: bool,
 }
 
 impl SVMFeatureSet {
@@ -104,6 +105,7 @@ impl SVMFeatureSet {
             vote_account_initialize_v2: true,
             direct_account_pointers_in_program_input: true,
             loader_v3_minimum_extend_program_size: true,
+            enable_sha512_syscall: true,
         }
     }
 }
