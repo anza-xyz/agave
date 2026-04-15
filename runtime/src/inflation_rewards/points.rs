@@ -2,6 +2,7 @@
 
 use {
     crate::epoch_stakes::VersionedEpochStakes,
+    log::error,
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
@@ -70,6 +71,7 @@ pub enum SkippedReason {
     ZeroCreditsAndReturnZero,
     ZeroCreditsAndReturnCurrent,
     ZeroCreditsAndReturnRewound,
+    GetTotalStakeFailed(GetTotalStakeError),
 }
 
 impl From<SkippedReason> for InflationPointCalculationEvent {
@@ -139,12 +141,29 @@ pub(crate) struct AlpenglowStakeState<'a> {
     pub(crate) epoch_stakes: &'a HashMap<Epoch, VersionedEpochStakes>,
 }
 
+/// Different errors possible in `AlpenglowStakeState::get_total_stake()`.
+#[derive(Debug)]
+pub enum GetTotalStakeError {
+    NoEpochStakes(Epoch),
+    RankForVotePubkeyNotFound(Epoch, Pubkey),
+    EntryForRankNotFound(Epoch, Pubkey, u16),
+}
+
 impl<'a> AlpenglowStakeState<'a> {
     /// Returns the total stake delegated to `self.vote_pubkey` in the given epoch.
-    fn get_total_stake(&self, epoch: Epoch) -> Option<u64> {
-        let rank_map = self.epoch_stakes.get(&epoch)?.bls_pubkey_to_rank_map();
-        let rank = *rank_map.get_rank_for_vote_pubkey(&self.vote_pubkey)? as usize;
-        rank_map.get_pubkey_stake_entry(rank).map(|e| e.stake)
+    fn get_total_stake(&self, epoch: Epoch) -> Result<u64, GetTotalStakeError> {
+        let rank_map = self
+            .epoch_stakes
+            .get(&epoch)
+            .ok_or(GetTotalStakeError::NoEpochStakes(epoch))?
+            .bls_pubkey_to_rank_map();
+        let rank = *rank_map.get_rank_for_vote_pubkey(&self.vote_pubkey).ok_or(
+            GetTotalStakeError::RankForVotePubkeyNotFound(epoch, self.vote_pubkey),
+        )?;
+        let entry = rank_map.get_pubkey_stake_entry(rank as usize).ok_or(
+            GetTotalStakeError::EntryForRankNotFound(epoch, self.vote_pubkey, rank),
+        )?;
+        Ok(entry.stake)
     }
 }
 
@@ -242,17 +261,37 @@ pub(crate) fn calculate_stake_points_and_credits(
             }
             Some(state) => {
                 // in alpenglow, points represent the total reward that this `vote_state` has earned.
-                // `earned_credits` has already taken the stake into account.
-                // to account for multiple delegations, scale the earned credit.
+                // `earned_credits` has already taken the stake into account.  It still has to be
+                // scaled by the stake that this staker delegated to the `vote_state`.
                 if earned_credits == 0 {
+                    // If earned_credits is 0, no need to look up total stake which can potentially fail.
                     earned_credits
                 } else {
-                    let Some(total_stake) = state.get_total_stake(epoch) else {
-                        return CalculatedStakePoints {
-                            points: 0,
-                            new_credits_observed,
-                            force_credits_update_with_skipped_reward: true,
-                        };
+                    // the earned_credits needs to be scaled by the portion of this staker's delegation.
+                    let total_stake = match state.get_total_stake(epoch) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            // assuming that we only do the calculations for the latest epoch, this
+                            // failure should be unlikely.
+                            let message = format!(
+                                "get_total_stake() failed with {e:?}. Rewards payout will be \
+                                 skipped"
+                            );
+                            error!("{message}");
+                            datapoint_error!("alpenglow_error", ("error", message, String));
+                            if let Some(inflation_point_calc_tracer) =
+                                inflation_point_calc_tracer.as_ref()
+                            {
+                                inflation_point_calc_tracer(
+                                    &SkippedReason::GetTotalStakeFailed(e).into(),
+                                );
+                            }
+                            return CalculatedStakePoints {
+                                points: 0,
+                                new_credits_observed,
+                                force_credits_update_with_skipped_reward: true,
+                            };
+                        }
                     };
                     earned_credits * stake_amount / total_stake as u128
                 }
