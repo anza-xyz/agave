@@ -197,29 +197,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S
         assert_matches!(mem::replace(self, Self::NotSpawned), Self::Taken(_));
     }
 
-    fn take_and_trash_pooled(&mut self) -> S::Inner {
-        let inner = self.take_pooled();
-        self.trash_taken();
-        inner
-    }
-
     fn put_returned(&mut self, inner: S::Inner) {
         let new = inner.id();
         assert_matches!(mem::replace(self, Self::Pooled(inner)), Self::Taken(old) if old == new);
-    }
-
-    fn peek_pooled(&self) -> Option<&S::Inner> {
-        match self {
-            Self::NotSpawned | Self::Taken(_) => None,
-            Self::Pooled(inner) => Some(inner),
-        }
-    }
-
-    fn is_not_spawned(&self) -> bool {
-        match self {
-            Self::NotSpawned => true,
-            Self::Pooled(_) | Self::Taken(_) => false,
-        }
     }
 
     fn take_pooled(&mut self) -> S::Inner {
@@ -572,7 +552,6 @@ where
                 let banking_stage_status = scheduler_pool.banking_stage_status();
                 if !exiting && matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
                     exiting = true;
-                    scheduler_pool.unregister_banking_stage();
                 }
 
                 let trashed_inner_count = {
@@ -789,53 +768,12 @@ where
         self.supported_scheduling_mode.is_supported(BlockProduction)
     }
 
-    pub fn register_banking_stage(
-        &self,
-        banking_thread_count: CountOrDefault,
-        banking_packet_receiver: BankingPacketReceiver,
-        banking_packet_handler: Box<dyn BankingPacketHandler>,
-        transaction_recorder: TransactionRecorder,
-        banking_stage_monitor: Box<dyn BankingStageMonitor>,
-    ) {
-        *self.banking_stage_handler_context.lock().unwrap() = Some(BankingStageHandlerContext {
-            banking_thread_count,
-            banking_packet_receiver,
-            banking_packet_handler,
-            transaction_recorder,
-            banking_stage_monitor,
-        });
-        // Immediately start a block production scheduler, so that the scheduler can start
-        // buffering tasks, which are preprocessed as much as possible.
-        assert!(self.toggle_block_production_mode(true));
-    }
-
-    fn unregister_banking_stage(&self) {
-        let handler_context = &mut self.banking_stage_handler_context.lock().unwrap();
-        let handler_context = handler_context.as_mut().unwrap();
-        // Replace with dummy ones to unblock validator shutdown.
-        // Note that replacing banking_stage_handler_context with None altogether will create a
-        // very short window of race condition due to untimely spawning of block production
-        // scheduler.
-        handler_context.banking_packet_receiver = never();
-        handler_context.banking_packet_handler =
-            Box::new(|_, _| unreachable!("paired with never() receiver, this cannot be called"));
-        handler_context.banking_stage_monitor = Box::new(ExitedBankingMonitor);
-    }
-
     fn banking_stage_status(&self) -> Option<BankingStageStatus> {
         self.banking_stage_handler_context
             .lock()
             .unwrap()
             .as_mut()
             .map(|context| context.banking_stage_monitor.status())
-    }
-
-    fn toggle_banking_packet_receiver(&self, enable: bool) {
-        let mut context = self.banking_stage_handler_context.lock().unwrap();
-        let context = context.as_mut().unwrap();
-        context
-            .banking_stage_monitor
-            .toggle_banking_packet_receiver(enable);
     }
 
     fn create_handler_context(
@@ -999,35 +937,6 @@ where
         this.cleaner_thread.join().unwrap();
 
         info!("SchedulerPool::uninstalled_from_bank_forks(): ...finished");
-    }
-
-    fn toggle_block_production_mode(&self, enable: bool) -> bool {
-        if !self.block_production_supported() {
-            info!("toggle_block_production_mode: unsupported: enable: {enable}");
-            // block production isn't supported to begin with.
-            return !enable;
-        }
-
-        // Grab this lock early so that following toggle_banking_packet_receiver() (i.e. the
-        // is_unified AtomicBool store) is synchronized well.
-        let mut block_production_scheduler_inner =
-            self.block_production_scheduler_inner.lock().unwrap();
-        if enable {
-            if block_production_scheduler_inner.is_not_spawned() {
-                self.spawn_block_production_scheduler(&mut block_production_scheduler_inner);
-            }
-        } else if block_production_scheduler_inner.peek_pooled().is_some() {
-            let scheduler = block_production_scheduler_inner.take_and_trash_pooled();
-            self.trashed_scheduler_inners
-                .lock()
-                .expect("not poisoned")
-                .push(scheduler);
-        }
-        self.toggle_banking_packet_receiver(enable);
-        drop(block_production_scheduler_inner);
-
-        info!("toggle_block_production_mode: succeeded: enable: {enable}");
-        true
     }
 }
 
@@ -2725,15 +2634,6 @@ pub enum BankingStageStatus {
 pub trait BankingStageMonitor: Send + Debug {
     fn status(&mut self) -> BankingStageStatus;
     fn toggle_banking_packet_receiver(&mut self, _enable: bool) {}
-}
-
-#[derive(Debug)]
-struct ExitedBankingMonitor;
-
-impl BankingStageMonitor for ExitedBankingMonitor {
-    fn status(&mut self) -> BankingStageStatus {
-        BankingStageStatus::Exited
-    }
 }
 
 impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {

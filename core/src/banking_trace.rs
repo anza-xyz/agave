@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     bincode::serialize_into,
@@ -188,36 +186,6 @@ pub struct Channels {
     pub tpu_vote_receiver: BankingPacketReceiver,
     pub gossip_vote_sender: BankingPacketSender,
     pub gossip_vote_receiver: BankingPacketReceiver,
-}
-
-impl Channels {
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn sender_for_unified_scheduler(&self) -> &BankingPacketSender {
-        // Unified scheduler doesn't distinguish which kind of channels, so just pick the non-vote
-        // channel arbitrarily here for consistency with receiver_for_unified_scheduler().
-        //
-        // This method is only used internally by clone_is_unified_for_unified_scheduler() below or
-        // tests as a convenience method. So, while no apparent code-patch reaching here, banking
-        // packets can still be routed dynamically depending on the activation of unified scheduler
-        // as block production. That's because each TracedSender is passed to sources (i.e.
-        // non-vote, tpu-vote, gossip-vote) during the validator booting.
-        //
-        // So, while this method name is similar to receiver_for_unified_scheduler() due to being
-        // paired getters of the channel for unified scheduler, this method is used differently
-        // than receiver_for_unified_scheduler() below as hinted by different visibility under no
-        // DCOU: `private` v.s. `pub(crate)`.
-        &self.non_vote_sender
-    }
-
-    pub(crate) fn receiver_for_unified_scheduler(&self) -> &BankingPacketReceiver {
-        // Unified scheduler doesn't distinguish which kind of channels, so just pick the non-vote
-        // channel arbitrarily here for consistency with sender_for_unified_scheduler().
-        &self.non_vote_receiver
-    }
-
-    pub(crate) fn clone_is_unified_for_unified_scheduler(&self) -> Arc<AtomicBool> {
-        self.sender_for_unified_scheduler().is_unified.clone()
-    }
 }
 
 impl BankingTracer {
