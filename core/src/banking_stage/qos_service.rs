@@ -4,23 +4,15 @@
 //!
 
 use {
-    super::{
-        BatchedTransactionCostDetails, BatchedTransactionDetails, BatchedTransactionErrorDetails,
-        committer::CommitTransactionDetails,
-    },
+    super::{BatchedTransactionDetails, committer::CommitTransactionDetails},
     agave_feature_set::FeatureSet,
     solana_clock::Slot,
     solana_cost_model::{
         cost_model::CostModel, cost_tracker::UpdatedCosts, transaction_cost::TransactionCost,
     },
-    solana_measure::measure::Measure,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_transaction_error::TransactionError,
-    std::{
-        num::Saturating,
-        sync::atomic::{AtomicU64, Ordering},
-    },
 };
 
 mod transaction {
@@ -32,15 +24,11 @@ mod transaction {
 // Banking thread calls `report_metrics(slot)` at end of `process_and_record_transaction()`, or any time
 // it wants.
 //
-pub struct QosService {
-    metrics: QosServiceMetrics,
-}
+pub struct QosService {}
 
 impl QosService {
-    pub fn new(id: u32) -> Self {
-        Self {
-            metrics: QosServiceMetrics::new(id),
-        }
+    pub fn new(_id: u32) -> Self {
+        Self {}
     }
 
     /// Calculate cost of transactions, if not already filtered out, determine which ones to
@@ -80,21 +68,10 @@ impl QosService {
         transactions: impl Iterator<Item = &'a Tx>,
         pre_results: impl Iterator<Item = transaction::Result<()>>,
     ) -> Vec<transaction::Result<TransactionCost<'a, Tx>>> {
-        let mut compute_cost_time = Measure::start("compute_cost_time");
-        let txs_costs: Vec<_> = transactions
+        transactions
             .zip(pre_results)
             .map(|(tx, pre_result)| pre_result.map(|()| CostModel::calculate_cost(tx, feature_set)))
-            .collect();
-        compute_cost_time.stop();
-        self.metrics
-            .stats
-            .compute_cost_time
-            .fetch_add(compute_cost_time.as_us(), Ordering::Relaxed);
-        self.metrics
-            .stats
-            .compute_cost_count
-            .fetch_add(txs_costs.len() as u64, Ordering::Relaxed);
-        txs_costs
+            .collect()
     }
 
     /// Given a list of transactions and their costs, this function returns a corresponding
@@ -106,7 +83,6 @@ impl QosService {
         transactions_costs: impl Iterator<Item = transaction::Result<TransactionCost<'a, Tx>>>,
         bank: &Bank,
     ) -> (Vec<transaction::Result<TransactionCost<'a, Tx>>>, usize) {
-        let mut cost_tracking_time = Measure::start("cost_tracking_time");
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
         let mut num_included = 0;
         let select_results = transactions
@@ -126,10 +102,6 @@ impl QosService {
                             updated_block_cost,
                             updated_costliest_account_cost
                         );
-                        self.metrics
-                            .stats
-                            .selected_txs_count
-                            .fetch_add(1, Ordering::Relaxed);
                         num_included += 1;
                         Ok(cost)
                     }
@@ -150,11 +122,6 @@ impl QosService {
             .collect();
         cost_tracker.add_transactions_in_flight(num_included);
 
-        cost_tracking_time.stop();
-        self.metrics
-            .stats
-            .cost_tracking_time
-            .fetch_add(cost_tracking_time.as_us(), Ordering::Relaxed);
         (select_results, num_included)
     }
 
@@ -237,103 +204,17 @@ impl QosService {
     }
 
     // metrics are reported by bank slot
-    pub fn report_metrics(&self, slot: Slot) {
-        self.metrics.report(slot);
-    }
+    pub fn report_metrics(&self, _slot: Slot) {}
 
     fn accumulate_estimated_transaction_costs(
         &self,
-        batched_transaction_details: &BatchedTransactionDetails,
+        _batched_transaction_details: &BatchedTransactionDetails,
     ) {
-        let &BatchedTransactionDetails {
-            costs:
-                BatchedTransactionCostDetails {
-                    batched_signature_cost: Saturating(batched_signature_cost),
-                    batched_write_lock_cost: Saturating(batched_write_lock_cost),
-                    batched_data_bytes_cost: Saturating(batched_data_bytes_cost),
-                    batched_loaded_accounts_data_size_cost:
-                        Saturating(batched_loaded_accounts_data_size_cost),
-                    batched_programs_execute_cost: Saturating(batched_programs_execute_cost),
-                },
-            errors:
-                BatchedTransactionErrorDetails {
-                    batched_retried_txs_per_block_limit_count:
-                        Saturating(batched_retried_txs_per_block_limit_count),
-                    batched_retried_txs_per_vote_limit_count:
-                        Saturating(batched_retried_txs_per_vote_limit_count),
-                    batched_retried_txs_per_account_limit_count:
-                        Saturating(batched_retried_txs_per_account_limit_count),
-                    batched_retried_txs_per_account_data_block_limit_count:
-                        Saturating(batched_retried_txs_per_account_data_block_limit_count),
-                    batched_dropped_txs_per_account_data_total_limit_count:
-                        Saturating(batched_dropped_txs_per_account_data_total_limit_count),
-                },
-        } = batched_transaction_details;
-        self.metrics
-            .stats
-            .estimated_signature_cu
-            .fetch_add(batched_signature_cost, Ordering::Relaxed);
-        self.metrics
-            .stats
-            .estimated_write_lock_cu
-            .fetch_add(batched_write_lock_cost, Ordering::Relaxed);
-        self.metrics
-            .stats
-            .estimated_data_bytes_cu
-            .fetch_add(batched_data_bytes_cost, Ordering::Relaxed);
-        self.metrics
-            .stats
-            .estimated_loaded_accounts_data_size_cu
-            .fetch_add(batched_loaded_accounts_data_size_cost, Ordering::Relaxed);
-        self.metrics
-            .stats
-            .estimated_programs_execute_cu
-            .fetch_add(batched_programs_execute_cost, Ordering::Relaxed);
-
-        self.metrics
-            .errors
-            .retried_txs_per_block_limit_count
-            .fetch_add(batched_retried_txs_per_block_limit_count, Ordering::Relaxed);
-        self.metrics
-            .errors
-            .retried_txs_per_vote_limit_count
-            .fetch_add(batched_retried_txs_per_vote_limit_count, Ordering::Relaxed);
-        self.metrics
-            .errors
-            .retried_txs_per_account_limit_count
-            .fetch_add(
-                batched_retried_txs_per_account_limit_count,
-                Ordering::Relaxed,
-            );
-        self.metrics
-            .errors
-            .retried_txs_per_account_data_block_limit_count
-            .fetch_add(
-                batched_retried_txs_per_account_data_block_limit_count,
-                Ordering::Relaxed,
-            );
-        self.metrics
-            .errors
-            .dropped_txs_per_account_data_total_limit_count
-            .fetch_add(
-                batched_dropped_txs_per_account_data_total_limit_count,
-                Ordering::Relaxed,
-            );
     }
 
-    pub fn accumulate_actual_execute_cu(&self, units: u64) {
-        self.metrics
-            .stats
-            .actual_programs_execute_cu
-            .fetch_add(units, Ordering::Relaxed);
-    }
+    pub fn accumulate_actual_execute_cu(&self, _units: u64) {}
 
-    pub fn accumulate_actual_execute_time(&self, micro_sec: u64) {
-        self.metrics
-            .stats
-            .actual_execute_time_us
-            .fetch_add(micro_sec, Ordering::Relaxed);
-    }
+    pub fn accumulate_actual_execute_time(&self, _micro_sec: u64) {}
 
     // rollup transaction cost details, eg signature_cost, write_lock_cost, data_bytes_cost and
     // execution_cost from the batch of transactions selected for block.
@@ -388,205 +269,6 @@ impl QosService {
     }
 }
 
-#[derive(Debug, Default)]
-struct QosServiceMetrics {
-    /// banking_stage creates one QosService instance per working threads, that is uniquely
-    /// identified by id. This field allows to categorize metrics for gossip votes, TPU votes
-    /// and other transactions.
-    id: String,
-
-    /// aggregate metrics per slot
-    slot: AtomicU64,
-
-    stats: QosServiceMetricsStats,
-    errors: QosServiceMetricsErrors,
-}
-
-#[derive(Debug, Default)]
-struct QosServiceMetricsStats {
-    /// accumulated time in micro-sec spent in computing transaction cost. It is the main performance
-    /// overhead introduced by cost_model
-    compute_cost_time: AtomicU64,
-
-    /// total number of transactions in the reporting period to be computed for their cost. It is
-    /// usually the number of sanitized transactions leader receives.
-    compute_cost_count: AtomicU64,
-
-    /// accumulated time in micro-sec spent in tracking each bank's cost. It is the second part of
-    /// overhead introduced
-    cost_tracking_time: AtomicU64,
-
-    /// number of transactions to be included in blocks
-    selected_txs_count: AtomicU64,
-
-    /// accumulated estimated signature Compute Unites to be packed into block
-    estimated_signature_cu: AtomicU64,
-
-    /// accumulated estimated write locks Compute Units to be packed into block
-    estimated_write_lock_cu: AtomicU64,
-
-    /// accumulated estimated instruction data Compute Units to be packed into block
-    estimated_data_bytes_cu: AtomicU64,
-
-    /// accumulated estimated loaded accounts data size cost to be packed into block
-    estimated_loaded_accounts_data_size_cu: AtomicU64,
-
-    /// accumulated estimated program Compute Units to be packed into block
-    estimated_programs_execute_cu: AtomicU64,
-
-    /// accumulated actual program Compute Units that have been packed into block
-    actual_programs_execute_cu: AtomicU64,
-
-    /// accumulated actual program execute micro-sec that have been packed into block
-    actual_execute_time_us: AtomicU64,
-}
-
-#[derive(Debug, Default)]
-struct QosServiceMetricsErrors {
-    /// number of transactions to be queued for retry due to their potential to breach block limit
-    retried_txs_per_block_limit_count: AtomicU64,
-
-    /// number of transactions to be queued for retry due to their potential to breach vote limit
-    retried_txs_per_vote_limit_count: AtomicU64,
-
-    /// number of transactions to be queued for retry due to their potential to breach writable
-    /// account limit
-    retried_txs_per_account_limit_count: AtomicU64,
-
-    /// number of transactions to be queued for retry due to their potential to breach account data
-    /// block limits
-    retried_txs_per_account_data_block_limit_count: AtomicU64,
-
-    /// number of transactions to be dropped due to their potential to breach account data total
-    /// limits
-    dropped_txs_per_account_data_total_limit_count: AtomicU64,
-}
-
-impl QosServiceMetrics {
-    pub fn new(id: u32) -> Self {
-        QosServiceMetrics {
-            id: id.to_string(),
-            ..QosServiceMetrics::default()
-        }
-    }
-
-    pub fn report(&self, bank_slot: Slot) {
-        if bank_slot != self.slot.load(Ordering::Relaxed) {
-            datapoint_info!(
-                "qos-service-stats",
-                "id" => self.id,
-                ("bank_slot", bank_slot, i64),
-                (
-                    "compute_cost_time",
-                    self.stats.compute_cost_time.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "compute_cost_count",
-                    self.stats.compute_cost_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "cost_tracking_time",
-                    self.stats.cost_tracking_time.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "selected_txs_count",
-                    self.stats.selected_txs_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "estimated_signature_cu",
-                    self.stats.estimated_signature_cu.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "estimated_write_lock_cu",
-                    self.stats
-                        .estimated_write_lock_cu
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "estimated_data_bytes_cu",
-                    self.stats
-                        .estimated_data_bytes_cu
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "estimated_loaded_accounts_data_size_cu",
-                    self.stats
-                        .estimated_loaded_accounts_data_size_cu
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "estimated_programs_execute_cu",
-                    self.stats
-                        .estimated_programs_execute_cu
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "actual_programs_execute_cu",
-                    self.stats
-                        .actual_programs_execute_cu
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "actual_execute_time_us",
-                    self.stats.actual_execute_time_us.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-            );
-            datapoint_info!(
-                "qos-service-errors",
-                "id" => self.id,
-                ("bank_slot", bank_slot, i64),
-                (
-                    "retried_txs_per_block_limit_count",
-                    self.errors
-                        .retried_txs_per_block_limit_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "retried_txs_per_vote_limit_count",
-                    self.errors
-                        .retried_txs_per_vote_limit_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "retried_txs_per_account_limit_count",
-                    self.errors
-                        .retried_txs_per_account_limit_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "retried_txs_per_account_data_block_limit_count",
-                    self.errors
-                        .retried_txs_per_account_data_block_limit_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "dropped_txs_per_account_data_total_limit_count",
-                    self.errors
-                        .dropped_txs_per_account_data_total_limit_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-            );
-            self.slot.store(bank_slot, Ordering::Relaxed);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {
@@ -601,7 +283,7 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::TowerSync,
-        std::sync::Arc,
+        std::{num::Saturating, sync::Arc},
     };
 
     #[test]
