@@ -615,9 +615,7 @@ mod tests {
         agave_snapshots::{paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig},
         clap::{App, Arg},
         solana_ledger::{
-            blockstore::Blockstore,
-            blockstore_options::{AccessType, BlockstoreOptions},
-            blockstore_processor::ProcessOptions,
+            blockstore::Blockstore, blockstore_processor::ProcessOptions,
             genesis_utils::create_genesis_config,
         },
         solana_runtime::{bank::Bank, snapshot_bank_utils},
@@ -652,16 +650,7 @@ mod tests {
         .unwrap();
 
         // Open the blockstore so load_and_process_ledger can pass it to process_blockstore.
-        let blockstore = Arc::new(
-            Blockstore::open_with_options(
-                ledger_path,
-                BlockstoreOptions {
-                    access_type: AccessType::PrimaryForMaintenance,
-                    ..BlockstoreOptions::default()
-                },
-            )
-            .unwrap(),
-        );
+        let blockstore = Arc::new(Blockstore::open(ledger_path).unwrap());
 
         // Setup the arguments such that a new snapshot will be generated from the loaded snapshot
         let arg_matches = App::new("test")
