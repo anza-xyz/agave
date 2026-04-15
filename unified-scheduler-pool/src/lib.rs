@@ -57,7 +57,7 @@ use {
         marker::PhantomData,
         mem,
         sync::{
-            Arc, Mutex, MutexGuard, OnceLock, Weak,
+            Arc, Mutex, OnceLock, Weak,
             atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
         },
         thread::{self, JoinHandle, sleep},
@@ -170,10 +170,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S
             }
             Self::Taken(id) => *id == returned.id(),
         }
-    }
-
-    fn put_spawned(&mut self, inner: S::Inner) {
-        assert_matches!(mem::replace(self, Self::Pooled(inner)), Self::NotSpawned);
     }
 
     fn trash_taken(&mut self) {
@@ -654,14 +650,7 @@ where
             // the availability of pooled block production scheduler by re-spawning one.
             if is_block_production_scheduler {
                 block_production_scheduler_inner.trash_taken();
-                if !is_block_production_disabled {
-                    // To prevent block-production scheduler from being taken in
-                    // do_take_resumed_scheduler() by different thread at this very moment, the
-                    // preceding `.trash_taken()` and following `.put_spawned()` must be done
-                    // atomically. That's why we pass around MutexGuard into
-                    // spawn_block_production_scheduler().
-                    self.spawn_block_production_scheduler(&mut block_production_scheduler_inner);
-                }
+                unreachable!("block production scheudler is not supported");
             }
 
             // Delay drop()-ing this trashed returned scheduler inner by stashing it in
@@ -802,20 +791,6 @@ where
             banking_stage_helper,
             transaction_recorder,
         )
-    }
-
-    fn spawn_block_production_scheduler(
-        &self,
-        block_production_scheduler_inner: &mut MutexGuard<'_, BlockProductionSchedulerInner<S, TH>>,
-    ) {
-        let scheduler = S::spawn(
-            self.self_arc(),
-            SchedulingContext::for_preallocation(),
-            initialized_result_with_timings(),
-        );
-        let ((result, _timings), inner) = scheduler.into_inner();
-        assert_matches!(result, Ok(_));
-        block_production_scheduler_inner.put_spawned(inner);
     }
 
     pub fn default_handler_count() -> usize {

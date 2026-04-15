@@ -258,13 +258,6 @@ pub struct SchedulingContext {
 }
 
 impl SchedulingContext {
-    pub fn for_preallocation() -> Self {
-        Self {
-            mode: SchedulingMode::BlockProduction,
-            bank: None,
-        }
-    }
-
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new_with_mode(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
         Self {
