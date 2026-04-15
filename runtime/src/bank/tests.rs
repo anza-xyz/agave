@@ -2113,6 +2113,43 @@ fn test_readonly_relaxed_locks() {
 }
 
 #[test]
+fn test_prepare_sanitized_batch_with_results_skip_account_locks_preserves_transaction_errors() {
+    let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+    let bank = Bank::new_for_tests(&genesis_config);
+    let txs = vec![
+        RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        )),
+        RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        )),
+        RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        )),
+    ];
+
+    let batch = bank.prepare_sanitized_batch_with_results(
+        &txs,
+        true,
+        [Ok(()), Err(TransactionError::AccountLoadedTwice), Ok(())].into_iter(),
+    );
+    assert_eq!(
+        batch.lock_results().as_slice(),
+        &[Ok(()), Err(TransactionError::AccountLoadedTwice), Ok(())]
+    );
+    assert!(!batch.needs_unlock());
+}
+
+#[test]
 fn test_bank_invalid_account_index() {
     let (genesis_config, mint_keypair) = create_genesis_config(1);
     let keypair = Keypair::new();

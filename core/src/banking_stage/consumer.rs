@@ -52,6 +52,11 @@ pub struct ExecutionFlags {
     /// failing transactions to be committed. If both flags are set then any
     /// failing transaction will cause all transactions to be aborted.
     pub all_or_nothing: bool,
+
+    /// NOTE: Not currently exposed to scheduler-bindings.
+    /// Use to skip locking accounts - i.e. rely on the scheduler to have
+    /// scheduled transactions with no overlapping accounts.
+    pub skip_account_locks: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -156,6 +161,7 @@ impl Consumer {
             ExecutionFlags {
                 drop_on_failure: false,
                 all_or_nothing: false,
+                skip_account_locks: false,
             },
         );
 
@@ -208,6 +214,7 @@ impl Consumer {
         // same account state
         let (batch, lock_us) = measure_us!(bank.prepare_sanitized_batch_with_results(
             txs,
+            flags.skip_account_locks,
             transaction_qos_cost_results.iter().map(|r| match r {
                 Ok(_cost) => Ok(()),
                 Err(err) => Err(err.clone()),
@@ -855,6 +862,63 @@ mod tests {
                 1
             ])
         );
+    }
+
+    #[test]
+    fn test_bank_process_and_record_transactions_skip_account_locks_leaves_locks_unchanged() {
+        let TestFrame {
+            mint_keypair,
+            bank,
+            bank_forks: _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(true, None);
+
+        let destination = Pubkey::new_unique();
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &destination,
+            1,
+            bank.last_blockhash(),
+        )]);
+        let max_ages = vec![MaxAge {
+            sanitized_epoch: bank.epoch(),
+            alt_invalidation_slot: bank.slot(),
+        }];
+
+        let process_transactions_batch_output = consumer.process_and_record_aged_transactions(
+            &bank,
+            &transactions,
+            &max_ages,
+            ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing: false,
+                skip_account_locks: true,
+            },
+        );
+
+        let ExecuteAndCommitTransactionsOutput {
+            transaction_counts,
+            commit_transactions_result,
+            ..
+        } = process_transactions_batch_output.execute_and_commit_transactions_output;
+
+        assert_eq!(
+            transaction_counts,
+            LeaderProcessedTransactionCounts {
+                attempted_processing_count: 1,
+                processed_count: 1,
+                processed_with_successful_result_count: 1,
+            }
+        );
+        assert!(commit_transactions_result.is_ok());
+
+        // The executed transaction should remain lockable afterward, confirming the skip-locks
+        // path did not leave any account locks behind.
+        let transaction_results = bank.try_lock_accounts(&transactions);
+        assert_eq!(transaction_results, vec![Ok(())]);
+
+        bank.unlock_accounts(transactions.iter().zip(&transaction_results));
     }
 
     #[test_case(false; "old")]

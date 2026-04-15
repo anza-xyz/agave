@@ -3345,7 +3345,7 @@ impl Bank {
         &'a self,
         txs: &'b [Tx],
     ) -> TransactionBatch<'a, 'b, Tx> {
-        self.prepare_sanitized_batch_with_results(txs, txs.iter().map(|_| Ok(())))
+        self.prepare_sanitized_batch_with_results(txs, false, txs.iter().map(|_| Ok(())))
     }
 
     /// Prepare a locked transaction batch from a list of sanitized transactions, and their cost
@@ -3353,14 +3353,24 @@ impl Bank {
     pub fn prepare_sanitized_batch_with_results<'a, 'b, Tx: TransactionWithMeta>(
         &'a self,
         transactions: &'b [Tx],
+        skip_account_locks: bool,
         transaction_results: impl Iterator<Item = Result<()>>,
     ) -> TransactionBatch<'a, 'b, Tx> {
-        // this lock_results could be: Ok, AccountInUse, WouldExceedBlockMaxLimit or WouldExceedAccountMaxLimit
-        TransactionBatch::new(
-            self.try_lock_accounts_with_results(transactions, transaction_results),
-            self,
-            OwnedOrBorrowed::Borrowed(transactions),
-        )
+        if skip_account_locks {
+            let mut batch = TransactionBatch::new(
+                transaction_results.collect(),
+                self,
+                OwnedOrBorrowed::Borrowed(transactions),
+            );
+            batch.set_needs_unlock(false);
+            batch
+        } else {
+            TransactionBatch::new(
+                self.try_lock_accounts_with_results(transactions, transaction_results),
+                self,
+                OwnedOrBorrowed::Borrowed(transactions),
+            )
+        }
     }
 
     /// Prepare a transaction batch from a single transaction without locking accounts
