@@ -241,9 +241,6 @@ impl Consumer {
             bank,
         );
 
-        // reports qos service stats for this batch
-        self.qos_service.report_metrics(bank.slot());
-
         debug!(
             "bank: {} lock: {}us unlock: {}us txs_len: {}",
             bank.slot(),
@@ -346,25 +343,6 @@ impl Consumer {
             processed_counts,
             balance_collector,
         } = load_and_execute_transactions_output;
-
-        let actual_execute_time = execute_and_commit_timings
-            .execute_timings
-            .execute_accessories
-            .process_instructions
-            .total_us
-            .0;
-        let actual_executed_cu = processing_results
-            .iter()
-            .map(|processing_result| {
-                processing_result
-                    .as_ref()
-                    .map_or(0, |pr| pr.executed_units())
-            })
-            .sum();
-        self.qos_service
-            .accumulate_actual_execute_cu(actual_executed_cu);
-        self.qos_service
-            .accumulate_actual_execute_time(actual_execute_time);
 
         let transaction_counts = LeaderProcessedTransactionCounts {
             processed_count: processed_counts.processed_transactions_count,

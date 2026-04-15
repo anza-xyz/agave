@@ -4,9 +4,8 @@
 //!
 
 use {
-    super::{BatchedTransactionDetails, committer::CommitTransactionDetails},
+    super::committer::CommitTransactionDetails,
     agave_feature_set::FeatureSet,
-    solana_clock::Slot,
     solana_cost_model::{
         cost_model::CostModel, cost_tracker::UpdatedCosts, transaction_cost::TransactionCost,
     },
@@ -48,9 +47,6 @@ impl QosService {
             transaction_costs.into_iter(),
             bank,
         );
-        self.accumulate_estimated_transaction_costs(&Self::accumulate_batched_transaction_costs(
-            transactions_qos_cost_results.iter(),
-        ));
         let cost_model_throttled_transactions_count =
             transactions.len().saturating_sub(num_included) as u64;
 
@@ -202,71 +198,6 @@ impl QosService {
         });
         cost_tracker.sub_transactions_in_flight(num_included);
     }
-
-    // metrics are reported by bank slot
-    pub fn report_metrics(&self, _slot: Slot) {}
-
-    fn accumulate_estimated_transaction_costs(
-        &self,
-        _batched_transaction_details: &BatchedTransactionDetails,
-    ) {
-    }
-
-    pub fn accumulate_actual_execute_cu(&self, _units: u64) {}
-
-    pub fn accumulate_actual_execute_time(&self, _micro_sec: u64) {}
-
-    // rollup transaction cost details, eg signature_cost, write_lock_cost, data_bytes_cost and
-    // execution_cost from the batch of transactions selected for block.
-    fn accumulate_batched_transaction_costs<'a, Tx: TransactionWithMeta + 'a>(
-        transactions_costs: impl Iterator<Item = &'a transaction::Result<TransactionCost<'a, Tx>>>,
-    ) -> BatchedTransactionDetails {
-        let mut batched_transaction_details = BatchedTransactionDetails::default();
-        transactions_costs.for_each(|cost| match cost {
-            Ok(cost) => {
-                batched_transaction_details.costs.batched_signature_cost += cost.signature_cost();
-                batched_transaction_details.costs.batched_write_lock_cost += cost.write_lock_cost();
-                batched_transaction_details.costs.batched_data_bytes_cost +=
-                    u64::from(cost.data_bytes_cost());
-                batched_transaction_details
-                    .costs
-                    .batched_loaded_accounts_data_size_cost +=
-                    cost.loaded_accounts_data_size_cost();
-                batched_transaction_details
-                    .costs
-                    .batched_programs_execute_cost += cost.programs_execution_cost();
-            }
-            Err(transaction_error) => match transaction_error {
-                TransactionError::WouldExceedMaxBlockCostLimit => {
-                    batched_transaction_details
-                        .errors
-                        .batched_retried_txs_per_block_limit_count += 1;
-                }
-                TransactionError::WouldExceedMaxVoteCostLimit => {
-                    batched_transaction_details
-                        .errors
-                        .batched_retried_txs_per_vote_limit_count += 1;
-                }
-                TransactionError::WouldExceedMaxAccountCostLimit => {
-                    batched_transaction_details
-                        .errors
-                        .batched_retried_txs_per_account_limit_count += 1;
-                }
-                TransactionError::WouldExceedAccountDataBlockLimit => {
-                    batched_transaction_details
-                        .errors
-                        .batched_retried_txs_per_account_data_block_limit_count += 1;
-                }
-                TransactionError::WouldExceedAccountDataTotalLimit => {
-                    batched_transaction_details
-                        .errors
-                        .batched_dropped_txs_per_account_data_total_limit_count += 1;
-                }
-                _ => {}
-            },
-        });
-        batched_transaction_details
-    }
 }
 
 #[cfg(test)]
@@ -274,7 +205,6 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        solana_cost_model::transaction_cost::{UsageCostDetails, WritableKeysTransaction},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_runtime::genesis_utils::{GenesisConfigInfo, create_genesis_config},
@@ -283,7 +213,7 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::TowerSync,
-        std::{num::Saturating, sync::Arc},
+        std::sync::Arc,
     };
 
     #[test]
@@ -600,58 +530,5 @@ mod tests {
                 bank.read_cost_tracker().unwrap().transaction_count()
             );
         }
-    }
-
-    #[test]
-    fn test_accumulate_batched_transaction_costs() {
-        let signature_cost = 1;
-        let write_lock_cost = 2;
-        let data_bytes_cost = 3;
-        let programs_execution_cost = 10;
-        let num_txs = 4;
-
-        let dummy_transaction = WritableKeysTransaction::new(vec![]);
-        let tx_cost_results: Vec<_> = (0..num_txs)
-            .map(|n| {
-                if n % 2 == 0 {
-                    Ok(TransactionCost::Transaction(UsageCostDetails {
-                        transaction: &dummy_transaction,
-                        signature_cost,
-                        write_lock_cost,
-                        data_bytes_cost,
-                        programs_execution_cost,
-                        loaded_accounts_data_size_cost: 0,
-                        allocated_accounts_data_size: 0,
-                    }))
-                } else {
-                    Err(TransactionError::WouldExceedMaxBlockCostLimit)
-                }
-            })
-            .collect();
-        // should only accumulate half of the costs that are OK
-        let expected_signatures = signature_cost * (num_txs / 2);
-        let expected_write_locks = write_lock_cost * (num_txs / 2);
-        let expected_data_bytes = u64::from(data_bytes_cost) * (num_txs / 2);
-        let expected_programs_execution_costs = programs_execution_cost * (num_txs / 2);
-        let batched_transaction_details =
-            QosService::accumulate_batched_transaction_costs(tx_cost_results.iter());
-        assert_eq!(
-            Saturating(expected_signatures),
-            batched_transaction_details.costs.batched_signature_cost
-        );
-        assert_eq!(
-            Saturating(expected_write_locks),
-            batched_transaction_details.costs.batched_write_lock_cost
-        );
-        assert_eq!(
-            Saturating(expected_data_bytes),
-            batched_transaction_details.costs.batched_data_bytes_cost
-        );
-        assert_eq!(
-            Saturating(expected_programs_execution_costs),
-            batched_transaction_details
-                .costs
-                .batched_programs_execute_cost
-        );
     }
 }
