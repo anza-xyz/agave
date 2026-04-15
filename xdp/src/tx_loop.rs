@@ -325,12 +325,12 @@ impl<T> Receiver<T> for TxReceiver<T> {
 }
 
 impl<U: Umem> TxLoop<U> {
-    pub fn run<T, Rx, D, R>(self, receiver: Rx, mut drop_item: D, route_fn: R)
+    pub fn run<T, Rx, D, R>(self, receiver: Rx, mut drop_item: D, mut route_fn: R)
     where
         T: TxPacket,
         Rx: Receiver<T>,
         D: FnMut(T),
-        R: Fn(&IpAddr) -> Option<NextHop>,
+        R: FnMut(&IpAddr) -> Option<NextHop>,
     {
         // How long we sleep waiting to receive packets from the channel.
         const RECV_TIMEOUT: Duration = Duration::from_nanos(1000);

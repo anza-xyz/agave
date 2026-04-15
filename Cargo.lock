@@ -604,6 +604,7 @@ dependencies = [
  "aya",
  "bytes",
  "caps",
+ "crossbeam-channel",
  "crossbeam-queue",
  "libc",
  "log",

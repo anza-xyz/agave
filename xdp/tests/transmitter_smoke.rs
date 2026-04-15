@@ -6,10 +6,11 @@ use {
     agave_cpu_utils::cpu_affinity,
     agave_xdp::{
         gre::packet::GRE_HEADER_BASE_SIZE,
-        netlink::MacAddress,
+        netlink::{MacAddress, netlink_get_neighbors},
         packet::{ETH_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE},
         transmitter::{
-            BytesTxPacket, QueueCpuBinding, Transmitter, TransmitterBuilder, XdpConfig, XdpSender,
+            BytesTxPacket, NeighborIntervals, QueueCpuBinding, Transmitter, TransmitterBuilder,
+            XdpConfig, XdpSender,
         },
     },
     bytes::Bytes,
@@ -22,8 +23,8 @@ use {
         },
     },
     std::{
-        io, mem,
-        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+        fs, io, mem,
+        net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
         ops::Range,
         os::fd::{AsFd, AsRawFd, OwnedFd},
         sync::{
@@ -400,6 +401,152 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
             Duration::from_secs(3),
         )
         .expect("receive UDP frame from AF_XDP transmitter");
+    assert_eq!(received, payload.as_ref());
+}
+
+#[test]
+#[ignore = "requires root and network namespace privileges"]
+fn transmitter_resolves_neighbors() {
+    let cpu_id = transmitter_cpu();
+
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
+
+    // both veth endpoints are local, configure the peer to accept ARP from a local source address.
+    fs::write("/proc/sys/net/ipv4/conf/axdp1/accept_local", "1")
+        .expect("enable accept_local on veth peer");
+
+    let neighbor_intervals = NeighborIntervals {
+        use_interval: Duration::from_millis(100),
+        miss_interval: Duration::from_millis(10),
+    };
+    // how long before a neighbor entry is considered stale and needs to be touched again
+    fs::write(
+        "/proc/sys/net/ipv4/neigh/axdp0/base_reachable_time_ms",
+        "500",
+    )
+    .expect("shorten neighbor reachable time");
+    fs::write("/proc/sys/net/ipv4/neigh/axdp0/delay_first_probe_time", "0")
+        .expect("disable neighbor probe delay");
+
+    let receiver = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
+    let dst_port = 45_682;
+    let src_port = 12_348;
+    let destination = SocketAddr::V4(SocketAddrV4::new(links.right_ip, dst_port));
+
+    let exit = Arc::new(AtomicBool::new(false));
+    let config = XdpConfig::with_tx_channel_cap(
+        Some(common::LEFT_IFACE.to_string()),
+        vec![QueueCpuBinding {
+            queue: 0,
+            cpu: cpu_id,
+        }],
+        false,
+        TEST_TX_CHANNEL_CAP,
+    );
+    let (transmitter, sender) =
+        TransmitterBuilder::new_with_intervals(config, Arc::clone(&exit), neighbor_intervals)
+            .expect("build copy-mode transmitter")
+            .build();
+    let transmitter = TransmitterGuard::new(transmitter, sender, exit);
+
+    let neighbors = netlink_get_neighbors(None, libc::AF_INET as u8).expect("read neighbor table");
+    assert!(
+        neighbors.iter().all(|neighbor| {
+            neighbor.ifindex != links.left_if_index as i32
+                || neighbor.destination != Some(IpAddr::V4(links.right_ip))
+        }),
+        "neighbor unexpectedly exists before sending"
+    );
+
+    // this should resolve the neighbor. The packet is lost because the neighbor is not yet
+    // reachable.
+    let packet = BytesTxPacket::new(
+        SocketAddrV4::new(links.left_ip, src_port),
+        destination,
+        None,
+        Bytes::from_static(b"agave-xdp-neighbor-resolution"),
+    );
+    transmitter
+        .sender()
+        .try_send(0, packet)
+        .expect("queue packet to resolve neighbor");
+
+    common::wait_until(
+        "neighbor to become reachable",
+        Duration::from_secs(3),
+        || {
+            netlink_get_neighbors(None, libc::AF_INET as u8)
+                .expect("read neighbor table")
+                .into_iter()
+                .find(|neighbor| {
+                    neighbor.ifindex == links.left_if_index as i32
+                        && neighbor.destination == Some(IpAddr::V4(links.right_ip))
+                        && neighbor.lladdr == Some(links.right_mac)
+                        && neighbor.state & libc::NUD_REACHABLE != 0
+                })
+        },
+    );
+
+    // now wait for it to go stale
+    common::wait_until("neighbor to become stale", Duration::from_secs(3), || {
+        netlink_get_neighbors(None, libc::AF_INET as u8)
+            .expect("read neighbor table")
+            .into_iter()
+            .find(|neighbor| {
+                neighbor.ifindex == links.left_if_index as i32
+                    && neighbor.destination == Some(IpAddr::V4(links.right_ip))
+                    && neighbor.lladdr == Some(links.right_mac)
+                    && neighbor.state & libc::NUD_STALE != 0
+            })
+    });
+
+    // this should refresh
+    let payload = Bytes::from_static(b"agave-xdp-neighbor-touch");
+    let packet = BytesTxPacket::new(
+        SocketAddrV4::new(links.left_ip, src_port),
+        destination,
+        None,
+        payload.clone(),
+    );
+    transmitter
+        .sender()
+        .try_send(0, packet)
+        .expect("queue packet to touch stale neighbor");
+
+    common::wait_until(
+        "stale neighbor to be touched",
+        Duration::from_secs(3),
+        || {
+            netlink_get_neighbors(None, libc::AF_INET as u8)
+                .expect("read neighbor table")
+                .into_iter()
+                .find(|neighbor| {
+                    let touched = libc::NUD_DELAY | libc::NUD_PROBE | libc::NUD_REACHABLE;
+                    neighbor.ifindex == links.left_if_index as i32
+                        && neighbor.destination == Some(IpAddr::V4(links.right_ip))
+                        && neighbor.lladdr == Some(links.right_mac)
+                        && neighbor.state & touched != 0
+                })
+        },
+    );
+
+    let mut buf = [0u8; 2048];
+    let received = receiver
+        .recv_matching_udp(
+            &mut buf,
+            &ExpectedUdpPacket {
+                src_mac: links.left_mac,
+                dst_mac: links.right_mac,
+                src_ip: links.left_ip,
+                dst_ip: links.right_ip,
+                src_port,
+                dst_port,
+                payload: payload.as_ref(),
+            },
+            Duration::from_secs(3),
+        )
+        .expect("receive UDP frame after touching stale neighbor");
     assert_eq!(received, payload.as_ref());
 }
 
