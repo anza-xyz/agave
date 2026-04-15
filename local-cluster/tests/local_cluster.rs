@@ -1502,26 +1502,6 @@ fn test_fail_entry_verification_leader() {
 
 #[test]
 #[serial]
-#[ignore]
-#[allow(unused_attributes)]
-fn test_fake_shreds_broadcast_leader() {
-    agave_logger::setup_with_default(RUST_LOG_FILTER);
-    let node_stakes = vec![300, 100];
-    let (cluster, _) = test_faulty_node(
-        BroadcastStageType::BroadcastFakeShreds,
-        node_stakes,
-        None,
-        None,
-    );
-    cluster.check_for_new_roots(
-        16,
-        "test_fake_shreds_broadcast_leader",
-        SocketAddrSpace::Unspecified,
-    );
-}
-
-#[test]
-#[serial]
 // Test that when a leader is leader for banks B_i..B_{i+n}, and B_i is not
 // votable, then B_{i+1} still chains to B_i
 fn test_no_voting() {
