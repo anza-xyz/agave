@@ -1132,7 +1132,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             "ref count should be one after cleaning all entries"
         );
 
-        entry.set_dirty(true);
+        entry.mark_dirty();
 
         // Return the last entry in the slot list, which is the only one
         *slot_list
