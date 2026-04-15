@@ -29,6 +29,7 @@ use {
     solana_keypair::Signer,
     solana_ledger::{
         blockstore::{Blockstore, SlotMeta},
+        blockstore_meta::BlockLocation,
         shred,
     },
     solana_measure::measure::Measure,
@@ -82,7 +83,7 @@ pub type ConfirmedSlotsSender = CrossbeamSender<Vec<Slot>>;
 pub type ConfirmedSlotsReceiver = CrossbeamReceiver<Vec<Slot>>;
 pub type DumpedSlotsSender = CrossbeamSender<Vec<(Slot, Hash)>>;
 pub type DumpedSlotsReceiver = CrossbeamReceiver<Vec<(Slot, Hash)>>;
-pub type OutstandingShredRepairs = OutstandingRequests<ShredRepairType>;
+pub type OutstandingShredRepairs = OutstandingRequests<ShredRepairType, BlockLocation>;
 pub type PopularPrunedForksSender = CrossbeamSender<Vec<Slot>>;
 pub type PopularPrunedForksReceiver = CrossbeamReceiver<Vec<Slot>>;
 
@@ -973,7 +974,7 @@ impl RepairService {
         let nonce = outstanding_repair_requests
             .write()
             .unwrap()
-            .add_request(repair_request, timestamp());
+            .add_request_with_metadata(repair_request, timestamp(), Some(BlockLocation::Original));
 
         // Create repair request
         let header =
@@ -1102,7 +1103,16 @@ impl RepairService {
                 if let Some(repairs) = repairs {
                     let mut outstanding_requests = outstanding_requests.write().unwrap();
                     for repair_type in repairs {
-                        let nonce = outstanding_requests.add_request(repair_type, timestamp());
+                        let location = repair_type
+                            .block_id()
+                            .map_or(BlockLocation::Original, |block_id| {
+                                BlockLocation::Alternate { block_id }
+                            });
+                        let nonce = outstanding_requests.add_request_with_metadata(
+                            repair_type,
+                            timestamp(),
+                            Some(location),
+                        );
 
                         match serve_repair.map_repair_request(
                             &repair_type,

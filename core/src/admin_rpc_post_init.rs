@@ -1,8 +1,7 @@
 use {
     crate::{
-        banking_stage::BankingControlMsg,
-        cluster_slots_service::cluster_slots::ClusterSlots,
-        repair::{outstanding_requests::OutstandingRequests, serve_repair::ShredRepairType},
+        banking_stage::BankingControlMsg, cluster_slots_service::cluster_slots::ClusterSlots,
+        repair::repair_service::OutstandingShredRepairs,
     },
     solana_gossip::{cluster_info::ClusterInfo, node::NodeMultihoming},
     solana_ledger::blockstore::Blockstore,
@@ -83,7 +82,7 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
     pub notifies: Arc<RwLock<KeyUpdaters>>,
     pub repair_socket: Arc<UdpSocket>,
-    pub outstanding_repair_requests: Arc<RwLock<OutstandingRequests<ShredRepairType>>>,
+    pub outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
     pub cluster_slots: Arc<ClusterSlots>,
     pub node: Option<Arc<NodeMultihoming>>,
     pub banking_control_sender: mpsc::Sender<BankingControlMsg>,

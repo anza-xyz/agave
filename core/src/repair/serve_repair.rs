@@ -37,9 +37,12 @@ use {
     },
     solana_hash::{HASH_BYTES, Hash},
     solana_keypair::{Keypair, signable::Signable},
-    solana_ledger::shred::{
-        self, DATA_SHREDS_PER_FEC_BLOCK, MAX_FEC_SETS_PER_SLOT, Nonce, SIZE_OF_NONCE,
-        ShredFetchStats, ShredType, layout::get_merkle_root, merkle_tree,
+    solana_ledger::{
+        blockstore_meta::BlockLocation,
+        shred::{
+            self, DATA_SHREDS_PER_FEC_BLOCK, MAX_FEC_SETS_PER_SLOT, Nonce, SIZE_OF_NONCE,
+            ShredFetchStats, ShredType, layout::get_merkle_root, merkle_tree,
+        },
     },
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
     solana_packet::PACKET_DATA_SIZE,
@@ -124,6 +127,15 @@ impl ShredRepairType {
             | ShredRepairType::HighestShred(slot, _)
             | ShredRepairType::Shred(slot, _) => *slot,
             ShredRepairType::ShredForBlockId { slot, .. } => *slot,
+        }
+    }
+
+    pub fn block_id(&self) -> Option<Hash> {
+        match self {
+            ShredRepairType::ShredForBlockId { block_id, .. } => Some(*block_id),
+            ShredRepairType::Orphan(_)
+            | ShredRepairType::HighestShred(_, _)
+            | ShredRepairType::Shred(_, _) => None,
         }
     }
 }
@@ -1515,7 +1527,19 @@ impl ServeRepair {
             }
         };
         let peer = repair_peers.sample(&mut rand::rng());
-        let nonce = outstanding_requests.add_request(repair_request, timestamp());
+        let location = repair_request
+            .block_id()
+            // Eager repair uses the Original blockstore column,
+            // however block id based repair shreds must be inserted in the
+            // Alternate column
+            .map_or(BlockLocation::Original, |block_id| {
+                BlockLocation::Alternate { block_id }
+            });
+        let nonce = outstanding_requests.add_request_with_metadata(
+            repair_request,
+            timestamp(),
+            Some(location),
+        );
         let out = self.map_repair_request(
             &repair_request,
             &peer.pubkey,
