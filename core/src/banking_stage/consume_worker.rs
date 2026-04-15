@@ -175,7 +175,6 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 }
 
-#[allow(dead_code)]
 #[cfg(unix)]
 pub(crate) mod external {
     use {
