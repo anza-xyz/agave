@@ -61,7 +61,13 @@ pub fn spawn_stake_weighted_qos_server(
             )
         }
         SwQosConfig::MaxStreams(config) => {
-            let qos = SwQosMaxStreams::new(config, stats.clone(), staked_nodes, cancel.clone());
+            let qos = SwQosMaxStreams::new(
+                config,
+                packet_sender.clone(),
+                stats.clone(),
+                staked_nodes,
+                cancel.clone(),
+            );
             spawn_server(
                 name,
                 stats,

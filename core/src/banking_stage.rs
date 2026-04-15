@@ -38,6 +38,7 @@ use {
         bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
     },
+    solana_streamer::quic::SchedulerIngestBufferStatus,
     solana_time_utils::AtomicInterval,
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
@@ -102,7 +103,7 @@ const MAX_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 const DEFAULT_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-const TOTAL_BUFFERED_PACKETS: usize = 100_000;
+pub(crate) const TOTAL_BUFFERED_PACKETS: usize = 100_000;
 const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Default)]
@@ -380,6 +381,7 @@ pub struct BankingStage {
     committer: Committer,
     log_messages_bytes_limit: Option<usize>,
     threads: FuturesUnordered<NamedTask<std::thread::Result<()>>>,
+    buffer_status: Option<SchedulerIngestBufferStatus>,
 }
 
 impl BankingStage {
@@ -399,6 +401,7 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+        buffer_status: Option<SchedulerIngestBufferStatus>,
     ) -> BankingStageHandle {
         let committer = Committer::new(
             transaction_status_sender,
@@ -421,6 +424,7 @@ impl BankingStage {
             committer,
             log_messages_bytes_limit,
             threads: FuturesUnordered::default(),
+            buffer_status,
         };
 
         // Spawn the manager thread.
@@ -600,6 +604,7 @@ impl BankingStage {
         // Macro to spawn the scheduler. Different type on `scheduler` and thus
         // scheduler_controller mean we cannot have an easy if for `scheduler`
         // assignment without introducing `dyn`.
+        let buffer_status = self.buffer_status.clone();
         macro_rules! spawn_scheduler {
             ($scheduler:ident) => {
                 let exit = exit.clone();
@@ -616,6 +621,7 @@ impl BankingStage {
                                 sharable_banks,
                                 $scheduler,
                                 worker_metrics,
+                                buffer_status,
                             );
 
                             match scheduler_controller.run() {
@@ -991,6 +997,7 @@ mod tests {
             None,
             bank_forks,
             None,
+            None,
         );
         drop(non_vote_sender);
         drop(tpu_vote_sender);
@@ -1050,6 +1057,7 @@ mod tests {
             replay_vote_sender,
             None,
             bank_forks, // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
+            None,
             None,
         );
 
@@ -1205,6 +1213,7 @@ mod tests {
                 None,
                 bank_forks,
                 None,
+                None,
             );
 
             // wait for banking_stage to eat the packets
@@ -1357,6 +1366,7 @@ mod tests {
             replay_vote_sender,
             None,
             bank_forks,
+            None,
             None,
         );
 

@@ -164,6 +164,7 @@ impl Tpu {
         let (packet_sender, packet_receiver) = bounded(TPU_CHANNEL_SIZE);
         let (vote_packet_sender, vote_packet_receiver) = unbounded();
         let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
+
         let fetch_stage = FetchStage::new_with_sender(
             tpu_vote_sockets,
             exit.clone(),
@@ -218,11 +219,14 @@ impl Tpu {
             .into_iter()
             .map(Into::into)
             .collect();
-        let SpawnServerResult {
-            endpoints: _,
-            thread: tpu_quic_t,
-            key_updater,
-        } = spawn_stake_weighted_qos_server(
+        let (
+            SpawnServerResult {
+                endpoints: _,
+                thread: tpu_quic_t,
+                key_updater,
+            },
+            scheduler_buffer_status,
+        ) = spawn_stake_weighted_qos_server(
             "solQuicTpu",
             "quic_streamer_tpu",
             transactions_quic_sockets,
@@ -234,6 +238,10 @@ impl Tpu {
             cancel.clone(),
         )
         .unwrap();
+        scheduler_buffer_status.max_size.store(
+            crate::banking_stage::TOTAL_BUFFERED_PACKETS,
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         // Streamer for TPU forward
         let transactions_forwards_quic_sockets: Vec<QuicSocket> =
@@ -241,11 +249,14 @@ impl Tpu {
                 .into_iter()
                 .map(Into::into)
                 .collect();
-        let SpawnServerResult {
-            endpoints: _,
-            thread: tpu_forwards_quic_t,
-            key_updater: forwards_key_updater,
-        } = spawn_stake_weighted_qos_server(
+        let (
+            SpawnServerResult {
+                endpoints: _,
+                thread: tpu_forwards_quic_t,
+                key_updater: forwards_key_updater,
+            },
+            _,
+        ) = spawn_stake_weighted_qos_server(
             "solQuicTpuFwd",
             "quic_streamer_tpu_forwards",
             transactions_forwards_quic_sockets,
@@ -322,6 +333,7 @@ impl Tpu {
             log_messages_bytes_limit,
             bank_forks.clone(),
             prioritization_fee_cache,
+            Some(scheduler_buffer_status),
         );
 
         #[cfg(unix)]

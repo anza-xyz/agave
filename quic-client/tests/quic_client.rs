@@ -70,11 +70,14 @@ mod tests {
         let (sender, receiver) = unbounded();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (s, cancel, keypair) = server_args();
-        let SpawnServerResult {
-            endpoints: _,
-            thread: t,
-            key_updater: _,
-        } = solana_streamer::quic::spawn_stake_weighted_qos_server(
+        let (
+            SpawnServerResult {
+                endpoints: _,
+                thread: t,
+                key_updater: _,
+            },
+            _,
+        ) = solana_streamer::quic::spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             vec![s.try_clone().unwrap().into()],
@@ -210,11 +213,14 @@ mod tests {
         let (sender, receiver) = unbounded();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (request_recv_socket, request_recv_cancel, keypair) = server_args();
-        let SpawnServerResult {
-            endpoints: request_recv_endpoints,
-            thread: request_recv_thread,
-            key_updater: _,
-        } = solana_streamer::quic::spawn_stake_weighted_qos_server(
+        let (
+            SpawnServerResult {
+                endpoints: request_recv_endpoints,
+                thread: request_recv_thread,
+                key_updater: _,
+            },
+            _,
+        ) = solana_streamer::quic::spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [request_recv_socket.try_clone().unwrap().into()],
@@ -235,11 +241,14 @@ mod tests {
         let addr = response_recv_socket.local_addr().unwrap().ip();
         let port = response_recv_socket.local_addr().unwrap().port();
         let server_addr = SocketAddr::new(addr, port);
-        let SpawnServerResult {
-            endpoints: mut response_recv_endpoints,
-            thread: response_recv_thread,
-            key_updater: _,
-        } = solana_streamer::quic::spawn_stake_weighted_qos_server(
+        let (
+            SpawnServerResult {
+                endpoints: mut response_recv_endpoints,
+                thread: response_recv_thread,
+                key_updater: _,
+            },
+            _,
+        ) = solana_streamer::quic::spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [response_recv_socket.into()],

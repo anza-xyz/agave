@@ -581,6 +581,26 @@ impl Default for SwQosConfig {
     }
 }
 
+/// Shared view of the scheduler's ingest buffer occupancy.
+///
+/// Created in TPU setup, cloned to both the scheduler (which updates
+/// `current_size`) and the streamer QoS layer (which reads it to detect
+/// downstream saturation).
+#[derive(Clone)]
+pub struct SchedulerIngestBufferStatus {
+    pub current_size: Arc<AtomicUsize>,
+    pub max_size: Arc<AtomicUsize>,
+}
+
+impl Default for SchedulerIngestBufferStatus {
+    fn default() -> Self {
+        Self {
+            current_size: Arc::new(AtomicUsize::new(0)),
+            max_size: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
 impl SwQosConfig {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn default_for_tests() -> Self {
@@ -684,7 +704,7 @@ pub fn spawn_stake_weighted_qos_server(
     quic_server_params: QuicStreamerConfig,
     qos_config: SwQosConfig,
     cancel: CancellationToken,
-) -> Result<SpawnServerResult, QuicServerError> {
+) -> Result<(SpawnServerResult, SchedulerIngestBufferStatus), QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
     match qos_config {
         SwQosConfig::Sleep(config) => {
@@ -700,9 +720,17 @@ pub fn spawn_stake_weighted_qos_server(
                 qos,
                 cancel,
             )
+            .map(|ssr| (ssr, SchedulerIngestBufferStatus::default()))
         }
         SwQosConfig::MaxStreams(config) => {
-            let qos = SwQosMaxStreams::new(config, stats.clone(), staked_nodes, cancel.clone());
+            let qos = SwQosMaxStreams::new(
+                config,
+                packet_sender.clone(),
+                stats.clone(),
+                staked_nodes,
+                cancel.clone(),
+            );
+            let buffer_status = qos.scheduler_buffer_status().clone();
             spawn_runtime_and_server(
                 thread_name,
                 metrics_name,
@@ -714,6 +742,7 @@ pub fn spawn_stake_weighted_qos_server(
                 qos,
                 cancel,
             )
+            .map(|ssr| (ssr, buffer_status))
         }
     }
 }
@@ -840,11 +869,14 @@ mod test {
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let cancel = CancellationToken::new();
-        let SpawnServerResult {
-            endpoints: _,
-            thread: t,
-            key_updater: _,
-        } = spawn_stake_weighted_qos_server(
+        let (
+            SpawnServerResult {
+                endpoints: _,
+                thread: t,
+                key_updater: _,
+            },
+            _,
+        ) = spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [s.into()],
@@ -896,11 +928,14 @@ mod test {
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let cancel = CancellationToken::new();
-        let SpawnServerResult {
-            endpoints: _,
-            thread: t,
-            key_updater: _,
-        } = spawn_stake_weighted_qos_server(
+        let (
+            SpawnServerResult {
+                endpoints: _,
+                thread: t,
+                key_updater: _,
+            },
+            _,
+        ) = spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [s.into()],
@@ -1088,11 +1123,14 @@ mod test {
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let cancel = CancellationToken::new();
-        let SpawnServerResult {
-            endpoints: _,
-            thread: t,
-            key_updater: _,
-        } = spawn_stake_weighted_qos_server(
+        let (
+            SpawnServerResult {
+                endpoints: _,
+                thread: t,
+                key_updater: _,
+            },
+            _,
+        ) = spawn_stake_weighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [s.into()],

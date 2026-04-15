@@ -9,7 +9,13 @@ use {
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    std::{collections::BTreeSet, iter::Rev, ops::Bound, sync::Arc},
+    solana_streamer::quic::SchedulerIngestBufferStatus,
+    std::{
+        collections::BTreeSet,
+        iter::Rev,
+        ops::Bound,
+        sync::{Arc, atomic::Ordering},
+    },
 };
 
 /// This structure will hold `TransactionState` for the entirety of a
@@ -43,6 +49,7 @@ pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
     priority_queue: BTreeSet<TransactionPriorityId>,
     id_to_transaction_state: Slab<TransactionState<Tx>>,
     held_transactions: Vec<TransactionPriorityId>,
+    buffer_status: Option<SchedulerIngestBufferStatus>,
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -117,6 +124,9 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
         cursor: Option<&TransactionPriorityId>,
     ) -> Rev<std::collections::btree_set::Range<'_, TransactionPriorityId>>;
 
+    /// Attach a shared buffer status tracker. Default: no-op.
+    fn set_buffer_status(&mut self, _status: SchedulerIngestBufferStatus) {}
+
     #[cfg(feature = "dev-context-only-utils")]
     fn clear(&mut self);
 }
@@ -125,6 +135,20 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
 // pushing a new transaction into the container to avoid reallocation.
 pub(crate) const EXTRA_CAPACITY: usize = 64;
 
+impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
+    fn increment_buffer_status(&self) {
+        if let Some(ref status) = self.buffer_status {
+            status.current_size.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn decrement_buffer_status(&self) {
+        if let Some(ref status) = self.buffer_status {
+            status.current_size.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
 impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<Tx> {
     fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -132,6 +156,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
             priority_queue: BTreeSet::new(),
             id_to_transaction_state: Slab::with_capacity(capacity + EXTRA_CAPACITY),
             held_transactions: Vec::with_capacity(capacity),
+            buffer_status: None,
         }
     }
 
@@ -184,6 +209,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         for _ in 0..num_dropped {
             let priority_id = self.priority_queue.pop_first().expect("queue is not empty");
             self.id_to_transaction_state.remove(priority_id.id);
+            self.decrement_buffer_status();
         }
 
         num_dropped
@@ -195,6 +221,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
 
     fn remove_by_id(&mut self, id: TransactionId) {
         let state = self.id_to_transaction_state.remove(id);
+        self.decrement_buffer_status();
         // Remove from queue if present. May not be present if the transaction was already popped
         // (in-flight/scheduling).
         self.priority_queue
@@ -227,10 +254,17 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         }
     }
 
+    fn set_buffer_status(&mut self, status: SchedulerIngestBufferStatus) {
+        self.buffer_status = Some(status);
+    }
+
     #[cfg(feature = "dev-context-only-utils")]
     fn clear(&mut self) {
         self.priority_queue.clear();
         self.id_to_transaction_state.clear();
+        if let Some(ref status) = self.buffer_status {
+            status.current_size.store(0, Ordering::Relaxed);
+        }
     }
 }
 
@@ -249,6 +283,7 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
             let entry = self.get_vacant_map_entry();
             let transaction_id = entry.key();
             entry.insert(TransactionState::new(transaction, max_age, priority, cost));
+            self.increment_buffer_status();
             TransactionPriorityId::new(priority, transaction_id)
         };
 
@@ -308,6 +343,7 @@ impl TransactionViewStateContainer {
         // Attempt to insert the transaction.
         if let Ok(state) = f(Arc::clone(bytes_entry)) {
             vacant_entry.insert(state);
+            self.inner.increment_buffer_status();
             Some(transaction_id)
         } else {
             None
@@ -395,6 +431,10 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
         cursor: Option<&TransactionPriorityId>,
     ) -> Rev<std::collections::btree_set::Range<'_, TransactionPriorityId>> {
         self.inner.recheck_iter(cursor)
+    }
+
+    fn set_buffer_status(&mut self, status: SchedulerIngestBufferStatus) {
+        self.inner.set_buffer_status(status);
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -644,5 +684,33 @@ mod tests {
         container.remove_by_id(popped.id);
         assert!(container.get_transaction(popped.id).is_none());
         assert!(container.is_empty());
+    }
+
+    #[test]
+    fn test_buffer_status_tracks_insert_and_remove() {
+        use solana_streamer::quic::SchedulerIngestBufferStatus;
+        use std::sync::atomic::AtomicUsize;
+
+        let current_size = Arc::new(AtomicUsize::new(0));
+        let status = SchedulerIngestBufferStatus {
+            current_size: current_size.clone(),
+            max_size: Arc::new(AtomicUsize::new(100)),
+        };
+
+        let mut container = TransactionStateContainer::with_capacity(5);
+        container.set_buffer_status(status);
+
+        // Insert 3 transactions, atomic should track them
+        push_to_container(&mut container, 3);
+        assert_eq!(current_size.load(Ordering::Relaxed), 3);
+
+        // Remove one by ID
+        let top = container.pop().unwrap();
+        container.remove_by_id(top.id);
+        assert_eq!(current_size.load(Ordering::Relaxed), 2);
+
+        // Clear resets to 0
+        container.clear();
+        assert_eq!(current_size.load(Ordering::Relaxed), 0);
     }
 }

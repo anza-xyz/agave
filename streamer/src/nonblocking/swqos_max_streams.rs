@@ -1,4 +1,5 @@
 use {
+    crate::quic::SchedulerIngestBufferStatus,
     crate::{
         nonblocking::{
             load_debt_tracker::LoadDebtTracker,
@@ -17,8 +18,10 @@ use {
         },
         streamer::StakedNodes,
     },
+    crossbeam_channel::Sender,
     percentage::Percentage,
     quinn::Connection,
+    solana_perf::packet::PacketBatch,
     solana_time_utils as timing,
     std::{
         future::Future,
@@ -40,6 +43,11 @@ const MAX_RTT: Duration = Duration::from_millis(200);
 
 /// Min RTT for BDP scaling.
 const MIN_RTT: Duration = Duration::from_millis(1);
+
+/// Fraction of channel capacity at which we consider the downstream pipeline
+/// saturated. When `packet_sender.len() / capacity >= this`, `compute_max_streams`
+/// treats the system as saturated even if the token bucket hasn't drained.
+const CHANNEL_SATURATION_FRACTION: f64 = 0.20;
 
 /// Backward-compat RTT floor for unsaturated staked peers.  Matches the old
 /// SWQoS REFERENCE_RTT_MS so that low-RTT staked connections keep the same
@@ -97,6 +105,11 @@ pub struct SwQosMaxStreams {
     config: SwQosMaxStreamsConfig,
     capacity_tps: u64,
     load_tracker: Arc<LoadDebtTracker>,
+    packet_sender: Sender<PacketBatch>,
+    /// Pre-computed threshold: `capacity * CHANNEL_SATURATION_FRACTION`.
+    /// `None` for unbounded channels (never channel-saturated).
+    channel_saturation_threshold: Option<usize>,
+    scheduler_buffer_status: SchedulerIngestBufferStatus,
     stats: Arc<StreamerStats>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     unstaked_connection_table: Arc<Mutex<ConnectionTable<SwQosMaxStreamsStreamerCounter>>>,
@@ -130,12 +143,16 @@ impl SwQosMaxStreams {
 
     pub fn new(
         config: SwQosMaxStreamsConfig,
+        packet_sender: Sender<PacketBatch>,
         stats: Arc<StreamerStats>,
         staked_nodes: Arc<RwLock<StakedNodes>>,
         cancel: CancellationToken,
     ) -> Self {
         let max_streams_per_second = config.max_streams_per_ms * 1000;
         let burst_capacity = max_streams_per_second / 10;
+        let channel_saturation_threshold = packet_sender
+            .capacity()
+            .map(|cap| (cap as f64 * CHANNEL_SATURATION_FRACTION) as usize);
 
         Self {
             config,
@@ -145,6 +162,9 @@ impl SwQosMaxStreams {
                 burst_capacity,
                 Duration::from_millis(1),
             )),
+            packet_sender,
+            channel_saturation_threshold,
+            scheduler_buffer_status: SchedulerIngestBufferStatus::default(),
             stats,
             staked_nodes,
             unstaked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
@@ -156,6 +176,30 @@ impl SwQosMaxStreams {
                 cancel,
             ))),
         }
+    }
+
+    pub fn scheduler_buffer_status(&self) -> &SchedulerIngestBufferStatus {
+        &self.scheduler_buffer_status
+    }
+
+    /// Whether the downstream channel is saturated (≥20% full).
+    /// Returns false for unbounded channels.
+    fn is_channel_saturated(&self) -> bool {
+        self.channel_saturation_threshold
+            .is_some_and(|threshold| self.packet_sender.len() >= threshold)
+    }
+
+    /// Whether the scheduler ingest buffer is over capacity.
+    /// Returns false when max_size is 0 (unconfigured).
+    fn is_scheduler_buffer_saturated(&self) -> bool {
+        let s = &self.scheduler_buffer_status;
+        let max = s.max_size.load(Ordering::Relaxed);
+        max > 0 && s.current_size.load(Ordering::Relaxed) > max
+    }
+
+    /// Combined downstream saturation check.
+    fn is_downstream_saturated(&self) -> bool {
+        self.is_channel_saturated() || self.is_scheduler_buffer_saturated()
     }
 
     /// Core MAX_STREAMS computation (testable without a quinn::Connection).
@@ -470,7 +514,7 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
         context: &SwQosMaxStreamsConnectionContext,
         rtt: Duration,
     ) -> MaxStreamsAction {
-        let saturated = self.load_tracker.is_saturated();
+        let saturated = self.load_tracker.is_saturated() || self.is_downstream_saturated();
         match self.compute_max_streams_for_rtt(context, rtt, saturated) {
             Some(0) => MaxStreamsAction::Park,
             Some(max_streams) => MaxStreamsAction::Set(max_streams),
@@ -481,7 +525,7 @@ impl QosController<SwQosMaxStreamsConnectionContext> for SwQosMaxStreams {
     fn on_stream_accepted(&self, context: &SwQosMaxStreamsConnectionContext) {
         self.load_tracker.acquire();
         if matches!(context.peer_type, ConnectionPeerType::Staked(_))
-            && self.load_tracker.is_saturated()
+            && (self.load_tracker.is_saturated() || self.is_downstream_saturated())
         {
             self.stats
                 .saturated_staked_streams
@@ -551,7 +595,9 @@ pub mod test {
         let cancel = CancellationToken::new();
         let stats = Arc::new(StreamerStats::default());
         let staked_nodes = Arc::new(RwLock::new(crate::streamer::StakedNodes::default()));
-        SwQosMaxStreams::new(config, stats, staked_nodes, cancel)
+        // Unbounded sender: never channel-saturated, preserving existing test behavior.
+        let (sender, _receiver) = crossbeam_channel::unbounded();
+        SwQosMaxStreams::new(config, sender, stats, staked_nodes, cancel)
     }
 
     fn unstaked_context() -> SwQosMaxStreamsConnectionContext {
@@ -863,5 +909,204 @@ pub mod test {
             "large/small ratio={}, expected large staker to dominate",
             q_large / q_small
         );
+    }
+
+    // -- Channel saturation --
+
+    fn make_swqos_with_bounded_channel(
+        config: SwQosMaxStreamsConfig,
+        capacity: usize,
+    ) -> (SwQosMaxStreams, crossbeam_channel::Receiver<PacketBatch>) {
+        let cancel = CancellationToken::new();
+        let stats = Arc::new(StreamerStats::default());
+        let staked_nodes = Arc::new(RwLock::new(crate::streamer::StakedNodes::default()));
+        let (sender, receiver) = crossbeam_channel::bounded(capacity);
+        let swqos = SwQosMaxStreams::new(config, sender, stats, staked_nodes, cancel);
+        (swqos, receiver)
+    }
+
+    #[test]
+    fn test_channel_saturation_threshold_computed() {
+        let (swqos, _rx) = make_swqos_with_bounded_channel(SwQosMaxStreamsConfig::default(), 100);
+        // 100 * 0.20 = 20
+        assert_eq!(swqos.channel_saturation_threshold, Some(20));
+    }
+
+    #[test]
+    fn test_unbounded_channel_never_saturated() {
+        let swqos = make_swqos(SwQosMaxStreamsConfig::default());
+        assert_eq!(swqos.channel_saturation_threshold, None);
+        assert!(!swqos.is_channel_saturated());
+    }
+
+    #[test]
+    fn test_channel_saturation_at_20_percent() {
+        let capacity = 100;
+        let (swqos, _rx) =
+            make_swqos_with_bounded_channel(SwQosMaxStreamsConfig::default(), capacity);
+        let threshold = swqos.channel_saturation_threshold.unwrap(); // 20
+
+        // Fill to threshold - 1: not saturated
+        let dummy = || PacketBatch::from(Vec::<solana_perf::packet::BytesPacket>::new());
+        for _ in 0..threshold - 1 {
+            swqos.packet_sender.send(dummy()).unwrap();
+        }
+        assert!(!swqos.is_channel_saturated());
+
+        // One more pushes to threshold: saturated
+        swqos.packet_sender.send(dummy()).unwrap();
+        assert!(swqos.is_channel_saturated());
+    }
+
+    #[test]
+    fn test_channel_saturation_triggers_saturated_quotas() {
+        let capacity = 100;
+        let (swqos, _rx) = make_swqos_with_bounded_channel(
+            SwQosMaxStreamsConfig {
+                max_streams_per_ms: 500,
+                ..SwQosMaxStreamsConfig::default()
+            },
+            capacity,
+        );
+
+        let ctx = staked_context(1_000, 100_000, 1);
+        let rtt = Duration::from_millis(100);
+
+        // Unsaturated: full base quota
+        let unsaturated = swqos.compute_max_streams(&ctx, rtt);
+        assert_eq!(
+            unsaturated,
+            MaxStreamsAction::Set(DEFAULT_BASE_MAX_STREAMS_STAKED)
+        );
+
+        // Fill channel to 20%
+        let dummy = || PacketBatch::from(Vec::<solana_perf::packet::BytesPacket>::new());
+        for _ in 0..swqos.channel_saturation_threshold.unwrap() {
+            swqos.packet_sender.send(dummy()).unwrap();
+        }
+
+        // Now should get saturated quota (stake-proportional, lower)
+        let saturated = swqos.compute_max_streams(&ctx, rtt);
+        match saturated {
+            MaxStreamsAction::Set(max_streams) => {
+                assert!(
+                    max_streams < DEFAULT_BASE_MAX_STREAMS_STAKED,
+                    "channel-saturated quota {max_streams} should be less than unsaturated {}",
+                    DEFAULT_BASE_MAX_STREAMS_STAKED,
+                );
+            }
+            other => panic!("expected Set, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_channel_saturation_parks_unstaked() {
+        let capacity = 100;
+        let (swqos, _rx) =
+            make_swqos_with_bounded_channel(SwQosMaxStreamsConfig::default(), capacity);
+
+        let ctx = unstaked_context();
+        let rtt = Duration::from_millis(100);
+
+        // Fill channel to 20%
+        let dummy = || PacketBatch::from(Vec::<solana_perf::packet::BytesPacket>::new());
+        for _ in 0..swqos.channel_saturation_threshold.unwrap() {
+            swqos.packet_sender.send(dummy()).unwrap();
+        }
+
+        assert_eq!(swqos.compute_max_streams(&ctx, rtt), MaxStreamsAction::Park);
+    }
+
+    fn make_swqos_with_buffer_status(
+        config: SwQosMaxStreamsConfig,
+        max_size: usize,
+    ) -> (SwQosMaxStreams, Arc<AtomicUsize>) {
+        let cancel = CancellationToken::new();
+        let stats = Arc::new(StreamerStats::default());
+        let staked_nodes = Arc::new(RwLock::new(crate::streamer::StakedNodes::default()));
+        let (sender, _receiver) = crossbeam_channel::unbounded();
+        let swqos = SwQosMaxStreams::new(config, sender, stats, staked_nodes, cancel);
+        let status = swqos.scheduler_buffer_status();
+        status.max_size.store(max_size, Ordering::Relaxed);
+        let current_size = status.current_size.clone();
+        (swqos, current_size)
+    }
+
+    #[test]
+    fn test_scheduler_buffer_not_saturated_when_below_max() {
+        let (swqos, current_size) =
+            make_swqos_with_buffer_status(SwQosMaxStreamsConfig::default(), 100_000);
+        current_size.store(99_999, Ordering::Relaxed);
+        assert!(!swqos.is_scheduler_buffer_saturated());
+    }
+
+    #[test]
+    fn test_scheduler_buffer_not_saturated_at_exact_max() {
+        let (swqos, current_size) =
+            make_swqos_with_buffer_status(SwQosMaxStreamsConfig::default(), 100_000);
+        current_size.store(100_000, Ordering::Relaxed);
+        assert!(!swqos.is_scheduler_buffer_saturated());
+    }
+
+    #[test]
+    fn test_scheduler_buffer_saturated_above_max() {
+        let (swqos, current_size) =
+            make_swqos_with_buffer_status(SwQosMaxStreamsConfig::default(), 100_000);
+        current_size.store(100_001, Ordering::Relaxed);
+        assert!(swqos.is_scheduler_buffer_saturated());
+    }
+
+    #[test]
+    fn test_scheduler_buffer_saturation_triggers_saturated_quotas() {
+        let (swqos, current_size) = make_swqos_with_buffer_status(
+            SwQosMaxStreamsConfig {
+                max_streams_per_ms: 500,
+                ..SwQosMaxStreamsConfig::default()
+            },
+            100_000,
+        );
+
+        let ctx = staked_context(1_000, 100_000, 1);
+        let rtt = Duration::from_millis(100);
+
+        // Unsaturated: full base quota
+        let unsaturated = swqos.compute_max_streams(&ctx, rtt);
+        assert_eq!(
+            unsaturated,
+            MaxStreamsAction::Set(DEFAULT_BASE_MAX_STREAMS_STAKED)
+        );
+
+        // Push buffer over max
+        current_size.store(100_001, Ordering::Relaxed);
+
+        // Now should get saturated quota (lower)
+        let saturated = swqos.compute_max_streams(&ctx, rtt);
+        match saturated {
+            MaxStreamsAction::Set(max_streams) => {
+                assert!(
+                    max_streams < DEFAULT_BASE_MAX_STREAMS_STAKED,
+                    "buffer-saturated quota {max_streams} should be less than unsaturated {}",
+                    DEFAULT_BASE_MAX_STREAMS_STAKED,
+                );
+            }
+            other => panic!("expected Set, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_scheduler_buffer_saturation_parks_unstaked() {
+        let (swqos, current_size) =
+            make_swqos_with_buffer_status(SwQosMaxStreamsConfig::default(), 100_000);
+        let ctx = unstaked_context();
+        let rtt = Duration::from_millis(100);
+
+        current_size.store(100_001, Ordering::Relaxed);
+        assert_eq!(swqos.compute_max_streams(&ctx, rtt), MaxStreamsAction::Park);
+    }
+
+    #[test]
+    fn test_none_scheduler_buffer_never_saturated() {
+        let swqos = make_swqos(SwQosMaxStreamsConfig::default());
+        assert!(!swqos.is_scheduler_buffer_saturated());
     }
 }
