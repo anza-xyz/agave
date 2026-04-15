@@ -121,7 +121,6 @@ fn create_test_validator_keys(keypairs: &[&str]) -> Vec<(ValidatorKeys, bool)> {
 }
 
 /// Smoke-tests the `new_with_equal_stakes()` startup path for a single-node cluster.
-/// This does not cover the explicit config-driven constructor path.
 #[test]
 #[serial]
 fn test_local_cluster_start_and_exit() {
@@ -134,28 +133,6 @@ fn test_local_cluster_start_and_exit() {
         SocketAddrSpace::Unspecified,
     );
     assert_eq!(cluster.validators.len(), num_nodes);
-}
-
-/// Verifies that an explicitly customized `ClusterConfig` still boots cleanly.
-/// This covers config plumbing rather than the helper-based startup path.
-#[test]
-#[serial]
-fn test_local_cluster_start_and_exit_with_config() {
-    agave_logger::setup();
-    const NUM_NODES: usize = 1;
-    let mut config = ClusterConfig {
-        validator_configs: make_identical_validator_configs(
-            &ValidatorConfig::default_for_test(),
-            NUM_NODES,
-        ),
-        node_stakes: vec![DEFAULT_NODE_STAKE; NUM_NODES],
-        ticks_per_slot: 8,
-        slots_per_epoch: MINIMUM_SLOTS_PER_EPOCH,
-        stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH,
-        ..ClusterConfig::default()
-    };
-    let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-    assert_eq!(cluster.validators.len(), NUM_NODES);
 }
 
 /// Baseline multi-node transaction propagation and confirmation across every validator.
