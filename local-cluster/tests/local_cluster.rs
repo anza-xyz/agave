@@ -4356,9 +4356,6 @@ fn test_leader_failure_4() {
 // common ancestor votes in tower.
 // To allow this test to run in a reasonable time we change the
 // slot_hash expiry to 64 slots.
-
-/// Ensures a validator can eventually switch forks even when the slots referenced by its
-/// old local vote state have aged out of the slot-hashes sysvar.
 #[test]
 #[serial]
 fn test_slot_hash_expiry() {
