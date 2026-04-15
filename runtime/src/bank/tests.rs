@@ -1682,6 +1682,9 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
     let next_slot = bank.slot() + 1;
     let bank = Bank::new_from_parent(bank, SlotLeader::default(), next_slot);
 
+    let node_pubkey0 = solana_pubkey::new_rand();
+    let node_pubkey1 = solana_pubkey::new_rand();
+    let node_pubkey2 = solana_pubkey::new_rand();
     let vote_pubkey0 = solana_pubkey::new_rand();
     let vote_pubkey1 = solana_pubkey::new_rand();
     let vote_pubkey2 = solana_pubkey::new_rand();
@@ -1691,36 +1694,36 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
 
     // Create vote accounts
     let vote_account0 = vote_state::create_v4_account_with_authorized(
-        &vote_pubkey0,
+        &node_pubkey0,
         &authorized_voter.pubkey(),
         [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
         &authorized_voter.pubkey(),
         0,
-        &authorized_voter.pubkey(),
-        0,
         &vote_pubkey0,
+        0,
+        &node_pubkey0,
         100,
     );
     let vote_account1 = vote_state::create_v4_account_with_authorized(
-        &vote_pubkey1,
+        &node_pubkey1,
         &authorized_voter.pubkey(),
         [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
         &authorized_voter.pubkey(),
         0,
-        &authorized_voter.pubkey(),
-        0,
         &vote_pubkey1,
+        0,
+        &node_pubkey1,
         100,
     );
     let vote_account2 = vote_state::create_v4_account_with_authorized(
-        &vote_pubkey2,
+        &node_pubkey2,
         &authorized_voter.pubkey(),
         [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
         &authorized_voter.pubkey(),
         0,
-        &authorized_voter.pubkey(),
-        0,
         &vote_pubkey2,
+        0,
+        &node_pubkey2,
         100,
     );
     bank.store_account(&vote_pubkey0, &vote_account0);
