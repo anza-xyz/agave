@@ -427,7 +427,7 @@ mod tests {
             // and it has default loaded_account_data_size
             let loaded_accounts_data_size_cost =
                 CostModel::calculate_loaded_accounts_data_size_cost(
-                    MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+                    MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.into(),
                     &feature_set,
                 );
             let vote_program_usage_details = UsageCostDetails {

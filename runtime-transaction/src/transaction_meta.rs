@@ -15,7 +15,7 @@ use {
     agave_feature_set::FeatureSet,
     solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
     solana_hash::Hash, solana_message::TransactionSignatureDetails,
-    solana_transaction::TransactionError,
+    solana_transaction::TransactionError, std::num::NonZeroU32,
 };
 
 pub trait TransactionMeta {
@@ -43,7 +43,7 @@ pub struct TransactionConfiguration {
     pub updated_heap_bytes: u32,
     pub compute_unit_limit: u32,
     pub priority_fee_lamports: u64,
-    pub loaded_accounts_data_size_limit: u32,
+    pub loaded_accounts_data_size_limit: NonZeroU32,
 }
 
 impl TransactionConfiguration {

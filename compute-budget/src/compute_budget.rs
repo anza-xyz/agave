@@ -5,6 +5,7 @@ pub use solana_program_runtime::execution_budget::{
 use {
     solana_fee_structure::FeeDetails,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
+    std::num::NonZeroU32,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -300,7 +301,7 @@ impl ComputeBudget {
 
     pub fn get_compute_budget_and_limits(
         &self,
-        loaded_accounts_data_size_limit: u32,
+        loaded_accounts_data_size_limit: NonZeroU32,
         fee_details: FeeDetails,
     ) -> SVMTransactionExecutionAndFeeBudgetLimits {
         SVMTransactionExecutionAndFeeBudgetLimits {

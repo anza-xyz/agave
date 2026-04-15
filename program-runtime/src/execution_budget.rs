@@ -297,7 +297,7 @@ impl SVMTransactionExecutionCost {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SVMTransactionExecutionAndFeeBudgetLimits {
     pub budget: SVMTransactionExecutionBudget,
-    pub loaded_accounts_data_size_limit: u32,
+    pub loaded_accounts_data_size_limit: NonZeroU32,
     pub fee_details: FeeDetails,
 }
 
@@ -306,7 +306,7 @@ impl Default for SVMTransactionExecutionAndFeeBudgetLimits {
     fn default() -> Self {
         Self {
             budget: SVMTransactionExecutionBudget::default(),
-            loaded_accounts_data_size_limit: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+            loaded_accounts_data_size_limit: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             fee_details: FeeDetails::default(),
         }
     }
