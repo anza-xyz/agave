@@ -3,9 +3,7 @@
 use {
     self::{
         broadcast_duplicates_run::{BroadcastDuplicatesConfig, BroadcastDuplicatesRun},
-        broadcast_fake_shreds_run::BroadcastFakeShredsRun,
         broadcast_metrics::*,
-        fail_entry_verification_broadcast_run::FailEntryVerificationBroadcastRun,
         standard_broadcast_run::StandardBroadcastRun,
     },
     crate::{
@@ -44,10 +42,8 @@ use {
 };
 
 pub mod broadcast_duplicates_run;
-mod broadcast_fake_shreds_run;
 pub mod broadcast_metrics;
 pub(crate) mod broadcast_utils;
-mod fail_entry_verification_broadcast_run;
 pub(crate) mod standard_broadcast_run;
 
 const _: () = const {
@@ -106,8 +102,6 @@ pub enum BroadcastStageReturnType {
 #[derive(Clone, Debug)]
 pub enum BroadcastStageType {
     Standard,
-    FailEntryVerification,
-    BroadcastFakeShreds,
     BroadcastDuplicates(BroadcastDuplicatesConfig),
 }
 
@@ -137,30 +131,6 @@ impl BroadcastStageType {
                 blockstore,
                 bank_forks,
                 StandardBroadcastRun::new(shred_version, migration_status, votor_event_sender),
-                xdp_sender,
-            ),
-
-            BroadcastStageType::FailEntryVerification => BroadcastStage::new(
-                sock,
-                cluster_info,
-                receiver,
-                retransmit_slots_receiver,
-                exit_sender,
-                blockstore,
-                bank_forks,
-                FailEntryVerificationBroadcastRun::new(shred_version),
-                xdp_sender,
-            ),
-
-            BroadcastStageType::BroadcastFakeShreds => BroadcastStage::new(
-                sock,
-                cluster_info,
-                receiver,
-                retransmit_slots_receiver,
-                exit_sender,
-                blockstore,
-                bank_forks,
-                BroadcastFakeShredsRun::new(0, shred_version),
                 xdp_sender,
             ),
 
