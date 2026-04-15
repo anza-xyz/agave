@@ -189,7 +189,12 @@ dependencies = [
  "solana-version",
  "solana-vote",
  "solana-vote-program",
+<<<<<<< HEAD
  "thiserror 2.0.17",
+=======
+ "tempfile",
+ "thiserror 2.0.18",
+>>>>>>> 78bfdd34c (Configure snapshot usage as load and generate when creating snapshots (#11942))
  "tikv-jemallocator",
  "tokio",
 ]
