@@ -1,7 +1,6 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
     agave_snapshots::{
-        SnapshotInterval,
         paths::{self as snapshot_paths, BANK_SNAPSHOTS_DIR},
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_hash::StartingSnapshotHashes,
@@ -183,12 +182,10 @@ pub fn load_and_process_ledger(
 
         SnapshotConfig {
             usage,
-            full_snapshot_archive_interval: SnapshotInterval::Disabled,
-            incremental_snapshot_archive_interval: SnapshotInterval::Disabled,
             full_snapshot_archives_dir,
             incremental_snapshot_archives_dir,
             bank_snapshots_dir,
-            ..SnapshotConfig::default()
+            ..SnapshotConfig::new_load_only()
         }
     };
 
@@ -680,16 +677,12 @@ mod tests {
                     .takes_value(true),
             )
             .get_matches_from(vec!["test", "--snapshot-slot", "0"]);
-        let process_options = ProcessOptions {
-            halt_at_slot: Some(0),
-            ..ProcessOptions::default()
-        };
 
         let LoadAndProcessLedgerOutput { bank_forks, .. } = load_and_process_ledger(
             &arg_matches,
             &genesis_config,
             blockstore,
-            process_options,
+            ProcessOptions::default(),
             None,
         )
         .unwrap();
