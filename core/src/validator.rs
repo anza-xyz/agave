@@ -3324,13 +3324,6 @@ mod tests {
     }
 
     fn target_tick_duration() -> Duration {
-        // DEFAULT_MS_PER_SLOT = 400
-        // DEFAULT_TICKS_PER_SLOT = 64
-        // MS_PER_TICK = 6
-        //
-        // But, DEFAULT_MS_PER_SLOT / DEFAULT_TICKS_PER_SLOT = 6.25
-        //
-        // So, convert to microseconds first to avoid the integer rounding error
         let target_tick_duration_us =
             solana_clock::DEFAULT_MS_PER_SLOT * 1000 / solana_clock::DEFAULT_TICKS_PER_SLOT;
         assert_eq!(target_tick_duration_us, 6250);

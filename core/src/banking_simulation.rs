@@ -88,7 +88,7 @@ use {
 /// simulated block's hashes would differ than the recorded ones as block composition difference is
 /// inevitable.
 ///
-/// As in the real environment, for PoH time we use the `PohRecorder`. This is simply a 400ms
+/// As in the real environment, for PoH time we use the `PohRecorder`. This is simply a slot
 /// timer, external to `BankingStage` and thus mostly irrelevant to `BankingStage` performance. For
 /// wall time, we use the first `BankStatus::BlockAndBankHash` and `SystemTime::now()` to define
 /// T=0 for simulation. Then, simulation progress is timed accordingly. For context, this syncing
