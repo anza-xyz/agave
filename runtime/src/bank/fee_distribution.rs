@@ -432,11 +432,11 @@ pub mod tests {
         );
     }
 
-    #[test_case(true, Ok(160027074900); "allowed")]
+    #[test_case(true, Ok(()); "allowed")]
     #[test_case(false, Err(DepositFeeError::InvalidAccountOwner); "prohibited")]
     fn test_deposit_fees_to_vote_account(
         custom_commission_collector: bool,
-        expected: Result<u64, DepositFeeError>,
+        expected: Result<(), DepositFeeError>,
     ) {
         let initial_balance = 1000;
         let genesis = create_genesis_config_with_leader(0, &pubkey::new_rand(), initial_balance);
@@ -449,8 +449,11 @@ pub mod tests {
 
         let pubkey = genesis.voting_keypair.pubkey();
         let deposit_amount = 500;
-
-        assert_eq!(bank.deposit_fees(&pubkey, deposit_amount), expected,);
+        let pre_lamports = bank.get_balance(&pubkey);
+        assert_eq!(
+            expected.map(|_| pre_lamports.saturating_add(deposit_amount)),
+            bank.deposit_fees(&pubkey, deposit_amount)
+        );
     }
 
     #[test]
