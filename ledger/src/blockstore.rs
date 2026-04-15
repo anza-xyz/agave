@@ -645,8 +645,8 @@ impl Blockstore {
         use crate::blockstore_meta::DoubleMerkleMeta;
         let meta = DoubleMerkleMeta {
             double_merkle_root,
-            fec_set_count: 1,       // Minimal valid value
-            proofs: ByteBuf::new(), // Empty proofs for testing
+            fec_set_count: 1,   // Minimal valid value
+            proofs: Vec::new(), // Empty proofs for testing
         };
         self.double_merkle_meta_cf
             .put((slot, block_location), &meta)
