@@ -83,7 +83,22 @@ impl QosService {
         let mut compute_cost_time = Measure::start("compute_cost_time");
         let txs_costs: Vec<_> = transactions
             .zip(pre_results)
-            .map(|(tx, pre_result)| pre_result.map(|()| CostModel::calculate_cost(tx, feature_set)))
+            .map(|(tx, pre_result)| {
+                pre_result.map(|()| {
+                    let mut reserving_cost = CostModel::calculate_cost(tx, feature_set);
+
+                    if let TransactionCost::Transaction(ref mut usage_cost_details) = reserving_cost
+                    {
+                        // To maintain cost tracking consistency, reserve at least one page for
+                        // loading the fee payer account in fee-only fallback scenarios.
+                        usage_cost_details.loaded_accounts_data_size_cost = usage_cost_details
+                            .loaded_accounts_data_size_cost
+                            .max(CostModel::calculate_pages_cost(1));
+                    }
+
+                    reserving_cost
+                })
+            })
             .collect();
         compute_cost_time.stop();
         self.metrics
