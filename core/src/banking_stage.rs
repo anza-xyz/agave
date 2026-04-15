@@ -41,7 +41,7 @@ use {
     solana_time_utils::AtomicInterval,
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
-        num::{NonZeroU64, NonZeroUsize, Saturating},
+        num::{NonZeroU64, NonZeroUsize},
         ops::Deref,
         sync::{
             Arc, RwLock,
@@ -325,30 +325,6 @@ impl BankingStageStats {
             self.batch_packet_indexes_len.clear();
         }
     }
-}
-
-#[derive(Debug, Default)]
-pub struct BatchedTransactionDetails {
-    pub costs: BatchedTransactionCostDetails,
-    pub errors: BatchedTransactionErrorDetails,
-}
-
-#[derive(Debug, Default)]
-pub struct BatchedTransactionCostDetails {
-    pub batched_signature_cost: Saturating<u64>,
-    pub batched_write_lock_cost: Saturating<u64>,
-    pub batched_data_bytes_cost: Saturating<u64>,
-    pub batched_loaded_accounts_data_size_cost: Saturating<u64>,
-    pub batched_programs_execute_cost: Saturating<u64>,
-}
-
-#[derive(Debug, Default)]
-pub struct BatchedTransactionErrorDetails {
-    pub batched_retried_txs_per_block_limit_count: Saturating<u64>,
-    pub batched_retried_txs_per_vote_limit_count: Saturating<u64>,
-    pub batched_retried_txs_per_account_limit_count: Saturating<u64>,
-    pub batched_retried_txs_per_account_data_block_limit_count: Saturating<u64>,
-    pub batched_dropped_txs_per_account_data_total_limit_count: Saturating<u64>,
 }
 
 pub trait LikeClusterInfo: Send + Sync + 'static + Clone {
