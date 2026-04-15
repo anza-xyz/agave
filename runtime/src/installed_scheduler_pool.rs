@@ -254,7 +254,7 @@ pub type SchedulerId = u64;
 #[derive(Clone, Debug)]
 pub struct SchedulingContext {
     mode: SchedulingMode,
-    bank: Option<Arc<Bank>>,
+    bank: Arc<Bank>,
 }
 
 impl SchedulingContext {
@@ -262,7 +262,7 @@ impl SchedulingContext {
     pub(crate) fn new(bank: Arc<Bank>) -> Self {
         Self {
             mode: SchedulingMode::BlockVerification,
-            bank: Some(bank),
+            bank,
         }
     }
 
@@ -270,12 +270,12 @@ impl SchedulingContext {
         self.mode
     }
 
-    pub fn bank(&self) -> Option<&Arc<Bank>> {
-        self.bank.as_ref()
+    pub fn bank(&self) -> &Arc<Bank> {
+        &self.bank
     }
 
-    pub fn slot(&self) -> Option<Slot> {
-        self.bank.as_ref().map(|bank| bank.slot())
+    pub fn slot(&self) -> Slot {
+        self.bank.slot()
     }
 }
 
@@ -440,7 +440,7 @@ impl BankWithScheduler {
         // to a different bank!
         if let Some(bank_in_context) = scheduler
             .as_ref()
-            .map(|scheduler| scheduler.context().bank().unwrap())
+            .map(|scheduler| scheduler.context().bank())
         {
             assert!(Arc::ptr_eq(&bank, bank_in_context));
         }

@@ -88,7 +88,7 @@ enum CheckPoint<'a> {
     TaskHandled(OrderedTaskId),
     TaskAccumulated(OrderedTaskId, &'a Result<()>),
     SessionEnding,
-    SessionFinished(Option<Slot>),
+    SessionFinished(Slot),
     SchedulerThreadAborted,
     IdleSchedulerCleaned(usize),
     IdlingSchedulerTrashed,
@@ -910,7 +910,7 @@ impl TaskHandler for DefaultTaskHandler {
         task: &Task,
         handler_context: &HandlerContext,
     ) {
-        let bank = scheduling_context.bank().unwrap();
+        let bank = scheduling_context.bank();
         let transaction = task.transaction();
         let task_id = task.task_id();
 
@@ -2104,7 +2104,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     if matches!(scheduling_mode, BlockProduction) {
                         datapoint_info!(
                             "unified_scheduler-bp_session_stats",
-                            ("slot", current_slot.unwrap_or_default(), i64),
+                            ("slot", current_slot, i64),
                             ("block_size_estimate", block_size_estimate, i64),
                             ("total_task_count", state_machine.total_task_count(), i64),
                             (
@@ -3410,7 +3410,7 @@ mod tests {
 
         let scheduler = pool.take_scheduler(new_context.clone()).unwrap();
         assert_eq!(scheduler_id, scheduler.id());
-        assert!(Arc::ptr_eq(scheduler.context().bank().unwrap(), new_bank));
+        assert!(Arc::ptr_eq(scheduler.context().bank(), new_bank));
     }
 
     #[test]
@@ -3896,7 +3896,7 @@ mod tests {
                 _handler_context: &HandlerContext,
             ) {
                 // The task task_id must always be matched to the slot.
-                assert_eq!(task.task_id() as Slot, scheduling_context.slot().unwrap());
+                assert_eq!(task.task_id() as Slot, scheduling_context.slot());
             }
         }
 
