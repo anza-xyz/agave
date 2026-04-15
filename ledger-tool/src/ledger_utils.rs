@@ -13,9 +13,7 @@ use {
         validate_account_paths_for_direct_io,
     },
     solana_clock::Slot,
-    solana_core::validator::{
-        BlockProductionMethod, BlockVerificationMethod, supported_scheduling_mode,
-    },
+    solana_core::validator::{BlockProductionMethod, BlockVerificationMethod},
     solana_genesis_config::GenesisConfig,
     solana_genesis_utils::open_genesis_config,
     solana_geyser_plugin_manager::geyser_plugin_service::{
@@ -44,7 +42,6 @@ use {
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
     solana_transaction::versioned::VersionedTransaction,
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         path::{Path, PathBuf},
         process::exit,
@@ -67,7 +64,6 @@ pub struct LoadAndProcessLedgerOutput {
     // not. It is safe to let ABS continue in the background, and ABS will stop
     // if/when it finally checks the exit flag
     pub accounts_background_service: AccountsBackgroundService,
-    pub unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
 }
 
 const PROCESS_SLOTS_HELP_STRING: &str =
@@ -392,27 +388,6 @@ pub fn load_and_process_ledger(
         "Using: block-verification-method: {block_verification_method}, block-production-method: \
          {block_production_method}",
     );
-    let unified_scheduler_handler_threads =
-        value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
-    let unified_scheduler_pool = match (&block_verification_method, &block_production_method) {
-        methods @ (BlockVerificationMethod::UnifiedScheduler, _) => {
-            let no_replay_vote_sender = None;
-
-            let pool = DefaultSchedulerPool::new(
-                supported_scheduling_mode(methods),
-                unified_scheduler_handler_threads,
-                process_options.runtime_config.log_messages_bytes_limit,
-                transaction_status_sender.clone(),
-                no_replay_vote_sender,
-                None,
-            );
-            bank_forks
-                .write()
-                .unwrap()
-                .install_scheduler_pool(pool.clone());
-            Some(pool)
-        }
-    };
 
     let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
 
@@ -461,7 +436,6 @@ pub fn load_and_process_ledger(
         bank_forks,
         starting_snapshot_hashes,
         accounts_background_service,
-        unified_scheduler_pool,
     })
     .map_err(LoadAndProcessLedgerError::ProcessBlockstoreFromRoot);
 
