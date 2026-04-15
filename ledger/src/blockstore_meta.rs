@@ -44,6 +44,7 @@ bitflags! {
         // CONNECTED is explicitly the first bit to ensure backwards compatibility
         // with the boolean field that ConnectedFlags replaced in SlotMeta.
         const CONNECTED        = 0b0000_0001;
+        // PARENT_CONNECTED IS INTENTIONALLY UNUSED FOR NOW
         const PARENT_CONNECTED = 0b1000_0000;
     }
 }
@@ -142,16 +143,12 @@ pub struct SlotMetaBase<T> {
     pub completed_data_indexes: T,
 }
 
-pub type SlotMeta = SlotMetaBase<CompletedDataIndexes>;
+pub type SlotMetaV2 = SlotMetaBase<CompletedDataIndexes>;
 
-/// SlotMetaV3 extends SlotMeta with two additional fields: `parent_block_id`
-/// and `replay_fec_set_index`. The SlotMeta type will continue to be used
-/// (written) for now, but a SlotMetaV3 can be read from the Blockstore and
-/// converted into a SlotMeta. The logic to read and convert SlotMetaV3 to
-/// SlotMeta enables this software to read a Blockstore modified by a future
-/// version where the SlotMetaV3 format is persisted.
+/// SlotMetaV2 with two additional fields: `parent_block_id` and
+/// `replay_fec_set_index`, used for fast leader handover in Alpenglow.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
-pub(crate) struct SlotMetaV3 {
+pub struct SlotMetaV3 {
     pub slot: Slot,
     pub consumed: u64,
     pub received: u64,
@@ -165,26 +162,28 @@ pub(crate) struct SlotMetaV3 {
     pub completed_data_indexes: CompletedDataIndexes,
     /// The block id of the parent block.
     /// Populated from the block header / update parent marker.
+    #[serde(deserialize_with = "default_on_err")]
     pub parent_block_id: Hash,
     /// The FEC set index from which replay should start for this block.
     /// Populated from the block header / update parent marker.
+    #[serde(deserialize_with = "default_on_err")]
     pub replay_fec_set_index: u32,
 }
 
-impl From<SlotMetaV3> for SlotMeta {
-    fn from(v3: SlotMetaV3) -> Self {
-        SlotMeta {
-            slot: v3.slot,
-            consumed: v3.consumed,
-            received: v3.received,
-            first_shred_timestamp: v3.first_shred_timestamp,
-            last_index: v3.last_index,
-            parent_slot: v3.parent_slot,
-            next_slots: v3.next_slots,
-            connected_flags: v3.connected_flags,
-            completed_data_indexes: v3.completed_data_indexes,
-        }
-    }
+pub type SlotMeta = SlotMetaV3;
+
+/// Serde impleentation of deserialize for a field that's optional at the end of
+/// a struct. Useful when adding new fields to a column.
+///
+/// `default_on_eof` allocates and does a string compare, so this is preferable
+/// if the fields do not have any other validation or failure cases
+#[inline]
+fn default_on_err<'de, T, D>(d: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    T::deserialize(d).or_else(|_| Ok(T::default()))
 }
 
 // Serde implementation of serialize and deserialize for Option<u64>
@@ -518,6 +517,16 @@ impl SlotMeta {
         }
 
         self.is_connected()
+    }
+
+    /// Clear the meta's parent_connected and connected flags.
+    /// Returns true if the meta was connected, indicating children need clearing.
+    #[allow(dead_code)]
+    pub(crate) fn clear_parent_connected(&mut self) -> bool {
+        let originally_connected = self.is_connected();
+        self.connected_flags
+            .remove(ConnectedFlags::PARENT_CONNECTED | ConnectedFlags::CONNECTED);
+        originally_connected
     }
 
     /// Dangerous.
