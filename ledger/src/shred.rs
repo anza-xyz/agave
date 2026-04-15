@@ -79,7 +79,7 @@ pub use {
         payload::Payload,
         stats::{ProcessShredsStats, ShredFetchStats},
     },
-    crate::shredder::{ReedSolomonCache, Shredder},
+    crate::shredder::Shredder,
 };
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 use {solana_keypair::Keypair, solana_perf::packet::Packet, solana_signer::Signer};
@@ -699,7 +699,6 @@ unsafe impl<'a, C: ConfigCore> SchemaRead<'a, C> for ShredVariant {
 
 pub fn recover<T: IntoIterator<Item = Shred>>(
     shreds: T,
-    reed_solomon_cache: &ReedSolomonCache,
 ) -> Result<impl Iterator<Item = Result<Shred, Error>> + use<T>, Error> {
     let shreds = shreds
         .into_iter()
@@ -718,7 +717,7 @@ pub fn recover<T: IntoIterator<Item = Shred>>(
     // The same signature also verifies for recovered shreds because when
     // reconstructing the Merkle tree for the erasure batch, we will obtain the
     // same Merkle root.
-    let shreds = merkle::recover(shreds, reed_solomon_cache)?;
+    let shreds = merkle::recover(shreds)?;
     Ok(shreds.map(|shred| shred.map(Shred::from)))
 }
 
@@ -1048,7 +1047,6 @@ mod tests {
             is_last_in_slot,
             fec_set_index, // next_shred_index
             fec_set_index, // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
     }
@@ -1817,7 +1815,6 @@ mod tests {
         let keypair = keypair_from_seed(&seed).unwrap();
         let slot = 142076266;
         let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 42).unwrap();
-        let reed_solomon_cache = ReedSolomonCache::default();
         let mut shred = shredder
             .make_shreds_from_data_slice(
                 &keypair,
@@ -1826,7 +1823,6 @@ mod tests {
                 Hash::default(),
                 64,
                 64,
-                &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
             )
             .unwrap()

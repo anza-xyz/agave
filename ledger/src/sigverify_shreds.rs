@@ -100,7 +100,7 @@ mod tests {
         super::*,
         crate::{
             shred::{ProcessShredsStats, Shred},
-            shredder::{ReedSolomonCache, Shredder},
+            shredder::Shredder,
         },
         assert_matches::assert_matches,
         itertools::Itertools,
@@ -134,7 +134,6 @@ mod tests {
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
         let keypair = Keypair::new();
-        let reed_solomon_cache = ReedSolomonCache::default();
         let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &[],
@@ -142,7 +141,6 @@ mod tests {
             Hash::default(),
             0,
             0,
-            &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
         let shred = shreds.pop().unwrap();
@@ -242,7 +240,6 @@ mod tests {
     fn make_packet_batch(keypair: &Keypair, slot: u64) -> PacketBatch {
         let mut batch = RecycledPacketBatch::default();
         let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
-        let reed_solomon_cache = ReedSolomonCache::default();
         let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             keypair,
             &[],
@@ -250,7 +247,6 @@ mod tests {
             Hash::default(),
             0,
             0,
-            &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
         batch.resize(shreds.len(), Packet::default());
@@ -301,7 +297,6 @@ mod tests {
         is_last_in_slot: bool,
         keypairs: &HashMap<Slot, Keypair>,
     ) -> Vec<Shred> {
-        let reed_solomon_cache = ReedSolomonCache::default();
         let mut shreds: Vec<_> = keypairs
             .iter()
             .flat_map(|(&slot, keypair)| {
@@ -321,7 +316,6 @@ mod tests {
                     Hash::new_from_array(rng.random()), // chained_merkle_root
                     rng.random_range(0..2671),          // next_shred_index
                     rng.random_range(0..2781),          // next_code_index
-                    &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 )
             })

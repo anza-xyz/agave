@@ -1828,9 +1828,7 @@ mod tests {
             blockstore_processor::fill_blockstore_slot_with_ticks,
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
-            shred::{
-                ProcessShredsStats, ReedSolomonCache, Shred, Shredder, max_ticks_per_n_shreds,
-            },
+            shred::{ProcessShredsStats, Shred, Shredder, max_ticks_per_n_shreds},
         },
         solana_net_utils::SocketAddrSpace,
         solana_perf::packet::{Packet, PacketFlags, PacketRef, deserialize_from_with_limit},
@@ -2320,7 +2318,6 @@ mod tests {
         assert!(rv.is_none());
         let shredder = Shredder::new(slot, slot - 1, 0, 2).unwrap();
         let keypair = Keypair::new();
-        let reed_solomon_cache = ReedSolomonCache::default();
         let index = 1;
         let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
@@ -2329,7 +2326,6 @@ mod tests {
             Hash::default(),
             index as u32,
             index as u32,
-            &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
         shreds.truncate(1);
@@ -2740,7 +2736,6 @@ mod tests {
         fn new_test_data_shred(slot: Slot, index: u32) -> Shred {
             let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
             let keypair = Keypair::new();
-            let reed_solomon_cache = ReedSolomonCache::default();
             let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
                 &keypair,
                 &[],
@@ -2748,7 +2743,6 @@ mod tests {
                 Hash::default(),
                 0,
                 0,
-                &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
             );
             shreds.remove(index as usize)
@@ -2756,7 +2750,6 @@ mod tests {
         fn new_test_coding_shred(slot: Slot, index: u32) -> Shred {
             let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
             let keypair = Keypair::new();
-            let reed_solomon_cache = ReedSolomonCache::default();
             let (_, mut shreds) = shredder.entries_to_merkle_shreds_for_tests(
                 &keypair,
                 &[],
@@ -2764,7 +2757,6 @@ mod tests {
                 Hash::default(),
                 0,
                 0,
-                &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
             );
             shreds.remove(index as usize)

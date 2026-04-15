@@ -149,7 +149,7 @@ pub mod test {
         solana_keypair::Keypair,
         solana_ledger::{
             get_tmp_ledger_path,
-            shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+            shred::{ProcessShredsStats, Shred, Shredder},
         },
         solana_runtime::bank_utils,
         trees::tr,
@@ -289,7 +289,6 @@ pub mod test {
         outstanding_repairs = HashMap::new();
         slot_meta_cache = HashMap::default();
         let keypair = Keypair::new();
-        let reed_solomon_cache = ReedSolomonCache::default();
 
         let completed_shreds: Vec<Shred> = [(0, 0), (2, 1), (4, 2), (6, best_overall_slot)]
             .iter()
@@ -302,7 +301,6 @@ pub mod test {
                     Hash::default(),
                     last_shred as u32,
                     last_shred as u32,
-                    &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 );
                 shreds

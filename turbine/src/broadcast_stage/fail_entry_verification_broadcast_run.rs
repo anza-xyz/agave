@@ -3,7 +3,7 @@ use {
     crate::cluster_nodes::ClusterNodesCache,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+    solana_ledger::shred::{ProcessShredsStats, Shredder},
     std::{thread::sleep, time::Duration},
 };
 
@@ -20,7 +20,6 @@ pub(super) struct FailEntryVerificationBroadcastRun {
     next_shred_index: u32,
     next_code_index: u32,
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
-    reed_solomon_cache: Arc<ReedSolomonCache>,
 }
 
 impl FailEntryVerificationBroadcastRun {
@@ -38,7 +37,6 @@ impl FailEntryVerificationBroadcastRun {
             next_shred_index: 0,
             next_code_index: 0,
             cluster_nodes_cache,
-            reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
         }
     }
 }
@@ -107,7 +105,6 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
             self.chained_merkle_root,
             self.next_shred_index,
             self.next_code_index,
-            &self.reed_solomon_cache,
             &mut stats,
         );
 
@@ -126,7 +123,6 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
                 self.chained_merkle_root,
                 self.next_shred_index,
                 self.next_code_index,
-                &self.reed_solomon_cache,
                 &mut stats,
             );
             // Don't mark the last shred as last so that validators won't know
@@ -139,7 +135,6 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
                 self.chained_merkle_root,
                 self.next_shred_index,
                 self.next_code_index,
-                &self.reed_solomon_cache,
                 &mut stats,
             );
             assert_eq!(good_last_data_shred.len(), 1);
