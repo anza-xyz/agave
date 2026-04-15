@@ -776,6 +776,7 @@ mod tests {
             commission_bps: u16,
             pubkey: Pubkey,
             validator_reward: u64,
+            validator_stake: u64,
         ) -> (Self, u64) {
             let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
             let lamports = bank.get_account(&pubkey).unwrap().lamports();
@@ -788,12 +789,8 @@ mod tests {
                     0,
                 );
             }
-            let total_stake = bank
-                .epoch_stakes_from_slot(bank.slot())
-                .unwrap()
-                .total_stake();
             let stake = lamports - rent_exempt_reserve;
-            let stake_weighted_reward = validator_reward * stake / total_stake;
+            let stake_weighted_reward = validator_reward * stake / validator_stake;
             let (voter_reward, staker_reward, is_split) =
                 commission_split(commission_bps, stake_weighted_reward);
             assert!(is_split);
@@ -833,36 +830,45 @@ mod tests {
                     lamports - rent_exempt_reserve
                 })
                 .sum::<u64>();
-            let epoch_state = EpochInflationAccountState::new_from_bank(bank)
-                .unwrap()
-                .get_epoch_state(bank.epoch())
-                .unwrap();
-            let total_stake = bank
-                .epoch_stakes_from_slot(bank.slot())
-                .unwrap()
-                .total_stake();
-            let (validator_reward, leader_reward) =
-                calculate_reward(&epoch_state, total_stake, validator_stake);
-            let total_reward = if pay_leader {
-                validator_reward + leader_reward
-            } else {
-                validator_reward
-            };
-            let total_reward = total_reward * num_reward_slots;
 
-            let mut total_validator_reward = 0;
+            let vote_rewards = {
+                let epoch_state = EpochInflationAccountState::new_from_bank(bank)
+                    .unwrap()
+                    .get_epoch_state(bank.epoch())
+                    .unwrap();
+                let total_stake = bank
+                    .epoch_stakes_from_slot(bank.slot())
+                    .unwrap()
+                    .total_stake();
+                let (validator_reward, leader_reward) =
+                    calculate_reward(&epoch_state, total_stake, validator_stake);
+                let vote_rewards = if pay_leader {
+                    validator_reward + leader_reward
+                } else {
+                    validator_reward
+                };
+                vote_rewards * num_reward_slots
+            };
+
+            let mut voter_expected_reward = 0;
             let mut stakers = HashMap::new();
             for staker_pubkey in staker_pubkeys {
-                let (staker, voter_reward) =
-                    Staker::new(rent, bank, commission_bps, *staker_pubkey, total_reward);
-                total_validator_reward += voter_reward;
+                let (staker, voter_reward) = Staker::new(
+                    rent,
+                    bank,
+                    commission_bps,
+                    *staker_pubkey,
+                    vote_rewards,
+                    validator_stake,
+                );
+                voter_expected_reward += voter_reward;
                 stakers.insert(*staker_pubkey, staker);
             }
 
             State {
                 voter_lamports,
                 stakers,
-                voter_expected_reward: total_validator_reward,
+                voter_expected_reward,
             }
         }
     }

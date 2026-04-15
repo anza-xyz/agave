@@ -435,6 +435,7 @@ impl Bank {
         new_rate_activation_epoch: Option<Epoch>,
         delay_commission_updates: bool,
         commission_rate_in_basis_points: bool,
+        is_alpenglow_active: bool,
     ) -> Option<DelegationRewards> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
@@ -482,14 +483,10 @@ impl Bank {
             vote_state.commission() as u16 * 100
         };
 
-        let ag_stake_state = self
-            .feature_set
-            .snapshot()
-            .alpenglow
-            .then_some(AlpenglowStakeState {
-                vote_pubkey,
-                epoch_stakes: &self.epoch_stakes,
-            });
+        let ag_stake_state = is_alpenglow_active.then_some(AlpenglowStakeState {
+            vote_pubkey,
+            epoch_stakes: &self.epoch_stakes,
+        });
 
         match redeem_rewards(
             stake_state,
@@ -549,6 +546,7 @@ impl Bank {
         let feature_snapshot = self.feature_set.snapshot();
         let delay_commission_updates = feature_snapshot.delay_commission_updates;
         let commission_rate_in_basis_points = feature_snapshot.commission_rate_in_basis_points;
+        let is_alpenglow_active = feature_snapshot.alpenglow;
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
         // For N stake delegations, where N is >1,000,000, we produce:
@@ -580,6 +578,7 @@ impl Bank {
                                 new_warmup_cooldown_rate_epoch,
                                 delay_commission_updates,
                                 commission_rate_in_basis_points,
+                                is_alpenglow_active,
                             )
                         });
                     let (stake_reward, maybe_reward_record) = match maybe_reward_record {
