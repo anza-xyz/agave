@@ -635,6 +635,8 @@ mod tests {
             .unwrap_or_default()
         {}
         let now = Instant::now();
+        let slot_time =
+            Duration::from_nanos_u128(scheduler_controller.sharable_banks.working().ns_per_slot);
         assert!(
             scheduler_controller
                 .process_transactions(
@@ -642,8 +644,8 @@ mod tests {
                     Some(&CostPacer {
                         block_limit: u64::MAX,
                         shared_block_cost: SharedBlockCost::new(0),
-                        detection_time: now.checked_sub(Duration::from_millis(400)).unwrap(),
-                        fill_time: Some(Duration::from_millis(300)),
+                        detection_time: now.checked_sub(slot_time).unwrap(),
+                        fill_time: Some(slot_time.saturating_sub(Duration::from_millis(100))),
                     }),
                     &now
                 )
