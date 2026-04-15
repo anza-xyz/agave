@@ -1692,6 +1692,7 @@ mod tests {
                 data,
                 region,
                 SerializedAccountMetadata {
+                    vm_addr: vm_addr as u64,
                     original_data_len: self.data.len(),
                     vm_key_addr: key_addr as u64,
                     vm_lamports_addr: lamports_addr as u64,

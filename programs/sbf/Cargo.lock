@@ -8815,6 +8815,7 @@ dependencies = [
 name = "solana-sbf-rust-direct-account-pointers"
 version = "4.0.0-beta.8"
 dependencies = [
+ "solana-account-info",
  "solana-account-view",
  "solana-address 2.2.0",
  "solana-cpi",

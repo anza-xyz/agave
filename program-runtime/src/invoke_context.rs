@@ -174,6 +174,9 @@ pub struct SyscallContext {
 
 #[derive(Debug, Clone)]
 pub struct SerializedAccountMetadata {
+    /// Address of the first byte of the serialized account record (the
+    /// `NON_DUP_MARKER`/duplicate-marker byte).
+    pub vm_addr: u64,
     pub original_data_len: usize,
     pub vm_data_addr: u64,
     pub vm_key_addr: u64,
