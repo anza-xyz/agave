@@ -1094,20 +1094,22 @@ mod tests {
     fn test_multiple_delegators(pay_leader: bool, commission_bps: u16) {
         let num_reward_slots = 10;
         let mint_keypair = Keypair::new();
-        let validator_keypair = ValidatorVoteKeypairs::new_rand();
-        let validator_node_key = validator_keypair.node_keypair.pubkey();
-        let validator_vote_key = validator_keypair.vote_keypair.pubkey();
-        let validator_stake_key = validator_keypair.stake_keypair.pubkey();
-        let validator_bls_key = validator_keypair.bls_keypair.public.to_bytes_compressed();
-        let validators = vec![validator_keypair];
+        let validator_keypairs = (0..5)
+            .map(|_| ValidatorVoteKeypairs::new_rand())
+            .collect::<Vec<_>>();
         let validator_lamports = 890_880;
         let mut genesis_config = create_genesis_config_with_leader_ex(
             1_000_000_000,
             &mint_keypair.pubkey(),
-            &validator_node_key,
-            &validator_vote_key,
-            &validator_stake_key,
-            Some(validator_bls_key),
+            &validator_keypairs[0].node_keypair.pubkey(),
+            &validator_keypairs[0].vote_keypair.pubkey(),
+            &validator_keypairs[0].stake_keypair.pubkey(),
+            Some(
+                validator_keypairs[0]
+                    .bls_keypair
+                    .public
+                    .to_bytes_compressed(),
+            ),
             LAMPORTS_PER_SOL,
             validator_lamports,
             FeeRateGovernor::new(0, 0),
@@ -1118,6 +1120,7 @@ mod tests {
         );
         genesis_config.epoch_schedule = EpochSchedule::without_warmup();
         activate_all_features_alpenglow(&mut genesis_config);
+        let validators = vec![validator_keypair];
         set_commission(&mut genesis_config, &validators, commission_bps);
 
         let vote_account = genesis_config
