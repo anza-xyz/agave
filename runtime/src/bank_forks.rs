@@ -294,7 +294,7 @@ impl BankForks {
         mode: SchedulingMode,
         bank: Arc<Bank>,
     ) -> BankWithScheduler {
-        let context = SchedulingContext::new_with_mode(mode, bank.clone());
+        let context = SchedulingContext::new(bank.clone());
         let Some(scheduler) = scheduler_pool.take_scheduler(context) else {
             return BankWithScheduler::new_without_scheduler(bank);
         };

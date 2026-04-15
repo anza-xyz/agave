@@ -259,25 +259,11 @@ pub struct SchedulingContext {
 
 impl SchedulingContext {
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub(crate) fn new_with_mode(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
+    pub(crate) fn new(bank: Arc<Bank>) -> Self {
         Self {
-            mode,
+            mode: SchedulingMode::BlockVerification,
             bank: Some(bank),
         }
-    }
-
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn for_verification(bank: Arc<Bank>) -> Self {
-        Self::new_with_mode(SchedulingMode::BlockVerification, bank)
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn for_production(bank: Arc<Bank>) -> Self {
-        Self::new_with_mode(SchedulingMode::BlockProduction, bank)
-    }
-
-    pub fn is_preallocated(&self) -> bool {
-        self.bank.is_none()
     }
 
     pub fn mode(&self) -> SchedulingMode {
@@ -605,7 +591,7 @@ impl BankWithSchedulerInner {
 
                 // Schedulers can be stale only if its mode is block-verification. So,
                 // unconditional context construction for verification is okay here.
-                let context = SchedulingContext::for_verification(self.bank.clone());
+                let context = SchedulingContext::new(self.bank.clone());
                 let mut scheduler = self.scheduler.write().unwrap();
                 trace!("with_active_scheduler: {scheduler:?}");
                 scheduler.transition_from_stale_to_active(|pool, result_with_timings| {
@@ -814,7 +800,7 @@ mod tests {
         mock.expect_context()
             .times(1)
             .in_sequence(&mut seq.lock().unwrap())
-            .return_const(SchedulingContext::for_verification(bank));
+            .return_const(SchedulingContext::new(bank));
 
         for wait_reason in is_dropped_flags {
             let seq_cloned = seq.clone();

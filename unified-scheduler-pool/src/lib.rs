@@ -1816,13 +1816,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         let scheduling_mode = context.mode();
         let mut current_slot = context.slot();
         let mut block_size_estimate = 0;
-        let (mut is_finished, mut session_ending) = match scheduling_mode {
-            BlockVerification => (false, false),
-            BlockProduction => {
-                assert!(context.is_preallocated());
-                (true, true)
-            }
-        };
+        let (mut is_finished, mut session_ending) = (false, false);
 
         // Firstly, setup bi-directional messaging between the scheduler and handlers to pass
         // around tasks, by creating 2 channels (one for to-be-handled tasks from the scheduler to
@@ -2169,7 +2163,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // enter into the preceding `while(!is_finished) {...}` loop again.
                                 // Before that, propagate new SchedulingContext to handler threads
                                 assert_eq!(scheduling_mode, new_context.mode());
-                                assert!(!new_context.is_preallocated());
                                 current_slot = new_context.slot();
                                 block_size_estimate = 0;
                                 runnable_task_sender
@@ -2686,10 +2679,7 @@ mod tests {
         crate::sleepless_testing,
         assert_matches::assert_matches,
         solana_clock::Slot,
-        solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
-        solana_poh::record_channels::record_channels,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::{Bank, SlotLeader},
@@ -2708,7 +2698,6 @@ mod tests {
             sync::{Arc, RwLock},
             thread::JoinHandle,
         },
-        test_case::test_matrix,
     };
 
     impl<S, TH> SchedulerPool<S, TH>
@@ -2796,7 +2785,7 @@ mod tests {
 
         let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
         let bank = Arc::new(Bank::default_for_tests());
-        let context = SchedulingContext::for_verification(bank);
+        let context = SchedulingContext::new(bank);
         let scheduler = pool.take_scheduler(context).unwrap();
 
         let debug = format!("{scheduler:#?}");
@@ -2838,7 +2827,7 @@ mod tests {
         );
         let pool = pool_raw.clone();
         let bank = Arc::new(Bank::default_for_tests());
-        let context1 = SchedulingContext::for_verification(bank);
+        let context1 = SchedulingContext::new(bank);
         let context2 = context1.clone();
 
         let old_scheduler = pool.do_take_scheduler(context1);
@@ -2899,7 +2888,7 @@ mod tests {
         );
         let pool = pool_raw.clone();
         let bank = Arc::new(Bank::default_for_tests());
-        let context1 = SchedulingContext::for_verification(bank);
+        let context1 = SchedulingContext::new(bank);
         let context2 = context1.clone();
 
         let small_scheduler = pool.do_take_scheduler(context1);
@@ -2974,7 +2963,7 @@ mod tests {
         );
         let pool = pool_raw.clone();
         let bank = Arc::new(Bank::default_for_tests());
-        let context = SchedulingContext::for_verification(bank.clone());
+        let context = SchedulingContext::new(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         pool.register_timeout_listener(bank.create_timeout_listener());
@@ -3044,7 +3033,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
-        let context = SchedulingContext::for_verification(bank.clone());
+        let context = SchedulingContext::new(bank.clone());
 
         let scheduler = pool.take_scheduler(context).unwrap();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
@@ -3111,7 +3100,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
-        let context = SchedulingContext::for_verification(bank.clone());
+        let context = SchedulingContext::new(bank.clone());
 
         let scheduler = pool.take_scheduler(context).unwrap();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
@@ -3162,7 +3151,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
-        let context = SchedulingContext::for_verification(bank.clone());
+        let context = SchedulingContext::new(bank.clone());
 
         let scheduler = pool.take_scheduler(context).unwrap();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
@@ -3244,7 +3233,7 @@ mod tests {
         let pool = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::new_for_verification(
             None, None, None, None, None,
         );
-        let context = SchedulingContext::for_verification(bank.clone());
+        let context = SchedulingContext::new(bank.clone());
         let scheduler = pool.do_take_scheduler(context);
         scheduler.schedule_execution(tx, 0).unwrap();
 
@@ -3331,7 +3320,7 @@ mod tests {
         let pool = SchedulerPool::<PooledScheduler<CountingHandler>, _>::new_for_verification(
             None, None, None, None, None,
         );
-        let context = SchedulingContext::for_verification(bank.clone());
+        let context = SchedulingContext::new(bank.clone());
         let scheduler = pool.do_take_scheduler(context);
 
         // This test is racy.
@@ -3365,7 +3354,7 @@ mod tests {
 
         let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None, None);
         let bank = Arc::new(Bank::default_for_tests());
-        let context = &SchedulingContext::for_verification(bank);
+        let context = &SchedulingContext::new(bank);
 
         let scheduler1 = pool.do_take_scheduler(context.clone());
         let scheduler_id1 = scheduler1.id();
@@ -3392,7 +3381,7 @@ mod tests {
 
         let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None, None);
         let bank = Arc::new(Bank::default_for_tests());
-        let context = &SchedulingContext::for_verification(bank);
+        let context = &SchedulingContext::new(bank);
         let mut scheduler = pool.do_take_scheduler(context.clone());
 
         // should never panic.
@@ -3412,8 +3401,8 @@ mod tests {
         let new_bank = &Arc::new(Bank::default_for_tests());
         assert!(!Arc::ptr_eq(old_bank, new_bank));
 
-        let old_context = &SchedulingContext::for_verification(old_bank.clone());
-        let new_context = &SchedulingContext::for_verification(new_bank.clone());
+        let old_context = &SchedulingContext::new(old_bank.clone());
+        let new_context = &SchedulingContext::new(new_bank.clone());
 
         let scheduler = pool.do_take_scheduler(old_context.clone());
         let scheduler_id = scheduler.id();
@@ -3499,7 +3488,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
-        let context = SchedulingContext::for_verification(bank.clone());
+        let context = SchedulingContext::new(bank.clone());
 
         assert_eq!(bank.transaction_count(), 0);
         let scheduler = pool.take_scheduler(context).unwrap();
@@ -3543,7 +3532,7 @@ mod tests {
             DEFAULT_TIMEOUT_DURATION,
         );
         let pool = pool_raw.clone();
-        let context = SchedulingContext::for_verification(bank.clone());
+        let context = SchedulingContext::new(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
 
         let unfunded_keypair = Keypair::new();
@@ -3670,7 +3659,7 @@ mod tests {
             None,
             None,
         );
-        let context = SchedulingContext::for_verification(bank.clone());
+        let context = SchedulingContext::new(bank.clone());
 
         let scheduler = pool.take_scheduler(context).unwrap();
 
@@ -3740,7 +3729,7 @@ mod tests {
         let pool = SchedulerPool::<PooledScheduler<CountingFaultyHandler>, _>::new_for_verification(
             None, None, None, None, None,
         );
-        let context = SchedulingContext::for_verification(bank.clone());
+        let context = SchedulingContext::new(bank.clone());
         let scheduler = pool.do_take_scheduler(context);
 
         for i in 0..10 {
@@ -3849,8 +3838,7 @@ mod tests {
         let mut expected_transaction_count = Saturating(0);
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
-        let context =
-            SchedulingContext::new_with_mode(SchedulingMode::BlockVerification, bank.clone());
+        let context = SchedulingContext::new(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
         let old_scheduler_id = scheduler.id();
 
@@ -3881,8 +3869,7 @@ mod tests {
         ));
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
-        let context =
-            SchedulingContext::new_with_mode(SchedulingMode::BlockVerification, bank.clone());
+        let context = SchedulingContext::new(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
         // make sure the same scheduler is used to test its internal cross-session behavior
         // regardless scheduling_mode.
@@ -3944,8 +3931,8 @@ mod tests {
                 2,
                 genesis_config.hash(),
             ));
-        let context0 = &SchedulingContext::for_verification(bank0.clone());
-        let context1 = &SchedulingContext::for_verification(bank1.clone());
+        let context0 = &SchedulingContext::new(bank0.clone());
+        let context1 = &SchedulingContext::new(bank1.clone());
 
         // Exercise the scheduler by busy-looping to expose the race condition
         for (context, task_id) in [(context0, 0), (context1, 1)]
@@ -4153,7 +4140,7 @@ mod tests {
                 slot.checked_add(1).unwrap(),
             ));
         }
-        let context = SchedulingContext::for_verification(bank.clone());
+        let context = SchedulingContext::new(bank.clone());
 
         let pool =
             SchedulerPool::<AsyncScheduler<TRIGGER_RACE_CONDITION>, DefaultTaskHandler>::new_dyn_for_verification(
@@ -4237,7 +4224,7 @@ mod tests {
         // this internally should call SanitizedTransaction::get_account_locks().
         let result = &mut Ok(());
         let timings = &mut ExecuteTimings::default();
-        let scheduling_context = &SchedulingContext::for_verification(bank.clone());
+        let scheduling_context = &SchedulingContext::new(bank.clone());
         let handler_context = &HandlerContext {
             thread_count: 0,
             log_messages_bytes_limit: None,
@@ -4255,134 +4242,5 @@ mod tests {
         });
         DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
         assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
-    }
-
-    enum TxResult {
-        ExecutedWithSuccess,
-        ExecutedWithFailure,
-        NotExecuted,
-    }
-
-    #[test_matrix(
-        [TxResult::ExecutedWithSuccess, TxResult::ExecutedWithFailure, TxResult::NotExecuted],
-        [false, true]
-    )]
-    fn test_task_handler_poh_recording(tx_result: TxResult, should_succeed_to_record_to_poh: bool) {
-        agave_logger::setup();
-
-        let GenesisConfigInfo {
-            genesis_config,
-            ref mint_keypair,
-            ..
-        } = create_genesis_config_for_block_production(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let bank_forks = BankForks::new_rw_arc(bank);
-        let bank = bank_forks.read().unwrap().working_bank_with_scheduler();
-
-        let (tx, expected_tx_result) = match tx_result {
-            TxResult::ExecutedWithSuccess => (
-                system_transaction::transfer(
-                    mint_keypair,
-                    &solana_pubkey::new_rand(),
-                    1,
-                    genesis_config.hash(),
-                ),
-                Ok(()),
-            ),
-            TxResult::ExecutedWithFailure => (
-                system_transaction::transfer(
-                    mint_keypair,
-                    &solana_pubkey::new_rand(),
-                    1_000_000,
-                    genesis_config.hash(),
-                ),
-                Ok(()),
-            ),
-            TxResult::NotExecuted => (
-                system_transaction::transfer(
-                    mint_keypair,
-                    &solana_pubkey::new_rand(),
-                    1,
-                    Hash::default(),
-                ),
-                Err(TransactionError::BlockhashNotFound),
-            ),
-        };
-        let tx = RuntimeTransaction::from_transaction_for_tests(tx);
-
-        let result = &mut Ok(());
-        let timings = &mut ExecuteTimings::default();
-        let scheduling_context = &SchedulingContext::for_production(bank.clone());
-        let (sender, receiver) = crossbeam_channel::unbounded();
-
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-
-        let handler_context = &HandlerContext {
-            thread_count: 0,
-            log_messages_bytes_limit: None,
-            transaction_status_sender: Some(TransactionStatusSender {
-                sender,
-                dependency_tracker: None,
-            }),
-            replay_vote_sender: None,
-            prioritization_fee_cache: None,
-            banking_packet_receiver: never(),
-            banking_packet_handler: Box::new(|_, _| {}),
-            banking_stage_helper: None,
-            transaction_recorder: Some(transaction_recorder),
-        };
-
-        let task = SchedulingStateMachine::create_task(tx.clone(), 0, &mut |_| {
-            UsageQueue::new(&Capability::FifoQueueing)
-        });
-
-        // Recording will succeed based upon if the channel is shutdown or not.
-        if should_succeed_to_record_to_poh {
-            // If we should succeed, we reset the channel to accept records.
-            record_receiver.restart(bank.bank_id());
-        }
-
-        assert_eq!(bank.transaction_count(), 0);
-        assert_eq!(bank.transaction_error_count(), 0);
-        DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
-
-        if should_succeed_to_record_to_poh {
-            if expected_tx_result.is_ok() {
-                assert_matches!(result, Ok(()));
-                assert_eq!(bank.transaction_count(), 1);
-                if matches!(tx_result, TxResult::ExecutedWithFailure) {
-                    assert_eq!(bank.transaction_error_count(), 1);
-                } else {
-                    assert_eq!(bank.transaction_error_count(), 0);
-                }
-                assert_matches!(
-                    receiver.try_recv(),
-                    Ok(TransactionStatusMessage::Batch((
-                        TransactionStatusBatch { .. },
-                        None, // no work id
-                    )))
-                );
-                // check that the `Record` is correctly sent through the channel;
-                // in reality this would then be picked up by PoH service.
-                assert!(record_receiver.try_recv().is_ok());
-            } else {
-                assert_eq!(result, &expected_tx_result);
-                assert_eq!(bank.transaction_count(), 0);
-                assert_eq!(bank.transaction_error_count(), 0);
-                assert_matches!(receiver.try_recv(), Err(_));
-                assert!(record_receiver.try_recv().is_err());
-            }
-        } else {
-            if expected_tx_result.is_ok() {
-                assert_matches!(result, Err(TransactionError::CommitCancelled));
-            } else {
-                assert_eq!(result, &expected_tx_result);
-            }
-
-            assert_eq!(bank.transaction_count(), 0);
-            assert_matches!(receiver.try_recv(), Err(_));
-            assert!(record_receiver.try_recv().is_err());
-        }
     }
 }
