@@ -3,6 +3,7 @@ use {
     crate::{
         device::{NetworkDevice, QueueId},
         load_xdp_program,
+        neighbors::NeighborsObserver,
         route::{RouteTable, Router, RoutingTables},
         route_monitor::RouteMonitor,
         set_cpu_affinity,
@@ -180,6 +181,8 @@ pub struct TransmitterBuilder {
     tx_channel_cap: usize,
     maybe_ebpf: Option<Ebpf>,
     atomic_router: Arc<ArcSwap<Router>>,
+    neighbors: NeighborsObserver,
+    neighbors_monitor_handle: thread::JoinHandle<()>,
     route_monitor_handle: thread::JoinHandle<()>,
 }
 
@@ -192,6 +195,7 @@ impl TransmitterBuilder {
     #[cfg(target_os = "linux")]
     pub fn new(config: XdpConfig, exit: Arc<AtomicBool>) -> Result<Self, Box<dyn Error>> {
         use {
+            crate::neighbors::NeighborsRefresher,
             caps::{
                 CapSet,
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
@@ -283,6 +287,15 @@ impl TransmitterBuilder {
             router.routing_table()
         );
 
+        fn retain_cap_net_admin() {
+            // we need to retain CAP_NET_ADMIN in case the netlink socket needs reinitialized
+            let retained_caps = caps::CapsHashSet::from_iter([caps::Capability::CAP_NET_ADMIN]);
+            caps::set(None, caps::CapSet::Effective, &retained_caps)
+                .expect("linux allows effective capset to be set");
+            caps::set(None, caps::CapSet::Permitted, &retained_caps)
+                .expect("linux allows permitted capset to be set");
+        }
+
         // Use ArcSwap for lock-free updates of the routing table
         let atomic_router = Arc::new(ArcSwap::from_pointee(router));
         let route_monitor_handle = RouteMonitor::start(
@@ -291,15 +304,14 @@ impl TransmitterBuilder {
             exit.clone(),
             ROUTE_MONITOR_UPDATE_INTERVAL,
             || {
-                // we need to retain CAP_NET_ADMIN in case the netlink socket needs reinitialized
-                let retained_caps = caps::CapsHashSet::from_iter([caps::Capability::CAP_NET_ADMIN]);
-                caps::set(None, caps::CapSet::Effective, &retained_caps)
-                    .expect("linux allows effective capset to be set");
-                caps::set(None, caps::CapSet::Permitted, &retained_caps)
-                    .expect("linux allows permitted capset to be set");
+                retain_cap_net_admin();
                 info!("route monitor thread started");
             },
         );
+        let (neighbors_monitor_handle, neighbors) = NeighborsRefresher::start(exit, || {
+            retain_cap_net_admin();
+            info!("neighbors thread started");
+        })?;
 
         let maybe_ebpf = maybe_ebpf_result.transpose()?;
 
@@ -308,6 +320,8 @@ impl TransmitterBuilder {
             tx_channel_cap,
             maybe_ebpf,
             atomic_router,
+            neighbors,
+            neighbors_monitor_handle,
             route_monitor_handle,
         })
     }
@@ -329,11 +343,13 @@ impl TransmitterBuilder {
             tx_channel_cap,
             maybe_ebpf,
             atomic_router,
+            neighbors,
+            neighbors_monitor_handle,
             route_monitor_handle,
         } = self;
 
         let (drop_sender, drop_receiver) = crossbeam_channel::bounded(DROP_CHANNEL_CAP);
-        let mut threads = vec![route_monitor_handle];
+        let mut threads = vec![route_monitor_handle, neighbors_monitor_handle];
 
         threads.push(
             Builder::new()
@@ -363,6 +379,7 @@ impl TransmitterBuilder {
             let (sender, receiver) = crossbeam_channel::bounded(tx_channel_cap);
             let drop_sender = drop_sender.clone();
             let atomic_router = Arc::clone(&atomic_router);
+            let mut neighbors = neighbors.clone();
             threads.push(
                 Builder::new()
                     .name(format!("solTransmIO{i:02}"))
@@ -370,7 +387,28 @@ impl TransmitterBuilder {
                         tx_loop.run(receiver, drop_sender, move |ip| {
                             let r = atomic_router.load();
                             match ip {
-                                IpAddr::V4(ip) => r.route_v4(*ip).ok(),
+                                IpAddr::V4(ip) => {
+                                    let next_hop = r.route_v4(*ip).ok()?;
+                                    if next_hop.neigh_requires_refresh {
+                                        if let Some(gre) = next_hop.gre.as_ref() {
+                                            neighbors.observe(
+                                                gre.underlay_if_index,
+                                                gre.underlay_ip_addr,
+                                                gre.underlay_mac_addr.is_some(),
+                                            );
+                                        } else {
+                                            let IpAddr::V4(neighbor_ip) = next_hop.ip_addr else {
+                                                return None;
+                                            };
+                                            neighbors.observe(
+                                                next_hop.if_index,
+                                                neighbor_ip,
+                                                next_hop.mac_addr.is_some(),
+                                            );
+                                        }
+                                    }
+                                    Some(next_hop)
+                                }
                                 IpAddr::V6(_) => None,
                             }
                         })

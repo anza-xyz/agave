@@ -198,11 +198,11 @@ pub trait TxPacket {
 }
 
 impl<U: Umem> TxLoop<U> {
-    pub fn run<T: TxPacket, R: Fn(&IpAddr) -> Option<NextHop>>(
+    pub fn run<T: TxPacket, R: FnMut(&IpAddr) -> Option<NextHop>>(
         self,
         receiver: Receiver<T>,
         drop_sender: Sender<T>,
-        route_fn: R,
+        mut route_fn: R,
     ) {
         // How long we sleep waiting to receive shreds from the channel.
         const RECV_TIMEOUT: Duration = Duration::from_nanos(1000);

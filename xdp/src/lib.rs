@@ -14,6 +14,8 @@ pub mod gre;
 #[cfg(target_os = "linux")]
 pub(crate) mod lpm;
 #[cfg(target_os = "linux")]
+pub(crate) mod neighbors;
+#[cfg(target_os = "linux")]
 pub mod netlink;
 #[cfg(target_os = "linux")]
 pub mod packet;
