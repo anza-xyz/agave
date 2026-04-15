@@ -5851,7 +5851,6 @@ pub mod tests {
         crossbeam_channel::unbounded,
         rand::{rng, seq::SliceRandom},
         solana_account_decoder::parse_token::UiTokenAmount,
-        solana_clock::{DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
         solana_entry::entry::{next_entry, next_entry_mut},
         solana_genesis_utils::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, open_genesis_config},
         solana_hash::Hash,
@@ -7369,7 +7368,7 @@ pub mod tests {
 
         // Blockstore::find_missing_data_indexes() compares timestamps, so
         // set a small value for defer_threshold_ticks to avoid flakiness.
-        let defer_threshold_ticks = DEFAULT_TICKS_PER_SLOT / 16;
+        let defer_threshold_ticks = DEFAULT_TICKS_PER_SECOND / 16;
         let start_index = 0;
         let end_index = 50;
         let max_missing = 9;
@@ -7417,7 +7416,7 @@ pub mod tests {
         assert_eq!(
             blockstore.find_missing_data_indexes(
                 slot,
-                timestamp() - DEFAULT_MS_PER_SLOT, // first_timestamp
+                timestamp() - 1000, // first_timestamp
                 defer_threshold_ticks,
                 start_index,
                 end_index,
