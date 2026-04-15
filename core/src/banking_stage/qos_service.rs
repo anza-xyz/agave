@@ -23,26 +23,21 @@ mod transaction {
 // Banking thread calls `report_metrics(slot)` at end of `process_and_record_transaction()`, or any time
 // it wants.
 //
-pub struct QosService {}
+pub struct QosService;
 
 impl QosService {
-    pub fn new(_id: u32) -> Self {
-        Self {}
-    }
-
     /// Calculate cost of transactions, if not already filtered out, determine which ones to
     /// include in the slot, and accumulate costs in the cost tracker.
     /// Returns a vector of results containing selected transaction costs, and the number of
     /// transactions that were *NOT* selected.
     pub fn select_and_accumulate_transaction_costs<'a, Tx: TransactionWithMeta>(
-        &self,
         bank: &Bank,
         transactions: &'a [Tx],
         pre_results: impl Iterator<Item = transaction::Result<()>>,
     ) -> (Vec<transaction::Result<TransactionCost<'a, Tx>>>, u64) {
         let transaction_costs =
-            self.compute_transaction_costs(&bank.feature_set, transactions.iter(), pre_results);
-        let (transactions_qos_cost_results, num_included) = self.select_transactions_per_cost(
+            Self::compute_transaction_costs(&bank.feature_set, transactions.iter(), pre_results);
+        let (transactions_qos_cost_results, num_included) = Self::select_transactions_per_cost(
             transactions.iter(),
             transaction_costs.into_iter(),
             bank,
@@ -59,7 +54,6 @@ impl QosService {
     // invoke cost_model to calculate cost for the given list of transactions that have not
     // been filtered out already.
     fn compute_transaction_costs<'a, Tx: TransactionWithMeta>(
-        &self,
         feature_set: &FeatureSet,
         transactions: impl Iterator<Item = &'a Tx>,
         pre_results: impl Iterator<Item = transaction::Result<()>>,
@@ -74,7 +68,6 @@ impl QosService {
     /// list of Results that indicate if a transaction is selected to be included in the current block,
     /// and a count of the number of transactions that would fit in the block
     fn select_transactions_per_cost<'a, Tx: TransactionWithMeta>(
-        &self,
         transactions: impl Iterator<Item = &'a Tx>,
         transactions_costs: impl Iterator<Item = transaction::Result<TransactionCost<'a, Tx>>>,
         bank: &Bank,
@@ -237,8 +230,7 @@ mod tests {
         );
         let txs = [transfer_tx.clone(), vote_tx.clone(), vote_tx, transfer_tx];
 
-        let qos_service = QosService::new(1);
-        let txs_costs = qos_service.compute_transaction_costs(
+        let txs_costs = QosService::compute_transaction_costs(
             &FeatureSet::all_enabled(),
             txs.iter(),
             std::iter::repeat(Ok(())),
@@ -284,8 +276,7 @@ mod tests {
         // make a vec of txs
         let txs = [transfer_tx.clone(), vote_tx.clone(), transfer_tx, vote_tx];
 
-        let qos_service = QosService::new(1);
-        let txs_costs = qos_service.compute_transaction_costs(
+        let txs_costs = QosService::compute_transaction_costs(
             &FeatureSet::all_enabled(),
             txs.iter(),
             std::iter::repeat(Ok(())),
@@ -298,7 +289,7 @@ mod tests {
             .unwrap()
             .set_limits(cost_limit, cost_limit, cost_limit, 0);
         let (results, num_selected) =
-            qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+            QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
         assert_eq!(num_selected, 2);
 
         // verify that first transfer tx and first vote are allowed
@@ -341,8 +332,7 @@ mod tests {
 
         // assert all tx_costs should be applied to cost_tracker if all execution_results are all committed
         {
-            let qos_service = QosService::new(1);
-            let txs_costs = qos_service.compute_transaction_costs(
+            let txs_costs = QosService::compute_transaction_costs(
                 &FeatureSet::all_enabled(),
                 txs.iter(),
                 std::iter::repeat(Ok(())),
@@ -352,7 +342,7 @@ mod tests {
                 .map(|cost| cost.as_ref().unwrap().sum())
                 .sum();
             let (qos_cost_results, _num_included) =
-                qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
             assert_eq!(
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
@@ -412,8 +402,7 @@ mod tests {
 
         // assert all tx_costs should be removed from cost_tracker if all execution_results are all Not Committed
         {
-            let qos_service = QosService::new(1);
-            let txs_costs = qos_service.compute_transaction_costs(
+            let txs_costs = QosService::compute_transaction_costs(
                 &FeatureSet::all_enabled(),
                 txs.iter(),
                 std::iter::repeat(Ok(())),
@@ -423,7 +412,7 @@ mod tests {
                 .map(|cost| cost.as_ref().unwrap().sum())
                 .sum();
             let (qos_cost_results, _num_included) =
-                qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
             assert_eq!(
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
@@ -466,8 +455,7 @@ mod tests {
 
         // assert only committed tx_costs are applied cost_tracker
         {
-            let qos_service = QosService::new(1);
-            let txs_costs = qos_service.compute_transaction_costs(
+            let txs_costs = QosService::compute_transaction_costs(
                 &FeatureSet::all_enabled(),
                 txs.iter(),
                 std::iter::repeat(Ok(())),
@@ -477,7 +465,7 @@ mod tests {
                 .map(|cost| cost.as_ref().unwrap().sum())
                 .sum();
             let (qos_cost_results, _num_included) =
-                qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
             assert_eq!(
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()

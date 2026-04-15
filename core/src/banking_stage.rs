@@ -6,8 +6,7 @@ use qualifier_attr::qualifiers;
 use {
     self::{
         committer::Committer, consumer::Consumer, decision_maker::DecisionMaker,
-        qos_service::QosService, vote_packet_receiver::VotePacketReceiver,
-        vote_storage::VoteStorage,
+        vote_packet_receiver::VotePacketReceiver, vote_storage::VoteStorage,
     },
     crate::{
         banking_stage::{
@@ -553,7 +552,6 @@ impl BankingStage {
                 Consumer::new(
                     self.committer.clone(),
                     self.transaction_recorder.clone(),
-                    QosService::new(id),
                     self.log_messages_bytes_limit,
                 ),
                 finished_work_sender.clone(),
@@ -650,7 +648,6 @@ impl BankingStage {
         let consumer = Consumer::new(
             self.committer.clone(),
             self.transaction_recorder.clone(),
-            QosService::new(0),
             self.log_messages_bytes_limit,
         );
         let decision_maker = DecisionMaker::from(self.poh_recorder.read().unwrap().deref());
@@ -738,7 +735,6 @@ mod external {
                     Consumer::new(
                         self.committer.clone(),
                         self.transaction_recorder.clone(),
-                        QosService::new(id),
                         self.log_messages_bytes_limit,
                     ),
                     worker_to_pack,

@@ -106,7 +106,6 @@ pub struct LeaderProcessedTransactionCounts {
 pub struct Consumer {
     committer: Committer,
     transaction_recorder: TransactionRecorder,
-    qos_service: QosService,
     log_messages_bytes_limit: Option<usize>,
 }
 
@@ -114,13 +113,11 @@ impl Consumer {
     pub fn new(
         committer: Committer,
         transaction_recorder: TransactionRecorder,
-        qos_service: QosService,
         log_messages_bytes_limit: Option<usize>,
     ) -> Self {
         Self {
             committer,
             transaction_recorder,
-            qos_service,
             log_messages_bytes_limit,
         }
     }
@@ -200,7 +197,7 @@ impl Consumer {
         let (
             (transaction_qos_cost_results, cost_model_throttled_transactions_count),
             cost_model_us,
-        ) = measure_us!(self.qos_service.select_and_accumulate_transaction_costs(
+        ) = measure_us!(QosService::select_and_accumulate_transaction_costs(
             bank,
             txs,
             pre_results
@@ -586,7 +583,7 @@ mod tests {
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(transaction_status_sender, replay_vote_sender, None);
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(committer, recorder, None);
 
         TestFrame {
             mint_keypair,
@@ -609,7 +606,7 @@ mod tests {
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(None, replay_vote_sender, None);
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(committer, recorder, None);
         consumer.process_and_record_transactions(&bank, &transactions)
     }
 
