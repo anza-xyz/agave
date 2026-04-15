@@ -504,14 +504,6 @@ impl BankWithScheduler {
         )
     }
 
-    pub fn has_installed_active_bp_scheduler(&self) -> bool {
-        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
-            matches!(scheduler.context().mode(), SchedulingMode::BlockProduction)
-        } else {
-            false
-        }
-    }
-
     /// Schedule the transaction as long as the scheduler hasn't been aborted.
     ///
     /// If the scheduler has been aborted, this doesn't schedule the transaction, instead just
@@ -589,20 +581,6 @@ impl BankWithScheduler {
             &self.inner.scheduler,
             WaitReason::TerminatedToFreeze,
         )
-    }
-
-    pub fn ensure_return_abandoned_bp_scheduler_to_scheduler_pool(&self) {
-        if !self.has_installed_active_bp_scheduler() {
-            return;
-        }
-
-        if let Some((result, _timings)) = self.wait_for_completed_scheduler() {
-            info!(
-                "Reaped cleared tpu_bank and returned abandoned bp scheduler: {} {:?}",
-                self.slot(),
-                result
-            );
-        }
     }
 
     pub const fn no_scheduler_available() -> InstalledSchedulerRwLock {
