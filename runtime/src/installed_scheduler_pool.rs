@@ -22,7 +22,6 @@
 
 use {
     crate::bank::Bank,
-    assert_matches::assert_matches,
     log::*,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -30,7 +29,7 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_unified_scheduler_logic::{OrderedTaskId, SchedulingMode},
+    solana_unified_scheduler_logic::OrderedTaskId,
     std::{
         fmt::{self, Debug},
         mem,
@@ -253,21 +252,13 @@ pub type SchedulerId = u64;
 /// will be triggered when tried to be used normally across code-base.
 #[derive(Clone, Debug)]
 pub struct SchedulingContext {
-    mode: SchedulingMode,
     bank: Arc<Bank>,
 }
 
 impl SchedulingContext {
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new(bank: Arc<Bank>) -> Self {
-        Self {
-            mode: SchedulingMode::BlockVerification,
-            bank,
-        }
-    }
-
-    pub fn mode(&self) -> SchedulingMode {
-        self.mode
+        Self { bank }
     }
 
     pub fn bank(&self) -> &Arc<Bank> {
@@ -533,13 +524,6 @@ impl BankWithScheduler {
         self.inner.drop_scheduler();
     }
 
-    pub fn unpause_new_block_production_scheduler(&self) {
-        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
-            assert_matches!(scheduler.context().mode(), SchedulingMode::BlockProduction);
-            scheduler.unpause_after_taken();
-        }
-    }
-
     pub(crate) fn wait_for_paused_scheduler(bank: &Bank, scheduler: &InstalledSchedulerRwLock) {
         let maybe_result_with_timings = BankWithSchedulerInner::wait_for_scheduler_termination(
             bank,
@@ -784,6 +768,7 @@ mod tests {
             bank::test_utils::goto_end_of_slot_with_scheduler,
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
         },
+        assert_matches::assert_matches,
         mockall::Sequence,
         solana_system_transaction as system_transaction,
         std::sync::Mutex,

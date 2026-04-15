@@ -811,7 +811,6 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     if set_bank_res.is_err() {
         warn!("Failed to set poh bank, poh service is disconnected");
     }
-    tpu_bank.unpause_new_block_production_scheduler();
 }
 
 #[derive(Debug)]
