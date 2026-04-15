@@ -370,9 +370,7 @@ mod tests {
             );
             assert_eq!(
                 loaded_accounts_bytes,
-                transaction_configuration
-                    .loaded_accounts_data_size_limit
-                    .get()
+                transaction_configuration.loaded_accounts_data_size_limit
             );
         }
     }
