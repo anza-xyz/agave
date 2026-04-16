@@ -29,6 +29,7 @@ pub fn archive_snapshot(
     bank_snapshot_dir: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
     archive_format: ArchiveFormat,
+    io_setup: &IoSetupState,
 ) -> Result<SnapshotArchiveInfo> {
     use ArchiveSnapshotPackageError as E;
     const ACCOUNTS_DIR: &str = "accounts";
@@ -88,7 +89,7 @@ pub fn archive_snapshot(
     ));
 
     {
-        let archive_writer = large_file_buf_writer(&staging_archive_path, &IoSetupState::default())
+        let archive_writer = large_file_buf_writer(&staging_archive_path, io_setup)
             .map_err(|err| E::CreateArchiveFile(err, staging_archive_path.clone()))?;
 
         let do_archive_files = |encoder: &mut dyn Write| -> std::result::Result<(), E> {

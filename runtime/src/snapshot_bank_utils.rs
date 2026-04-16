@@ -733,12 +733,17 @@ pub fn bank_to_full_snapshot_archive(
 
     let snapshot_storages = snapshot_package.snapshot_storages;
 
+    let io_setup = IoSetupState::default()
+        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers)
+        .with_direct_io(snapshot_config.use_direct_io)
+        .with_shared_sqpoll()?;
     let bank_snapshot_info = snapshot_utils::serialize_snapshot(
         &snapshot_config.bank_snapshots_dir,
         snapshot_config.snapshot_version,
         snapshot_package.bank_snapshot_package,
         snapshot_storages.as_slice(),
         false, // we do not intend to fastboot, so skip flushing and hard linking the storages
+        &io_setup,
     )?;
 
     let snapshot_archive_info = snapshot_utils::archive_snapshot_package(
@@ -748,6 +753,7 @@ pub fn bank_to_full_snapshot_archive(
         bank_snapshot_info.snapshot_dir,
         snapshot_storages,
         &snapshot_config,
+        &io_setup,
     )?;
 
     Ok(FullSnapshotArchiveInfo::new(snapshot_archive_info))
@@ -800,12 +806,17 @@ pub fn bank_to_incremental_snapshot_archive(
 
     let snapshot_storages = snapshot_package.snapshot_storages;
 
+    let io_setup = IoSetupState::default()
+        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers)
+        .with_direct_io(snapshot_config.use_direct_io)
+        .with_shared_sqpoll()?;
     let bank_snapshot_info = snapshot_utils::serialize_snapshot(
         &snapshot_config.bank_snapshots_dir,
         snapshot_config.snapshot_version,
         snapshot_package.bank_snapshot_package,
         snapshot_storages.as_slice(),
         false, // we do not intend to fastboot, so skip flushing and hard linking the storages
+        &io_setup,
     )?;
 
     let snapshot_archive_info = snapshot_utils::archive_snapshot_package(
@@ -815,6 +826,7 @@ pub fn bank_to_incremental_snapshot_archive(
         bank_snapshot_info.snapshot_dir,
         snapshot_storages,
         &snapshot_config,
+        &io_setup,
     )?;
 
     Ok(IncrementalSnapshotArchiveInfo::new(
@@ -946,6 +958,7 @@ mod tests {
             bank_snapshot_package,
             snapshot_storages.as_slice(),
             should_flush_and_hard_link_storages,
+            &IoSetupState::default(),
         )?;
 
         Ok(())
