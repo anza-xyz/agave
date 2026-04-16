@@ -282,6 +282,16 @@ impl AddAssign for SquashTiming {
     }
 }
 
+/// Returned from `Bank::is_alpenglow_active_in_epoch()`.
+pub(crate) enum AlpenglowEpochStatus {
+    /// This is a full tower epoch
+    Tower,
+    /// The epoch started in tower and then switched to alpenglow
+    MigrationEpoch,
+    /// This is a full alpenglow epoch
+    FullAlpenglow,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CollectorFeeDetails {
     transaction_fee: u64,

@@ -8,8 +8,8 @@ use {
     },
     crate::{
         bank::{
-            RewardCalcTracer, RewardCalculationEvent, RewardCommission, RewardCommissions,
-            RewardsMetrics, null_tracer,
+            AlpenglowEpochStatus, RewardCalcTracer, RewardCalculationEvent, RewardCommission,
+            RewardCommissions, RewardsMetrics, null_tracer,
         },
         inflation_rewards::{
             points::{
@@ -35,16 +35,6 @@ use {
     solana_sysvar::epoch_rewards::EpochRewards,
     std::sync::{Arc, atomic::Ordering::Relaxed},
 };
-
-/// Returned from `Bank::is_alpenglow_active_in_epoch()`.
-enum AlpenglowEpochStatus {
-    /// This is a full tower epoch
-    Tower,
-    /// The epoch started in tower and then switched to alpenglow
-    MigrationEpoch,
-    /// This is a full alpenglow epoch
-    FullAlpenglow,
-}
 
 #[derive(Debug)]
 struct DelegationRewards {
@@ -540,7 +530,7 @@ impl Bank {
     }
 
     /// Returns the status of alpenglow activation in `epoch`.
-    fn is_alpenglow_active_in_epoch(&self, epoch: Epoch) -> AlpenglowEpochStatus {
+    pub(crate) fn is_alpenglow_active_in_epoch(&self, epoch: Epoch) -> AlpenglowEpochStatus {
         let Some(genesis_cert) = self.get_alpenglow_genesis_certificate() else {
             return AlpenglowEpochStatus::Tower;
         };

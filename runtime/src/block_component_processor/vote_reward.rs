@@ -1,5 +1,8 @@
 use {
-    crate::{bank::Bank, validated_block_finalization::ValidatedBlockFinalizationCert},
+    crate::{
+        bank::{AlpenglowEpochStatus, Bank},
+        validated_block_finalization::ValidatedBlockFinalizationCert,
+    },
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
     log::info,
     solana_account::{AccountSharedData, ReadableAccount},
@@ -141,6 +144,7 @@ pub(super) fn calculate_and_pay_voting_reward_and_update_vote_state(
             continue;
         };
         if let Some(account_data) = pay_reward_update_vote_state(
+            bank,
             current_epoch,
             reward_slot,
             current_slot_account,
@@ -158,6 +162,7 @@ pub(super) fn calculate_and_pay_voting_reward_and_update_vote_state(
         match current_vote_accounts.get(&current_slot_leader_vote_pubkey) {
             Some((_, leader_account)) => {
                 if let Some(account_data) = pay_reward_update_vote_state(
+                    bank,
                     current_epoch,
                     reward_slot,
                     leader_account,
@@ -214,6 +219,7 @@ fn calculate_reward(
 ///
 /// TODO: this is using VoteStateV4 explicitly.  When we upstream, we will use VoteStateHandle API.
 fn pay_reward_update_vote_state(
+    bank: &Bank,
     current_epoch: Epoch,
     reward_slot: Slot,
     account: &VoteAccount,
@@ -227,7 +233,7 @@ fn pay_reward_update_vote_state(
     };
     match vote_state_versions {
         VoteStateVersions::V4(mut vote_state) => {
-            increment_credits(&mut vote_state, current_epoch, reward);
+            increment_credits(bank, &mut vote_state, current_epoch, reward);
             update_vote_state(
                 &mut vote_state,
                 reward_slot,
@@ -248,14 +254,43 @@ fn pay_reward_update_vote_state(
     }
 }
 
+fn ensure_marker(bank: &Bank, vote_state: &mut VoteStateV4, epoch: Epoch) {
+    let marker_epoch = Epoch::MAX;
+    let marker_elem = (marker_epoch, 0, 0);
+    let epoch_credits = &mut vote_state.epoch_credits;
+    match bank.is_alpenglow_active_in_epoch(epoch) {
+        AlpenglowEpochStatus::Tower | AlpenglowEpochStatus::FullAlpenglow => (),
+        AlpenglowEpochStatus::MigrationEpoch => match epoch_credits.len() {
+            0 => {
+                epoch_credits.push(marker_elem);
+            }
+            1 => {
+                panic!();
+            }
+            _ => {
+                let ind0 = epoch_credits.len() - 1;
+                let ind1 = epoch_credits.len() - 2;
+                if epoch_credits[ind0].0 == marker_epoch || epoch_credits[ind1].0 == marker_epoch {
+                } else {
+                    epoch_credits.push(marker_elem);
+                }
+            }
+        },
+    }
+}
+
 /// Stores rewards as credits in the current vote state.
 ///
 /// TODO: this is using VoteStateV4 explicitly.  When we upstream, we will use VoteStateHandle API.
-fn increment_credits(vote_state: &mut VoteStateV4, new_epoch: Epoch, new_credits: u64) {
-    let marker_elem = (Epoch::MAX, 0, 0);
+fn increment_credits(
+    bank: &Bank,
+    vote_state: &mut VoteStateV4,
+    new_epoch: Epoch,
+    new_credits: u64,
+) {
+    ensure_marker(bank, vote_state, new_epoch);
     match vote_state.epoch_credits.last_mut() {
         None => {
-            vote_state.epoch_credits.push(marker_elem);
             vote_state.epoch_credits.push((new_epoch, new_credits, 0));
         }
         Some((epoch, final_credits, initial_credits)) => {
@@ -412,22 +447,39 @@ mod tests {
 
     #[test]
     fn increment_credits_works() {
+        let num_validators = 3;
+        let validators = (0..num_validators)
+            .map(|_| ValidatorVoteKeypairs::new_rand())
+            .collect::<Vec<_>>();
+        let (bank, _bank_forks) = initial_state(&validators, 0);
         let mut vote_state = VoteStateV4::default();
         let epoch = 1234;
         let credits = 543432;
-        increment_credits(&mut vote_state, epoch, credits);
+        increment_credits(&bank, &mut vote_state, epoch, credits);
         assert_eq!(credits, vote_state.epoch_credits.last().unwrap().1);
     }
 
     #[test]
     fn pay_reward_works() {
+        let num_validators = 3;
+        let validators = (0..num_validators)
+            .map(|_| ValidatorVoteKeypairs::new_rand())
+            .collect::<Vec<_>>();
+        let (bank, _bank_forks) = initial_state(&validators, 0);
         let account =
             VoteAccount::try_from(new_rand_vote_account(&mut rand::rng(), None, true)).unwrap();
         let epoch = 1234;
         let reward = 3453423;
-        let account_shared_data =
-            pay_reward_update_vote_state(epoch, 0, &account, Pubkey::default(), reward, None)
-                .unwrap();
+        let account_shared_data = pay_reward_update_vote_state(
+            &bank,
+            epoch,
+            0,
+            &account,
+            Pubkey::default(),
+            reward,
+            None,
+        )
+        .unwrap();
         let vote_state_versions: VoteStateVersions =
             bincode::deserialize(&account_shared_data.data_clone()).unwrap();
         let VoteStateVersions::V4(vote_state) = vote_state_versions else {
