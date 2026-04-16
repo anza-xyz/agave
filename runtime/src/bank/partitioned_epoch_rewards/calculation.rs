@@ -435,7 +435,7 @@ impl Bank {
         new_rate_activation_epoch: Option<Epoch>,
         delay_commission_updates: bool,
         commission_rate_in_basis_points: bool,
-        is_alpenglow_active: bool,
+        ag_epoch_status: &AlpenglowEpochStatus,
     ) -> Option<DelegationRewards> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
@@ -483,13 +483,14 @@ impl Bank {
             vote_state.commission() as u16 * 100
         };
 
-        let ag_stake_state = if is_alpenglow_active {
-            AlpenglowStakeState::Alpenglow {
-                vote_pubkey,
-                epoch_stakes: &self.epoch_stakes,
+        let ag_stake_state = match ag_epoch_status {
+            AlpenglowEpochStatus::Tower => AlpenglowStakeState::Tower,
+            AlpenglowEpochStatus::MigrationEpoch | AlpenglowEpochStatus::FullAlpenglow => {
+                AlpenglowStakeState::Alpenglow {
+                    vote_pubkey,
+                    epoch_stakes: &self.epoch_stakes,
+                }
             }
-        } else {
-            AlpenglowStakeState::Tower
         };
 
         match redeem_rewards(
@@ -567,11 +568,7 @@ impl Bank {
         let delay_commission_updates = feature_snapshot.delay_commission_updates;
         let commission_rate_in_basis_points = feature_snapshot.commission_rate_in_basis_points;
 
-        let is_alpenglow_active = match self.is_alpenglow_active_in_epoch(rewarded_epoch) {
-            AlpenglowEpochStatus::Tower => false,
-            AlpenglowEpochStatus::FullAlpenglow => true,
-            AlpenglowEpochStatus::MigrationEpoch => true,
-        };
+        let ag_epoch_status = self.is_alpenglow_active_in_epoch(rewarded_epoch);
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
         // For N stake delegations, where N is >1,000,000, we produce:
@@ -603,7 +600,7 @@ impl Bank {
                                 new_warmup_cooldown_rate_epoch,
                                 delay_commission_updates,
                                 commission_rate_in_basis_points,
-                                is_alpenglow_active,
+                                &ag_epoch_status,
                             )
                         });
                     let (stake_reward, maybe_reward_record) = match maybe_reward_record {
