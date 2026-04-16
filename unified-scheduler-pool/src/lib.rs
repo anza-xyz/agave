@@ -28,7 +28,6 @@ use {
     solana_ledger::blockstore_processor::{
         TransactionBatchWithIndexes, TransactionStatusSender, execute_batch,
     },
-    solana_poh::transaction_recorder::TransactionRecorder,
     solana_pubkey::Pubkey,
     solana_runtime::{
         installed_scheduler_pool::{
@@ -262,11 +261,6 @@ impl CommonHandlerContext {
 
 #[derive(derive_more::Debug)]
 struct BankingStageHandlerContext {
-    banking_thread_count: CountOrDefault,
-    banking_packet_receiver: BankingPacketReceiver,
-    #[debug("{banking_packet_handler:p}")]
-    banking_packet_handler: Box<dyn BankingPacketHandler>,
-    transaction_recorder: TransactionRecorder,
     banking_stage_monitor: Box<dyn BankingStageMonitor>,
 }
 
@@ -310,14 +304,6 @@ pub struct BankingStageHelper {
 const BANKING_STAGE_MAX_TASK_ID: usize = usize::MAX / 2;
 
 impl BankingStageHelper {
-    fn new(new_task_sender: Sender<NewTaskPayload>) -> Self {
-        Self {
-            usage_queue_loader: UsageQueueLoaderInner::new(Capability::PriorityQueueing),
-            next_task_id: AtomicUsize::default(),
-            new_task_sender,
-        }
-    }
-
     /// Generate batched task ids for the given number of tasks
     ///
     /// We assign task ids for the entire batch at once in the hope of alleviating cache-line
@@ -691,49 +677,13 @@ where
             .map(|context| context.banking_stage_monitor.status())
     }
 
-    fn create_handler_context(
-        &self,
-        mode: SchedulingMode,
-        new_task_sender: &Sender<NewTaskPayload>,
-    ) -> HandlerContext {
-        let (
-            thread_count,
-            banking_packet_receiver,
-            banking_packet_handler,
-            banking_stage_helper,
-            ..,
-        ): (
-            _,
-            _,
-            Box<dyn BankingPacketHandler>, /* to aid type inference */
-            _,
-            _,
-        ) = match mode {
-            BlockVerification => {
-                (
-                    self.block_verification_handler_count,
-                    // Return various type-specific no-op values.
-                    never(),
-                    Box::new(|_, _| {
-                        unreachable!("paired with never() receiver, this cannot be called")
-                    }),
-                    None,
-                    None,
-                )
-            }
-            BlockProduction => {
-                let handler_context = self.banking_stage_handler_context.lock().unwrap();
-                let handler_context = handler_context.as_ref().unwrap();
+    fn create_handler_context(&self) -> HandlerContext {
+        let thread_count = self.block_verification_handler_count;
+        let banking_packet_receiver = never();
+        let banking_packet_handler: Box<dyn BankingPacketHandler> =
+            Box::new(|_, _| unreachable!("paired with never() receiver, this cannot be called"));
+        let banking_stage_helper = None;
 
-                (
-                    handler_context.banking_thread_count,
-                    handler_context.banking_packet_receiver.clone(),
-                    handler_context.banking_packet_handler.clone(),
-                    Some(Arc::new(BankingStageHelper::new(new_task_sender.clone()))),
-                    Some(handler_context.transaction_recorder.clone()),
-                )
-            }
-        };
         let thread_count = thread_count.unwrap_or(Self::default_handler_count());
         assert!(thread_count >= 1);
         self.common_handler_context.clone().into_handler_context(
@@ -2346,8 +2296,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         result_with_timings: ResultWithTimings,
     ) -> Self {
         let mut thread_manager = ThreadManager::new(pool.clone());
-        let handler_context =
-            pool.create_handler_context(BlockVerification, &thread_manager.new_task_sender);
+        let handler_context = pool.create_handler_context();
         let usage_queue_loader = handler_context.usage_queue_loader_for_newly_spawned();
         thread_manager.start_threads(context.clone(), result_with_timings, handler_context);
         let inner = Self::Inner {
@@ -3787,10 +3736,7 @@ mod tests {
                     &mut timings,
                     &context,
                     &task,
-                    &pool.create_handler_context(
-                        BlockVerification,
-                        &crossbeam_channel::unbounded().0,
-                    ),
+                    &pool.create_handler_context(),
                 );
                 (result, timings)
             }));
