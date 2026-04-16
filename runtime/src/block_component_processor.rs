@@ -1057,14 +1057,17 @@ mod tests {
         // diff_slots = 15 - 10 = 5
         // lower = parent_time + 1
         // upper = parent_time + 2 * 5 * 400_000_000 = parent_time + 4_000_000_000
+        let parent_slot = 10;
         let parent_time = 1_000_000_000_000; // 1000 seconds in nanos
+        let working_slot = 15;
+        let slot_delta = working_slot - parent_slot;
         test_nanosecond_time_bounds_helper(
-            10,
+            parent_slot,
             parent_time,
-            15,
+            working_slot,
             DEFAULT_NS_PER_SLOT,
             parent_time + 1,
-            parent_time + 4_000_000_000,
+            parent_time + (2 * DEFAULT_NS_PER_SLOT * slot_delta) as i64,
         );
     }
 
