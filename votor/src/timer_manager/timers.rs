@@ -300,8 +300,7 @@ mod tests {
         assert!(timers.progress(now).is_none());
         assert!(receiver.try_recv().unwrap_err().is_empty());
 
-        let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
-        timers.set_timeouts(0, now, None, delta_block);
+        timers.set_timeouts(0, now, None, Duration::from_millis(DEFAULT_MS_PER_SLOT));
         while timers.progress(now).is_some() {
             now = now.checked_add(one_micro).unwrap();
         }
