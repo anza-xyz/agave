@@ -583,11 +583,11 @@ mod tests {
         super::*,
         agave_snapshots::{paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig},
         clap::{App, Arg},
+        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_ledger::{
             blockstore::Blockstore, blockstore_processor::ProcessOptions,
             genesis_utils::create_genesis_config,
         },
-        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_runtime::{bank::Bank, snapshot_bank_utils},
         std::fs,
         tempfile::TempDir,
@@ -652,12 +652,10 @@ mod tests {
         let root_bank = bank_forks.read().unwrap().root_bank();
 
         // Verify that latest_full_snapshot_slot is set, which matches the assert in main.rs
-        assert!(
-            root_bank
-                .accounts()
-                .accounts_db
-                .latest_full_snapshot_slot()
-                .is_some()
-        );
+        assert!(root_bank
+            .accounts()
+            .accounts_db
+            .latest_full_snapshot_slot()
+            .is_some());
     }
 }
