@@ -587,6 +587,7 @@ mod tests {
             blockstore::Blockstore, blockstore_processor::ProcessOptions,
             genesis_utils::create_genesis_config,
         },
+        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_runtime::{bank::Bank, snapshot_bank_utils},
         std::fs,
         tempfile::TempDir,
@@ -640,7 +641,10 @@ mod tests {
             &arg_matches,
             &genesis_config,
             blockstore,
-            ProcessOptions::default(),
+            ProcessOptions {
+                accounts_db_config: ACCOUNTS_DB_CONFIG_FOR_TESTING,
+                ..ProcessOptions::default()
+            },
             None,
         )
         .unwrap();
