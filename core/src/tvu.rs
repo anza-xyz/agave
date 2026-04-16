@@ -59,6 +59,7 @@ use {
     solana_runtime::{
         bank::MAX_ALPENGLOW_VOTE_ACCOUNTS, bank_forks::BankForks, commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache, snapshot_controller::SnapshotController,
+        validated_block_finalization::ValidatedBlockFinalizationCert,
         vote_sender_types::ReplayVoteSender,
     },
     solana_streamer::{
@@ -164,6 +165,7 @@ pub struct AlpenglowInitializationState {
     pub leader_window_info_sender: Sender<LeaderWindowInfo>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
+    pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 
     // Main communication channel
     pub votor_event_sender: VotorEventSender,
@@ -252,6 +254,7 @@ impl Tvu {
             key_notifiers,
             bls_connection_cache,
             voting_service_test_override,
+            highest_finalized,
         } = votor_init;
 
         // streamer and sigverify for A2A BLS messages
@@ -478,6 +481,7 @@ impl Tvu {
             reward_certs_sender,
             build_reward_certs_receiver,
             generated_cert_types,
+            highest_finalized,
         };
         let votor = Votor::new(votor_config);
 
@@ -848,6 +852,7 @@ pub mod tests {
                 key_notifiers,
                 bls_connection_cache: Arc::new(bls_connection_cache),
                 voting_service_test_override: None,
+                highest_finalized: Arc::new(RwLock::new(None)),
             },
         )
         .expect("assume success");

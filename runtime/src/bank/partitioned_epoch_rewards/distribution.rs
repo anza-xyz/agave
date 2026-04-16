@@ -422,7 +422,7 @@ mod tests {
             1000,
             &validator_vote_pubkey,
             0,
-            &validator_vote_pubkey,
+            &validator_pubkey,
             20,
         );
 

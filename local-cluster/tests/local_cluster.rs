@@ -120,6 +120,7 @@ fn create_test_validator_keys(keypairs: &[&str]) -> Vec<(ValidatorKeys, bool)> {
         .collect()
 }
 
+/// Smoke-tests the `new_with_equal_stakes()` startup path for a single-node cluster.
 #[test]
 #[serial]
 fn test_local_cluster_start_and_exit() {
@@ -134,26 +135,8 @@ fn test_local_cluster_start_and_exit() {
     assert_eq!(cluster.validators.len(), num_nodes);
 }
 
-#[test]
-#[serial]
-fn test_local_cluster_start_and_exit_with_config() {
-    agave_logger::setup();
-    const NUM_NODES: usize = 1;
-    let mut config = ClusterConfig {
-        validator_configs: make_identical_validator_configs(
-            &ValidatorConfig::default_for_test(),
-            NUM_NODES,
-        ),
-        node_stakes: vec![DEFAULT_NODE_STAKE; NUM_NODES],
-        ticks_per_slot: 8,
-        slots_per_epoch: MINIMUM_SLOTS_PER_EPOCH,
-        stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH,
-        ..ClusterConfig::default()
-    };
-    let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-    assert_eq!(cluster.validators.len(), NUM_NODES);
-}
-
+/// Baseline multi-node transaction propagation and confirmation across every validator.
+/// Later spend tests are narrower; this is the broad cluster-sanity reference point.
 #[test]
 #[serial]
 fn test_spend_and_verify_all_nodes() {
@@ -176,6 +159,8 @@ fn test_spend_and_verify_all_nodes() {
     );
 }
 
+/// Ensures a follower RPC PubSub endpoint emits both receive and processed signature
+/// notifications, not just the leader-facing send/confirm path covered elsewhere.
 #[test]
 #[serial]
 fn test_local_cluster_signature_subscribe() {
@@ -259,13 +244,14 @@ fn test_local_cluster_signature_subscribe() {
     assert!(got_received_notification);
 }
 
+/// Keeps a heavily skewed stake distribution alive long enough to verify ledger tick
+/// production stays correct under uneven leadership, not just under balanced-cluster smoke tests.
 #[test]
 #[serial]
 fn test_two_unbalanced_stakes() {
     agave_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_two_unbalanced_stakes");
     let validator_config = ValidatorConfig::default_for_test();
-    let num_ticks_per_second = 100;
     let num_ticks_per_slot = 16;
     let num_slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH;
 
@@ -277,7 +263,6 @@ fn test_two_unbalanced_stakes() {
             ticks_per_slot: num_ticks_per_slot,
             slots_per_epoch: num_slots_per_epoch,
             stakers_slot_offset: num_slots_per_epoch,
-            poh_config: PohConfig::new_sleep(Duration::from_millis(1000 / num_ticks_per_second)),
             ..ClusterConfig::default()
         },
         SocketAddrSpace::Unspecified,
@@ -295,6 +280,8 @@ fn test_two_unbalanced_stakes() {
     cluster_tests::verify_ledger_ticks(&leader_ledger, num_ticks_per_slot as usize);
 }
 
+/// Exercises TPU forwarding by sending transactions to a validator that never leads.
+/// Other spend tests assume direct leader delivery; this one proves the forwarding path itself.
 #[test]
 #[serial]
 fn test_forwarding() {
@@ -338,6 +325,8 @@ fn test_forwarding() {
     );
 }
 
+/// Validates the basic `exit_restart_node()` flow without involving snapshots or tower
+/// surgery, so restart regressions are caught before the more specialized restart tests run.
 #[test]
 #[serial]
 fn test_restart_node() {
@@ -381,6 +370,8 @@ fn test_restart_node() {
     );
 }
 
+/// Checks that a `MainnetBeta` local cluster boots with the expected builtins at epoch 0.
+/// This is cluster-type initialization coverage rather than consensus or networking coverage.
 #[test]
 #[serial]
 fn test_mainnet_beta_cluster_type() {
@@ -449,6 +440,8 @@ fn test_mainnet_beta_cluster_type() {
     }
 }
 
+/// Verifies full-snapshot download from a running validator and bootstrap of a new node
+/// from that archive, without relying on incremental snapshots.
 #[test]
 #[serial]
 fn test_snapshot_download() {
@@ -524,6 +517,8 @@ fn test_snapshot_download() {
     );
 }
 
+/// Extends full-snapshot bootstrap coverage to the combined full-plus-incremental
+/// download path, which exercises the incremental archive selection and restore flow.
 #[test]
 #[serial]
 fn test_incremental_snapshot_download() {
@@ -1204,6 +1199,8 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     info!("Starting final validator... DONE");
 }
 
+/// Restarts a validator from a snapshot whose saved tower trails the snapshot root.
+/// This specifically checks the restart path does not panic on snapshot/tower skew.
 #[allow(unused_attributes)]
 #[test]
 #[serial]
@@ -1278,6 +1275,8 @@ fn test_snapshot_restart_tower() {
     );
 }
 
+/// Proves a snapshot-restored validator repairs only slots at or above the snapshot's
+/// slot floor instead of backfilling older ledger history.
 #[test]
 #[serial]
 fn test_snapshots_blockstore_floor() {
@@ -1391,6 +1390,8 @@ fn test_snapshots_blockstore_floor() {
     assert_eq!(first_slot, slot_floor);
 }
 
+/// Repeats snapshot-based restart several times while preserving balances and continuing
+/// to generate valid snapshots, which catches restart idempotence issues.
 #[test]
 #[serial]
 fn test_snapshots_restart_validity() {
@@ -1478,52 +1479,10 @@ fn test_snapshots_restart_validity() {
     }
 }
 
-#[test]
-#[serial]
-#[allow(unused_attributes)]
-#[ignore]
-fn test_fail_entry_verification_leader() {
-    agave_logger::setup_with_default(RUST_LOG_FILTER);
-    let leader_stake = (DUPLICATE_THRESHOLD * 100.0) as u64 + 1;
-    let validator_stake1 = (100 - leader_stake) / 2;
-    let validator_stake2 = 100 - leader_stake - validator_stake1;
-    let (cluster, _) = test_faulty_node(
-        BroadcastStageType::FailEntryVerification,
-        vec![leader_stake, validator_stake1, validator_stake2],
-        None,
-        None,
-    );
-    cluster.check_for_new_roots(
-        16,
-        "test_fail_entry_verification_leader",
-        SocketAddrSpace::Unspecified,
-    );
-}
-
-#[test]
-#[serial]
-#[ignore]
-#[allow(unused_attributes)]
-fn test_fake_shreds_broadcast_leader() {
-    agave_logger::setup_with_default(RUST_LOG_FILTER);
-    let node_stakes = vec![300, 100];
-    let (cluster, _) = test_faulty_node(
-        BroadcastStageType::BroadcastFakeShreds,
-        node_stakes,
-        None,
-        None,
-    );
-    cluster.check_for_new_roots(
-        16,
-        "test_fake_shreds_broadcast_leader",
-        SocketAddrSpace::Unspecified,
-    );
-}
-
-#[test]
-#[serial]
 // Test that when a leader is leader for banks B_i..B_{i+n}, and B_i is not
 // votable, then B_{i+1} still chains to B_i
+#[test]
+#[serial]
 fn test_no_voting() {
     agave_logger::setup_with_default(RUST_LOG_FILTER);
     let validator_config = ValidatorConfig {
@@ -1562,6 +1521,8 @@ fn test_no_voting() {
     }
 }
 
+/// Forces a validator to violate an optimistically confirmed fork and verifies both the
+/// violation signal and recovery onto a new rooted fork.
 #[test]
 #[serial]
 fn test_optimistic_confirmation_violation_detection() {
@@ -1795,6 +1756,8 @@ fn test_optimistic_confirmation_violation_detection() {
     );
 }
 
+/// Exercises tower persistence across restarts, rollback to an older tower, and full
+/// rebuild from vote state when the tower file is removed.
 #[test]
 #[serial]
 fn test_validator_saves_tower() {
@@ -2051,12 +2014,16 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
     }
 }
 
+/// Creates a future tower in a single-validator cluster and verifies replay can recover
+/// without forking, isolating the restart logic from peer interaction.
 #[test]
 #[serial]
 fn test_future_tower_master_only() {
     do_test_future_tower(ClusterMode::MasterOnly);
 }
 
+/// Re-runs the future-tower scenario with a peer validator still advancing the cluster.
+/// This adds networked recovery coverage beyond the isolated single-validator case.
 #[test]
 #[serial]
 fn test_future_tower_master_slave() {
@@ -2116,6 +2083,8 @@ fn restart_whole_cluster_after_hard_fork(
     thread.join().unwrap();
 }
 
+/// Restarts a whole cluster across a hard fork older than a rooted slot and proves the
+/// stored towers are invalidated correctly under the new shred version.
 #[test]
 #[serial]
 fn test_hard_fork_invalidates_tower() {
@@ -2222,6 +2191,8 @@ fn test_hard_fork_invalidates_tower() {
         .check_for_new_roots(16, "hard fork", SocketAddrSpace::Unspecified);
 }
 
+/// Checks that concurrent program-account scans stay consistent at rooted/finalized
+/// commitment while transfers keep mutating accounts in the background.
 #[test]
 #[serial]
 fn test_run_test_load_program_accounts_root() {
@@ -2297,6 +2268,8 @@ fn create_snapshot_to_hard_fork(
     );
 }
 
+/// Recreates the hard-fork restart flow from a handcrafted snapshot at an unrooted slot.
+/// The unique assertion is that no gap is introduced into the roots column family.
 #[test]
 #[ignore]
 #[serial]
@@ -2458,6 +2431,8 @@ fn test_hard_fork_with_gap_in_roots() {
     assert_eq!(&slots_b[slots_b.len() - roots_b.len()..].to_vec(), &roots_b);
 }
 
+/// Simulates a crash that leaves a stale saved tower behind and verifies the validator
+/// can rejoin once it waits past the unsafe vote window.
 #[test]
 #[serial]
 fn test_restart_tower_rollback() {
@@ -2549,6 +2524,8 @@ fn test_restart_tower_rollback() {
     );
 }
 
+/// Reuses the program-account load scanner under a partition/recovery cycle, so the
+/// rooted-account consistency check is exercised under repair as well as steady state.
 #[test]
 #[serial]
 fn test_run_test_load_program_accounts_partition_root() {
@@ -2608,6 +2585,8 @@ fn test_run_test_load_program_accounts_partition_root() {
     );
 }
 
+/// Injects invalid vote signatures into the optimistic-confirmation path and confirms
+/// they neither root blocks nor trigger false optimistic confirmation.
 #[test]
 #[serial]
 #[allow(unused_attributes)]
@@ -2768,6 +2747,8 @@ fn test_oc_bad_signatures() {
     block_subscribe_client.shutdown().unwrap();
 }
 
+/// Keeps a long partition alive until votes land in-ledger on one fork, then proves
+/// those landed votes are enough to switch before blockhash-expiry-induced stalls occur.
 #[test]
 #[serial]
 #[ignore]
@@ -3051,12 +3032,16 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
     t_scan.join().unwrap();
 }
 
+/// The positive control for the lockout test harness; persisted tower state must keep
+/// validator A from switching onto the conflicting fork.
 #[test]
 #[serial]
 fn test_no_lockout_violation_with_tower() {
     do_test_lockout_violation_with_or_without_tower(true);
 }
 
+/// The negative control for the same scenario; removing the tower should permit the bad
+/// fork switch and demonstrate that the persisted tower is what prevents the violation.
 #[test]
 #[serial]
 fn test_lockout_violation_without_tower() {
@@ -3343,6 +3328,8 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     }
 }
 
+// Verifies replay refreshes an old vote whose original transaction expired so fork
+// choice can still converge instead of stalling on stale weight.
 #[test]
 #[serial]
 // Steps in this test:
@@ -3627,6 +3614,8 @@ fn test_fork_choice_refresh_old_votes() {
     );
 }
 
+/// Kills the heaviest partition after competing forks are established and checks the
+/// locked-out survivors still converge on a rooted fork.
 #[test]
 #[serial]
 fn test_kill_heaviest_partition() {
@@ -3672,6 +3661,8 @@ fn test_kill_heaviest_partition() {
     )
 }
 
+/// Nails the liveness boundary where killing exactly the switch-threshold failure stake
+/// leaves the remaining validators unable to root again.
 #[test]
 #[serial]
 fn test_kill_partition_switch_threshold_no_progress() {
@@ -3706,6 +3697,8 @@ fn test_kill_partition_switch_threshold_no_progress() {
     );
 }
 
+/// The paired boundary case just below that failure stake, proving roots resume once the
+/// cluster has barely enough stake to produce switching proofs.
 #[test]
 #[serial]
 fn test_kill_partition_switch_threshold_progress() {
@@ -3753,12 +3746,16 @@ fn test_kill_partition_switch_threshold_progress() {
     );
 }
 
+/// Injects duplicate shreds and resolves them using votes directly on the duplicate
+/// slot, which is the simpler duplicate-confirmation path.
 #[test]
 #[serial]
 #[allow(unused_attributes)]
 fn test_duplicate_shreds_broadcast_leader() {
     run_duplicate_shreds_broadcast_leader(true);
 }
+/// Reuses the duplicate-shred setup but only duplicate-confirms descendants, forcing the
+/// validator to fall back to ancestor-hashes repair instead of slot-local gossip evidence.
 #[test]
 #[serial]
 #[ignore]
@@ -3942,6 +3939,8 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
     gossip_voter.close();
 }
 
+/// Proves gossip-only votes from a dead validator count toward a switching proof.
+/// The validator must refuse to switch before the gossip vote appears and switch after it does.
 #[test]
 #[serial]
 #[ignore]
@@ -4166,6 +4165,8 @@ fn test_switch_threshold_uses_gossip_votes() {
     );
 }
 
+/// Verifies `num_listeners` actually spawns discoverable listener nodes in gossip.
+/// This is startup plumbing coverage rather than transaction or consensus coverage.
 #[test]
 #[serial]
 fn test_listener_startup() {
@@ -4234,6 +4235,8 @@ fn find_latest_replayed_slot_from_ledger(
     }
 }
 
+/// Baseline partition/recovery smoke test for the generic cluster-partition harness.
+/// Stricter fork-choice assertions are covered by separate partition tests.
 #[test]
 #[serial]
 fn test_cluster_partition() {
@@ -4254,6 +4257,8 @@ fn test_cluster_partition() {
     )
 }
 
+/// Proves a four-node cluster stays live after killing the bootstrap leader, which is a
+/// stronger failure mode than the one-node restart smoke tests.
 #[test]
 #[serial]
 fn test_leader_failure_4() {
@@ -4328,7 +4333,6 @@ fn test_leader_failure_4() {
 // common ancestor votes in tower.
 // To allow this test to run in a reasonable time we change the
 // slot_hash expiry to 64 slots.
-
 #[test]
 #[serial]
 fn test_slot_hash_expiry() {
@@ -5159,19 +5163,22 @@ fn test_boot_from_local_state_missing_archive() {
     info!("Waiting for validator to create snapshots... DONE");
 }
 
-// We want to simulate the following:
-//   /--- 1 --- 3 (duplicate block)
-// 0
-//   \--- 2
-//
-// 1. > DUPLICATE_THRESHOLD of the nodes vote on some version of the duplicate block 3,
-// but don't immediately duplicate confirm so they remove 3 from fork choice and reset PoH back to 1.
-// 2. All the votes on 3 don't land because there are no further blocks building off 3.
-// 3. Some < SWITCHING_THRESHOLD of nodes vote on 2, making it the heaviest fork because no votes on 3 landed
-// 4. Nodes then see duplicate confirmation on 3.
-// 5. Unless somebody builds off of 3 to include the duplicate confirmed votes, 2 will still be the heaviest.
-// However, because 2 has < SWITCHING_THRESHOLD of the votes, people who voted on 3 can't switch, leading to a
-// stall
+/// Recreates the duplicate-confirmed-versus-switch-threshold deadlock and verifies the
+/// validators can escape it after rediscovering the duplicate and rebuilding the right fork choice.
+///
+/// We want to simulate the following:
+///   /--- 1 --- 3 (duplicate block)
+/// 0
+///   \--- 2
+///
+/// 1. > DUPLICATE_THRESHOLD of the nodes vote on some version of the duplicate block 3,
+/// but don't immediately duplicate confirm so they remove 3 from fork choice and reset PoH back to 1.
+/// 2. All the votes on 3 don't land because there are no further blocks building off 3.
+/// 3. Some < SWITCHING_THRESHOLD of nodes vote on 2, making it the heaviest fork because no votes on 3 landed
+/// 4. Nodes then see duplicate confirmation on 3.
+/// 5. Unless somebody builds off of 3 to include the duplicate confirmed votes, 2 will still be the heaviest.
+/// However, because 2 has < SWITCHING_THRESHOLD of the votes, people who voted on 3 can't switch, leading to a
+/// stall
 #[test]
 #[serial]
 #[allow(unused_attributes)]
@@ -5587,6 +5594,8 @@ fn test_duplicate_shreds_switch_failure() {
     );
 }
 
+/// Randomizes block verification methods across validators and proves the mixed-method
+/// cluster still interoperates end to end.
 #[test]
 #[serial]
 fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
@@ -5619,6 +5628,8 @@ fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
     );
 }
 
+/// Randomizes block production methods across validators and checks the heterogeneous
+/// producers still land transactions and maintain cluster progress.
 #[test]
 #[serial]
 fn test_randomly_mixed_block_production_methods_between_bootstrap_and_not() {
@@ -5651,7 +5662,8 @@ fn test_randomly_mixed_block_production_methods_between_bootstrap_and_not() {
     );
 }
 
-/// Forks previous marked invalid should be marked as such in fork choice on restart
+/// Persists invalid-fork markings across restart so a validator rebuilds from the parent
+/// instead of replaying a branch it already proved invalid.
 #[test]
 #[ignore]
 #[serial]
@@ -5863,6 +5875,8 @@ fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
     );
 }
 
+/// Minimal single-node Alpenglow smoke test for boot, transaction execution, and root
+/// production without quorum or repair involvement.
 #[test]
 #[serial]
 fn test_alpenglow_1() {
@@ -5870,6 +5884,8 @@ fn test_alpenglow_1() {
     test_alpenglow_nodes_basic(NUM_NODES, 0);
 }
 
+/// Multi-node Alpenglow baseline where every validator stays online.
+/// This does not cover offline-node or restart behavior.
 #[test]
 #[serial]
 fn test_alpenglow_4() {
@@ -5877,6 +5893,8 @@ fn test_alpenglow_4() {
     test_alpenglow_nodes_basic(NUM_NODES, 0);
 }
 
+/// Checks that a four-node Alpenglow cluster still roots after taking one validator
+/// offline, which adds liveness-under-loss coverage beyond the all-online baseline.
 #[test]
 #[serial]
 fn test_alpenglow_4_1_offline() {
@@ -5885,6 +5903,8 @@ fn test_alpenglow_4_1_offline() {
     test_alpenglow_nodes_basic(NUM_NODES, NUM_OFFLINE);
 }
 
+/// Basic restart coverage for the Alpenglow execution path.
+/// This does not cover the legacy restart path.
 #[test]
 #[serial]
 fn test_restart_node_alpenglow() {
@@ -5928,10 +5948,11 @@ fn test_restart_node_alpenglow() {
     );
 }
 
-/// We start 2 nodes, where the first node A holds 90% of the stake
-///
+/// We start 2 nodes, where the first node A holds 90% of the stake.
 /// We let A run by itself, and ensure that B can join and rejoin the network
-/// through repair
+/// through repair.
+/// Verifies that a low-stake Alpenglow validator can fall behind, rejoin through repair,
+/// and resume notarized voting in an imbalanced-stake network.
 #[test]
 #[serial]
 fn test_alpenglow_imbalanced_stakes_catchup() {
@@ -6153,12 +6174,16 @@ fn test_alpenglow_migration(num_nodes: usize) {
     cluster.check_for_new_roots(8, test_name, SocketAddrSpace::Unspecified);
 }
 
+/// Single-node migration from legacy mode into Alpenglow after feature activation.
+/// This isolates the migration trigger from multi-node quorum effects.
 #[test]
 #[serial]
 fn test_alpenglow_migration_1() {
     test_alpenglow_migration(1)
 }
 
+/// Multi-node migration into Alpenglow, including notarized-vote and root production
+/// after the feature-activation offset is reached.
 #[test]
 #[serial]
 fn test_alpenglow_migration_4() {

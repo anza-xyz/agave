@@ -49,7 +49,7 @@
 //! So, given a) - c), we must restrict data shred's payload length such that the entire coding
 //! payload can fit into one coding shred / packet.
 
-pub(crate) use self::{merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH, payload::serde_bytes_payload};
+pub(crate) use self::merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH;
 use {
     self::traits::{Shred as _, ShredData as _},
     crate::blockstore::{self},
@@ -229,14 +229,12 @@ pub enum Error {
     Eq,
     Hash,
     PartialEq,
-    Deserialize,
     IntoPrimitive,
     Serialize,
     TryFromPrimitive,
     SchemaWrite,
     SchemaRead,
 )]
-#[serde(into = "u8", try_from = "u8")]
 #[wincode(tag_encoding = "u8")]
 pub enum ShredType {
     #[wincode(tag = 0b1010_0101)]

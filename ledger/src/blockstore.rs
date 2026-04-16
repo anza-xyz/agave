@@ -33,7 +33,6 @@ use {
     rand::Rng,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     rocksdb::{DBRawIterator, LiveFile},
-    serde_bytes::ByteBuf,
     solana_account::ReadableAccount,
     solana_address_lookup_table_interface::state::AddressLookupTable,
     solana_clock::{DEFAULT_TICKS_PER_SECOND, Slot, UnixTimestamp},
@@ -646,8 +645,8 @@ impl Blockstore {
         use crate::blockstore_meta::DoubleMerkleMeta;
         let meta = DoubleMerkleMeta {
             double_merkle_root,
-            fec_set_count: 1,       // Minimal valid value
-            proofs: ByteBuf::new(), // Empty proofs for testing
+            fec_set_count: 1,   // Minimal valid value
+            proofs: Vec::new(), // Empty proofs for testing
         };
         self.double_merkle_meta_cf
             .put((slot, block_location), &meta)
@@ -675,7 +674,7 @@ impl Blockstore {
         let (slot, fec_set_index) = erasure_set.store_key();
         self.erasure_meta_cf.put_bytes(
             (slot, u64::from(fec_set_index)),
-            &bincode::serialize(erasure_meta).unwrap(),
+            &wincode::serialize(erasure_meta).unwrap(),
         )
     }
 
@@ -1460,7 +1459,7 @@ impl Blockstore {
         let double_merkle_root = *merkle_tree.root();
         // We don't build the proofs here as they are only needed to serve repair requests.
         // These will be built later when calling `get_double_merkle_meta_maybe_populate_proofs`
-        let proofs = ByteBuf::new();
+        let proofs = Vec::new();
 
         // Create and add DoubleMerkleMeta to write batch
         let double_merkle_meta = DoubleMerkleMeta {
@@ -1531,7 +1530,7 @@ impl Blockstore {
         )?;
         let tree_size = double_merkle_meta.fec_set_count as usize + 1;
         let proof_len_bytes = get_proof_size(tree_size) as usize * SIZE_OF_MERKLE_PROOF_ENTRY;
-        let mut proofs = ByteBuf::with_capacity(tree_size * proof_len_bytes);
+        let mut proofs = Vec::with_capacity(tree_size * proof_len_bytes);
 
         for leaf_index in 0..tree_size {
             for proof_entry in merkle_tree.make_merkle_proof(leaf_index, tree_size) {
@@ -3057,9 +3056,9 @@ impl Blockstore {
 
         for bytes in shred_bytes_iter {
             let shred = Shred::new_from_serialized_shred(Vec::from(bytes)).map_err(|err| {
-                BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(format!(
-                    "Could not reconstruct shred from shred payload: {err:?}"
-                ))))
+                BlockstoreError::InvalidShredData(format!(
+                    "Could not reconstruct shred from shred payload: {err}"
+                ))
             })?;
             shreds.push(shred);
         }
@@ -3537,7 +3536,7 @@ impl Blockstore {
 
         let (rewards, num_partitions) = self
             .rewards_cf
-            .get_protobuf_or_bincode::<StoredExtendedRewards>(slot)?
+            .get_protobuf_or_wincode::<StoredExtendedRewards>(slot)?
             .unwrap_or_default()
             .into();
 
@@ -3591,7 +3590,7 @@ impl Blockstore {
         let transaction_status_dummy_key = cf::TransactionStatus::as_index(2);
         if self
             .transaction_status_cf
-            .get_protobuf_or_bincode::<StoredTransactionStatusMeta>(transaction_status_dummy_key)?
+            .get_protobuf_or_wincode::<StoredTransactionStatusMeta>(transaction_status_dummy_key)?
             .is_some()
         {
             self.transaction_status_cf
@@ -4117,7 +4116,7 @@ impl Blockstore {
 
     pub fn read_rewards(&self, index: Slot) -> Result<Option<Rewards>> {
         self.rewards_cf
-            .get_protobuf_or_bincode::<Rewards>(index)
+            .get_protobuf_or_wincode::<Rewards>(index)
             .map(|result| result.map(|option| option.into()))
     }
 
@@ -4379,9 +4378,9 @@ impl Blockstore {
                     .take(num_shreds as usize)
                     .process_results(|shreds| Shredder::deshred(shreds))?
                     .map_err(|e| {
-                        BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
-                            format!("could not reconstruct data buffer from shreds: {e:?}"),
-                        )))
+                        BlockstoreError::InvalidShredData(format!(
+                            "could not reconstruct data buffer from shreds: {e}"
+                        ))
                     })
                     .and_then(&mut deserialize)
             })
@@ -4401,9 +4400,9 @@ impl Blockstore {
             wincode::deserialize(&payload)
                 .map(|component| vec![component])
                 .map_err(|e| {
-                    BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
-                        format!("could not reconstruct block component: {e:?}"),
-                    )))
+                    BlockstoreError::InvalidShredData(format!(
+                        "could not reconstruct block component: {e}"
+                    ))
                 })
         })
     }
@@ -4417,9 +4416,7 @@ impl Blockstore {
     ) -> Result<Vec<Entry>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
             <WincodeVec<Entry, MaxDataShredsLen>>::deserialize(&payload).map_err(|e| {
-                BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(format!(
-                    "could not reconstruct entries: {e:?}"
-                ))))
+                BlockstoreError::InvalidShredData(format!("could not reconstruct entries: {e}"))
             })
         })
     }
@@ -5854,7 +5851,6 @@ pub mod tests {
         crossbeam_channel::unbounded,
         rand::{rng, seq::SliceRandom},
         solana_account_decoder::parse_token::UiTokenAmount,
-        solana_clock::{DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
         solana_entry::entry::{next_entry, next_entry_mut},
         solana_genesis_utils::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, open_genesis_config},
         solana_hash::Hash,
@@ -7372,7 +7368,7 @@ pub mod tests {
 
         // Blockstore::find_missing_data_indexes() compares timestamps, so
         // set a small value for defer_threshold_ticks to avoid flakiness.
-        let defer_threshold_ticks = DEFAULT_TICKS_PER_SLOT / 16;
+        let defer_threshold_ticks = DEFAULT_TICKS_PER_SECOND / 16;
         let start_index = 0;
         let end_index = 50;
         let max_missing = 9;
@@ -7420,7 +7416,7 @@ pub mod tests {
         assert_eq!(
             blockstore.find_missing_data_indexes(
                 slot,
-                timestamp() - DEFAULT_MS_PER_SLOT, // first_timestamp
+                timestamp() - 1000, // first_timestamp
                 defer_threshold_ticks,
                 start_index,
                 end_index,
@@ -10849,7 +10845,7 @@ pub mod tests {
             assert_eq!(
                 blockstore
                     .rewards_cf
-                    .get_protobuf_or_bincode::<StoredExtendedRewards>(slot)
+                    .get_protobuf_or_wincode::<StoredExtendedRewards>(slot)
                     .unwrap()
                     .unwrap(),
                 protobuf_rewards
@@ -10933,7 +10929,7 @@ pub mod tests {
             assert_eq!(
                 blockstore
                     .transaction_status_cf
-                    .get_protobuf_or_bincode::<StoredTransactionStatusMeta>((
+                    .get_protobuf_or_wincode::<StoredTransactionStatusMeta>((
                         Signature::default(),
                         slot
                     ))

@@ -925,9 +925,9 @@ impl LeaderTpuService {
         // 1. Notifications are an unbounded stream -- polling them will block indefinitely if not
         //    interrupted, and the exit condition will never be checked. 10ms ensures negligible
         //    CPU overhead while keeping notification checking timely.
-        // 2. The timeout must be strictly less than the slot time (DEFAULT_MS_PER_SLOT: 400) to
+        // 2. The timeout must be strictly less than the slot time (DEFAULT_MS_PER_SLOT) to
         //    avoid timeout never being reached. For example, if notifications are received every
-        //    400ms and the timeout is >= 400ms, notifications may theoretically always be available
+        //    100ms and the timeout is >= 100ms, notifications may theoretically always be available
         //    before the timeout is reached, resulting in the exit condition never being checked.
         const SLOT_UPDATE_TIMEOUT: Duration = Duration::from_millis(10);
 

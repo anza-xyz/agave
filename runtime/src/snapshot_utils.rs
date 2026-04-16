@@ -347,7 +347,42 @@ fn is_bank_snapshot_complete(bank_snapshot_dir: impl AsRef<Path>) -> bool {
     let version_path = bank_snapshot_dir
         .as_ref()
         .join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
-    version_path.is_file()
+
+    let Ok(version_file_info) = FileInfo::new_from_path(&version_path) else {
+        // failed to either open or query the file -- snapshot is incomplete
+        return false;
+    };
+
+    let Ok(version_str) = snapshot_version_from_file(version_file_info) else {
+        // failed to read from file -- snapshot is incomplete
+        return false;
+    };
+
+    let Ok(_snapshot_version) = SnapshotVersion::from_str(version_str.as_str()) else {
+        // invalid snapshot version -- snapshot is incomplete
+        return false;
+    };
+
+    // version file is good, so now check the serialized bank and status cache files
+    let Some(slot) = bank_snapshot_dir.as_ref().file_name() else {
+        return false;
+    };
+    let Some(slot) = slot.to_str() else {
+        return false;
+    };
+    for file_name in [slot, snapshot_paths::SNAPSHOT_STATUS_CACHE_FILENAME] {
+        let file_path = bank_snapshot_dir.as_ref().join(file_name);
+        let Ok(file_info) = FileInfo::new_from_path(file_path) else {
+            // failed to either open or query the file -- snapshot is incomplete
+            return false;
+        };
+        if file_info.size == 0 {
+            // file is empty -- snapshot is incomplete
+            return false;
+        }
+    }
+
+    true
 }
 
 /// Writes files that indicate the bank snapshot is loadable by fastboot
@@ -2714,5 +2749,70 @@ mod tests {
         // Set a very low maximum file size for deserialization
         // This should panic
         deserialize_obsolete_accounts(bank_snapshot_dir, 100).unwrap();
+    }
+
+    #[test]
+    fn test_is_bank_snapshot_complete() {
+        let temp_dir = TempDir::new().unwrap();
+        let slot = 123;
+        let bank_snapshot_dir = temp_dir.as_ref().join(slot.to_string());
+        fs::create_dir(&bank_snapshot_dir).unwrap();
+
+        let version_path = bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
+        let serialized_bank_path = bank_snapshot_dir.join(slot.to_string());
+        let status_cache_path =
+            bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_STATUS_CACHE_FILENAME);
+
+        // scenario 1: no version file
+        assert!(!is_bank_snapshot_complete(&bank_snapshot_dir));
+
+        // scenario 2: bad version file (too large)
+        let too_large = format!(
+            "{:v>width$}",
+            "hi",
+            width = (MAX_SNAPSHOT_VERSION_FILE_SIZE + 1) as usize,
+        );
+        fs::write(&version_path, too_large).unwrap();
+        assert!(!is_bank_snapshot_complete(&bank_snapshot_dir));
+
+        // scenario 3: bad version
+        fs::remove_file(&version_path).unwrap();
+        let bad_version = String::from("v0.0.0");
+        fs::write(&version_path, bad_version).unwrap();
+        assert!(!is_bank_snapshot_complete(&bank_snapshot_dir));
+
+        // scenario 4: empty version
+        fs::remove_file(&version_path).unwrap();
+        fs::File::create_new(&version_path).unwrap();
+        assert!(!is_bank_snapshot_complete(&bank_snapshot_dir));
+
+        // write a "good" version file so we can check the next file
+        fs::remove_file(&version_path).unwrap();
+        fs::write(&version_path, SnapshotVersion::default().as_str()).unwrap();
+
+        // scenario 5: no serialized bank file
+        assert!(!is_bank_snapshot_complete(&bank_snapshot_dir));
+
+        // scenario 6: empty serialized bank
+        fs::File::create_new(&serialized_bank_path).unwrap();
+        assert!(!is_bank_snapshot_complete(&bank_snapshot_dir));
+
+        // write a "good" serialized bank file so we can check the next file
+        fs::remove_file(&serialized_bank_path).unwrap();
+        fs::write(&serialized_bank_path, "serialized bank").unwrap();
+
+        // scenario 7: no status cache file
+        assert!(!is_bank_snapshot_complete(&bank_snapshot_dir));
+
+        // scenario 8: empty status cache
+        fs::File::create_new(&status_cache_path).unwrap();
+        assert!(!is_bank_snapshot_complete(&bank_snapshot_dir));
+
+        // write a "good" status cache file so we can check for all good
+        fs::remove_file(&status_cache_path).unwrap();
+        fs::write(&status_cache_path, "status cache").unwrap();
+
+        // scenario 9: all good
+        assert!(is_bank_snapshot_complete(bank_snapshot_dir));
     }
 }

@@ -43,7 +43,8 @@ use {
     solana_instruction::{Instruction, error::InstructionError},
     solana_keypair::{Keypair, keypair_from_seed, read_keypair_file},
     solana_loader_v3_interface::{
-        get_program_data_address, instruction as loader_v3_instruction,
+        get_program_data_address,
+        instruction::{self as loader_v3_instruction, MINIMUM_EXTEND_PROGRAM_BYTES},
         state::UpgradeableLoaderState,
     },
     solana_message::Message,
@@ -2452,6 +2453,35 @@ async fn process_extend_program(
         .ok_or_else(|| format!("Program {program_pubkey} is not upgradeable"))?;
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
+    let feature_set = fetch_feature_set(rpc_client).await?;
+    let feature_snapshot = feature_set.snapshot();
+
+    if feature_snapshot.loader_v3_minimum_extend_program_size {
+        // SIMD-0431: Minimum Extend Program Size
+        //
+        // All extensions must be >= 10 KiB in additional_bytes, unless
+        // MAX_PERMITTED_DATA_LENGTH - current_len < 10 KiB. In that case,
+        // additional_bytes must be equal to the remaining free space.
+        let current_len = programdata_account.data.len();
+        let headroom = (MAX_PERMITTED_DATA_LENGTH as usize).saturating_sub(current_len);
+        if additional_bytes < MINIMUM_EXTEND_PROGRAM_BYTES
+            && (additional_bytes as usize) != headroom
+        {
+            let err_msg = if (headroom as u32) < MINIMUM_EXTEND_PROGRAM_BYTES {
+                format!(
+                    "Program is {headroom} bytes from maximum size, but {additional_bytes} were \
+                     requested. Please re-run the command with {headroom} additional bytes."
+                )
+            } else {
+                format!(
+                    "ExtendProgram requires a minimum of {MINIMUM_EXTEND_PROGRAM_BYTES} \
+                     additional bytes or to extend to maximum size, but only {additional_bytes} \
+                     were requested"
+                )
+            };
+            return Err(err_msg.into());
+        }
+    }
 
     let instruction = loader_v3_instruction::extend_program(
         &program_pubkey,
@@ -2951,8 +2981,20 @@ async fn extend_program_data_if_needed(
         return Ok(());
     }
 
-    let additional_bytes =
+    let mut additional_bytes =
         u32::try_from(additional_bytes).expect("`u32` is big enough to hold an account size");
+
+    let feature_set = fetch_feature_set(rpc_client).await?;
+    let feature_snapshot = feature_set.snapshot();
+
+    if feature_snapshot.loader_v3_minimum_extend_program_size {
+        // SIMD-0431: Have to bump `additional_bytes` to satisfy either the
+        // minimum size requirement or the remaining headroom to
+        // MAX_PERMITTED_DATA_SIZE.
+        let headroom =
+            u32::try_from(max_permitted_data_length.saturating_sub(current_len)).unwrap();
+        additional_bytes = additional_bytes.max(MINIMUM_EXTEND_PROGRAM_BYTES.min(headroom));
+    }
 
     let instruction =
         loader_v3_instruction::extend_program(program_id, Some(fee_payer), additional_bytes);

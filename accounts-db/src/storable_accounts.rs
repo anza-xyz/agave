@@ -295,9 +295,12 @@ impl<'a> StorableAccountsBySlot<'a> {
     /// on the starting_offsets based on the assumption that the
     /// starting_offsets are always sorted.
     fn find_internal_index(&self, index: usize) -> (usize, usize) {
-        // special case for when there is only one slot - just return the first index without searching.
+        // special case for when there is only one entry - just return the first index without searching.
         // This happens when we are just shrinking a single slot storage, which happens very often.
-        if !self.contains_multiple_slots {
+        // Note: we check the actual number of entries, not just whether slots differ,
+        // because multiple entries can have the same slot value (e.g., when packing
+        // many_refs_newest and one_ref accounts from the same source slot).
+        if self.slots_and_accounts.len() == 1 {
             return (0, index);
         }
         let upper_bound = self
@@ -408,7 +411,7 @@ mod tests {
         },
         rand::Rng,
         solana_account::{AccountSharedData, accounts_equal},
-        std::sync::Arc,
+        std::{iter, sync::Arc},
     };
 
     impl StorableAccountsBySlot<'_> {
@@ -852,7 +855,7 @@ mod tests {
     }
 
     #[test]
-    fn test_find_internal_index() {
+    fn test_find_internal_index_with_multiple_entries_multiple_slots() {
         let db = AccountsDb::new_single_for_tests();
         let storage_id = 0; // does not matter
         let offset = 0; // does not matter
@@ -889,6 +892,59 @@ mod tests {
             let (slot_index2, account_index2) = storable_accounts.find_internal_index(i);
             assert_eq!(slot_index, slot_index2);
             assert_eq!(account_index, account_index2);
+        }
+    }
+
+    #[test]
+    fn test_find_internal_index_with_multiple_entries_single_slot() {
+        let accounts_db = AccountsDb::new_single_for_tests();
+        let all_accounts: Vec<_> = iter::repeat_with(|| AccountFromStorage {
+            index_info: AccountInfo::new(
+                StorageLocation::AppendVec(0, 0), // id and offset do not matter
+                false,
+            ),
+            data_len: 0,
+            pubkey: Pubkey::new_unique(),
+        })
+        .take(11)
+        .collect();
+        let all_accounts: Vec<_> = all_accounts.iter().collect();
+        let (accounts1, accounts2) = all_accounts.split_at(4);
+        let slot = 7;
+        let slots_and_accounts = &[(slot, accounts1), (slot, accounts2)];
+        let storable_accounts = StorableAccountsBySlot::new(0, slots_and_accounts, &accounts_db);
+
+        for i in 0..all_accounts.len() {
+            let (slot_index1, account_index1) = storable_accounts.find_internal_index_loop(i);
+            let (slot_index2, account_index2) = storable_accounts.find_internal_index(i);
+            assert_eq!(slot_index1, slot_index2);
+            assert_eq!(account_index1, account_index2);
+        }
+    }
+
+    #[test]
+    fn test_find_internal_index_with_single_entry_single_slot() {
+        let accounts_db = AccountsDb::new_single_for_tests();
+        let all_accounts: Vec<_> = iter::repeat_with(|| AccountFromStorage {
+            index_info: AccountInfo::new(
+                StorageLocation::AppendVec(0, 0), // id and offset do not matter
+                false,
+            ),
+            data_len: 0,
+            pubkey: Pubkey::new_unique(),
+        })
+        .take(5)
+        .collect();
+        let all_accounts: Vec<_> = all_accounts.iter().collect();
+        let slot = 3;
+        let slots_and_accounts = &[(slot, all_accounts.as_slice())];
+        let storable_accounts = StorableAccountsBySlot::new(0, slots_and_accounts, &accounts_db);
+
+        for i in 0..all_accounts.len() {
+            let (slot_index1, account_index1) = storable_accounts.find_internal_index_loop(i);
+            let (slot_index2, account_index2) = storable_accounts.find_internal_index(i);
+            assert_eq!(slot_index1, slot_index2);
+            assert_eq!(account_index1, account_index2);
         }
     }
 }

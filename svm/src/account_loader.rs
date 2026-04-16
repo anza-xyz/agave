@@ -150,6 +150,7 @@ pub struct FeesOnlyTransaction {
     pub load_error: TransactionError,
     pub rollback_accounts: RollbackAccounts,
     pub fee_details: FeeDetails,
+    pub loaded_accounts_data_size: u32,
 }
 
 // This is an internal SVM type that tracks account changes throughout a
@@ -409,26 +410,31 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
     match validation_result {
         Err(e) => TransactionLoadResult::NotLoaded(e),
         Ok(tx_details) => {
+            let mut loaded_transaction_data_size =
+                LoadedTransactionDataSize::with_max_size(tx_details.loaded_accounts_bytes_limit);
+
             let load_result = load_transaction_accounts(
                 account_loader,
                 message,
                 tx_details.loaded_fee_payer_account,
-                tx_details.loaded_accounts_bytes_limit,
+                &mut loaded_transaction_data_size,
                 error_metrics,
                 rent,
             );
 
             match load_result {
-                Ok(loaded_tx_accounts) => TransactionLoadResult::Loaded(LoadedTransaction {
-                    accounts: loaded_tx_accounts.accounts,
+                Ok(accounts) => TransactionLoadResult::Loaded(LoadedTransaction {
+                    accounts,
                     fee_details: tx_details.fee_details,
                     rollback_accounts: tx_details.rollback_accounts,
                     compute_budget: tx_details.compute_budget,
-                    loaded_accounts_data_size: loaded_tx_accounts.loaded_accounts_data_size,
+                    loaded_accounts_data_size: loaded_transaction_data_size
+                        .loaded_accounts_data_size,
                 }),
                 Err(err) => TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
                     load_error: err,
                     fee_details: tx_details.fee_details,
+                    loaded_accounts_data_size: tx_details.rollback_accounts.data_size() as u32,
                     rollback_accounts: tx_details.rollback_accounts,
                 }),
             }
@@ -437,16 +443,23 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-struct LoadedTransactionAccounts {
-    pub(crate) accounts: Vec<KeyedAccountSharedData>,
+struct LoadedTransactionDataSize {
     pub(crate) loaded_accounts_data_size: u32,
+    pub(crate) requested_loaded_accounts_data_size_limit: u32,
 }
 
-impl LoadedTransactionAccounts {
+impl LoadedTransactionDataSize {
+    fn with_max_size(requested_loaded_accounts_data_size_limit: NonZeroU32) -> Self {
+        Self {
+            loaded_accounts_data_size: 0,
+            requested_loaded_accounts_data_size_limit: requested_loaded_accounts_data_size_limit
+                .get(),
+        }
+    }
+
     fn increase_calculated_data_size(
         &mut self,
         data_size_delta: usize,
-        requested_loaded_accounts_data_size_limit: NonZeroU32,
         error_metrics: &mut TransactionErrorMetrics,
     ) -> Result<()> {
         let Ok(data_size_delta) = u32::try_from(data_size_delta) else {
@@ -458,7 +471,7 @@ impl LoadedTransactionAccounts {
             .loaded_accounts_data_size
             .saturating_add(data_size_delta);
 
-        if self.loaded_accounts_data_size > requested_loaded_accounts_data_size_limit.get() {
+        if self.loaded_accounts_data_size > self.requested_loaded_accounts_data_size_limit {
             error_metrics.max_loaded_accounts_data_size_exceeded += 1;
             Err(TransactionError::MaxLoadedAccountsDataSizeExceeded)
         } else {
@@ -471,24 +484,19 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     account_loader: &mut AccountLoader<CB>,
     message: &impl SVMMessage,
     loaded_fee_payer_account: LoadedTransactionAccount,
-    loaded_accounts_bytes_limit: NonZeroU32,
+    loaded_tx_data_size: &mut LoadedTransactionDataSize,
     error_metrics: &mut TransactionErrorMetrics,
     rent: &Rent,
-) -> Result<LoadedTransactionAccounts> {
+) -> Result<Vec<KeyedAccountSharedData>> {
     let account_keys = message.account_keys();
+    let mut loaded_transaction_accounts = Vec::with_capacity(account_keys.len());
     let mut additional_loaded_accounts: AHashSet<Pubkey> = AHashSet::new();
 
-    let mut loaded_transaction_accounts = LoadedTransactionAccounts {
-        accounts: Vec::with_capacity(account_keys.len()),
-        loaded_accounts_data_size: 0,
-    };
-
     // Transactions pay a base fee per address lookup table.
-    loaded_transaction_accounts.increase_calculated_data_size(
+    loaded_tx_data_size.increase_calculated_data_size(
         message
             .num_lookup_tables()
             .saturating_mul(ADDRESS_LOOKUP_TABLE_BASE_SIZE),
-        loaded_accounts_bytes_limit,
         error_metrics,
     )?;
 
@@ -499,11 +507,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 loaded_size,
             } = loaded_account;
 
-            loaded_transaction_accounts.increase_calculated_data_size(
-                loaded_size,
-                loaded_accounts_bytes_limit,
-                error_metrics,
-            )?;
+            loaded_tx_data_size.increase_calculated_data_size(loaded_size, error_metrics)?;
 
             // This has been annotated branch-by-branch because collapsing the logic is infeasible.
             // Its purpose is to ensure programdata accounts are counted once and *only* once per
@@ -530,10 +534,9 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                         account_loader.load_account(&programdata_address)
                     {
                         // ...count programdata toward this transaction's total size.
-                        loaded_transaction_accounts.increase_calculated_data_size(
+                        loaded_tx_data_size.increase_calculated_data_size(
                             TRANSACTION_ACCOUNT_BASE_SIZE
                                 .saturating_add(programdata_account.data().len()),
-                            loaded_accounts_bytes_limit,
                             error_metrics,
                         )?;
                         additional_loaded_accounts.insert(programdata_address);
@@ -541,7 +544,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 }
             }
 
-            loaded_transaction_accounts.accounts.push((*key, account));
+            loaded_transaction_accounts.push((*key, account));
 
             Ok(())
         };
@@ -1125,33 +1128,21 @@ mod tests {
     #[test]
     fn test_increase_calculated_data_size() {
         let mut error_metrics = TransactionErrorMetrics::default();
-        let mut acc = LoadedTransactionAccounts {
-            accounts: vec![],
-            loaded_accounts_data_size: 0,
-        };
-
         let data_size: usize = 123;
         let requested_data_size_limit = NonZeroU32::new(data_size as u32).unwrap();
+        let mut acc = LoadedTransactionDataSize::with_max_size(requested_data_size_limit);
 
         // OK - loaded data size is up to limit
         assert!(
-            acc.increase_calculated_data_size(
-                data_size,
-                requested_data_size_limit,
-                &mut error_metrics
-            )
-            .is_ok()
+            acc.increase_calculated_data_size(data_size, &mut error_metrics)
+                .is_ok()
         );
         assert_eq!(data_size as u32, acc.loaded_accounts_data_size);
 
         // fail - loading more data that would exceed limit
         let another_byte: usize = 1;
         assert_eq!(
-            acc.increase_calculated_data_size(
-                another_byte,
-                requested_data_size_limit,
-                &mut error_metrics
-            ),
+            acc.increase_calculated_data_size(another_byte, &mut error_metrics),
             Err(TransactionError::MaxLoadedAccountsDataSizeExceeded)
         );
     }
@@ -1326,6 +1317,9 @@ mod tests {
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
+        let mut loaded_transaction_data_size =
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
             vec![Signature::new_unique()],
@@ -1338,17 +1332,15 @@ mod tests {
                 loaded_size: fee_payer_account.data().len(),
                 account: fee_payer_account.clone(),
             },
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            &mut loaded_transaction_data_size,
             &mut error_metrics,
             &Rent::default(),
         );
         assert_eq!(
+            vec![(fee_payer_address, fee_payer_account)],
             result.unwrap(),
-            LoadedTransactionAccounts {
-                accounts: vec![(fee_payer_address, fee_payer_account)],
-                loaded_accounts_data_size: 0,
-            }
         );
+        assert_eq!(0, loaded_transaction_data_size.loaded_accounts_data_size);
     }
 
     #[test]
@@ -1379,6 +1371,9 @@ mod tests {
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
+        let mut loaded_transaction_data_size =
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
             vec![Signature::new_unique()],
@@ -1392,7 +1387,7 @@ mod tests {
                 account: fee_payer_account.clone(),
                 loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            &mut loaded_transaction_data_size,
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1430,6 +1425,9 @@ mod tests {
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
+        let mut loaded_transaction_data_size =
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
             vec![Signature::new_unique()],
@@ -1439,7 +1437,7 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            &mut loaded_transaction_data_size,
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1474,6 +1472,9 @@ mod tests {
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
+        let mut loaded_transaction_data_size =
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
             vec![Signature::new_unique()],
@@ -1483,7 +1484,7 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            &mut loaded_transaction_data_size,
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1529,6 +1530,9 @@ mod tests {
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
+        let mut loaded_transaction_data_size =
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
             vec![Signature::new_unique()],
@@ -1542,25 +1546,26 @@ mod tests {
                 account: fee_payer_account.clone(),
                 loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            &mut loaded_transaction_data_size,
             &mut error_metrics,
             &Rent::default(),
         );
 
-        let loaded_accounts_data_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32 * 2;
+        let expected_loaded_accounts_data_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32 * 2;
 
         assert_eq!(
+            vec![
+                (key2.pubkey(), fee_payer_account),
+                (
+                    key1.pubkey(),
+                    mock_bank.accounts_map[&key1.pubkey()].0.clone()
+                ),
+            ],
             result.unwrap(),
-            LoadedTransactionAccounts {
-                accounts: vec![
-                    (key2.pubkey(), fee_payer_account),
-                    (
-                        key1.pubkey(),
-                        mock_bank.accounts_map[&key1.pubkey()].0.clone()
-                    ),
-                ],
-                loaded_accounts_data_size,
-            }
+        );
+        assert_eq!(
+            expected_loaded_accounts_data_size,
+            loaded_transaction_data_size.loaded_accounts_data_size
         );
     }
 
@@ -1597,6 +1602,9 @@ mod tests {
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
+        let mut loaded_transaction_data_size =
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
             vec![Signature::new_unique()],
@@ -1606,7 +1614,7 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            &mut loaded_transaction_data_size,
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1653,16 +1661,20 @@ mod tests {
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
+        let mut loaded_transaction_data_size =
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
             vec![Signature::new_unique()],
             false,
         );
+
         let result = load_transaction_accounts(
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            &mut loaded_transaction_data_size,
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1722,6 +1734,9 @@ mod tests {
             false,
         );
 
+        let mut loaded_transaction_data_size =
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+
         let result = load_transaction_accounts(
             &mut account_loader,
             sanitized_transaction.message(),
@@ -1729,25 +1744,26 @@ mod tests {
                 account: fee_payer_account.clone(),
                 loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            &mut loaded_transaction_data_size,
             &mut error_metrics,
             &Rent::default(),
         );
 
-        let loaded_accounts_data_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32 * 2;
+        let expected_loaded_accounts_data_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32 * 2;
 
         assert_eq!(
+            vec![
+                (key2.pubkey(), fee_payer_account),
+                (
+                    key1.pubkey(),
+                    mock_bank.accounts_map[&key1.pubkey()].0.clone()
+                ),
+            ],
             result.unwrap(),
-            LoadedTransactionAccounts {
-                accounts: vec![
-                    (key2.pubkey(), fee_payer_account),
-                    (
-                        key1.pubkey(),
-                        mock_bank.accounts_map[&key1.pubkey()].0.clone()
-                    ),
-                ],
-                loaded_accounts_data_size,
-            }
+        );
+        assert_eq!(
+            expected_loaded_accounts_data_size,
+            loaded_transaction_data_size.loaded_accounts_data_size
         );
     }
 
@@ -1808,6 +1824,9 @@ mod tests {
             false,
         );
 
+        let mut loaded_transaction_data_size =
+            LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+
         let result = load_transaction_accounts(
             &mut account_loader,
             sanitized_transaction.message(),
@@ -1815,28 +1834,29 @@ mod tests {
                 account: fee_payer_account.clone(),
                 loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
-            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            &mut loaded_transaction_data_size,
             &mut error_metrics,
             &Rent::default(),
         );
 
-        let loaded_accounts_data_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32 * 2;
+        let expected_loaded_accounts_data_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32 * 2;
 
         let mut account_data = AccountSharedData::default();
         account_data.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
         assert_eq!(
+            vec![
+                (key2.pubkey(), fee_payer_account),
+                (
+                    key1.pubkey(),
+                    mock_bank.accounts_map[&key1.pubkey()].0.clone()
+                ),
+                (key3.pubkey(), account_data),
+            ],
             result.unwrap(),
-            LoadedTransactionAccounts {
-                accounts: vec![
-                    (key2.pubkey(), fee_payer_account),
-                    (
-                        key1.pubkey(),
-                        mock_bank.accounts_map[&key1.pubkey()].0.clone()
-                    ),
-                    (key3.pubkey(), account_data),
-                ],
-                loaded_accounts_data_size,
-            }
+        );
+        assert_eq!(
+            expected_loaded_accounts_data_size,
+            loaded_transaction_data_size.loaded_accounts_data_size
         );
     }
 
@@ -2448,21 +2468,24 @@ mod tests {
 
             assert!(expected_size <= MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get() as usize);
 
-            let loaded_transaction_accounts = load_transaction_accounts(
+            let mut loaded_transaction_data_size =
+                LoadedTransactionDataSize::with_max_size(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+
+            load_transaction_accounts(
                 &mut account_loader,
                 &transaction,
                 LoadedTransactionAccount {
                     loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE + fee_payer_account.data().len(),
                     account: fee_payer_account,
                 },
-                MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+                &mut loaded_transaction_data_size,
                 &mut TransactionErrorMetrics::default(),
                 &Rent::default(),
             )
             .unwrap();
 
             assert_eq!(
-                loaded_transaction_accounts.loaded_accounts_data_size,
+                loaded_transaction_data_size.loaded_accounts_data_size,
                 expected_size as u32,
             );
         }

@@ -3,7 +3,7 @@
 use {
     crate::repair::{repair_service::OutstandingShredRepairs, serve_repair::ServeRepair},
     agave_feature_set::FeatureSet,
-    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
+    solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
@@ -77,7 +77,7 @@ impl ShredFilterContext {
     }
 
     fn maybe_update(&mut self, root_bank: Arc<Bank>, repair_context: Option<&RepairContext>) {
-        if self.last_updated.elapsed().as_millis() as u64 > DEFAULT_MS_PER_SLOT {
+        if self.last_updated.elapsed().as_nanos() > root_bank.ns_per_slot {
             *self = Self::new(root_bank, repair_context);
         }
     }

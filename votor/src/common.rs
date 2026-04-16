@@ -75,11 +75,3 @@ pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 
 /// Timeout for standstill detection mechanism.
 pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
-
-/// Block timeout, when we should publish the final shred for the leader block index
-/// within the leader window
-#[inline]
-pub fn block_timeout(leader_block_index: usize) -> Duration {
-    // TODO: based on testing, perhaps adjust this
-    DELTA_BLOCK.saturating_mul((leader_block_index as u32).saturating_add(1))
-}

@@ -246,7 +246,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
             0,
             &vote_pubkey,
             0,
-            &vote_pubkey,
+            &node_pubkey,
             vote_account_lamports,
         );
         let stake_account = Account::from(stake_utils::create_stake_account(
@@ -438,7 +438,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
         0,
         validator_vote_account_pubkey,
         0,
-        validator_vote_account_pubkey,
+        validator_pubkey,
         vote_account_lamports,
     );
 

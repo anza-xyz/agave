@@ -918,7 +918,7 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
         0,
         &vote_id,
         0,
-        &vote_id,
+        &node_pubkey,
         100,
     );
     let stake_id1 = solana_pubkey::new_rand();
@@ -1682,6 +1682,9 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
     let next_slot = bank.slot() + 1;
     let bank = Bank::new_from_parent(bank, SlotLeader::default(), next_slot);
 
+    let node_pubkey0 = solana_pubkey::new_rand();
+    let node_pubkey1 = solana_pubkey::new_rand();
+    let node_pubkey2 = solana_pubkey::new_rand();
     let vote_pubkey0 = solana_pubkey::new_rand();
     let vote_pubkey1 = solana_pubkey::new_rand();
     let vote_pubkey2 = solana_pubkey::new_rand();
@@ -1691,36 +1694,36 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
 
     // Create vote accounts
     let vote_account0 = vote_state::create_v4_account_with_authorized(
-        &vote_pubkey0,
+        &node_pubkey0,
         &authorized_voter.pubkey(),
         [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
         &authorized_voter.pubkey(),
         0,
-        &authorized_voter.pubkey(),
+        &vote_pubkey0,
         0,
-        &authorized_voter.pubkey(),
+        &node_pubkey0,
         100,
     );
     let vote_account1 = vote_state::create_v4_account_with_authorized(
-        &vote_pubkey1,
+        &node_pubkey1,
         &authorized_voter.pubkey(),
         [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
         &authorized_voter.pubkey(),
         0,
-        &authorized_voter.pubkey(),
+        &vote_pubkey1,
         0,
-        &authorized_voter.pubkey(),
+        &node_pubkey1,
         100,
     );
     let vote_account2 = vote_state::create_v4_account_with_authorized(
-        &vote_pubkey2,
+        &node_pubkey2,
         &authorized_voter.pubkey(),
         [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
         &authorized_voter.pubkey(),
         0,
-        &authorized_voter.pubkey(),
+        &vote_pubkey2,
         0,
-        &authorized_voter.pubkey(),
+        &node_pubkey2,
         100,
     );
     bank.store_account(&vote_pubkey0, &vote_account0);
@@ -9861,7 +9864,7 @@ fn test_rent_state_changes_sysvars() {
         0,
         &validator_voting_keypair.pubkey(),
         0,
-        &validator_voting_keypair.pubkey(),
+        &validator_pubkey,
         validator_stake_lamports,
     );
 
@@ -11422,6 +11425,7 @@ fn test_filter_program_errors_and_collect_fee_details() {
                 load_error: TransactionError::InvalidProgramForExecution,
                 rollback_accounts: RollbackAccounts::default(),
                 fee_details,
+                loaded_accounts_data_size: 0,
             },
         ))),
         new_executed_processing_result(

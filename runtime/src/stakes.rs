@@ -634,7 +634,7 @@ pub(crate) mod tests {
             0,
             &vote_pubkey,
             0,
-            &vote_pubkey,
+            &node_pubkey,
             1,
         );
         let stake_pubkey = solana_pubkey::new_rand();
@@ -667,7 +667,7 @@ pub(crate) mod tests {
                 0,
                 vote_pubkey,
                 0,
-                vote_pubkey,
+                &node_pubkey,
                 1,
             ),
             rent,

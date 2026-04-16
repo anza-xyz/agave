@@ -1114,7 +1114,7 @@ mod tests {
                     start_slot,
                     end_slot,
                     parent_block,
-                    skip_timer: Instant::now(),
+                    block_timer: Instant::now(),
                 }),
                 &self.timer_manager,
                 &self.shared_context,

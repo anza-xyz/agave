@@ -476,6 +476,14 @@ impl BlockComponent {
         Self::BlockMarker(marker)
     }
 
+    pub fn new_block_header(parent_slot: Slot, parent_block_id: Hash) -> Self {
+        let header = BlockHeaderV1 {
+            parent_slot,
+            parent_block_id,
+        };
+        Self::new_block_marker(VersionedBlockMarker::new_block_header(header))
+    }
+
     pub const fn as_marker(&self) -> Option<&VersionedBlockMarker> {
         match self {
             Self::BlockMarker(m) => Some(m),

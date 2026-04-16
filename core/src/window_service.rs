@@ -13,7 +13,7 @@ use {
     agave_feature_set as feature_set,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
     rayon::{ThreadPool, prelude::*},
-    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
+    solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
@@ -113,7 +113,7 @@ fn run_check_duplicate(
     let mut root_bank = bank_forks.read().unwrap().root_bank();
     let mut last_updated = Instant::now();
     let check_duplicate = |shred: PossibleDuplicateShred| -> Result<()> {
-        if last_updated.elapsed().as_millis() as u64 > DEFAULT_MS_PER_SLOT {
+        if last_updated.elapsed().as_nanos() > root_bank.ns_per_slot {
             // Grabs bank forks lock once a slot
             last_updated = Instant::now();
             root_bank = bank_forks.read().unwrap().root_bank();

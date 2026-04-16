@@ -881,23 +881,15 @@ fn test_clean_zero_lamport_and_dead_slot() {
     let ancestors = Ancestors::from(vec![0]);
     let (slot1, account_info1) = accounts
         .accounts_index
-        .get_with_and_then(
-            &pubkey1,
-            Some(&ancestors),
-            None,
-            false,
-            |(slot, account_info)| (slot, account_info),
-        )
+        .get_with_and_then(&pubkey1, &ancestors, None, false, |(slot, account_info)| {
+            (slot, account_info)
+        })
         .unwrap();
     let (slot2, account_info2) = accounts
         .accounts_index
-        .get_with_and_then(
-            &pubkey2,
-            Some(&ancestors),
-            None,
-            false,
-            |(slot, account_info)| (slot, account_info),
-        )
+        .get_with_and_then(&pubkey2, &ancestors, None, false, |(slot, account_info)| {
+            (slot, account_info)
+        })
         .unwrap();
     assert_eq!(slot1, 0);
     assert_eq!(slot1, slot2);
@@ -1514,15 +1506,16 @@ fn test_accounts_db_purge_keep_live() {
     // since the store count will not be zero
     accounts.store_for_tests((current_slot, [(&pubkey2, &account2)].as_slice()));
     accounts.add_root_and_flush_write_cache(current_slot);
+    let ancestors = Ancestors::from(vec![accounts.accounts_index.max_root_inclusive()]);
     let (slot1, account_info1) = accounts
         .accounts_index
-        .get_with_and_then(&pubkey, None, None, false, |(slot, account_info)| {
+        .get_with_and_then(&pubkey, &ancestors, None, false, |(slot, account_info)| {
             (slot, account_info)
         })
         .unwrap();
     let (slot2, account_info2) = accounts
         .accounts_index
-        .get_with_and_then(&pubkey2, None, None, false, |(slot, account_info)| {
+        .get_with_and_then(&pubkey2, &ancestors, None, false, |(slot, account_info)| {
             (slot, account_info)
         })
         .unwrap();
@@ -3303,7 +3296,7 @@ impl AccountsDb {
 
         self.accounts_index.get_with_and_then(
             pubkey,
-            Some(&ancestors),
+            &ancestors,
             max_root,
             false,
             |(slot_found, account_info)| {
@@ -3513,12 +3506,13 @@ fn test_accounts_db_cache_clean_dead_slots() {
     }
 
     // Before the flush, we can find entries in the database for slots < alive_slot if we specify
-    // a smaller max root
+    // an older ancestor set
+    let ancestors = Ancestors::from(vec![last_dead_slot]);
     for key in &keys {
         assert!(
             accounts_db
                 .accounts_index
-                .get_with_and_then(key, None, Some(last_dead_slot), false, |_| {})
+                .get_with_and_then(key, &ancestors, None, false, |_| {})
                 .is_some()
         );
     }
@@ -3540,7 +3534,7 @@ fn test_accounts_db_cache_clean_dead_slots() {
         assert!(
             accounts_db
                 .accounts_index
-                .get_with_and_then(key, None, Some(last_dead_slot), false, |_| {})
+                .get_with_and_then(key, &ancestors, Some(last_dead_slot), false, |_| {})
                 .is_none()
         );
     }
@@ -5503,13 +5497,14 @@ fn test_shrink_collect_with_obsolete_accounts() {
     db.add_root_and_flush_write_cache(slot);
 
     let storage = db.get_and_assert_single_storage(slot);
+    let ancestors = Ancestors::from(vec![db.accounts_index.max_root_inclusive()]);
 
     for (i, pubkey) in pubkeys.iter().enumerate() {
         // Mark Some accounts obsolete. These will include zero lamport and non zero lamport accounts
         if i % 5 == 0 {
             // Lookup the pubkey in the database and find the AccountInfo
             db.accounts_index
-                .get_with_and_then(pubkey, None, None, false, |account_info| {
+                .get_with_and_then(pubkey, &ancestors, None, false, |account_info| {
                     db.remove_dead_accounts(
                         [account_info].iter(),
                         None,

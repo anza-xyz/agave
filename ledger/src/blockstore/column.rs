@@ -4,13 +4,14 @@ use {
         blockstore::error::Result,
         blockstore_meta::{self, BlockLocation, PerfSample},
     },
-    bincode::Options as BincodeOptions,
-    serde::{Serialize, de::DeserializeOwned},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::{HASH_BYTES, Hash},
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
     solana_signature::{SIGNATURE_BYTES, Signature},
     solana_storage_proto::convert::generated,
+    wincode::{
+        ReadError, SchemaRead, SchemaReadOwned, SchemaWrite, config::DefaultConfig, io::Reader,
+    },
 };
 
 pub(crate) const DEPRECATED_PROGRAM_COSTS_COLUMN_NAME: &str = "program_costs";
@@ -270,12 +271,18 @@ macro_rules! convert_column_key_bytes_to_index {
     }};
 }
 
-fn deserialize_fixint_reject_trailing<T: DeserializeOwned>(data: &[u8]) -> Result<T> {
-    let config = bincode::DefaultOptions::new()
-        // `bincode::serialize` uses fixint encoding by default, so we need to use the same here
-        .with_fixint_encoding()
-        .reject_trailing_bytes();
-    Ok(config.deserialize(data)?)
+// TODO: replace with dedicated wincode API on wincode>=0.5.1
+fn deserialize_reject_trailing<'de, T>(src: &'de [u8]) -> Result<T>
+where
+    T: SchemaRead<'de, DefaultConfig, Dst = T>,
+{
+    let mut reader = src;
+    let value = <T as SchemaRead<'de, DefaultConfig>>::get(reader.by_ref())?;
+    if reader.is_empty() {
+        Ok(value)
+    } else {
+        Err(ReadError::Custom("trailing bytes").into())
+    }
 }
 
 pub trait Column {
@@ -301,14 +308,17 @@ pub trait ColumnName {
 
 // Columns that serialize data on insertion and deserialize on fetch
 pub trait TypedColumn: Column {
-    type Type: Serialize + DeserializeOwned;
+    type Type: SchemaWrite<DefaultConfig, Src = Self::Type>
+        + SchemaReadOwned<DefaultConfig, Dst = Self::Type>;
 
+    #[inline]
     fn deserialize(data: &[u8]) -> Result<Self::Type> {
-        Ok(bincode::deserialize(data)?)
+        Ok(wincode::deserialize(data)?)
     }
 
+    #[inline]
     fn serialize(data: &Self::Type) -> Result<Vec<u8>> {
-        Ok(bincode::serialize(data)?)
+        Ok(wincode::serialize(data)?)
     }
 }
 
@@ -598,8 +608,9 @@ impl ColumnName for columns::Index {
 impl TypedColumn for columns::Index {
     type Type = blockstore_meta::Index;
 
+    #[inline]
     fn deserialize(data: &[u8]) -> Result<Self::Type> {
-        deserialize_fixint_reject_trailing(data)
+        deserialize_reject_trailing(data)
     }
 }
 
@@ -877,6 +888,7 @@ mod tests {
         super::*,
         crate::blockstore_meta::{ConnectedFlags, SlotMetaV3},
         solana_hash::Hash,
+        wincode,
     };
 
     #[test]
@@ -900,8 +912,6 @@ mod tests {
 
     #[test]
     fn test_slot_meta_column_deserialize_v2_from_v3_bytes() {
-        use bincode::Options;
-
         let meta_v3 = SlotMetaV3 {
             slot: 42,
             consumed: 10,
@@ -915,18 +925,11 @@ mod tests {
             parent_block_id: Hash::new_unique(),
             replay_fec_set_index: 7,
         };
-        let v3_bytes = bincode::serialize(&meta_v3).unwrap();
+        let v3_bytes = wincode::serialize(&meta_v3).unwrap();
 
         let expected = blockstore_meta::SlotMeta::from(meta_v3);
 
-        let config = bincode::DefaultOptions::new()
-            .with_fixint_encoding()
-            .reject_trailing_bytes();
-        assert!(
-            config
-                .deserialize::<blockstore_meta::SlotMeta>(&v3_bytes)
-                .is_err()
-        );
+        assert!(deserialize_reject_trailing::<blockstore_meta::SlotMeta>(&v3_bytes).is_err());
 
         let deserialized = <columns::SlotMeta as TypedColumn>::deserialize(&v3_bytes).unwrap();
         assert_eq!(expected, deserialized);

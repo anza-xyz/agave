@@ -430,7 +430,7 @@ mod tests {
                 self, Lockout, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
                 VoteAuthorizeWithSeedArgs, VoteInit, VoteInitV2, VoteStateUpdate, VoteStateV3,
                 VoteStateV4, VoteStateVersions, create_bls_pubkey_and_proof_of_possession,
-                handler::{VoteStateHandle, VoteStateHandler},
+                handler::VoteStateHandler,
             },
         },
         bincode::serialize,
@@ -683,7 +683,7 @@ mod tests {
             0,
             &vote_pubkey,
             0,
-            &vote_pubkey,
+            &node_pubkey,
             balance,
         );
 
@@ -776,7 +776,7 @@ mod tests {
             0,
             authorized_withdrawer,
             0,
-            authorized_withdrawer,
+            &node_pubkey,
             100,
         )
     }
@@ -807,7 +807,7 @@ mod tests {
             0,
             &authorized_withdrawer,
             0,
-            &authorized_withdrawer,
+            &node_pubkey,
             100,
         );
 

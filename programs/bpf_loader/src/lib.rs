@@ -8,7 +8,8 @@ use {
     solana_bincode::limited_deserialize,
     solana_instruction::{AccountMeta, error::InstructionError},
     solana_loader_v3_interface::{
-        instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
+        instruction::{MINIMUM_EXTEND_PROGRAM_BYTES, UpgradeableLoaderInstruction},
+        state::UpgradeableLoaderState,
     },
     solana_program_runtime::{
         deploy_program,
@@ -847,6 +848,30 @@ fn common_extend_program(
             MAX_PERMITTED_DATA_LENGTH
         );
         return Err(InstructionError::InvalidRealloc);
+    }
+
+    if invoke_context
+        .get_feature_set()
+        .loader_v3_minimum_extend_program_size
+    {
+        // SIMD-0431: Minimum Extend Program Size
+        //
+        // All extensions must be >= 10 KiB in additional_bytes, unless
+        // MAX_PERMITTED_DATA_LENGTH - current_len < 10 KiB. In that case,
+        // additional_bytes must be equal to the remaining free space.
+        let headroom = (MAX_PERMITTED_DATA_LENGTH as usize).saturating_sub(old_len);
+        if additional_bytes < MINIMUM_EXTEND_PROGRAM_BYTES
+            && (additional_bytes as usize) != headroom
+        {
+            ic_logger_msg!(
+                log_collector,
+                "ExtendProgram requires a minimum of {} additional bytes or to extend to maximum \
+                 size, but only {} were requested",
+                MINIMUM_EXTEND_PROGRAM_BYTES,
+                additional_bytes,
+            );
+            return Err(InstructionError::InvalidArgument);
+        }
     }
 
     let clock_slot = invoke_context

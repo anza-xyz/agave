@@ -112,7 +112,7 @@ impl StakeReward {
             1000,
             &validator_voting_keypair.pubkey(),
             0,
-            &validator_voting_keypair.pubkey(),
+            &validator_pubkey,
             validator_stake_lamports,
         );
 

@@ -1466,6 +1466,7 @@ impl Validator {
 
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let highest_parent_ready = Arc::new(RwLock::default());
+        let highest_finalized = Arc::new(RwLock::new(None));
 
         let block_creation_loop_config = BlockCreationLoopConfig {
             exit: exit.clone(),
@@ -1481,6 +1482,7 @@ impl Validator {
             highest_parent_ready: highest_parent_ready.clone(),
             replay_highest_frozen: replay_highest_frozen.clone(),
             record_receiver_receiver,
+            highest_finalized: highest_finalized.clone(),
         };
         let block_creation_loop = BlockCreationLoop::new(block_creation_loop_config);
 
@@ -1624,6 +1626,7 @@ impl Validator {
                 key_notifiers: key_notifiers.clone(),
                 bls_connection_cache,
                 voting_service_test_override: config.voting_service_test_override.clone(),
+                highest_finalized,
             },
         )
         .map_err(ValidatorError::Other)?;
@@ -3321,13 +3324,6 @@ mod tests {
     }
 
     fn target_tick_duration() -> Duration {
-        // DEFAULT_MS_PER_SLOT = 400
-        // DEFAULT_TICKS_PER_SLOT = 64
-        // MS_PER_TICK = 6
-        //
-        // But, DEFAULT_MS_PER_SLOT / DEFAULT_TICKS_PER_SLOT = 6.25
-        //
-        // So, convert to microseconds first to avoid the integer rounding error
         let target_tick_duration_us =
             solana_clock::DEFAULT_MS_PER_SLOT * 1000 / solana_clock::DEFAULT_TICKS_PER_SLOT;
         assert_eq!(target_tick_duration_us, 6250);

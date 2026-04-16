@@ -287,11 +287,17 @@ impl RpcRequestMiddleware {
                 };
                 let computed = match interval {
                     SnapshotInterval::Disabled => Duration::ZERO,
-                    SnapshotInterval::Slots(slots) => Duration::from_millis(
-                        slots
-                            .get()
-                            .saturating_mul(solana_clock::DEFAULT_MS_PER_SLOT),
-                    ),
+                    SnapshotInterval::Slots(slots) => {
+                        let ns_per_slot = self
+                            .bank_forks
+                            .read()
+                            .unwrap()
+                            .root_bank()
+                            .ns_per_slot
+                            .try_into()
+                            .unwrap_or(solana_clock::DEFAULT_MS_PER_SLOT * 1_000_000);
+                        Duration::from_nanos(slots.get().saturating_mul(ns_per_slot))
+                    }
                 };
                 let fallback = match st {
                     SnapshotKind::Full => FALLBACK_FULL_SNAPSHOT_TIMEOUT_SECS,

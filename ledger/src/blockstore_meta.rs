@@ -7,8 +7,6 @@ use {
         },
     },
     bitflags::bitflags,
-    serde::{Deserialize, Deserializer, Serialize, Serializer},
-    serde_bytes::ByteBuf,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::{HASH_BYTES, Hash},
     std::{
@@ -19,7 +17,7 @@ use {
 };
 
 bitflags! {
-    #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     /// Flags to indicate whether a slot is a descendant of a slot on the main fork
     pub struct ConnectedFlags:u8 {
         // A slot S should be considered to be connected if:
@@ -48,6 +46,10 @@ bitflags! {
     }
 }
 
+wincode::pod_wrapper! {
+    unsafe struct PodConnectedFlags(ConnectedFlags);
+}
+
 impl Default for ConnectedFlags {
     fn default() -> Self {
         ConnectedFlags::empty()
@@ -55,8 +57,7 @@ impl Default for ConnectedFlags {
 }
 
 /// A fixed size BitVec offers fast lookup and fast de/serialization.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(transparent)]
+#[derive(Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite)]
 pub struct CompletedDataIndexes {
     index: BitVec<MAX_DATA_SHREDS_PER_SLOT>,
 }
@@ -101,14 +102,14 @@ impl FromIterator<u32> for CompletedDataIndexes {
     }
 }
 
-// Manually implement Debut to display indices indices instead of raw u8's
+// Manually implement Debug to display indices instead of raw u8's
 impl Debug for CompletedDataIndexes {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.iter().collect::<Vec<_>>())
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, SchemaRead, SchemaWrite, Eq, PartialEq)]
 /// The Meta column family
 pub struct SlotMetaBase<T> {
     /// The number of slots above the root (the genesis block). The first
@@ -126,16 +127,17 @@ pub struct SlotMetaBase<T> {
     pub first_shred_timestamp: u64,
     /// The index of the shred that is flagged as the last shred for this slot.
     /// None until the shred with LAST_SHRED_IN_SLOT flag is received.
-    #[serde(with = "serde_compat")]
+    #[wincode(with = "wincode_compat::OptionCompat")]
     pub last_index: Option<u64>,
     /// The slot height of the block this one derives from.
     /// The parent slot of the head of a detached chain of slots is None.
-    #[serde(with = "serde_compat")]
+    #[wincode(with = "wincode_compat::OptionCompat")]
     pub parent_slot: Option<Slot>,
     /// The list of slots, each of which contains a block that derives
     /// from this one.
     pub next_slots: Vec<Slot>,
     /// Connected status flags of this slot
+    #[wincode(with = "PodConnectedFlags")]
     pub connected_flags: ConnectedFlags,
     /// Shreds indices which are marked data complete.  That is, those that have the
     /// [`ShredFlags::DATA_COMPLETE_SHRED`][`crate::shred::ShredFlags::DATA_COMPLETE_SHRED`] set.
@@ -150,17 +152,18 @@ pub type SlotMeta = SlotMetaBase<CompletedDataIndexes>;
 /// converted into a SlotMeta. The logic to read and convert SlotMetaV3 to
 /// SlotMeta enables this software to read a Blockstore modified by a future
 /// version where the SlotMetaV3 format is persisted.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, SchemaRead, SchemaWrite, Eq, PartialEq)]
 pub(crate) struct SlotMetaV3 {
     pub slot: Slot,
     pub consumed: u64,
     pub received: u64,
     pub first_shred_timestamp: u64,
-    #[serde(with = "serde_compat")]
+    #[wincode(with = "wincode_compat::OptionCompat")]
     pub last_index: Option<u64>,
-    #[serde(with = "serde_compat")]
+    #[wincode(with = "wincode_compat::OptionCompat")]
     pub parent_slot: Option<Slot>,
     pub next_slots: Vec<Slot>,
+    #[wincode(with = "PodConnectedFlags")]
     pub connected_flags: ConnectedFlags,
     pub completed_data_indexes: CompletedDataIndexes,
     /// The block id of the parent block.
@@ -187,42 +190,60 @@ impl From<SlotMetaV3> for SlotMeta {
     }
 }
 
-// Serde implementation of serialize and deserialize for Option<u64>
+// Wincode implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
-mod serde_compat {
-    use super::*;
+mod wincode_compat {
+    use {
+        super::*,
+        std::mem::MaybeUninit,
+        wincode::{
+            ReadResult, WriteResult,
+            config::ConfigCore,
+            io::{Reader, Writer},
+        },
+    };
 
-    pub(super) fn serialize<S>(val: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        val.unwrap_or(u64::MAX).serialize(serializer)
+    pub(crate) struct OptionCompat;
+    unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for OptionCompat {
+        type Dst = Option<Slot>;
+
+        const TYPE_META: wincode::TypeMeta =
+            <Slot as SchemaRead<'de, C>>::TYPE_META.keep_zero_copy(false);
+
+        fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+            let val = <Slot as SchemaRead<'de, C>>::get(reader)?;
+            dst.write((val != Slot::MAX).then_some(val));
+            Ok(())
+        }
     }
+    unsafe impl<C: ConfigCore> SchemaWrite<C> for OptionCompat {
+        type Src = Option<Slot>;
 
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let val = u64::deserialize(deserializer)?;
-        Ok((val != u64::MAX).then_some(val))
+        const TYPE_META: wincode::TypeMeta =
+            <Slot as SchemaWrite<C>>::TYPE_META.keep_zero_copy(false);
+
+        fn size_of(src: &Self::Src) -> WriteResult<usize> {
+            <Slot as SchemaWrite<C>>::size_of(&src.unwrap_or(Slot::MAX))
+        }
+
+        fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+            <Slot as SchemaWrite<C>>::write(writer, &src.unwrap_or(Slot::MAX))
+        }
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, SchemaRead, SchemaWrite, PartialEq, Eq)]
 pub struct Index {
     pub slot: Slot,
     data: ShredIndex,
     coding: ShredIndex,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite, Eq, PartialEq)]
 /// Erasure coding information
 pub struct ErasureMeta {
     /// Which erasure set in the slot this is
-    #[serde(
-        serialize_with = "serde_compat_cast::serialize::<_, u64, _>",
-        deserialize_with = "serde_compat_cast::deserialize::<_, u64, _>"
-    )]
+    #[wincode(with = "wincode_compat_cast::U32AsU64")]
     fec_set_index: u32,
     /// First coding index in the FEC set
     first_coding_index: u64,
@@ -232,40 +253,51 @@ pub struct ErasureMeta {
     config: ErasureConfig,
 }
 
-// Helper module to serde values by type-casting to an intermediate
+// Helper module to serialize values by type-casting to an intermediate
 // type for backward compatibility.
-mod serde_compat_cast {
-    use super::*;
+mod wincode_compat_cast {
+    use {
+        super::*,
+        std::mem::MaybeUninit,
+        wincode::{
+            ReadResult, WriteResult,
+            config::ConfigCore,
+            io::{Reader, Writer},
+        },
+    };
 
-    // Serializes a value of type T by first type-casting to type R.
-    pub(super) fn serialize<S: Serializer, R, T: Copy>(
-        &val: &T,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        R: TryFrom<T> + Serialize,
-        <R as TryFrom<T>>::Error: std::fmt::Display,
-    {
-        R::try_from(val)
-            .map_err(serde::ser::Error::custom)?
-            .serialize(serializer)
+    /// Serializes a `u32` as `u64` for backward compatibility with on-disk data
+    /// that stored the field with 8-byte width.
+    pub(super) struct U32AsU64;
+    unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for U32AsU64 {
+        type Dst = u32;
+
+        const TYPE_META: wincode::TypeMeta =
+            <u64 as SchemaRead<'de, C>>::TYPE_META.keep_zero_copy(false);
+
+        fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+            let val = <u64 as SchemaRead<'de, C>>::get(reader)?;
+            dst.write(val as u32);
+            Ok(())
+        }
     }
+    unsafe impl<C: ConfigCore> SchemaWrite<C> for U32AsU64 {
+        type Src = u32;
 
-    // Deserializes a value of type R and type-casts it to type T.
-    pub(super) fn deserialize<'de, D, R, T>(deserializer: D) -> Result<T, D::Error>
-    where
-        D: Deserializer<'de>,
-        R: Deserialize<'de>,
-        T: TryFrom<R>,
-        <T as TryFrom<R>>::Error: std::fmt::Display,
-    {
-        R::deserialize(deserializer)
-            .map(T::try_from)?
-            .map_err(serde::de::Error::custom)
+        const TYPE_META: wincode::TypeMeta =
+            <u64 as SchemaWrite<C>>::TYPE_META.keep_zero_copy(false);
+
+        fn size_of(src: &Self::Src) -> WriteResult<usize> {
+            <u64 as SchemaWrite<C>>::size_of(&u64::from(*src))
+        }
+
+        fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+            <u64 as SchemaWrite<C>>::write(writer, &u64::from(*src))
+        }
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaRead, SchemaWrite)]
 pub(crate) struct ErasureConfig {
     pub(crate) num_data: usize,
     pub(crate) num_coding: usize,
@@ -277,7 +309,7 @@ impl ErasureConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, SchemaRead, SchemaWrite)]
 pub struct MerkleRootMeta {
     /// The merkle root, `None` for legacy shreds
     merkle_root: Option<Hash>,
@@ -287,11 +319,9 @@ pub struct MerkleRootMeta {
     first_received_shred_type: ShredType,
 }
 
-#[derive(Deserialize, Serialize, SchemaRead, SchemaWrite)]
+#[derive(SchemaRead, SchemaWrite)]
 pub struct DuplicateSlotProof {
-    #[serde(with = "shred::serde_bytes_payload")]
     pub shred1: shred::Payload,
-    #[serde(with = "shred::serde_bytes_payload")]
     pub shred2: shred::Payload,
 }
 
@@ -329,7 +359,7 @@ impl Display for BlockLocation {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq)]
 pub enum FrozenHashVersioned {
     Current(FrozenHashStatus),
 }
@@ -350,7 +380,7 @@ impl FrozenHashVersioned {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq)]
 pub struct FrozenHashStatus {
     pub frozen_hash: Hash,
     pub is_duplicate_confirmed: bool,
@@ -389,7 +419,7 @@ impl Index {
 ///   requested range, avoiding unnecessary traversal.
 /// - **Simplified Serialization**: The contiguous memory layout allows for efficient
 ///   serialization/deserialization without tree reconstruction.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Default)]
 pub struct ShredIndex {
     index: BitVec<MAX_DATA_SHREDS_PER_SLOT>,
     num_shreds: usize,
@@ -679,15 +709,15 @@ impl DuplicateSlotProof {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Default, SchemaRead, SchemaWrite, PartialEq, Eq)]
 pub struct AddressSignatureMeta {
     pub writeable: bool,
 }
 
 /// Performance information about validator execution during a time slice.
 ///
-/// Version of the [`PerfSample`] introduced in 1.15.x.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[repr(C)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct PerfSample {
     // `PerfSampleV1` part
     pub num_transactions: u64,
@@ -698,13 +728,14 @@ pub struct PerfSample {
     pub num_non_vote_transactions: u64,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[repr(C)]
+#[derive(Clone, Debug, Default, SchemaRead, SchemaWrite, PartialEq, Eq)]
 pub struct OptimisticSlotMetaV0 {
     pub hash: Hash,
     pub timestamp: UnixTimestamp,
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq)]
 pub enum OptimisticSlotMetaVersioned {
     V0(OptimisticSlotMetaV0),
 }
@@ -727,7 +758,7 @@ impl OptimisticSlotMetaVersioned {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct DoubleMerkleMeta {
     /// The double merkle root computed as the root of the merkle tree
     /// containing the merkle roots of each fec set + the parent info (parent_slot, parent_double_merkle_root)
@@ -738,13 +769,13 @@ pub struct DoubleMerkleMeta {
 
     /// The merkle proofs.
     /// Each proof is of size `get_proof_size(fec_set_count + 1)`
-    /// This `ByteBuf` contains the concatenated proofs for all the fec set leaves and the parent info leaf
+    /// This `Vec<u8>` contains the concatenated proofs for all the fec set leaves and the parent info leaf
     ///
     /// The size of this vec is `(fec_set_count + 1) * get_proof_size(fec_set_count + 1) * SIZE_OF_MERKLE_PROOF_ENTRY`
     /// To access the proof for the i-th leaf:
     ///   `proofs[i * get_proof_size(fec_set_count + 1) * SIZE_OF_MERKLE_PROOF_ENTRY
     ///      ..(i + 1) * get_proof_size(fec_set_count + 1) * SIZE_OF_MERKLE_PROOF_ENTRY]`
-    pub(crate) proofs: ByteBuf,
+    pub(crate) proofs: Vec<u8>,
 }
 
 impl DoubleMerkleMeta {
@@ -982,14 +1013,15 @@ mod test {
         // Define a couple structs with bool and ConnectedFlags to illustrate
         // that that ConnectedFlags can be deserialized into a bool if the
         // PARENT_CONNECTED bit is NOT set
-        #[derive(Debug, Deserialize, PartialEq, Serialize)]
+        #[derive(Debug, PartialEq, SchemaRead, SchemaWrite)]
         struct WithBool {
             slot: Slot,
             connected: bool,
         }
-        #[derive(Debug, Deserialize, PartialEq, Serialize)]
+        #[derive(Debug, PartialEq, SchemaRead, SchemaWrite)]
         struct WithFlags {
             slot: Slot,
+            #[wincode(with = "PodConnectedFlags")]
             connected: ConnectedFlags,
         }
 
@@ -1005,40 +1037,40 @@ mod test {
 
         // Confirm that serialized byte arrays are same length
         assert_eq!(
-            bincode::serialized_size(&with_bool).unwrap(),
-            bincode::serialized_size(&with_flags).unwrap()
+            wincode::serialized_size(&with_bool).unwrap(),
+            wincode::serialized_size(&with_flags).unwrap()
         );
 
         // Confirm that connected=false equivalent to ConnectedFlags::default()
         assert_eq!(
-            bincode::serialize(&with_bool).unwrap(),
-            bincode::serialize(&with_flags).unwrap()
+            wincode::serialize(&with_bool).unwrap(),
+            wincode::serialize(&with_flags).unwrap()
         );
 
         // Set connected in WithBool and confirm inequality
         with_bool.connected = true;
         assert_ne!(
-            bincode::serialize(&with_bool).unwrap(),
-            bincode::serialize(&with_flags).unwrap()
+            wincode::serialize(&with_bool).unwrap(),
+            wincode::serialize(&with_flags).unwrap()
         );
 
         // Set connected in WithFlags and confirm equality regained
         with_flags.connected.set(ConnectedFlags::CONNECTED, true);
         assert_eq!(
-            bincode::serialize(&with_bool).unwrap(),
-            bincode::serialize(&with_flags).unwrap()
+            wincode::serialize(&with_bool).unwrap(),
+            wincode::serialize(&with_flags).unwrap()
         );
 
         // Deserializing WithBool into WithFlags succeeds
         assert_eq!(
             with_flags,
-            bincode::deserialize::<WithFlags>(&bincode::serialize(&with_bool).unwrap()).unwrap()
+            wincode::deserialize::<WithFlags>(&wincode::serialize(&with_bool).unwrap()).unwrap()
         );
 
         // Deserializing WithFlags into WithBool succeeds
         assert_eq!(
             with_bool,
-            bincode::deserialize::<WithBool>(&bincode::serialize(&with_flags).unwrap()).unwrap()
+            wincode::deserialize::<WithBool>(&wincode::serialize(&with_flags).unwrap()).unwrap()
         );
 
         // Deserializing WithFlags with extra bit set into WithBool fails
@@ -1046,7 +1078,7 @@ mod test {
             .connected
             .set(ConnectedFlags::PARENT_CONNECTED, true);
         assert!(
-            bincode::deserialize::<WithBool>(&bincode::serialize(&with_flags).unwrap()).is_err()
+            wincode::deserialize::<WithBool>(&wincode::serialize(&with_flags).unwrap()).is_err()
         );
     }
 
@@ -1065,11 +1097,10 @@ mod test {
 
     #[test]
     fn test_erasure_meta_transition() {
-        #[derive(Debug, Deserialize, PartialEq, Serialize)]
+        #[derive(Debug, PartialEq, SchemaRead, SchemaWrite)]
         struct OldErasureMeta {
             set_index: u64,
             first_coding_index: u64,
-            #[serde(rename = "size")]
             __unused_size: usize,
             config: ErasureConfig,
         }
@@ -1093,12 +1124,12 @@ mod test {
         };
 
         assert_eq!(
-            bincode::serialized_size(&old_erasure_meta).unwrap(),
-            bincode::serialized_size(&new_erasure_meta).unwrap(),
+            wincode::serialized_size(&old_erasure_meta).unwrap(),
+            wincode::serialized_size(&new_erasure_meta).unwrap(),
         );
 
         assert_eq!(
-            bincode::deserialize::<ErasureMeta>(&bincode::serialize(&old_erasure_meta).unwrap())
+            wincode::deserialize::<ErasureMeta>(&wincode::serialize(&old_erasure_meta).unwrap())
                 .unwrap(),
             new_erasure_meta
         );
@@ -1107,7 +1138,7 @@ mod test {
         old_erasure_meta.__unused_size = usize::try_from(u32::MAX).unwrap();
 
         assert_eq!(
-            bincode::deserialize::<OldErasureMeta>(&bincode::serialize(&new_erasure_meta).unwrap())
+            wincode::deserialize::<OldErasureMeta>(&wincode::serialize(&new_erasure_meta).unwrap())
                 .unwrap(),
             old_erasure_meta
         );
