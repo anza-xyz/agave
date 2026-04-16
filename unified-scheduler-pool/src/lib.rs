@@ -14,14 +14,12 @@
 //! regarding to pooling and the actual use.
 
 use {
-    agave_banking_stage_ingress_types::BankingPacketBatch,
     assert_matches::assert_matches,
     crossbeam_channel::{
         self, Receiver, RecvError, RecvTimeoutError, SendError, Sender, never, select_biased,
     },
     dashmap::DashMap,
     derive_where::derive_where,
-    dyn_clone::{DynClone, clone_trait_object},
     log::*,
     scopeguard::defer,
     solana_clock::{Epoch, Slot},
@@ -57,7 +55,6 @@ use {
         thread::{self, JoinHandle, sleep},
         time::{Duration, Instant},
     },
-    trait_set::trait_set,
     unwrap_none::UnwrapNone,
 };
 
@@ -232,13 +229,6 @@ impl CommonHandlerContext {
 struct BankingStageHandlerContext {
     banking_stage_monitor: Box<dyn BankingStageMonitor>,
 }
-
-trait_set! {
-    pub trait BankingPacketHandler =
-        DynClone + FnMut(&BankingStageHelper, BankingPacketBatch) + Send + 'static;
-}
-// Make this `Clone`-able so that it can easily propagated to all the handler threads.
-clone_trait_object!(BankingPacketHandler);
 
 /// A helper struct for the banking stage integration, primarily used for task creation.
 ///

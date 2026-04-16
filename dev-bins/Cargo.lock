@@ -2222,12 +2222,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1435fa1053d8b2fbbe9be7e97eca7f33d37b28409959813daefc1446a14247f1"
 
 [[package]]
-name = "dyn-clone"
-version = "1.0.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
-
-[[package]]
 name = "eager"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9770,7 +9764,6 @@ dependencies = [
  "dashmap",
  "derive-where",
  "derive_more 2.1.1",
- "dyn-clone",
  "log",
  "scopeguard",
  "solana-clock",
@@ -9787,7 +9780,6 @@ dependencies = [
  "solana-transaction-error",
  "solana-unified-scheduler-logic",
  "static_assertions",
- "trait-set",
  "unwrap_none",
 ]
 
@@ -10941,17 +10933,6 @@ dependencies = [
  "sharded-slab",
  "thread_local",
  "tracing-core",
-]
-
-[[package]]
-name = "trait-set"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b79e2e9c9ab44c6d7c20d5976961b47e8f49ac199154daa514b77cd1ab536625"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
