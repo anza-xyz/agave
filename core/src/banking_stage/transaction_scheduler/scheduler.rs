@@ -1,7 +1,7 @@
 use {
     super::{
         scheduler_common::SchedulingCommon, scheduler_error::SchedulerError,
-        transaction_state::TransactionState, transaction_state_container::StateContainer,
+        transaction_state_container::StateContainer,
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     std::num::Saturating,
@@ -15,7 +15,6 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
         &mut self,
         container: &mut S,
         budget: u64,
-        pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError>;
 
     /// Receive completed batches of transactions without blocking.

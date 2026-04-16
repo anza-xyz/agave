@@ -4,7 +4,7 @@
 use {
     super::{
         receive_and_buffer::{DisconnectedError, ReceiveAndBuffer},
-        scheduler::{PreLockFilterAction, Scheduler},
+        scheduler::Scheduler,
         scheduler_error::SchedulerError,
         scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics, SchedulingDetails},
     },
@@ -230,11 +230,10 @@ where
                 let scheduling_budget = cost_pacer
                     .expect("cost pacer must be set for Consume")
                     .scheduling_budget(now);
-                let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
-                    &mut self.container,
-                    scheduling_budget,
-                    |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
-                )?);
+                let (scheduling_summary, schedule_time_us) = measure_us!(
+                    self.scheduler
+                        .schedule(&mut self.container, scheduling_budget,)?
+                );
 
                 self.count_metrics.update(|count_metrics| {
                     count_metrics.num_scheduled += scheduling_summary.num_scheduled;
