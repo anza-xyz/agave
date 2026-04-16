@@ -70,7 +70,6 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         &mut self,
         container: &mut S,
         budget: u64,
-        _pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
         pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError> {
         // Subtract any in-flight compute units from the budget.
@@ -379,13 +378,6 @@ mod test {
             .unzip()
     }
 
-    fn test_pre_graph_filter(
-        _txs: &[&RuntimeTransaction<SanitizedTransaction>],
-        results: &mut [bool],
-    ) {
-        results.fill(true);
-    }
-
     fn test_pre_lock_filter(
         _tx: &TransactionState<RuntimeTransaction<SanitizedTransaction>>,
     ) -> PreLockFilterAction {
@@ -403,7 +395,6 @@ mod test {
             scheduler.schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
                 test_pre_lock_filter
             ),
             Err(SchedulerError::DisconnectedSendChannel(_))
@@ -423,7 +414,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
                 test_pre_lock_filter,
             )
             .unwrap();
@@ -445,7 +435,6 @@ mod test {
             .schedule(
                 &mut container,
                 0, // zero budget
-                test_pre_graph_filter,
                 test_pre_lock_filter,
             )
             .unwrap();
@@ -471,7 +460,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
                 test_pre_lock_filter,
             )
             .unwrap();
@@ -498,7 +486,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
                 test_pre_lock_filter,
             )
             .unwrap();
@@ -525,7 +512,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
                 test_pre_lock_filter,
             )
             .unwrap();
@@ -548,7 +534,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
                 test_pre_lock_filter,
             )
             .unwrap();
@@ -568,7 +553,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
                 test_pre_lock_filter,
             )
             .unwrap();
@@ -609,7 +593,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
                 test_pre_lock_filter,
             )
             .unwrap();
@@ -646,7 +629,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
                 test_pre_lock_filter,
             )
             .unwrap();

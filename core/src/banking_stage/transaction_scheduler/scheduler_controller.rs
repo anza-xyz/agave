@@ -12,7 +12,6 @@ use {
         banking_stage::{
             TOTAL_BUFFERED_PACKETS,
             consume_worker::ConsumeWorkerMetrics,
-            consumer::Consumer,
             decision_maker::{BufferedPacketsDecision, DecisionMaker},
             transaction_scheduler::{
                 receive_and_buffer::ReceivingStats, transaction_priority_id::TransactionPriorityId,
@@ -24,7 +23,7 @@ use {
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
-    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
+    solana_runtime::bank_forks::SharableBanks,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         num::{NonZeroU64, Saturating},
@@ -227,16 +226,13 @@ where
         now: &Instant,
     ) -> Result<usize, SchedulerError> {
         let scheduled = match decision {
-            BufferedPacketsDecision::Consume(bank) => {
+            BufferedPacketsDecision::Consume(_bank) => {
                 let scheduling_budget = cost_pacer
                     .expect("cost pacer must be set for Consume")
                     .scheduling_budget(now);
                 let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
                     &mut self.container,
                     scheduling_budget,
-                    |txs, results| {
-                        Self::pre_graph_filter(txs, results, bank, bank.max_processing_age())
-                    },
                     |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
                 )?);
 
@@ -270,32 +266,6 @@ where
         };
 
         Ok(scheduled)
-    }
-
-    fn pre_graph_filter(
-        transactions: &[&R::Transaction],
-        results: &mut [bool],
-        bank: &Bank,
-        max_age: usize,
-    ) {
-        let lock_results = vec![Ok(()); transactions.len()];
-        let mut error_counters = TransactionErrorMetrics::default();
-        let check_results = bank.check_transactions::<R::Transaction>(
-            transactions,
-            &lock_results,
-            max_age,
-            &mut error_counters,
-        );
-
-        for ((check_result, tx), result) in check_results
-            .into_iter()
-            .zip(transactions)
-            .zip(results.iter_mut())
-        {
-            *result = check_result
-                .and_then(|_| Consumer::check_fee_payer_unlocked(bank, *tx, &mut error_counters))
-                .is_ok();
-        }
     }
 
     /// Clears the transaction state container.
