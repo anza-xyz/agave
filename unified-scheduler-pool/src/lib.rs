@@ -1359,24 +1359,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         None
     }
 
-    fn can_receive_unblocked_task(
-        session_ending: bool,
-        mode: SchedulingMode,
-        state_machine: &SchedulingStateMachine,
-    ) -> bool {
-        match mode {
-            BlockVerification => {
-                // Always take as much as possible out of SchedulingStateMachine to avoid crossbeam
-                // channel internal message buffering depletion with much relaxed condition than
-                // block production.
-                state_machine.has_unblocked_task()
-            }
-            BlockProduction => {
-                // Much like max_running_task_count() reasonings, stop taking runnable and
-                // unblocked tasks out of SchedulingStateMachine as soon as session is ending.
-                !session_ending && state_machine.has_runnable_task()
-            }
-        }
+    fn can_receive_unblocked_task(state_machine: &SchedulingStateMachine) -> bool {
+        // Always take as much as possible out of SchedulingStateMachine to avoid crossbeam
+        // channel internal message buffering depletion with much relaxed condition than
+        // block production.
+        state_machine.has_unblocked_task()
     }
 
     fn can_finish_session(
@@ -1707,11 +1694,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // arm. So, eagerly binding the result to a variable unconditionally here
                         // makes no perf. difference...
                         let dummy_unblocked_task_receiver =
-                            dummy_receiver(Self::can_receive_unblocked_task(
-                                session_ending,
-                                SchedulingMode::BlockVerification,
-                                &state_machine,
-                            ));
+                            dummy_receiver(Self::can_receive_unblocked_task(&state_machine));
 
                         // There's something special called dummy_unblocked_task_receiver here.
                         // This odd pattern was needed to react to newly unblocked tasks from
