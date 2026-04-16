@@ -483,11 +483,14 @@ impl Bank {
             vote_state.commission() as u16 * 100
         };
 
-        let ag_stake_state = is_alpenglow_active.then_some(AlpenglowStakeState {
-            vote_pubkey,
-            epoch_stakes: &self.epoch_stakes,
-            rewarding: true,
-        });
+        let ag_stake_state = if is_alpenglow_active {
+            AlpenglowStakeState::Alpenglow {
+                vote_pubkey,
+                epoch_stakes: &self.epoch_stakes,
+            }
+        } else {
+            AlpenglowStakeState::Tower
+        };
 
         match redeem_rewards(
             stake_state,

@@ -122,30 +122,33 @@ fn calculate_stake_points(
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
 ) -> u128 {
-    let map = HashMap::new();
     calculate_stake_points_and_credits(
         stake,
         vote_state,
         stake_history,
         inflation_point_calc_tracer,
         new_rate_activation_epoch,
-        Some(AlpenglowStakeState {
-            vote_pubkey: Pubkey::new_unique(),
-            epoch_stakes: &map,
-            rewarding: false,
-        }),
+        AlpenglowStakeState::Calculating,
     )
     .points
 }
 
-/// State needed to compute rewards for alpenglow.
+/// Alpenglow related state needed in `calculate_stake_points_and_credits`.
 #[derive(Debug)]
-pub(crate) struct AlpenglowStakeState<'a> {
-    /// Pubkey for the vote account of the validator that the stake is delegated to.
-    pub(crate) vote_pubkey: Pubkey,
-    /// `epoch_stakes` from the current bank.
-    pub(crate) epoch_stakes: &'a HashMap<Epoch, VersionedEpochStakes>,
-    pub(crate) rewarding: bool,
+pub(crate) enum AlpenglowStakeState<'a> {
+    /// Function is called for calculating rewards.
+    Calculating,
+    /// Function is called when Tower is active.
+    /// This includes epochs where only Tower is active and the migration epoch.
+    Tower,
+    /// Function is called when Alpenglow is active.
+    /// This includes epochs where only Alpenglow is active and the migration epoch.
+    Alpenglow {
+        /// Pubkey for the vote account of the validator that the stake is delegated to.
+        vote_pubkey: Pubkey,
+        /// `epoch_stakes` from the current bank.
+        epoch_stakes: &'a HashMap<Epoch, VersionedEpochStakes>,
+    },
 }
 
 /// Different errors possible in `AlpenglowStakeState::get_total_stake()`.
@@ -158,17 +161,20 @@ pub enum GetTotalStakeError {
 
 impl<'a> AlpenglowStakeState<'a> {
     /// Returns the total stake delegated to `self.vote_pubkey` in the given epoch.
-    fn get_total_stake(&self, epoch: Epoch) -> Result<u64, GetTotalStakeError> {
-        let rank_map = self
-            .epoch_stakes
+    fn get_total_stake(
+        vote_pubkey: Pubkey,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
+        epoch: Epoch,
+    ) -> Result<u64, GetTotalStakeError> {
+        let rank_map = epoch_stakes
             .get(&epoch)
             .ok_or(GetTotalStakeError::NoEpochStakes(epoch))?
             .bls_pubkey_to_rank_map();
-        let rank = *rank_map.get_rank_for_vote_pubkey(&self.vote_pubkey).ok_or(
-            GetTotalStakeError::RankForVotePubkeyNotFound(epoch, self.vote_pubkey),
+        let rank = *rank_map.get_rank_for_vote_pubkey(&vote_pubkey).ok_or(
+            GetTotalStakeError::RankForVotePubkeyNotFound(epoch, vote_pubkey),
         )?;
         let entry = rank_map.get_pubkey_stake_entry(rank as usize).ok_or(
-            GetTotalStakeError::EntryForRankNotFound(epoch, self.vote_pubkey, rank),
+            GetTotalStakeError::EntryForRankNotFound(epoch, vote_pubkey, rank),
         )?;
         Ok(entry.stake)
     }
@@ -183,7 +189,7 @@ pub(crate) fn calculate_stake_points_and_credits(
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
-    ag_stake_state: Option<AlpenglowStakeState>,
+    ag_stake_state: AlpenglowStakeState,
 ) -> CalculatedStakePoints {
     let credits_in_stake = stake.credits_observed;
     let credits_in_vote = vote_state.credits;
@@ -244,13 +250,14 @@ pub(crate) fn calculate_stake_points_and_credits(
         }
 
         match &ag_stake_state {
-            None => {
+            AlpenglowStakeState::Calculating => (),
+            AlpenglowStakeState::Tower => {
                 if alpenglow_marker_observed {
                     continue;
                 }
             }
-            Some(state) => {
-                if state.rewarding && !alpenglow_marker_observed {
+            AlpenglowStakeState::Alpenglow { .. } => {
+                if !alpenglow_marker_observed {
                     continue;
                 }
             }
@@ -282,23 +289,27 @@ pub(crate) fn calculate_stake_points_and_credits(
 
         // finally calculate points for this epoch
         let earned_points = match &ag_stake_state {
-            None => {
+            AlpenglowStakeState::Calculating | AlpenglowStakeState::Tower => {
                 // in tower, the stake has to be included to calculate the total points this `vote_state` earned.
                 stake_amount * earned_credits
             }
-            Some(state) => {
-                if !state.rewarding {
-                    stake_amount * earned_credits
-                }
+            AlpenglowStakeState::Alpenglow {
+                vote_pubkey,
+                epoch_stakes,
+            } => {
                 // in alpenglow, points represent the total reward that this `vote_state` has earned.
                 // `earned_credits` has already taken the stake into account.  It still has to be
                 // scaled by the stake that this staker delegated to the `vote_state`.
-                else if earned_credits == 0 {
+                if earned_credits == 0 {
                     // If earned_credits is 0, no need to look up total stake which can potentially fail.
                     earned_credits
                 } else {
                     // the earned_credits needs to be scaled by the portion of this staker's delegation.
-                    let total_stake = match state.get_total_stake(epoch) {
+                    let total_stake = match AlpenglowStakeState::get_total_stake(
+                        *vote_pubkey,
+                        epoch_stakes,
+                        epoch,
+                    ) {
                         Ok(t) => t,
                         Err(e) => {
                             // assuming that we only do the calculations for the latest epoch, this

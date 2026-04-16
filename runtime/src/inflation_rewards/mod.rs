@@ -36,7 +36,7 @@ pub(crate) fn redeem_rewards<'a>(
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     stake_account_lamports_for_trace: u64,
-    ag_stake_state: Option<AlpenglowStakeState>,
+    ag_stake_state: AlpenglowStakeState,
 ) -> Result<(u64, u64, Stake), InstructionError> {
     if let StakeStateV2::Stake(_meta, stake, _stake_flags) = stake_state {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
@@ -93,7 +93,7 @@ fn redeem_stake_rewards<'a>(
     vote_state: DelegatedVoteState,
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
-    ag_stake_state: Option<AlpenglowStakeState>,
+    ag_stake_state: AlpenglowStakeState,
 ) -> Option<(u64, u64)> {
     if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
         inflation_point_calc_tracer(&InflationPointCalculationEvent::CreditsObserved(
@@ -138,7 +138,7 @@ fn calculate_stake_rewards<'a>(
     vote_state: DelegatedVoteState,
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
-    ag_stake_state: Option<AlpenglowStakeState>,
+    ag_stake_state: AlpenglowStakeState,
 ) -> Option<CalculatedStakeRewards> {
     let CalculationEnvironment {
         stake_history,
@@ -148,7 +148,10 @@ fn calculate_stake_rewards<'a>(
         ..
     } = calculation_environment;
 
-    let is_alpenglow_enabled = ag_stake_state.is_some();
+    let is_alpenglow_enabled = match &ag_stake_state {
+        AlpenglowStakeState::Alpenglow { .. } => true,
+        AlpenglowStakeState::Calculating | AlpenglowStakeState::Tower => false,
+    };
 
     // ensure to run to trigger (optional) inflation_point_calc_tracer
     let CalculatedStakePoints {
@@ -348,7 +351,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
 
@@ -374,7 +377,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
 
@@ -414,7 +417,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
 
@@ -444,7 +447,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
 
@@ -471,7 +474,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
 
@@ -501,7 +504,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
 
@@ -529,7 +532,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
 
@@ -559,7 +562,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
 
@@ -583,7 +586,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
         vote_state.set_inflation_rewards_commission_bps(9900);
@@ -604,7 +607,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
 
@@ -632,7 +635,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
 
@@ -660,7 +663,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
 
@@ -676,7 +679,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                None
+                AlpenglowStakeState::Tower
             )
         );
 
@@ -696,7 +699,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                None
+                AlpenglowStakeState::Tower
             )
         );
         // this is new behavior 2; don't hint when credits both from stake and vote are identical
@@ -713,7 +716,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
 
@@ -742,7 +745,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
 
@@ -771,7 +774,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
     }
@@ -801,7 +804,7 @@ mod tests {
                 commission_rate_in_basis_points,
             },
             null_tracer(),
-            None,
+            AlpenglowStakeState::Tower,
         );
     }
 
@@ -839,7 +842,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
-                None,
+                AlpenglowStakeState::Tower,
             )
         );
     }
