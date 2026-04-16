@@ -67,10 +67,6 @@ use {
 // assumption these days...
 const MAX_BLOCK_SIZE_THRESHOLD: BlockSize = 20 * 1024 * 1024;
 
-// This const is intentionally aligned with central scheduler's corresponding const called
-// TOTAL_BUFFERED_PACKETS.
-const MAX_UNIQUE_ACTIVE_TASK_COUNT: usize = 100_000;
-
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
 
@@ -1346,75 +1342,21 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         );
     }
 
-    fn max_running_task_count(mode: SchedulingMode, thread_count: usize) -> Option<usize> {
-        match mode {
-            BlockVerification => {
-                // Unlike block production, there is no agony for block verification with regards
-                // to max_running_task_count. Its responsibility is to execute all transactions by
-                // _the pre-determined order_ and no reprioritization or interruption whatsoever.
-                // So, just specify no limit and buffer everything as much as possible at the
-                // runnable task channel.
-                None
-            }
-            BlockProduction => {
-                // Unlike block verification, it's desired for block production to be safely
-                // interrupted as soon as possible after session is ending. Thus, don't take
-                // unbounded number of non-conflicting tasks out of SchedulingStateMachine, which
-                // all needs to be descheduled before finishing session.
-                //
-                // That said, max_running_task_count shouldn't naively be matched to
-                // thread_count (i.e. the number of handler threads). Actually, it should account
-                // for some extra queue depth to avoid depletions at the runnable task channel.
-                // Otherwise, handler thread could be busy-looping at best or stalled on syscall at
-                // worst for the next runnable task to be scheduled by the scheduler thread even
-                // though there are actually more runnable tasks at hand in fact. That would
-                // significantly hurt concurrency, and eventually throughput. While throughput
-                // isn't the primary design target (= low latency) of unified scheduler, this
-                // warrants some compromise here. Note that increasing the buffering at crossbeam
-                // channels hampers timing sensitivity of task reprioritization on higher-paying
-                // transaction arrival at the middle of slot, which is selling point of unified
-                // scheduler to recite. This is because there is no efficient way to selectively
-                // remove messages from them. Put differently, sent tasks aren't interruptible.
-                //
-                // So, all in all, we need to strike some nuanced balance here. Currently, this has
-                // not rigidly been tested yet; but capping to 2x of handler thread should be
-                // enough, because unified scheduler is latency optimized... This means each thread
-                // has extra pseudo task queue entry.
-                const MAX_RUNNING_TASK_COUNT_FACTOR: usize = 2;
-
-                Some(
-                    thread_count
-                        .checked_mul(MAX_RUNNING_TASK_COUNT_FACTOR)
-                        .unwrap(),
-                )
-            }
-        }
+    fn max_running_task_count() -> Option<usize> {
+        // Unlike block production, there is no agony for block verification with regards
+        // to max_running_task_count. Its responsibility is to execute all transactions by
+        // _the pre-determined order_ and no reprioritization or interruption whatsoever.
+        // So, just specify no limit and buffer everything as much as possible at the
+        // runnable task channel.
+        None
     }
 
-    fn max_unique_active_task_count(mode: SchedulingMode) -> Option<usize> {
-        match mode {
-            BlockVerification => {
-                // We can't silently drop block verification tasks by imposing some arbitrary limit
-                // here; otherwise same transactions could be allowed in the same block!
-                // The block size (i.e. shred count) limit is already enforced before unified
-                // scheduler.
-                None
-            }
-            BlockProduction => {
-                // Unlike BlockVerification, we need to cap the maximum number of tasks at hand at
-                // any given moment, in order to avoid unbounded memory consumption, which is
-                // remotely controllable. Also, drop duplicate tasks to make better use of the now
-                // constrained space.
-                // Note that this deduplication isn't perfect because it searches duplicates only
-                // among the _current_ active task set, allowing false negatives (i.e. failure of
-                // duplicate detection) in the already handled tasks. However, it's effective
-                // enough, given that significant buffering just before the first leader slot.
-                // This naive impl is chosen; otherwise proper eviction would rather be hard here,
-                // considering the existence of transaction retires (same tx but with different
-                // task id).
-                Some(MAX_UNIQUE_ACTIVE_TASK_COUNT)
-            }
-        }
+    fn max_unique_active_task_count() -> Option<usize> {
+        // We can't silently drop block verification tasks by imposing some arbitrary limit
+        // here; otherwise same transactions could be allowed in the same block!
+        // The block size (i.e. shred count) limit is already enforced before unified
+        // scheduler.
+        None
     }
 
     fn can_receive_unblocked_task(
@@ -1747,11 +1689,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                 let mut state_machine = unsafe {
                     SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling(
-                        Self::max_running_task_count(
-                            SchedulingMode::BlockVerification,
-                            handler_context.thread_count,
-                        ),
-                        Self::max_unique_active_task_count(SchedulingMode::BlockVerification),
+                        Self::max_running_task_count(),
+                        Self::max_unique_active_task_count(),
                     )
                 };
 
