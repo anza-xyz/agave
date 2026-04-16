@@ -120,13 +120,11 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
-        test_case::test_case,
     };
 
-    #[test_case(false; "old")]
-    #[test_case(true; "simd83")]
-    fn test_transaction_batch(relax_intrabatch_account_locks: bool) {
-        let (bank, txs) = setup(false, relax_intrabatch_account_locks);
+    #[test]
+    fn test_transaction_batch() {
+        let (bank, txs) = setup(false);
 
         // Test getting locked accounts
         let batch = bank.prepare_sanitized_batch(&txs);
@@ -146,10 +144,9 @@ mod tests {
         assert!(batch2.lock_results().iter().all(|x| x.is_ok()));
     }
 
-    #[test_case(false; "old")]
-    #[test_case(true; "simd83")]
-    fn test_simulation_batch(relax_intrabatch_account_locks: bool) {
-        let (bank, txs) = setup(false, relax_intrabatch_account_locks);
+    #[test]
+    fn test_simulation_batch() {
+        let (bank, txs) = setup(false);
 
         // Prepare batch without locks
         let batch = bank.prepare_unlocked_batch_from_single_tx(&txs[0]);
@@ -164,15 +161,10 @@ mod tests {
         assert!(batch3.lock_results().iter().all(|x| x.is_ok()));
     }
 
-    #[test_case(false; "old")]
-    #[test_case(true; "simd83")]
-    fn test_unlock_failures(relax_intrabatch_account_locks: bool) {
-        let (bank, txs) = setup(true, relax_intrabatch_account_locks);
-        let expected_lock_results = if relax_intrabatch_account_locks {
-            vec![Ok(()), Ok(()), Ok(())]
-        } else {
-            vec![Ok(()), Err(TransactionError::AccountInUse), Ok(())]
-        };
+    #[test]
+    fn test_unlock_failures() {
+        let (bank, txs) = setup(true);
+        let expected_lock_results = vec![Ok(()), Ok(()), Ok(())];
 
         // Test getting locked accounts
         let mut batch = bank.prepare_sanitized_batch(&txs);
@@ -194,20 +186,14 @@ mod tests {
         assert_eq!(batch2.lock_results, expected_lock_results,);
     }
 
-    fn setup(
-        insert_conflicting_tx: bool,
-        relax_intrabatch_account_locks: bool,
-    ) -> (Bank, Vec<RuntimeTransaction<SanitizedTransaction>>) {
+    fn setup(insert_conflicting_tx: bool) -> (Bank, Vec<RuntimeTransaction<SanitizedTransaction>>) {
         let dummy_leader_pubkey = solana_pubkey::new_rand();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
         } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        if !relax_intrabatch_account_locks {
-            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
-        }
+        let bank = Bank::new_for_tests(&genesis_config);
 
         let pubkey = solana_pubkey::new_rand();
         let keypair2 = Keypair::new();

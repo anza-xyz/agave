@@ -228,7 +228,6 @@ where
                 let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
                     &mut self.container,
                     scheduling_budget,
-                    bank.feature_set.snapshot().relax_intrabatch_account_locks,
                     |txs, results| {
                         Self::pre_graph_filter(txs, results, bank, bank.max_processing_age())
                     },

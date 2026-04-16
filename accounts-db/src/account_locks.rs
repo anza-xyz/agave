@@ -16,26 +16,9 @@ pub struct AccountLocks {
 }
 
 impl AccountLocks {
-    /// Lock the account keys in `keys` for a transaction.
-    /// The bool in the tuple indicates if the account is writable.
-    /// Returns an error if any of the accounts are already locked in a way
-    /// that conflicts with the requested lock.
-    /// NOTE this is the pre-SIMD83 logic and can be removed once SIMD83 is active.
-    pub fn try_lock_accounts<'a>(
-        &mut self,
-        keys: impl Iterator<Item = (&'a Pubkey, bool)> + Clone,
-    ) -> TransactionResult<()> {
-        self.can_lock_accounts(keys.clone())?;
-        self.lock_accounts(keys);
-
-        Ok(())
-    }
-
     /// Lock accounts for all transactions in a batch which don't conflict
     /// with existing locks. Returns a vector of `TransactionResult` indicating
     /// success or failure for each transaction in the batch.
-    /// NOTE this is the SIMD83 logic; after the feature is active, it becomes
-    /// the only logic, and this note can be removed with the feature gate.
     pub fn try_lock_transaction_batch<'a>(
         &mut self,
         mut validated_batch_keys: Vec<
@@ -201,45 +184,6 @@ fn has_duplicates(account_keys: AccountKeys) -> bool {
 #[cfg(test)]
 mod tests {
     use {super::*, solana_message::v0::LoadedAddresses};
-
-    #[test]
-    fn test_account_locks() {
-        let mut account_locks = AccountLocks::default();
-
-        let key1 = Pubkey::new_unique();
-        let key2 = Pubkey::new_unique();
-
-        // Add write and read-lock.
-        let result = account_locks.try_lock_accounts([(&key1, true), (&key2, false)].into_iter());
-        assert!(result.is_ok());
-
-        // Try to add duplicate write-lock.
-        let result = account_locks.try_lock_accounts([(&key1, true)].into_iter());
-        assert_eq!(result, Err(TransactionError::AccountInUse));
-
-        // Try to add write lock on read-locked account.
-        let result = account_locks.try_lock_accounts([(&key2, true)].into_iter());
-        assert_eq!(result, Err(TransactionError::AccountInUse));
-
-        // Try to add read lock on write-locked account.
-        let result = account_locks.try_lock_accounts([(&key1, false)].into_iter());
-        assert_eq!(result, Err(TransactionError::AccountInUse));
-
-        // Add read lock on read-locked account.
-        let result = account_locks.try_lock_accounts([(&key2, false)].into_iter());
-        assert!(result.is_ok());
-
-        // Unlock write and read locks.
-        account_locks.unlock_accounts([(&key1, true), (&key2, false)].into_iter());
-
-        // No more remaining write-locks. Read-lock remains.
-        assert!(!account_locks.is_locked_write(&key1));
-        assert!(account_locks.is_locked_readonly(&key2));
-
-        // Unlock read lock.
-        account_locks.unlock_accounts([(&key2, false)].into_iter());
-        assert!(!account_locks.is_locked_readonly(&key2));
-    }
 
     #[test]
     fn test_validate_account_locks_valid_no_dynamic() {

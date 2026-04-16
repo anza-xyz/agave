@@ -2094,7 +2094,6 @@ mod tests {
             collections::HashSet,
             sync::{RwLock, atomic::AtomicBool},
         },
-        test_case::test_case,
     };
 
     // Helper struct to create tests that hold channels, files, etc.
@@ -2112,9 +2111,7 @@ mod tests {
         consumed_receiver: Receiver<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
     }
 
-    fn setup_test_frame(
-        relax_intrabatch_account_locks: bool,
-    ) -> (
+    fn setup_test_frame() -> (
         TestFrame,
         ConsumeWorker<RuntimeTransaction<SanitizedTransaction>>,
     ) {
@@ -2125,14 +2122,11 @@ mod tests {
         } = create_slow_genesis_config(10_000);
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         // Warp to next epoch for MaxAge tests.
-        let mut bank = Bank::new_from_parent(
+        let bank = Bank::new_from_parent(
             bank.clone(),
             SlotLeader::new_unique(),
             bank.get_epoch_info().slots_in_epoch,
         );
-        if !relax_intrabatch_account_locks {
-            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
-        }
         let bank = Arc::new(bank);
 
         let (record_sender, record_receiver) = record_channels(false);
@@ -2172,7 +2166,7 @@ mod tests {
 
     #[test]
     fn test_worker_consume_no_bank() {
-        let (test_frame, worker) = setup_test_frame(true);
+        let (test_frame, worker) = setup_test_frame();
         let TestFrame {
             mint_keypair,
             genesis_config,
@@ -2219,7 +2213,7 @@ mod tests {
 
     #[test]
     fn test_worker_consume_no_bank_drains_queue() {
-        let (test_frame, worker) = setup_test_frame(true);
+        let (test_frame, worker) = setup_test_frame();
         let TestFrame {
             mint_keypair,
             genesis_config,
@@ -2271,7 +2265,7 @@ mod tests {
 
     #[test]
     fn test_worker_consume_simple() {
-        let (mut test_frame, worker) = setup_test_frame(true);
+        let (mut test_frame, worker) = setup_test_frame();
         let TestFrame {
             mint_keypair,
             genesis_config,
@@ -2322,10 +2316,9 @@ mod tests {
         let _ = worker_thread.join().unwrap();
     }
 
-    #[test_case(false; "old")]
-    #[test_case(true; "simd83")]
-    fn test_worker_consume_self_conflicting(relax_intrabatch_account_locks: bool) {
-        let (mut test_frame, worker) = setup_test_frame(relax_intrabatch_account_locks);
+    #[test]
+    fn test_worker_consume_self_conflicting() {
+        let (mut test_frame, worker) = setup_test_frame();
         let TestFrame {
             mint_keypair,
             genesis_config,
@@ -2374,15 +2367,7 @@ mod tests {
         assert_eq!(consumed.work.ids, vec![id1, id2]);
         assert_eq!(consumed.work.max_ages, vec![max_age, max_age]);
 
-        // id2 succeeds with simd83, or is retryable due to lock conflict without simd83
-        assert_eq!(
-            consumed.retryable_indexes,
-            if relax_intrabatch_account_locks {
-                vec![]
-            } else {
-                vec![RetryableIndex::new(1, true)]
-            }
-        );
+        assert_eq!(consumed.retryable_indexes, vec![]);
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
@@ -2390,7 +2375,7 @@ mod tests {
 
     #[test]
     fn test_worker_consume_multiple_messages() {
-        let (mut test_frame, worker) = setup_test_frame(true);
+        let (mut test_frame, worker) = setup_test_frame();
         let TestFrame {
             mint_keypair,
             genesis_config,
@@ -2469,7 +2454,7 @@ mod tests {
 
     #[test]
     fn test_worker_ttl() {
-        let (mut test_frame, worker) = setup_test_frame(true);
+        let (mut test_frame, worker) = setup_test_frame();
         let TestFrame {
             mint_keypair,
             genesis_config,

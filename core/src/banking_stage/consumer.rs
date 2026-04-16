@@ -582,10 +582,7 @@ mod tests {
         consumer: Consumer,
     }
 
-    fn setup_test(
-        relax_intrabatch_account_locks: bool,
-        transaction_status_sender: Option<TransactionStatusSender>,
-    ) -> TestFrame {
+    fn setup_test(transaction_status_sender: Option<TransactionStatusSender>) -> TestFrame {
         agave_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
@@ -596,10 +593,7 @@ mod tests {
             &Pubkey::new_unique(),
             bootstrap_validator_stake_lamports(),
         );
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        if !relax_intrabatch_account_locks {
-            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
-        }
+        let bank = Bank::new_for_tests(&genesis_config);
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
         let (record_sender, mut record_receiver) = record_channels(false);
@@ -687,7 +681,7 @@ mod tests {
             bank_forks: _bank_forks,
             mut record_receiver,
             consumer,
-        } = setup_test(true, None);
+        } = setup_test(None);
 
         let pubkey = solana_pubkey::new_rand();
         let transactions = sanitize_transactions(vec![system_transaction::transfer(
@@ -773,7 +767,7 @@ mod tests {
             bank_forks: _bank_forks,
             record_receiver: _record_receiver,
             consumer,
-        } = setup_test(true, None);
+        } = setup_test(None);
         let pubkey = Pubkey::new_unique();
 
         // setup nonce account with a durable nonce different from the current
@@ -841,7 +835,7 @@ mod tests {
             bank_forks: _bank_forks,
             record_receiver: _record_receiver,
             consumer,
-        } = setup_test(true, None);
+        } = setup_test(None);
 
         let pubkey = solana_pubkey::new_rand();
         let transactions = {
@@ -882,18 +876,15 @@ mod tests {
         );
     }
 
-    #[test_case(false; "old")]
-    #[test_case(true; "simd83")]
-    fn test_bank_process_and_record_transactions_cost_tracker(
-        relax_intrabatch_account_locks: bool,
-    ) {
+    #[test]
+    fn test_bank_process_and_record_transactions_cost_tracker() {
         let TestFrame {
             mint_keypair,
             bank,
             bank_forks: _bank_forks,
             record_receiver: _record_receiver,
             consumer,
-        } = setup_test(relax_intrabatch_account_locks, None);
+        } = setup_test(None);
 
         let pubkey = solana_pubkey::new_rand();
 
@@ -1013,21 +1004,16 @@ mod tests {
         assert_eq!(get_tx_count(), 2);
     }
 
-    #[test_case(false, false; "old::locked")]
-    #[test_case(false, true; "old::duplicate")]
-    #[test_case(true, false; "simd83::locked")]
-    #[test_case(true, true; "simd83::duplicate")]
-    fn test_bank_process_and_record_transactions_account_in_use(
-        relax_intrabatch_account_locks: bool,
-        use_duplicate_transaction: bool,
-    ) {
+    #[test_case(false; "locked")]
+    #[test_case(true; "duplicate")]
+    fn test_bank_process_and_record_transactions_account_in_use(use_duplicate_transaction: bool) {
         let TestFrame {
             mint_keypair,
             bank,
             bank_forks: _bank_forks,
             record_receiver: _record_receiver,
             consumer,
-        } = setup_test(relax_intrabatch_account_locks, None);
+        } = setup_test(None);
 
         let pubkey = solana_pubkey::new_rand();
         let pubkey1 = solana_pubkey::new_rand();
@@ -1050,10 +1036,9 @@ mod tests {
             use_duplicate_transaction
         );
 
-        // with simd83 and no duplicate, we take a cross-batch lock on an account to create a conflict
-        // with a duplicate transaction and simd83 it comes from message hash equality in the batch
-        // without simd83 the conflict comes from locks in batch
-        if relax_intrabatch_account_locks && !use_duplicate_transaction {
+        // with a duplicate transaction, we get a conflict from message hash equality in the batch
+        // with no duplicate, we must take a cross-batch lock on an account to create a conflict
+        if !use_duplicate_transaction {
             let conflicting_transaction =
                 sanitize_transactions(vec![system_transaction::transfer(
                     &Keypair::new(),
@@ -1084,8 +1069,8 @@ mod tests {
         );
         assert!(commit_transactions_result.is_ok());
 
-        // with simd3, duplicate transactions are not retryable
-        if relax_intrabatch_account_locks && use_duplicate_transaction {
+        // duplicate transactions are not retryable
+        if use_duplicate_transaction {
             assert_eq!(retryable_transaction_indexes, Vec::<_>::new());
         } else {
             assert_eq!(
@@ -1151,14 +1136,9 @@ mod tests {
         );
     }
 
-    #[test_case(false, false; "old::locked")]
-    #[test_case(false, true; "old::duplicate")]
-    #[test_case(true, false; "simd83::locked")]
-    #[test_case(true, true; "simd83::duplicate")]
-    fn test_process_transactions_account_in_use(
-        relax_intrabatch_account_locks: bool,
-        use_duplicate_transaction: bool,
-    ) {
+    #[test_case(false; "locked")]
+    #[test_case(true; "duplicate")]
+    fn test_process_transactions_account_in_use(use_duplicate_transaction: bool) {
         agave_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
@@ -1166,9 +1146,6 @@ mod tests {
             ..
         } = create_slow_genesis_config(10_000);
         let mut bank = Bank::new_for_tests(&genesis_config);
-        if !relax_intrabatch_account_locks {
-            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
-        }
         bank.ns_per_slot = u128::MAX;
         let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         // set cost tracker limits to MAX so it will not filter out TXs
@@ -1198,9 +1175,9 @@ mod tests {
             ..
         } = execute_transactions_for_test(bank, transactions);
 
-        // If SIMD-83 is enabled *and* the transactions are distinct, all are executed.
-        // In the three other cases, only one is executed. In all four cases, all are attempted.
-        let execution_count = if relax_intrabatch_account_locks && !use_duplicate_transaction {
+        // if the transactions are distinct, all are executed.
+        // otherwise, only one is executed. regardless, all are attempted.
+        let execution_count = if !use_duplicate_transaction {
             transactions_len
         } else {
             1
@@ -1225,22 +1202,12 @@ mod tests {
             execution_count
         );
 
-        // If SIMD-83 is enabled and the transactions are distinct, there are zero retryable (all executed).
-        // If SIMD-83 is enabled and the transactions are identical, there are zero retryable (marked AlreadyProcessed).
-        // If SIMD-83 is not enabled, all but the first are retryable (marked AccountInUse).
-        if relax_intrabatch_account_locks {
-            assert_eq!(
-                execute_and_commit_transactions_output.retryable_transaction_indexes,
-                Vec::<_>::new()
-            );
-        } else {
-            assert_eq!(
-                execute_and_commit_transactions_output.retryable_transaction_indexes,
-                (1..transactions_len)
-                    .map(|index| RetryableIndex::new(index, true))
-                    .collect::<Vec<_>>()
-            );
-        }
+        // If the transactions are distinct, there are zero retryable (all executed).
+        // If the transactions are identical, there are zero retryable (marked AlreadyProcessed).
+        assert_eq!(
+            execute_and_commit_transactions_output.retryable_transaction_indexes,
+            Vec::<_>::new()
+        );
     }
 
     #[test]
@@ -1251,7 +1218,7 @@ mod tests {
             bank_forks: _bank_forks,
             mut record_receiver,
             consumer,
-        } = setup_test(true, None);
+        } = setup_test(None);
 
         let pubkey = solana_pubkey::new_rand();
 
@@ -1323,7 +1290,7 @@ mod tests {
             bank_forks: _bank_forks,
             record_receiver: _record_receiver,
             consumer,
-        } = setup_test(true, tss);
+        } = setup_test(tss);
 
         let pubkey = solana_pubkey::new_rand();
         let pubkey1 = solana_pubkey::new_rand();
@@ -1394,7 +1361,7 @@ mod tests {
             bank_forks,
             mut record_receiver,
             consumer,
-        } = setup_test(true, tss);
+        } = setup_test(tss);
 
         let keypair = Keypair::new();
         let address_table_key = Pubkey::new_unique();
