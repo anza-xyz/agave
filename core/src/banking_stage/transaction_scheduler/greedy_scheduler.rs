@@ -209,8 +209,6 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
             num_scheduled,
             num_unschedulable_conflicts,
             num_unschedulable_threads,
-            num_filtered_out: 0,
-            filter_time_us: 0,
         })
     }
 

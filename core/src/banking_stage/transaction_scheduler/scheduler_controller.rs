@@ -241,11 +241,9 @@ where
                         scheduling_summary.num_unschedulable_conflicts;
                     count_metrics.num_unschedulable_threads +=
                         scheduling_summary.num_unschedulable_threads;
-                    count_metrics.num_schedule_filtered_out += scheduling_summary.num_filtered_out;
                 });
 
                 self.timing_metrics.update(|timing_metrics| {
-                    timing_metrics.schedule_filter_time_us += scheduling_summary.filter_time_us;
                     timing_metrics.schedule_time_us += schedule_time_us;
                 });
                 self.scheduling_details.update(&scheduling_summary);
