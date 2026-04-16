@@ -6,7 +6,7 @@
 pub mod instruction;
 pub mod instruction_accounts;
 pub mod transaction_accounts;
-mod vm_addresses;
+pub mod vm_addresses;
 pub mod vm_slice;
 
 pub mod transaction;

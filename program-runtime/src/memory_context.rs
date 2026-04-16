@@ -3,6 +3,8 @@ use {
     solana_sbpf::memory_region::MemoryMapping,
 };
 
+const NUMBER_OF_REGIONS: usize = 392;
+
 enum MemoryContextType {
     ABIv1(MemoryContext),
     Placeholder,
@@ -104,6 +106,23 @@ impl MemoryContexts {
     pub fn pop(&mut self) {
         self.contexts.pop();
     }
+
+    pub fn abi_v2_regions_exist(&self) -> bool {
+        self.abiv2_mappings.get_regions().len() > 0
+    }
+
+    pub fn create_abi_v2_mappings<C: ContextObject>(
+        &mut self,
+        regions: Vec<MemoryRegion>,
+        executable: &Executable<C>,
+    ) {
+        self.abiv2_mappings = Box::new(MemoryMapping::new_uninitialized(
+            regions,
+            executable.get_config(),
+            executable.get_sbpf_version(),
+            Box::new(default_access_violation_handler),
+        ));
+    }
 }
 
 /// This structure contains metadata about the memory for each instruction under execution.
@@ -139,4 +158,90 @@ pub struct SerializedAccountMetadata {
     pub vm_key_addr: u64,
     pub vm_lamports_addr: u64,
     pub vm_owner_addr: u64,
+}
+
+pub(crate) fn create_abiv2_regions(transaction_context: &TransactionContext) -> Vec<MemoryRegion> {
+    let mut v2_regions: Vec<MemoryRegion> = vec![MemoryRegion::default(); NUMBER_OF_REGIONS];
+
+    // Filled on a later stage
+    // Index 0: ELF rodata
+    // Index 1: ELF text area (not mapped)
+    *v2_regions
+        .get_mut((MM_BYTECODE_START >> 32) as usize)
+        .unwrap() = MemoryRegion::new_readonly(&[], MM_BYTECODE_START);
+
+    // Index 2: heap
+    // Index 3: stack
+
+    // Index 4: Transaction frame area
+    *v2_regions
+        .get_mut((TRANSACTION_FRAME_ADDRESS >> 32) as usize)
+        .unwrap() = MemoryRegion::new_readonly_gapless_from_pointer(
+        transaction_context.transaction_frame_address(),
+        TRANSACTION_FRAME_ADDRESS,
+        size_of::<TransactionFrame>() as u64,
+    );
+
+    // Index 5: Accounts metadata area
+    let accounts_as_vm_slice = transaction_context.accounts().shared_fields_as_vm_slice();
+    *v2_regions
+        .get_mut((ACCOUNT_METADATA_AREA >> 32) as usize)
+        .unwrap() = MemoryRegion::new_readonly_gapless_from_pointer(
+        accounts_as_vm_slice.ptr(),
+        ACCOUNT_METADATA_AREA,
+        accounts_as_vm_slice
+            .len()
+            .saturating_mul(size_of::<AccountSharedFields>() as u64),
+    );
+
+    // Index 6: Instruction metadata area
+    let instruction_trace_as_vm_slice = transaction_context.instruction_trace_as_vm_slice();
+    *v2_regions
+        .get_mut((INSTRUCTION_TRACE_AREA >> 32) as usize)
+        .unwrap() = MemoryRegion::new_readonly_gapless_from_pointer(
+        instruction_trace_as_vm_slice.ptr(),
+        INSTRUCTION_TRACE_AREA,
+        instruction_trace_as_vm_slice
+            .len()
+            .saturating_mul(size_of::<InstructionFrame>() as u64),
+    );
+
+    // Index 7: Return data scratchpad area
+    let return_data_as_vm_slice = transaction_context.return_data_as_vm_slice();
+    *v2_regions
+        .get_mut((RETURN_DATA_SCRATCHPAD >> 32) as usize)
+        .unwrap() = MemoryRegion::new_readonly_gapless_from_pointer(
+        return_data_as_vm_slice.ptr(),
+        RETURN_DATA_SCRATCHPAD,
+        return_data_as_vm_slice.len(),
+    );
+
+    // Indexes 8..264: Transaction accounts payload
+    {
+        let accounts_index = (GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS >> 32) as usize;
+        let range = accounts_index..accounts_index.saturating_add(MAX_ACCOUNTS_PER_TRANSACTION);
+        let account_regions = v2_regions.get_mut(range).unwrap();
+        transaction_context
+            .accounts()
+            .account_payload_regions(account_regions);
+    }
+
+    // Indexes 264..328: Instruction data payload area
+    {
+        let ix_payload_index = (GUEST_INSTRUCTION_DATA_BASE_ADDRESS >> 32) as usize;
+        let range = ix_payload_index..ix_payload_index.saturating_add(MAX_INSTRUCTION_TRACE_LENGTH);
+        let regions = v2_regions.get_mut(range).unwrap();
+        transaction_context.instruction_payload_regions(regions);
+    }
+
+    // Indexes 328..392: Instruction accounts area
+    {
+        let ix_accounts_index = (GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS >> 32) as usize;
+        let range =
+            ix_accounts_index..ix_accounts_index.saturating_add(MAX_INSTRUCTION_TRACE_LENGTH);
+        let regions = v2_regions.get_mut(range).unwrap();
+        transaction_context.instruction_accounts_regions(regions);
+    }
+
+    v2_regions
 }

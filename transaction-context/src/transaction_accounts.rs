@@ -9,6 +9,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
+    solana_sbpf::memory_region::MemoryRegion,
     std::{
         cell::{Cell, UnsafeCell},
         ops::{Deref, DerefMut},
@@ -20,7 +21,7 @@ use {
 /// This struct is shared with programs. Do not alter its fields.
 #[repr(C)]
 #[derive(Debug, PartialEq)]
-struct AccountSharedFields {
+pub struct AccountSharedFields {
     key: Pubkey,
     owner: Pubkey,
     lamports: u64,
@@ -484,6 +485,39 @@ impl TransactionAccounts {
             self.shared_account_fields
                 .iter()
                 .map(|item| &(*item.get()).key)
+        }
+    }
+
+    pub fn shared_fields_as_vm_slice(&self) -> VmSlice<AccountSharedFields> {
+        VmSlice::new(
+            self.shared_account_fields.as_ptr() as u64,
+            self.shared_account_fields.len() as u64,
+        )
+    }
+
+    pub fn account_payload_regions(&self, accounts_regions: &mut [MemoryRegion]) {
+        for ((shared_fields, private_fields), region) in self
+            .shared_account_fields
+            .iter()
+            .zip(self.private_account_fields.iter())
+            .zip(accounts_regions.iter_mut())
+        {
+            let payload_vm_slice = unsafe { &(*shared_fields.get()).payload };
+
+            let host_addr = unsafe { (*private_fields.get()).payload.as_ptr() as u64 };
+            *region = MemoryRegion::new_readonly_gapless_from_pointer(
+                host_addr,
+                payload_vm_slice.ptr(),
+                payload_vm_slice.len(), // We are sharing the payload of all accounts as readonly
+            );
+        }
+
+        // Fill the remaining regions as empty
+        let accounts_no = self.shared_account_fields.len();
+        for (idx, region) in accounts_regions.iter_mut().skip(accounts_no).enumerate() {
+            region.vm_addr = GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS.saturating_add(
+                GUEST_REGION_SIZE.saturating_mul(accounts_no.saturating_add(idx) as u64),
+            )
         }
     }
 }

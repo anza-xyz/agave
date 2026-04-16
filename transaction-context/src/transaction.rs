@@ -15,7 +15,7 @@ use {
     solana_instructions_sysvar as instructions,
     solana_rent::Rent,
     solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
-    std::{borrow::Cow, cell::Cell, rc::Rc},
+    std::{borrow::Cow, cell::Cell, ptr, rc::Rc},
 };
 use {
     crate::{instruction_accounts::InstructionAccount, vm_slice::VmSlice},
@@ -35,7 +35,7 @@ pub type InstructionTrace<'ix_data> = (
 /// Modifications without a feature gate and proper versioning might break programs.
 #[repr(C)]
 #[derive(Debug)]
-struct TransactionFrame {
+pub struct TransactionFrame {
     /// Pubkey of the last program to write to the return data scratchpad
     return_data_pubkey: Pubkey,
     return_data_scratchpad: VmSlice<u8>,
@@ -641,6 +641,68 @@ impl<'ix_data> TransactionContext<'ix_data> {
     /// Return number of CPIs in instruction trace
     pub fn number_of_cpis_in_trace(&self) -> usize {
         self.transaction_frame.number_of_cpis_in_trace as usize
+    }
+
+    /// Return the pointer address of the transaction frame
+    pub fn transaction_frame_address(&self) -> u64 {
+        let addr = ptr::addr_of!(self.transaction_frame);
+        addr as u64
+    }
+
+    pub fn instruction_trace_as_vm_slice(&self) -> VmSlice<InstructionFrame> {
+        VmSlice::new(
+            self.instruction_trace.as_ptr() as u64,
+            self.instruction_trace.len() as u64,
+        )
+    }
+
+    pub fn return_data_as_vm_slice(&self) -> VmSlice<u8> {
+        VmSlice::new(
+            self.return_data_bytes.as_ptr() as u64,
+            self.return_data_bytes.len() as u64,
+        )
+    }
+
+    pub fn instruction_payload_regions(&self, regions: &mut [MemoryRegion]) {
+        for ((ix_frame, ix_data), region) in self
+            .instruction_trace
+            .iter()
+            .zip(self.instruction_data.iter())
+            .zip(regions.iter_mut())
+        {
+            *region = MemoryRegion::new_readonly(ix_data, ix_frame.instruction_data.ptr());
+        }
+
+        self.fill_missing_instruction_regions(regions, GUEST_INSTRUCTION_DATA_BASE_ADDRESS);
+    }
+
+    pub fn instruction_accounts_regions(&self, regions: &mut [MemoryRegion]) {
+        for ((ix_frame, accounts), region) in self
+            .instruction_trace
+            .iter()
+            .zip(self.instruction_accounts.iter())
+            .zip(regions.iter_mut())
+        {
+            *region = MemoryRegion::new_readonly_gapless_from_pointer(
+                accounts.as_ptr() as u64,
+                ix_frame.instruction_accounts.ptr(),
+                ix_frame
+                    .instruction_accounts
+                    .len()
+                    .saturating_mul(size_of::<InstructionAccount>() as u64),
+            );
+        }
+        self.fill_missing_instruction_regions(regions, GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS);
+    }
+
+    fn fill_missing_instruction_regions(&self, regions: &mut [MemoryRegion], base_address: u64) {
+        // Fill the address for the rest of the regions
+        let num_ixs = self.instruction_trace.len().saturating_sub(1);
+        for (idx, region) in regions.iter_mut().skip(num_ixs).enumerate() {
+            region.vm_addr = base_address.saturating_add(
+                GUEST_REGION_SIZE.saturating_mul(idx.saturating_add(num_ixs) as u64),
+            );
+        }
     }
 }
 
