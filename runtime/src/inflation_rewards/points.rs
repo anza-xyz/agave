@@ -122,23 +122,30 @@ fn calculate_stake_points(
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
 ) -> u128 {
+    let map = HashMap::new();
     calculate_stake_points_and_credits(
         stake,
         vote_state,
         stake_history,
         inflation_point_calc_tracer,
         new_rate_activation_epoch,
-        None,
+        Some(AlpenglowStakeState {
+            vote_pubkey: Pubkey::new_unique(),
+            epoch_stakes: &map,
+            rewarding: false,
+        }),
     )
     .points
 }
 
 /// State needed to compute rewards for alpenglow.
+#[derive(Debug)]
 pub(crate) struct AlpenglowStakeState<'a> {
     /// Pubkey for the vote account of the validator that the stake is delegated to.
     pub(crate) vote_pubkey: Pubkey,
     /// `epoch_stakes` from the current bank.
     pub(crate) epoch_stakes: &'a HashMap<Epoch, VersionedEpochStakes>,
+    pub(crate) rewarding: bool,
 }
 
 /// Different errors possible in `AlpenglowStakeState::get_total_stake()`.
@@ -227,8 +234,28 @@ pub(crate) fn calculate_stake_points_and_credits(
     let mut points = 0;
     let mut new_credits_observed = credits_in_stake;
 
+    let mut alpenglow_marker_observed = false;
+
     for epoch_credits_item in vote_state.epoch_credits_iter {
         let (epoch, final_epoch_credits, initial_epoch_credits) = epoch_credits_item;
+        if epoch == Epoch::MAX {
+            alpenglow_marker_observed = true;
+            continue;
+        }
+
+        match &ag_stake_state {
+            None => {
+                if alpenglow_marker_observed {
+                    continue;
+                }
+            }
+            Some(state) => {
+                if state.rewarding && !alpenglow_marker_observed {
+                    continue;
+                }
+            }
+        }
+
         let stake_amount = u128::from(stake.delegation.stake(
             epoch,
             stake_history,
@@ -260,10 +287,13 @@ pub(crate) fn calculate_stake_points_and_credits(
                 stake_amount * earned_credits
             }
             Some(state) => {
+                if !state.rewarding {
+                    stake_amount * earned_credits
+                }
                 // in alpenglow, points represent the total reward that this `vote_state` has earned.
                 // `earned_credits` has already taken the stake into account.  It still has to be
                 // scaled by the stake that this staker delegated to the `vote_state`.
-                if earned_credits == 0 {
+                else if earned_credits == 0 {
                     // If earned_credits is 0, no need to look up total stake which can potentially fail.
                     earned_credits
                 } else {

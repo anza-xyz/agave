@@ -486,6 +486,7 @@ impl Bank {
         let ag_stake_state = is_alpenglow_active.then_some(AlpenglowStakeState {
             vote_pubkey,
             epoch_stakes: &self.epoch_stakes,
+            rewarding: true,
         });
 
         match redeem_rewards(
@@ -566,8 +567,7 @@ impl Bank {
         let is_alpenglow_active = match self.is_alpenglow_active_in_epoch(rewarded_epoch) {
             AlpenglowEpochStatus::Tower => false,
             AlpenglowEpochStatus::FullAlpenglow => true,
-            // TODO: currently ag rewards payout only works for full AG epochs.
-            AlpenglowEpochStatus::MigrationEpoch => false,
+            AlpenglowEpochStatus::MigrationEpoch => true,
         };
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");

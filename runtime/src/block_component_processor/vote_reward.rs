@@ -256,10 +256,15 @@ fn pay_reward_update_vote_state(
 
 fn ensure_marker(bank: &Bank, vote_state: &mut VoteStateV4, epoch: Epoch) {
     let marker_epoch = Epoch::MAX;
-    let marker_elem = (marker_epoch, 0, 0);
+    let marker_elem = (marker_epoch, u64::MAX, u64::MAX);
     let epoch_credits = &mut vote_state.epoch_credits;
     match bank.is_alpenglow_active_in_epoch(epoch) {
-        AlpenglowEpochStatus::Tower | AlpenglowEpochStatus::FullAlpenglow => (),
+        AlpenglowEpochStatus::Tower => (),
+        AlpenglowEpochStatus::FullAlpenglow => {
+            if epoch_credits.is_empty() {
+                epoch_credits.push(marker_elem);
+            }
+        }
         AlpenglowEpochStatus::MigrationEpoch => match epoch_credits.len() {
             0 => {
                 epoch_credits.push(marker_elem);
@@ -294,19 +299,23 @@ fn increment_credits(
             vote_state.epoch_credits.push((new_epoch, new_credits, 0));
         }
         Some((epoch, final_credits, initial_credits)) => {
+            if *epoch == Epoch::MAX {
+                vote_state.epoch_credits.push((new_epoch, new_credits, 0));
+                return;
+            }
             if *epoch == new_epoch {
                 *final_credits = final_credits.saturating_add(new_credits);
-            } else {
-                if final_credits == initial_credits {
-                    *epoch = new_epoch;
-                    *final_credits = final_credits.saturating_add(new_credits);
-                } else {
-                    let elem = (new_epoch, new_credits + *final_credits, *final_credits);
-                    vote_state.epoch_credits.push(elem);
-                    if vote_state.epoch_credits.len() > MAX_EPOCH_CREDITS_HISTORY {
-                        vote_state.epoch_credits.remove(0);
-                    }
-                }
+                return;
+            }
+            if final_credits == initial_credits {
+                *epoch = new_epoch;
+                *final_credits = final_credits.saturating_add(new_credits);
+                return;
+            }
+            let elem = (new_epoch, new_credits + *final_credits, *final_credits);
+            vote_state.epoch_credits.push(elem);
+            if vote_state.epoch_credits.len() > MAX_EPOCH_CREDITS_HISTORY {
+                vote_state.epoch_credits.remove(0);
             }
         }
     }
@@ -561,8 +570,8 @@ mod tests {
                 let VoteStateVersions::V4(vote_state) = vote_state_versions else {
                     panic!();
                 };
-                assert_eq!(vote_state.epoch_credits.len(), 1);
-                let got_reward = vote_state.epoch_credits[0].1;
+                assert_eq!(vote_state.epoch_credits.len(), 2);
+                let got_reward = vote_state.epoch_credits[1].1;
                 let total_stake = bank
                     .epoch_stakes_from_slot(reward_slot)
                     .unwrap()
@@ -937,8 +946,8 @@ mod tests {
             let VoteStateVersions::V4(vote_state) = vote_state_versions else {
                 panic!();
             };
-            assert_eq!(vote_state.epoch_credits.len(), 1);
-            let (epoch, final_credit, initial_credit) = vote_state.epoch_credits[0];
+            assert_eq!(vote_state.epoch_credits.len(), 2);
+            let (epoch, final_credit, initial_credit) = vote_state.epoch_credits[1];
 
             assert_eq!(epoch, bank.epoch());
             assert_eq!(initial_credit, 0);
@@ -1238,7 +1247,11 @@ mod tests {
             let before = prev_state.stakers.get(pubkey).unwrap();
             let after = final_state.stakers.get(pubkey).unwrap();
             let diff = after.lamports - before.lamports;
-            assert_eq!(diff, before.expected_rewards);
+            assert_eq!(
+                diff, before.expected_rewards,
+                "before={} after={} diff={diff} expected={}",
+                before.lamports, after.lamports, before.expected_rewards
+            );
         }
 
         let voter_diff =

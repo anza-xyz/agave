@@ -283,6 +283,7 @@ impl AddAssign for SquashTiming {
 }
 
 /// Returned from `Bank::is_alpenglow_active_in_epoch()`.
+#[derive(Debug)]
 pub(crate) enum AlpenglowEpochStatus {
     /// This is a full tower epoch
     Tower,
