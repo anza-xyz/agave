@@ -173,18 +173,12 @@ pub struct HandlerContext {
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_vote_sender: Option<ReplayVoteSender>,
     prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
-    banking_stage_helper: Option<Arc<BankingStageHelper>>,
 }
 
 impl HandlerContext {
     fn usage_queue_loader_for_newly_spawned(&self) -> UsageQueueLoader {
-        match self.banking_stage_helper.clone() {
-            None => UsageQueueLoader::OwnedBySelf {
-                usage_queue_loader_inner: UsageQueueLoaderInner::new(Capability::FifoQueueing),
-            },
-            Some(helper) => UsageQueueLoader::SharedWithBankingStage {
-                banking_stage_helper: helper,
-            },
+        UsageQueueLoader::OwnedBySelf {
+            usage_queue_loader_inner: UsageQueueLoaderInner::new(Capability::FifoQueueing),
         }
     }
 
@@ -202,11 +196,7 @@ struct CommonHandlerContext {
 }
 
 impl CommonHandlerContext {
-    fn into_handler_context(
-        self,
-        thread_count: usize,
-        banking_stage_helper: Option<Arc<BankingStageHelper>>,
-    ) -> HandlerContext {
+    fn into_handler_context(self, thread_count: usize) -> HandlerContext {
         let Self {
             log_messages_bytes_limit,
             transaction_status_sender,
@@ -220,7 +210,6 @@ impl CommonHandlerContext {
             transaction_status_sender,
             replay_vote_sender,
             prioritization_fee_cache,
-            banking_stage_helper,
         }
     }
 }
@@ -248,20 +237,6 @@ pub struct BankingStageHelper {
     new_task_sender: Sender<NewTaskPayload>,
 }
 
-// AtomicUsize's fetch_add entails the wrapping semantics. So, address such an overflowing, under
-// the constraint of not compromising performance at all (i.e. no limit check on hot path and no
-// d-cache pressure): use a hard-coded unconditional number.
-// Note that this concern is of theoretical matter. As such, we introduce rather a naive limit with
-// great safety margin, considering relatively frequent check interval (a single session, usually a
-// slot). Regardless the aforementioned interval precondition, it's exceedingly hard to conceive
-// task id is allotted more than half of usize. That's because we'd still need to be running for
-// almost 300 years continuously to index BANKING_STAGE_MAX_TASK_ID txs at the rate of
-// 1_000_000_000/secs ingestion.
-// For the completeness of discussion, the existence of this check will alleviate the concern of
-// being part of more elaborated attacks with combination of unforeseen vulnerability like internal
-// amplification of banking packets.
-const BANKING_STAGE_MAX_TASK_ID: usize = usize::MAX / 2;
-
 impl BankingStageHelper {
     /// Generate batched task ids for the given number of tasks
     ///
@@ -272,15 +247,6 @@ impl BankingStageHelper {
     /// kind of loop iterations.
     pub fn generate_task_ids(&self, count: usize) -> usize {
         self.next_task_id.fetch_add(count, Relaxed)
-    }
-
-    fn is_task_id_overgrown(&self) -> bool {
-        self.next_task_id.load(Relaxed) > BANKING_STAGE_MAX_TASK_ID
-    }
-
-    #[cfg(test)]
-    fn set_next_task_id(&self, next_task_id: usize) {
-        self.next_task_id.store(next_task_id, Relaxed);
     }
 
     pub fn create_new_task(
@@ -618,13 +584,12 @@ where
 
     fn create_handler_context(&self) -> HandlerContext {
         let thread_count = self.block_verification_handler_count;
-        let banking_stage_helper = None;
 
         let thread_count = thread_count.unwrap_or(Self::default_handler_count());
         assert!(thread_count >= 1);
         self.common_handler_context
             .clone()
-            .into_handler_context(thread_count, banking_stage_helper)
+            .into_handler_context(thread_count)
     }
 
     pub fn default_handler_count() -> usize {
@@ -1006,13 +971,6 @@ enum UsageQueueLoader {
     OwnedBySelf {
         usage_queue_loader_inner: UsageQueueLoaderInner,
     },
-    // As documented at BankingStageHelper and solana_core::banking_stage::unified_scheduler,
-    // UsageQueueLoaderInner is placed behind BankingStageHelper for block production performance.
-    // Barely expose that to the cleaner thread by holding its Arc here as well; used by block
-    // production.
-    SharedWithBankingStage {
-        banking_stage_helper: Arc<BankingStageHelper>,
-    },
 }
 
 impl UsageQueueLoader {
@@ -1021,9 +979,6 @@ impl UsageQueueLoader {
             Self::OwnedBySelf {
                 usage_queue_loader_inner,
             } => usage_queue_loader_inner,
-            Self::SharedWithBankingStage {
-                banking_stage_helper,
-            } => &banking_stage_helper.usage_queue_loader,
         }
     }
 
@@ -1040,21 +995,7 @@ impl UsageQueueLoader {
             Self::OwnedBySelf {
                 usage_queue_loader_inner: _,
             } => false,
-            Self::SharedWithBankingStage {
-                banking_stage_helper,
-            } => banking_stage_helper.is_task_id_overgrown(),
         }
-    }
-
-    #[cfg(test)]
-    fn set_next_task_id_for_block_production(&self, next_task_id: usize) {
-        let Self::SharedWithBankingStage {
-            banking_stage_helper,
-        } = self
-        else {
-            panic!()
-        };
-        banking_stage_helper.set_next_task_id(next_task_id);
     }
 }
 
@@ -1966,9 +1907,6 @@ pub trait SchedulerInner {
     fn is_trashed(&self) -> bool;
     fn is_overgrown(&self) -> bool;
     fn discard_buffer(&self);
-
-    #[cfg(test)]
-    fn set_next_task_id_for_block_production(&self, next_task_id: usize);
 }
 
 pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
@@ -2105,12 +2043,6 @@ where
 
     fn discard_buffer(&self) {
         self.thread_manager.discard_buffered_tasks();
-    }
-
-    #[cfg(test)]
-    fn set_next_task_id_for_block_production(&self, next_task_id: usize) {
-        self.usage_queue_loader
-            .set_next_task_id_for_block_production(next_task_id);
     }
 }
 
@@ -3514,10 +3446,6 @@ mod tests {
         fn discard_buffer(&self) {
             unimplemented!()
         }
-
-        fn set_next_task_id_for_block_production(&self, _next_task_id: usize) {
-            unimplemented!()
-        }
     }
 
     impl<const TRIGGER_RACE_CONDITION: bool> UninstalledScheduler
@@ -3680,7 +3608,6 @@ mod tests {
             transaction_status_sender: None,
             replay_vote_sender: None,
             prioritization_fee_cache: None,
-            banking_stage_helper: None,
         };
 
         let task = SchedulingStateMachine::create_task(tx, 0, &mut |_| {
