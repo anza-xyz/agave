@@ -2063,7 +2063,7 @@ pub mod test {
 
         let mut send_stream = client_connection.open_uni().await.unwrap();
         send_stream
-            .write_all(&[42; PACKET_DATA_SIZE + 1])
+            .write_all(&[42; solana_message::v1::MAX_TRANSACTION_SIZE + 1])
             .await
             .unwrap();
         match client_connection.closed().await {
