@@ -36,6 +36,16 @@ use {
     std::sync::{Arc, atomic::Ordering::Relaxed},
 };
 
+/// Returned from `Bank::is_alpenglow_active_in_epoch()`.
+enum AlpenglowEpochStatus {
+    /// This is a full tower epoch
+    Tower,
+    /// The epoch started in tower and then switched to alpenglow
+    MigrationEpoch,
+    /// This is a full alpenglow epoch
+    FullAlpenglow,
+}
+
 #[derive(Debug)]
 struct DelegationRewards {
     stake_reward: PartitionedStakeReward,
@@ -529,6 +539,22 @@ impl Bank {
         }
     }
 
+    /// Returns the status of alpenglow activation in `epoch`.
+    fn is_alpenglow_active_in_epoch(&self, epoch: Epoch) -> AlpenglowEpochStatus {
+        let Some(genesis_cert) = self.get_alpenglow_genesis_certificate() else {
+            return AlpenglowEpochStatus::Tower;
+        };
+        let cert_slot = genesis_cert.cert_type.slot();
+        match (
+            cert_slot <= self.epoch_schedule.get_first_slot_in_epoch(epoch),
+            cert_slot <= self.epoch_schedule.get_last_slot_in_epoch(epoch),
+        ) {
+            (true, _) => AlpenglowEpochStatus::FullAlpenglow,
+            (false, true) => AlpenglowEpochStatus::MigrationEpoch,
+            (false, false) => AlpenglowEpochStatus::Tower,
+        }
+    }
+
     /// Calculates epoch rewards for stake/commission accounts
     /// Returns commission accounts, stake rewards, and the sum of all stake rewards in lamports
     fn calculate_stake_rewards_and_commissions<'a>(
@@ -546,7 +572,13 @@ impl Bank {
         let feature_snapshot = self.feature_set.snapshot();
         let delay_commission_updates = feature_snapshot.delay_commission_updates;
         let commission_rate_in_basis_points = feature_snapshot.commission_rate_in_basis_points;
-        let is_alpenglow_active = feature_snapshot.alpenglow;
+
+        let is_alpenglow_active = match self.is_alpenglow_active_in_epoch(rewarded_epoch) {
+            AlpenglowEpochStatus::Tower => false,
+            AlpenglowEpochStatus::FullAlpenglow => true,
+            // TODO: currently ag rewards payout only works for full AG epochs.
+            AlpenglowEpochStatus::MigrationEpoch => false,
+        };
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
         // For N stake delegations, where N is >1,000,000, we produce:

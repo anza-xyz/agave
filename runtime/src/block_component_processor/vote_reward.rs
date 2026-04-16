@@ -1092,24 +1092,20 @@ mod tests {
 
     #[test_matrix([true, false], [1_000, 5_000])]
     fn test_multiple_delegators(pay_leader: bool, commission_bps: u16) {
+        let num_validators = 1;
         let num_reward_slots = 10;
         let mint_keypair = Keypair::new();
-        let validator_keypairs = (0..5)
+        let validators = (0..num_validators)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
         let validator_lamports = 890_880;
         let mut genesis_config = create_genesis_config_with_leader_ex(
             1_000_000_000,
             &mint_keypair.pubkey(),
-            &validator_keypairs[0].node_keypair.pubkey(),
-            &validator_keypairs[0].vote_keypair.pubkey(),
-            &validator_keypairs[0].stake_keypair.pubkey(),
-            Some(
-                validator_keypairs[0]
-                    .bls_keypair
-                    .public
-                    .to_bytes_compressed(),
-            ),
+            &validators[0].node_keypair.pubkey(),
+            &validators[0].vote_keypair.pubkey(),
+            &validators[0].stake_keypair.pubkey(),
+            Some(validators[0].bls_keypair.public.to_bytes_compressed()),
             LAMPORTS_PER_SOL,
             validator_lamports,
             FeeRateGovernor::new(0, 0),
@@ -1120,12 +1116,11 @@ mod tests {
         );
         genesis_config.epoch_schedule = EpochSchedule::without_warmup();
         activate_all_features_alpenglow(&mut genesis_config);
-        let validators = vec![validator_keypair];
         set_commission(&mut genesis_config, &validators, commission_bps);
 
         let vote_account = genesis_config
             .accounts
-            .get(&validator_vote_key)
+            .get(&validators[0].vote_keypair.pubkey())
             .unwrap()
             .clone()
             .into();
@@ -1136,7 +1131,7 @@ mod tests {
             let stake_pubkey = keypair.pubkey();
             let account = Account::from(stake_utils::create_stake_account(
                 &stake_pubkey,
-                &validator_vote_key,
+                &validators[0].vote_keypair.pubkey(),
                 &vote_account,
                 &genesis_config.rent,
                 stake,
@@ -1160,12 +1155,12 @@ mod tests {
                 .iter()
                 .map(|k| k.pubkey())
                 .collect::<Vec<_>>();
-            pubkeys.push(validator_stake_key);
+            pubkeys.push(validators[0].stake_keypair.pubkey());
             pubkeys
         };
         let prev_state = State::new(
             &initial_bank,
-            validator_vote_key,
+            validators[0].vote_keypair.pubkey(),
             &staker_pubkeys,
             &genesis_config.rent,
             pay_leader,
@@ -1183,7 +1178,7 @@ mod tests {
 
         let final_state = State::new(
             &final_bank,
-            validator_vote_key,
+            validators[0].vote_keypair.pubkey(),
             &staker_pubkeys,
             &genesis_config.rent,
             pay_leader,
