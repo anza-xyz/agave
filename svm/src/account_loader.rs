@@ -27,7 +27,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{
-        bpf_loader_upgradeable, native_loader,
+        bpf_loader_upgradeable, loader_v4, native_loader,
         sysvar::{self, slot_history},
     },
     solana_svm_callback::{AccountState, TransactionProcessingCallback},
@@ -516,9 +516,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             // handle cases that LoaderV3 presumably makes impossible, such as self-referential
             // program accounts or multiply-referenced programdata accounts, for added safety.
             //
-            // If in the future LoaderV3 programs are migrated to LoaderV4, this entire code block
-            // can be deleted.
-            //
             // If this is a valid LoaderV3 program...
             if bpf_loader_upgradeable::check_id(account.owner())
                 && let Ok(UpgradeableLoaderState::Program {
@@ -571,7 +568,21 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         };
 
         let owner_id = program_account.owner();
-        if !native_loader::check_id(owner_id) && !PROGRAM_OWNERS.contains(owner_id) {
+
+        // A feature gate is required to remove Loader V4 from this load-time
+        // ownership check. If it was removed, transactions which attempt to
+        // invoke Loader V4-owned accounts would result in fees-only transaction
+        // errors, which do not meter CUs.
+        //
+        // An attacker could easily trigger this by assigning an all-zero
+        // System account to Loader V4 and invoking it in a transaction
+        // message. Some nodes would return an execution error while others
+        // would return a fees-only transaction. The former will affect the
+        // cost tracker, while the latter will not.
+        if !native_loader::check_id(owner_id)
+            && !PROGRAM_OWNERS.contains(owner_id)
+            && !loader_v4::check_id(owner_id)
+        {
             error_metrics.invalid_program_for_execution += 1;
             return Err(TransactionError::InvalidProgramForExecution);
         }

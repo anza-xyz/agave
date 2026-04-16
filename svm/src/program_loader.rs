@@ -4,7 +4,6 @@ use {
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_clock::Slot,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
-    solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::{
         loaded_programs::ProgramRuntimeEnvironment,
         program_cache_entry::{
@@ -26,7 +25,6 @@ pub(crate) enum ProgramAccountLoadResult {
     ProgramOfLoaderV1(AccountSharedData),
     ProgramOfLoaderV2(AccountSharedData),
     ProgramOfLoaderV3(AccountSharedData, AccountSharedData, Slot),
-    ProgramOfLoaderV4(AccountSharedData, Slot),
 }
 
 pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
@@ -36,15 +34,11 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     let (program_account, last_modification_slot) = callbacks.get_account_shared_data(pubkey)?;
 
     let load_result = if loader_v4::check_id(program_account.owner()) {
-        solana_loader_v4_program::get_state(program_account.data())
-            .ok()
-            .and_then(|state| {
-                (!matches!(state.status, LoaderV4Status::Retracted)).then_some(state.slot)
-            })
-            .map(|slot| ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot))
-            .unwrap_or(ProgramAccountLoadResult::InvalidAccountData(
-                ProgramCacheEntryOwner::LoaderV4,
-            ))
+        // Loader V4 was removed, but this branch can't be removed without a
+        // feature gate. However, since no valid Loader V4 state exists on any
+        // network, we can just always error here, since this was always the
+        // result anyway.
+        ProgramAccountLoadResult::InvalidAccountData(ProgramCacheEntryOwner::LoaderV4)
     } else if bpf_loader_upgradeable::check_id(program_account.owner()) {
         if let Ok(UpgradeableLoaderState::Program {
             programdata_address,
@@ -158,27 +152,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
                 .map_err(|_| ())
             })
             .map_err(|_| (deployment_slot, ProgramCacheEntryOwner::LoaderV3)),
-
-        ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, deployment_slot) => {
-            program_account
-                .data()
-                .get(LoaderV4State::program_data_offset()..)
-                .ok_or(())
-                .and_then(|elf_bytes| {
-                    ProgramCacheEntry::new(
-                        &loader_v4::id(),
-                        ProgramRuntimeEnvironment::clone(program_runtime_environment),
-                        deployment_slot,
-                        deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
-                        elf_bytes,
-                        program_account.data().len(),
-                        #[cfg(feature = "metrics")]
-                        &mut load_program_metrics,
-                    )
-                    .map_err(|_| ())
-                })
-                .map_err(|_| (deployment_slot, ProgramCacheEntryOwner::LoaderV4))
-        }
     }
     .unwrap_or_else(|(deployment_slot, owner)| {
         let env = ProgramRuntimeEnvironment::clone(program_runtime_environment);
@@ -224,9 +197,11 @@ pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
         }
         Err(TransactionError::ProgramAccountNotFound)
     } else if loader_v4::check_id(program.owner()) {
-        let state = solana_loader_v4_program::get_state(program.data())
-            .map_err(|_| TransactionError::ProgramAccountNotFound)?;
-        Ok(state.slot)
+        // Loader V4 was removed, but this branch can't be removed without a
+        // feature gate. However, since no valid Loader V4 state exists on any
+        // network, we can just always error here, since this was always the
+        // result anyway.
+        Err(TransactionError::ProgramAccountNotFound)
     } else {
         Ok(0)
     }

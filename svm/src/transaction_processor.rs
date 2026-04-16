@@ -51,6 +51,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
+    solana_sdk_ids::loader_v4,
     solana_svm_callback::TransactionProcessingCallback,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::LogCollector,
@@ -822,7 +823,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 cache_entry.stats.uses.fetch_add(1, Ordering::Relaxed);
             } else if let Some((account, last_modification_slot)) =
                 account_loader.get_account_shared_data(account_key)
-                && PROGRAM_OWNERS.contains(account.owner())
+                // A feature gate is required to remove Loader V4 from this
+                // ownership check. For more information, see similar comments
+                // in the account_loader and program_loader modules.
+                && (PROGRAM_OWNERS.contains(account.owner()) || loader_v4::check_id(account.owner()))
             {
                 program_accounts_set.insert(*account_key, last_modification_slot);
             }

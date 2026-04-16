@@ -13,7 +13,7 @@ use {
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_fee_structure::FeeDetails,
     solana_hash::Hash,
-    solana_instruction::{AccountMeta, Instruction},
+    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_keypair::Keypair,
     solana_loader_v3_interface::{
         get_program_data_address, instruction as loaderv3_instruction,
@@ -30,7 +30,8 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget, native_loader,
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget, loader_v4,
+        native_loader,
     },
     solana_signer::Signer,
     solana_svm::{
@@ -2635,6 +2636,110 @@ fn program_cache_create_account() {
         env.test_entry = test_entry;
         env.execute();
     }
+}
+
+// Invoking an account whose owner is `loader_v4::id()` must result in an
+// **executed-failed** transaction (NOT fees-only) with an
+// `InstructionError::UnsupportedProgramId` at the failing instruction index.
+//
+// This is the consensus invariant maintained by the manual carve-out at
+// `svm/src/account_loader.rs:590-593`.
+//
+// If the carve-out was removed without a feature gate, the transaction would
+// instead be `ProcessedTransaction::FeesOnly { load_error: TransactionError::InvalidProgramForExecution, .. }`
+// and the cost tracker would see zero CUs for the transaction. This would
+// break consensus, since a multi-instruction tx currently consumes the CUs of
+// the entire transaction, including any preceding successful instruction.
+#[test]
+fn loader_v4_owned_account_invocation() {
+    let mut test_entry = SvmTestEntry::default();
+
+    let fee_payer_keypair = Keypair::new();
+    let fee_payer = fee_payer_keypair.pubkey();
+
+    let mut fee_payer_data =
+        AccountSharedData::new(LAMPORTS_PER_SOL * 10, 0, &system_program::id());
+    fee_payer_data.set_rent_epoch(u64::MAX);
+    test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+    // Mock an account owned by Loader V4.
+    //
+    // Currently there is no way to create a valid Loader V4-owned program on
+    // any network, since the feature has never been enabled. However, accounts
+    // can still be assigned to Loader V4, but their data must be all-zeroes.
+    let loader_v4_account_id = Pubkey::new_unique();
+    let mut loader_v4_account_data =
+        AccountSharedData::new(LAMPORTS_PER_SOL, 10_240, &loader_v4::id());
+    loader_v4_account_data.set_rent_epoch(u64::MAX);
+    test_entry.add_initial_account(loader_v4_account_id, &loader_v4_account_data);
+
+    let recipient = Pubkey::new_unique();
+
+    // tx 0: single-instruction invocation of the Loader V4-owned account.
+    let single_ix_tx = Transaction::new_signed_with_payer(
+        &[Instruction::new_with_bytes(
+            loader_v4_account_id,
+            &[],
+            vec![],
+        )],
+        Some(&fee_payer),
+        &[&fee_payer_keypair],
+        Hash::default(),
+    );
+    test_entry.push_transaction_with_status(single_ix_tx, ExecutionStatus::ExecutedFailed);
+
+    // tx 1: system transfer + Loader V4 invocation.
+    let multi_ix_tx = Transaction::new_signed_with_payer(
+        &[
+            system_instruction::transfer(&fee_payer, &recipient, 1),
+            Instruction::new_with_bytes(loader_v4_account_id, &[], vec![]),
+        ],
+        Some(&fee_payer),
+        &[&fee_payer_keypair],
+        Hash::default(),
+    );
+    test_entry.push_transaction_with_status(multi_ix_tx, ExecutionStatus::ExecutedFailed);
+
+    // Each failed tx still pays the signature fee.
+    test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+
+    let env = SvmTestEnvironment::create(test_entry);
+    let output = env.execute();
+
+    // tx 0: failing instruction is at index 0, no CUs consumed because the
+    // Loader V4 instruction short-circuits in `process_executable_chain`
+    // before reaching `consume_checked`.
+    let executed = output.processing_results[0]
+        .processed_transaction()
+        .unwrap()
+        .execution_details()
+        .unwrap();
+    assert_eq!(
+        executed.status,
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::UnsupportedProgramId,
+        )),
+    );
+    assert_eq!(executed.executed_units, 0);
+
+    // tx 1: failing instruction is at index 1; ix 0 (system transfer) ran
+    // to completion and consumed builtin CUs. Those CUs are visible to the
+    // cost tracker precisely *because* the transaction stayed on the
+    // executed-failed path instead of degrading to fees-only.
+    let executed = output.processing_results[1]
+        .processed_transaction()
+        .unwrap()
+        .execution_details()
+        .unwrap();
+    assert_eq!(
+        executed.status,
+        Err(TransactionError::InstructionError(
+            1,
+            InstructionError::UnsupportedProgramId,
+        )),
+    );
+    assert!(executed.executed_units > 0);
 }
 
 #[test_case(false, false; "close::scan_only")]
