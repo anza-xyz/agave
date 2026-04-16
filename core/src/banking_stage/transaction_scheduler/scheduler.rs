@@ -44,13 +44,6 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
     /// implementation.
     fn scheduling_common_mut(&mut self) -> &mut SchedulingCommon<Tx>;
 }
-
-/// Action to be taken by pre-lock filter.
-pub(crate) enum PreLockFilterAction {
-    /// Attempt to schedule the transaction.
-    AttemptToSchedule,
-}
-
 /// Metrics from scheduling transactions.
 #[derive(Default, Debug, PartialEq, Eq)]
 pub(crate) struct SchedulingSummary {
