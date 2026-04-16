@@ -102,7 +102,6 @@ type AtomicSchedulerId = AtomicU64;
 #[derive(Debug)]
 pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
-    block_production_scheduler_inner: Mutex<BlockProductionSchedulerInner<S, TH>>,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     common_handler_context: CommonHandlerContext,
@@ -123,46 +122,6 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_pool_sender: Sender<Weak<Self>>,
     cleaner_thread: JoinHandle<()>,
     _phantom: PhantomData<TH>,
-}
-
-/// A small tri-state [`Option`]-like private helper type to codify the existence of
-/// block-production scheduler as a singleton.
-///
-/// Block-production scheduler should carry its buffered (= not-yet-processed) tasks over sessions
-/// (= banks) and `banking_packet_receiver` shouldn't be consumed by multiple schedulers at once.
-/// So, it's managed differently from block-verification schedulers.
-#[derive(Default, Debug)]
-enum BlockProductionSchedulerInner<S: SpawnableScheduler<TH>, TH: TaskHandler> {
-    #[default]
-    NotSpawned,
-    Pooled(S::Inner),
-    #[allow(unused)]
-    Taken(SchedulerId),
-}
-
-impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S, TH> {
-    fn can_put(&self, returned: &S::Inner) -> bool {
-        match self {
-            Self::NotSpawned => false,
-            Self::Pooled(inner) => {
-                // the given `returned` inner must be a block-verification scheduler if there's
-                // already a pooled block-production scheduler inner here. So, return `false` after
-                // sanity check to detect double `put` intention with following `assert_ne!()`.
-                assert_ne!(inner.id(), returned.id());
-                false
-            }
-            Self::Taken(id) => *id == returned.id(),
-        }
-    }
-
-    fn trash_taken(&mut self) {
-        assert_matches!(mem::replace(self, Self::NotSpawned), Self::Taken(_));
-    }
-
-    fn put_returned(&mut self, inner: S::Inner) {
-        let new = inner.id();
-        assert_matches!(mem::replace(self, Self::Pooled(inner)), Self::Taken(old) if old == new);
-    }
 }
 
 #[derive(derive_more::Debug, Clone)]
@@ -385,7 +344,6 @@ where
 
         let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
             scheduler_inners: Mutex::default(),
-            block_production_scheduler_inner: Mutex::default(),
             trashed_scheduler_inners: Mutex::default(),
             timeout_listeners: Mutex::default(),
             common_handler_context: CommonHandlerContext {
@@ -426,26 +384,11 @@ where
     fn return_scheduler(&self, scheduler: S::Inner) {
         // Refer to the comment in is_aborted() as to the exact definition of the concept of
         // _trashed_ and the interaction among different parts of unified scheduler.
-        let mut block_production_scheduler_inner =
-            self.block_production_scheduler_inner.lock().unwrap();
-        let is_block_production_scheduler = block_production_scheduler_inner.can_put(&scheduler);
-        let should_trash = if is_block_production_scheduler {
-            info!("Forcibly trashing scheduler due to disabled block production mode");
-            true
-        } else {
-            scheduler.is_trashed()
-        };
+        let should_trash = scheduler.is_trashed();
 
         if should_trash {
             // Note that the following steps are tightly in sync with the bp
             // spawning in cleaner_main_loop.
-
-            // Maintain the runtime invariant established in register_banking_stage() about
-            // the availability of pooled block production scheduler by re-spawning one.
-            if is_block_production_scheduler {
-                block_production_scheduler_inner.trash_taken();
-                unreachable!("block production scheudler is not supported");
-            }
 
             // Delay drop()-ing this trashed returned scheduler inner by stashing it in
             // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
@@ -456,15 +399,12 @@ where
                 .expect("not poisoned")
                 .push(scheduler);
             sleepless_testing::at(CheckPoint::ReturningSchedulerTrashed);
-        } else if is_block_production_scheduler {
-            block_production_scheduler_inner.put_returned(scheduler);
         } else {
             self.scheduler_inners
                 .lock()
                 .expect("not poisoned")
                 .push((scheduler, Instant::now()));
         }
-        drop(block_production_scheduler_inner);
     }
 
     #[cfg(test)]
@@ -568,7 +508,6 @@ where
 
         // Then, drop all schedulers in the pool.
         mem::take(&mut *self.scheduler_inners.lock().unwrap());
-        mem::take(&mut *self.block_production_scheduler_inner.lock().unwrap());
         mem::take(&mut *self.trashed_scheduler_inners.lock().unwrap());
 
         // At this point, all circular references of this pool has been cut. And there should be
