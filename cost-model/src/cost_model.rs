@@ -924,4 +924,58 @@ mod tests {
 
         assert_eq!(expected_execution_cost, programs_execution_cost);
     }
+
+    #[test]
+    fn test_zero_bytes() {
+        // 0 bytes should result in 0 pages and 0 cost
+        assert_eq!(CostModel::calculate_pages_for_bytes(0), 0);
+        assert_eq!(CostModel::calculate_pages_cost(0), 0);
+        assert_eq!(
+            CostModel::calculate_loaded_accounts_data_size_cost(0, &FeatureSet::default()),
+            0
+        );
+    }
+
+    #[test]
+    fn test_non_zero_bytes_single_page() {
+        let page_size = solana_fee_structure::ACCOUNT_DATA_COST_PAGE_SIZE as u32;
+
+        // Any non-zero bytes up to page_size should be 1 page
+        assert_eq!(CostModel::calculate_pages_for_bytes(1), 1);
+        assert_eq!(CostModel::calculate_pages_for_bytes(page_size), 1);
+
+        assert_eq!(
+            CostModel::calculate_loaded_accounts_data_size_cost(1, &FeatureSet::default()),
+            CostModel::calculate_pages_cost(1)
+        );
+    }
+
+    #[test]
+    fn test_non_zero_bytes_multiple_pages() {
+        let page_size = solana_fee_structure::ACCOUNT_DATA_COST_PAGE_SIZE as u32;
+
+        // Just over one page should round up to 2 pages
+        assert_eq!(CostModel::calculate_pages_for_bytes(page_size + 1), 2);
+
+        assert_eq!(
+            CostModel::calculate_loaded_accounts_data_size_cost(
+                page_size + 1,
+                &FeatureSet::default()
+            ),
+            CostModel::calculate_pages_cost(2)
+        );
+    }
+
+    #[test]
+    fn test_exact_multiple_pages() {
+        let page_size = solana_fee_structure::ACCOUNT_DATA_COST_PAGE_SIZE as u32;
+
+        let bytes = page_size * 3;
+        assert_eq!(CostModel::calculate_pages_for_bytes(bytes), 3);
+
+        assert_eq!(
+            CostModel::calculate_loaded_accounts_data_size_cost(bytes, &FeatureSet::default()),
+            CostModel::calculate_pages_cost(3)
+        );
+    }
 }
