@@ -2,8 +2,9 @@
 
 use {
     crate::{
-        invoke_context::{InvokeContext, SerializedAccountMetadata},
+        invoke_context::InvokeContext,
         memory::{translate_slice, translate_type, translate_type_mut_for_cpi, translate_vm_slice},
+        memory_context::SerializedAccountMetadata,
         serialization::{create_memory_region_of_account, modify_memory_region_of_account},
     },
     solana_account_info::AccountInfo,
@@ -280,7 +281,7 @@ impl<'a> CallerAccount<'a> {
         check_aligned: bool,
         _vm_addr: u64,
         account_info: &solana_account_info::AccountInfo,
-        account_metadata: &crate::invoke_context::SerializedAccountMetadata,
+        account_metadata: &crate::memory_context::SerializedAccountMetadata,
     ) -> Result<CallerAccount<'a>, Error> {
         use crate::memory::{translate_type, translate_type_mut_for_cpi};
 
@@ -414,7 +415,7 @@ impl<'a> CallerAccount<'a> {
         check_aligned: bool,
         vm_addr: u64,
         account_info: &SolAccountInfo,
-        account_metadata: &crate::invoke_context::SerializedAccountMetadata,
+        account_metadata: &crate::memory_context::SerializedAccountMetadata,
     ) -> Result<CallerAccount<'a>, Error> {
         use crate::memory::translate_type_mut_for_cpi;
 
@@ -1364,8 +1365,9 @@ mod tests {
     use {
         super::*,
         crate::{
-            invoke_context::{BpfAllocator, MemoryContext, SerializedAccountMetadata},
+            invoke_context::BpfAllocator,
             memory::translate_type,
+            memory_context::{MemoryContext, SerializedAccountMetadata},
             with_mock_invoke_context_with_feature_set,
         },
         assert_matches::assert_matches,

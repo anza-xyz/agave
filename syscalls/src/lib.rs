@@ -2694,8 +2694,9 @@ mod tests {
         solana_program::program::check_type_assumptions,
         solana_program_runtime::{
             execution_budget::MAX_HEAP_FRAME_BYTES,
-            invoke_context::{BpfAllocator, InvokeContext, MemoryContext},
+            invoke_context::{BpfAllocator, InvokeContext},
             memory::address_is_aligned,
+            memory_context::MemoryContext,
             with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
         },
         solana_sbpf::{
