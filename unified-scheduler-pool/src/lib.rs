@@ -22,7 +22,7 @@ use {
     derive_where::derive_where,
     log::*,
     scopeguard::defer,
-    solana_clock::{Epoch, Slot},
+    solana_clock::Slot,
     solana_ledger::blockstore_processor::{
         TransactionBatchWithIndexes, TransactionStatusSender, execute_batch,
     },
@@ -50,7 +50,7 @@ use {
         mem,
         sync::{
             Arc, Mutex, OnceLock, Weak,
-            atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
+            atomic::{AtomicU64, Ordering::Relaxed},
         },
         thread::{self, JoinHandle, sleep},
         time::{Duration, Instant},
@@ -217,68 +217,6 @@ impl CommonHandlerContext {
 #[derive(derive_more::Debug)]
 struct BankingStageHandlerContext {
     banking_stage_monitor: Box<dyn BankingStageMonitor>,
-}
-
-/// A helper struct for the banking stage integration, primarily used for task creation.
-///
-/// This block-production struct is expected to be shared across the scheduler thread and its
-/// handler threads because all of them needs to handle task creation unlike block verification.
-///
-/// Particularly, usage_queue_loader is desired to be shared across handlers so that task creation
-/// can be processed in the multi-threaded way. For more details, see
-/// solana_core::banking_stage::unified_scheduler module doc.
-#[derive(Debug)]
-pub struct BankingStageHelper {
-    usage_queue_loader: UsageQueueLoaderInner,
-    // Supplemental identification for tasks of identical priority, allotted according to FIFO of
-    // batch granularity, resulting in the total order over the set of available tasks,
-    // collectively.
-    next_task_id: AtomicUsize,
-    new_task_sender: Sender<NewTaskPayload>,
-}
-
-impl BankingStageHelper {
-    /// Generate batched task ids for the given number of tasks
-    ///
-    /// We assign task ids for the entire batch at once in the hope of alleviating cache-line
-    /// bouncing on self.next_task_id, slightly compromising strict FIFO semantics. In other words,
-    /// batched sequencing is slightly skewed from the strict FIFO adherence, which would be
-    /// sequencing at the observation of given task at the very instance of handling it in some
-    /// kind of loop iterations.
-    pub fn generate_task_ids(&self, count: usize) -> usize {
-        self.next_task_id.fetch_add(count, Relaxed)
-    }
-
-    pub fn create_new_task(
-        &self,
-        transaction: RuntimeTransaction<SanitizedTransaction>,
-        task_id: OrderedTaskId,
-        consumed_block_size: BlockSize,
-        sanitized_epoch: Epoch,
-        alt_invalidation_slot: Slot,
-    ) -> Task {
-        SchedulingStateMachine::create_block_production_task(
-            transaction,
-            task_id,
-            consumed_block_size,
-            sanitized_epoch,
-            alt_invalidation_slot,
-            &mut |pubkey| self.usage_queue_loader.load(pubkey),
-        )
-    }
-
-    pub fn send_new_task(&self, task: Task) {
-        self.new_task_sender
-            .send(NewTaskPayload::Payload(task))
-            .unwrap();
-    }
-
-    pub fn new_task_id(task_id: usize, priority: u64) -> OrderedTaskId {
-        // Use wrapping_sub to avoid a clippy::arithmetic_side_effects false positive...
-        // Actually won't ever wrap, thanks to MAX.
-        let reversed_priority = u64::MAX.wrapping_sub(priority) as OrderedTaskId;
-        (reversed_priority << const { OrderedTaskId::BITS / 2 }) | (task_id as OrderedTaskId)
-    }
 }
 
 pub type DefaultSchedulerPool =
