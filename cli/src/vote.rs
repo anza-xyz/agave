@@ -1666,7 +1666,10 @@ pub async fn process_show_vote_account(
         authorized_voters: (&vote_state.authorized_voters).into(),
         authorized_withdrawer: vote_state.authorized_withdrawer.to_string(),
         credits: vote_state.credits(),
-        commission: (vote_state.inflation_rewards_commission_bps / 100) as u8,
+        commission: vote_state
+            .inflation_rewards_commission_bps
+            .div_ceil(100)
+            .min(u8::MAX as u16) as u8,
         root_slot: vote_state.root_slot,
         recent_timestamp: vote_state.last_timestamp.clone(),
         votes,
