@@ -15,7 +15,7 @@ use {
         loaded_programs::{
             ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
         },
-        memory_context::{MemoryContext, MemoryContexts},
+        memory_context::MemoryContexts,
         program_cache_entry::ProgramCacheEntryType,
         stable_log,
         sysvar_cache::SysvarCache,
@@ -262,7 +262,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             compute_meter: ComputeMeter(Cell::new(compute_budget.compute_unit_limit)),
             total_nested_exec_time: Duration::ZERO,
             timings: ExecuteDetailsTimings::default(),
-            memory_contexts: MemoryContexts(Vec::new()),
+            memory_contexts: MemoryContexts::new(),
             register_traces: Vec::new(),
             #[cfg(feature = "sbpf-debugger")]
             debug_port: None,
@@ -296,13 +296,13 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             }
         }
 
-        self.memory_contexts.0.push(MemoryContext::empty());
+        self.memory_contexts.push();
         self.transaction_context.push()
     }
 
     /// Pop a stack frame from the invocation stack
     pub(crate) fn pop(&mut self) -> Result<(), InstructionError> {
-        self.memory_contexts.0.pop();
+        self.memory_contexts.pop();
         self.transaction_context.pop()
     }
 
