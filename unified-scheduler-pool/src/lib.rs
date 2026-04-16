@@ -14,7 +14,7 @@
 //! regarding to pooling and the actual use.
 
 use {
-    agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
+    agave_banking_stage_ingress_types::BankingPacketBatch,
     assert_matches::assert_matches,
     crossbeam_channel::{
         self, Receiver, RecvError, RecvTimeoutError, SendError, Sender, never, select_biased,
@@ -176,7 +176,6 @@ pub struct HandlerContext {
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_vote_sender: Option<ReplayVoteSender>,
     prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
-    banking_packet_receiver: BankingPacketReceiver,
     #[debug("{banking_packet_handler:p}")]
     banking_packet_handler: Box<dyn BankingPacketHandler>,
     banking_stage_helper: Option<Arc<BankingStageHelper>>,
@@ -203,7 +202,6 @@ impl HandlerContext {
     }
 
     fn disable_banking_packet_handler(&mut self) {
-        self.banking_packet_receiver = never();
         self.banking_packet_handler =
             Box::new(|_, _| unreachable!("paired with never() receiver, this cannot be called"));
     }
@@ -221,7 +219,6 @@ impl CommonHandlerContext {
     fn into_handler_context(
         self,
         thread_count: usize,
-        banking_packet_receiver: BankingPacketReceiver,
         banking_packet_handler: Box<dyn BankingPacketHandler>,
         banking_stage_helper: Option<Arc<BankingStageHelper>>,
     ) -> HandlerContext {
@@ -238,7 +235,6 @@ impl CommonHandlerContext {
             transaction_status_sender,
             replay_vote_sender,
             prioritization_fee_cache,
-            banking_packet_receiver,
             banking_packet_handler,
             banking_stage_helper,
         }
@@ -645,7 +641,6 @@ where
 
     fn create_handler_context(&self) -> HandlerContext {
         let thread_count = self.block_verification_handler_count;
-        let banking_packet_receiver = never();
         let banking_packet_handler: Box<dyn BankingPacketHandler> =
             Box::new(|_, _| unreachable!("paired with never() receiver, this cannot be called"));
         let banking_stage_helper = None;
@@ -654,7 +649,6 @@ where
         assert!(thread_count >= 1);
         self.common_handler_context.clone().into_handler_context(
             thread_count,
-            banking_packet_receiver,
             banking_packet_handler,
             banking_stage_helper,
         )
@@ -1749,7 +1743,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         };
 
         let handler_main_loop = || {
-            let mut handler_context = handler_context.clone();
+            let handler_context = handler_context.clone();
             let mut runnable_task_receiver = runnable_task_receiver.clone();
             let finished_blocked_task_sender = finished_blocked_task_sender.clone();
             let finished_idle_task_sender = finished_idle_task_sender.clone();
@@ -1782,26 +1776,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 runnable_task_receiver.never_receive_from_aux();
                                 continue;
                             }
-                        },
-                        // See solana_core::banking_stage::unified_scheduler module doc as to
-                        // justification of this additional kind of work at the lowest precedence
-                        // of select!
-                        recv(handler_context.banking_packet_receiver) -> banking_packet => {
-                            let HandlerContext {banking_packet_handler, banking_stage_helper, ..} = &mut handler_context;
-                            let banking_stage_helper = banking_stage_helper.as_ref().unwrap();
-
-                            let Ok(banking_packet) = banking_packet else {
-                                info!("disconnected banking_packet_receiver");
-                                // Don't break here; handler threads are expected to outlive its
-                                // associated scheduler thread always. So, disable banking packet
-                                // handler then continue to be cleaned up properly later, much like
-                                // block verification handler thread.
-                                handler_context.disable_banking_packet_handler();
-                                continue;
-                            };
-                            banking_packet_handler(banking_stage_helper, banking_packet);
-                            continue;
-                        },
+                        }
                     };
                     defer! {
                         if !thread::panicking() {
@@ -3732,7 +3707,6 @@ mod tests {
             transaction_status_sender: None,
             replay_vote_sender: None,
             prioritization_fee_cache: None,
-            banking_packet_receiver: never(),
             banking_packet_handler: Box::new(|_, _| {}),
             banking_stage_helper: None,
         };
