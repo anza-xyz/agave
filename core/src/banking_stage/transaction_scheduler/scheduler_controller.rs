@@ -477,9 +477,7 @@ mod tests {
             consumer::{RetryableIndex, TARGET_NUM_TRANSACTIONS_PER_BATCH},
             scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
             tests::create_slow_genesis_config,
-            transaction_scheduler::prio_graph_scheduler::{
-                PrioGraphScheduler, PrioGraphSchedulerConfig,
-            },
+            transaction_scheduler::greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
         },
         agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
         crossbeam_channel::{Receiver, Sender, unbounded},
@@ -534,7 +532,7 @@ mod tests {
         create_receive_and_buffer: impl FnOnce(BankingPacketReceiver, Arc<RwLock<BankForks>>) -> R,
     ) -> (
         TestFrame<R::Transaction>,
-        SchedulerController<R, PrioGraphScheduler<R::Transaction>>,
+        SchedulerController<R, GreedyScheduler<R::Transaction>>,
     ) {
         let GenesisConfigInfo {
             mut genesis_config,
@@ -565,10 +563,10 @@ mod tests {
             finished_consume_work_sender,
         };
 
-        let scheduler = PrioGraphScheduler::new(
+        let scheduler = GreedyScheduler::new(
             consume_work_senders,
             finished_consume_work_receiver,
-            PrioGraphSchedulerConfig::default(),
+            GreedySchedulerConfig::default(),
         );
         let exit = Arc::new(AtomicBool::new(false));
         let scheduler_controller = SchedulerController::new(
@@ -795,16 +793,16 @@ mod tests {
 
         // We expect 2 batches to be scheduled
         test_receive_then_schedule(&mut scheduler_controller);
-        let consume_works = (0..2)
-            .map(|_| consume_work_receivers[0].try_recv().unwrap())
-            .collect_vec();
+        let consume_work = consume_work_receivers[0].try_recv().unwrap();
+        assert!(consume_work_receivers[0].try_recv().is_err());
 
-        let num_txs_per_batch = consume_works.iter().map(|cw| cw.ids.len()).collect_vec();
-        let message_hashes = consume_works
+        let num_txs_per_batch = consume_work.ids.len();
+        let message_hashes = consume_work
+            .transactions
             .iter()
-            .flat_map(|cw| cw.transactions.iter().map(|tx| tx.message_hash()))
+            .map(|tx| tx.message_hash())
             .collect_vec();
-        assert_eq!(num_txs_per_batch, vec![1; 2]);
+        assert_eq!(num_txs_per_batch, 2);
         assert_eq!(message_hashes, vec![&tx2_hash, &tx1_hash]);
     }
 
