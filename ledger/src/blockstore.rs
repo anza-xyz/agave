@@ -4722,24 +4722,6 @@ impl Blockstore {
         *self.lowest_cleanup_slot.read().unwrap()
     }
 
-    /// Returns the total physical storage size contributed by all data shreds.
-    ///
-    /// Note that the reported size does not include those recently inserted
-    /// shreds that are still in memory.
-    pub fn total_data_shred_storage_size(&self) -> Result<i64> {
-        self.data_shred_cf
-            .get_int_property(RocksProperties::TOTAL_SST_FILES_SIZE)
-    }
-
-    /// Returns the total physical storage size contributed by all coding shreds.
-    ///
-    /// Note that the reported size does not include those recently inserted
-    /// shreds that are still in memory.
-    pub fn total_coding_shred_storage_size(&self) -> Result<i64> {
-        self.code_shred_cf
-            .get_int_property(RocksProperties::TOTAL_SST_FILES_SIZE)
-    }
-
     /// Returns whether the blockstore has primary (read and write) access
     pub fn is_primary_access(&self) -> bool {
         self.db.is_primary_access()
