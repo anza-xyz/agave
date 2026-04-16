@@ -251,34 +251,28 @@ fn pay_reward_update_vote_state(
 /// Stores rewards as credits in the current vote state.
 ///
 /// TODO: this is using VoteStateV4 explicitly.  When we upstream, we will use VoteStateHandle API.
-fn increment_credits(vote_state: &mut VoteStateV4, epoch: Epoch, credits: u64) {
-    // never seen a credit
-    if vote_state.epoch_credits.is_empty() {
-        vote_state.epoch_credits.push((epoch, 0, 0));
-    } else if epoch != vote_state.epoch_credits.last().unwrap().0 {
-        let (_, credits, prev_credits) = *vote_state.epoch_credits.last().unwrap();
-
-        if credits != prev_credits {
-            // if credits were earned previous epoch
-            // append entry at end of list for the new epoch
-            vote_state.epoch_credits.push((epoch, credits, credits));
-        } else {
-            // else just move the current epoch
-            vote_state.epoch_credits.last_mut().unwrap().0 = epoch;
+fn increment_credits(vote_state: &mut VoteStateV4, new_epoch: Epoch, new_credits: u64) {
+    match vote_state.epoch_credits.last_mut() {
+        None => {
+            vote_state.epoch_credits.push((new_epoch, new_credits, 0));
         }
-
-        // Remove too old epoch_credits
-        if vote_state.epoch_credits.len() > MAX_EPOCH_CREDITS_HISTORY {
-            vote_state.epoch_credits.remove(0);
+        Some((epoch, final_credits, initial_credits)) => {
+            if *epoch == new_epoch {
+                *final_credits = final_credits.saturating_add(new_credits);
+            } else {
+                if final_credits == initial_credits {
+                    *epoch = new_epoch;
+                    *final_credits = final_credits.saturating_add(new_credits);
+                } else {
+                    let elem = (new_epoch, new_credits + *final_credits, *final_credits);
+                    vote_state.epoch_credits.push(elem);
+                    if vote_state.epoch_credits.len() > MAX_EPOCH_CREDITS_HISTORY {
+                        vote_state.epoch_credits.remove(0);
+                    }
+                }
+            }
         }
     }
-
-    vote_state.epoch_credits.last_mut().unwrap().1 = vote_state
-        .epoch_credits
-        .last()
-        .unwrap()
-        .1
-        .saturating_add(credits);
 }
 
 /// Updates `root_slot` and `votes` in vote state using the rewards and finalization certificates from the footer
