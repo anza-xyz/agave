@@ -43,9 +43,7 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{
-        BlockSize, Capability, OrderedTaskId,
-        SchedulingMode::{self, BlockProduction, BlockVerification},
-        SchedulingStateMachine, Task, UsageQueue,
+        BlockSize, Capability, OrderedTaskId, SchedulingStateMachine, Task, UsageQueue,
     },
     static_assertions::const_assert_eq,
     std::{
@@ -62,10 +60,6 @@ use {
     trait_set::trait_set,
     unwrap_none::UnwrapNone,
 };
-
-// For now, cap bandwidth use to just half of 1 Gbps link, which should be pretty conservative
-// assumption these days...
-const MAX_BLOCK_SIZE_THRESHOLD: BlockSize = 20 * 1024 * 1024;
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
@@ -198,10 +192,6 @@ impl HandlerContext {
                 banking_stage_helper: helper,
             },
         }
-    }
-
-    fn banking_stage_helper(&self) -> &BankingStageHelper {
-        self.banking_stage_helper.as_ref().unwrap()
     }
 
     fn clone_for_scheduler_thread(&self) -> Self {
@@ -338,21 +328,6 @@ impl BankingStageHelper {
         )
     }
 
-    fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
-        let new_task_id = self.regenerated_task_id(executed_task.task.task_id());
-        let consumed_block_size = executed_task.consumed_block_size();
-        let sanitized_epoch = executed_task.sanitized_epoch();
-        let alt_invalidation_slot = executed_task.alt_invalidation_slot();
-        let transaction = executed_task.into_transaction();
-        self.create_new_task(
-            transaction,
-            new_task_id,
-            consumed_block_size,
-            sanitized_epoch,
-            alt_invalidation_slot,
-        )
-    }
-
     pub fn send_new_task(&self, task: Task) {
         self.new_task_sender
             .send(NewTaskPayload::Payload(task))
@@ -364,11 +339,6 @@ impl BankingStageHelper {
         // Actually won't ever wrap, thanks to MAX.
         let reversed_priority = u64::MAX.wrapping_sub(priority) as OrderedTaskId;
         (reversed_priority << const { OrderedTaskId::BITS / 2 }) | (task_id as OrderedTaskId)
-    }
-
-    fn regenerated_task_id(&self, executed_task_id: OrderedTaskId) -> OrderedTaskId {
-        const REVERSED_PRIORITY_MASK: OrderedTaskId = 0xffff_ffff_ffff_ffff_0000_0000_0000_0000;
-        (executed_task_id & REVERSED_PRIORITY_MASK) | (self.generate_task_ids(1) as OrderedTaskId)
     }
 }
 
@@ -852,18 +822,6 @@ impl ExecutedTask {
 
     fn consumed_block_size(&self) -> BlockSize {
         self.task.consumed_block_size()
-    }
-
-    fn sanitized_epoch(&self) -> Epoch {
-        self.task.sanitized_epoch()
-    }
-
-    fn alt_invalidation_slot(&self) -> Slot {
-        self.task.alt_invalidation_slot()
-    }
-
-    fn into_transaction(self) -> RuntimeTransaction<SanitizedTransaction> {
-        self.task.into_transaction()
     }
 }
 
@@ -1376,13 +1334,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     /// Returns `true` if the caller should abort.
     #[must_use]
     fn abort_or_accumulate_result_with_timings(
-        mode: SchedulingMode,
         (result, timings): &mut ResultWithTimings,
         executed_task: Box<ExecutedTask>,
-        state_machine: &mut SchedulingStateMachine,
-        block_size_estimate: &mut usize,
-        session_ending: &mut bool,
-        handler_context: &HandlerContext,
     ) -> bool {
         sleepless_testing::at(CheckPoint::TaskAccumulated(
             executed_task.task.task_id(),
@@ -1390,100 +1343,30 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         ));
         timings.accumulate(&executed_task.result_with_timings.1);
 
-        match mode {
-            BlockVerification => match executed_task.result_with_timings.0 {
-                Ok(()) => {
-                    // The most normal case
-                    // This is only for block production.
-                    assert_eq!(executed_task.consumed_block_size(), 0);
+        match executed_task.result_with_timings.0 {
+            Ok(()) => {
+                // The most normal case
+                // This is only for block production.
+                assert_eq!(executed_task.consumed_block_size(), 0);
 
-                    false
-                }
-                // This should never be observed because the scheduler thread makes all running
-                // tasks are conflict-free
-                Err(TransactionError::AccountInUse)
-                // These should have been validated by blockstore by now
-                | Err(TransactionError::AccountLoadedTwice)
-                | Err(TransactionError::TooManyAccountLocks)
-                // Block verification should never see this:
-                | Err(TransactionError::CommitCancelled) => {
-                    unreachable!()
-                }
-                Err(error) => {
-                    error!("error is detected while accumulating....: {error:?}");
-                    *result = Err(error);
-                    true
-                }
-            },
-            BlockProduction => {
-                match executed_task.result_with_timings.0 {
-                    Ok(()) => {
-                        // The most normal case
-                        *block_size_estimate = block_size_estimate
-                            .checked_add(executed_task.consumed_block_size())
-                            .unwrap();
-
-                        // Avoid too large blocks in byte wise, which could destabilize the
-                        // cluster.
-                        //
-                        // While this check is very light-weight, it isn't rigid nor deterministic.
-                        // That's why it's called an estimate-based _threshold_, not _limit_ to
-                        // indicate these implications. This lenient behavior is acceptable.
-                        if *block_size_estimate > MAX_BLOCK_SIZE_THRESHOLD {
-                            sleepless_testing::at(CheckPoint::SessionEnding);
-                            *session_ending = true;
-                        }
-                    }
-                    Err(TransactionError::CommitCancelled)
-                    | Err(TransactionError::WouldExceedMaxBlockCostLimit)
-                    | Err(TransactionError::WouldExceedMaxVoteCostLimit)
-                    | Err(TransactionError::WouldExceedMaxAccountCostLimit)
-                    | Err(TransactionError::WouldExceedAccountDataBlockLimit) => {
-                        // Treat these errors as indication of block full signal while retrying the
-                        // task at the same time.
-                        Self::rebuffer_task_for_next_session(
-                            executed_task,
-                            state_machine,
-                            session_ending,
-                            handler_context,
-                        );
-                    }
-                    // This should never be observed because the scheduler thread makes all running
-                    // tasks are conflict-free; Furthermore, block producing scheduler should be
-                    // prepared for the probable presence of an independent banking thread (like
-                    // the jito thread). This is addressed by the TaskHandler::handle().
-                    Err(TransactionError::AccountInUse)
-                    // These should have been validated by banking_packet_handler by now
-                    | Err(TransactionError::AccountLoadedTwice)
-                    | Err(TransactionError::TooManyAccountLocks) => {
-                        unreachable!();
-                    }
-                    Err(ref error) => {
-                        // The other errors; just discard tasks. These are permanently
-                        // not-committable worthless tasks.
-                        debug!("error is detected while accumulating....: {error:?}");
-                    }
-                };
-                // Don't abort at all in block production unlike block verification
                 false
             }
+            // This should never be observed because the scheduler thread makes all running
+            // tasks are conflict-free
+            Err(TransactionError::AccountInUse)
+            // These should have been validated by blockstore by now
+            | Err(TransactionError::AccountLoadedTwice)
+            | Err(TransactionError::TooManyAccountLocks)
+            // Block verification should never see this:
+            | Err(TransactionError::CommitCancelled) => {
+                unreachable!()
+            }
+            Err(error) => {
+                error!("error is detected while accumulating....: {error:?}");
+                *result = Err(error);
+                true
+            }
         }
-    }
-
-    fn rebuffer_task_for_next_session(
-        executed_task: Box<ExecutedTask>,
-        state_machine: &mut SchedulingStateMachine,
-        session_ending: &mut bool,
-        handler_context: &HandlerContext,
-    ) {
-        let task = handler_context
-            .banking_stage_helper()
-            .recreate_task(executed_task);
-        state_machine.buffer_task(task);
-
-        // Now, new session is desired, start session_ending.
-        sleepless_testing::at(CheckPoint::SessionEnding);
-        *session_ending = true;
     }
 
     fn take_session_result_with_timings(&mut self) -> ResultWithTimings {
@@ -1507,7 +1390,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         handler_context: HandlerContext,
     ) {
         let mut current_slot = context.slot();
-        let mut block_size_estimate = 0;
         let (mut is_finished, mut session_ending) = (false, false);
 
         // Firstly, setup bi-directional messaging between the scheduler and handlers to pass
@@ -1702,13 +1584,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 state_machine.deschedule_task(&executed_task.task);
 
                                 if Self::abort_or_accumulate_result_with_timings(
-                                    SchedulingMode::BlockVerification,
                                     &mut result_with_timings,
                                     executed_task,
-                                    &mut state_machine,
-                                    &mut block_size_estimate,
-                                    &mut session_ending,
-                                    &handler_context,
                                 ) {
                                     break 'nonaborted_main_loop;
                                 }
@@ -1761,13 +1638,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 state_machine.deschedule_task(&executed_task.task);
 
                                 if Self::abort_or_accumulate_result_with_timings(
-                                    SchedulingMode::BlockVerification,
                                     &mut result_with_timings,
                                     executed_task,
-                                    &mut state_machine,
-                                    &mut block_size_estimate,
-                                    &mut session_ending,
-                                    &handler_context,
                                 ) {
                                     break 'nonaborted_main_loop;
                                 }
@@ -1823,7 +1695,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // enter into the preceding `while(!is_finished) {...}` loop again.
                                 // Before that, propagate new SchedulingContext to handler threads
                                 current_slot = new_context.slot();
-                                block_size_estimate = 0;
                                 runnable_task_sender
                                     .send_chained_channel(
                                         &new_context,
