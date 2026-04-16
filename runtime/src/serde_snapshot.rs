@@ -790,7 +790,7 @@ pub(crate) struct ReconstructedBankInfo {
     /// Will be used when verifying accounts, after rebuilding a Bank.
     pub(crate) calculated_accounts_lt_hash: AccountsLtHash,
     /// The capitalization, in lamports, calculated during index generation.
-    pub(crate) calculated_capitalization: u64,
+    pub(crate) calculated_capitalization: u128,
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -1011,7 +1011,7 @@ pub struct ReconstructedAccountsDbInfo {
     /// Will be used when verifying accounts, after rebuilding a Bank.
     pub calculated_accounts_lt_hash: AccountsLtHash,
     /// The capitalization, in lamports, calculated during index generation.
-    pub calculated_capitalization: u64,
+    pub calculated_capitalization: u128,
     pub bank_hash_stats: BankHashStats,
 }
 

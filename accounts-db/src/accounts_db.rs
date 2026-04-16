@@ -394,7 +394,7 @@ pub struct IndexGenerationInfo {
     /// Will be used when verifying accounts, after rebuilding a Bank.
     pub calculated_accounts_lt_hash: AccountsLtHash,
     /// The capitalization, in lamports, calculated during index generation.
-    pub calculated_capitalization: u64,
+    pub calculated_capitalization: u128,
 }
 
 /// Accumulator for the values produced while generating the index
@@ -416,7 +416,7 @@ struct IndexGenerationAccumulator {
     /// The accounts lt hash for the set of accounts processed using this accumulator
     lt_hash: LtHash,
     /// The capitalization for the set of accounts processed using this accumulator
-    capitalization: u64,
+    capitalization: u128,
     /// The number of accounts in this slot that were skipped when generating the index as they
     /// were already marked obsolete in the account storage entry
     num_obsolete_accounts_skipped: u64,
@@ -5892,6 +5892,7 @@ impl AccountsDb {
         let slot = storage.slot();
         let store_id = storage.id();
 
+        let mut capitalization = 0_u64;
         let mut accounts_data_len = 0;
         let mut stored_size_alive = 0;
         let mut all_accounts_are_zero_lamports = true;
@@ -5964,8 +5965,9 @@ impl AccountsDb {
                 let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
                 accum.lt_hash.mix_in(&account_lt_hash.0);
 
-                accum.capitalization = accum
-                    .capitalization
+                // SAFETY: The bank capitalization field is a u64, so the lamport sum of
+                // all accounts modified in a single slot must fit into a u64.
+                capitalization = capitalization
                     .checked_add(account.lamports())
                     .expect("capitalization cannot overflow");
 
@@ -5988,6 +5990,11 @@ impl AccountsDb {
                 }
             })
             .expect("must scan accounts storage");
+
+        accum.capitalization = accum
+            .capitalization
+            .checked_add(u128::from(capitalization))
+            .expect("capitalization cannot overflow");
 
         let (insert_info, insert_time_us) = measure_us!(
             self.accounts_index
@@ -6239,7 +6246,7 @@ impl AccountsDb {
             accounts_data_len_from_duplicates: u64,
             num_duplicate_accounts: u64,
             duplicates_lt_hash: Box<DuplicatesLtHash>,
-            capitalization_from_duplicates: u64,
+            capitalization_from_duplicates: u128,
         }
         impl DuplicatePubkeysVisitedInfo {
             fn reduce(mut self, other: Self) -> Self {
@@ -6424,11 +6431,11 @@ impl AccountsDb {
     fn visit_duplicate_pubkeys_during_startup(
         &self,
         pubkeys: &[Pubkey],
-    ) -> (u64, u64, Box<DuplicatesLtHash>, u64) {
+    ) -> (u64, u64, Box<DuplicatesLtHash>, u128) {
         let mut accounts_data_len_from_duplicates = 0;
         let mut num_duplicate_accounts = 0_u64;
         let mut duplicates_lt_hash = Box::new(DuplicatesLtHash::default());
-        let mut capitalization_from_duplicates = 0_u64;
+        let mut capitalization_from_duplicates = 0_u128;
         self.accounts_index.scan(
             pubkeys.iter(),
             |pubkey, slots_refs| {
@@ -6462,7 +6469,7 @@ impl AccountsDb {
                                     Self::lt_hash_account(&loaded_account, pubkey);
                                 duplicates_lt_hash.0.mix_in(&account_lt_hash.0);
                                 capitalization_from_duplicates = capitalization_from_duplicates
-                                    .checked_add(lamports)
+                                    .checked_add(u128::from(lamports))
                                     .expect("capitalization cannot overflow");
                             });
                         });

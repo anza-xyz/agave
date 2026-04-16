@@ -211,7 +211,7 @@ pub fn bank_from_snapshot_archives(
     measure_rebuild.stop();
     info!("{measure_rebuild}");
 
-    if bank.capitalization() != info.calculated_capitalization {
+    if u128::from(bank.capitalization()) != info.calculated_capitalization {
         // When limit_load_slot_count is set, ignore capitalization mismatches.
         // Because skipped slots may have changed the calculated capitalization,
         // causing a mismatch with the bank's capitalization.
@@ -411,7 +411,7 @@ pub fn bank_from_snapshot_dir(
     );
     info!("{measure_rebuild_bank}");
 
-    if bank.capitalization() != info.calculated_capitalization {
+    if u128::from(bank.capitalization()) != info.calculated_capitalization {
         // When limit_load_slot_count is set, ignore capitalization mismatches.
         // Because skipped slots may have changed the calculated capitalization,
         // causing a mismatch with the bank's capitalization.
@@ -1460,7 +1460,7 @@ mod tests {
         match error {
             SnapshotError::MismatchedCapitalization(expected, calculated) => {
                 assert_eq!(expected, bad_capitalization);
-                assert_eq!(calculated, good_capitalization);
+                assert_eq!(calculated, good_capitalization.into());
             }
             _ => {
                 panic!("wrong error");
@@ -2350,7 +2350,7 @@ mod tests {
         match error {
             SnapshotError::MismatchedCapitalization(expected, calculated) => {
                 assert_eq!(expected, bad_capitalization);
-                assert_eq!(calculated, good_capitalization);
+                assert_eq!(calculated, good_capitalization.into());
             }
             _ => {
                 panic!("wrong error");
