@@ -138,11 +138,16 @@ fn calculate_stake_points(
 pub(crate) enum AlpenglowStakeState<'a> {
     /// Function is called for calculating rewards.
     Calculating,
-    /// Function is called when Tower is active.
-    /// This includes epochs where only Tower is active and the migration epoch.
+    /// Function is called when Tower is active for the entire epoch.
     Tower,
-    /// Function is called when Alpenglow is active.
-    /// This includes epochs where only Alpenglow is active and the migration epoch.
+    /// Function is called when we migrate from Tower to Alpenglow.
+    Migrating {
+        /// Pubkey for the vote account of the validator that the stake is delegated to.
+        vote_pubkey: Pubkey,
+        /// `epoch_stakes` from the current bank.
+        epoch_stakes: &'a HashMap<Epoch, VersionedEpochStakes>,
+    },
+    /// Function is called when Alpenglow is active for the entire epoch.
     Alpenglow {
         /// Pubkey for the vote account of the validator that the stake is delegated to.
         vote_pubkey: Pubkey,
@@ -240,27 +245,28 @@ pub(crate) fn calculate_stake_points_and_credits(
     let mut points = 0;
     let mut new_credits_observed = credits_in_stake;
 
-    let mut alpenglow_marker_observed = false;
+    let mut ag_marker_observed = false;
 
     for epoch_credits_item in vote_state.epoch_credits_iter {
         let (epoch, final_epoch_credits, initial_epoch_credits) = epoch_credits_item;
         if epoch == Epoch::MAX {
-            alpenglow_marker_observed = true;
+            ag_marker_observed = true;
             continue;
         }
 
         match &ag_stake_state {
             AlpenglowStakeState::Calculating => (),
             AlpenglowStakeState::Tower => {
-                if alpenglow_marker_observed {
+                if ag_marker_observed {
                     continue;
                 }
             }
             AlpenglowStakeState::Alpenglow { .. } => {
-                if !alpenglow_marker_observed {
+                if !ag_marker_observed {
                     continue;
                 }
             }
+            AlpenglowStakeState::Migrating { .. } => {}
         }
 
         let stake_amount = u128::from(stake.delegation.stake(
@@ -289,6 +295,24 @@ pub(crate) fn calculate_stake_points_and_credits(
 
         // finally calculate points for this epoch
         let earned_points = match &ag_stake_state {
+            AlpenglowStakeState::Migrating {
+                vote_pubkey,
+                epoch_stakes,
+            } => {
+                if ag_marker_observed {
+                    if earned_credits == 0 {
+                        earned_credits
+                    } else {
+                        let total_stake =
+                            AlpenglowStakeState::get_total_stake(*vote_pubkey, epoch_stakes, epoch)
+                                .unwrap();
+                        earned_credits * stake_amount / total_stake as u128
+                    }
+                } else {
+                    // XXX: this needs to be scaled as tower rewards are scaled in `calculate_stake_rewards`.
+                    stake_amount * earned_credits
+                }
+            }
             AlpenglowStakeState::Calculating | AlpenglowStakeState::Tower => {
                 // in tower, the stake has to be included to calculate the total points this `vote_state` earned.
                 stake_amount * earned_credits

@@ -148,9 +148,16 @@ fn calculate_stake_rewards<'a>(
         ..
     } = calculation_environment;
 
-    let is_alpenglow_enabled = match &ag_stake_state {
-        AlpenglowStakeState::Alpenglow { .. } => true,
-        AlpenglowStakeState::Calculating | AlpenglowStakeState::Tower => false,
+    enum Status {
+        Alpenglow,
+        Tower,
+        Migration,
+    }
+
+    let status = match &ag_stake_state {
+        AlpenglowStakeState::Alpenglow { .. } => Status::Alpenglow,
+        AlpenglowStakeState::Migrating { .. } => Status::Migration,
+        AlpenglowStakeState::Calculating | AlpenglowStakeState::Tower => Status::Tower,
     };
 
     // ensure to run to trigger (optional) inflation_point_calc_tracer
@@ -203,18 +210,25 @@ fn calculate_stake_rewards<'a>(
         return None;
     }
 
-    let rewards = if is_alpenglow_enabled {
-        // In alpenglow, `points` represents the actual reward that this `vote_state` earned.
-        points
-    } else {
-        // In tower, `points` still needs to be scaled by `point_value` to calculate this
-        // `vote_state` earned.
-        // The final unwrap is safe, as points_value.points is guaranteed to be non zero above.
-        points
-            .checked_mul(u128::from(point_value.rewards))
-            .expect("Rewards intermediate calculation should fit within u128")
-            .checked_div(point_value.points)
-            .unwrap()
+    let rewards = match status {
+        Status::Alpenglow => {
+            // In alpenglow, `points` represents the actual reward that this `vote_state` earned.
+            points
+        }
+        Status::Tower => {
+            // In tower, `points` still needs to be scaled by `point_value` to calculate this
+            // `vote_state` earned.
+            // The final unwrap is safe, as points_value.points is guaranteed to be non zero above.
+            points
+                .checked_mul(u128::from(point_value.rewards))
+                .expect("Rewards intermediate calculation should fit within u128")
+                .checked_div(point_value.points)
+                .unwrap()
+        }
+        Status::Migration => {
+            // XXX: this assumes that `calculate_stake_points_and_credits` has properly scaled the rewards
+            points
+        }
     };
 
     let rewards = u64::try_from(rewards).expect("Rewards should fit within u64");

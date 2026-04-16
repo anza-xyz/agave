@@ -485,12 +485,14 @@ impl Bank {
 
         let ag_stake_state = match ag_epoch_status {
             AlpenglowEpochStatus::Tower => AlpenglowStakeState::Tower,
-            AlpenglowEpochStatus::MigrationEpoch | AlpenglowEpochStatus::FullAlpenglow => {
-                AlpenglowStakeState::Alpenglow {
-                    vote_pubkey,
-                    epoch_stakes: &self.epoch_stakes,
-                }
-            }
+            AlpenglowEpochStatus::FullAlpenglow => AlpenglowStakeState::Alpenglow {
+                vote_pubkey,
+                epoch_stakes: &self.epoch_stakes,
+            },
+            AlpenglowEpochStatus::MigrationEpoch => AlpenglowStakeState::Migrating {
+                vote_pubkey,
+                epoch_stakes: &self.epoch_stakes,
+            },
         };
 
         match redeem_rewards(
