@@ -107,7 +107,6 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     common_handler_context: CommonHandlerContext,
     block_verification_handler_count: CountOrDefault,
-    banking_stage_handler_context: Mutex<Option<BankingStageHandlerContext>>,
     // weak_self could be elided by changing InstalledScheduler::take_scheduler()'s receiver to
     // Arc<Self> from &Self, because SchedulerPool is used as in the form of Arc<SchedulerPool>
     // almost always. But, this would cause wasted and noisy Arc::clone()'s at every call sites.
@@ -214,11 +213,6 @@ impl CommonHandlerContext {
     }
 }
 
-#[derive(derive_more::Debug)]
-struct BankingStageHandlerContext {
-    banking_stage_monitor: Box<dyn BankingStageMonitor>,
-}
-
 pub type DefaultSchedulerPool =
     SchedulerPool<PooledScheduler<DefaultTaskHandler>, DefaultTaskHandler>;
 
@@ -297,7 +291,6 @@ where
     ) -> Arc<Self> {
         let (scheduler_pool_sender, scheduler_pool_receiver) = crossbeam_channel::bounded(1);
 
-        let mut exiting = false;
         let cleaner_main_loop = move || {
             info!("cleaner_main_loop: started...");
 
@@ -334,11 +327,6 @@ where
                     drop(idle_inners);
                     idle_inner_count
                 };
-
-                let banking_stage_status = scheduler_pool.banking_stage_status();
-                if !exiting && matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
-                    exiting = true;
-                }
 
                 let trashed_inner_count = {
                     let Ok(mut trashed_inners) = scheduler_pool.trashed_scheduler_inners.lock()
@@ -407,7 +395,6 @@ where
                 prioritization_fee_cache,
             },
             block_verification_handler_count,
-            banking_stage_handler_context: Mutex::default(),
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
             max_usage_queue_count,
@@ -442,11 +429,7 @@ where
         let mut block_production_scheduler_inner =
             self.block_production_scheduler_inner.lock().unwrap();
         let is_block_production_scheduler = block_production_scheduler_inner.can_put(&scheduler);
-        let is_block_production_disabled = matches!(
-            self.banking_stage_status(),
-            Some(BankingStageStatus::Disabled)
-        );
-        let should_trash = if is_block_production_scheduler && is_block_production_disabled {
+        let should_trash = if is_block_production_scheduler {
             info!("Forcibly trashing scheduler due to disabled block production mode");
             true
         } else {
@@ -510,14 +493,6 @@ where
     #[cfg(feature = "dev-context-only-utils")]
     pub fn pooled_scheduler_count(&self) -> usize {
         self.scheduler_inners.lock().expect("not poisoned").len()
-    }
-
-    fn banking_stage_status(&self) -> Option<BankingStageStatus> {
-        self.banking_stage_handler_context
-            .lock()
-            .unwrap()
-            .as_mut()
-            .map(|context| context.banking_stage_monitor.status())
     }
 
     fn create_handler_context(&self) -> HandlerContext {
@@ -1905,17 +1880,6 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         };
         Self { inner, context }
     }
-}
-
-#[derive(Debug)]
-pub enum BankingStageStatus {
-    Disabled,
-    Exited,
-}
-
-pub trait BankingStageMonitor: Send + Debug {
-    fn status(&mut self) -> BankingStageStatus;
-    fn toggle_banking_packet_receiver(&mut self, _enable: bool) {}
 }
 
 impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
