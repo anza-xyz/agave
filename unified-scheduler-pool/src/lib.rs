@@ -1366,24 +1366,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         state_machine.has_unblocked_task()
     }
 
-    fn can_finish_session(
-        session_ending: bool,
-        mode: SchedulingMode,
-        state_machine: &SchedulingStateMachine,
-    ) -> bool {
-        match mode {
-            BlockVerification => {
-                // It's needed to wait to execute all active tasks without any short-circuiting,
-                // even if the session has been signalled for ending; otherwise verification
-                // outcome could differ.
-                session_ending && state_machine.has_no_active_task()
-            }
-            BlockProduction => {
-                // No need to wait to execute all active tasks unlike block verification. Just wind
-                // down all tasks which has already been passed down to handler threads.
-                session_ending && state_machine.has_no_running_task()
-            }
-        }
+    fn can_finish_session(session_ending: bool, state_machine: &SchedulingStateMachine) -> bool {
+        // It's needed to wait to execute all active tasks without any short-circuiting,
+        // even if the session has been signalled for ending; otherwise verification
+        // outcome could differ.
+        session_ending && state_machine.has_no_active_task()
     }
 
     /// Returns `true` if the caller should abort.
@@ -1787,11 +1774,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             },
                         };
 
-                        is_finished = Self::can_finish_session(
-                            session_ending,
-                            SchedulingMode::BlockVerification,
-                            &state_machine,
-                        );
+                        is_finished = Self::can_finish_session(session_ending, &state_machine);
                     }
                     assert!(mem::replace(&mut is_finished, false));
 
