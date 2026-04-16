@@ -4594,15 +4594,25 @@ impl ReplayStage {
         // Find the next slot that chains to the old slot
         let mut generate_new_bank_forks_read_lock =
             Measure::start("generate_new_bank_forks_read_lock");
-        let forks = bank_forks.read().unwrap();
-        generate_new_bank_forks_read_lock.stop();
+        let (frozen_banks, frozen_bank_slots, root, known_bank_slots) = {
+            let forks = bank_forks.read().unwrap();
+            generate_new_bank_forks_read_lock.stop();
 
-        let frozen_banks: HashMap<_, _> = forks.frozen_banks().collect();
-        let frozen_bank_slots: Vec<_> = frozen_banks
-            .keys()
-            .cloned()
-            .filter(|slot| *slot >= forks.root() && !progress.get(slot).unwrap().is_dead)
-            .collect();
+            let frozen_banks: HashMap<_, _> = forks.frozen_banks().collect();
+            let frozen_bank_slots: Vec<_> = frozen_banks
+                .keys()
+                .cloned()
+                .filter(|slot| *slot >= forks.root() && !progress.get(slot).unwrap().is_dead)
+                .collect();
+            let known_bank_slots = forks.banks().keys().copied().collect::<HashSet<_>>();
+
+            (
+                frozen_banks,
+                frozen_bank_slots,
+                forks.root(),
+                known_bank_slots,
+            )
+        };
 
         let mut generate_new_bank_forks_get_slots_since =
             Measure::start("generate_new_bank_forks_get_slots_since");
@@ -4624,19 +4634,14 @@ impl ReplayStage {
                 .get(&parent_slot)
                 .expect("missing parent in bank forks");
             for child_slot in children {
-                if forks.get(child_slot).is_some() || new_banks.contains_key(&child_slot) {
+                if known_bank_slots.contains(&child_slot) || new_banks.contains_key(&child_slot) {
                     trace!("child already active or frozen {child_slot}");
                     continue;
                 }
                 let leader = leader_schedule_cache
                     .slot_leader_at(child_slot, Some(parent_bank))
                     .unwrap();
-                info!(
-                    "new fork:{} parent:{} root:{}",
-                    child_slot,
-                    parent_slot,
-                    forks.root()
-                );
+                info!("new fork:{child_slot} parent:{parent_slot} root:{root}",);
                 // Migration period banks are VoM
                 let options = NewBankOptions {
                     vote_only_bank: migration_status.should_bank_be_vote_only(child_slot),
@@ -4647,7 +4652,7 @@ impl ReplayStage {
                 let child_bank = Self::new_bank_from_parent_with_notify(
                     parent_bank.clone(),
                     child_slot,
-                    forks.root(),
+                    root,
                     leader,
                     rpc_subscriptions,
                     slot_status_notifier,
@@ -4660,12 +4665,11 @@ impl ReplayStage {
                     empty,
                     vec![leader.id],
                     parent_bank.slot(),
-                    &forks,
+                    &bank_forks.read().unwrap(),
                 );
                 new_banks.insert(child_slot, child_bank);
             }
         }
-        drop(forks);
         generate_new_bank_forks_loop.stop();
 
         let mut generate_new_bank_forks_write_lock =
@@ -4675,6 +4679,9 @@ impl ReplayStage {
             let root = forks.root();
             for (slot, bank) in new_banks {
                 if slot < root {
+                    continue;
+                }
+                if forks.get(slot).is_some() {
                     continue;
                 }
                 if forks.get(bank.parent_slot()).is_none() {
