@@ -6,16 +6,21 @@ use {
 enum MemoryContextType {
     ABIv1(MemoryContext),
     Placeholder,
+    ABIv2,
 }
 
 pub struct MemoryContexts {
     contexts: Vec<MemoryContextType>,
+    abiv2_mappings: Box<MemoryMapping>,
 }
 
 impl MemoryContexts {
     pub(crate) fn new() -> Self {
         Self {
             contexts: Vec::new(),
+            abiv2_mappings: Box::new(
+                MemoryMapping::new(Vec::new(), &Config::default(), SBPFVersion::Reserved).unwrap(),
+            ),
         }
     }
 
@@ -36,6 +41,7 @@ impl MemoryContexts {
         match self.contexts.last().ok_or(InstructionError::CallDepth)? {
             MemoryContextType::ABIv1(ctx) => Ok(ctx),
             MemoryContextType::Placeholder => Err(InstructionError::ProgramEnvironmentSetupFailure),
+            MemoryContextType::ABIv2 => Err(InstructionError::InvalidAccountData),
         }
     }
 
@@ -49,6 +55,7 @@ impl MemoryContexts {
         match context {
             MemoryContextType::ABIv1(ctx) => Ok(ctx),
             MemoryContextType::Placeholder => Err(InstructionError::ProgramEnvironmentSetupFailure),
+            MemoryContextType::ABIv2 => Err(InstructionError::ProgramEnvironmentSetupFailure),
         }
     }
 
@@ -58,6 +65,7 @@ impl MemoryContexts {
             MemoryContextType::Placeholder => {
                 return Err(InstructionError::ProgramEnvironmentSetupFailure);
             }
+            MemoryContextType::ABIv2 => &self.abiv2_mappings,
         };
 
         Ok(mapping)
@@ -73,6 +81,7 @@ impl MemoryContexts {
             MemoryContextType::Placeholder => {
                 return Err(InstructionError::ProgramEnvironmentSetupFailure);
             }
+            MemoryContextType::ABIv2 => &mut self.abiv2_mappings,
         };
 
         Ok(mapping)
