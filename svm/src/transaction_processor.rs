@@ -48,6 +48,7 @@ use {
         program_cache_entry::ProgramCacheEntry,
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
+        threaded_compilation::CompilationMode,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -864,12 +865,25 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 .collect();
 
         let mut count_hits_and_misses = true;
-        let compilation_worker = self
-            .global_program_cache
-            .read()
-            .unwrap()
-            .compilation_worker
-            .clone();
+
+        let compilation_mode = CompilationMode::get();
+        let extracted_callback: &dyn Fn(&_, &_) = if let CompilationMode::ThreadedJit =
+            compilation_mode
+        {
+            let compilation_worker = self
+                .global_program_cache
+                .read()
+                .unwrap()
+                .compilation_worker
+                .clone();
+            let jit_timer = Arc::clone(&execute_timings.details.create_executor_jit_compile_us);
+            &move |_, program| {
+                compilation_worker.request_compilation(Arc::clone(program), Arc::clone(&jit_timer));
+            }
+        } else {
+            &|_, _| {}
+        };
+
         loop {
             // Lock the global cache.
             let global_program_cache = self.global_program_cache.read().unwrap();
@@ -880,12 +894,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 program_runtime_environment_for_execution,
                 increment_usage_counter,
                 count_hits_and_misses,
-                |_key, program| {
-                    compilation_worker.request_compilation(
-                        Arc::clone(program),
-                        Arc::clone(&execute_timings.details.create_executor_jit_compile_us),
-                    );
-                },
+                extracted_callback,
             );
 
             count_hits_and_misses = false;
@@ -895,7 +904,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             drop(global_program_cache);
 
             let program_to_store = program_to_load.map(|key| {
-                // Load, verify and potentially compile one program.
+                // Load and verify one program.
                 let (program, last_modification_slot) = load_program_with_pubkey(
                     account_loader,
                     program_runtime_environment_for_execution,
@@ -904,6 +913,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     execute_timings,
                 )
                 .expect("called load_program_with_pubkey() with nonexistent account");
+                match compilation_mode {
+                    CompilationMode::Never => {}
+                    CompilationMode::ThreadedJit => extracted_callback(&key, &program),
+                    CompilationMode::AlwaysJit => {
+                        let compile_duration = program.try_compile_loaded();
+                        execute_timings
+                            .details
+                            .create_executor_jit_compile_us
+                            .fetch_add(compile_duration, Ordering::Relaxed);
+                    }
+                }
                 (key, program, last_modification_slot)
             });
 

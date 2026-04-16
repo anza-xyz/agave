@@ -1,4 +1,4 @@
-use crate::program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType};
+use crate::program_cache_entry::ProgramCacheEntry;
 use std::sync::{Arc, atomic::AtomicU64};
 
 // There are ~600ms per slot. Making an assumption that each compile takes on average 1ms, that
@@ -26,32 +26,10 @@ impl CompilationWorker {
             .name("solCompile".into())
             .spawn(move || {
                 for request in compile_recv {
-                    let executable = match &request.entry.program {
-                        ProgramCacheEntryType::FailedVerification(_)
-                        | ProgramCacheEntryType::Closed
-                        | ProgramCacheEntryType::DelayVisibility
-                        | ProgramCacheEntryType::Unloaded(_)
-                        | ProgramCacheEntryType::Builtin(_) => continue,
-                        ProgramCacheEntryType::Loaded(executable) => executable,
-                    };
-                    if executable.get_compiled_program().is_some() {
-                        continue;
-                    }
-
-                    #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
-                    {
-                        use solana_svm_measure::measure::Measure;
-                        use std::sync::atomic::Ordering;
-
-                        let jit_compile_time = Measure::start("jit_compile_time");
-                        if let Err(e) = executable.jit_compile() {
-                            log::warn!("compiling failed even though program is valid: {e:?}");
-                        }
-                        let jit_compile_time = jit_compile_time.end_as_us();
-                        request
-                            .compile_time_us
-                            .fetch_add(jit_compile_time, Ordering::Relaxed);
-                    }
+                    request.compile_time_us.fetch_add(
+                        request.entry.try_compile_loaded(),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
                 }
             })
             .expect("thread spawns should succeed");
@@ -69,5 +47,30 @@ impl CompilationWorker {
             entry,
             compile_time_us,
         });
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum CompilationMode {
+    #[default]
+    ThreadedJit,
+    AlwaysJit,
+    Never,
+}
+
+impl CompilationMode {
+    pub fn get() -> Self {
+        static COMPILE_MODE: std::sync::LazyLock<CompilationMode> =
+            std::sync::LazyLock::new(|| {
+                std::env::var("AGAVE_COMPILE_PROGRAMS")
+                    .map(|v| match &*v {
+                        "always" => CompilationMode::AlwaysJit,
+                        "never" => CompilationMode::Never,
+                        "threaded" => CompilationMode::ThreadedJit,
+                        _ => CompilationMode::ThreadedJit,
+                    })
+                    .unwrap_or_default()
+            });
+        *COMPILE_MODE
     }
 }
