@@ -785,7 +785,7 @@ impl CrdsStats {
 mod tests {
     use {
         super::*,
-        crate::crds_data::{AccountsHashes, new_rand_timestamp},
+        crate::crds_data::{SnapshotHashes, new_rand_timestamp},
         rand::{Rng, rng},
         rayon::ThreadPoolBuilder,
         solana_keypair::Keypair,
@@ -1320,8 +1320,12 @@ mod tests {
         );
         assert_eq!(crds.get_shred_version(&pubkey), Some(8));
         // Add other crds values with the same pubkey.
-        let val = AccountsHashes::new_rand(&mut rng, Some(pubkey));
-        let val = CrdsData::AccountsHashes(val);
+        let val = CrdsData::SnapshotHashes(SnapshotHashes {
+            from: pubkey,
+            full: (0, solana_hash::Hash::default()),
+            incremental: vec![],
+            wallclock: 0,
+        });
         let val = CrdsValue::new_unsigned(val);
         assert_eq!(
             crds.insert(val, timestamp(), GossipRoute::LocalMessage),
@@ -1333,7 +1337,7 @@ mod tests {
         assert_eq!(crds.get::<&ContactInfo>(pubkey), None);
         assert_eq!(crds.get_shred_version(&pubkey), None);
         // Remove the remaining entry with the same pubkey.
-        crds.remove(&CrdsValueLabel::AccountsHashes(pubkey), timestamp());
+        crds.remove(&CrdsValueLabel::SnapshotHashes(pubkey), timestamp());
         assert_eq!(crds.get_records(&pubkey).count(), 0);
     }
 
