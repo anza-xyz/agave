@@ -176,8 +176,6 @@ pub struct HandlerContext {
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_vote_sender: Option<ReplayVoteSender>,
     prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
-    #[debug("{banking_packet_handler:p}")]
-    banking_packet_handler: Box<dyn BankingPacketHandler>,
     banking_stage_helper: Option<Arc<BankingStageHelper>>,
 }
 
@@ -194,16 +192,7 @@ impl HandlerContext {
     }
 
     fn clone_for_scheduler_thread(&self) -> Self {
-        let mut context = self.clone();
-        if self.banking_stage_helper.is_some() {
-            context.disable_banking_packet_handler();
-        }
-        context
-    }
-
-    fn disable_banking_packet_handler(&mut self) {
-        self.banking_packet_handler =
-            Box::new(|_, _| unreachable!("paired with never() receiver, this cannot be called"));
+        self.clone()
     }
 }
 
@@ -219,7 +208,6 @@ impl CommonHandlerContext {
     fn into_handler_context(
         self,
         thread_count: usize,
-        banking_packet_handler: Box<dyn BankingPacketHandler>,
         banking_stage_helper: Option<Arc<BankingStageHelper>>,
     ) -> HandlerContext {
         let Self {
@@ -235,7 +223,6 @@ impl CommonHandlerContext {
             transaction_status_sender,
             replay_vote_sender,
             prioritization_fee_cache,
-            banking_packet_handler,
             banking_stage_helper,
         }
     }
@@ -641,17 +628,13 @@ where
 
     fn create_handler_context(&self) -> HandlerContext {
         let thread_count = self.block_verification_handler_count;
-        let banking_packet_handler: Box<dyn BankingPacketHandler> =
-            Box::new(|_, _| unreachable!("paired with never() receiver, this cannot be called"));
         let banking_stage_helper = None;
 
         let thread_count = thread_count.unwrap_or(Self::default_handler_count());
         assert!(thread_count >= 1);
-        self.common_handler_context.clone().into_handler_context(
-            thread_count,
-            banking_packet_handler,
-            banking_stage_helper,
-        )
+        self.common_handler_context
+            .clone()
+            .into_handler_context(thread_count, banking_stage_helper)
     }
 
     pub fn default_handler_count() -> usize {
@@ -3707,7 +3690,6 @@ mod tests {
             transaction_status_sender: None,
             replay_vote_sender: None,
             prioritization_fee_cache: None,
-            banking_packet_handler: Box::new(|_, _| {}),
             banking_stage_helper: None,
         };
 
