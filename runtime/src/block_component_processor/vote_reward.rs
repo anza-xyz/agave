@@ -252,8 +252,10 @@ fn pay_reward_update_vote_state(
 ///
 /// TODO: this is using VoteStateV4 explicitly.  When we upstream, we will use VoteStateHandle API.
 fn increment_credits(vote_state: &mut VoteStateV4, new_epoch: Epoch, new_credits: u64) {
+    let marker_elem = (Epoch::MAX, 0, 0);
     match vote_state.epoch_credits.last_mut() {
         None => {
+            vote_state.epoch_credits.push(marker_elem);
             vote_state.epoch_credits.push((new_epoch, new_credits, 0));
         }
         Some((epoch, final_credits, initial_credits)) => {
