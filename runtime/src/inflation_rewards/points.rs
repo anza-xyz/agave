@@ -25,7 +25,8 @@ pub struct PointValue {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct CalculatedStakePoints {
-    pub(crate) points: u128,
+    pub(crate) tower_points: u128,
+    pub(crate) ag_points: u128,
     pub(crate) new_credits_observed: u64,
     pub(crate) force_credits_update_with_skipped_reward: bool,
 }
@@ -129,7 +130,7 @@ fn calculate_stake_points(
         new_rate_activation_epoch,
         AlpenglowStakeState::Calculating,
     )
-    .points
+    .tower_points
 }
 
 /// Alpenglow related state needed in `calculate_stake_points_and_credits`.
@@ -304,7 +305,7 @@ fn migrating_epoch_credits_iter(
     new_rate_activation_epoch: Option<Epoch>,
     vote_pubkey: Pubkey,
     epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
-) -> (u128, u64) {
+) -> (u128, u128, u64) {
     let tower = epoch_credits_iter
         .by_ref()
         .take_while(|(epoch, _, _)| *epoch != Epoch::MAX);
@@ -327,9 +328,7 @@ fn migrating_epoch_credits_iter(
     );
 
     let new_credits_observed = tower_new_credits_observed.max(ag_new_credits_observed);
-    // XXX
-    let points = tower_points + ag_points;
-    (points, new_credits_observed)
+    (tower_points, ag_points, new_credits_observed)
 }
 
 /// for a given stake and vote_state, calculate how many
@@ -370,7 +369,8 @@ pub(crate) fn calculate_stake_points_and_credits(
 
             // hint with true to indicate some exceptional credits handling is needed
             return CalculatedStakePoints {
-                points: 0,
+                tower_points: 0,
+                ag_points: 0,
                 new_credits_observed: credits_in_vote,
                 force_credits_update_with_skipped_reward: true,
             };
@@ -381,7 +381,8 @@ pub(crate) fn calculate_stake_points_and_credits(
             }
             // don't hint caller and return current value if credits remain unchanged (= delinquent)
             return CalculatedStakePoints {
-                points: 0,
+                tower_points: 0,
+                ag_points: 0,
                 new_credits_observed: credits_in_stake,
                 force_credits_update_with_skipped_reward: false,
             };
@@ -389,14 +390,17 @@ pub(crate) fn calculate_stake_points_and_credits(
         Ordering::Greater => {}
     }
 
-    let (points, new_credits_observed) = match ag_stake_state {
-        AlpenglowStakeState::Calculating | AlpenglowStakeState::Tower => tower_epoch_credits_iter(
-            stake,
-            vote_state.epoch_credits_iter,
-            stake_history,
-            inflation_point_calc_tracer,
-            new_rate_activation_epoch,
-        ),
+    let (points, ag_points, new_credits_observed) = match ag_stake_state {
+        AlpenglowStakeState::Calculating | AlpenglowStakeState::Tower => {
+            let (points, credits) = tower_epoch_credits_iter(
+                stake,
+                vote_state.epoch_credits_iter,
+                stake_history,
+                inflation_point_calc_tracer,
+                new_rate_activation_epoch,
+            );
+            (points, 0, credits)
+        }
         AlpenglowStakeState::Migrating {
             vote_pubkey,
             epoch_stakes,
@@ -412,18 +416,22 @@ pub(crate) fn calculate_stake_points_and_credits(
         AlpenglowStakeState::Alpenglow {
             vote_pubkey,
             epoch_stakes,
-        } => ag_epoch_credits_iter(
-            stake,
-            vote_state.epoch_credits_iter,
-            stake_history,
-            inflation_point_calc_tracer,
-            new_rate_activation_epoch,
-            vote_pubkey,
-            epoch_stakes,
-        ),
+        } => {
+            let (ag_points, credits) = ag_epoch_credits_iter(
+                stake,
+                vote_state.epoch_credits_iter,
+                stake_history,
+                inflation_point_calc_tracer,
+                new_rate_activation_epoch,
+                vote_pubkey,
+                epoch_stakes,
+            );
+            (0, ag_points, credits)
+        }
     };
     CalculatedStakePoints {
-        points,
+        tower_points: points,
+        ag_points,
         new_credits_observed,
         force_credits_update_with_skipped_reward: false,
     }
