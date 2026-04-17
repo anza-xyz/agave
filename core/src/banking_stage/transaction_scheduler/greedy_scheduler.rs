@@ -13,7 +13,6 @@ use {
     },
     crate::banking_stage::{
         consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
-        read_write_account_set::ReadWriteAccountSet,
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
     agave_scheduling_utils::thread_aware_account_locks::{
@@ -47,7 +46,6 @@ impl Default for GreedySchedulerConfig {
 /// scheduled, up to the limits.
 pub struct GreedyScheduler<Tx: TransactionWithMeta> {
     common: SchedulingCommon<Tx>,
-    working_account_set: ReadWriteAccountSet,
     unschedulables: Vec<TransactionPriorityId>,
     config: GreedySchedulerConfig,
 }
@@ -60,7 +58,6 @@ impl<Tx: TransactionWithMeta> GreedyScheduler<Tx> {
         config: GreedySchedulerConfig,
     ) -> Self {
         Self {
-            working_account_set: ReadWriteAccountSet::default(),
             unschedulables: Vec::with_capacity(config.max_scanned_transactions_per_scheduling_pass),
             common: SchedulingCommon::new(
                 consume_work_senders,
@@ -185,7 +182,6 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                     if self.common.batches.transactions()[thread_id].len()
                         >= self.config.target_transactions_per_batch
                     {
-                        self.working_account_set.clear();
                         num_sent += self.common.send_batches()?;
                     }
 
@@ -204,7 +200,6 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
             }
         }
 
-        self.working_account_set.clear();
         num_sent += self.common.send_batches()?;
         let Saturating(num_scheduled) = num_scheduled;
         assert_eq!(

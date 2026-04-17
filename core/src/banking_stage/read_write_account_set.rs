@@ -41,12 +41,6 @@ impl ReadWriteAccountSet {
             })
     }
 
-    /// Clears the read and write sets
-    pub fn clear(&mut self) {
-        self.read_set.clear();
-        self.write_set.clear();
-    }
-
     /// Check if an account can be read-locked
     fn can_read(&self, pubkey: &Pubkey) -> bool {
         !self.write_set.contains(pubkey)
