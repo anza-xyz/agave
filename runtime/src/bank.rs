@@ -288,7 +288,7 @@ pub(crate) enum AlpenglowEpochStatus {
     /// This is a full tower epoch
     Tower,
     /// The epoch started in tower and then switched to alpenglow
-    MigrationEpoch,
+    MigrationEpoch { epoch_inflation_rewards: u64 },
     /// This is a full alpenglow epoch
     FullAlpenglow,
 }

@@ -489,9 +489,12 @@ impl Bank {
                 vote_pubkey,
                 epoch_stakes: &self.epoch_stakes,
             },
-            AlpenglowEpochStatus::MigrationEpoch => AlpenglowStakeState::Migrating {
+            AlpenglowEpochStatus::MigrationEpoch {
+                epoch_inflation_rewards,
+            } => AlpenglowStakeState::Migrating {
                 vote_pubkey,
                 epoch_stakes: &self.epoch_stakes,
+                epoch_inflation_rewards: *epoch_inflation_rewards,
             },
         };
 
@@ -547,7 +550,15 @@ impl Bank {
             cert_slot <= self.epoch_schedule.get_last_slot_in_epoch(epoch),
         ) {
             (true, _) => AlpenglowEpochStatus::FullAlpenglow,
-            (false, true) => AlpenglowEpochStatus::MigrationEpoch,
+            (false, true) => {
+                // XXX
+                let capitalization = 0;
+                let epoch_inflation_rewards =
+                    self.calculate_epoch_inflation_rewards(capitalization, epoch);
+                AlpenglowEpochStatus::MigrationEpoch {
+                    epoch_inflation_rewards,
+                }
+            }
             (false, false) => AlpenglowEpochStatus::Tower,
         }
     }
