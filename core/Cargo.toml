@@ -229,9 +229,5 @@ harness = false
 name = "shredder"
 harness = false
 
-[[bench]]
-name = "receive_and_buffer"
-harness = false
-
 [lints]
 workspace = true
