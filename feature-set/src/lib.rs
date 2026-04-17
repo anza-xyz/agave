@@ -51,7 +51,6 @@ pub struct FeatureSnapshot {
     pub enable_sbpf_v3_deployment_and_execution: bool,
     pub deplete_cu_meter_on_vm_failure: bool,
     pub fix_alt_bn128_multiplication_input_length: bool,
-    pub relax_intrabatch_account_locks: bool,
     pub formalize_loaded_transaction_data_size: bool,
     pub alpenglow: bool,
     pub disable_zk_elgamal_proof_program: bool,
@@ -152,7 +151,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             fix_alt_bn128_multiplication_input_length: is_active(
                 &fix_alt_bn128_multiplication_input_length::ID,
             ),
-            relax_intrabatch_account_locks: is_active(&relax_intrabatch_account_locks::ID),
             formalize_loaded_transaction_data_size: is_active(
                 &formalize_loaded_transaction_data_size::ID,
             ),
