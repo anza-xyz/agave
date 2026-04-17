@@ -27,7 +27,7 @@ pub struct StandardBroadcastRun {
     parent: Slot,
     parent_block_id: Hash,
     chained_merkle_root: Hash,
-    carryover_entry: Option<WorkingBankEntry>,
+    carryover_entry: Option<WorkingBankEntryOrMarker>,
     double_merkle_leaves: Vec<Hash>,
     next_shred_index: u32,
     next_code_index: u32,
@@ -262,7 +262,7 @@ impl StandardBroadcastRun {
         process_stats: &mut ProcessShredsStats,
     ) -> Result<()> {
         let ReceiveResults {
-            entries,
+            component,
             bank,
             last_tick_height,
         } = receive_results;
@@ -327,12 +327,10 @@ impl StandardBroadcastRun {
             vec![]
         };
 
-        let entry_component =
-            BlockComponent::new_entry_batch(entries).expect("Received 0 length entry batch");
-        let entry_shreds = self
+        let shreds = self
             .component_to_shreds(
                 keypair,
-                &entry_component,
+                &component,
                 reference_tick as u8,
                 is_last_in_slot,
                 process_stats,
@@ -340,10 +338,10 @@ impl StandardBroadcastRun {
             .unwrap();
 
         let shreds = if maybe_send_header {
-            header_shreds.extend(entry_shreds);
+            header_shreds.extend(shreds);
             header_shreds
         } else {
-            entry_shreds
+            shreds
         };
         // Insert the first data shred synchronously so that blockstore stores
         // that the leader started this block. This must be done before the
@@ -539,12 +537,12 @@ impl BroadcastRun for StandardBroadcastRun {
         &mut self,
         keypair: &Keypair,
         blockstore: &Blockstore,
-        receiver: &Receiver<WorkingBankEntry>,
+        receiver: &Receiver<WorkingBankEntryOrMarker>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
         let mut process_stats = ProcessShredsStats::default();
-        let receive_results = broadcast_utils::recv_slot_entries(
+        let receive_results = broadcast_utils::recv_slot_components(
             receiver,
             &mut self.carryover_entry,
             &mut process_stats,
@@ -694,7 +692,7 @@ mod test {
         // Insert 1 less than the number of ticks needed to finish the slot
         let ticks0 = create_ticks(genesis_config.ticks_per_slot - 1, 0, genesis_config.hash());
         let receive_results = ReceiveResults {
-            entries: ticks0.clone(),
+            component: BlockComponent::EntryBatch(ticks0.clone()),
             bank: bank1.clone(),
             last_tick_height: (ticks0.len() - 1) as u64,
         };
@@ -774,7 +772,7 @@ mod test {
             genesis_config.hash(),
         );
         let receive_results = ReceiveResults {
-            entries: ticks1.clone(),
+            component: BlockComponent::EntryBatch(ticks1.clone()),
             bank: bank2,
             last_tick_height: (ticks1.len() - 1) as u64,
         };
@@ -851,7 +849,7 @@ mod test {
             let ticks = create_ticks(num_ticks, 0, genesis_config.hash());
             last_tick_height += (ticks.len() - 1) as u64;
             let receive_results = ReceiveResults {
-                entries: ticks,
+                component: BlockComponent::EntryBatch(ticks),
                 bank: bank.clone(),
                 last_tick_height,
             };
@@ -900,7 +898,7 @@ mod test {
         // Insert complete slot of ticks needed to finish the slot
         let ticks = create_ticks(genesis_config.ticks_per_slot, 0, genesis_config.hash());
         let receive_results = ReceiveResults {
-            entries: ticks.clone(),
+            component: BlockComponent::EntryBatch(ticks.clone()),
             bank: bank0,
             last_tick_height: ticks.len() as u64,
         };

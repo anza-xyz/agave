@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     super::{StakeAccount, Stakes},
     crate::stake_history::StakeHistory,
@@ -70,6 +72,7 @@ impl Serialize for SerdeStakesToStakeFormat {
     }
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn serialize_stake_accounts_to_delegation_format<S: Serializer>(
     stakes: &Stakes<StakeAccount>,
     serializer: S,
@@ -180,6 +183,7 @@ impl Serialize for SerdeStakeAccountMapToStakeFormat {
 /// deserialization without creating imbl::HashMap (such conversion is deferred until
 /// data is actually needed).
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct DeserializableStakes<T> {
     pub vote_accounts: VoteAccounts,
     pub stake_delegations: Vec<(Pubkey, T)>,

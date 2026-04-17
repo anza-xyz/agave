@@ -1447,8 +1447,10 @@ impl Bank {
                 let leader_schedule_epoch = new.epoch_schedule().get_leader_schedule_epoch(slot);
                 new.update_epoch_stakes(leader_schedule_epoch);
             }
-            new.distribute_partitioned_epoch_rewards();
         });
+
+        let (_, distribute_rewards_time_us) =
+            measure_us!(new.distribute_partitioned_epoch_rewards());
 
         let (_, cache_preparation_time_us) =
             measure_us!(new.prepare_program_cache_for_upcoming_feature_set());
@@ -1507,6 +1509,7 @@ impl Bank {
                 feature_set_time_us,
                 ancestors_time_us,
                 update_epoch_time_us,
+                distribute_rewards_time_us,
                 cache_preparation_time_us,
                 update_sysvars_time_us,
                 fill_sysvar_cache_time_us,
@@ -3311,16 +3314,13 @@ impl Bank {
         tx_results: impl Iterator<Item = Result<()>>,
     ) -> Vec<Result<()>> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let relax_intrabatch_account_locks =
-            self.feature_set.snapshot().relax_intrabatch_account_locks;
 
-        // with simd83 enabled, we must fail transactions that duplicate a prior message hash
-        // previously, conflicting account locks would fail such transactions as a side effect
+        // we must fail transactions that duplicate a prior message hash
         let mut batch_message_hashes = AHashSet::with_capacity(txs.len());
         let tx_results = tx_results
             .enumerate()
             .map(|(i, tx_result)| match tx_result {
-                Ok(()) if relax_intrabatch_account_locks => {
+                Ok(()) => {
                     // `HashSet::insert()` returns `true` when the value does *not* already exist
                     if batch_message_hashes.insert(txs[i].message_hash()) {
                         Ok(())
@@ -3328,16 +3328,12 @@ impl Bank {
                         Err(TransactionError::AlreadyProcessed)
                     }
                 }
-                Ok(()) => Ok(()),
                 Err(e) => Err(e),
             });
 
-        self.rc.accounts.lock_accounts(
-            txs.iter(),
-            tx_results,
-            tx_account_lock_limit,
-            relax_intrabatch_account_locks,
-        )
+        self.rc
+            .accounts
+            .lock_accounts(txs.iter(), tx_results, tx_account_lock_limit)
     }
 
     /// Prepare a locked transaction batch from a list of sanitized transactions.

@@ -51,7 +51,6 @@ pub struct FeatureSnapshot {
     pub enable_sbpf_v3_deployment_and_execution: bool,
     pub deplete_cu_meter_on_vm_failure: bool,
     pub fix_alt_bn128_multiplication_input_length: bool,
-    pub relax_intrabatch_account_locks: bool,
     pub formalize_loaded_transaction_data_size: bool,
     pub alpenglow: bool,
     pub disable_zk_elgamal_proof_program: bool,
@@ -85,6 +84,7 @@ pub struct FeatureSnapshot {
     pub direct_account_pointers_in_program_input: bool,
     pub upgrade_bpf_stake_program_to_v5: bool,
     pub loader_v3_minimum_extend_program_size: bool,
+    pub enable_sha512_syscall: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -152,7 +152,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             fix_alt_bn128_multiplication_input_length: is_active(
                 &fix_alt_bn128_multiplication_input_length::ID,
             ),
-            relax_intrabatch_account_locks: is_active(&relax_intrabatch_account_locks::ID),
             formalize_loaded_transaction_data_size: is_active(
                 &formalize_loaded_transaction_data_size::ID,
             ),
@@ -198,6 +197,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             loader_v3_minimum_extend_program_size: is_active(
                 &loader_v3_minimum_extend_program_size::ID,
             ),
+            enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
         }
     }
 }
@@ -361,6 +361,7 @@ impl FeatureSet {
             direct_account_pointers_in_program_input: snapshot
                 .direct_account_pointers_in_program_input,
             loader_v3_minimum_extend_program_size: snapshot.loader_v3_minimum_extend_program_size,
+            enable_sha512_syscall: snapshot.enable_sha512_syscall,
         }
     }
 }
@@ -1518,6 +1519,10 @@ pub mod upgrade_bpf_stake_program_to_v5 {
     }
 }
 
+pub mod enable_sha512_syscall {
+    solana_pubkey::declare_id!("s512oDwgx8hjMnaQjXfqqrZroVj4HvC6TkN3iSSWXCh");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2562,6 +2567,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             loader_v3_minimum_extend_program_size::id(),
             "SIMD-0431: Loader V3 minimum extend program size",
         ),
+        (enable_sha512_syscall::id(), "SIMD-0512: SHA512 Syscall"),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
     ]

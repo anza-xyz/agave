@@ -13,8 +13,9 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
         create_vm,
-        invoke_context::{BpfAllocator, InvokeContext, MemoryContext},
+        invoke_context::{BpfAllocator, InvokeContext},
         loaded_programs::ProgramRuntimeEnvironment,
+        memory_context::MemoryContext,
         program_cache_entry::{
             DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryType,
         },

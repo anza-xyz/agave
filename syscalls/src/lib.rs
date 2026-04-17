@@ -17,6 +17,7 @@ use {
     solana_blake3_hasher as blake3,
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
+    solana_hash_512::Hash512,
     solana_instruction::{AccountMeta, ProcessedSiblingInstruction, error::InstructionError},
     solana_keccak_hasher as keccak, solana_poseidon as poseidon,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, SUCCESS},
@@ -39,6 +40,7 @@ use {
         SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH, Secp256k1RecoverError,
     },
     solana_sha256_hasher::Hasher,
+    solana_sha512_hasher as sha512,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::{ic_logger_msg, ic_msg},
     solana_svm_type_overrides::sync::Arc,
@@ -173,6 +175,7 @@ trait HasherImpl {
 struct Sha256Hasher(Hasher);
 struct Blake3Hasher(blake3::Hasher);
 struct Keccak256Hasher(keccak::Hasher);
+struct Sha512Hasher(sha512::Hasher);
 
 impl HasherImpl for Sha256Hasher {
     const NAME: &'static str = "Sha256";
@@ -255,6 +258,33 @@ impl HasherImpl for Keccak256Hasher {
     }
 }
 
+impl HasherImpl for Sha512Hasher {
+    const NAME: &'static str = "Sha512";
+    type Output = Hash512;
+
+    fn create_hasher() -> Self {
+        Sha512Hasher(sha512::Hasher::default())
+    }
+
+    fn hash(&mut self, val: &[u8]) {
+        self.0.hash(val);
+    }
+
+    fn result(self) -> Self::Output {
+        self.0.result()
+    }
+
+    fn get_base_cost(compute_cost: &SVMTransactionExecutionCost) -> u64 {
+        compute_cost.sha256_base_cost
+    }
+    fn get_byte_cost(compute_cost: &SVMTransactionExecutionCost) -> u64 {
+        compute_cost.sha256_byte_cost
+    }
+    fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
+        compute_budget.sha256_max_slices
+    }
+}
+
 // NOTE: These constants are temporarily defined here and will be
 // moved to a dedicated crate in the future.
 mod bls12_381_curve_id {
@@ -296,6 +326,7 @@ pub fn create_program_runtime_environment(
     let blake3_syscall_enabled = feature_set.blake3_syscall_enabled;
     let curve25519_syscall_enabled = feature_set.curve25519_syscall_enabled;
     let enable_bls12_381_syscall = feature_set.enable_bls12_381_syscall;
+    let enable_sha512_syscall = feature_set.enable_sha512_syscall;
     let disable_fees_sysvar = feature_set.disable_fees_sysvar;
     let last_restart_slot_syscall_enabled = feature_set.last_restart_slot_sysvar;
     let enable_poseidon_syscall = feature_set.enable_poseidon_syscall;
@@ -375,6 +406,14 @@ pub fn create_program_runtime_environment(
         blake3_syscall_enabled,
         "sol_blake3",
         SyscallHash::<Blake3Hasher>
+    )?;
+
+    // SHA512
+    register_feature_gated_function!(
+        result,
+        enable_sha512_syscall,
+        "sol_sha512",
+        SyscallHash::<Sha512Hasher>
     )?;
 
     // Elliptic Curve Operations
@@ -2694,8 +2733,9 @@ mod tests {
         solana_program::program::check_type_assumptions,
         solana_program_runtime::{
             execution_budget::MAX_HEAP_FRAME_BYTES,
-            invoke_context::{BpfAllocator, InvokeContext, MemoryContext},
+            invoke_context::{BpfAllocator, InvokeContext},
             memory::address_is_aligned,
+            memory_context::MemoryContext,
             with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
         },
         solana_sbpf::{
@@ -7795,5 +7835,92 @@ mod tests {
                     .is_none()
             );
         }
+    }
+
+    #[test]
+    fn test_syscall_sha512() {
+        let config = Config::default();
+        prepare_mockup!(invoke_context, program_id, bpf_loader_deprecated::id());
+
+        let bytes1 = "Gaggablaghblagh!";
+        let bytes2 = "flurbos";
+
+        let mock_slice1 = MockSlice {
+            vm_addr: 0x300000000,
+            len: bytes1.len(),
+        };
+        let mock_slice2 = MockSlice {
+            vm_addr: 0x400000000,
+            len: bytes2.len(),
+        };
+        let bytes_to_hash = [mock_slice1, mock_slice2];
+        let mut hash_result = [0; solana_hash_512::HASH_BYTES];
+        let ro_len = bytes_to_hash.len() as u64;
+        let ro_va = 0x100000000;
+        let rw_va = 0x200000000;
+        let memory_mapping = MemoryMapping::new(
+            vec![
+                MemoryRegion::new_readonly(bytes_of_slice(&bytes_to_hash), ro_va),
+                MemoryRegion::new_writable(bytes_of_slice_mut(&mut hash_result), rw_va),
+                MemoryRegion::new_readonly(bytes1.as_bytes(), bytes_to_hash[0].vm_addr),
+                MemoryRegion::new_readonly(bytes2.as_bytes(), bytes_to_hash[1].vm_addr),
+            ],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping(memory_mapping);
+        invoke_context.compute_meter.mock_set_remaining(
+            (invoke_context.get_execution_cost().sha256_base_cost
+                + invoke_context.get_execution_cost().mem_op_base_cost.max(
+                    invoke_context
+                        .get_execution_cost()
+                        .sha256_byte_cost
+                        .saturating_mul((bytes1.len() + bytes2.len()) as u64 / 2),
+                ))
+                * 4,
+        );
+
+        let result =
+            SyscallHash::<Sha512Hasher>::rust(&mut invoke_context, ro_va, ro_len, rw_va, 0, 0);
+        result.unwrap();
+
+        let hash_local = sha512::hashv(&[bytes1.as_ref(), bytes2.as_ref()]).to_bytes();
+        assert_eq!(hash_result, hash_local);
+        let result = SyscallHash::<Sha512Hasher>::rust(
+            &mut invoke_context,
+            ro_va - 1, // AccessViolation
+            ro_len,
+            rw_va,
+            0,
+            0,
+        );
+        assert_access_violation!(result, ro_va - 1, 32);
+        let result = SyscallHash::<Sha512Hasher>::rust(
+            &mut invoke_context,
+            ro_va,
+            ro_len + 1, // AccessViolation
+            rw_va,
+            0,
+            0,
+        );
+        assert_access_violation!(result, ro_va, 48);
+        let result = SyscallHash::<Sha512Hasher>::rust(
+            &mut invoke_context,
+            ro_va,
+            ro_len,
+            rw_va - 1, // AccessViolation
+            0,
+            0,
+        );
+        assert_access_violation!(result, rw_va - 1, solana_hash_512::HASH_BYTES as u64);
+        let result =
+            SyscallHash::<Sha512Hasher>::rust(&mut invoke_context, ro_va, ro_len, rw_va, 0, 0);
+        assert_matches!(
+            result,
+            Result::Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ComputationalBudgetExceeded
+        );
     }
 }

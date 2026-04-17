@@ -215,9 +215,10 @@ impl EventHandler {
         let should_set_timeouts = vctx.vote_history.add_parent_ready(slot, parent_block);
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
         if should_set_timeouts {
+            let delta_block = Duration::from_nanos_u128(vctx.sharable_banks.root().ns_per_slot);
             timer_manager
                 .write()
-                .set_timeouts(slot, local_context.standstill_slot);
+                .set_timeouts(slot, local_context.standstill_slot, delta_block);
             local_context.stats.timeout_set = local_context.stats.timeout_set.saturating_add(1);
         }
 

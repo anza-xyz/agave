@@ -5,8 +5,9 @@ use qualifier_attr::qualifiers;
 use {
     crate::{
         execution_budget::MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268,
-        invoke_context::{BpfAllocator, InvokeContext, MemoryContext, SerializedAccountMetadata},
+        invoke_context::{BpfAllocator, InvokeContext},
         mem_pool::VmMemoryPool,
+        memory_context::{MemoryContext, SerializedAccountMetadata},
         program_cache_entry::ProgramCacheEntry,
         serialization, stable_log,
     },

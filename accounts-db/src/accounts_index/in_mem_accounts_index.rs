@@ -396,7 +396,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 entry.map(|entry| {
                     let result = user_fn(entry.slot_list_write_lock());
                     // note that to be safe here, we ALWAYS mark the entry as dirty
-                    entry.set_dirty(true);
+                    entry.mark_dirty();
                     result
                 }),
             )
@@ -414,7 +414,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         } else {
             slot_list.push((slot, new_entry));
         }
-        current.set_dirty(true);
+        current.mark_dirty();
     }
 
     pub fn upsert(
@@ -562,7 +562,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 current.unref_by_count(ref_count_change.unsigned_abs());
             }
         }
-        current.set_dirty(true);
+        current.mark_dirty();
         slot_list_len
     }
 
@@ -842,7 +842,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         // Step 4: Extract the data to perform disk update outside the lock
         //
         // Race condition handling: If a parallel operation dirties the item again after scanning,
-        // then we will set_dirty(true) and skip the disk update. The dirty flag will ensure the
+        // then we will mark_dirty() and skip the disk update. The dirty flag will ensure the
         // next flush picks up the item again. If the item becomes dirty during our disk write,
         // that's ok - the dirty flag will be picked up on the next flush and prevent us from
         // evicting the item from the cache.
@@ -871,13 +871,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         // re-check the ref count after locking the slot list
         if entry.ref_count() != 1 {
-            entry.set_dirty(true);
+            entry.mark_dirty();
             return ShouldFlush::No(ReasonToNotFlush::RefCount);
         }
 
         if slot_list.len() != 1 {
             // we only flush regular entries, i.e. slot list len == 1
-            entry.set_dirty(true);
+            entry.mark_dirty();
             return ShouldFlush::No(ReasonToNotFlush::SlotListLen);
         }
 
@@ -886,7 +886,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         if slot_list_elem.1.is_cached() {
             // we only flush regular entries, i.e. slot list does not contain any cached entries
-            entry.set_dirty(true);
+            entry.mark_dirty();
             return ShouldFlush::No(ReasonToNotFlush::SlotListCached);
         }
 
@@ -1947,7 +1947,7 @@ mod tests {
                     ref_count,
                     AccountMapEntryMeta::default(),
                 ));
-                entry.set_dirty(true);
+                entry.mark_dirty();
                 entry.set_age(age);
                 (Pubkey::new_unique(), entry)
             })
@@ -1959,7 +1959,7 @@ mod tests {
                     ref_count,
                     AccountMapEntryMeta::default(),
                 ));
-                entry.set_dirty(false);
+                assert!(!entry.dirty());
                 entry.set_age(age);
                 (Pubkey::new_unique(), entry)
             })
@@ -2044,7 +2044,7 @@ mod tests {
                     AccountMapEntryMeta::default(),
                 ));
                 if i % 2 == 0 {
-                    one_element_slot_list_entry.set_dirty(true);
+                    one_element_slot_list_entry.mark_dirty();
                 }
                 one_element_slot_list_entry.set_age(current_age);
                 (pk, one_element_slot_list_entry)
@@ -2093,7 +2093,7 @@ mod tests {
                 /*ref count*/ 1,
                 AccountMapEntryMeta::default(),
             );
-            entry.set_dirty(true);
+            entry.mark_dirty();
 
             let entry_for_flush = bucket.try_make_entry_for_flush(&entry, 0, 0);
             assert_eq!(entry_for_flush, ShouldFlush::Yes((slot, account_info)));
@@ -2106,7 +2106,7 @@ mod tests {
                 /*ref count*/ 1,
                 AccountMapEntryMeta::default(),
             );
-            entry.set_dirty(false);
+            assert!(!entry.dirty());
 
             let entry_for_flush = bucket.try_make_entry_for_flush(&entry, 0, 0);
             assert_eq!(entry_for_flush, ShouldFlush::No(ReasonToNotFlush::Clean),);
@@ -2131,7 +2131,7 @@ mod tests {
                 /*ref count*/ 2,
                 AccountMapEntryMeta::default(),
             );
-            entry.set_dirty(true);
+            entry.mark_dirty();
 
             let entry_for_flush = bucket.try_make_entry_for_flush(&entry, 0, 0);
             assert_eq!(entry_for_flush, ShouldFlush::No(ReasonToNotFlush::RefCount),);
@@ -2144,7 +2144,7 @@ mod tests {
                 /*ref count*/ 1,
                 AccountMapEntryMeta::default(),
             );
-            entry.set_dirty(true);
+            entry.mark_dirty();
 
             let entry_for_flush = bucket.try_make_entry_for_flush(&entry, 0, 0);
             assert_eq!(
@@ -2160,7 +2160,7 @@ mod tests {
                 /*ref count*/ 1,
                 AccountMapEntryMeta::default(),
             );
-            entry.set_dirty(true);
+            entry.mark_dirty();
 
             let entry_for_flush = bucket.try_make_entry_for_flush(&entry, 0, 0);
             assert_eq!(
@@ -2177,7 +2177,7 @@ mod tests {
                 /*ref count*/ 1,
                 AccountMapEntryMeta::default(),
             );
-            entry.set_dirty(true);
+            entry.mark_dirty();
 
             let entry_for_flush = bucket.try_make_entry_for_flush(&entry, 0, 0);
             assert_eq!(

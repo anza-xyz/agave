@@ -2,6 +2,18 @@ name: Bump Version
 
 on:
   workflow_dispatch:
+    inputs:
+      level:
+        description: Version bump level
+        type: choice
+        default: patch-or-pre-release
+        options:
+          - patch-or-pre-release
+          - patch
+          - minor
+          - major
+          - pre-release
+          - promote-pre-release
 
 jobs:
   version-bump:
@@ -34,7 +46,7 @@ jobs:
         env:
           BASE_REF: ${{ github.ref }}
         run: |
-          xtask bump-version patch-or-pre-release
+          xtask bump-version ${{ inputs.level }}
 
           new_version="$(toml get --raw Cargo.toml workspace.package.version)"
 

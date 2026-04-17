@@ -419,6 +419,7 @@ solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=4.1
 solana-gossip = { path = "gossip", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-hard-forks = "3.1.0"
 solana-hash = "4.3.0"
+solana-hash-512 = "1.1.0"
 solana-inflation = "3.1.0"
 solana-instruction = "3.4.0"
 solana-instruction-error = "2.3.0"
@@ -488,6 +489,7 @@ solana-serde = "3.0.0"
 solana-serde-varint = "3.0.1"
 solana-serialize-utils = "3.1.1"
 solana-sha256-hasher = "3.1.0"
+solana-sha512-hasher = "1.0.1"
 solana-short-vec = "3.2.0"
 solana-shred-version = "3.0.1"
 solana-signature = { version = "3.4.0", default-features = false }
@@ -531,7 +533,7 @@ solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=4
 solana-validator-exit = "3.0.0"
 solana-version = { path = "version", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-vote = { path = "vote", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-solana-vote-interface = "5.1.0"
+solana-vote-interface = "6.0.0"
 solana-vote-program = { path = "programs/vote", version = "=4.1.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-zk-sdk = "5.0.1"

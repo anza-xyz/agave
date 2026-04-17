@@ -43,15 +43,18 @@ fn create_accounts() -> (
     }
 
     let vote_pubkey = Pubkey::new_unique();
+    let node_pubkey = Pubkey::new_unique();
     let authority_pubkey = Pubkey::new_unique();
     let vote_account = {
         let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::new(
             &VoteInitV2 {
-                node_pubkey: authority_pubkey,
+                node_pubkey,
                 authorized_voter: authority_pubkey,
                 authorized_withdrawer: authority_pubkey,
                 ..Default::default()
             },
+            &vote_pubkey,
+            &node_pubkey,
             &clock,
         ));
 

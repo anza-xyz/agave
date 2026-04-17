@@ -17,7 +17,7 @@ use {
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
     dashmap::{DashMap, mapref::entry::Entry::Occupied},
-    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
+    solana_clock::Slot,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, ping_pong::Pong},
     solana_keypair::{Keypair, Signer, signable::Signable},
     solana_ledger::blockstore::Blockstore,
@@ -623,7 +623,15 @@ impl AncestorHashesService {
                         &mut request_throttle,
                     );
 
-                    sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT));
+                    let sleep_duration = Duration::from_nanos_u128(
+                        repair_info
+                            .bank_forks
+                            .read()
+                            .unwrap()
+                            .root_bank()
+                            .ns_per_slot,
+                    );
+                    sleep(sleep_duration);
                 }
             })
             .unwrap()

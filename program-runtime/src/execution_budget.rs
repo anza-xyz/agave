@@ -23,9 +23,6 @@ pub const DEFAULT_INVOCATION_COST: u64 = 946;
 /// Max call depth. This is the maximum nesting of SBF to SBF call that can happen within a program.
 pub const MAX_CALL_DEPTH: usize = 64;
 
-/// The size of one SBF stack frame.
-pub const STACK_FRAME_SIZE: usize = 4096;
-
 pub const MAX_COMPUTE_UNIT_LIMIT: u32 = 1_400_000;
 
 /// Roughly 0.5us/page, where page is 32K; given roughly 15CU/us, the
@@ -81,7 +78,7 @@ impl SVMTransactionExecutionBudget {
             max_instruction_trace_length: MAX_INSTRUCTION_TRACE_LENGTH,
             sha256_max_slices: 20_000,
             max_call_depth: MAX_CALL_DEPTH,
-            stack_frame_size: STACK_FRAME_SIZE,
+            stack_frame_size: solana_sbpf::vm::get_stack_frame_size(),
             heap_size: u32::try_from(solana_program_entrypoint::HEAP_LENGTH).unwrap(),
         }
     }
