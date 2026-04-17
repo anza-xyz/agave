@@ -64,6 +64,11 @@ pub struct ExecutionFlags {
     /// scheduled transactions with total cost within the block limits,
     /// or verifying it after execution.
     pub skip_cost_tracking: bool,
+
+    /// NOTE: Not currently exposed to scheduler-bindings.
+    /// Used to skip recording transactions into PoH.
+    /// This is useful for replay where we simply commit the transactions.
+    pub skip_poh_recording: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -170,6 +175,7 @@ impl Consumer {
                 all_or_nothing: false,
                 skip_account_locks: false,
                 skip_cost_tracking: false,
+                skip_poh_recording: false,
             },
         );
 
@@ -385,94 +391,88 @@ impl Consumer {
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
 
-        let reserved_bytes =
-            bank.entry_bytes_budget()
+        let starting_transaction_index = if flags.skip_poh_recording {
+            None
+        } else {
+            let reserved_bytes = bank
+                .entry_bytes_budget()
                 .reserve(entry_bytes)
                 .map_err(|err| match err {
                     EntryBytesReserveError::ExceedsSlotLimit => PohRecorderError::MaxHeightReached,
                 });
-        let (record_transactions_summary, record_us) = measure_us!(reserved_bytes.map(|_| {
-            self.transaction_recorder
-                .record_transactions(bank.bank_id(), processed_transactions)
-        }));
-        execute_and_commit_timings.record_us = record_us;
+            let (record_transactions_summary, record_us) = measure_us!(reserved_bytes.map(|_| {
+                self.transaction_recorder
+                    .record_transactions(bank.bank_id(), processed_transactions)
+            }));
+            execute_and_commit_timings.record_us = record_us;
 
-        let (recording_result, starting_transaction_index) = match record_transactions_summary {
-            Ok(summary) => {
-                execute_and_commit_timings.record_transactions_timings =
-                    RecordTransactionsTimings {
-                        processing_results_to_transactions_us: Saturating(
-                            processing_results_to_transactions_us,
-                        ),
-                        ..summary.record_transactions_timings
-                    };
-                (summary.result, summary.starting_transaction_index)
+            let (recording_result, starting_transaction_index) = match record_transactions_summary {
+                Ok(summary) => {
+                    execute_and_commit_timings.record_transactions_timings =
+                        RecordTransactionsTimings {
+                            processing_results_to_transactions_us: Saturating(
+                                processing_results_to_transactions_us,
+                            ),
+                            ..summary.record_transactions_timings
+                        };
+                    (summary.result, summary.starting_transaction_index)
+                }
+                Err(err) => (Err(err), None),
+            };
+
+            if let Err(recorder_err) = recording_result {
+                retryable_transaction_indexes.extend(
+                    processing_results.iter().enumerate().filter_map(
+                        |(index, processing_result)| {
+                            processing_result.was_processed().then_some(RetryableIndex {
+                                index,
+                                immediately_retryable: true, // recording errors are always immediately retryable
+                            })
+                        },
+                    ),
+                );
+
+                // retryable indexes are expected to be sorted - in this case the
+                // `extend` can cause that assumption to be violated.
+                retryable_transaction_indexes.sort_unstable();
+
+                return ExecuteAndCommitTransactionsOutput {
+                    transaction_counts,
+                    retryable_transaction_indexes,
+                    commit_transactions_result: Err(recorder_err),
+                    execute_and_commit_timings,
+                    error_counters,
+                };
             }
-            Err(err) => (Err(err), None),
+
+            starting_transaction_index
         };
 
-        if let Err(recorder_err) = recording_result {
-            retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
-                |(index, processing_result)| {
-                    processing_result.was_processed().then_some(RetryableIndex {
-                        index,
-                        immediately_retryable: true, // recording errors are always immediately retryable
+        let (_, commit_transaction_statuses) = if processed_counts.processed_transactions_count != 0
+        {
+            self.committer.commit_transactions(
+                batch,
+                processing_results,
+                starting_transaction_index,
+                bank,
+                balance_collector,
+                &mut execute_and_commit_timings,
+                &processed_counts,
+            )
+        } else {
+            (
+                0,
+                processing_results
+                    .into_iter()
+                    .map(|processing_result| match processing_result {
+                        Ok(_) => unreachable!("processed transaction count is 0"),
+                        Err(err) => CommitTransactionDetails::NotCommitted(err),
                     })
-                },
-            ));
-
-            // retryable indexes are expected to be sorted - in this case the
-            // `extend` can cause that assumption to be violated.
-            retryable_transaction_indexes.sort_unstable();
-
-            return ExecuteAndCommitTransactionsOutput {
-                transaction_counts,
-                retryable_transaction_indexes,
-                commit_transactions_result: Err(recorder_err),
-                execute_and_commit_timings,
-                error_counters,
-            };
-        }
-
-        let (commit_time_us, commit_transaction_statuses) =
-            if processed_counts.processed_transactions_count != 0 {
-                self.committer.commit_transactions(
-                    batch,
-                    processing_results,
-                    starting_transaction_index,
-                    bank,
-                    balance_collector,
-                    &mut execute_and_commit_timings,
-                    &processed_counts,
-                )
-            } else {
-                (
-                    0,
-                    processing_results
-                        .into_iter()
-                        .map(|processing_result| match processing_result {
-                            Ok(_) => unreachable!("processed transaction count is 0"),
-                            Err(err) => CommitTransactionDetails::NotCommitted(err),
-                        })
-                        .collect(),
-                )
-            };
+                    .collect(),
+            )
+        };
 
         drop(freeze_lock);
-
-        debug!(
-            "bank: {} process_and_record_locked: {}us record: {}us commit: {}us txs_len: {}",
-            bank.slot(),
-            load_execute_us,
-            record_us,
-            commit_time_us,
-            batch.sanitized_transactions().len(),
-        );
-
-        debug!(
-            "execute_and_commit_transactions_locked: {:?}",
-            execute_and_commit_timings.execute_timings,
-        );
 
         debug_assert_eq!(
             transaction_counts.attempted_processing_count,
@@ -927,6 +927,7 @@ mod tests {
                 all_or_nothing: false,
                 skip_account_locks: true,
                 skip_cost_tracking: false,
+                skip_poh_recording: false,
             },
         );
 
@@ -952,6 +953,109 @@ mod tests {
         assert_eq!(transaction_results, vec![Ok(())]);
 
         bank.unlock_accounts(transactions.iter().zip(&transaction_results));
+    }
+
+    #[test]
+    fn test_bank_process_and_record_transactions_skip_poh_recording() {
+        let TestFrame {
+            mint_keypair,
+            bank,
+            bank_forks: _bank_forks,
+            mut record_receiver,
+            consumer,
+        } = setup_test(true, None);
+
+        let destination = Pubkey::new_unique();
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &destination,
+            1,
+            bank.last_blockhash(),
+        )]);
+        let max_ages = vec![MaxAge {
+            sanitized_epoch: bank.epoch(),
+            alt_invalidation_slot: bank.slot(),
+        }];
+
+        let process_transactions_batch_output = consumer.process_and_record_aged_transactions(
+            &bank,
+            &transactions,
+            &max_ages,
+            ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing: false,
+                skip_account_locks: false,
+                skip_cost_tracking: false,
+                skip_poh_recording: true,
+            },
+        );
+
+        let ExecuteAndCommitTransactionsOutput {
+            transaction_counts,
+            commit_transactions_result,
+            retryable_transaction_indexes,
+            ..
+        } = process_transactions_batch_output.execute_and_commit_transactions_output;
+
+        assert_eq!(
+            transaction_counts,
+            LeaderProcessedTransactionCounts {
+                attempted_processing_count: 1,
+                processed_count: 1,
+                processed_with_successful_result_count: 1,
+            }
+        );
+        assert!(retryable_transaction_indexes.is_empty());
+        assert!(commit_transactions_result.is_ok());
+        assert_eq!(bank.get_balance(&destination), 1);
+
+        record_receiver.shutdown();
+        assert!(record_receiver.drain().next().is_none());
+
+        // Ensure that this works even with the recorder shutdown (replay)
+        let destination = Pubkey::new_unique();
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &destination,
+            1,
+            bank.last_blockhash(),
+        )]);
+        let max_ages = vec![MaxAge {
+            sanitized_epoch: bank.epoch(),
+            alt_invalidation_slot: bank.slot(),
+        }];
+
+        let process_transactions_batch_output = consumer.process_and_record_aged_transactions(
+            &bank,
+            &transactions,
+            &max_ages,
+            ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing: false,
+                skip_account_locks: false,
+                skip_cost_tracking: false,
+                skip_poh_recording: true,
+            },
+        );
+
+        let ExecuteAndCommitTransactionsOutput {
+            transaction_counts,
+            commit_transactions_result,
+            retryable_transaction_indexes,
+            ..
+        } = process_transactions_batch_output.execute_and_commit_transactions_output;
+
+        assert_eq!(
+            transaction_counts,
+            LeaderProcessedTransactionCounts {
+                attempted_processing_count: 1,
+                processed_count: 1,
+                processed_with_successful_result_count: 1,
+            }
+        );
+        assert!(retryable_transaction_indexes.is_empty());
+        assert!(commit_transactions_result.is_ok());
+        assert_eq!(bank.get_balance(&destination), 1);
     }
 
     #[test_case(false; "old")]
@@ -1119,6 +1223,7 @@ mod tests {
                     all_or_nothing: false,
                     skip_account_locks: false,
                     skip_cost_tracking: false, // track costs
+                    skip_poh_recording: false,
                 },
             );
         let ExecuteAndCommitTransactionsOutput {
@@ -1151,6 +1256,7 @@ mod tests {
                 all_or_nothing: false,
                 skip_account_locks: false,
                 skip_cost_tracking: true,
+                skip_poh_recording: false,
             },
         );
 
