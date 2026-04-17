@@ -2,13 +2,12 @@ use {
     crate::{bank::Bank, validated_block_finalization::ValidatedBlockFinalizationCert},
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
     log::info,
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccount,
-    solana_vote_interface::state::{
-        LandedVote, Lockout, MAX_EPOCH_CREDITS_HISTORY, VoteStateV4, VoteStateVersions,
-    },
+    solana_vote_interface::state::{LandedVote, Lockout},
+    solana_vote_program::vote_state::handler::VoteStateHandler,
     std::collections::VecDeque,
     thiserror::Error,
 };
@@ -135,7 +134,7 @@ pub(super) fn calculate_and_pay_voting_reward_and_update_vote_state(
             );
             continue;
         };
-        if let Some(account_data) = pay_reward_update_vote_state(
+        if let Some(account_data) = update_vote_account(
             current_epoch,
             reward_slot,
             current_slot_account,
@@ -152,7 +151,7 @@ pub(super) fn calculate_and_pay_voting_reward_and_update_vote_state(
     if total_leader_reward != 0 {
         match current_vote_accounts.get(&current_slot_leader_vote_pubkey) {
             Some((_, leader_account)) => {
-                if let Some(account_data) = pay_reward_update_vote_state(
+                if let Some(account_data) = update_vote_account(
                     current_epoch,
                     reward_slot,
                     leader_account,
@@ -204,11 +203,10 @@ fn calculate_reward(
     (validator_reward_lamports, leader_reward_lamports)
 }
 
-/// Deserializes `VoteState` from `account`; pays `reward` in `current_epoch` to the `epoch_credits` field;
-/// and updates the `votes` and `root_slot` fields in the vote state deserialized from the `account`.
+/// Deserializes the state from the `account` and updates various fields in it.
 ///
-/// TODO: this is using VoteStateV4 explicitly.  When we upstream, we will use VoteStateHandle API.
-fn pay_reward_update_vote_state(
+/// If successful, returns the `AccountSharedData` that can be stored back into a `Bank`.
+fn update_vote_account(
     current_epoch: Epoch,
     reward_slot: Slot,
     account: &VoteAccount,
@@ -216,67 +214,31 @@ fn pay_reward_update_vote_state(
     reward: u64,
     final_cert: Option<&ValidatedBlockFinalizationCert>,
 ) -> Option<AccountSharedData> {
-    let data = account.account().data();
-    let Ok(vote_state_versions) = bincode::deserialize(data) else {
-        return None;
-    };
-    match vote_state_versions {
-        VoteStateVersions::V4(mut vote_state) => {
-            increment_credits(&mut vote_state, current_epoch, reward);
-            update_vote_state(
-                &mut vote_state,
-                reward_slot,
-                validator_vote_pubkey,
-                final_cert,
-            );
-            let mut paid_account = AccountSharedData::new(
-                account.lamports(),
-                account.account().data().len(),
-                account.owner(),
-            );
-            paid_account
-                .serialize_data(&VoteStateVersions::V4(vote_state))
-                .ok()?;
-            Some(paid_account)
-        }
-        _ => None,
-    }
+    let versions = bincode::deserialize(account.account().data()).ok()?;
+    let mut handle = VoteStateHandler::try_new_from_vote_state_versions(versions).ok()?;
+    update_vote_state(
+        &mut handle,
+        reward_slot,
+        current_epoch,
+        reward,
+        validator_vote_pubkey,
+        final_cert,
+    );
+    let mut paid_account = AccountSharedData::new(
+        account.lamports(),
+        account.account().data().len(),
+        account.owner(),
+    );
+    handle
+        .serialize_into(paid_account.data_as_mut_slice())
+        .ok()?;
+    Some(paid_account)
 }
 
-/// Stores rewards as credits in the current vote state.
+/// Updates `epoch_credits`, `root_slot`, and `votes` in vote state using the rewards and finalization
+/// certificates from the footer.
 ///
-/// TODO: this is using VoteStateV4 explicitly.  When we upstream, we will use VoteStateHandle API.
-fn increment_credits(vote_state: &mut VoteStateV4, epoch: Epoch, credits: u64) {
-    // never seen a credit
-    if vote_state.epoch_credits.is_empty() {
-        vote_state.epoch_credits.push((epoch, 0, 0));
-    } else if epoch != vote_state.epoch_credits.last().unwrap().0 {
-        let (_, credits, prev_credits) = *vote_state.epoch_credits.last().unwrap();
-
-        if credits != prev_credits {
-            // if credits were earned previous epoch
-            // append entry at end of list for the new epoch
-            vote_state.epoch_credits.push((epoch, credits, credits));
-        } else {
-            // else just move the current epoch
-            vote_state.epoch_credits.last_mut().unwrap().0 = epoch;
-        }
-
-        // Remove too old epoch_credits
-        if vote_state.epoch_credits.len() > MAX_EPOCH_CREDITS_HISTORY {
-            vote_state.epoch_credits.remove(0);
-        }
-    }
-
-    vote_state.epoch_credits.last_mut().unwrap().1 = vote_state
-        .epoch_credits
-        .last()
-        .unwrap()
-        .1
-        .saturating_add(credits);
-}
-
-/// Updates `root_slot` and `votes` in vote state using the rewards and finalization certificates from the footer
+/// `epoch_credits` are updated to record the rewards that the vote account has earned.
 ///
 /// Downstream tooling expects these fields to be be set:
 /// - `root_slot`, a validator's latest finalized & replayed slot
@@ -292,22 +254,25 @@ fn increment_credits(vote_state: &mut VoteStateV4, epoch: Epoch, credits: u64) {
 /// - `root_slot` is populated from the footer finalization certificate
 /// - `votes` is populated from the footer rewards aggregate
 fn update_vote_state(
-    vote_state: &mut VoteStateV4,
+    handle: &mut VoteStateHandler,
     reward_slot: Slot,
+    reward_epoch: Epoch,
+    reward: u64,
     validator_vote_pubkey: Pubkey,
     final_cert: Option<&ValidatedBlockFinalizationCert>,
 ) {
+    handle.increment_credits(reward_epoch, reward);
     if let Some(final_cert) = final_cert {
         if final_cert.was_signed_by(&validator_vote_pubkey) {
-            vote_state.root_slot = Some(final_cert.slot());
+            handle.set_root_slot(Some(final_cert.slot()));
         }
     }
 
-    let latest_root_or_reward = vote_state.root_slot.unwrap_or(reward_slot).max(reward_slot);
-    vote_state.votes = VecDeque::from([LandedVote {
+    let latest_root_or_reward = handle.root_slot().unwrap_or(reward_slot).max(reward_slot);
+    handle.set_votes(VecDeque::from([LandedVote {
         lockout: Lockout::new(latest_root_or_reward),
         latency: 0,
-    }]);
+    }]));
 }
 
 #[cfg(test)]
@@ -339,17 +304,14 @@ mod tests {
         solana_rent::Rent,
         solana_signer::Signer,
         solana_signer_store::encode_base2,
+        solana_vote_interface::state::VoteStateVersions,
     };
 
-    fn get_vote_state_v4(bank: &Bank, vote_pubkey: &Pubkey) -> VoteStateV4 {
+    fn get_vote_state_handler(bank: &Bank, vote_pubkey: &Pubkey) -> VoteStateHandler {
         let vote_accounts = bank.vote_accounts();
         let (_, vote_account) = vote_accounts.get(vote_pubkey).unwrap();
-        let vote_state_versions: VoteStateVersions =
-            bincode::deserialize(vote_account.account().data()).unwrap();
-        let VoteStateVersions::V4(vote_state) = vote_state_versions else {
-            panic!("unexpected vote state version");
-        };
-        *vote_state
+        let versions = bincode::deserialize(vote_account.account().data()).unwrap();
+        VoteStateHandler::try_new_from_vote_state_versions(versions).unwrap()
     }
 
     fn build_fast_finalization_cert(
@@ -396,11 +358,15 @@ mod tests {
 
     #[test]
     fn increment_credits_works() {
-        let mut vote_state = VoteStateV4::default();
+        let mut handle = VoteStateHandler::default_v4();
         let epoch = 1234;
         let credits = 543432;
-        increment_credits(&mut vote_state, epoch, credits);
-        assert_eq!(credits, vote_state.epoch_credits.last().unwrap().1);
+        handle.increment_credits(epoch, credits);
+        let (got_epoch, got_final_credits, got_initial_credits) =
+            *handle.epoch_credits().last().unwrap();
+        assert_eq!(got_epoch, epoch);
+        assert_eq!(got_final_credits, credits);
+        assert_eq!(got_initial_credits, 0);
     }
 
     #[test]
@@ -410,8 +376,7 @@ mod tests {
         let epoch = 1234;
         let reward = 3453423;
         let account_shared_data =
-            pay_reward_update_vote_state(epoch, 0, &account, Pubkey::default(), reward, None)
-                .unwrap();
+            update_vote_account(epoch, 0, &account, Pubkey::default(), reward, None).unwrap();
         let vote_state_versions: VoteStateVersions =
             bincode::deserialize(&account_shared_data.data_clone()).unwrap();
         let VoteStateVersions::V4(vote_state) = vote_state_versions else {
@@ -567,11 +532,11 @@ mod tests {
         )
         .unwrap();
 
-        let vote_state = get_vote_state_v4(&bank, &target_vote_pubkey);
-        assert_eq!(vote_state.root_slot, Some(final_cert.slot()));
-        assert_eq!(vote_state.votes.len(), 1);
+        let handle = get_vote_state_handler(&bank, &target_vote_pubkey);
+        assert_eq!(handle.root_slot(), Some(final_cert.slot()));
+        assert_eq!(handle.votes().len(), 1);
         assert_eq!(
-            vote_state.votes.front().unwrap().lockout.slot(),
+            handle.votes().front().unwrap().lockout.slot(),
             final_cert.slot().max(reward_slot)
         );
     }
@@ -631,11 +596,11 @@ mod tests {
         )
         .unwrap();
 
-        let vote_state = get_vote_state_v4(&bank, &target_vote_pubkey);
-        assert_eq!(vote_state.root_slot, None);
-        assert_eq!(vote_state.votes.len(), 1);
+        let vote_state = get_vote_state_handler(&bank, &target_vote_pubkey);
+        assert_eq!(vote_state.root_slot(), None);
+        assert_eq!(vote_state.votes().len(), 1);
         assert_eq!(
-            vote_state.votes.front().unwrap().lockout.slot(),
+            vote_state.votes().front().unwrap().lockout.slot(),
             reward_slot
         );
     }
