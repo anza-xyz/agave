@@ -172,7 +172,7 @@ fn bench_banking(
 
     let mut bank = Bank::new_for_benches(&genesis_config);
     // Allow arbitrary transaction processing time for the purposes of this bench
-    bank.ns_per_slot = u128::MAX;
+    bank.set_ns_per_slot_for_tests(u128::MAX);
     let bank_forks = BankForks::new_rw_arc(bank);
     let bank = bank_forks.read().unwrap().get(0).unwrap();
 

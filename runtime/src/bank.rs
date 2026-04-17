@@ -265,6 +265,31 @@ static NANOSECOND_CLOCK_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
     pubkey
 });
 
+/// The off-curve account where we store the effective slot duration in nanoseconds.
+static NS_PER_SLOT_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
+    let (pubkey, _) =
+        Pubkey::find_program_address(&[b"nsperslot"], &agave_feature_set::alpenglow::id());
+    pubkey
+});
+
+/// The off-curve account where we store the effective max processing age.
+static MAX_PROCESSING_AGE_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
+    let (pubkey, _) = Pubkey::find_program_address(
+        &[b"maxprocessingage"],
+        &agave_feature_set::alpenglow::id(),
+    );
+    pubkey
+});
+
+/// The off-curve account where we store the effective max recent blockhash age.
+static MAX_RECENT_BLOCKHASHES_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
+    let (pubkey, _) = Pubkey::find_program_address(
+        &[b"maxrecentblockhashes"],
+        &agave_feature_set::alpenglow::id(),
+    );
+    pubkey
+});
+
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",
@@ -2201,7 +2226,7 @@ impl Bank {
     pub fn unix_timestamp_from_genesis(&self) -> i64 {
         self.genesis_creation_time.saturating_add(
             (self.slot as u128)
-                .saturating_mul(self.ns_per_slot)
+                .saturating_mul(self.ns_per_slot())
                 .saturating_div(1_000_000_000) as i64,
         )
     }
@@ -2556,7 +2581,12 @@ impl Bank {
     }
 
     pub fn max_processing_age(&self) -> usize {
-        self.max_processing_age
+        if self.bank_timing_accounts_active() {
+            self.get_max_processing_age_from_account()
+                .unwrap_or(self.max_processing_age)
+        } else {
+            self.max_processing_age
+        }
     }
 
     fn max_recent_blockhashes_for_active_features(&self) -> usize {
@@ -2568,7 +2598,7 @@ impl Bank {
     }
 
     fn max_status_cache_entries_for_active_features(&self) -> usize {
-        self.max_recent_blockhashes_for_active_features()
+        self.max_recent_blockhashes()
     }
 
     // Calculates the starting-slot for inflation from the activation slot.
@@ -2728,7 +2758,8 @@ impl Bank {
             (slot_delta <= slots_per_epoch)
                 .then_some((*pubkey, (last_timestamp.slot, last_timestamp.timestamp)))
         });
-        let slot_duration = Duration::from_nanos(self.ns_per_slot as u64);
+        let slot_duration =
+            Duration::from_nanos(u64::try_from(self.ns_per_slot()).unwrap_or(u64::MAX));
         let epoch = self.epoch_schedule().get_epoch(self.slot());
         let stakes = self.epoch_vote_accounts(epoch)?;
         let stake_weighted_timestamp = calculate_stake_weighted_timestamp(
@@ -3167,6 +3198,92 @@ impl Bank {
             wincode::deserialize(acct.data())
                 .expect("Couldn't deserialize nanosecond resolution clock")
         })
+    }
+
+    fn bank_timing_accounts_active(&self) -> bool {
+        self.feature_set
+            .is_active(&feature_set::publish_bank_timing_accounts::id())
+            || self.halve_slot_times_active()
+    }
+
+    fn get_offcurve_u64_account(&self, pubkey: &Pubkey) -> Option<u64> {
+        let acct = self.get_account(pubkey)?;
+        let data = acct.data().try_into().ok()?;
+        Some(u64::from_le_bytes(data))
+    }
+
+    fn get_offcurve_u128_account(&self, pubkey: &Pubkey) -> Option<u128> {
+        let acct = self.get_account(pubkey)?;
+        let data = acct.data().try_into().ok()?;
+        Some(u128::from_le_bytes(data))
+    }
+
+    fn store_offcurve_system_account(&self, pubkey: &Pubkey, data: &[u8]) {
+        let old_account = self.get_account_with_fixed_root(pubkey);
+        let lamports = old_account
+            .as_ref()
+            .map(ReadableAccount::lamports)
+            .unwrap_or_default()
+            .max(Rent::default().minimum_balance(data.len()));
+        let rent_epoch = old_account
+            .as_ref()
+            .map(ReadableAccount::rent_epoch)
+            .unwrap_or(INITIAL_RENT_EPOCH);
+
+        let mut account = AccountSharedData::new(lamports, data.len(), &system_program::ID);
+        account.set_rent_epoch(rent_epoch);
+        account.set_data_from_slice(data);
+        self.store_account_and_update_capitalization(pubkey, &account);
+    }
+
+    fn publish_bank_timing_accounts(&self) {
+        self.store_offcurve_system_account(&NS_PER_SLOT_ACCOUNT, &self.ns_per_slot.to_le_bytes());
+        self.store_offcurve_system_account(
+            &MAX_PROCESSING_AGE_ACCOUNT,
+            &u64::try_from(self.max_processing_age)
+                .expect("max_processing_age must fit in u64")
+                .to_le_bytes(),
+        );
+        self.store_offcurve_system_account(
+            &MAX_RECENT_BLOCKHASHES_ACCOUNT,
+            &u64::try_from(self.blockhash_queue.read().unwrap().get_max_age())
+                .expect("max_recent_blockhashes must fit in u64")
+                .to_le_bytes(),
+        );
+    }
+
+    pub fn ns_per_slot(&self) -> u128 {
+        if self.bank_timing_accounts_active() {
+            self.get_offcurve_u128_account(&NS_PER_SLOT_ACCOUNT)
+                .unwrap_or(self.ns_per_slot)
+        } else {
+            self.ns_per_slot
+        }
+    }
+
+    fn get_max_processing_age_from_account(&self) -> Option<usize> {
+        self.get_offcurve_u64_account(&MAX_PROCESSING_AGE_ACCOUNT)
+            .map(|value| usize::try_from(value).expect("max_processing_age must fit in usize"))
+    }
+
+    fn max_recent_blockhashes(&self) -> usize {
+        if self.bank_timing_accounts_active() {
+            self.get_offcurve_u64_account(&MAX_RECENT_BLOCKHASHES_ACCOUNT)
+                .map(|value| {
+                    usize::try_from(value).expect("max_recent_blockhashes must fit in usize")
+                })
+                .unwrap_or_else(|| self.max_recent_blockhashes_for_active_features())
+        } else {
+            self.max_recent_blockhashes_for_active_features()
+        }
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub fn set_ns_per_slot_for_tests(&mut self, ns_per_slot: u128) {
+        self.ns_per_slot = ns_per_slot;
+        if self.bank_timing_accounts_active() {
+            self.publish_bank_timing_accounts();
+        }
     }
 
     pub fn confirmed_last_blockhash(&self) -> Hash {
@@ -4638,6 +4755,9 @@ impl Bank {
             self.apply_cost_tracker_limits_for_active_features();
             self.apply_status_cache_limits_for_active_features();
         }
+        if self.bank_timing_accounts_active() {
+            self.publish_bank_timing_accounts();
+        }
         self.apply_simd_0339_invoke_cost_changes();
 
         let program_runtime_environment =
@@ -5377,7 +5497,7 @@ impl Bank {
     /// Return the target number of ticks per second for this bank.
     pub fn ticks_per_second(&self) -> u64 {
         let ticks_per_slot = u128::from(self.ticks_per_slot.max(1));
-        let ns_per_tick = self.ns_per_slot.saturating_div(ticks_per_slot).max(1);
+        let ns_per_tick = self.ns_per_slot().saturating_div(ticks_per_slot).max(1);
         u64::try_from(1_000_000_000u128.saturating_div(ns_per_tick))
             .expect("ticks per second must fit in u64")
     }
@@ -5869,6 +5989,11 @@ impl Bank {
             self.apply_halve_slot_times_runtime_changes();
         } else if new_feature_activations.contains(&feature_set::raise_block_limits_to_100m::id()) {
             self.apply_cost_tracker_limits_for_active_features();
+        }
+        if new_feature_activations.contains(&feature_set::publish_bank_timing_accounts::id())
+            || new_feature_activations.contains(&feature_set::halve_slot_times::id())
+        {
+            self.publish_bank_timing_accounts();
         }
         self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
 

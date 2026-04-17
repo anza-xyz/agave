@@ -286,7 +286,7 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
 /// publish the final shred for the block with starting point being the start of
 /// the leader window.
 fn block_timeout(bank: &Bank, leader_block_index: usize) -> Duration {
-    Duration::from_nanos_u128(bank.ns_per_slot)
+    Duration::from_nanos_u128(bank.ns_per_slot())
         .saturating_mul((leader_block_index as u32).saturating_add(1))
 }
 

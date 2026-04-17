@@ -3,7 +3,7 @@ use {
     crate::tpu_client::{MAX_FANOUT_SLOTS, RecentLeaderSlots, TpuClientConfig},
     futures_util::{future::join_all, stream::StreamExt},
     log::*,
-    solana_clock::{DEFAULT_MS_PER_SLOT, NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
+    solana_clock::{NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_connection_cache::{
         connection_cache::{
@@ -15,7 +15,10 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_pubkey::Pubkey,
     solana_pubsub_client::nonblocking::pubsub_client::{PubsubClient, PubsubClientError},
-    solana_rpc_client::nonblocking::rpc_client::RpcClient,
+    solana_rpc_client::{
+        nonblocking::rpc_client::RpcClient,
+        slot_duration::BankTimingConfig,
+    },
     solana_rpc_client_api::{
         client_error::{Error as ClientError, ErrorKind, Result as ClientResult},
         request::RpcError,
@@ -70,6 +73,7 @@ struct LeaderTpuCacheUpdateInfo {
     pub(super) maybe_cluster_nodes: Option<ClientResult<Vec<RpcContactInfo>>>,
     pub(super) maybe_epoch_schedule: Option<ClientResult<EpochSchedule>>,
     pub(super) maybe_slot_leaders: Option<ClientResult<Vec<Pubkey>>>,
+    pub(super) maybe_timing_config: Option<ClientResult<BankTimingConfig>>,
     pub(super) first_slot: Slot,
 }
 impl LeaderTpuCacheUpdateInfo {
@@ -77,6 +81,7 @@ impl LeaderTpuCacheUpdateInfo {
         self.maybe_cluster_nodes.is_some()
             || self.maybe_epoch_schedule.is_some()
             || self.maybe_slot_leaders.is_some()
+            || self.maybe_timing_config.is_some()
     }
 }
 
@@ -687,6 +692,22 @@ where
         &self.rpc_client
     }
 
+    pub async fn get_bank_timing_config(&self) -> ClientResult<BankTimingConfig> {
+        self.rpc_client.get_bank_timing_config().await
+    }
+
+    pub async fn get_ns_per_slot(&self) -> ClientResult<u128> {
+        self.rpc_client.get_ns_per_slot().await
+    }
+
+    pub async fn get_max_processing_age(&self) -> ClientResult<usize> {
+        self.rpc_client.get_max_processing_age().await
+    }
+
+    pub async fn get_max_recent_blockhashes(&self) -> ClientResult<usize> {
+        self.rpc_client.get_max_recent_blockhashes().await
+    }
+
     pub async fn shutdown(&mut self) {
         self.exit.store(true, Ordering::Relaxed);
         self.leader_tpu_service.join().await;
@@ -879,12 +900,13 @@ impl LeaderTpuService {
         exit: Arc<AtomicBool>,
     ) -> Result<()> {
         let mut last_cluster_refresh = Instant::now();
-        let mut sleep_ms = DEFAULT_MS_PER_SLOT;
+        let mut timing_config = rpc_client.get_bank_timing_config().await.unwrap_or_default();
+        let mut sleep_duration = timing_config.slot_duration();
 
         while !exit.load(Ordering::Relaxed) {
             // Sleep a slot before checking if leader cache needs to be refreshed again
-            sleep(Duration::from_millis(sleep_ms)).await;
-            sleep_ms = DEFAULT_MS_PER_SLOT;
+            sleep(sleep_duration).await;
+            sleep_duration = timing_config.slot_duration();
 
             let cache_update_info = maybe_fetch_cache_info(
                 &leader_tpu_cache,
@@ -895,10 +917,16 @@ impl LeaderTpuService {
             .await;
 
             if cache_update_info.has_some() {
+                if let Some(maybe_timing_config) = cache_update_info.maybe_timing_config.as_ref() {
+                    match maybe_timing_config {
+                        Ok(updated_timing_config) => timing_config = *updated_timing_config,
+                        Err(err) => warn!("Failed to refresh bank timing config: {err}"),
+                    }
+                }
                 let mut leader_tpu_cache = leader_tpu_cache.write().unwrap();
                 let (has_error, cluster_refreshed) = leader_tpu_cache.update_all(cache_update_info);
                 if has_error {
-                    sleep_ms = 100;
+                    sleep_duration = Duration::from_millis(100);
                 }
                 if cluster_refreshed {
                     last_cluster_refresh = Instant::now();
@@ -925,10 +953,8 @@ impl LeaderTpuService {
         // 1. Notifications are an unbounded stream -- polling them will block indefinitely if not
         //    interrupted, and the exit condition will never be checked. 10ms ensures negligible
         //    CPU overhead while keeping notification checking timely.
-        // 2. The timeout must be strictly less than the slot time (DEFAULT_MS_PER_SLOT) to
-        //    avoid timeout never being reached. For example, if notifications are received every
-        //    100ms and the timeout is >= 100ms, notifications may theoretically always be available
-        //    before the timeout is reached, resulting in the exit condition never being checked.
+        // 2. The timeout must stay well below realistic slot durations so the exit condition
+        //    continues to get checked even under a steady stream of slot notifications.
         const SLOT_UPDATE_TIMEOUT: Duration = Duration::from_millis(10);
 
         while !exit.load(Ordering::Relaxed) {
@@ -984,6 +1010,13 @@ async fn maybe_fetch_cache_info(
         None
     };
 
+    let maybe_timing_config =
+        if maybe_cluster_nodes.is_some() || maybe_epoch_schedule.is_some() {
+            Some(rpc_client.get_bank_timing_config().await)
+        } else {
+            None
+        };
+
     // If we are within the fanout range of the last slot in the cache, fetch
     // more slot leaders. We pull down a big batch at at time to amortize the
     // cost of the RPC call. We don't want to stall transactions on pulling this
@@ -1005,6 +1038,7 @@ async fn maybe_fetch_cache_info(
         maybe_cluster_nodes,
         maybe_epoch_schedule,
         maybe_slot_leaders,
+        maybe_timing_config,
         first_slot: estimated_current_slot,
     }
 }

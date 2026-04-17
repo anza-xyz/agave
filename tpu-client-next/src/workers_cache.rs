@@ -11,6 +11,7 @@ use {
     },
     lru::LruCache,
     quinn::Endpoint,
+    solana_rpc_client::slot_duration::BankTimingConfig,
     std::{net::SocketAddr, sync::Arc, time::Duration},
     thiserror::Error,
     tokio::{
@@ -85,6 +86,7 @@ pub fn spawn_worker(
     worker_channel_size: usize,
     skip_check_transaction_age: bool,
     max_reconnect_attempts: usize,
+    timing_config: BankTimingConfig,
     handshake_timeout: Duration,
     stats: Arc<SendTransactionStats>,
 ) -> WorkerInfo {
@@ -98,6 +100,7 @@ pub fn spawn_worker(
         txs_receiver,
         skip_check_transaction_age,
         max_reconnect_attempts,
+        timing_config,
         stats,
         handshake_timeout,
     );
@@ -181,6 +184,7 @@ impl WorkersCache {
         worker_channel_size: usize,
         skip_check_transaction_age: bool,
         max_reconnect_attempts: usize,
+        timing_config: BankTimingConfig,
         handshake_timeout: Duration,
         stats: Arc<SendTransactionStats>,
     ) -> Option<ShutdownWorker> {
@@ -199,6 +203,7 @@ impl WorkersCache {
             worker_channel_size,
             skip_check_transaction_age,
             max_reconnect_attempts,
+            timing_config,
             handshake_timeout,
             stats,
         );

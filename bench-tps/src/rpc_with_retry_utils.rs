@@ -1,15 +1,18 @@
 use {
     log::*,
-    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
+    solana_clock::Slot,
     solana_commitment_config::CommitmentConfig,
     solana_tps_client::{TpsClient, TpsClientResult},
     std::{sync::Arc, thread::sleep, time::Duration},
 };
 
 const NUM_RETRY: u64 = 5;
-const RETRY_EVERY_MS: u64 = 4 * DEFAULT_MS_PER_SLOT;
 
-fn call_rpc_with_retry<Func, Data>(f: Func, retry_warning: &str) -> TpsClientResult<Data>
+fn call_rpc_with_retry<Func, Data>(
+    f: Func,
+    retry_warning: &str,
+    retry_every: Duration,
+) -> TpsClientResult<Data>
 where
     Func: Fn() -> TpsClientResult<Data>,
 {
@@ -24,7 +27,7 @@ where
                     return Err(error);
                 }
                 warn!("{retry_warning}: {error}, retry.");
-                sleep(Duration::from_millis(RETRY_EVERY_MS));
+                sleep(retry_every);
             }
         }
         iretry += 1;
@@ -38,9 +41,14 @@ pub(crate) fn get_slot_with_retry<Client>(
 where
     Client: 'static + TpsClient + Send + Sync + ?Sized,
 {
+    let retry_every = client
+        .get_bank_timing_config()
+        .unwrap_or_default()
+        .duration_for_slots(4);
     call_rpc_with_retry(
         || client.get_slot_with_commitment(commitment),
         "Failed to get slot",
+        retry_every,
     )
 }
 
@@ -53,8 +61,13 @@ pub(crate) fn get_blocks_with_retry<Client>(
 where
     Client: 'static + TpsClient + Send + Sync + ?Sized,
 {
+    let retry_every = client
+        .get_bank_timing_config()
+        .unwrap_or_default()
+        .duration_for_slots(4);
     call_rpc_with_retry(
         || client.get_blocks_with_commitment(start_slot, end_slot, commitment),
         "Failed to download blocks",
+        retry_every,
     )
 }

@@ -1144,7 +1144,7 @@ mod tests {
         if !relax_intrabatch_account_locks {
             bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
         }
-        bank.ns_per_slot = u128::MAX;
+        bank.set_ns_per_slot_for_tests(u128::MAX);
         let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         // set cost tracker limits to MAX so it will not filter out TXs
         bank.write_cost_tracker().unwrap().set_limits_max();

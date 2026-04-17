@@ -113,7 +113,7 @@ fn run_check_duplicate(
     let mut root_bank = bank_forks.read().unwrap().root_bank();
     let mut last_updated = Instant::now();
     let check_duplicate = |shred: PossibleDuplicateShred| -> Result<()> {
-        if last_updated.elapsed().as_nanos() > root_bank.ns_per_slot {
+        if last_updated.elapsed().as_nanos() > root_bank.ns_per_slot() {
             // Grabs bank forks lock once a slot
             last_updated = Instant::now();
             root_bank = bank_forks.read().unwrap().root_bank();

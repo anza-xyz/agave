@@ -16,6 +16,7 @@ use {
     async_trait::async_trait,
     quinn::{ClientConfig, Endpoint},
     solana_keypair::Keypair,
+    solana_rpc_client::slot_duration::BankTimingConfig,
     std::{
         net::{SocketAddr, UdpSocket},
         sync::Arc,
@@ -239,6 +240,8 @@ impl ConnectionWorkersScheduler {
         // `update_identity_receiver.changed()` is entered only once when the
         // channel is dropped.
         let mut identity_updater_is_active = true;
+        let mut current_timing_config: BankTimingConfig =
+            leader_updater.bank_timing_config().unwrap_or_default();
 
         loop {
             let transaction_batch: TransactionBatch = tokio::select! {
@@ -273,6 +276,12 @@ impl ConnectionWorkersScheduler {
 
             let connect_leaders = leader_updater.next_leaders(leaders_fanout.connect);
             let send_leaders = extract_send_leaders(&connect_leaders, leaders_fanout.send);
+            let updated_timing_config = leader_updater.bank_timing_config().unwrap_or_default();
+            if updated_timing_config != current_timing_config {
+                current_timing_config = updated_timing_config;
+                workers.flush();
+                debug!("Updated worker bank timing config.");
+            }
 
             // add future leaders to the cache to hide the latency of opening
             // the connection.
@@ -283,6 +292,7 @@ impl ConnectionWorkersScheduler {
                     worker_channel_size,
                     skip_check_transaction_age,
                     max_reconnect_attempts,
+                    current_timing_config,
                     DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
                     stats.clone(),
                 ) {

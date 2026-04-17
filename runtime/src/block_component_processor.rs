@@ -350,7 +350,7 @@ impl BlockComponentProcessor {
         let parent_slot = parent_bank.slot();
         let current_time_nanos = footer.block_producer_time_nanos as i64;
         let current_slot = bank.slot();
-        let ns_per_slot = bank.ns_per_slot.try_into().expect("ns_per_slot overflow");
+        let ns_per_slot = bank.ns_per_slot().try_into().expect("ns_per_slot overflow");
 
         let (lower_bound_nanos, upper_bound_nanos) =
             Self::nanosecond_time_bounds(parent_slot, parent_time_nanos, current_slot, ns_per_slot);
@@ -911,7 +911,7 @@ mod tests {
         let parent_slot = parent.slot();
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
         let current_slot = bank.slot();
-        let ns_per_slot = bank.ns_per_slot.try_into().expect("ns_per_slot overflow");
+        let ns_per_slot = bank.ns_per_slot().try_into().expect("ns_per_slot overflow");
 
         // Use a timestamp in the middle of the valid range
         let (lower_bound, upper_bound) = BlockComponentProcessor::nanosecond_time_bounds(
@@ -961,7 +961,7 @@ mod tests {
         parent.update_clock_from_footer(parent_time_nanos);
 
         let bank: Arc<Bank> = create_child_bank(&bank_forks, &parent, slot_gap);
-        let ns_per_slot = bank.ns_per_slot.try_into().expect("ns_per_slot overflow");
+        let ns_per_slot = bank.ns_per_slot().try_into().expect("ns_per_slot overflow");
 
         let (lower_bound, upper_bound) = BlockComponentProcessor::nanosecond_time_bounds(
             0,

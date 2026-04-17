@@ -8464,6 +8464,7 @@ dependencies = [
 name = "solana-rpc-client"
 version = "4.1.0-alpha.0"
 dependencies = [
+ "agave-feature-set",
  "async-trait",
  "base64 0.22.1",
  "bincode",

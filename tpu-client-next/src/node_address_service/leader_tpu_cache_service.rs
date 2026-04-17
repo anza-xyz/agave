@@ -12,7 +12,7 @@ use {
     solana_clock::{NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_pubkey::Pubkey,
-    solana_rpc_client::nonblocking::rpc_client::RpcClient,
+    solana_rpc_client::{nonblocking::rpc_client::RpcClient, slot_duration::BankTimingConfig},
     solana_rpc_client_api::{client_error::Error as ClientError, response::RpcContactInfo},
     std::{
         collections::HashMap, future::Future, net::SocketAddr, str::FromStr, sync::Arc,
@@ -68,13 +68,17 @@ pub struct LeaderUpdateReceiver {
 
 impl LeaderUpdateReceiver {
     pub fn leaders(&self, lookahead_leaders: usize) -> Vec<SocketAddr> {
-        let NodesTpuInfo { leaders, extend } = self.receiver.borrow().clone();
+        let NodesTpuInfo { leaders, extend, .. } = self.receiver.borrow().clone();
         let lookahead_leaders = if extend {
             lookahead_leaders.saturating_add(1)
         } else {
             lookahead_leaders
         };
         extract_send_leaders(&leaders, lookahead_leaders)
+    }
+
+    pub fn bank_timing_config(&self) -> BankTimingConfig {
+        self.receiver.borrow().timing_config
     }
 }
 
@@ -85,6 +89,7 @@ impl LeaderUpdateReceiver {
 struct NodesTpuInfo {
     leaders: Vec<SocketAddr>,
     extend: bool,
+    timing_config: BankTimingConfig,
 }
 
 impl LeaderTpuCacheService {
@@ -95,7 +100,7 @@ impl LeaderTpuCacheService {
         config: Config,
         cancel: CancellationToken,
     ) -> Result<(LeaderUpdateReceiver, Self), Error> {
-        let (leader_tpu_map, epoch_info, slot_leaders) = initialize_state(
+        let (leader_tpu_map, epoch_info, slot_leaders, timing_config) = initialize_state(
             cluster_info.as_ref(),
             slot_receiver.clone(),
             config.max_consecutive_failures,
@@ -114,6 +119,7 @@ impl LeaderTpuCacheService {
         let (leaders_sender, leaders_receiver) = watch::channel(NodesTpuInfo {
             leaders,
             extend: config.lookahead_leaders != lookahead_leaders,
+            timing_config,
         });
 
         let handle = tokio::spawn(Self::run_loop(
@@ -122,6 +128,7 @@ impl LeaderTpuCacheService {
             epoch_info,
             slot_leaders,
             leader_tpu_map,
+            timing_config,
             config,
             leaders_sender,
             cancel.clone(),
@@ -153,6 +160,7 @@ impl LeaderTpuCacheService {
         mut epoch_info: EpochInfo,
         mut slot_leaders: SlotLeaders,
         mut leader_tpu_map: LeaderTpuMap,
+        mut timing_config: BankTimingConfig,
         config: Config,
         leaders_sender: watch::Sender<NodesTpuInfo>,
         cancel: CancellationToken,
@@ -166,6 +174,13 @@ impl LeaderTpuCacheService {
                         "cluster TPU ports",
                         &mut leader_tpu_map,
                         || LeaderTpuMap::new(cluster_info.as_ref()),
+                        &mut num_consecutive_failures,
+                        config.max_consecutive_failures,
+                    ).await?;
+                    try_update(
+                        "bank timing config",
+                        &mut timing_config,
+                        || cluster_info.bank_timing_config(),
                         &mut num_consecutive_failures,
                         config.max_consecutive_failures,
                     ).await?;
@@ -184,6 +199,7 @@ impl LeaderTpuCacheService {
                         cluster_info.as_ref(),
                         &mut epoch_info,
                         &mut slot_leaders,
+                        &mut timing_config,
                         &mut num_consecutive_failures,
                         config.max_consecutive_failures,
                     ).await?;
@@ -195,7 +211,11 @@ impl LeaderTpuCacheService {
                     );
                     let leaders = leader_sockets(current_slot, lookahead_leaders, &slot_leaders, &leader_tpu_map);
 
-                    if let Err(e) = leaders_sender.send(NodesTpuInfo { leaders, extend: config.lookahead_leaders != lookahead_leaders }) {
+                    if let Err(e) = leaders_sender.send(NodesTpuInfo {
+                        leaders,
+                        extend: config.lookahead_leaders != lookahead_leaders,
+                        timing_config,
+                    }) {
                         warn!("Unexpectedly dropped leaders_sender: {e}");
                         return Err(Error::ChannelClosed);
                     }
@@ -242,6 +262,7 @@ pub trait ClusterInfoProvider: Send + Sync {
     async fn tpu_socket_map(&self) -> Result<HashMap<Pubkey, SocketAddr>, Error>;
     async fn epoch_info(&self, first_slot: Slot) -> Result<(Slot, Slot), Error>;
     async fn slot_leaders(&self, first_slot: Slot, slots_limit: u64) -> Result<Vec<Pubkey>, Error>;
+    async fn bank_timing_config(&self) -> Result<BankTimingConfig, Error>;
 }
 
 async fn update_leader_info(
@@ -249,6 +270,7 @@ async fn update_leader_info(
     cluster_info: &impl ClusterInfoProvider,
     epoch_info: &mut EpochInfo,
     slot_leaders: &mut SlotLeaders,
+    timing_config: &mut BankTimingConfig,
     num_consecutive_failures: &mut usize,
     max_consecutive_failures: usize,
 ) -> Result<(), Error> {
@@ -257,6 +279,14 @@ async fn update_leader_info(
             "epoch info",
             epoch_info,
             || EpochInfo::new(cluster_info, estimated_current_slot),
+            num_consecutive_failures,
+            max_consecutive_failures,
+        )
+        .await?;
+        try_update(
+            "bank timing config",
+            timing_config,
+            || cluster_info.bank_timing_config(),
             num_consecutive_failures,
             max_consecutive_failures,
         )
@@ -326,11 +356,12 @@ async fn initialize_state(
     cluster_info: &impl ClusterInfoProvider,
     slot_receiver: SlotReceiver,
     max_attempts: usize,
-) -> Result<(LeaderTpuMap, EpochInfo, SlotLeaders), Error> {
+) -> Result<(LeaderTpuMap, EpochInfo, SlotLeaders, BankTimingConfig), Error> {
     const ATTEMPTS_SLEEP_DURATION: Duration = Duration::from_millis(100);
     let mut leader_tpu_map = None;
     let mut epoch_info = None;
     let mut slot_leaders = None;
+    let mut timing_config = None;
     let mut num_attempts: usize = 0;
     while num_attempts < max_attempts {
         let iteration_start = Instant::now();
@@ -354,11 +385,19 @@ async fn initialize_state(
                 .ok();
             }
         }
-        if leader_tpu_map.is_some() && epoch_info.is_some() && slot_leaders.is_some() {
+        if timing_config.is_none() {
+            timing_config = cluster_info.bank_timing_config().await.ok();
+        }
+        if leader_tpu_map.is_some()
+            && epoch_info.is_some()
+            && slot_leaders.is_some()
+            && timing_config.is_some()
+        {
             return Ok((
                 leader_tpu_map.take().unwrap(),
                 epoch_info.take().unwrap(),
                 slot_leaders.take().unwrap(),
+                timing_config.take().unwrap(),
             ));
         }
         num_attempts += 1;
@@ -523,6 +562,10 @@ impl ClusterInfoProvider for RpcClient {
         let slot_leaders = self.get_slot_leaders(first_slot, max_slots_to_fetch).await;
         debug!("Fetched slot leaders from slot {first_slot} for {slots_limit}. ");
         slot_leaders.map_err(Error::RpcError)
+    }
+
+    async fn bank_timing_config(&self) -> Result<BankTimingConfig, Error> {
+        self.get_bank_timing_config().await.map_err(Error::RpcError)
     }
 }
 

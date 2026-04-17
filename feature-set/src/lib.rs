@@ -1351,6 +1351,10 @@ pub mod raise_account_cu_limit {
     solana_pubkey::declare_id!("htsptAwi2yRoZH83SKaUXykeZGtZHgxkS2QwW1pssR8");
 }
 
+pub mod publish_bank_timing_accounts {
+    solana_pubkey::declare_id!("859bJTjTTmSnXSpf337sw4mGumtcq7tGCxeSWYcXfftU");
+}
+
 pub mod halve_slot_times {
     solana_pubkey::declare_id!("shortoK7FR1q2FtTS83NAFEERpibyAGSEFHvNj1mJW7");
 }
@@ -2427,6 +2431,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             raise_account_cu_limit::id(),
             "SIMD-0306: Raise account CU limit to 40% max",
+        ),
+        (
+            publish_bank_timing_accounts::id(),
+            "Publish bank timing and blockhash age config to off-curve accounts",
         ),
         (halve_slot_times::id(), "Halve slot time to 200ms"),
         (

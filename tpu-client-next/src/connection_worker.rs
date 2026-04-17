@@ -11,8 +11,8 @@ use {
         transaction_batch::TransactionBatch,
     },
     quinn::{ConnectError, Connection, ConnectionError, Endpoint},
-    solana_clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_measure::measure::Measure,
+    solana_rpc_client::slot_duration::BankTimingConfig,
     solana_time_utils::timestamp,
     solana_tls_utils::socket_addr_to_quic_server_name,
     std::{
@@ -30,15 +30,6 @@ use {
 /// This is set to 2 seconds, which was the earlier shorter connection idle timeout
 /// which was also used by QUINN to timeout connection handshake.
 pub(crate) const DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// Interval between retry attempts for creating a new connection. This value is
-/// a best-effort estimate, based on current network conditions.
-const RETRY_SLEEP_INTERVAL: Duration =
-    Duration::from_millis(NUM_CONSECUTIVE_LEADER_SLOTS * DEFAULT_MS_PER_SLOT);
-
-/// Maximum age (in milliseconds) of a blockhash, beyond which transaction
-/// batches are dropped.
-const MAX_PROCESSING_AGE_MS: u64 = MAX_PROCESSING_AGE as u64 * DEFAULT_MS_PER_SLOT;
 
 /// [`ConnectionState`] represents the current state of a quic connection.
 ///
@@ -88,6 +79,8 @@ pub(crate) struct ConnectionWorker {
     send_txs_stats: Arc<SendTransactionStats>,
     cancel: CancellationToken,
     handshake_timeout: Duration,
+    retry_sleep_interval: Duration,
+    max_processing_age_ms: u64,
 }
 
 impl ConnectionWorker {
@@ -107,6 +100,7 @@ impl ConnectionWorker {
         transactions_receiver: mpsc::Receiver<TransactionBatch>,
         skip_check_transaction_age: bool,
         max_reconnect_attempts: usize,
+        timing_config: BankTimingConfig,
         send_txs_stats: Arc<SendTransactionStats>,
         handshake_timeout: Duration,
     ) -> (Self, CancellationToken) {
@@ -122,6 +116,12 @@ impl ConnectionWorker {
             cancel: cancel.clone(),
             handshake_timeout,
             last_congestion_events: 0,
+            retry_sleep_interval: timing_config.leader_window_duration(),
+            max_processing_age_ms: timing_config
+                .max_processing_age_duration()
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX),
         };
 
         (this, cancel)
@@ -180,7 +180,7 @@ impl ConnectionWorker {
                             self.connection = ConnectionState::Closing;
                             continue;
                         }
-                        sleep(RETRY_SLEEP_INTERVAL).await;
+                        sleep(self.retry_sleep_interval).await;
                         self.reconnect(*num_reconnects).await;
                     }
                 }
@@ -271,7 +271,7 @@ impl ConnectionWorker {
     async fn send_transactions(&mut self, connection: Connection, transactions: TransactionBatch) {
         let now = timestamp();
         if !self.skip_check_transaction_age
-            && now.saturating_sub(transactions.timestamp()) > MAX_PROCESSING_AGE_MS
+            && now.saturating_sub(transactions.timestamp()) > self.max_processing_age_ms
         {
             debug!("Drop outdated transaction batch for peer: {}", self.peer);
             return;

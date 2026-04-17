@@ -77,6 +77,7 @@ use {
     async_trait::async_trait,
     futures::StreamExt,
     solana_clock::Slot,
+    solana_rpc_client::slot_duration::BankTimingConfig,
     std::{net::SocketAddr, sync::Arc},
     thiserror::Error,
     tokio::join,
@@ -162,12 +163,20 @@ impl NodeAddressService {
     pub fn estimated_current_slot(&self) -> Slot {
         self.slot_receiver.slot()
     }
+
+    pub fn bank_timing_config(&self) -> Option<BankTimingConfig> {
+        Some(self.leaders_receiver.bank_timing_config())
+    }
 }
 
 #[async_trait]
 impl LeaderUpdater for NodeAddressService {
     fn next_leaders(&mut self, lookahead_leaders: usize) -> Vec<SocketAddr> {
         self.leaders_receiver.leaders(lookahead_leaders)
+    }
+
+    fn bank_timing_config(&self) -> Option<BankTimingConfig> {
+        Some(self.leaders_receiver.bank_timing_config())
     }
 
     async fn stop(&mut self) {

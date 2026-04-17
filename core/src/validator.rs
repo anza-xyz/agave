@@ -1971,7 +1971,8 @@ fn check_poh_speed(bank: &Bank, maybe_hash_samples: Option<u64>) -> Result<(), V
     let hash_time = compute_hash_time(hash_samples);
     let my_hashes_per_second = (hash_samples as f64 / hash_time.as_secs_f64()) as u64;
 
-    let target_slot_duration = Duration::from_nanos(bank.ns_per_slot as u64);
+    let target_slot_duration =
+        Duration::from_nanos(u64::try_from(bank.ns_per_slot()).unwrap_or(u64::MAX));
     let target_hashes_per_second =
         (hashes_per_slot as f64 / target_slot_duration.as_secs_f64()) as u64;
 

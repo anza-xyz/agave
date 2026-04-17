@@ -5,6 +5,7 @@ pub mod mock_sender;
 pub mod nonblocking;
 pub mod rpc_client;
 pub mod rpc_sender;
+pub mod slot_duration;
 pub mod spinner;
 pub use solana_rpc_client_api as api;
 

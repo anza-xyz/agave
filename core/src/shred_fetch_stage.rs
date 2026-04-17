@@ -79,7 +79,7 @@ impl ShredFilterContext {
     }
 
     fn maybe_update(&mut self, root_bank: Arc<Bank>, repair_context: Option<&RepairContext>) {
-        if self.last_updated.elapsed().as_nanos() > root_bank.ns_per_slot {
+        if self.last_updated.elapsed().as_nanos() > root_bank.ns_per_slot() {
             *self = Self::new(root_bank, repair_context);
         }
     }

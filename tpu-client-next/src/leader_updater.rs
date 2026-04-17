@@ -6,6 +6,7 @@
 
 use {
     async_trait::async_trait,
+    solana_rpc_client::slot_duration::BankTimingConfig,
     std::{fmt, net::SocketAddr},
     thiserror::Error,
 };
@@ -24,6 +25,10 @@ pub trait LeaderUpdater: Send {
     /// only one estimated leader, there is a risk of losing all the transactions,
     /// depending on the forwarding policy.
     fn next_leaders(&mut self, lookahead_leaders: usize) -> Vec<SocketAddr>;
+
+    fn bank_timing_config(&self) -> Option<BankTimingConfig> {
+        None
+    }
 
     /// Stop [`LeaderUpdater`] and releases all associated resources.
     async fn stop(&mut self);

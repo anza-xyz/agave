@@ -6828,6 +6828,7 @@ fn verify_bank_values(
     base_cost_tracker: Option<&CostTracker>,
 ) {
     assert_eq!(bank.ns_per_slot, expected_ns_per_slot);
+    assert_eq!(bank.ns_per_slot(), expected_ns_per_slot);
     assert_eq!(bank.hashes_per_tick().unwrap(), expected_hashes_per_tick,);
     assert_eq!(bank.ticks_per_slot(), expected_ticks_per_slot,);
     assert_eq!(bank.slots_per_year(), expected_slots_per_year,);
@@ -6874,6 +6875,51 @@ fn verify_bank_values(
     );
 }
 
+fn read_timing_account_u64(bank: &Bank, pubkey: &Pubkey) -> u64 {
+    u64::from_le_bytes(bank.get_account(pubkey).unwrap().data().try_into().unwrap())
+}
+
+fn read_timing_account_u128(bank: &Bank, pubkey: &Pubkey) -> u128 {
+    u128::from_le_bytes(bank.get_account(pubkey).unwrap().data().try_into().unwrap())
+}
+
+#[test]
+fn test_publish_bank_timing_accounts_feature_activate() {
+    let (bank0, bank_forks) = {
+        let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
+        let features_to_deactivate = vec![
+            feature_set::publish_bank_timing_accounts::id(),
+            feature_set::halve_slot_times::id(),
+        ];
+        deactivate_features(&mut genesis_config, &features_to_deactivate);
+        Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests()
+    };
+    let mut bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+    bank1.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
+
+    bank1.store_account(
+        &feature_set::publish_bank_timing_accounts::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+    bank1.compute_and_apply_new_feature_activations();
+
+    assert_eq!(bank1.ns_per_slot(), bank0.ns_per_slot);
+    assert_eq!(bank1.max_processing_age(), MAX_PROCESSING_AGE);
+    assert_eq!(
+        bank1.blockhash_queue.read().unwrap().get_max_age(),
+        MAX_RECENT_BLOCKHASHES,
+    );
+    assert_eq!(read_timing_account_u128(&bank1, &NS_PER_SLOT_ACCOUNT), bank0.ns_per_slot);
+    assert_eq!(
+        read_timing_account_u64(&bank1, &MAX_PROCESSING_AGE_ACCOUNT),
+        MAX_PROCESSING_AGE as u64,
+    );
+    assert_eq!(
+        read_timing_account_u64(&bank1, &MAX_RECENT_BLOCKHASHES_ACCOUNT),
+        MAX_RECENT_BLOCKHASHES as u64,
+    );
+}
+
 #[test]
 fn test_halve_slot_times_feature_activate() {
     // Setup the parent bank with some non-default values to ensure the feature
@@ -6899,6 +6945,15 @@ fn test_halve_slot_times_feature_activate() {
     // Verify expectations.
     assert!(bank1.halve_slot_times_active());
     assert_eq!(bank1.halve_slot_times_slot(), Some(1));
+    assert_eq!(read_timing_account_u128(&bank1, &NS_PER_SLOT_ACCOUNT), bank0.ns_per_slot / 2);
+    assert_eq!(
+        read_timing_account_u64(&bank1, &MAX_PROCESSING_AGE_ACCOUNT),
+        (MAX_PROCESSING_AGE * 2) as u64,
+    );
+    assert_eq!(
+        read_timing_account_u64(&bank1, &MAX_RECENT_BLOCKHASHES_ACCOUNT),
+        (MAX_RECENT_BLOCKHASHES * 2) as u64,
+    );
     verify_bank_values(
         bank1,
         bank0.ns_per_slot / 2,

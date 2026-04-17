@@ -14,6 +14,7 @@ use {
     solana_clock::Slot,
     solana_pubsub_client::nonblocking::pubsub_client::{PubsubClient, PubsubClientError},
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
+    solana_rpc_client::slot_duration::BankTimingConfig,
     solana_rpc_client_api::{client_error::Error as ClientError, response::SlotUpdate},
     std::{net::SocketAddr, sync::Arc, time::Duration},
     thiserror::Error,
@@ -63,12 +64,20 @@ impl WebsocketNodeAddressService {
     pub fn current_slot(&self) -> Slot {
         self.service.estimated_current_slot()
     }
+
+    pub fn bank_timing_config(&self) -> Option<BankTimingConfig> {
+        self.service.bank_timing_config()
+    }
 }
 
 #[async_trait]
 impl LeaderUpdater for WebsocketNodeAddressService {
     fn next_leaders(&mut self, lookahead_leaders: usize) -> Vec<SocketAddr> {
         self.service.next_leaders(lookahead_leaders)
+    }
+
+    fn bank_timing_config(&self) -> Option<BankTimingConfig> {
+        self.service.bank_timing_config()
     }
 
     async fn stop(&mut self) {

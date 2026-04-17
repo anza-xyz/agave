@@ -10,7 +10,7 @@ use {
             ConnectionCache, ConnectionManager, ConnectionPool, NewConnectionConfig,
         },
     },
-    solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client::{rpc_client::RpcClient, slot_duration::BankTimingConfig},
     solana_signature::Signature,
     solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_error::{TransportError, TransportResult},
@@ -229,6 +229,24 @@ where
 
     pub fn rpc_client(&self) -> &RpcClient {
         &self.rpc_client
+    }
+
+    pub fn get_bank_timing_config(&self) -> solana_rpc_client_api::client_error::Result<BankTimingConfig> {
+        self.rpc_client.get_bank_timing_config()
+    }
+
+    pub fn get_ns_per_slot(&self) -> solana_rpc_client_api::client_error::Result<u128> {
+        self.rpc_client.get_ns_per_slot()
+    }
+
+    pub fn get_max_processing_age(&self) -> solana_rpc_client_api::client_error::Result<usize> {
+        self.rpc_client.get_max_processing_age()
+    }
+
+    pub fn get_max_recent_blockhashes(
+        &self,
+    ) -> solana_rpc_client_api::client_error::Result<usize> {
+        self.rpc_client.get_max_recent_blockhashes()
     }
 
     fn invoke<T, F: std::future::Future<Output = T>>(&self, f: F) -> T {

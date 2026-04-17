@@ -15,6 +15,7 @@ use {
         http_sender::HttpSender,
         mock_sender::{MockSender, MocksMap, mock_encoded_account},
         nonblocking::{self, rpc_client::get_rpc_request_str},
+        slot_duration::BankTimingConfig,
         rpc_sender::*,
     },
     serde::Serialize,
@@ -3719,6 +3720,26 @@ impl RpcClient {
 
     pub fn get_new_latest_blockhash(&self, blockhash: &Hash) -> ClientResult<Hash> {
         self.invoke((self.rpc_client.as_ref()).get_new_latest_blockhash(blockhash))
+    }
+
+    pub fn get_bank_timing_config(&self) -> ClientResult<BankTimingConfig> {
+        self.invoke((self.rpc_client.as_ref()).get_bank_timing_config())
+    }
+
+    pub fn get_ns_per_slot(&self) -> ClientResult<u128> {
+        self.invoke((self.rpc_client.as_ref()).get_ns_per_slot())
+    }
+
+    pub fn get_max_processing_age(&self) -> ClientResult<usize> {
+        self.invoke((self.rpc_client.as_ref()).get_max_processing_age())
+    }
+
+    pub fn get_max_recent_blockhashes(&self) -> ClientResult<usize> {
+        self.invoke((self.rpc_client.as_ref()).get_max_recent_blockhashes())
+    }
+
+    pub fn get_slot_duration(&self) -> ClientResult<Duration> {
+        self.invoke((self.rpc_client.as_ref()).get_slot_duration())
     }
 
     pub fn get_transport_stats(&self) -> RpcTransportStats {

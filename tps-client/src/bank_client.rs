@@ -119,11 +119,6 @@ impl TpsClient for BankClient {
         for pubkey in pubkeys {
             let account = SyncClient::get_account(self, pubkey)
                 .map_err(|err| TpsClientError::Custom(format!("{err:?}")))?;
-            if account.is_none() {
-                return Err(TpsClientError::Custom(format!(
-                    "AccountNotFound: pubkey={pubkey}"
-                )));
-            }
             accounts.push(account);
         }
         Ok(accounts)

@@ -3,12 +3,14 @@
 use {
     log::debug,
     solana_account::Account,
-    solana_clock::DEFAULT_MS_PER_SLOT,
     solana_commitment_config::CommitmentConfig,
     solana_epoch_info::EpochInfo,
     solana_hash::Hash,
     solana_message::Message,
     solana_pubkey::Pubkey,
+    solana_rpc_client::slot_duration::{
+        BankTimingConfig, bank_timing_accounts, bank_timing_config_from_accounts,
+    },
     solana_rpc_client_api::{client_error::Error as ClientError, config::RpcBlockConfig},
     solana_signature::Signature,
     solana_tpu_client::tpu_client::TpuSenderError,
@@ -17,7 +19,7 @@ use {
     solana_transaction_status::UiConfirmedBlock,
     std::{
         thread::sleep,
-        time::{Duration, Instant},
+        time::Instant,
     },
     thiserror::Error,
 };
@@ -56,8 +58,22 @@ pub trait TpsClient {
         commitment_config: CommitmentConfig,
     ) -> TpsClientResult<(Hash, u64)>;
 
+    fn get_bank_timing_config(&self) -> TpsClientResult<BankTimingConfig> {
+        let timing_accounts = bank_timing_accounts();
+        let accounts = self.get_multiple_accounts(&timing_accounts)?;
+        bank_timing_config_from_accounts(&accounts).map_err(TpsClientError::Custom)
+    }
+
+    fn get_ns_per_slot(&self) -> TpsClientResult<u128> {
+        Ok(self.get_bank_timing_config()?.ns_per_slot)
+    }
+
     fn get_new_latest_blockhash(&self, blockhash: &Hash) -> TpsClientResult<Hash> {
         let start = Instant::now();
+        let retry_interval = self
+            .get_bank_timing_config()
+            .unwrap_or_default()
+            .half_slot_duration();
         while start.elapsed().as_secs() < 5 {
             if let Ok(new_blockhash) = self.get_latest_blockhash() {
                 if new_blockhash != *blockhash {
@@ -67,7 +83,7 @@ pub trait TpsClient {
             debug!("Got same blockhash ({blockhash:?}), will retry...");
 
             // Retry ~twice during a slot
-            sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT / 2));
+            sleep(retry_interval);
         }
         Err(TpsClientError::Custom("Timeout".to_string()))
     }

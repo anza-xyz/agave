@@ -13,7 +13,6 @@ use {
     rayon::prelude::*,
     solana_account::Account,
     solana_client::nonce_utils,
-    solana_clock::{DEFAULT_MS_PER_SLOT, DEFAULT_S_PER_SLOT, MAX_PROCESSING_AGE},
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_hash::Hash,
     solana_instruction::{AccountMeta, Instruction},
@@ -43,9 +42,6 @@ use {
         time::{Duration, Instant},
     },
 };
-
-// The point at which transactions become "too old", in seconds.
-const MAX_TX_QUEUE_AGE: u64 = (MAX_PROCESSING_AGE as f64 * DEFAULT_S_PER_SLOT) as u64;
 
 // Add prioritization fee to transfer transactions, if `compute_unit_price` is set.
 // If `Random` the compute-unit-price is determined by generating a random number in the range
@@ -367,6 +363,7 @@ fn create_sender_threads<T>(
     client: &Arc<T>,
     shared_txs: &SharedTransactions,
     thread_batch_sleep_ms: usize,
+    max_tx_queue_age_ms: u64,
     total_tx_sent_count: &Arc<AtomicUsize>,
     threads: usize,
     exit_signal: Arc<AtomicBool>,
@@ -393,6 +390,7 @@ where
                         &shared_tx_active_thread_count,
                         &total_tx_sent_count,
                         thread_batch_sleep_ms,
+                        max_tx_queue_age_ms,
                         &client,
                         signatures_sender,
                     );
@@ -467,6 +465,13 @@ where
     let blockhash = Arc::new(RwLock::new(get_latest_blockhash(client.as_ref())));
     let shared_tx_active_thread_count = Arc::new(AtomicIsize::new(0));
     let total_tx_sent_count = Arc::new(AtomicUsize::new(0));
+    let max_tx_queue_age_ms = client
+        .get_bank_timing_config()
+        .unwrap_or_default()
+        .max_processing_age_duration()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX);
 
     // if we use durable nonce, we don't need blockhash thread
     let blockhash_thread = if !use_durable_nonce {
@@ -496,6 +501,7 @@ where
         &client,
         &shared_txs,
         thread_batch_sleep_ms,
+        max_tx_queue_age_ms,
         &total_tx_sent_count,
         threads,
         exit_signal.clone(),
@@ -964,19 +970,7 @@ fn get_new_latest_blockhash<T: TpsClient + ?Sized>(
     client: &Arc<T>,
     blockhash: &Hash,
 ) -> Option<Hash> {
-    let start = Instant::now();
-    while start.elapsed().as_secs() < 5 {
-        if let Ok(new_blockhash) = client.get_latest_blockhash() {
-            if new_blockhash != *blockhash {
-                return Some(new_blockhash);
-            }
-        }
-        debug!("Got same blockhash ({blockhash:?}), will retry...");
-
-        // Retry ~twice during a slot
-        sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT / 2));
-    }
-    None
+    client.get_new_latest_blockhash(blockhash).ok()
 }
 
 fn poll_blockhash<T: TpsClient + ?Sized>(
@@ -1035,6 +1029,7 @@ fn do_tx_transfers<T: TpsClient + ?Sized>(
     shared_tx_thread_count: &Arc<AtomicIsize>,
     total_tx_sent_count: &Arc<AtomicUsize>,
     thread_batch_sleep_ms: usize,
+    max_tx_queue_age_ms: u64,
     client: &Arc<T>,
     signatures_sender: Option<SignatureBatchSender>,
 ) {
@@ -1065,7 +1060,7 @@ fn do_tx_transfers<T: TpsClient + ?Sized>(
                     if tx_timestamp < min_timestamp {
                         min_timestamp = tx_timestamp;
                     }
-                    if now > tx_timestamp && now - tx_timestamp > 1000 * MAX_TX_QUEUE_AGE {
+                    if now > tx_timestamp && now - tx_timestamp > max_tx_queue_age_ms {
                         old_transactions = true;
                         continue;
                     }

@@ -8,7 +8,7 @@
 
 pub use crate::mock_sender::Mocks;
 #[cfg(feature = "spinner")]
-use {crate::spinner, solana_clock::MAX_HASH_AGE_IN_SECONDS, std::cmp::min};
+use {crate::spinner, std::cmp::min};
 use {
     crate::{
         http_sender::HttpSender,
@@ -17,6 +17,7 @@ use {
             GetConfirmedSignaturesForAddress2Config, RpcClientConfig, SerializableMessage,
             SerializableTransaction,
         },
+        slot_duration::{self, BankTimingConfig},
         rpc_sender::*,
     },
     base64::{Engine, prelude::BASE64_STANDARD},
@@ -29,7 +30,7 @@ use {
         UiAccount, UiAccountData, UiAccountEncoding,
         token::{TokenAccountType, UiTokenAccount, UiTokenAmount},
     },
-    solana_clock::{DEFAULT_MS_PER_SLOT, Epoch, Slot, UnixTimestamp},
+    solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_commitment_config::CommitmentConfig,
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
@@ -1230,6 +1231,11 @@ impl RpcClient {
             )
             .into());
         }
+        let max_finalization_wait = self
+            .get_bank_timing_config()
+            .await
+            .unwrap_or_default()
+            .max_recent_blockhashes_duration();
         let now = Instant::now();
         loop {
             // Return when specified commitment is reached
@@ -1255,7 +1261,7 @@ impl RpcClient {
                 .get_num_blocks_since_signature_confirmation(signature)
                 .await
                 .unwrap_or(confirmations);
-            if now.elapsed().as_secs() >= MAX_HASH_AGE_IN_SECONDS as u64 {
+            if now.elapsed() >= max_finalization_wait {
                 return Err(RpcError::ForUser(
                     "transaction not finalized. This can happen when a transaction lands in an \
                      abandoned fork. Please retry."
@@ -4683,6 +4689,11 @@ impl RpcClient {
     pub async fn get_new_latest_blockhash(&self, blockhash: &Hash) -> ClientResult<Hash> {
         let mut num_retries = 0;
         let start = Instant::now();
+        let retry_interval = self
+            .get_bank_timing_config()
+            .await
+            .unwrap_or_default()
+            .half_slot_duration();
         while start.elapsed().as_secs() < 5 {
             if let Ok(new_blockhash) = self.get_latest_blockhash().await {
                 if new_blockhash != *blockhash {
@@ -4692,7 +4703,7 @@ impl RpcClient {
             debug!("Got same blockhash ({blockhash:?}), will retry...");
 
             // Retry ~twice during a slot
-            sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT / 2)).await;
+            sleep(retry_interval).await;
             num_retries += 1;
         }
         Err(RpcError::ForUser(format!(
@@ -4702,6 +4713,31 @@ impl RpcClient {
             blockhash
         ))
         .into())
+    }
+
+    pub async fn get_bank_timing_config(&self) -> ClientResult<BankTimingConfig> {
+        let timing_accounts = slot_duration::bank_timing_accounts();
+        let accounts = self
+            .get_multiple_accounts_with_commitment(&timing_accounts, self.commitment())
+            .await?;
+        slot_duration::bank_timing_config_from_accounts(&accounts.value)
+            .map_err(|err| ClientErrorKind::Custom(err).into())
+    }
+
+    pub async fn get_ns_per_slot(&self) -> ClientResult<u128> {
+        Ok(self.get_bank_timing_config().await?.ns_per_slot)
+    }
+
+    pub async fn get_max_processing_age(&self) -> ClientResult<usize> {
+        Ok(self.get_bank_timing_config().await?.max_processing_age)
+    }
+
+    pub async fn get_max_recent_blockhashes(&self) -> ClientResult<usize> {
+        Ok(self.get_bank_timing_config().await?.max_recent_blockhashes)
+    }
+
+    pub async fn get_slot_duration(&self) -> ClientResult<Duration> {
+        Ok(self.get_bank_timing_config().await?.slot_duration())
     }
 
     pub async fn send<T>(&self, request: RpcRequest, params: Value) -> ClientResult<T>

@@ -7,7 +7,7 @@ use {
     crossbeam_channel::{Receiver, Sender, select, tick, unbounded},
     log::*,
     serde::Serialize,
-    solana_clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE, Slot},
+    solana_clock::Slot,
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_measure::measure::Measure,
     solana_rpc_client_api::config::RpcBlockConfig,
@@ -22,7 +22,6 @@ use {
         fs::File,
         sync::Arc,
         thread::{self, Builder, JoinHandle},
-        time::Duration,
     },
 };
 
@@ -63,10 +62,6 @@ where
 // The time to process blocks is dominated by get_block calls.
 // Each call takes slightly less time than slot.
 const NUM_SLOTS_PER_ITERATION: u64 = 16;
-// How often process blocks.
-const PROCESS_BLOCKS_EVERY_MS: u64 = NUM_SLOTS_PER_ITERATION * DEFAULT_MS_PER_SLOT;
-// Max age for transaction in the transaction map, older transactions are cleaned up and marked as timeout.
-const REMOVE_TIMEOUT_TX_EVERY_MS: i64 = MAX_PROCESSING_AGE as i64 * DEFAULT_MS_PER_SLOT as i64;
 
 // Map used to filter submitted transactions.
 #[derive(Clone)]
@@ -96,13 +91,20 @@ impl LogTransactionService {
         }
 
         let client = client.clone();
+        let timing_config = client.get_bank_timing_config().unwrap_or_default();
         let tx_log_writer = TransactionLogWriter::new(transaction_data_file);
         let block_log_writer = BlockLogWriter::new(block_data_file);
 
         let thread_handler = Builder::new()
             .name("LogTransactionService".to_string())
             .spawn(move || {
-                Self::run(client, signature_receiver, tx_log_writer, block_log_writer);
+                Self::run(
+                    client,
+                    signature_receiver,
+                    tx_log_writer,
+                    block_log_writer,
+                    timing_config,
+                );
             })
             .expect("LogTransactionService should have started successfully.");
         Self { thread_handler }
@@ -117,6 +119,7 @@ impl LogTransactionService {
         signature_receiver: SignatureBatchReceiver,
         mut tx_log_writer: TransactionLogWriter,
         mut block_log_writer: BlockLogWriter,
+        timing_config: solana_rpc_client::slot_duration::BankTimingConfig,
     ) where
         Client: 'static + TpsClient + Send + Sync + ?Sized,
     {
@@ -124,7 +127,8 @@ impl LogTransactionService {
         let commitment: CommitmentConfig = CommitmentConfig {
             commitment: CommitmentLevel::Confirmed,
         };
-        let block_processing_timer_receiver = tick(Duration::from_millis(PROCESS_BLOCKS_EVERY_MS));
+        let block_processing_timer_receiver =
+            tick(timing_config.duration_for_slots(NUM_SLOTS_PER_ITERATION));
 
         let mut start_slot = get_slot_with_retry(&client, commitment).expect(
             "get_slot_with_retry should have succeed, cannot proceed without having slot. Must be \
@@ -177,7 +181,16 @@ impl LogTransactionService {
                         &mut block_log_writer,
                         commitment,
                     );
-                    Self::clean_transaction_map(&mut tx_log_writer, &mut signature_to_tx_info, last_block_time);
+                    Self::clean_transaction_map(
+                        &mut tx_log_writer,
+                        &mut signature_to_tx_info,
+                        last_block_time,
+                        timing_config
+                            .max_processing_age_duration()
+                            .as_millis()
+                            .try_into()
+                            .unwrap_or(i64::MAX),
+                    );
 
                     start_slot = start_slot.saturating_add(NUM_SLOTS_PER_ITERATION);
                     tx_log_writer.flush();
@@ -324,10 +337,11 @@ impl LogTransactionService {
         tx_log_writer: &mut TransactionLogWriter,
         signature_to_tx_info: &mut MapSignatureToTxInfo,
         last_block_time: DateTime<Utc>,
+        remove_timeout_tx_every_ms: i64,
     ) {
         signature_to_tx_info.retain(|signature, tx_info| {
             let duration_since_sent = last_block_time.signed_duration_since(tx_info.sent_at);
-            let is_timeout_tx = duration_since_sent.num_milliseconds() > REMOVE_TIMEOUT_TX_EVERY_MS;
+            let is_timeout_tx = duration_since_sent.num_milliseconds() > remove_timeout_tx_every_ms;
             if is_timeout_tx {
                 tx_log_writer.write(
                     None,
