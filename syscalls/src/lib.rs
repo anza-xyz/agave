@@ -7887,7 +7887,7 @@ mod tests {
         result.unwrap();
 
         let hash_local =
-            solana_sha512_hasher::hashv(&[bytes1.as_ref(), bytes2.as_ref()]).to_bytes();
+            sha512::hashv(&[bytes1.as_ref(), bytes2.as_ref()]).to_bytes();
         assert_eq!(hash_result, hash_local);
         let result = SyscallHash::<Sha512Hasher>::rust(
             &mut invoke_context,
