@@ -210,18 +210,23 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         validator_pubkey,
     };
 
-    for (validator_voting_keypairs, stake) in voting_keypairs[1..].iter().zip(&stakes[1..]) {
+    for (validator_voting_keypairs, &stake) in voting_keypairs[1..].iter().zip(&stakes[1..]) {
         let node_pubkey = validator_voting_keypairs.borrow().node_keypair.pubkey();
         let vote_pubkey = validator_voting_keypairs.borrow().vote_keypair.pubkey();
         let stake_pubkey = validator_voting_keypairs.borrow().stake_keypair.pubkey();
+        let bls_pubkey = validator_voting_keypairs
+            .borrow()
+            .bls_keypair
+            .public
+            .to_bytes_compressed();
 
         // Ensure minimum lamports for VAT filtering, but only when stake > 0.
         // When stake is explicitly 0, respect that (e.g., for testing unstaked validator filtering).
         let rent = &genesis_config_info.genesis_config.rent;
-        let (vote_account_lamports, stake_lamports) = if *stake > 0 {
+        let (vote_account_lamports, stake_lamports) = if stake > 0 {
             (
-                (*stake).max(minimum_vote_account_balance_for_vat(100)),
-                (*stake).max(minimum_stake_lamports_for_vat(rent)),
+                stake.max(minimum_vote_account_balance_for_vat(100)),
+                stake.max(minimum_stake_lamports_for_vat(rent)),
             )
         } else {
             // Zero stake - just need rent exemption, no VAT minimums
@@ -231,40 +236,19 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
             )
         };
 
-        // Create accounts
-        let node_account = Account::new(VALIDATOR_LAMPORTS, 0, &system_program::id());
-        let bls_pubkey_compressed = validator_voting_keypairs
-            .borrow()
-            .bls_keypair
-            .public
-            .to_bytes_compressed();
-        let vote_account = vote_state::create_v4_account_with_authorized(
-            &node_pubkey,
-            &vote_pubkey,
-            bls_pubkey_compressed,
-            &vote_pubkey,
-            0,
-            &vote_pubkey,
-            0,
-            &node_pubkey,
+        let accounts = create_validator(
+            rent,
+            node_pubkey,
+            VALIDATOR_LAMPORTS,
+            vote_pubkey,
             vote_account_lamports,
-        );
-        let stake_account = Account::from(stake_utils::create_stake_account(
-            &stake_pubkey,
-            &vote_pubkey,
-            &vote_account,
-            &genesis_config_info.genesis_config.rent,
+            stake_pubkey,
             stake_lamports,
-        ));
-
-        let vote_account = Account::from(vote_account);
-
-        // Put newly created accounts into genesis
-        genesis_config_info.genesis_config.accounts.extend(vec![
-            (node_pubkey, node_account),
-            (vote_pubkey, vote_account),
-            (stake_pubkey, stake_account),
-        ]);
+            Some(bls_pubkey),
+        )
+        .into_iter()
+        .map(|(pubkey, account)| (pubkey, Account::from(account)));
+        genesis_config_info.genesis_config.accounts.extend(accounts);
     }
 
     genesis_config_info
@@ -400,6 +384,45 @@ pub fn bls_pubkey_to_compressed_bytes(
     bincode::serialize(&key).unwrap().try_into().unwrap()
 }
 
+fn create_validator(
+    rent: &Rent,
+    node_pubkey: Pubkey,
+    node_lamports: u64,
+    vote_pubkey: Pubkey,
+    vote_lamports: u64,
+    stake_pubkey: Pubkey,
+    stake_lamports: u64,
+    bls_pubkey: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
+) -> Vec<(Pubkey, AccountSharedData)> {
+    let vote_account = vote_state::create_v4_account_with_authorized(
+        &node_pubkey,
+        &vote_pubkey,
+        bls_pubkey.unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
+        &vote_pubkey,
+        0,
+        &vote_pubkey,
+        0,
+        &node_pubkey,
+        vote_lamports,
+    );
+
+    let stake_account = stake_utils::create_stake_account(
+        &stake_pubkey,
+        &vote_pubkey,
+        &vote_account,
+        rent,
+        stake_lamports,
+    );
+
+    let node_account = AccountSharedData::new(node_lamports, 0, &system_program::id());
+
+    vec![
+        (vote_pubkey, vote_account),
+        (stake_pubkey, stake_account),
+        (node_pubkey, node_account),
+    ]
+}
+
 #[expect(clippy::too_many_arguments)]
 pub fn create_genesis_config_with_leader_ex_no_features(
     mint_lamports: u64,
@@ -430,36 +453,21 @@ pub fn create_genesis_config_with_leader_ex_no_features(
         )
     };
 
-    let validator_vote_account = vote_state::create_v4_account_with_authorized(
-        validator_pubkey,
-        validator_vote_account_pubkey,
-        validator_bls_pubkey.unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
-        validator_vote_account_pubkey,
-        0,
-        validator_vote_account_pubkey,
-        0,
-        validator_pubkey,
-        vote_account_lamports,
-    );
-
-    let validator_stake_account = stake_utils::create_stake_account(
-        validator_stake_account_pubkey,
-        validator_vote_account_pubkey,
-        &validator_vote_account,
-        &rent,
-        stake_lamports,
-    );
-
     initial_accounts.push((
         *mint_pubkey,
         AccountSharedData::new(mint_lamports, 0, &system_program::id()),
     ));
-    initial_accounts.push((
+    let mut validator_accounts = create_validator(
+        &rent,
         *validator_pubkey,
-        AccountSharedData::new(validator_lamports, 0, &system_program::id()),
-    ));
-    initial_accounts.push((*validator_vote_account_pubkey, validator_vote_account));
-    initial_accounts.push((*validator_stake_account_pubkey, validator_stake_account));
+        validator_lamports,
+        *validator_vote_account_pubkey,
+        vote_account_lamports,
+        *validator_stake_account_pubkey,
+        stake_lamports,
+        validator_bls_pubkey,
+    );
+    initial_accounts.append(&mut validator_accounts);
 
     let native_mint_account = solana_account::AccountSharedData::from(Account {
         owner: spl_generic_token::token::id(),
