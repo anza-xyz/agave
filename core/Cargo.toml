@@ -236,9 +236,5 @@ harness = false
 name = "receive_and_buffer"
 harness = false
 
-[[bench]]
-name = "scheduler"
-harness = false
-
 [lints]
 workspace = true
