@@ -1,7 +1,7 @@
 use {
     crate::nonblocking::quic::{ClientConnectionTracker, ConnectionPeerType},
     quinn::Connection,
-    std::future::Future,
+    std::{future::Future, time::Duration},
     tokio_util::sync::CancellationToken,
 };
 
@@ -11,6 +11,16 @@ use {
 pub(crate) trait ConnectionContext: Clone + Send + Sync {
     fn peer_type(&self) -> ConnectionPeerType;
     fn remote_pubkey(&self) -> Option<solana_pubkey::Pubkey>;
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum MaxStreamsAction {
+    /// This QoS implementation does not manage MAX_STREAMS on this path.
+    Unmanaged,
+    /// Apply a MAX_STREAMS value.
+    Set(u32),
+    /// Park the connection (MAX_STREAMS=0 and park behavior).
+    Park,
 }
 
 /// A trait to manage QoS for connections. This includes
@@ -54,6 +64,12 @@ pub(crate) trait QosController<C: ConnectionContext> {
 
     /// Optionally spawn QoS-specific background tasks onto the server runtime.
     fn spawn_background_tasks(&mut self) {}
+
+    /// Desired MAX_STREAMS action for this connection.
+    fn compute_max_streams(&self, context: &C, rtt: Duration) -> MaxStreamsAction {
+        let _ = (context, rtt);
+        MaxStreamsAction::Unmanaged
+    }
 
     /// How many concurrent
     fn max_concurrent_connections(&self) -> usize;

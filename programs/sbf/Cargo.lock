@@ -9443,6 +9443,7 @@ dependencies = [
  "solana-perf",
  "solana-pubkey 4.2.0",
  "solana-signer",
+ "solana-svm-type-overrides",
  "solana-time-utils",
  "solana-tls-utils",
  "solana-transaction-error",

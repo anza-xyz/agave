@@ -25,6 +25,7 @@ use {
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
+    solana_streamer::quic::SchedulerIngestBufferStatus,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         num::{NonZeroU64, Saturating},
@@ -104,14 +105,19 @@ where
         sharable_banks: SharableBanks,
         scheduler: S,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
+        buffer_status: Option<SchedulerIngestBufferStatus>,
     ) -> Self {
+        let mut container = R::Container::with_capacity(TOTAL_BUFFERED_PACKETS);
+        if let Some(status) = buffer_status {
+            container.set_buffer_status(status);
+        }
         Self {
             exit,
             config,
             decision_maker,
             receive_and_buffer,
             sharable_banks,
-            container: R::Container::with_capacity(TOTAL_BUFFERED_PACKETS),
+            container,
             scheduler,
             count_metrics: SchedulerCountMetrics::default(),
             timing_metrics: SchedulerTimingMetrics::default(),
@@ -579,6 +585,7 @@ mod tests {
             bank_forks.read().unwrap().sharable_banks(),
             scheduler,
             vec![], // no actual workers with metrics to report, this can be empty
+            None,
         );
 
         (test_frame, scheduler_controller)
