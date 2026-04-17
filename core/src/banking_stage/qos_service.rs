@@ -53,7 +53,7 @@ impl QosService {
 
     // invoke cost_model to calculate cost for the given list of transactions that have not
     // been filtered out already.
-    fn compute_transaction_costs<'a, Tx: TransactionWithMeta>(
+    pub fn compute_transaction_costs<'a, Tx: TransactionWithMeta>(
         feature_set: &FeatureSet,
         transactions: impl Iterator<Item = &'a Tx>,
         pre_results: impl Iterator<Item = transaction::Result<()>>,
