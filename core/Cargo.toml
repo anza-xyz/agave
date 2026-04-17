@@ -215,9 +215,6 @@ test-case = { workspace = true }
 jemallocator = { workspace = true }
 
 [[bench]]
-name = "banking_stage"
-
-[[bench]]
 name = "gen_keys"
 
 [[bench]]
