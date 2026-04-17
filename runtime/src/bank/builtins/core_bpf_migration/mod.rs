@@ -2170,17 +2170,14 @@ pub(crate) mod tests {
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
-        let full_snapshot_archive_info = bank_to_full_snapshot_archive(
+        let snapshot_config = SnapshotConfig::new_from_paths(
             bank_snapshots_dir.path(),
-            &bank,
-            None,
             snapshot_archives_dir.path(),
             snapshot_archives_dir.path(),
-            snapshot_archive_format,
-        )
-        .unwrap();
+        );
+        let full_snapshot_archive_info =
+            bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
 
         // Restore the bank from the snapshot and run checks.
         let roundtrip_bank = bank_from_snapshot_archives(

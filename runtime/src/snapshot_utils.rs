@@ -483,7 +483,6 @@ pub fn archive_snapshot_package(
     snapshot_archive_kind: SnapshotArchiveKind,
     snapshot_slot: Slot,
     snapshot_hash: SnapshotHash,
-    bank_snapshot_dir: impl AsRef<Path>,
     mut snapshot_storages: Vec<Arc<AccountStorageEntry>>,
     snapshot_config: &SnapshotConfig,
 ) -> Result<SnapshotArchiveInfo> {
@@ -513,9 +512,8 @@ pub fn archive_snapshot_package(
         snapshot_slot,
         snapshot_hash,
         snapshot_storages.as_slice(),
-        &bank_snapshot_dir,
         snapshot_archive_path,
-        snapshot_config.archive_format,
+        snapshot_config,
     )?;
 
     Ok(snapshot_archive_info)

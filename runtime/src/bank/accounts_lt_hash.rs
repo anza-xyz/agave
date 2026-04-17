@@ -886,18 +886,15 @@ mod tests {
         bank.set_block_id(Some(Hash::default()));
 
         // verification happens at startup, so mimic the behavior by loading from a snapshot
-        let snapshot_config = SnapshotConfig::default();
         let bank_snapshots_dir = TempDir::new().unwrap();
         let snapshot_archives_dir = TempDir::new().unwrap();
-        let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
-            &bank_snapshots_dir,
-            &bank,
-            Some(snapshot_config.snapshot_version),
-            &snapshot_archives_dir,
-            &snapshot_archives_dir,
-            snapshot_config.archive_format,
-        )
-        .unwrap();
+        let snapshot_config = SnapshotConfig::new_from_paths(
+            bank_snapshots_dir.path(),
+            snapshot_archives_dir.path(),
+            snapshot_archives_dir.path(),
+        );
+        let snapshot =
+            snapshot_bank_utils::bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
         let accounts_index_config = AccountsIndexConfig {
             index_limit: accounts_index_limit,
@@ -994,18 +991,15 @@ mod tests {
         }
         bank.set_block_id(Some(Hash::default()));
 
-        let snapshot_config = SnapshotConfig::default();
         let bank_snapshots_dir = TempDir::new().unwrap();
         let snapshot_archives_dir = TempDir::new().unwrap();
-        let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
-            &bank_snapshots_dir,
-            &bank,
-            Some(snapshot_config.snapshot_version),
-            &snapshot_archives_dir,
-            &snapshot_archives_dir,
-            snapshot_config.archive_format,
-        )
-        .unwrap();
+        let snapshot_config = SnapshotConfig::new_from_paths(
+            bank_snapshots_dir.path(),
+            snapshot_archives_dir.path(),
+            snapshot_archives_dir.path(),
+        );
+        let snapshot =
+            snapshot_bank_utils::bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
         let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],

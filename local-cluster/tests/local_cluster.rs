@@ -2251,15 +2251,9 @@ fn create_snapshot_to_hard_fork(
     .expect("must process blockstore from root");
 
     let bank = bank_forks.read().unwrap().get(snapshot_slot).unwrap();
-    let full_snapshot_archive_info = snapshot_bank_utils::bank_to_full_snapshot_archive(
-        ledger_path,
-        &bank,
-        Some(snapshot_config.snapshot_version),
-        ledger_path,
-        ledger_path,
-        snapshot_config.archive_format,
-    )
-    .unwrap();
+    let snapshot_config = SnapshotConfig::new_from_paths(ledger_path, ledger_path, ledger_path);
+    let full_snapshot_archive_info =
+        snapshot_bank_utils::bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
     info!(
         "Successfully created snapshot for slot {}, hash {}: {}",
         bank.slot(),

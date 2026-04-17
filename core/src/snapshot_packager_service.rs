@@ -121,16 +121,13 @@ impl SnapshotPackagerService {
                     let archive_time = Instant::now();
                     // Serializing the snapshot package is not allowed to fail, as archiving is
                     // not allowed to fail (see comment on archive_snapshot_package below
-                    let bank_snapshot_info = snapshot_utils::serialize_snapshot(
+                    if let Err(err) = snapshot_utils::serialize_snapshot(
                         &snapshot_config.bank_snapshots_dir,
                         snapshot_config.snapshot_version,
                         snapshot_package.bank_snapshot_package,
                         snapshot_package.snapshot_storages.as_slice(),
                         exit_backpressure.is_none(),
-                    );
-
-                    let Ok(bank_snapshot_info) = bank_snapshot_info else {
-                        let err = bank_snapshot_info.unwrap_err();
+                    ) {
                         error!(
                             "Stopping {}! Fatal error while serializing snapshot for slot \
                              {snapshot_slot}: {err}",
@@ -138,7 +135,7 @@ impl SnapshotPackagerService {
                         );
                         exit.store(true, Ordering::Relaxed);
                         break;
-                    };
+                    }
 
                     if let SnapshotKind::Archive(snapshot_archive_kind) = snapshot_kind {
                         // Archiving the snapshot package is not allowed to fail.
@@ -148,7 +145,6 @@ impl SnapshotPackagerService {
                             snapshot_archive_kind,
                             snapshot_slot,
                             snapshot_hash,
-                            &bank_snapshot_info.snapshot_dir,
                             snapshot_package.snapshot_storages,
                             snapshot_config,
                         ) {

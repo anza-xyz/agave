@@ -638,14 +638,9 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         bank.fill_bank_with_ticks_for_tests();
         Bank::calculate_and_set_block_id_for_dcou(&bank);
-        let archive_format = SnapshotConfig::default().archive_format;
         snapshot_bank_utils::bank_to_full_snapshot_archive(
-            &bank_snapshots_dir,
+            &SnapshotConfig::new_from_paths(&bank_snapshots_dir, ledger_path, ledger_path),
             &bank,
-            None,
-            ledger_path,
-            ledger_path,
-            archive_format,
         )
         .unwrap();
 

@@ -308,15 +308,13 @@ mod tests {
         let incremental_snapshot_archives_dir = TempDir::new().unwrap();
 
         // Serialize
-        let snapshot_archive_info = snapshot_bank_utils::bank_to_full_snapshot_archive(
-            &bank_snapshots_dir,
-            &bank,
-            None,
+        let snapshot_config = SnapshotConfig::new_from_paths(
+            bank_snapshots_dir.path(),
             full_snapshot_archives_dir.path(),
             incremental_snapshot_archives_dir.path(),
-            SnapshotConfig::default().archive_format,
-        )
-        .unwrap();
+        );
+        let snapshot_archive_info =
+            snapshot_bank_utils::bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
 
         // Deserialize
         let dbank = snapshot_bank_utils::bank_from_snapshot_archives(

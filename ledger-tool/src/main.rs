@@ -16,7 +16,7 @@ use {
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::{
         ArchiveFormat, DEFAULT_ARCHIVE_COMPRESSION, SUPPORTED_ARCHIVE_COMPRESSION, SnapshotVersion,
-        snapshot_archive_info::SnapshotArchiveInfoGetter as _,
+        snapshot_archive_info::SnapshotArchiveInfoGetter as _, snapshot_config::SnapshotConfig,
     },
     clap::{
         App, AppSettings, Arg, ArgMatches, SubCommand, crate_description, crate_name, value_t,
@@ -2509,6 +2509,15 @@ fn main() {
                     // The bank must have a block id set to take a snapshot.
                     Bank::calculate_and_set_block_id_for_dcou(&bank);
 
+                    let snapshot_config = SnapshotConfig {
+                        bank_snapshots_dir: ledger_path.clone(),
+                        full_snapshot_archives_dir: output_directory.clone(),
+                        incremental_snapshot_archives_dir: output_directory.clone(),
+                        archive_format: snapshot_archive_format,
+                        snapshot_version,
+                        ..SnapshotConfig::default()
+                    };
+
                     if is_incremental {
                         if starting_snapshot_hashes.is_none() {
                             eprintln!(
@@ -2530,13 +2539,9 @@ fn main() {
 
                         let incremental_snapshot_archive_info =
                             snapshot_bank_utils::bank_to_incremental_snapshot_archive(
-                                ledger_path,
+                                &snapshot_config,
                                 &bank,
                                 full_snapshot_slot,
-                                Some(snapshot_version),
-                                output_directory.clone(),
-                                output_directory,
-                                snapshot_archive_format,
                             )
                             .unwrap_or_else(|err| {
                                 eprintln!("Unable to create incremental snapshot: {err}");
@@ -2554,12 +2559,8 @@ fn main() {
                     } else {
                         let full_snapshot_archive_info =
                             snapshot_bank_utils::bank_to_full_snapshot_archive(
-                                ledger_path,
+                                &snapshot_config,
                                 &bank,
-                                Some(snapshot_version),
-                                output_directory.clone(),
-                                output_directory,
-                                snapshot_archive_format,
                             )
                             .unwrap_or_else(|err| {
                                 eprintln!("Unable to create snapshot: {err}");

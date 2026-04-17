@@ -2,7 +2,7 @@ use {
     super::{ArchiveFormat, SnapshotInterval, SnapshotVersion, ZstdConfig},
     std::{
         num::{NonZeroU64, NonZeroUsize},
-        path::PathBuf,
+        path::{Path, PathBuf},
     },
 };
 
@@ -106,6 +106,29 @@ impl SnapshotConfig {
             incremental_snapshot_archive_interval: SnapshotInterval::Disabled,
             ..Self::default()
         }
+    }
+
+    /// Constructs a `SnapshotConfig` from three directory paths, using defaults for all other
+    /// fields. Intended for use in tests where only the directory layout matters.
+    pub fn new_from_paths(
+        bank_snapshots_dir: impl AsRef<Path>,
+        full_snapshot_archives_dir: impl AsRef<Path>,
+        incremental_snapshot_archives_dir: impl AsRef<Path>,
+    ) -> Self {
+        Self {
+            bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
+            full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
+            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
+                .as_ref()
+                .to_path_buf(),
+            ..Self::default()
+        }
+    }
+
+    /// Returns this config with `bank_snapshots_dir` replaced.
+    pub fn with_bank_snapshots_dir(mut self, dir: impl AsRef<Path>) -> Self {
+        self.bank_snapshots_dir = dir.as_ref().to_path_buf();
+        self
     }
 
     /// Should snapshots be generated?
