@@ -364,26 +364,6 @@ mod tests {
             );
         }
 
-        // More than 12 signatures.
-        {
-            let transaction = create_legacy_transaction(
-                13,
-                MessageHeader {
-                    num_required_signatures: 13,
-                    num_readonly_signed_accounts: 0,
-                    num_readonly_unsigned_accounts: 0,
-                },
-                (0..13).map(|_| Pubkey::new_unique()).collect(),
-                vec![],
-            );
-            let data = wincode::serialize(&transaction).unwrap();
-            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
-            assert_eq!(
-                sanitize_signatures(&view),
-                Err(TransactionViewError::SanitizeError)
-            );
-        }
-
         // Not enough static accounts.
         {
             let transaction = create_legacy_transaction(
@@ -417,12 +397,12 @@ mod tests {
                 vec![],
             );
             let data = wincode::serialize(&transaction).unwrap();
-            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
-            assert_eq!(
-                sanitize_signatures(&view),
-                Err(TransactionViewError::SanitizeError)
-            );
+            let view = TransactionView::try_new_unsanitized(data.as_ref());
+            // SignatureFrame validates number of signatures, it throw ParseError if
+            // it is less than 12
+            assert!(matches!(view, Err(TransactionViewError::ParseError)));
         }
+
         {
             let transaction = create_v1_transaction(
                 13,
@@ -504,11 +484,10 @@ mod tests {
                 vec![],
             );
             let data = wincode::serialize(&transaction).unwrap();
-            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
-            assert_eq!(
-                sanitize_message_header(&view),
-                Err(TransactionViewError::SanitizeError)
-            );
+            let view = TransactionView::try_new_unsanitized(data.as_ref());
+            // SignatureFrame validates number of signatures, it throw ParseError if
+            // it is less than 1
+            assert!(matches!(view, Err(TransactionViewError::ParseError)));
         }
         {
             let transaction = create_v1_transaction(

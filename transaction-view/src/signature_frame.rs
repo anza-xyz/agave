@@ -1,7 +1,7 @@
 use {
     crate::{
         bytes::{advance_offset_for_array, read_byte},
-        result::Result,
+        result::{Result, TransactionViewError},
     },
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
@@ -37,6 +37,9 @@ impl SignatureFrame {
         const _: () = assert!(MAX_SIGNATURES_PER_PACKET & 0b1000_0000 == 0);
 
         let num_signatures = read_byte(bytes, offset)?;
+        if num_signatures == 0 || num_signatures > MAX_SIGNATURES_PER_PACKET {
+            return Err(TransactionViewError::ParseError);
+        }
 
         let signature_offset = *offset as u16;
         advance_offset_for_array::<Signature>(bytes, offset, u16::from(num_signatures))?;
@@ -51,6 +54,13 @@ impl SignatureFrame {
 #[cfg(test)]
 mod tests {
     use {super::*, solana_short_vec::ShortVec};
+
+    #[test]
+    fn test_zero_signatures() {
+        let bytes = bincode::serialize(&ShortVec(Vec::<Signature>::new())).unwrap();
+        let mut offset = 0;
+        assert!(SignatureFrame::try_new(&bytes, &mut offset).is_err());
+    }
 
     #[test]
     fn test_one_signature() {
@@ -82,5 +92,21 @@ mod tests {
         assert_eq!(frame.num_signatures, 1);
         assert_eq!(frame.offset, 2);
         assert_eq!(offset, 2 + core::mem::size_of::<Signature>());
+    }
+
+    #[test]
+    fn test_too_many_signatures() {
+        let signatures = vec![Signature::default(); usize::from(MAX_SIGNATURES_PER_PACKET) + 1];
+        let bytes = bincode::serialize(&ShortVec(signatures)).unwrap();
+        let mut offset = 0;
+        assert!(SignatureFrame::try_new(&bytes, &mut offset).is_err());
+    }
+
+    #[test]
+    fn test_u16_max_signatures() {
+        let signatures = vec![Signature::default(); u16::MAX as usize];
+        let bytes = bincode::serialize(&ShortVec(signatures)).unwrap();
+        let mut offset = 0;
+        assert!(SignatureFrame::try_new(&bytes, &mut offset).is_err());
     }
 }
