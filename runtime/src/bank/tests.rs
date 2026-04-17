@@ -46,8 +46,8 @@ use {
     },
     solana_client_traits::SyncClient,
     solana_clock::{
-        BankId, DEFAULT_TICKS_PER_SLOT, Epoch, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE,
-        MAX_RECENT_BLOCKHASHES, Slot, UnixTimestamp,
+        BankId, DEFAULT_TICKS_PER_SLOT, Epoch, INITIAL_RENT_EPOCH, MAX_RECENT_BLOCKHASHES, Slot,
+        UnixTimestamp,
     },
     solana_cluster_type::ClusterType,
     solana_compute_budget::{
@@ -11553,8 +11553,9 @@ fn test_blockhash_last_valid_block_height() {
         Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 
     // valid until MAX_PROCESSING_AGE
+    let max_processing_age = bank.max_processing_age();
     let last_blockhash = bank.last_blockhash();
-    for i in 1..=MAX_PROCESSING_AGE as u64 {
+    for i in 1..=max_processing_age as u64 {
         goto_end_of_slot(bank.clone());
         bank = Arc::new(new_from_parent(bank));
         assert_eq!(i, bank.block_height);
@@ -11564,13 +11565,13 @@ fn test_blockhash_last_valid_block_height() {
             .unwrap();
         assert_eq!(
             last_valid_block_height,
-            bank.block_height + MAX_PROCESSING_AGE as u64 - i
+            bank.block_height + max_processing_age as u64 - i
         );
         assert!(bank.is_blockhash_valid(&last_blockhash));
     }
 
     // Make sure it stays in the queue until `MAX_RECENT_BLOCKHASHES`
-    for i in MAX_PROCESSING_AGE + 1..=MAX_RECENT_BLOCKHASHES {
+    for i in max_processing_age + 1..=MAX_RECENT_BLOCKHASHES {
         goto_end_of_slot(bank.clone());
         bank = Arc::new(new_from_parent(bank));
         assert_eq!(bank.block_height, i as u64);
@@ -11580,7 +11581,7 @@ fn test_blockhash_last_valid_block_height() {
         let last_valid_block_height = bank
             .get_blockhash_last_valid_block_height(&last_blockhash)
             .unwrap();
-        assert_eq!(last_valid_block_height, MAX_PROCESSING_AGE as u64);
+        assert_eq!(last_valid_block_height, max_processing_age as u64);
 
         // But it isn't valid for processing
         assert!(!bank.is_blockhash_valid(&last_blockhash));
