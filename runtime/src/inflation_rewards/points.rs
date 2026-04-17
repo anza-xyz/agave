@@ -145,7 +145,6 @@ pub(crate) enum AlpenglowStakeState<'a> {
         vote_pubkey: Pubkey,
         /// `epoch_stakes` from the current bank.
         epoch_stakes: &'a HashMap<Epoch, VersionedEpochStakes>,
-        epoch_inflation_rewards: u64,
     },
     /// Function is called when Alpenglow is active for the entire epoch.
     Alpenglow {
@@ -305,7 +304,6 @@ fn migrating_epoch_credits_iter(
     new_rate_activation_epoch: Option<Epoch>,
     vote_pubkey: Pubkey,
     epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
-    epoch_inflation_rewards: u64,
 ) -> (u128, u64) {
     let tower = epoch_credits_iter
         .by_ref()
@@ -402,7 +400,6 @@ pub(crate) fn calculate_stake_points_and_credits(
         AlpenglowStakeState::Migrating {
             vote_pubkey,
             epoch_stakes,
-            epoch_inflation_rewards,
         } => migrating_epoch_credits_iter(
             stake,
             vote_state.epoch_credits_iter,
@@ -411,7 +408,6 @@ pub(crate) fn calculate_stake_points_and_credits(
             new_rate_activation_epoch,
             vote_pubkey,
             epoch_stakes,
-            epoch_inflation_rewards,
         ),
         AlpenglowStakeState::Alpenglow {
             vote_pubkey,

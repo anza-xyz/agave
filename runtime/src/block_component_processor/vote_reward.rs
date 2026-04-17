@@ -265,7 +265,7 @@ fn ensure_marker(bank: &Bank, vote_state: &mut VoteStateV4, epoch: Epoch) {
                 epoch_credits.push(marker_elem);
             }
         }
-        AlpenglowEpochStatus::MigrationEpoch { .. } => match epoch_credits.len() {
+        AlpenglowEpochStatus::MigrationEpoch => match epoch_credits.len() {
             0 => {
                 epoch_credits.push(marker_elem);
             }
