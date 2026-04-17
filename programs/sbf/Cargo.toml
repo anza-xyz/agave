@@ -15,6 +15,7 @@ edition = { workspace = true }
 members = [
     "rust/128bit",
     "rust/128bit_dep",
+    "rust/abi_v2_memory",
     "rust/account_mem",
     "rust/account_mem_deprecated",
     "rust/alloc",
@@ -161,6 +162,7 @@ solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.3
 solana-system-interface = { version = "=3.2", features = ["bincode"] }
 solana-sysvar = "=4.1.0"
 solana-test-validator = { path = "../../test-validator", version = "=4.3.0-alpha.1" }
+solana-transaction-context = { path = "../../transaction-context", version = "=4.3.0-alpha.1" }
 solana-vote = { path = "../../vote", version = "=4.3.0-alpha.1" }
 solana-vote-interface = "6.0.3"
 solana-vote-program = { path = "../../programs/vote", version = "=4.3.0-alpha.1" }
@@ -170,6 +172,7 @@ thiserror = "2.0"
 [features]
 sbf_c = []
 sbf_rust = []
+abi-v2 = []
 sbf_sanity_list = []
 sbpf-v3 = []
 dummy-for-ci-check = ["sbf_c", "sbf_rust", "sbf_sanity_list", "sbpf-v3"]

@@ -1,13 +1,14 @@
+use crate::{instruction_accounts::InstructionAccount, vm_slice::VmSlice};
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 use {
     crate::{
         IndexOfAccount,
-        instruction_accounts::{BorrowedInstructionAccount, InstructionAccount},
+        instruction_accounts::BorrowedInstructionAccount,
         transaction::TransactionContext,
         vm_addresses::{
             GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, GUEST_INSTRUCTION_DATA_BASE_ADDRESS,
             GUEST_REGION_SIZE,
         },
-        vm_slice::VmSlice,
     },
     solana_account::ReadableAccount,
     solana_instruction::error::InstructionError,
@@ -70,6 +71,7 @@ impl InstructionFrame {
 
 /// View interface to read instructions.
 #[derive(Debug)]
+#[cfg(not(any(target_arch = "sbf", target_arch = "bpf")))]
 pub struct InstructionContext<'a, 'ix_data> {
     pub(crate) transaction_context: &'a TransactionContext<'ix_data>,
     // The rest of the fields are redundant shortcuts
@@ -82,6 +84,7 @@ pub struct InstructionContext<'a, 'ix_data> {
     pub(crate) instruction_data: &'ix_data [u8],
 }
 
+#[cfg(not(any(target_arch = "sbf", target_arch = "bpf")))]
 impl<'a> InstructionContext<'a, '_> {
     /// How many Instructions were on the trace before this one was pushed
     pub fn get_index_in_trace(&self) -> usize {

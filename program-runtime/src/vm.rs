@@ -88,7 +88,7 @@ unsafe fn configure_program_regions<C: ContextObject>(
     let sbpf_version = executable.get_sbpf_version();
 
     let (ro_area, stack_area, heap_area) = if sbpf_version >= SBPFVersion::V4 {
-        let [ro_area, _text_area, stack_area, heap_area] = regions else {
+        let [ro_area, _text_area, stack_area, heap_area, ..] = regions else {
             panic!("the regions vector must have at least four entries")
         };
 
@@ -556,6 +556,7 @@ fn initialize_abi_v2_areas<C: ContextObject>(
         return;
     }
 
+    std::println!("Configuring ABIv2");
     let abi_v2_regions = create_abiv2_regions(invoke_context.transaction_context);
     invoke_context
         .memory_contexts

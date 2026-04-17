@@ -50,6 +50,11 @@ impl<T> VmSlice<T> {
     pub fn set_len(&mut self, new_len: u64) {
         self.len = new_len;
     }
+
+    #[cfg(any(target_arch = "bpf", target_arch = "sbf"))]
+    pub fn deref(&self) -> &[T] {
+        unsafe { core::slice::from_raw_parts(self.ptr as *const T, self.len as usize) }
+    }
 }
 
 const _: () = assert!(size_of::<VmSlice<u8>>() == 16);

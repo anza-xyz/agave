@@ -8472,6 +8472,13 @@ name = "solana-sbf-rust-128bit-dep"
 version = "4.3.0-alpha.1"
 
 [[package]]
+name = "solana-sbf-rust-abi-v2-memory"
+version = "4.3.0-alpha.1"
+dependencies = [
+ "solana-transaction-context",
+]
+
+[[package]]
 name = "solana-sbf-rust-account-mem"
 version = "4.3.0-alpha.1"
 dependencies = [

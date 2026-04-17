@@ -6,8 +6,7 @@ use {
         instruction::{InstructionContext, InstructionFrame},
         transaction_accounts::{KeyedAccountSharedData, TransactionAccounts},
         vm_addresses::{
-            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, GUEST_INSTRUCTION_DATA_BASE_ADDRESS,
-            GUEST_REGION_SIZE, RETURN_DATA_SCRATCHPAD,
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_REGION_SIZE, RETURN_DATA_SCRATCHPAD,
         },
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -18,11 +17,13 @@ use {
     std::{borrow::Cow, cell::Cell, ptr, rc::Rc},
 };
 use {
-    crate::{instruction_accounts::InstructionAccount, vm_slice::VmSlice},
+    crate::{vm_addresses::GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, instruction_accounts::InstructionAccoun,
+            vm_slice::VmSlice},
     solana_pubkey::Pubkey,
 };
 
 /// Used only in fn `take_instruction_trace` for deconstructing TransactionContext
+#[cfg(not(any(target_arch = "sbf", target_arch = "bpf")))]
 pub type InstructionTrace<'ix_data> = (
     Vec<InstructionFrame>,
     Vec<Box<[InstructionAccount]>>,
@@ -37,20 +38,20 @@ pub type InstructionTrace<'ix_data> = (
 #[derive(Debug)]
 pub struct TransactionFrame {
     /// Pubkey of the last program to write to the return data scratchpad
-    return_data_pubkey: Pubkey,
-    return_data_scratchpad: VmSlice<u8>,
+    pub return_data_pubkey: Pubkey,
+    pub return_data_scratchpad: VmSlice<u8>,
     /// Scratchpad for programs to write CPI instruction data
     pub cpi_data_scratchpad: VmSlice<u8>,
     /// Scratchpad for programs to write CPI accounts
     pub cpi_accounts_scratchpad: VmSlice<InstructionAccount>,
     /// Index of current executing instruction
-    current_executing_instruction: u16,
+    pub current_executing_instruction: u16,
     /// Number of instructions in the instruction trace (including top level and CPIs)
-    total_number_of_instructions_in_trace: u16,
+    pub total_number_of_instructions_in_trace: u16,
     /// Number of CPIs in the instruction trace
-    number_of_cpis_in_trace: u16,
+    pub number_of_cpis_in_trace: u16,
     /// Number of transaction accounts
-    number_of_transaction_accounts: u16,
+    pub number_of_transaction_accounts: u16,
 }
 
 /// Loaded transaction shared between runtime and programs.
