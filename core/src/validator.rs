@@ -217,6 +217,15 @@ impl BlockProductionMethod {
     pub fn cli_message() -> &'static str {
         "Switch transaction scheduling method for producing ledger entries"
     }
+
+    pub fn warn_if_deprecated(&self) {
+        if matches!(self, Self::CentralScheduler) {
+            warn!(
+                "`central-scheduler` is deprecated and will be removed in a future release; use \
+                 `central-scheduler-greedy` instead"
+            );
+        }
+    }
 }
 
 #[derive(
