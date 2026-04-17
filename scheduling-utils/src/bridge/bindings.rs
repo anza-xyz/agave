@@ -83,7 +83,7 @@ where
             },
             runtime: RuntimeState {
                 feature_set: FeatureSet::all_enabled(),
-                fee_features: FeeFeatures {},
+                fee_features: FeeFeatures::default(),
                 lamports_per_signature: 5000,
                 burn_percent: 50,
             },

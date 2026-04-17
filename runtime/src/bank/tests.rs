@@ -105,7 +105,7 @@ use {
         transaction_execution_result::{AccountsDeltas, ExecutedTransaction},
     },
     solana_svm_timings::ExecuteTimings,
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_system_interface::{
         MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION, MAX_PERMITTED_DATA_LENGTH,
         error::SystemError,
@@ -1551,6 +1551,7 @@ fn test_bank_tx_compute_unit_fee() {
     let expected_fee_paid = calculate_test_fee(
         &new_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique()))),
         bank.fee_structure(),
+        &bank.feature_set,
     );
 
     let (expected_fee_collected, expected_fee_burned) =
@@ -9332,19 +9333,39 @@ fn test_call_precomiled_program() {
     bank.process_transaction(&tx).unwrap();
 }
 
-fn calculate_test_fee(message: &impl SVMMessage, fee_structure: &FeeStructure) -> u64 {
+fn calculate_test_fee(
+    message: &SanitizedMessage,
+    fee_structure: &FeeStructure,
+    feature_set: &FeatureSet,
+) -> u64 {
     let prioritization_fee = process_compute_budget_instructions(
-        message.program_instructions_iter(),
-        &FeatureSet::default(),
+        SVMStaticMessage::program_instructions_iter(message),
+        feature_set,
     )
     .unwrap_or_default()
     .get_prioritization_fee();
-    solana_fee::calculate_fee(
+    solana_fee::calculate_fee_with_flags(
         message,
         fee_structure.lamports_per_signature,
         prioritization_fee,
-        FeeFeatures {},
+        Bank::is_simple_vote_message(message),
+        FeeFeatures::from(feature_set),
     )
+}
+
+fn new_simple_vote_message(
+    fee_payer: &Pubkey,
+    authorized_voter: &Pubkey,
+    vote_pubkey: &Pubkey,
+) -> SanitizedMessage {
+    new_sanitized_message(Message::new(
+        &[vote_instruction::tower_sync(
+            vote_pubkey,
+            authorized_voter,
+            TowerSync::new_from_slot(0, Hash::default()),
+        )],
+        Some(fee_payer),
+    ))
 }
 
 #[test]
@@ -9358,6 +9379,7 @@ fn test_calculate_fee() {
                 lamports_per_signature: 0,
                 ..FeeStructure::default()
             },
+            &FeatureSet::default(),
         ),
         0
     );
@@ -9370,6 +9392,7 @@ fn test_calculate_fee() {
                 lamports_per_signature: 1,
                 ..FeeStructure::default()
             },
+            &FeatureSet::default(),
         ),
         1
     );
@@ -9387,8 +9410,154 @@ fn test_calculate_fee() {
                 lamports_per_signature: 2,
                 ..FeeStructure::default()
             },
+            &FeatureSet::default(),
         ),
         4
+    );
+}
+
+#[test]
+fn test_calculate_fee_simple_vote_halved_with_feature() {
+    let vote_pubkey = Pubkey::new_unique();
+    let authorized_voter = Pubkey::new_unique();
+    let message = new_simple_vote_message(&authorized_voter, &authorized_voter, &vote_pubkey);
+    let fee_structure = FeeStructure {
+        lamports_per_signature: 5_000,
+        ..FeeStructure::default()
+    };
+    let mut feature_set = FeatureSet::default();
+    feature_set.activate(&feature_set::halve_slot_times::id(), 0);
+
+    assert_eq!(
+        calculate_test_fee(&message, &fee_structure, &FeatureSet::default()),
+        5_000
+    );
+    assert_eq!(
+        calculate_test_fee(&message, &fee_structure, &feature_set),
+        2_500
+    );
+}
+
+#[test]
+fn test_calculate_fee_two_signature_simple_vote_halved_with_feature() {
+    let vote_pubkey = Pubkey::new_unique();
+    let fee_payer = Pubkey::new_unique();
+    let authorized_voter = Pubkey::new_unique();
+    let message = new_simple_vote_message(&fee_payer, &authorized_voter, &vote_pubkey);
+    let fee_structure = FeeStructure {
+        lamports_per_signature: 5_000,
+        ..FeeStructure::default()
+    };
+    let mut feature_set = FeatureSet::default();
+    feature_set.activate(&feature_set::halve_slot_times::id(), 0);
+
+    assert_eq!(
+        calculate_test_fee(&message, &fee_structure, &FeatureSet::default()),
+        10_000
+    );
+    assert_eq!(
+        calculate_test_fee(&message, &fee_structure, &feature_set),
+        5_000
+    );
+}
+
+#[test]
+fn test_calculate_fee_non_simple_vote_not_discounted_with_feature() {
+    let vote_pubkey = Pubkey::new_unique();
+    let authorized_voter = Pubkey::new_unique();
+    let recipient = Pubkey::new_unique();
+    let message = new_sanitized_message(Message::new(
+        &[
+            vote_instruction::tower_sync(
+                &vote_pubkey,
+                &authorized_voter,
+                TowerSync::new_from_slot(0, Hash::default()),
+            ),
+            system_instruction::transfer(&authorized_voter, &recipient, 1),
+        ],
+        Some(&authorized_voter),
+    ));
+    let fee_structure = FeeStructure {
+        lamports_per_signature: 5_000,
+        ..FeeStructure::default()
+    };
+    let mut feature_set = FeatureSet::default();
+    feature_set.activate(&feature_set::halve_slot_times::id(), 0);
+
+    assert_eq!(
+        calculate_test_fee(&message, &fee_structure, &feature_set),
+        5_000
+    );
+}
+
+#[test]
+fn test_bank_vote_transaction_fee_halved_after_halve_slot_times_activation() {
+    let (genesis_config, mint_keypair) = create_genesis_config(1_000_000);
+    let authorized_voter = Keypair::new();
+    let vote_pubkey = Pubkey::new_unique();
+    let node_pubkey = Pubkey::new_unique();
+    let vote_account = vote_state::create_v4_account_with_authorized(
+        &node_pubkey,
+        &authorized_voter.pubkey(),
+        [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+        &authorized_voter.pubkey(),
+        0,
+        &vote_pubkey,
+        0,
+        &node_pubkey,
+        100,
+    );
+    let fee_structure = FeeStructure {
+        lamports_per_signature: 5_000,
+        ..FeeStructure::default()
+    };
+    let mut bank0 = Bank::new_for_tests(&genesis_config);
+    bank0.set_fee_structure(&fee_structure);
+    let (bank0, bank_forks) = bank0.wrap_with_bank_forks_for_tests();
+    bank0.store_account(&vote_pubkey, &vote_account);
+
+    let bank_without_feature = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+    let mut bank_with_feature = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 2);
+    bank_with_feature.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
+    bank_with_feature.store_account(
+        &feature_set::halve_slot_times::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+    bank_with_feature.compute_and_apply_new_feature_activations();
+
+    let baseline_balance = bank0.get_balance(&mint_keypair.pubkey());
+    let build_vote_tx = |bank: &Bank| {
+        Transaction::new_signed_with_payer(
+            &[vote_instruction::tower_sync(
+                &vote_pubkey,
+                &authorized_voter.pubkey(),
+                TowerSync::new_from_slot(bank.parent_slot, bank.parent_hash),
+            )],
+            Some(&mint_keypair.pubkey()),
+            &[&mint_keypair, &authorized_voter],
+            bank.last_blockhash(),
+        )
+    };
+
+    let tx_without_feature = build_vote_tx(&bank_without_feature);
+    assert_eq!(
+        bank_without_feature.process_transaction(&tx_without_feature),
+        Ok(())
+    );
+    assert_eq!(
+        baseline_balance - bank_without_feature.get_balance(&mint_keypair.pubkey()),
+        10_000
+    );
+
+    let tx_with_feature = build_vote_tx(&bank_with_feature);
+    assert_eq!(
+        bank_with_feature.process_transaction(&tx_with_feature),
+        Ok(())
+    );
+    assert!(bank_with_feature.halve_slot_times_active());
+    assert_eq!(
+        baseline_balance - bank_with_feature.get_balance(&mint_keypair.pubkey()),
+        5_000
     );
 }
 
@@ -9405,7 +9574,7 @@ fn test_calculate_fee_compute_units() {
 
     let message = new_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
     assert_eq!(
-        calculate_test_fee(&message, &fee_structure,),
+        calculate_test_fee(&message, &fee_structure, &FeatureSet::default()),
         max_fee + lamports_per_signature
     );
 
@@ -9415,7 +9584,7 @@ fn test_calculate_fee_compute_units() {
     let ix1 = system_instruction::transfer(&Pubkey::new_unique(), &Pubkey::new_unique(), 1);
     let message = new_sanitized_message(Message::new(&[ix0, ix1], Some(&Pubkey::new_unique())));
     assert_eq!(
-        calculate_test_fee(&message, &fee_structure,),
+        calculate_test_fee(&message, &fee_structure, &FeatureSet::default()),
         max_fee + 3 * lamports_per_signature
     );
 
@@ -9443,7 +9612,7 @@ fn test_calculate_fee_compute_units() {
             ],
             Some(&Pubkey::new_unique()),
         ));
-        let fee = calculate_test_fee(&message, &fee_structure);
+        let fee = calculate_test_fee(&message, &fee_structure, &FeatureSet::default());
         let prioritization_fee = ComputeBudgetLimits {
             compute_unit_price: PRIORITIZATION_FEE_RATE,
             compute_unit_limit: requested_compute_units,
@@ -9478,7 +9647,7 @@ fn test_calculate_prioritization_fee() {
         Some(&Pubkey::new_unique()),
     ));
 
-    let fee = calculate_test_fee(&message, &fee_structure);
+    let fee = calculate_test_fee(&message, &fee_structure, &FeatureSet::default());
     assert_eq!(
         fee,
         fee_structure.lamports_per_signature + prioritization_fee
@@ -9514,7 +9683,10 @@ fn test_calculate_fee_secp256k1() {
         ],
         Some(&key0),
     ));
-    assert_eq!(calculate_test_fee(&message, &fee_structure,), 2);
+    assert_eq!(
+        calculate_test_fee(&message, &fee_structure, &FeatureSet::default()),
+        2
+    );
 
     secp_instruction1.data = vec![0];
     secp_instruction2.data = vec![10];
@@ -9522,7 +9694,10 @@ fn test_calculate_fee_secp256k1() {
         &[ix0, secp_instruction1, secp_instruction2],
         Some(&key0),
     ));
-    assert_eq!(calculate_test_fee(&message, &fee_structure,), 11);
+    assert_eq!(
+        calculate_test_fee(&message, &fee_structure, &FeatureSet::default()),
+        11
+    );
 }
 
 #[test]
@@ -10806,7 +10981,7 @@ fn test_calculate_fee_with_request_heap_frame_flag() {
     // assert when request_heap_frame is presented in tx, prioritization fee will be counted
     // into transaction fee
     assert_eq!(
-        calculate_test_fee(&message, &fee_structure),
+        calculate_test_fee(&message, &fee_structure, &FeatureSet::default()),
         signature_fee + request_cu * lamports_per_cu
     );
 }

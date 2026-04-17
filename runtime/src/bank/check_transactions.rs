@@ -4,7 +4,7 @@ use {
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_clock::{MAX_TRANSACTION_FORWARDING_DELAY, Slot},
     solana_compute_budget::compute_budget::SVMTransactionExecutionBudget,
-    solana_fee::{FeeFeatures, calculate_fee_details},
+    solana_fee::{FeeFeatures, calculate_fee_details_with_flags},
     solana_nonce::state::{Data as NonceData, DurableNonce},
     solana_nonce_account as nonce_account,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
@@ -109,10 +109,11 @@ impl Bank {
                         .borrow()
                         .transaction_configuration(feature_set)
                         .map(|config| {
-                            let fee_details = calculate_fee_details(
+                            let fee_details = calculate_fee_details_with_flags(
                                 tx.borrow(),
                                 self.fee_structure.lamports_per_signature,
                                 config.priority_fee_lamports,
+                                tx.borrow().is_simple_vote_transaction(),
                                 fee_features,
                             );
                             if let Some(compute_budget) = self.compute_budget {

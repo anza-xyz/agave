@@ -67,10 +67,11 @@ impl Bank {
         transaction: &impl TransactionWithMeta,
         transaction_configuration: &TransactionConfiguration,
     ) -> u64 {
-        let fee_details = solana_fee::calculate_fee_details(
+        let fee_details = solana_fee::calculate_fee_details_with_flags(
             transaction,
             self.fee_structure().lamports_per_signature,
             transaction_configuration.priority_fee_lamports,
+            transaction.is_simple_vote_transaction(),
             FeeFeatures::from(self.feature_set.as_ref()),
         );
         let FeeDistribution {

@@ -173,7 +173,7 @@ use {
     },
     solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_syscalls::create_program_runtime_environment,
     solana_system_transaction as system_transaction,
     solana_sysvar::{self as sysvar, SysvarSerialize, last_restart_slot::LastRestartSlot},
@@ -3062,20 +3062,34 @@ impl Bank {
 
     pub fn get_fee_for_message_with_lamports_per_signature(
         &self,
-        message: &impl SVMMessage,
+        message: &SanitizedMessage,
     ) -> u64 {
         let prioritization_fee = process_compute_budget_instructions(
-            message.program_instructions_iter(),
+            SVMStaticMessage::program_instructions_iter(message),
             &self.feature_set,
         )
         .unwrap_or_default()
         .get_prioritization_fee();
-        solana_fee::calculate_fee(
+        solana_fee::calculate_fee_with_flags(
             message,
             self.fee_structure().lamports_per_signature,
             prioritization_fee,
+            Self::is_simple_vote_message(message),
             FeeFeatures::from(self.feature_set.as_ref()),
         )
+    }
+
+    fn is_simple_vote_message(message: &SanitizedMessage) -> bool {
+        let mut program_ids =
+            SVMStaticMessage::program_instructions_iter(message).map(|(program_id, _)| program_id);
+        SVMStaticMessage::num_transaction_signatures(message) > 0
+            && SVMStaticMessage::num_transaction_signatures(message) < 3
+            && matches!(message, SanitizedMessage::Legacy(_))
+            && program_ids
+                .next()
+                .xor(program_ids.next())
+                .map(|program_id| program_id == &solana_sdk_ids::vote::ID)
+                .unwrap_or(false)
     }
 
     pub fn get_blockhash_last_valid_block_height(&self, blockhash: &Hash) -> Option<Slot> {

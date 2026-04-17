@@ -477,10 +477,11 @@ impl Consumer {
     ) -> Result<(), TransactionError> {
         let fee_payer = transaction.fee_payer();
         let transaction_configuration = transaction.transaction_configuration(&bank.feature_set)?;
-        let fee = solana_fee::calculate_fee(
+        let fee = solana_fee::calculate_fee_with_flags(
             transaction,
             bank.fee_structure().lamports_per_signature,
             transaction_configuration.priority_fee_lamports,
+            transaction.is_simple_vote_transaction(),
             FeeFeatures::from(bank.feature_set.as_ref()),
         );
         let (mut fee_payer_account, _slot) = bank
