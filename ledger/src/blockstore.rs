@@ -885,23 +885,12 @@ impl Blockstore {
     ) {
         let mark_slot_dead = shred_insertion_tracker
             .slot_meta_working_set
-<<<<<<< HEAD
             .get(&slot)
-            .is_none_or(|meta| !meta.new_slot_meta.borrow().is_full())
-        {
-=======
-            .get(&(location, slot))
             .map(|meta| !meta.new_slot_meta.borrow().is_full())
-            .or_else(|| {
-                self.meta_from_location(slot, location)
-                    .ok()
-                    .flatten()
-                    .map(|meta| !meta.is_full())
-            })
+            .or_else(|| self.meta(slot).ok().flatten().map(|meta| !meta.is_full()))
             .unwrap_or(true);
 
         if mark_slot_dead {
->>>>>>> 9808d65b2 (blockstore: Add fallback in mark_slot_dead_if_not_full() (#12026))
             // If the slot is already full there is no reason to mark as dead
             self.dead_slots_cf
                 .put_bytes_in_batch(
@@ -7771,7 +7760,6 @@ pub mod tests {
     fn test_mark_slot_dead_if_not_full() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        let location = BlockLocation::Original;
 
         // Leave an empty slot
         let empty_slot = 0;
@@ -7793,9 +7781,9 @@ pub mod tests {
         let mut shred_insertion_tracker =
             ShredInsertionTracker::new(1, blockstore.db.batch().unwrap());
 
-        blockstore.mark_slot_dead_if_not_full(empty_slot, location, &mut shred_insertion_tracker);
-        blockstore.mark_slot_dead_if_not_full(partial_slot, location, &mut shred_insertion_tracker);
-        blockstore.mark_slot_dead_if_not_full(full_slot, location, &mut shred_insertion_tracker);
+        blockstore.mark_slot_dead_if_not_full(empty_slot, &mut shred_insertion_tracker);
+        blockstore.mark_slot_dead_if_not_full(partial_slot, &mut shred_insertion_tracker);
+        blockstore.mark_slot_dead_if_not_full(full_slot, &mut shred_insertion_tracker);
         // Commit the write batch so state changes can be read back
         blockstore
             .write_batch(shred_insertion_tracker.write_batch)
