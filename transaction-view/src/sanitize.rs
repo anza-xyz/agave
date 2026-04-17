@@ -7,7 +7,6 @@ use {
         transaction_view::UnsanitizedTransactionView,
     },
     solana_program_runtime::execution_budget::{MAX_HEAP_FRAME_BYTES, MIN_HEAP_FRAME_BYTES},
-    std::collections::HashSet,
 };
 
 pub(crate) fn sanitize(
@@ -120,14 +119,9 @@ fn sanitize_account_access(view: &UnsanitizedTransactionView<impl TransactionDat
         return Err(TransactionViewError::SanitizeError);
     }
 
-    // no duplicated accounts
-    let accounts = view.static_account_keys();
-    let mut seen = HashSet::with_capacity(accounts.len());
-    for account in accounts {
-        if !seen.insert(account) {
-            return Err(TransactionViewError::SanitizeError);
-        }
-    }
+    // No duplicated accounts
+    // Note: This check is performed downstream in `validate_account_locks()`.
+    // It is skipped here to avoid redundant work on the hot path.
 
     Ok(())
 }
@@ -572,27 +566,6 @@ mod tests {
                         readonly_indexes: (0..100).collect(),
                     },
                 ],
-            );
-            let data = wincode::serialize(&transaction).unwrap();
-            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
-            assert_eq!(
-                sanitize_account_access(&view),
-                Err(TransactionViewError::SanitizeError)
-            );
-        }
-
-        // Duplicate static accounts.
-        {
-            let payer = Pubkey::new_unique();
-            let transaction = create_legacy_transaction(
-                1,
-                MessageHeader {
-                    num_required_signatures: 1,
-                    num_readonly_signed_accounts: 0,
-                    num_readonly_unsigned_accounts: 0,
-                },
-                vec![payer, payer],
-                vec![],
             );
             let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
