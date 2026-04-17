@@ -7886,8 +7886,7 @@ mod tests {
             SyscallHash::<Sha512Hasher>::rust(&mut invoke_context, ro_va, ro_len, rw_va, 0, 0);
         result.unwrap();
 
-        let hash_local =
-            sha512::hashv(&[bytes1.as_ref(), bytes2.as_ref()]).to_bytes();
+        let hash_local = sha512::hashv(&[bytes1.as_ref(), bytes2.as_ref()]).to_bytes();
         assert_eq!(hash_result, hash_local);
         let result = SyscallHash::<Sha512Hasher>::rust(
             &mut invoke_context,
