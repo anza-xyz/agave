@@ -458,6 +458,7 @@ impl Consumer {
                 balance_collector,
                 &mut execute_and_commit_timings,
                 &processed_counts,
+                true, // for block-production assume transactions are verified
             )
         } else {
             (

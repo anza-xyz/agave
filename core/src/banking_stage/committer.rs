@@ -68,6 +68,7 @@ impl Committer {
         balance_collector: Option<BalanceCollector>,
         execute_and_commit_timings: &mut LeaderExecuteAndCommitTimings,
         processed_counts: &ProcessedTransactionCounts,
+        transactions_verified: bool,
     ) -> (u64, Vec<CommitTransactionDetails>) {
         let (commit_results, commit_time_us) = measure_us!(bank.commit_transactions(
             batch.sanitized_transactions(),
@@ -100,7 +101,14 @@ impl Committer {
                 batch.sanitized_transactions(),
                 &commit_results,
                 Some(&self.replay_vote_sender),
-                ReplayVoteSendType::VerifiedExecuted,
+                if transactions_verified {
+                    ReplayVoteSendType::VerifiedExecuted
+                } else {
+                    ReplayVoteSendType::Executed {
+                        replay_bank_id: bank.bank_id(),
+                        replay_slot: bank.slot(),
+                    }
+                },
             );
 
             if let Some(prioritization_fee_cache) = self.prioritization_fee_cache.as_ref() {
