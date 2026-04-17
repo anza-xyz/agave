@@ -215,9 +215,6 @@ test-case = { workspace = true }
 jemallocator = { workspace = true }
 
 [[bench]]
-name = "gen_keys"
-
-[[bench]]
 name = "sigverify_stage"
 harness = false
 
