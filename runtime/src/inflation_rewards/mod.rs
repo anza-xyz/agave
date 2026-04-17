@@ -148,18 +148,6 @@ fn calculate_stake_rewards<'a>(
         ..
     } = calculation_environment;
 
-    enum Status {
-        Alpenglow,
-        Tower,
-        Migration,
-    }
-
-    let status = match &ag_stake_state {
-        AlpenglowStakeState::Alpenglow { .. } => Status::Alpenglow,
-        AlpenglowStakeState::Migrating { .. } => Status::Migration,
-        AlpenglowStakeState::Calculating | AlpenglowStakeState::Tower => Status::Tower,
-    };
-
     // ensure to run to trigger (optional) inflation_point_calc_tracer
     let CalculatedStakePoints {
         tower_points,
@@ -172,7 +160,7 @@ fn calculate_stake_rewards<'a>(
         stake_history,
         inflation_point_calc_tracer.as_ref(),
         new_rate_activation_epoch,
-        ag_stake_state,
+        &ag_stake_state,
     );
 
     // Drive credits_observed forward unconditionally when rewards are disabled
@@ -211,12 +199,12 @@ fn calculate_stake_rewards<'a>(
         return None;
     }
 
-    let rewards = match status {
-        Status::Alpenglow => {
+    let rewards = match ag_stake_state {
+        AlpenglowStakeState::Alpenglow { .. } => {
             // In alpenglow, `points` represents the actual reward that this `vote_state` earned.
             ag_points
         }
-        Status::Tower => {
+        AlpenglowStakeState::Tower | AlpenglowStakeState::Calculating => {
             // In tower, `points` still needs to be scaled by `point_value` to calculate this
             // `vote_state` earned.
             // The final unwrap is safe, as points_value.points is guaranteed to be non zero above.
@@ -226,7 +214,7 @@ fn calculate_stake_rewards<'a>(
                 .checked_div(point_value.points)
                 .unwrap()
         }
-        Status::Migration => {
+        AlpenglowStakeState::Migrating { .. } => {
             tower_points
                 .checked_mul(u128::from(point_value.rewards))
                 .expect("Rewards intermediate calculation should fit within u128")
@@ -699,7 +687,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                AlpenglowStakeState::Tower
+                &AlpenglowStakeState::Tower
             )
         );
 
@@ -720,7 +708,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                AlpenglowStakeState::Tower
+                &AlpenglowStakeState::Tower
             )
         );
         // this is new behavior 2; don't hint when credits both from stake and vote are identical
@@ -738,7 +726,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                AlpenglowStakeState::Tower,
+                &AlpenglowStakeState::Tower,
             )
         );
 
