@@ -339,7 +339,7 @@ pub fn create_program_runtime_environment(
             SBPFVersion::V3
         };
     let max_sbpf_version = if feature_set.enable_sbpf_v3_deployment_and_execution {
-        SBPFVersion::V3
+        SBPFVersion::V4
     } else if feature_set.enable_sbpf_v2_deployment_and_execution {
         SBPFVersion::V2
     } else if feature_set.enable_sbpf_v1_deployment_and_execution {
@@ -790,6 +790,7 @@ declare_builtin_function!(
         let Ok(layout) = Layout::from_size_align(size as usize, align) else {
             return Ok(0);
         };
+        std::println!("Getting allocator?");
         let allocator = &mut invoke_context.memory_contexts.memory_context_mut_abi_v1()?.allocator;
         if free_addr == 0 {
             match allocator.alloc(layout) {

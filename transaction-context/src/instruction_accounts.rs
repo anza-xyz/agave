@@ -1,6 +1,8 @@
+use crate::IndexOfAccount;
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 use {
     crate::{
-        IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION, transaction::TransactionContext,
+        MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION, transaction::TransactionContext,
         transaction_accounts::AccountRefMut,
     },
     solana_account::{ReadableAccount, WritableAccount},

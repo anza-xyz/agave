@@ -1,14 +1,14 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+use {crate::vm_slice::VmSlice, solana_pubkey::Pubkey};
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 use {
     crate::{
         IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION, MAX_ACCOUNT_DATA_LEN,
         vm_addresses::{GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS, GUEST_REGION_SIZE},
-        vm_slice::VmSlice,
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_instruction::error::InstructionError,
-    solana_pubkey::Pubkey,
     solana_sbpf::memory_region::MemoryRegion,
     std::{
         cell::{Cell, UnsafeCell},
@@ -17,17 +17,16 @@ use {
         sync::Arc,
     },
 };
-
 /// This struct is shared with programs. Do not alter its fields.
 #[repr(C)]
 #[derive(Debug, PartialEq)]
 pub struct AccountSharedFields {
-    key: Pubkey,
-    owner: Pubkey,
-    lamports: u64,
+    pub key: Pubkey,
+    pub owner: Pubkey,
+    pub lamports: u64,
     // The payload is going to be filled with the guest virtual address of the account payload
     // vector.
-    payload: VmSlice<u8>,
+    pub payload: VmSlice<u8>,
 }
 
 #[derive(Debug, PartialEq)]
