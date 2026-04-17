@@ -154,6 +154,7 @@ impl XdpRetransmitBuilder {
                 CapSet,
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
             },
+            log::debug,
             std::collections::HashSet,
         };
         let XdpConfig {
@@ -236,13 +237,18 @@ impl XdpRetransmitBuilder {
         caps::drop(None, CapSet::Effective, CAP_NET_ADMIN).expect("drop CAP_NET_ADMIN capability");
 
         let tables = tables_result?;
-        let router = Router::from_tables(tables.clone())?;
+        let router = Router::from_tables(tables)?;
+        debug!(
+            "published router table {}:\n{}",
+            RouteTable::Main,
+            router.routing_table()
+        );
 
         // Use ArcSwap for lock-free updates of the routing table
         let atomic_router = Arc::new(ArcSwap::from_pointee(router));
         let route_monitor_handle = RouteMonitor::start(
             Arc::clone(&atomic_router),
-            tables,
+            RouteTable::Main,
             exit.clone(),
             ROUTE_MONITOR_UPDATE_INTERVAL,
             || {

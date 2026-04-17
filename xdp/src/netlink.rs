@@ -2,12 +2,13 @@
 
 use {
     libc::{
-        AF_INET, AF_INET6, AF_NETLINK, IFLA_INFO_DATA, IFLA_INFO_KIND, IFLA_LINKINFO, NDA_DST,
-        NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE, NLA_ALIGNTO, NLA_TYPE_MASK, NLM_F_DUMP,
-        NLM_F_MULTI, NLM_F_REQUEST, NLMSG_DONE, NLMSG_ERROR, RTA_DST, RTA_GATEWAY, RTA_IIF,
-        RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETLINK, RTM_GETNEIGH, RTM_GETROUTE,
-        RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW, SOL_NETLINK, SOL_SOCKET,
-        nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket,
+        AF_INET, AF_INET6, AF_NETLINK, IFLA_INFO_DATA, IFLA_INFO_KIND, IFLA_LINKINFO, MSG_DONTWAIT,
+        MSG_TRUNC, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_GET_STRICT_CHK, NETLINK_ROUTE,
+        NLA_ALIGNTO, NLA_TYPE_MASK, NLM_F_DUMP, NLM_F_DUMP_INTR, NLM_F_MULTI, NLM_F_REQUEST,
+        NLMSG_DONE, NLMSG_ERROR, RTA_DST, RTA_GATEWAY, RTA_IIF, RTA_OIF, RTA_PREFSRC, RTA_PRIORITY,
+        RTA_TABLE, RTM_GETLINK, RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH,
+        RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW, SOL_NETLINK, SOL_SOCKET, nlattr, nlmsgerr, nlmsghdr,
+        recv, send, setsockopt, sockaddr_nl, socket,
     },
     std::{
         collections::HashMap,
@@ -56,18 +57,20 @@ impl NetlinkSocket {
         let sock = unsafe { OwnedFd::from_raw_fd(sock) };
 
         let enable = 1i32;
-        // Safety: libc wrapper
-        if unsafe {
-            setsockopt(
-                sock.as_raw_fd(),
-                SOL_NETLINK,
-                NETLINK_EXT_ACK,
-                &enable as *const _ as *const _,
-                mem::size_of::<i32>() as u32,
-            )
-        } < 0
-        {
-            return Err(io::Error::last_os_error());
+        for opt in [NETLINK_EXT_ACK, NETLINK_GET_STRICT_CHK] {
+            // Safety: libc wrapper
+            if unsafe {
+                setsockopt(
+                    sock.as_raw_fd(),
+                    SOL_NETLINK,
+                    opt,
+                    &enable as *const _ as *const _,
+                    mem::size_of::<i32>() as u32,
+                )
+            } < 0
+            {
+                return Err(io::Error::last_os_error());
+            }
         }
         Ok(Self { sock, _nl_pid: 0 })
     }
@@ -88,11 +91,27 @@ impl NetlinkSocket {
     }
 
     pub(crate) fn recv(&self) -> Result<Vec<NetlinkMessage>, io::Error> {
-        // The theoretical max size of a single netlink message (including header) is 4GiB.
-        // See: https://elixir.bootlin.com/linux/v6.17.7/source/include/uapi/linux/netlink.h#L46
-        // However, in the kernel, the netlink message size is set to a page size.
-        // If the page size exceeds 8KiB, the netlink message size is capped to 8KiB
-        // See: https://elixir.bootlin.com/linux/v6.17.7/source/include/linux/netlink.h#L267
+        self.recv_with_flags(0)
+    }
+
+    pub(crate) fn recv_nonblocking(&self) -> Result<Option<Vec<NetlinkMessage>>, io::Error> {
+        match self.recv_with_flags(MSG_DONTWAIT) {
+            Ok(messages) => Ok(Some(messages)),
+            Err(e)
+                if e.raw_os_error()
+                    .is_some_and(|errno| errno == libc::EAGAIN || errno == libc::EWOULDBLOCK) =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn recv_with_flags(&self, flags: i32) -> Result<Vec<NetlinkMessage>, io::Error> {
+        // The kernel returns NLMSG_GOODSIZE (8k) as the recommended max allocation for netlink
+        // responses. However that is not a hard cap, and netlink code can in theory return larger
+        // messages. Out of caution we allocate a larger buffer AND use MSG_TRUNC to detect if that
+        // is still not enough.
         let mut buf = [0u8; 8 * 1024]; // 8 KiB
         let mut messages = Vec::new();
         let mut multipart = true;
@@ -104,7 +123,7 @@ impl NetlinkSocket {
                     self.sock.as_raw_fd(),
                     buf.as_mut_ptr() as *mut _,
                     buf.len(),
-                    0,
+                    flags | MSG_TRUNC,
                 )
             };
             if len < 0 {
@@ -115,11 +134,20 @@ impl NetlinkSocket {
             }
 
             let len = len as usize;
+            if len > buf.len() {
+                return Err(io::Error::other("netlink datagram truncated"));
+            }
             let mut offset = 0;
             while offset < len {
                 let message = NetlinkMessage::read(&buf[offset..])?;
                 offset += align_to(message.header.nlmsg_len as usize, NLMSG_ALIGNTO as usize);
                 multipart = message.header.nlmsg_flags & NLM_F_MULTI as u16 != 0;
+                if message.header.nlmsg_flags & NLM_F_DUMP_INTR as u16 != 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "netlink dump interrupted",
+                    ));
+                }
                 match message.header.nlmsg_type as i32 {
                     NLMSG_ERROR => {
                         let err = message.error.unwrap();
@@ -679,15 +707,9 @@ pub fn netlink_get_routes(family: u8, table: u32) -> Result<Vec<RouteEntry>, io:
         if msg.header.nlmsg_type != RTM_NEWROUTE {
             continue;
         }
-
-        if msg.data.len() < mem::size_of::<rtmsg>() {
-            continue;
-        }
-
         if let Some(route) = parse_rtm_newroute(&msg) {
-            // for compatibility reasons, it turns out the kernel ignores the rtm_table filter in
-            // the request unless NETLINK_GET_STRICT_CHK is set. Filter manually for now until we
-            // add support for strict checking and do enough testing.
+            // with strict checking, the kernel should return routes for the requested table only
+            debug_assert!(route.table == Some(table));
             if route.table == Some(table) {
                 routes.push(route);
             }
@@ -701,6 +723,7 @@ pub fn parse_rtm_newroute(msg: &NetlinkMessage) -> Option<RouteEntry> {
     if msg.data.len() < mem::size_of::<rtmsg>() {
         return None;
     }
+
     let rt_msg = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const rtmsg) };
     let Ok(attrs) = parse_attrs(&msg.data[mem::size_of::<rtmsg>()..]) else {
         return None;
