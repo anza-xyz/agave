@@ -125,6 +125,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
                 drop_on_failure: false,
                 all_or_nothing: false,
                 skip_account_locks: false,
+                skip_cost_tracking: false,
             },
         );
         self.metrics.update_for_consume(&output);
@@ -396,6 +397,7 @@ pub(crate) mod external {
                 drop_on_failure: message.flags & execution_flags::DROP_ON_FAILURE != 0,
                 all_or_nothing: message.flags & execution_flags::ALL_OR_NOTHING != 0,
                 skip_account_locks: false,
+                skip_cost_tracking: false,
             };
             if execution_flags.all_or_nothing && translation_results.len() != transactions.len() {
                 self.send_execution_response(

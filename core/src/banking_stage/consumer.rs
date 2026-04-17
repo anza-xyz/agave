@@ -6,6 +6,7 @@ use {
         scheduler_messages::MaxAge,
     },
     itertools::Itertools,
+    solana_cost_model::transaction_cost::TransactionCost,
     solana_fee::FeeFeatures,
     solana_measure::measure_us,
     solana_poh::{
@@ -38,7 +39,7 @@ const SERIALIZED_ENTRIES_OVERHEAD: u64 = {
     + 8 // Vec<Entry> length
 };
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct ExecutionFlags {
     /// Should failing transactions within the batch be dropped (no fee charged
     /// & not committed).
@@ -57,6 +58,12 @@ pub struct ExecutionFlags {
     /// Use to skip locking accounts - i.e. rely on the scheduler to have
     /// scheduled transactions with no overlapping accounts.
     pub skip_account_locks: bool,
+
+    /// NOTE: Not currently exposed to scheduler-bindings.
+    /// Used to skip cost-tracking - i.e. rely on the scheduler to have
+    /// scheduled transactions with total cost within the block limits,
+    /// or verifying it after execution.
+    pub skip_cost_tracking: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -162,6 +169,7 @@ impl Consumer {
                 drop_on_failure: false,
                 all_or_nothing: false,
                 skip_account_locks: false,
+                skip_cost_tracking: false,
             },
         );
 
@@ -203,10 +211,11 @@ impl Consumer {
         let (
             (transaction_qos_cost_results, cost_model_throttled_transactions_count),
             cost_model_us,
-        ) = measure_us!(QosService::select_and_accumulate_transaction_costs(
+        ) = measure_us!(Self::cost_tracker_reserve(
             bank,
             txs,
-            pre_results
+            pre_results,
+            flags.skip_cost_tracking
         ));
 
         // Only lock accounts for those transactions are selected for the block;
@@ -235,15 +244,17 @@ impl Consumer {
             ..
         } = execute_and_commit_transactions_output;
 
-        // Costs of all transactions are added to the cost_tracker before processing.
-        // To ensure accurate tracking of compute units, transactions that ultimately
-        // were not included in the block should have their cost removed, the rest
-        // should update with their actually consumed units.
-        QosService::remove_or_update_costs(
-            transaction_qos_cost_results.iter(),
-            commit_transactions_result.as_ref().ok(),
-            bank,
-        );
+        if !flags.skip_cost_tracking {
+            // Costs of all transactions are added to the cost_tracker before processing.
+            // To ensure accurate tracking of compute units, transactions that ultimately
+            // were not included in the block should have their cost removed, the rest
+            // should update with their actually consumed units.
+            QosService::remove_or_update_costs(
+                transaction_qos_cost_results.iter(),
+                commit_transactions_result.as_ref().ok(),
+                bank,
+            );
+        }
 
         debug!(
             "bank: {} lock: {}us unlock: {}us txs_len: {}",
@@ -504,6 +515,27 @@ impl Consumer {
             &bank.rent_collector().rent,
             fee,
         )
+    }
+
+    fn cost_tracker_reserve<'a, Tx: TransactionWithMeta>(
+        bank: &Bank,
+        transactions: &'a [Tx],
+        pre_results: impl Iterator<Item = Result<(), TransactionError>>,
+        skip_cost_tracking: bool,
+    ) -> (Vec<Result<TransactionCost<'a, Tx>, TransactionError>>, u64) {
+        if skip_cost_tracking {
+            // Skip tracking and only calculate the costs.
+            (
+                QosService::compute_transaction_costs(
+                    &bank.feature_set,
+                    transactions.iter(),
+                    pre_results,
+                ),
+                0, // no transactions throttled since we're skipping cost tracking
+            )
+        } else {
+            QosService::select_and_accumulate_transaction_costs(bank, transactions, pre_results)
+        }
     }
 }
 
@@ -894,6 +926,7 @@ mod tests {
                 drop_on_failure: false,
                 all_or_nothing: false,
                 skip_account_locks: true,
+                skip_cost_tracking: false,
             },
         );
 
@@ -1050,6 +1083,101 @@ mod tests {
 
         assert_eq!(get_block_cost(), expected_block_cost);
         assert_eq!(get_tx_count(), 2);
+    }
+
+    #[test]
+    fn test_bank_process_and_record_transactions_skip_cost_tracking() {
+        let TestFrame {
+            mint_keypair,
+            bank,
+            bank_forks: _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(true, None);
+
+        let max_ages = vec![MaxAge {
+            sanitized_epoch: bank.epoch(),
+            alt_invalidation_slot: bank.slot(),
+        }];
+
+        let get_block_cost = || bank.read_cost_tracker().unwrap().block_cost();
+        let get_tx_count = || bank.read_cost_tracker().unwrap().transaction_count();
+
+        let tracked_transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        )]);
+        let tracked_process_transactions_batch_output = consumer
+            .process_and_record_aged_transactions(
+                &bank,
+                &tracked_transactions,
+                &max_ages,
+                ExecutionFlags {
+                    drop_on_failure: false,
+                    all_or_nothing: false,
+                    skip_account_locks: false,
+                    skip_cost_tracking: false, // track costs
+                },
+            );
+        let ExecuteAndCommitTransactionsOutput {
+            transaction_counts,
+            commit_transactions_result,
+            ..
+        } = tracked_process_transactions_batch_output.execute_and_commit_transactions_output;
+
+        assert_eq!(transaction_counts.processed_with_successful_result_count, 1);
+        assert!(commit_transactions_result.is_ok());
+
+        let tracked_block_cost = get_block_cost();
+        let tracked_tx_count = get_tx_count();
+        assert_ne!(tracked_block_cost, 0);
+        assert_eq!(tracked_tx_count, 1);
+
+        // Use new transactions so we do not hit status-cache
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        )]);
+        let process_transactions_batch_output = consumer.process_and_record_aged_transactions(
+            &bank,
+            &transactions,
+            &max_ages,
+            ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing: false,
+                skip_account_locks: false,
+                skip_cost_tracking: true,
+            },
+        );
+
+        assert_eq!(
+            process_transactions_batch_output.cost_model_throttled_transactions_count,
+            0
+        );
+
+        let ExecuteAndCommitTransactionsOutput {
+            transaction_counts,
+            commit_transactions_result,
+            retryable_transaction_indexes,
+            ..
+        } = process_transactions_batch_output.execute_and_commit_transactions_output;
+
+        assert_eq!(
+            transaction_counts,
+            LeaderProcessedTransactionCounts {
+                attempted_processing_count: 1,
+                processed_count: 1,
+                processed_with_successful_result_count: 1,
+            }
+        );
+        assert!(retryable_transaction_indexes.is_empty());
+        assert!(commit_transactions_result.is_ok());
+        assert_eq!(get_block_cost(), tracked_block_cost); // no change
+        assert_eq!(get_tx_count(), tracked_tx_count);
     }
 
     #[test_case(false, false; "old::locked")]
