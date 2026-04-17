@@ -325,7 +325,7 @@ mod tests {
             genesis_utils::{
                 ValidatorVoteKeypairs, activate_all_features_alpenglow,
                 create_genesis_config_with_alpenglow_vote_accounts,
-                create_genesis_config_with_leader_ex,
+                create_genesis_config_with_leader_ex, create_validator,
             },
             inflation_rewards::commission_split,
             stake_utils,
@@ -756,14 +756,6 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct RewardState {
-        vote_pubkey: Pubkey,
-        stake_prev_lamports: u64,
-        vote_prev_lamports: u64,
-        expected_reward: u64,
-    }
-
-    #[derive(Debug)]
     struct Staker {
         lamports: u64,
         expected_rewards: u64,
@@ -805,13 +797,13 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct State {
+    struct StateEntry {
         voter_lamports: u64,
         voter_expected_reward: u64,
         stakers: HashMap<Pubkey, Staker>,
     }
 
-    impl State {
+    impl StateEntry {
         fn new(
             bank: &Bank,
             voter_pubkey: Pubkey,
@@ -865,12 +857,53 @@ mod tests {
                 stakers.insert(*staker_pubkey, staker);
             }
 
-            State {
+            Self {
                 voter_lamports,
                 stakers,
                 voter_expected_reward,
             }
         }
+    }
+
+    #[derive(Debug)]
+    struct State {
+        entries: HashMap<Pubkey, StateEntry>,
+    }
+
+    impl State {
+        fn new(
+            bank: &Bank,
+            staker_pubkeys: &HashMap<Pubkey, Vec<Pubkey>>,
+            rent: &Rent,
+            pay_leader: bool,
+            commission_bps: u16,
+            num_reward_slots: u64,
+        ) -> Self {
+            let entries = staker_pubkeys
+                .iter()
+                .map(|(pubkey, stakers)| {
+                    let state_entry = StateEntry::new(
+                        bank,
+                        *pubkey,
+                        stakers,
+                        rent,
+                        pay_leader,
+                        commission_bps,
+                        num_reward_slots,
+                    );
+                    (*pubkey, state_entry)
+                })
+                .collect();
+            Self { entries }
+        }
+    }
+
+    #[derive(Debug)]
+    struct RewardState {
+        vote_pubkey: Pubkey,
+        stake_prev_lamports: u64,
+        vote_prev_lamports: u64,
+        expected_reward: u64,
     }
 
     impl RewardState {
@@ -1092,22 +1125,22 @@ mod tests {
 
     #[test_matrix([true, false], [1_000, 5_000])]
     fn test_multiple_delegators(pay_leader: bool, commission_bps: u16) {
-        let num_validators = 1;
+        let num_validators = 4;
         let num_reward_slots = 10;
+        let lamports = LAMPORTS_PER_SOL * 20;
         let mint_keypair = Keypair::new();
         let validators = (0..num_validators)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
-        let validator_lamports = 890_880;
         let mut genesis_config = create_genesis_config_with_leader_ex(
-            1_000_000_000,
+            lamports,
             &mint_keypair.pubkey(),
             &validators[0].node_keypair.pubkey(),
             &validators[0].vote_keypair.pubkey(),
             &validators[0].stake_keypair.pubkey(),
             Some(validators[0].bls_keypair.public.to_bytes_compressed()),
-            LAMPORTS_PER_SOL,
-            validator_lamports,
+            lamports,
+            lamports,
             FeeRateGovernor::new(0, 0),
             Rent::default(),
             ClusterType::Development,
@@ -1116,6 +1149,26 @@ mod tests {
         );
         genesis_config.epoch_schedule = EpochSchedule::without_warmup();
         activate_all_features_alpenglow(&mut genesis_config);
+        for (ind, keypair) in validators.iter().enumerate().skip(1) {
+            let node_pubkey = keypair.node_keypair.pubkey();
+            let vote_pubkey = keypair.vote_keypair.pubkey();
+            let stake_pubkey = keypair.stake_keypair.pubkey();
+            let bls_pubkey = Some(keypair.bls_keypair.public.to_bytes_compressed());
+            let lamports = lamports + ind as u64 * LAMPORTS_PER_SOL;
+            let accounts = create_validator(
+                &genesis_config.rent,
+                node_pubkey,
+                lamports,
+                vote_pubkey,
+                lamports,
+                stake_pubkey,
+                lamports,
+                bls_pubkey,
+            )
+            .into_iter()
+            .map(|(pubkey, account)| (pubkey, Account::from(account)));
+            genesis_config.accounts.extend(accounts);
+        }
         set_commission(&mut genesis_config, &validators, commission_bps);
 
         let vote_account = genesis_config
@@ -1126,15 +1179,14 @@ mod tests {
             .into();
 
         let staker_keypairs = (0..5).map(|_| Keypair::new()).collect::<Vec<_>>();
-        let stake = LAMPORTS_PER_SOL * 2;
-        for keypair in &staker_keypairs {
+        for (ind, keypair) in staker_keypairs.iter().enumerate() {
             let stake_pubkey = keypair.pubkey();
             let account = Account::from(stake_utils::create_stake_account(
                 &stake_pubkey,
                 &validators[0].vote_keypair.pubkey(),
                 &vote_account,
                 &genesis_config.rent,
-                stake,
+                lamports + (ind as u64 + 1) * lamports,
             ));
             genesis_config.accounts.insert(stake_pubkey, account);
         }
@@ -1151,16 +1203,27 @@ mod tests {
         assert_eq!(initial_bank.epoch(), 1);
 
         let staker_pubkeys = {
-            let mut pubkeys = staker_keypairs
+            let mut staker_pubkeys = validators
                 .iter()
-                .map(|k| k.pubkey())
-                .collect::<Vec<_>>();
-            pubkeys.push(validators[0].stake_keypair.pubkey());
-            pubkeys
+                .map(|keypair| {
+                    (
+                        keypair.vote_keypair.pubkey(),
+                        vec![keypair.stake_keypair.pubkey()],
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+            for staker_keypair in &staker_keypairs {
+                let staker_pubkey = staker_keypair.pubkey();
+                staker_pubkeys
+                    .get_mut(&validators[0].vote_keypair.pubkey())
+                    .unwrap()
+                    .push(staker_pubkey);
+            }
+            staker_pubkeys
         };
+
         let prev_state = State::new(
             &initial_bank,
-            validators[0].vote_keypair.pubkey(),
             &staker_pubkeys,
             &genesis_config.rent,
             pay_leader,
@@ -1178,7 +1241,6 @@ mod tests {
 
         let final_state = State::new(
             &final_bank,
-            validators[0].vote_keypair.pubkey(),
             &staker_pubkeys,
             &genesis_config.rent,
             pay_leader,
@@ -1186,22 +1248,50 @@ mod tests {
             num_reward_slots,
         );
 
-        for pubkey in prev_state.stakers.keys() {
-            let before = prev_state.stakers.get(pubkey).unwrap();
-            let after = final_state.stakers.get(pubkey).unwrap();
-            let diff = after.lamports - before.lamports;
-            assert_eq!(diff, before.expected_rewards);
+        for (vote_pubkey, prev_entry) in &prev_state.entries {
+            let final_entry = final_state.entries.get(vote_pubkey).unwrap();
+            for (staker_pubkey, prev_staker) in &prev_entry.stakers {
+                let final_staker = final_entry.stakers.get(staker_pubkey).unwrap();
+                let diff = final_staker.lamports - prev_staker.lamports;
+                println!(
+                    "before={} after={} diff={diff} expected={}",
+                    prev_staker.lamports, final_staker.lamports, prev_staker.expected_rewards
+                );
+            }
+
+            let voter_diff =
+                final_entry.voter_lamports + VAT_TO_BURN_PER_EPOCH - prev_entry.voter_lamports;
+            // Due to rounding issues, off by 1 errors are possible.
+            println!(
+                "final_lamports={} prev_lamports={} diff={voter_diff} expected={}",
+                final_entry.voter_lamports,
+                prev_entry.voter_lamports,
+                prev_entry.voter_expected_reward
+            );
         }
 
-        let voter_diff =
-            final_state.voter_lamports + VAT_TO_BURN_PER_EPOCH - prev_state.voter_lamports;
-        // Due to rounding issues, off by 1 errors are possible.
-        assert!(
-            voter_diff.abs_diff(prev_state.voter_expected_reward) <= 1,
-            "final_lamports={} prev_lamports={} diff={voter_diff} expected={}",
-            final_state.voter_lamports,
-            prev_state.voter_lamports,
-            prev_state.voter_expected_reward
-        );
+        for (vote_pubkey, prev_entry) in &prev_state.entries {
+            let final_entry = final_state.entries.get(vote_pubkey).unwrap();
+            for (staker_pubkey, prev_staker) in &prev_entry.stakers {
+                let final_staker = final_entry.stakers.get(staker_pubkey).unwrap();
+                let diff = final_staker.lamports - prev_staker.lamports;
+                assert_eq!(
+                    diff, prev_staker.expected_rewards,
+                    "before={} after={} diff={diff} expected={}",
+                    prev_staker.lamports, final_staker.lamports, prev_staker.expected_rewards
+                );
+            }
+
+            let voter_diff =
+                final_entry.voter_lamports + VAT_TO_BURN_PER_EPOCH - prev_entry.voter_lamports;
+            // Due to rounding issues, off by 1 errors are possible.
+            assert!(
+                voter_diff.abs_diff(prev_entry.voter_expected_reward) <= 1,
+                "final_lamports={} prev_lamports={} diff={voter_diff} expected={}",
+                final_entry.voter_lamports,
+                prev_entry.voter_lamports,
+                prev_entry.voter_expected_reward
+            );
+        }
     }
 }
