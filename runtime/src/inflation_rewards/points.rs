@@ -136,9 +136,6 @@ fn calculate_stake_points(
 /// State needed to compute rewards for alpenglow.
 #[derive(Debug)]
 pub(crate) struct AlpenglowStakeState<'a> {
-    /// Pubkey for the vote account of the validator that the stake is delegated to.
-    // XXX: this seems to be available in `Stake`
-    pub(crate) vote_pubkey: Pubkey,
     /// `epoch_stakes` from the current bank.
     pub(crate) epoch_stakes: &'a HashMap<Epoch, VersionedEpochStakes>,
 }
@@ -153,17 +150,21 @@ pub enum GetTotalStakeError {
 
 impl<'a> AlpenglowStakeState<'a> {
     /// Returns the total stake delegated to `self.vote_pubkey` in the given epoch.
-    fn get_total_stake(&self, epoch: Epoch) -> Result<u64, GetTotalStakeError> {
+    fn get_total_stake(
+        &self,
+        epoch: Epoch,
+        vote_pubkey: Pubkey,
+    ) -> Result<u64, GetTotalStakeError> {
         let rank_map = self
             .epoch_stakes
             .get(&epoch)
             .ok_or(GetTotalStakeError::NoEpochStakes(epoch))?
             .bls_pubkey_to_rank_map();
-        let rank = *rank_map.get_rank_for_vote_pubkey(&self.vote_pubkey).ok_or(
-            GetTotalStakeError::RankForVotePubkeyNotFound(epoch, self.vote_pubkey),
+        let rank = *rank_map.get_rank_for_vote_pubkey(&vote_pubkey).ok_or(
+            GetTotalStakeError::RankForVotePubkeyNotFound(epoch, vote_pubkey),
         )?;
         let entry = rank_map.get_pubkey_stake_entry(rank as usize).ok_or(
-            GetTotalStakeError::EntryForRankNotFound(epoch, self.vote_pubkey, rank),
+            GetTotalStakeError::EntryForRankNotFound(epoch, vote_pubkey, rank),
         )?;
         Ok(entry.stake)
     }
@@ -270,31 +271,32 @@ pub(crate) fn calculate_stake_points_and_credits(
                     earned_credits
                 } else {
                     // the earned_credits needs to be scaled by the portion of this staker's delegation.
-                    let total_stake = match state.get_total_stake(epoch) {
-                        Ok(t) => t,
-                        Err(e) => {
-                            // assuming that we only do the calculations for the latest epoch, this
-                            // failure should be unlikely.
-                            let message = format!(
-                                "get_total_stake() failed with {e:?}. Rewards payout will be \
+                    let total_stake =
+                        match state.get_total_stake(epoch, stake.delegation.voter_pubkey) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                // assuming that we only do the calculations for the latest epoch, this
+                                // failure should be unlikely.
+                                let message = format!(
+                                    "get_total_stake() failed with {e:?}. Rewards payout will be \
                                  skipped"
-                            );
-                            error!("{message}");
-                            datapoint_error!("alpenglow_error", ("error", message, String));
-                            if let Some(inflation_point_calc_tracer) =
-                                inflation_point_calc_tracer.as_ref()
-                            {
-                                inflation_point_calc_tracer(
-                                    &SkippedReason::GetTotalStakeFailed(e).into(),
                                 );
+                                error!("{message}");
+                                datapoint_error!("alpenglow_error", ("error", message, String));
+                                if let Some(inflation_point_calc_tracer) =
+                                    inflation_point_calc_tracer.as_ref()
+                                {
+                                    inflation_point_calc_tracer(
+                                        &SkippedReason::GetTotalStakeFailed(e).into(),
+                                    );
+                                }
+                                return CalculatedStakePoints {
+                                    points: 0,
+                                    new_credits_observed,
+                                    force_credits_update_with_skipped_reward: true,
+                                };
                             }
-                            return CalculatedStakePoints {
-                                points: 0,
-                                new_credits_observed,
-                                force_credits_update_with_skipped_reward: true,
-                            };
-                        }
-                    };
+                        };
                     earned_credits * stake_amount / total_stake as u128
                 }
             }

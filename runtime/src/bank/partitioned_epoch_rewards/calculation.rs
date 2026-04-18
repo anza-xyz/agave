@@ -494,7 +494,6 @@ impl Bank {
         };
 
         let ag_stake_state = is_alpenglow_active.then_some(AlpenglowStakeState {
-            vote_pubkey,
             epoch_stakes: &self.epoch_stakes,
         });
 
