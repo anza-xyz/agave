@@ -279,7 +279,7 @@ pub(crate) fn calculate_stake_points_and_credits(
                                 // failure should be unlikely.
                                 let message = format!(
                                     "get_total_stake() failed with {e:?}. Rewards payout will be \
-                                 skipped"
+                                     skipped"
                                 );
                                 error!("{message}");
                                 datapoint_error!("alpenglow_error", ("error", message, String));
