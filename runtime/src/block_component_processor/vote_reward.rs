@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn calculate_and_pay_works() {
         let num_validators = 100;
-        let per_validator_stake = LAMPORTS_PER_SOL * 100;
+        let per_validator_stake = LAMPORTS_PER_SOL * 200;
         let num_validators_to_reward = 10;
 
         let validator_keypairs = (0..num_validators)

@@ -2316,8 +2316,8 @@ mod tests {
             &voters,               // expected_voters
             &stakers,              // expected_stakers
             0,                     // expected_reward_commissions
-            499500,                // expected_stake_rewards
-            499542,                // expected_rewards
+            249700,                // expected_stake_rewards
+            249771,                // expected_rewards
             8_400_000_000_000u128, // expected_points
             None,                  // parent_capitalization
         );
@@ -2336,9 +2336,9 @@ mod tests {
             2,                           // expected_cache_len
             &voters,                     // expected_voters
             &stakers,                    // expected_stakers
-            5555,                        // expected_reward_commissions
-            494730,                      // expected_stake_rewards
-            500313,                      // expected_rewards
+            2775,                        // expected_reward_commissions
+            247315,                      // expected_stake_rewards
+            250156,                      // expected_rewards
             9_450_000_000_000u128,       // expected_points
             Some(parent_capitalization), // parent_capitalization
         );
@@ -2357,9 +2357,9 @@ mod tests {
             3,                           // expected_cache_len
             &voters,                     // expected_voters
             &stakers,                    // expected_stakers
-            17300,                       // expected_reward_commissions
-            485365,                      // expected_stake_rewards
-            502779,                      // expected_rewards
+            8650,                        // expected_reward_commissions
+            242670,                      // expected_stake_rewards
+            251389,                      // expected_rewards
             12_810_000_000_000u128,      // expected_points
             Some(parent_capitalization), // parent_capitalization
         );
