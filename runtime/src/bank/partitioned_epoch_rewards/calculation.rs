@@ -495,6 +495,7 @@ impl Bank {
 
         let ag_stake_state = match ag_activation_status {
             AlpenglowEpochStatus::Tower => None,
+            // TODO: handle rewards migration epoch.  Currently it is treated as tower.
             AlpenglowEpochStatus::MigrationEpoch => None,
             AlpenglowEpochStatus::FullAlpenglow => Some(AlpenglowStakeState {
                 epoch_stakes: &self.epoch_stakes,
