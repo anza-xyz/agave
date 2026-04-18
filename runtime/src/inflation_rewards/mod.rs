@@ -148,8 +148,6 @@ fn calculate_stake_rewards<'a>(
         ..
     } = calculation_environment;
 
-    let is_alpenglow_enabled = ag_stake_state.is_some();
-
     // ensure to run to trigger (optional) inflation_point_calc_tracer
     let CalculatedStakePoints {
         points,
@@ -161,7 +159,7 @@ fn calculate_stake_rewards<'a>(
         stake_history,
         inflation_point_calc_tracer.as_ref(),
         new_rate_activation_epoch,
-        ag_stake_state,
+        &ag_stake_state,
     );
 
     // Drive credits_observed forward unconditionally when rewards are disabled
@@ -200,7 +198,7 @@ fn calculate_stake_rewards<'a>(
         return None;
     }
 
-    let rewards = if is_alpenglow_enabled {
+    let rewards = if ag_stake_state.is_some() {
         // In alpenglow, `points` represents the actual reward that this `vote_state` earned.
         points
     } else {
@@ -676,7 +674,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                None
+                &None
             )
         );
 
@@ -696,7 +694,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                None
+                &None
             )
         );
         // this is new behavior 2; don't hint when credits both from stake and vote are identical
@@ -713,7 +711,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
-                None,
+                &None,
             )
         );
 

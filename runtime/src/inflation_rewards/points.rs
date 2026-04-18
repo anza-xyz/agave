@@ -128,7 +128,7 @@ fn calculate_stake_points(
         stake_history,
         inflation_point_calc_tracer,
         new_rate_activation_epoch,
-        None,
+        &None,
     )
     .points
 }
@@ -179,7 +179,7 @@ pub(crate) fn calculate_stake_points_and_credits(
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
-    ag_stake_state: Option<AlpenglowStakeState>,
+    ag_stake_state: &Option<AlpenglowStakeState>,
 ) -> CalculatedStakePoints {
     let credits_in_stake = stake.credits_observed;
     let credits_in_vote = vote_state.credits;
