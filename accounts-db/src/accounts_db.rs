@@ -3368,11 +3368,13 @@ impl AccountsDb {
         })?;
 
         // If the scan's ancestors are all rooted, drop them and scan roots only
-        let empty_ancestors = Ancestors::default();
+        // Scan Guard max root must be used as the scan guard guarantees that
+        // the account state as of max root is persisted in the database
+        let max_root_ancestors = Ancestors::from(vec![scan_guard.max_root()]);
         let ancestors = if scan_guard.should_use_ancestors(ancestors) {
             ancestors
         } else {
-            &empty_ancestors
+            &max_root_ancestors
         };
 
         // Bound max_root by ancestors.min_slot() so that roots from slots
@@ -3442,11 +3444,13 @@ impl AccountsDb {
         })?;
 
         // If the scan's ancestors are all rooted, drop them and scan roots only
-        let empty_ancestors = Ancestors::default();
+        // Scan Guard max root must be used as the scan guard guarantees that
+        // the account state as of max root is persisted in the database
+        let max_root_ancestors = Ancestors::from(vec![scan_guard.max_root()]);
         let ancestors = if scan_guard.should_use_ancestors(ancestors) {
             ancestors
         } else {
-            &empty_ancestors
+            &max_root_ancestors
         };
 
         // Bound max_root by ancestors.min_slot() so that roots from slots
