@@ -143,9 +143,18 @@ pub(crate) struct AlpenglowStakeState<'a> {
 /// Different errors possible in `AlpenglowStakeState::get_total_stake()`.
 #[derive(Debug)]
 pub enum GetTotalStakeError {
-    NoEpochStakes(Epoch),
-    RankForVotePubkeyNotFound(Epoch, Pubkey),
-    EntryForRankNotFound(Epoch, Pubkey, u16),
+    NoEpochStakes {
+        epoch: Epoch,
+    },
+    RankForVotePubkeyNotFound {
+        epoch: Epoch,
+        vote_pubkey: Pubkey,
+    },
+    EntryForRankNotFound {
+        epoch: Epoch,
+        vote_pubkey: Pubkey,
+        rank: u16,
+    },
 }
 
 impl<'a> AlpenglowStakeState<'a> {
@@ -158,13 +167,17 @@ impl<'a> AlpenglowStakeState<'a> {
         let rank_map = self
             .epoch_stakes
             .get(&epoch)
-            .ok_or(GetTotalStakeError::NoEpochStakes(epoch))?
+            .ok_or(GetTotalStakeError::NoEpochStakes { epoch })?
             .bls_pubkey_to_rank_map();
-        let rank = *rank_map.get_rank_for_vote_pubkey(&vote_pubkey).ok_or(
-            GetTotalStakeError::RankForVotePubkeyNotFound(epoch, vote_pubkey),
-        )?;
+        let rank = *rank_map
+            .get_rank_for_vote_pubkey(&vote_pubkey)
+            .ok_or(GetTotalStakeError::RankForVotePubkeyNotFound { epoch, vote_pubkey })?;
         let entry = rank_map.get_pubkey_stake_entry(rank as usize).ok_or(
-            GetTotalStakeError::EntryForRankNotFound(epoch, vote_pubkey, rank),
+            GetTotalStakeError::EntryForRankNotFound {
+                epoch,
+                vote_pubkey,
+                rank,
+            },
         )?;
         Ok(entry.stake)
     }
@@ -278,11 +291,15 @@ pub(crate) fn calculate_stake_points_and_credits(
                                 // assuming that we only do the calculations for the latest epoch, this
                                 // failure should be unlikely.
                                 let message = format!(
-                                    "get_total_stake() failed with {e:?}. Rewards payout will be \
-                                     skipped"
+                                    "get_total_stake(epoch={epoch}, voter={}) failed with {e:?}. \
+                                     Rewards payout will be skipped",
+                                    stake.delegation.voter_pubkey
                                 );
                                 error!("{message}");
-                                datapoint_error!("alpenglow_error", ("error", message, String));
+                                datapoint_error!(
+                                    "PER-total-stake-calculation-failure",
+                                    ("error", message, String)
+                                );
                                 if let Some(inflation_point_calc_tracer) =
                                     inflation_point_calc_tracer.as_ref()
                                 {
