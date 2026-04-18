@@ -134,8 +134,10 @@ fn calculate_stake_points(
 }
 
 /// State needed to compute rewards for alpenglow.
+#[derive(Debug)]
 pub(crate) struct AlpenglowStakeState<'a> {
     /// Pubkey for the vote account of the validator that the stake is delegated to.
+    // XXX: this seems to be available in `Stake`
     pub(crate) vote_pubkey: Pubkey,
     /// `epoch_stakes` from the current bank.
     pub(crate) epoch_stakes: &'a HashMap<Epoch, VersionedEpochStakes>,
@@ -293,7 +295,12 @@ pub(crate) fn calculate_stake_points_and_credits(
                             };
                         }
                     };
-                    earned_credits * stake_amount / total_stake as u128
+                    let ret = earned_credits * stake_amount / total_stake as u128;
+                    println!(
+                        "calc: pubkey={}, earned_points={ret} earned_credits={earned_credits} stake_amount={stake_amount}, total_stake={total_stake}",
+                        state.vote_pubkey
+                    );
+                    ret
                 }
             }
         };
