@@ -689,9 +689,10 @@ pub fn bank_to_full_snapshot_archive(
     bank: &Bank,
 ) -> agave_snapshots::Result<FullSnapshotArchiveInfo> {
     let temp_bank_snapshots_dir = tempfile::tempdir_in(&snapshot_config.bank_snapshots_dir)?;
-    let snapshot_config = snapshot_config
-        .clone()
-        .with_bank_snapshots_dir(temp_bank_snapshots_dir.path());
+    let snapshot_config = SnapshotConfig {
+        bank_snapshots_dir: temp_bank_snapshots_dir.path().to_path_buf(),
+        ..snapshot_config.clone()
+    };
 
     assert!(bank.is_complete());
     assert!(bank.block_id().is_some());
@@ -776,9 +777,10 @@ pub fn bank_to_incremental_snapshot_archive(
     // this bank snapshot *cannot* be used by fastboot.
     // Putting the snapshot in a tempdir effectively enforces that.
     let temp_bank_snapshots_dir = tempfile::tempdir_in(&snapshot_config.bank_snapshots_dir)?;
-    let snapshot_config = snapshot_config
-        .clone()
-        .with_bank_snapshots_dir(temp_bank_snapshots_dir.path());
+    let snapshot_config = SnapshotConfig {
+        bank_snapshots_dir: temp_bank_snapshots_dir.path().to_path_buf(),
+        ..snapshot_config.clone()
+    };
 
     let snapshot_storages = snapshot_package.snapshot_storages;
 

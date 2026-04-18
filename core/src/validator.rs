@@ -2437,9 +2437,12 @@ fn maybe_warp_slot(
         bank_forks.set_root(warp_slot, Some(snapshot_controller), Some(warp_slot));
         leader_schedule_cache.set_root(&warp_bank);
 
-        let snapshot_config = config.snapshot_config.clone();
+        let snapshot_config = SnapshotConfig {
+            bank_snapshots_dir: ledger_path.to_path_buf(),
+            ..config.snapshot_config.clone()
+        };
         let full_snapshot_archive_info = match snapshot_bank_utils::bank_to_full_snapshot_archive(
-            &snapshot_config.with_bank_snapshots_dir(ledger_path),
+            &snapshot_config,
             &warp_bank,
         ) {
             Ok(archive_info) => archive_info,

@@ -2,7 +2,7 @@ use {
     super::{ArchiveFormat, SnapshotInterval, SnapshotVersion, ZstdConfig},
     std::{
         num::{NonZeroU64, NonZeroUsize},
-        path::{Path, PathBuf},
+        path::PathBuf,
     },
 };
 
@@ -106,12 +106,6 @@ impl SnapshotConfig {
             incremental_snapshot_archive_interval: SnapshotInterval::Disabled,
             ..Self::default()
         }
-    }
-
-    /// Returns this config with `bank_snapshots_dir` replaced.
-    pub fn with_bank_snapshots_dir(mut self, dir: impl AsRef<Path>) -> Self {
-        self.bank_snapshots_dir = dir.as_ref().to_path_buf();
-        self
     }
 
     /// Should snapshots be generated?
