@@ -356,6 +356,13 @@ impl SlotMetaWorkingSetEntry {
     }
 }
 
+pub(crate) fn hashes_per_tick_for_ledger(genesis_config: &GenesisConfig) -> u64 {
+    let Some(hashes_per_tick) = genesis_config.poh_config.hashes_per_tick else {
+        return 0;
+    };
+    hashes_per_tick
+}
+
 pub fn banking_trace_path(path: &Path) -> PathBuf {
     path.join("banking_trace")
 }
@@ -1097,11 +1104,19 @@ impl Blockstore {
         location: BlockLocation,
         shred_insertion_tracker: &mut ShredInsertionTracker,
     ) {
-        if shred_insertion_tracker
+        let mark_slot_dead = shred_insertion_tracker
             .slot_meta_working_set
             .get(&(location, slot))
-            .is_none_or(|meta| !meta.new_slot_meta.borrow().is_full())
-        {
+            .map(|meta| !meta.new_slot_meta.borrow().is_full())
+            .or_else(|| {
+                self.meta_from_location(slot, location)
+                    .ok()
+                    .flatten()
+                    .map(|meta| !meta.is_full())
+            })
+            .unwrap_or(true);
+
+        if mark_slot_dead {
             // If the slot is already full there is no reason to mark as dead
             self.dead_slots_cf.put_bytes_in_batch(
                 &mut shred_insertion_tracker.write_batch,
@@ -5419,7 +5434,9 @@ pub fn create_new_ledger(
         },
     )?;
     let ticks_per_slot = genesis_config.ticks_per_slot;
-    let hashes_per_tick = genesis_config.poh_config.hashes_per_tick.unwrap_or(0);
+    // Slot-0 tick entries are created before a Bank exists, so derive the
+    // effective hashes-per-tick directly from genesis feature state here.
+    let hashes_per_tick = hashes_per_tick_for_ledger(genesis_config);
     let entries = create_ticks(ticks_per_slot, hashes_per_tick, genesis_config.hash());
     let last_hash = entries.last().unwrap().hash;
     let version = solana_shred_version::version_from_hash(&last_hash);
@@ -5870,6 +5887,15 @@ pub mod tests {
         assert_eq!(slot, meta.slot);
         assert!(meta.is_full());
         assert!(meta.next_slots.is_empty());
+    }
+
+    #[test]
+    fn test_hashes_per_tick_for_ledger() {
+        let mut genesis_config = GenesisConfig::default();
+        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 0);
+
+        genesis_config.poh_config.hashes_per_tick = Some(2);
+        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 2);
     }
 
     #[test]
@@ -8223,6 +8249,44 @@ pub mod tests {
         assert!(slot_meta.is_full());
 
         assert!(blockstore.has_duplicate_shreds_in_slot(0));
+    }
+
+    #[test]
+    fn test_mark_slot_dead_if_not_full() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let location = BlockLocation::Original;
+
+        // Leave an empty slot
+        let empty_slot = 0;
+
+        // Insert a partial slot
+        let partial_slot = 5;
+        let (mut shreds, _) = make_slot_entries(partial_slot, partial_slot - 1, 100);
+        assert!(shreds.len() > 1);
+        shreds.pop();
+        blockstore.insert_shreds(shreds, None, false).unwrap();
+        assert!(!blockstore.meta(partial_slot).unwrap().unwrap().is_full());
+
+        // Insert a full slot
+        let full_slot = 10;
+        let (shreds, _) = make_slot_entries(full_slot, full_slot - 1, 100);
+        blockstore.insert_shreds(shreds, None, false).unwrap();
+        assert!(blockstore.meta(full_slot).unwrap().unwrap().is_full());
+
+        let mut shred_insertion_tracker =
+            ShredInsertionTracker::new(1, blockstore.db.batch().unwrap());
+
+        blockstore.mark_slot_dead_if_not_full(empty_slot, location, &mut shred_insertion_tracker);
+        blockstore.mark_slot_dead_if_not_full(partial_slot, location, &mut shred_insertion_tracker);
+        blockstore.mark_slot_dead_if_not_full(full_slot, location, &mut shred_insertion_tracker);
+        // Commit the write batch so state changes can be read back
+        blockstore
+            .write_batch(shred_insertion_tracker.write_batch)
+            .unwrap();
+        assert!(blockstore.is_dead(empty_slot));
+        assert!(blockstore.is_dead(partial_slot));
+        assert!(!blockstore.is_dead(full_slot));
     }
 
     #[test]

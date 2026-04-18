@@ -362,6 +362,15 @@ impl Tvu {
             fetch_receiver,
             retransmit_sender.clone(),
             verified_sender,
+            Arc::new({
+                let outstanding_repair_requests = outstanding_repair_requests.clone();
+                move |nonce| {
+                    outstanding_repair_requests
+                        .read()
+                        .unwrap()
+                        .fetch_metadata_for_nonce(nonce)
+                }
+            }),
             tvu_config.shred_sigverify_threads,
         );
 
