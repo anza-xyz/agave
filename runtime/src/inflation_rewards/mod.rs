@@ -233,8 +233,6 @@ fn calculate_stake_rewards<'a>(
         ));
     }
 
-    println!("mod: split rewards={rewards} into voter={voter_rewards} staker={staker_rewards}");
-
     if (voter_rewards == 0 || staker_rewards == 0) && is_split {
         // don't collect if we lose a whole lamport somewhere
         //  is_split means there should be tokens on both sides,

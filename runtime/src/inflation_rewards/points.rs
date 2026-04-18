@@ -295,12 +295,7 @@ pub(crate) fn calculate_stake_points_and_credits(
                             };
                         }
                     };
-                    let ret = earned_credits * stake_amount / total_stake as u128;
-                    println!(
-                        "calc: pubkey={}, earned_points={ret} earned_credits={earned_credits} stake_amount={stake_amount}, total_stake={total_stake}",
-                        state.vote_pubkey
-                    );
-                    ret
+                    earned_credits * stake_amount / total_stake as u128
                 }
             }
         };

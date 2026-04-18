@@ -206,9 +206,6 @@ fn calculate_reward(
     // As per the Alpenglow SIMD, the rewards are split equally between the validators and the leader.
     let validator_reward_lamports = reward_lamports / 2;
     let leader_reward_lamports = reward_lamports - validator_reward_lamports;
-    println!(
-        "calculate_reward: epoch_state={epoch_state:?} total_stake={total_stake_lamports} validator_stake={validator_stake_lamports} leader={leader_reward_lamports} validator={validator_reward_lamports}"
-    );
     (validator_reward_lamports, leader_reward_lamports)
 }
 
@@ -779,9 +776,6 @@ mod tests {
             let stake_weighted_reward = validator_reward * stake / validator_stake;
             let (voter_reward, staker_reward, is_split) =
                 commission_split(commission_bps, stake_weighted_reward);
-            println!(
-                "test: validator_reward={validator_reward} stake={stake} validator_stake={validator_stake} split rewards={stake_weighted_reward} into voter={voter_reward} staker={staker_reward}"
-            );
             assert!(is_split);
             (
                 Self {
@@ -1328,28 +1322,6 @@ mod tests {
             commission_bps,
             num_reward_slots,
         );
-
-        for (vote_pubkey, prev_entry) in &prev_state.entries {
-            let final_entry = final_state.entries.get(vote_pubkey).unwrap();
-            for (staker_pubkey, prev_staker) in &prev_entry.stakers {
-                let final_staker = final_entry.stakers.get(staker_pubkey).unwrap();
-                let diff = final_staker.lamports - prev_staker.lamports;
-                println!(
-                    "staker={staker_pubkey} before={} after={} diff={diff} expected={}",
-                    prev_staker.lamports, final_staker.lamports, prev_staker.expected_rewards
-                );
-            }
-
-            let voter_diff =
-                final_entry.voter_lamports + VAT_TO_BURN_PER_EPOCH - prev_entry.voter_lamports;
-            // Due to rounding issues, off by 1 errors are possible.
-            println!(
-                "voter={vote_pubkey} final_lamports={} prev_lamports={} diff={voter_diff} expected={}",
-                final_entry.voter_lamports,
-                prev_entry.voter_lamports,
-                prev_entry.voter_expected_reward
-            );
-        }
 
         for (vote_pubkey, prev_entry) in &prev_state.entries {
             let final_entry = final_state.entries.get(vote_pubkey).unwrap();
