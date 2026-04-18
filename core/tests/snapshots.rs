@@ -91,11 +91,12 @@ impl SnapshotTestConfig {
         let snapshot_config = SnapshotConfig {
             full_snapshot_archive_interval,
             incremental_snapshot_archive_interval,
-            ..SnapshotConfig::new_from_paths(
-                bank_snapshots_dir.path(),
-                full_snapshot_archives_dir.path(),
-                incremental_snapshot_archives_dir.path(),
-            )
+            full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
+                .path()
+                .to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+            ..SnapshotConfig::default()
         };
         SnapshotTestConfig {
             bank_forks: bank_forks_arc,

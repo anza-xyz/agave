@@ -2171,11 +2171,12 @@ pub(crate) mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
 
-        let snapshot_config = SnapshotConfig::new_from_paths(
-            bank_snapshots_dir.path(),
-            snapshot_archives_dir.path(),
-            snapshot_archives_dir.path(),
-        );
+        let snapshot_config = SnapshotConfig {
+            full_snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+            ..SnapshotConfig::default()
+        };
         let full_snapshot_archive_info =
             bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
 

@@ -598,13 +598,14 @@ impl SnapshotValidatorConfig {
         let snapshot_config = SnapshotConfig {
             full_snapshot_archive_interval,
             incremental_snapshot_archive_interval,
+            full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
+                .path()
+                .to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
             maximum_full_snapshot_archives_to_retain: NonZeroUsize::new(usize::MAX).unwrap(),
             maximum_incremental_snapshot_archives_to_retain: NonZeroUsize::new(usize::MAX).unwrap(),
-            ..SnapshotConfig::new_from_paths(
-                bank_snapshots_dir.path(),
-                full_snapshot_archives_dir.path(),
-                incremental_snapshot_archives_dir.path(),
-            )
+            ..SnapshotConfig::default()
         };
         assert!(is_snapshot_config_valid(&snapshot_config));
 

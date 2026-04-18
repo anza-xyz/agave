@@ -843,6 +843,21 @@ mod tests {
         test_case::test_case,
     };
 
+    fn snapshot_config_for_tests(
+        bank_snapshots_dir: &TempDir,
+        full_snapshot_archives_dir: &TempDir,
+        incremental_snapshot_archives_dir: &TempDir,
+    ) -> SnapshotConfig {
+        SnapshotConfig {
+            full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
+                .path()
+                .to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+            ..SnapshotConfig::default()
+        }
+    }
+
     fn create_snapshot_dirs_for_tests(
         genesis_config: &GenesisConfig,
         bank_snapshots_dir: impl AsRef<Path>,
@@ -930,10 +945,10 @@ mod tests {
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
 
-        let snapshot_config = SnapshotConfig::new_from_paths(
-            bank_snapshots_dir.path(),
-            full_snapshot_archives_dir.path(),
-            incremental_snapshot_archives_dir.path(),
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &full_snapshot_archives_dir,
+            &incremental_snapshot_archives_dir,
         );
         let snapshot_archive_info =
             bank_to_full_snapshot_archive(&snapshot_config, &original_bank).unwrap();
@@ -1011,10 +1026,10 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
 
-        let snapshot_config = SnapshotConfig::new_from_paths(
-            bank_snapshots_dir.path(),
-            snapshot_archives_dir.path(),
-            snapshot_archives_dir.path(),
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &snapshot_archives_dir,
+            &snapshot_archives_dir,
         );
         let full_snapshot_archive_info =
             bank_to_full_snapshot_archive(&snapshot_config, &bank1).unwrap();
@@ -1113,10 +1128,10 @@ mod tests {
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
 
-        let snapshot_config = SnapshotConfig::new_from_paths(
-            bank_snapshots_dir.path(),
-            full_snapshot_archives_dir.path(),
-            incremental_snapshot_archives_dir.path(),
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &full_snapshot_archives_dir,
+            &incremental_snapshot_archives_dir,
         );
         let full_snapshot_archive_info =
             bank_to_full_snapshot_archive(&snapshot_config, &bank4).unwrap();
@@ -1199,10 +1214,10 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_config = SnapshotConfig::new_from_paths(
-            bank_snapshots_dir.path(),
-            full_snapshot_archives_dir.path(),
-            incremental_snapshot_archives_dir.path(),
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &full_snapshot_archives_dir,
+            &incremental_snapshot_archives_dir,
         );
 
         let full_snapshot_slot = slot;
@@ -1303,10 +1318,10 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_config = SnapshotConfig::new_from_paths(
-            bank_snapshots_dir.path(),
-            full_snapshot_archives_dir.path(),
-            incremental_snapshot_archives_dir.path(),
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &full_snapshot_archives_dir,
+            &incremental_snapshot_archives_dir,
         );
 
         let full_snapshot_slot = slot;
@@ -1373,11 +1388,8 @@ mod tests {
         bank.set_capitalization_for_tests(bad_capitalization);
 
         let snapshot_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_config = SnapshotConfig::new_from_paths(
-            snapshot_dir.path(),
-            snapshot_dir.path(),
-            snapshot_dir.path(),
-        );
+        let snapshot_config =
+            snapshot_config_for_tests(&snapshot_dir, &snapshot_dir, &snapshot_dir);
         let full_snapshot_archive_info =
             bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
 
@@ -1444,10 +1456,10 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_config = SnapshotConfig::new_from_paths(
-            bank_snapshots_dir.path(),
-            full_snapshot_archives_dir.path(),
-            incremental_snapshot_archives_dir.path(),
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &full_snapshot_archives_dir,
+            &incremental_snapshot_archives_dir,
         );
 
         let GenesisConfigInfo {
@@ -1623,11 +1635,8 @@ mod tests {
 
         let all_snapshots_dir = tempfile::TempDir::new().unwrap();
 
-        let snapshot_config = SnapshotConfig::new_from_paths(
-            all_snapshots_dir.path(),
-            all_snapshots_dir.path(),
-            all_snapshots_dir.path(),
-        );
+        let snapshot_config =
+            snapshot_config_for_tests(&all_snapshots_dir, &all_snapshots_dir, &all_snapshots_dir);
         let full_snapshot_slot = slot;
         bank_to_full_snapshot_archive(&snapshot_config, &bank1).unwrap();
 
@@ -1699,10 +1708,10 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let _bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 3, true);
 
-        let snapshot_config = SnapshotConfig::new_from_paths(
-            bank_snapshots_dir.as_ref(),
-            bank_snapshots_dir.as_ref(),
-            bank_snapshots_dir.as_ref(),
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &bank_snapshots_dir,
+            &bank_snapshots_dir,
         );
 
         // Verify the snapshot is found with all files present
@@ -1983,10 +1992,10 @@ mod tests {
 
         // Take full snapshot and then do a roundtrip on the bank and ensure it
         // deserializes correctly
-        let snapshot_config = SnapshotConfig::new_from_paths(
-            bank_snapshots_dir.path(),
-            full_snapshot_archives_dir.path(),
-            full_snapshot_archives_dir.path(),
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &full_snapshot_archives_dir,
+            &full_snapshot_archives_dir,
         );
         let full_snapshot_archive_info =
             bank_to_full_snapshot_archive(&snapshot_config, &bank3).unwrap();

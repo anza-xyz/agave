@@ -1132,11 +1132,10 @@ impl TestValidator {
                     NonZeroU64::new(100).unwrap(),
                 ),
                 incremental_snapshot_archive_interval: SnapshotInterval::Disabled,
-                ..SnapshotConfig::new_from_paths(
-                    ledger_path.join(BANK_SNAPSHOTS_DIR),
-                    &ledger_path,
-                    &ledger_path,
-                )
+                bank_snapshots_dir: ledger_path.join(BANK_SNAPSHOTS_DIR),
+                full_snapshot_archives_dir: ledger_path.to_path_buf(),
+                incremental_snapshot_archives_dir: ledger_path.to_path_buf(),
+                ..SnapshotConfig::default()
             },
             warp_slot: config.warp_slot,
             validator_exit: config.validator_exit.clone(),

@@ -638,11 +638,13 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         bank.fill_bank_with_ticks_for_tests();
         Bank::calculate_and_set_block_id_for_dcou(&bank);
-        snapshot_bank_utils::bank_to_full_snapshot_archive(
-            &SnapshotConfig::new_from_paths(&bank_snapshots_dir, ledger_path, ledger_path),
-            &bank,
-        )
-        .unwrap();
+        let snapshot_config = SnapshotConfig {
+            full_snapshot_archives_dir: ledger_path.to_path_buf(),
+            incremental_snapshot_archives_dir: ledger_path.to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.clone(),
+            ..SnapshotConfig::default()
+        };
+        snapshot_bank_utils::bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
 
         // Open the blockstore so load_and_process_ledger can pass it to process_blockstore.
         let blockstore = Arc::new(Blockstore::open(ledger_path).unwrap());
