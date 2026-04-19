@@ -336,6 +336,7 @@ dependencies = [
  "solana-short-vec",
  "solana-signature",
  "solana-svm-transaction",
+ "solana-transaction",
  "solana-transaction-context",
 ]
 

@@ -24,7 +24,7 @@ use {
         svm_message::{SVMMessage, SVMStaticMessage},
         svm_transaction::SVMTransaction,
     },
-    solana_transaction::TransactionError,
+    solana_transaction::{TransactionError, versioned::TransactionVersion},
 };
 
 mod sdk_transactions;
@@ -165,6 +165,10 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
 }
 
 impl<T: SVMTransaction> SVMTransaction for RuntimeTransaction<T> {
+    fn version(&self) -> TransactionVersion {
+        self.transaction.version()
+    }
+
     fn signature(&self) -> &Signature {
         self.transaction.signature()
     }

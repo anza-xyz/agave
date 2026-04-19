@@ -235,6 +235,10 @@ impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
 }
 
 impl<D: TransactionData> SVMTransaction for ResolvedTransactionView<D> {
+    fn version(&self) -> solana_transaction::versioned::TransactionVersion {
+        self.view.version().into()
+    }
+
     fn signature(&self) -> &Signature {
         &self.view.signatures()[0]
     }
