@@ -27,7 +27,6 @@ pub fn archive_snapshot(
     snapshot_slot: Slot,
     snapshot_hash: SnapshotHash,
     snapshot_storages: &[Arc<AccountStorageEntry>],
-    bank_snapshot_dir: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
     snapshot_config: &SnapshotConfig,
 ) -> Result<SnapshotArchiveInfo> {
@@ -58,9 +57,11 @@ pub fn archive_snapshot(
         .map_err(|err| E::CreateSnapshotStagingDir(err, staging_snapshot_dir.clone()))?;
 
     // To be a source for symlinking and archiving, the path need to be an absolute path
-    let src_snapshot_dir = bank_snapshot_dir.as_ref().canonicalize().map_err(|err| {
-        E::CanonicalizeSnapshotSourceDir(err, bank_snapshot_dir.as_ref().to_path_buf())
-    })?;
+    let src_snapshot_dir =
+        paths::get_bank_snapshot_dir(&snapshot_config.bank_snapshots_dir, snapshot_slot);
+    let src_snapshot_dir = src_snapshot_dir
+        .canonicalize()
+        .map_err(|err| E::CanonicalizeSnapshotSourceDir(err, src_snapshot_dir))?;
     let staging_snapshot_file = staging_snapshot_dir.join(&slot_str);
     let src_snapshot_file = src_snapshot_dir.join(slot_str);
     symlink::symlink_file(&src_snapshot_file, &staging_snapshot_file)
