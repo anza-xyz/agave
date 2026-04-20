@@ -25,7 +25,7 @@ use {
             HardLinkStoragesToSnapshotError, SnapshotError, SnapshotFastbootError,
             SnapshotNewFromDirError,
         },
-        paths::{self as snapshot_paths, get_incremental_snapshot_archives},
+        paths::{self as snapshot_paths, incremental_snapshot_archives_iter},
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
             SnapshotArchiveInfoGetter,
@@ -1580,7 +1580,8 @@ pub fn purge_old_snapshot_archives(
     );
 
     let mut full_snapshot_archives =
-        snapshot_paths::get_full_snapshot_archives(&full_snapshot_archives_dir);
+        snapshot_paths::full_snapshot_archives_iter(&full_snapshot_archives_dir)
+            .collect::<Vec<_>>();
     full_snapshot_archives.sort_unstable();
     full_snapshot_archives.reverse();
 
@@ -1627,7 +1628,7 @@ pub fn purge_old_snapshot_archives(
     );
     let mut incremental_snapshot_archives_by_base_slot = HashMap::<Slot, Vec<_>>::new();
     for incremental_snapshot_archive in
-        get_incremental_snapshot_archives(&incremental_snapshot_archives_dir)
+        incremental_snapshot_archives_iter(&incremental_snapshot_archives_dir)
     {
         incremental_snapshot_archives_by_base_slot
             .entry(incremental_snapshot_archive.base_slot())
@@ -1822,7 +1823,7 @@ mod tests {
         super::*,
         agave_snapshots::{
             paths::{
-                get_full_snapshot_archives, get_highest_full_snapshot_archive_slot,
+                full_snapshot_archives_iter, get_highest_full_snapshot_archive_slot,
                 get_highest_incremental_snapshot_archive_slot,
             },
             snapshot_config::{
@@ -2157,7 +2158,8 @@ mod tests {
             0,
         );
 
-        let snapshot_archives = get_full_snapshot_archives(full_snapshot_archives_dir);
+        let snapshot_archives =
+            full_snapshot_archives_iter(full_snapshot_archives_dir.path()).collect::<Vec<_>>();
         assert_eq!(snapshot_archives.len() as Slot, max_slot - min_slot);
     }
 
@@ -2180,7 +2182,8 @@ mod tests {
             0,
         );
 
-        let snapshot_archives = get_full_snapshot_archives(full_snapshot_archives_dir);
+        let snapshot_archives =
+            full_snapshot_archives_iter(full_snapshot_archives_dir.path()).collect::<Vec<_>>();
         assert_eq!(snapshot_archives.len() as Slot, max_slot - min_slot);
         assert!(snapshot_archives.iter().all(|info| info.is_remote()));
     }
@@ -2203,7 +2206,8 @@ mod tests {
         );
 
         let incremental_snapshot_archives =
-            get_incremental_snapshot_archives(incremental_snapshot_archives_dir);
+            incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.path())
+                .collect::<Vec<_>>();
         assert_eq!(
             incremental_snapshot_archives.len() as Slot,
             (max_full_snapshot_slot - min_full_snapshot_slot)
@@ -2233,7 +2237,8 @@ mod tests {
         );
 
         let incremental_snapshot_archives =
-            get_incremental_snapshot_archives(incremental_snapshot_archives_dir);
+            incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.path())
+                .collect::<Vec<_>>();
         assert_eq!(
             incremental_snapshot_archives.len() as Slot,
             (max_full_snapshot_slot - min_full_snapshot_slot)
@@ -2414,7 +2419,7 @@ mod tests {
                 NonZeroUsize::new(usize::MAX).unwrap(),
             );
             let mut full_snapshot_archives =
-                get_full_snapshot_archives(&full_snapshot_archives_dir);
+                full_snapshot_archives_iter(&full_snapshot_archives_dir).collect::<Vec<_>>();
             full_snapshot_archives.sort_unstable();
             assert_eq!(
                 full_snapshot_archives.len(),
@@ -2490,7 +2495,7 @@ mod tests {
 
         // Ensure correct number of full snapshot archives are purged/retained
         let mut remaining_full_snapshot_archives =
-            get_full_snapshot_archives(full_snapshot_archives_dir.path());
+            full_snapshot_archives_iter(full_snapshot_archives_dir.path()).collect::<Vec<_>>();
         assert_eq!(
             remaining_full_snapshot_archives.len(),
             maximum_full_snapshot_archives_to_retain.get(),
@@ -2504,7 +2509,8 @@ mod tests {
         // incremental snapshot archive is retained. This is accounted for by the
         // `+ maximum_full_snapshot_archives_to_retain.saturating_sub(1)`
         let mut remaining_incremental_snapshot_archives =
-            get_incremental_snapshot_archives(incremental_snapshot_archives_dir.path());
+            incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.path())
+                .collect::<Vec<_>>();
         assert_eq!(
             remaining_incremental_snapshot_archives.len(),
             maximum_incremental_snapshot_archives_to_retain
@@ -2590,7 +2596,8 @@ mod tests {
         );
 
         let remaining_incremental_snapshot_archives =
-            get_incremental_snapshot_archives(incremental_snapshot_archives_dir.path());
+            incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.path())
+                .collect::<Vec<_>>();
         assert!(remaining_incremental_snapshot_archives.is_empty());
     }
 
