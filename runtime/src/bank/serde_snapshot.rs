@@ -214,6 +214,8 @@ mod tests {
         bank.freeze();
         add_root_and_flush_write_cache(&bank0);
 
+        let epoch_with_real_stake = 42;
+
         // Set extra fields
         bank.fee_rate_governor.lamports_per_signature = 7000;
         // Note that epoch_stakes already has two epoch stakes entries for epochs 0 and 1
@@ -272,6 +274,24 @@ mod tests {
             Arc::default(),
         )
         .unwrap();
+
+        // Specifically check that bls_pubkey_rank_map is equal, you do need to call this
+        // before checking epoch_stakes because this needs to be populated.
+        for (epoch, epoch_stakes) in dbank.epoch_stakes.iter() {
+            let bls_pubkey_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
+            if *epoch == epoch_with_real_stake {
+                assert!(!bls_pubkey_to_rank_map.is_empty());
+            } else {
+                assert!(bls_pubkey_to_rank_map.is_empty());
+            }
+            assert_eq!(
+                bls_pubkey_to_rank_map,
+                bank.epoch_stakes
+                    .get(epoch)
+                    .expect("Expecting epoch stakes for {epoch}")
+                    .bls_pubkey_to_rank_map()
+            );
+        }
 
         assert_eq!(bank.epoch_stakes, dbank.epoch_stakes);
         assert_eq!(
