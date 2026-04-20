@@ -60,7 +60,22 @@ impl QosService {
     ) -> Vec<transaction::Result<TransactionCost<'a, Tx>>> {
         transactions
             .zip(pre_results)
-            .map(|(tx, pre_result)| pre_result.map(|()| CostModel::calculate_cost(tx, feature_set)))
+            .map(|(tx, pre_result)| {
+                pre_result.map(|()| {
+                    let mut reserving_cost = CostModel::calculate_cost(tx, feature_set);
+
+                    if let TransactionCost::Transaction(ref mut usage_cost_details) = reserving_cost
+                    {
+                        // To maintain cost tracking consistency, reserve at least one page for
+                        // loading the fee payer account in fee-only fallback scenarios.
+                        usage_cost_details.loaded_accounts_data_size_cost = usage_cost_details
+                            .loaded_accounts_data_size_cost
+                            .max(CostModel::calculate_pages_cost(1));
+                    }
+
+                    reserving_cost
+                })
+            })
             .collect()
     }
 
@@ -518,5 +533,41 @@ mod tests {
                 bank.read_cost_tracker().unwrap().transaction_count()
             );
         }
+    }
+
+    #[test]
+    fn test_min_one_page_cost_reserved() {
+        let payer = Keypair::new();
+        let recipient = solana_pubkey::Pubkey::new_unique();
+
+        let transaction = solana_transaction::Transaction::new_unsigned(solana_message::Message::new(
+        &[
+            solana_compute_budget_interface::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(0),
+            solana_system_interface::instruction::transfer(&payer.pubkey(), &recipient, 1),
+        ],
+        Some(&payer.pubkey()),
+    ));
+
+        let txs = [RuntimeTransaction::from_transaction_for_tests(transaction)];
+        let tx_costs = QosService::compute_transaction_costs(
+            &FeatureSet::all_enabled(),
+            txs.iter(),
+            std::iter::repeat(Ok(())),
+        );
+
+        let tx_cost = tx_costs
+            .into_iter()
+            .next()
+            .expect("one tx cost")
+            .expect("tx cost should be computed");
+
+        let TransactionCost::Transaction(usage_cost_details) = tx_cost else {
+            panic!("expected TransactionCost::Transaction");
+        };
+
+        assert_eq!(
+            usage_cost_details.loaded_accounts_data_size_cost,
+            CostModel::calculate_pages_cost(1),
+        );
     }
 }
