@@ -21,7 +21,7 @@ use {
     },
     solana_sysvar::epoch_rewards::{self, EpochRewards},
     solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
-    solana_vote_program::vote_state::process_slot_vote_unchecked,
+    solana_vote_program::vote_state::{handler::VoteStateHandler, process_slot_vote_unchecked},
     std::{
         hint::black_box,
         sync::{Arc, RwLock},
@@ -74,13 +74,15 @@ fn populate_vote_accounts(bank: &Bank, vote_pubkeys: Vec<Pubkey>) {
     for vote_pubkey in vote_pubkeys.into_iter() {
         let mut vote_account = bank.get_account(&vote_pubkey).unwrap();
 
-        let mut vote_state = VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap();
+        let mut vote_state = VoteStateHandler::new_v4(
+            VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
+        );
 
         for i in 0..SYNTHETIC_VOTE_SLOTS {
             process_slot_vote_unchecked(&mut vote_state, i);
         }
 
-        let versioned = VoteStateVersions::V4(Box::new(vote_state));
+        let versioned = VoteStateVersions::V4(Box::new(vote_state.unwrap_v4()));
         vote_account.set_state(&versioned).unwrap();
 
         bank.store_account(&vote_pubkey, &vote_account);

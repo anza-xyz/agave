@@ -415,8 +415,10 @@ struct IndexGenerationAccumulator {
     num_existed_on_disk: u64,
     /// The accounts lt hash for the set of accounts processed using this accumulator
     lt_hash: LtHash,
-    /// The capitalization for the set of accounts processed using this accumulator
-    capitalization: u64,
+    /// The capitalization for the set of accounts processed using this accumulator.
+    /// Needs to be u128 as it may temporarily overflow u64 due to
+    /// all duplicates being summed before being removed.
+    capitalization: u128,
     /// The number of accounts in this slot that were skipped when generating the index as they
     /// were already marked obsolete in the account storage entry
     num_obsolete_accounts_skipped: u64,
@@ -1649,9 +1651,12 @@ impl AccountsDb {
             },
         );
         let total = pubkey_refcount.len();
+        if total == 0 {
+            return;
+        }
         let failed = AtomicBool::default();
         let threads = quarter_thread_count();
-        let per_batch = total / threads;
+        let per_batch = total.div_ceil(threads);
         (0..=threads).into_par_iter().for_each(|attempt| {
             pubkey_refcount
                 .iter()
@@ -3370,9 +3375,15 @@ impl AccountsDb {
             &empty_ancestors
         };
 
+        // Bound max_root by ancestors.min_slot() so that roots from slots
+        // beyond the querying bank's ancestor chain are not visible.
+        let mut max_root = scan_guard.max_root();
+        if let Some(min) = ancestors.min_slot() {
+            max_root = max_root.min(min);
+        }
         self.accounts_index.scan_accounts(
             ancestors,
-            scan_guard.max_root(),
+            max_root,
             |pubkey, (account_info, slot)| {
                 let mut account_accessor =
                     self.get_account_accessor(slot, pubkey, &account_info.storage_location());
@@ -3438,14 +3449,21 @@ impl AccountsDb {
             &empty_ancestors
         };
 
-        let max_root = scan_guard.max_root();
+        // Bound max_root by ancestors.min_slot() so that roots from slots
+        // beyond the querying bank's ancestor chain are not visible. A root
+        // between min_slot and max_slot that is not an ancestor belongs to a
+        // different fork and should not appear in scan results.
+        let mut max_root = scan_guard.max_root();
+        if let Some(min) = ancestors.min_slot() {
+            max_root = max_root.min(min);
+        }
         for pubkey in self.accounts_index.get_index_key_pubkeys(&index_key) {
             if config.is_aborted() {
                 break;
             }
             self.accounts_index.get_with_and_then(
                 &pubkey,
-                Some(ancestors),
+                ancestors,
                 Some(max_root),
                 true,
                 |(slot, account_info)| {
@@ -3585,10 +3603,15 @@ impl AccountsDb {
         pubkey: &'a Pubkey,
         clone_in_lock: bool,
     ) -> Option<(Slot, StorageLocation, Option<LoadedAccountAccessor<'a>>)> {
+        // Bound the root search to ancestors.min_slot() so that roots from
+        // slots beyond the querying bank's ancestor chain are not visible.
+        // min_slot is more correct than max_slot because a root between min
+        // and max that is not an ancestor belongs to a different fork.
+        let max_root_slot = ancestors.min_slot();
         self.accounts_index.get_with_and_then(
             pubkey,
-            Some(ancestors),
-            None,
+            ancestors,
+            max_root_slot,
             true,
             |(slot, account_info)| {
                 let storage_location = account_info.storage_location();
@@ -4805,7 +4828,7 @@ impl AccountsDb {
                             .accounts_index
                             .get_with_and_then(
                                 &pubkey,
-                                Some(ancestors),
+                                ancestors,
                                 Some(startup_slot),
                                 false,
                                 |(slot, account_info)| {
@@ -4864,7 +4887,7 @@ impl AccountsDb {
                         self.accounts_index
                             .get_with_and_then(
                                 &pubkey,
-                                Some(ancestors),
+                                ancestors,
                                 Some(startup_slot),
                                 false,
                                 |(slot, account_info)| {
@@ -5607,7 +5630,7 @@ impl AccountsDb {
                     return;
                 }
                 if account.is_zero_lamport() {
-                    if ancestors.is_some() {
+                    if let Some(ancestors) = ancestors {
                         if let Some(is_zero_lamport) = self.accounts_index.get_with_and_then(
                             pubkey,
                             ancestors,
@@ -5871,6 +5894,7 @@ impl AccountsDb {
         let slot = storage.slot();
         let store_id = storage.id();
 
+        let mut capitalization = 0_u64;
         let mut accounts_data_len = 0;
         let mut stored_size_alive = 0;
         let mut all_accounts_are_zero_lamports = true;
@@ -5943,8 +5967,9 @@ impl AccountsDb {
                 let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
                 accum.lt_hash.mix_in(&account_lt_hash.0);
 
-                accum.capitalization = accum
-                    .capitalization
+                // SAFETY: The bank capitalization field is a u64, so the lamport sum of
+                // all accounts modified in a single slot must fit into a u64.
+                capitalization = capitalization
                     .checked_add(account.lamports())
                     .expect("capitalization cannot overflow");
 
@@ -5967,6 +5992,11 @@ impl AccountsDb {
                 }
             })
             .expect("must scan accounts storage");
+
+        accum.capitalization = accum
+            .capitalization
+            .checked_add(u128::from(capitalization))
+            .expect("capitalization cannot overflow");
 
         let (insert_info, insert_time_us) = measure_us!(
             self.accounts_index
@@ -6218,7 +6248,7 @@ impl AccountsDb {
             accounts_data_len_from_duplicates: u64,
             num_duplicate_accounts: u64,
             duplicates_lt_hash: Box<DuplicatesLtHash>,
-            capitalization_from_duplicates: u64,
+            capitalization_from_duplicates: u128,
         }
         impl DuplicatePubkeysVisitedInfo {
             fn reduce(mut self, other: Self) -> Self {
@@ -6346,10 +6376,19 @@ impl AccountsDb {
             .capacity_in_mem
             .store(index_capacity, Ordering::Relaxed);
 
+        // The bank capitalization field is a u64, so a valid capitalization must fit into a u64.
+        // The lamports from duplicate accounts have now been removed, so try casting.
+        let Ok(calculated_capitalization) = u64::try_from(total_accum.capitalization) else {
+            panic!(
+                "calculated capitalization overflowed a u64, which is invalid! calculated \
+                 capitalization: {}",
+                total_accum.capitalization,
+            );
+        };
         IndexGenerationInfo {
             accounts_data_len: total_accum.accounts_data_len,
             calculated_accounts_lt_hash: AccountsLtHash(total_accum.lt_hash),
-            calculated_capitalization: total_accum.capitalization,
+            calculated_capitalization,
         }
     }
 
@@ -6403,11 +6442,11 @@ impl AccountsDb {
     fn visit_duplicate_pubkeys_during_startup(
         &self,
         pubkeys: &[Pubkey],
-    ) -> (u64, u64, Box<DuplicatesLtHash>, u64) {
+    ) -> (u64, u64, Box<DuplicatesLtHash>, u128) {
         let mut accounts_data_len_from_duplicates = 0;
         let mut num_duplicate_accounts = 0_u64;
         let mut duplicates_lt_hash = Box::new(DuplicatesLtHash::default());
-        let mut capitalization_from_duplicates = 0_u64;
+        let mut capitalization_from_duplicates = 0_u128;
         self.accounts_index.scan(
             pubkeys.iter(),
             |pubkey, slots_refs| {
@@ -6441,7 +6480,7 @@ impl AccountsDb {
                                     Self::lt_hash_account(&loaded_account, pubkey);
                                 duplicates_lt_hash.0.mix_in(&account_lt_hash.0);
                                 capitalization_from_duplicates = capitalization_from_duplicates
-                                    .checked_add(lamports)
+                                    .checked_add(u128::from(lamports))
                                     .expect("capitalization cannot overflow");
                             });
                         });

@@ -21,7 +21,7 @@ use {
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_fee_calculator::FeeRateGovernor,
-    solana_fee_structure::{FeeBin, FeeBudgetLimits, FeeStructure},
+    solana_fee_structure::{FeeBin, FeeStructure},
     solana_hash::Hash,
     solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_keypair::Keypair,
@@ -3948,17 +3948,16 @@ fn test_program_fees() {
         &ReservedAccountKeys::empty_key_set(),
     )
     .unwrap();
-    let fee_budget_limits = FeeBudgetLimits::from(
-        process_compute_budget_instructions(
-            SVMStaticMessage::program_instructions_iter(&sanitized_message),
-            &feature_set,
-        )
-        .unwrap_or_default(),
-    );
+    let prioritization_fee = process_compute_budget_instructions(
+        SVMStaticMessage::program_instructions_iter(&sanitized_message),
+        &feature_set,
+    )
+    .unwrap_or_default()
+    .get_prioritization_fee();
     let expected_normal_fee = solana_fee::calculate_fee(
         &sanitized_message,
         fee_structure.lamports_per_signature,
-        fee_budget_limits.prioritization_fee,
+        prioritization_fee,
         bank.feature_set.as_ref().into(),
     );
     bank_client
@@ -3980,17 +3979,16 @@ fn test_program_fees() {
         &ReservedAccountKeys::empty_key_set(),
     )
     .unwrap();
-    let fee_budget_limits = FeeBudgetLimits::from(
-        process_compute_budget_instructions(
-            SVMStaticMessage::program_instructions_iter(&sanitized_message),
-            &feature_set,
-        )
-        .unwrap_or_default(),
-    );
+    let prioritization_fee = process_compute_budget_instructions(
+        SVMStaticMessage::program_instructions_iter(&sanitized_message),
+        &feature_set,
+    )
+    .unwrap_or_default()
+    .get_prioritization_fee();
     let expected_prioritized_fee = solana_fee::calculate_fee(
         &sanitized_message,
         fee_structure.lamports_per_signature,
-        fee_budget_limits.prioritization_fee,
+        prioritization_fee,
         bank.feature_set.as_ref().into(),
     );
     assert!(expected_normal_fee < expected_prioritized_fee);

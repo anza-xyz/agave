@@ -9,9 +9,10 @@ use {
         banking_trace::BankingTracer,
         replay_stage::{Finalizer, ReplayStage},
     },
-    agave_votor::{common::block_timeout, event::LeaderWindowInfo},
+    agave_votor::event::LeaderWindowInfo,
     crossbeam_channel::Receiver,
     solana_clock::Slot,
+    solana_entry::block_component::{BlockMarkerV1, GenesisCertificate, VersionedBlockMarker},
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
@@ -26,6 +27,7 @@ use {
         bank::{Bank, NewBankOptions},
         bank_forks::BankForks,
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
+        validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     stats::{LoopMetrics, SlotMetrics},
     std::{
@@ -83,6 +85,7 @@ pub struct BlockCreationLoopConfig {
     pub leader_window_info_receiver: Receiver<LeaderWindowInfo>,
     pub highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
+    pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 
     // Channel to receive RecordReceiver from PohService
     pub record_receiver_receiver: Receiver<RecordReceiver>,
@@ -93,6 +96,7 @@ struct LeaderContext {
     my_pubkey: Pubkey,
     leader_window_info_receiver: Receiver<LeaderWindowInfo>,
     highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
+    highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 
     blockstore: Arc<Blockstore>,
     record_receiver: RecordReceiver,
@@ -107,6 +111,9 @@ struct LeaderContext {
     // Metrics
     metrics: LoopMetrics,
     slot_metrics: SlotMetrics,
+
+    // Migration information
+    genesis_cert: GenesisCertificate,
 }
 
 #[derive(Default)]
@@ -153,6 +160,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
         highest_parent_ready,
         replay_highest_frozen,
         record_receiver_receiver,
+        highest_finalized,
     } = config;
 
     // Similar to Votor, if this loop dies kill the validator
@@ -170,6 +178,15 @@ fn start_loop(config: BlockCreationLoopConfig) {
             return;
         }
     };
+
+    let genesis_cert = bank_forks
+        .read()
+        .unwrap()
+        .migration_status()
+        .genesis_certificate()
+        .expect("Migration complete, genesis certificate must exist");
+    let genesis_cert = GenesisCertificate::try_from((*genesis_cert).clone())
+        .expect("Genesis certificate must be valid");
 
     info!("{my_pubkey}: PohService has shutdown, BlockCreationLoop is enabled");
 
@@ -189,6 +206,8 @@ fn start_loop(config: BlockCreationLoopConfig) {
         replay_highest_frozen,
         metrics: LoopMetrics::default(),
         slot_metrics: SlotMetrics::default(),
+        highest_finalized,
+        genesis_cert,
     };
 
     // Setup poh
@@ -221,7 +240,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
             start_slot,
             end_slot,
             parent_block: (parent_slot, _),
-            skip_timer,
+            block_timer,
         } = {
             // Drain all pending messages and keep the latest one
             let Some(info) = ctx
@@ -243,7 +262,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
         };
 
         trace!("Received window notification for {start_slot} to {end_slot} parent: {parent_slot}");
-        if let Err(e) = produce_window(start_slot, end_slot, parent_slot, skip_timer, &mut ctx) {
+        if let Err(e) = produce_window(start_slot, end_slot, parent_slot, block_timer, &mut ctx) {
             // Give up on this leader window
             error!(
                 "{my_pubkey}: Unable to produce window {start_slot}-{end_slot}, skipping window: \
@@ -276,13 +295,22 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
         .reset(bank.clone(), next_leader_slot);
 }
 
+/// From the passed in bank (used for determining slot times) and leader block
+/// index within the leader window, returns the duration after which we should
+/// publish the final shred for the block with starting point being the start of
+/// the leader window.
+fn block_timeout(bank: &Bank, leader_block_index: usize) -> Duration {
+    Duration::from_nanos_u128(bank.ns_per_slot)
+        .saturating_mul((leader_block_index as u32).saturating_add(1))
+}
+
 /// Produces the leader window from `start_slot` -> `end_slot` using parent
 /// `parent_slot` while abiding to the `skip_timer`
 fn produce_window(
     start_slot: Slot,
     end_slot: Slot,
     mut parent_slot: Slot,
-    skip_timer: Instant,
+    block_timer: Instant,
     ctx: &mut LeaderContext,
 ) -> Result<(), StartLeaderError> {
     let my_pubkey = ctx.my_pubkey;
@@ -292,20 +320,19 @@ fn produce_window(
     while !ctx.exit.load(Ordering::Relaxed) && slot <= end_slot {
         // Insert the bank. In case `replay_stage` is slow and `parent_slot` is not
         // yet frozen, we wait up until the timeout.
-        start_leader_wait_for_parent_replay(slot, parent_slot, skip_timer, ctx)?;
-
-        let leader_index = leader_slot_index(slot);
-        let timeout = block_timeout(leader_index);
+        let working_bank =
+            start_leader_wait_for_parent_replay(slot, parent_slot, block_timer, ctx)?;
+        let timeout = block_timeout(&working_bank, leader_slot_index(slot));
         trace!(
             "{my_pubkey}: waiting for leader bank {slot} to finish, remaining time: {}",
-            timeout.saturating_sub(skip_timer.elapsed()).as_millis(),
+            timeout.saturating_sub(block_timer.elapsed()).as_millis(),
         );
 
         let mut bank_completion_measure = Measure::start("bank_completion");
         if let Err(e) = record_and_complete_block(
             ctx.poh_recorder.as_ref(),
             &mut ctx.record_receiver,
-            skip_timer,
+            block_timer,
             timeout,
         ) {
             panic!("PohRecorder record failed: {e:?}");
@@ -402,19 +429,22 @@ fn record_and_complete_block(
 fn start_leader_wait_for_parent_replay(
     slot: Slot,
     parent_slot: Slot,
-    skip_timer: Instant,
+    block_timer: Instant,
     ctx: &mut LeaderContext,
-) -> Result<(), StartLeaderError> {
+) -> Result<Arc<Bank>, StartLeaderError> {
     trace!(
         "{}: Attempting to start leader slot {slot} parent {parent_slot}",
         ctx.my_pubkey
     );
     let my_pubkey = ctx.my_pubkey;
-    let timeout = block_timeout(leader_slot_index(slot));
+    let timeout = block_timeout(
+        &ctx.bank_forks.read().unwrap().root_bank(),
+        leader_slot_index(slot),
+    );
     let end_slot = last_of_consecutive_leader_slots(slot);
 
     let mut slot_delay_start = Measure::start("slot_delay");
-    while !timeout.saturating_sub(skip_timer.elapsed()).is_zero() {
+    while !timeout.saturating_sub(block_timer.elapsed()).is_zero() {
         ctx.slot_metrics.attempt_start_leader_count += 1;
 
         // Check if the entire window is skipped.
@@ -445,13 +475,18 @@ fn start_leader_wait_for_parent_replay(
                         );
                     });
 
-                return Ok(());
+                return Ok(ctx
+                    .poh_recorder
+                    .read()
+                    .unwrap()
+                    .bank()
+                    .expect("We just started the leader, so the bank must exist"));
             }
             Err(StartLeaderError::ReplayIsBehind(_, _)) => {
                 trace!(
                     "{my_pubkey}: Attempting to produce slot {slot}, however replay of the the \
                      parent {parent_slot} is not yet finished, waiting. Skip timer {}",
-                    skip_timer.elapsed().as_millis()
+                    block_timer.elapsed().as_millis()
                 );
                 let highest_frozen_slot = ctx
                     .replay_highest_frozen
@@ -466,7 +501,7 @@ fn start_leader_wait_for_parent_replay(
                     .freeze_notification
                     .wait_timeout_while(
                         highest_frozen_slot,
-                        timeout.saturating_sub(skip_timer.elapsed()),
+                        timeout.saturating_sub(block_timer.elapsed()),
                         |hfs| *hfs < parent_slot,
                     )
                     .unwrap();
@@ -592,6 +627,11 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
     let tpu_bank = ctx.bank_forks.write().unwrap().insert(tpu_bank);
     let bank_id = tpu_bank.bank_id();
     ctx.poh_recorder.write().unwrap().set_bank(tpu_bank);
+
+    // If this is the first alpenglow block, emit the genesis certificate marker
+    maybe_include_genesis_certificate(parent_slot, ctx);
+
+    // Wakeup banking stage
     ctx.record_receiver.restart(bank_id);
     ctx.slot_metrics.reset(slot);
 
@@ -599,4 +639,34 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
         "{}: new fork:{} parent:{} (leader) root:{}",
         ctx.my_pubkey, slot, parent_slot, root_slot
     );
+}
+
+///  If this the very first alpenglow block, include the genesis certificate
+///  Note: if the alpenglow genesis is 0, then this is a test cluster with Alpenglow enabled
+///  by default. No need to put in the genesis marker as the genesis account is already populated
+///  during cluster creation.
+fn maybe_include_genesis_certificate(parent_slot: Slot, ctx: &LeaderContext) {
+    if parent_slot != ctx.genesis_cert.slot || parent_slot == 0 {
+        return;
+    }
+    let genesis_marker = VersionedBlockMarker::V1(BlockMarkerV1::new_genesis_certificate(
+        ctx.genesis_cert.clone(),
+    ));
+
+    let mut poh_recorder = ctx.poh_recorder.write().unwrap();
+    // Send the genesis certificate
+    poh_recorder
+        .send_marker(genesis_marker)
+        .expect("Max tick height cannot have been reached");
+
+    // Process the genesis certificate
+    let bank = poh_recorder.bank().expect("Bank cannot have been cleared");
+    let processor = bank.block_component_processor.read().unwrap();
+    processor
+        .on_genesis_certificate(
+            bank.clone(),
+            ctx.genesis_cert.clone(),
+            &ctx.bank_forks.read().unwrap().migration_status(),
+        )
+        .expect("Recording genesis certificate should not fail");
 }

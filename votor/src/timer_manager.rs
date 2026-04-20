@@ -5,10 +5,7 @@ mod stats;
 mod timers;
 
 use {
-    crate::{
-        common::{DELTA_BLOCK, DELTA_TIMEOUT},
-        event::VotorEvent,
-    },
+    crate::{common::DELTA_TIMEOUT, event::VotorEvent},
     agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
     parking_lot::RwLock as PlRwLock,
@@ -37,11 +34,7 @@ impl TimerManager {
         exit: Arc<AtomicBool>,
         migration_status: Arc<MigrationStatus>,
     ) -> Self {
-        let timers = Arc::new(PlRwLock::new(Timers::new(
-            DELTA_TIMEOUT,
-            DELTA_BLOCK,
-            event_sender,
-        )));
+        let timers = Arc::new(PlRwLock::new(Timers::new(DELTA_TIMEOUT, event_sender)));
         let handle = {
             let timers = Arc::clone(&timers);
             thread::spawn(move || {
@@ -64,10 +57,15 @@ impl TimerManager {
         Self { timers, handle }
     }
 
-    pub(crate) fn set_timeouts(&self, slot: Slot, standstill_slot: Option<Slot>) {
+    pub(crate) fn set_timeouts(
+        &self,
+        slot: Slot,
+        standstill_slot: Option<Slot>,
+        delta_block: Duration,
+    ) {
         self.timers
             .write()
-            .set_timeouts(slot, Instant::now(), standstill_slot);
+            .set_timeouts(slot, Instant::now(), standstill_slot, delta_block);
     }
 
     pub(crate) fn join(self) {
@@ -82,7 +80,10 @@ impl TimerManager {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::event::VotorEvent, crossbeam_channel::unbounded, std::time::Duration};
+    use {
+        super::*, crate::event::VotorEvent, crossbeam_channel::unbounded,
+        solana_clock::DEFAULT_MS_PER_SLOT, std::time::Duration,
+    };
 
     #[test]
     fn test_timer_manager() {
@@ -93,10 +94,11 @@ mod tests {
             exit.clone(),
             Arc::new(MigrationStatus::post_migration_status()),
         );
+        let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
         let slot = 52;
         let start = Instant::now();
-        timer_manager.set_timeouts(slot, None);
-        // Should see two timeouts at DELTA_BLOCK and DELTA_TIMEOUT
+        timer_manager.set_timeouts(slot, None, delta_block);
+        // Should see two timeouts at delta_block and DELTA_TIMEOUT
         let mut timeouts_received = 0;
         while timeouts_received < 2 && Instant::now().duration_since(start) < Duration::from_secs(2)
         {
@@ -106,7 +108,7 @@ mod tests {
                     VotorEvent::Timeout(s) => {
                         assert_eq!(s, slot);
                         assert!(
-                            Instant::now().duration_since(start) >= DELTA_TIMEOUT + DELTA_BLOCK
+                            Instant::now().duration_since(start) >= DELTA_TIMEOUT + delta_block
                         );
                         timeouts_received += 1;
                     }

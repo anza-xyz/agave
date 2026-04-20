@@ -7,9 +7,9 @@ use {
         consensus_pool::stats::ConsensusPoolStats,
         event::VotorEvent,
     },
-    agave_votor_messages::vote::Vote,
+    agave_votor_messages::{fraction::Fraction, vote::Vote},
     solana_hash::Hash,
-    std::collections::BTreeMap,
+    std::{collections::BTreeMap, num::NonZeroU64},
 };
 
 #[derive(Debug, Default)]
@@ -89,14 +89,20 @@ impl SlotStakeCounters {
                 return false; // I voted for the same block, no need to send NotarizeFallback
             }
         }
-        let skip_ratio = self.skip_total as f64 / self.total_stake as f64;
-        let notarized_ratio = *stake as f64 / self.total_stake as f64;
-        trace!("safe_to_notar {block_id:?} {skip_ratio} {notarized_ratio}");
+        trace!(
+            "safe_to_notar {block_id:?} skip_ratio={} notarized_ratio={}",
+            self.skip_total as f64 / self.total_stake as f64,
+            *stake as f64 / self.total_stake as f64
+        );
         // Check if the block fits condition (i) 40% of stake holders voted notarize
+        let total_stake = NonZeroU64::new(self.total_stake).unwrap();
+        let notarized_ratio = Fraction::new(*stake, total_stake);
+        let notarized_plus_skip_ratio =
+            Fraction::new(self.skip_total.checked_add(*stake).unwrap(), total_stake);
         notarized_ratio >= SAFE_TO_NOTAR_MIN_NOTARIZE_ONLY
             // Check if the block fits condition (ii) 20% notarized, and 60% notarized or skip
             || (notarized_ratio >= SAFE_TO_NOTAR_MIN_NOTARIZE_FOR_NOTARIZE_OR_SKIP
-                && notarized_ratio + skip_ratio >= SAFE_TO_NOTAR_MIN_NOTARIZE_AND_SKIP)
+                && notarized_plus_skip_ratio >= SAFE_TO_NOTAR_MIN_NOTARIZE_AND_SKIP)
     }
 
     fn is_safe_to_skip(&self) -> bool {
@@ -112,11 +118,13 @@ impl SlotStakeCounters {
                 self.notarize_total,
                 self.top_notarized_stake
             );
-            self.skip_total
-                .saturating_add(self.notarize_total.saturating_sub(self.top_notarized_stake))
-                as f64
-                / self.total_stake as f64
-                >= SAFE_TO_SKIP_THRESHOLD
+
+            let num_stake = self
+                .skip_total
+                .saturating_add(self.notarize_total.saturating_sub(self.top_notarized_stake));
+            let total_stake = NonZeroU64::new(self.total_stake).unwrap();
+
+            Fraction::new(num_stake, total_stake) >= SAFE_TO_SKIP_THRESHOLD
         } else {
             false
         }

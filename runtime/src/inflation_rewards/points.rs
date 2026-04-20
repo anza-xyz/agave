@@ -240,7 +240,7 @@ mod tests {
     use {
         super::*,
         solana_native_token::LAMPORTS_PER_SOL,
-        solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandle},
+        solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
     };
 
     impl<'a> From<&'a VoteStateV4> for DelegatedVoteState<'a> {
@@ -266,14 +266,14 @@ mod tests {
 
     #[test]
     fn test_stake_state_calculate_points_with_typical_values() {
-        let mut vote_state = VoteStateV4::default();
+        let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
 
         // bootstrap means fully-vested stake at epoch 0 with
         //  10_000_000 SOL is a big but not unreasonable stake
         let stake = new_stake(
             10_000_000 * LAMPORTS_PER_SOL,
             &Pubkey::default(),
-            &vote_state,
+            vote_state.as_ref_v4(),
             u64::MAX,
         );
 
@@ -289,7 +289,7 @@ mod tests {
             u128::from(stake.delegation.stake) * epoch_slots,
             calculate_stake_points(
                 &stake,
-                DelegatedVoteState::from(&vote_state),
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None

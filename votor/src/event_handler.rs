@@ -215,9 +215,10 @@ impl EventHandler {
         let should_set_timeouts = vctx.vote_history.add_parent_ready(slot, parent_block);
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
         if should_set_timeouts {
+            let delta_block = Duration::from_nanos_u128(vctx.sharable_banks.root().ns_per_slot);
             timer_manager
                 .write()
-                .set_timeouts(slot, local_context.standstill_slot);
+                .set_timeouts(slot, local_context.standstill_slot, delta_block);
             local_context.stats.timeout_set = local_context.stats.timeout_set.saturating_add(1);
         }
 
@@ -312,6 +313,10 @@ impl EventHandler {
                 info!("{my_pubkey}: Block Notarized {block:?}");
                 vctx.vote_history.add_block_notarized(block);
                 Self::try_final(my_pubkey, block, vctx, &mut votes)?;
+            }
+
+            VotorEvent::BlockNotarFallback(block) => {
+                info!("{my_pubkey}: Block notar-fallback {block:?}");
             }
 
             VotorEvent::FirstShred(slot) => {
@@ -952,7 +957,6 @@ mod tests {
             wait_to_vote_slot: None,
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(my_vote_keypair)])),
             derived_bls_keypairs: HashMap::new(),
-            has_new_vote_been_rooted: false,
             own_vote_sender,
             consensus_metrics_sender,
         };
@@ -1111,7 +1115,7 @@ mod tests {
                     start_slot,
                     end_slot,
                     parent_block,
-                    skip_timer: Instant::now(),
+                    block_timer: Instant::now(),
                 }),
                 &self.timer_manager,
                 &self.shared_context,

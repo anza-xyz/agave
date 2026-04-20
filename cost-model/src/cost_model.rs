@@ -185,7 +185,7 @@ impl CostModel {
                 Ok(config) => (
                     u64::from(config.compute_unit_limit),
                     Self::calculate_loaded_accounts_data_size_cost(
-                        config.loaded_accounts_data_size_limit.get(),
+                        config.loaded_accounts_data_size_limit,
                         feature_set,
                     ),
                 ),
@@ -913,5 +913,48 @@ mod tests {
             CostModel::get_estimated_execution_cost(&transaction, &feature_set);
 
         assert_eq!(expected_execution_cost, programs_execution_cost);
+    }
+
+    #[test]
+    fn test_zero_bytes() {
+        // 0 bytes should result in 0 pages and 0 cost
+        assert_eq!(
+            CostModel::calculate_loaded_accounts_data_size_cost(0, &FeatureSet::default()),
+            0
+        );
+    }
+
+    #[test]
+    fn test_non_zero_bytes_single_page() {
+        // Any non-zero bytes up to page_size should be 1 page
+        assert_eq!(
+            CostModel::calculate_loaded_accounts_data_size_cost(1, &FeatureSet::default()),
+            DEFAULT_HEAP_COST
+        );
+    }
+
+    #[test]
+    fn test_non_zero_bytes_multiple_pages() {
+        let page_size = solana_fee_structure::ACCOUNT_DATA_COST_PAGE_SIZE as u32;
+
+        // Just over one page should round up to 2 pages
+        assert_eq!(
+            CostModel::calculate_loaded_accounts_data_size_cost(
+                page_size + 1,
+                &FeatureSet::default()
+            ),
+            2 * DEFAULT_HEAP_COST
+        );
+    }
+
+    #[test]
+    fn test_exact_multiple_pages() {
+        let page_size = solana_fee_structure::ACCOUNT_DATA_COST_PAGE_SIZE as u32;
+
+        let bytes = page_size * 3;
+        assert_eq!(
+            CostModel::calculate_loaded_accounts_data_size_cost(bytes, &FeatureSet::default()),
+            3 * DEFAULT_HEAP_COST
+        );
     }
 }

@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     core::borrow::Borrow,
     solana_account::AccountSharedData,
@@ -129,6 +131,7 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
     }
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn collect_accounts_for_failed_tx<'a>(
     collected_accounts: &mut Vec<(&'a Pubkey, &'a AccountSharedData)>,
     collected_account_transactions: &mut Option<Vec<&'a SanitizedTransaction>>,
@@ -590,6 +593,7 @@ mod tests {
                 rollback_accounts: RollbackAccounts::FeePayerOnly {
                     fee_payer: (from_address, from_account_pre.clone()),
                 },
+                loaded_accounts_data_size: 0,
             },
         )))];
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);

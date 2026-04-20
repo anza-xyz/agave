@@ -2,7 +2,10 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
+#[cfg(not(feature = "dev-context-only-utils"))]
 mod account_saver;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod account_saver;
 pub mod accounts_background_service;
 pub mod bank;
 pub mod bank_client;
@@ -30,7 +33,10 @@ pub mod snapshot_controller;
 pub mod snapshot_minimizer;
 pub mod snapshot_package;
 pub mod snapshot_utils;
+#[cfg(not(feature = "dev-context-only-utils"))]
 mod stake_account;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod stake_account;
 pub mod stake_history;
 pub mod stake_utils;
 pub mod stake_weighted_timestamp;

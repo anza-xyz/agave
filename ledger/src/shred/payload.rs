@@ -99,30 +99,6 @@ impl Payload {
     }
 }
 
-pub(crate) mod serde_bytes_payload {
-    use {
-        super::Payload,
-        serde::{Deserialize, Deserializer, Serializer},
-        serde_bytes::ByteBuf,
-    };
-
-    pub(crate) fn serialize<S: Serializer>(
-        payload: &Payload,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_bytes(payload)
-    }
-
-    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Payload, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Deserialize::deserialize(deserializer)
-            .map(ByteBuf::into_vec)
-            .map(Payload::from)
-    }
-}
-
 impl PartialEq for Payload {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -316,28 +292,5 @@ mod test {
             .expect("valid packet and nonce");
         assert_eq!(bytes, shred.payload().as_ref());
         assert_eq!(got, Some(nonce));
-    }
-
-    #[test]
-    fn test_payload_wincode_serde_bytes_compat() {
-        // Verify that wincode serializes Payload with the same bytes as bincode does via
-        // serde_bytes_payload, ensuring on-disk compatibility during migration.
-        #[derive(serde::Serialize, serde::Deserialize)]
-        struct AsSerdeBytesPayload(#[serde(with = "super::serde_bytes_payload")] Payload);
-
-        for example in [vec![], vec![44], vec![0u8, 1, 2, 3, 100, 255]] {
-            let payload = Payload::from(example);
-
-            let wincode_bytes = wincode::serialize(&payload).unwrap();
-            let bincode_bytes = bincode::serialize(&AsSerdeBytesPayload(payload.clone())).unwrap();
-
-            assert_eq!(wincode_bytes, bincode_bytes);
-
-            let wincode_payload: Payload = wincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(*wincode_payload, *payload);
-            let bincode_payload: AsSerdeBytesPayload =
-                bincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(*wincode_payload, *bincode_payload.0);
-        }
     }
 }

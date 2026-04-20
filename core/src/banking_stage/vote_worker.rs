@@ -574,7 +574,6 @@ mod tests {
         super::*,
         crate::banking_stage::{
             committer::Committer,
-            qos_service::QosService,
             tests::{create_slow_genesis_config, sanitize_transactions},
             vote_storage::tests::packet_from_slots,
         },
@@ -767,7 +766,7 @@ mod tests {
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(None, replay_vote_sender, None);
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(committer, recorder, None);
 
         // Create and process a simple transfer transaction
         let pubkey = solana_pubkey::new_rand();

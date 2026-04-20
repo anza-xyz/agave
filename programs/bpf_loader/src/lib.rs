@@ -8,7 +8,8 @@ use {
     solana_bincode::limited_deserialize,
     solana_instruction::{AccountMeta, error::InstructionError},
     solana_loader_v3_interface::{
-        instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
+        instruction::{MINIMUM_EXTEND_PROGRAM_BYTES, UpgradeableLoaderInstruction},
+        state::UpgradeableLoaderState,
     },
     solana_program_runtime::{
         deploy_program,
@@ -18,7 +19,7 @@ use {
         vm::execute,
     },
     solana_pubkey::Pubkey,
-    solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
+    solana_sbpf::declare_builtin_function,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader},
     solana_svm_log_collector::{LogCollector, ic_logger_msg, ic_msg},
     solana_svm_measure::measure::Measure,
@@ -69,7 +70,6 @@ declare_builtin_function!(
         _arg2: u64,
         _arg3: u64,
         _arg4: u64,
-        _memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Box<dyn std::error::Error>> {
         process_instruction_inner(invoke_context)
     }
@@ -93,17 +93,23 @@ pub(crate) fn process_instruction_inner<'a>(
     if native_loader::check_id(&owner_id) {
         let program_id = instruction_context.get_program_key()?;
         return if bpf_loader_upgradeable::check_id(program_id) {
-            invoke_context.consume_checked(UPGRADEABLE_LOADER_COMPUTE_UNITS)?;
+            invoke_context
+                .compute_meter
+                .consume_checked(UPGRADEABLE_LOADER_COMPUTE_UNITS)?;
             process_loader_upgradeable_instruction(invoke_context)
         } else if bpf_loader::check_id(program_id) {
-            invoke_context.consume_checked(DEFAULT_LOADER_COMPUTE_UNITS)?;
+            invoke_context
+                .compute_meter
+                .consume_checked(DEFAULT_LOADER_COMPUTE_UNITS)?;
             ic_logger_msg!(
                 log_collector,
                 "BPF loader management instructions are no longer supported",
             );
             Err(InstructionError::UnsupportedProgramId)
         } else if bpf_loader_deprecated::check_id(program_id) {
-            invoke_context.consume_checked(DEPRECATED_LOADER_COMPUTE_UNITS)?;
+            invoke_context
+                .compute_meter
+                .consume_checked(DEPRECATED_LOADER_COMPUTE_UNITS)?;
             ic_logger_msg!(log_collector, "Deprecated loader is no longer supported");
             Err(InstructionError::UnsupportedProgramId)
         } else {
@@ -694,7 +700,10 @@ fn process_loader_upgradeable_instruction(
                         ic_logger_msg!(log_collector, "Program account not owned by loader");
                         return Err(InstructionError::IncorrectProgramId);
                     }
-                    let clock = invoke_context.get_sysvar_cache().get_clock()?;
+                    let clock = invoke_context
+                        .environment_config
+                        .sysvar_cache()
+                        .get_clock()?;
                     if clock.slot == slot {
                         ic_logger_msg!(log_collector, "Program was deployed in this block already");
                         return Err(InstructionError::InvalidArgument);
@@ -718,7 +727,10 @@ fn process_loader_upgradeable_instruction(
                                 &instruction_context,
                                 &log_collector,
                             )?;
-                            let clock = invoke_context.get_sysvar_cache().get_clock()?;
+                            let clock = invoke_context
+                                .environment_config
+                                .sysvar_cache()
+                                .get_clock()?;
                             invoke_context
                                 .program_cache_for_tx_batch
                                 .store_modified_entry(
@@ -745,26 +757,12 @@ fn process_loader_upgradeable_instruction(
             }
         }
         UpgradeableLoaderInstruction::ExtendProgram { additional_bytes } => {
-            if invoke_context
-                .get_feature_set()
-                .enable_extend_program_checked
-            {
-                ic_logger_msg!(
-                    log_collector,
-                    "ExtendProgram was superseded by ExtendProgramChecked"
-                );
-                return Err(InstructionError::InvalidInstructionData);
-            }
             common_extend_program(invoke_context, additional_bytes, false)?;
         }
-        UpgradeableLoaderInstruction::ExtendProgramChecked { additional_bytes } => {
-            if !invoke_context
-                .get_feature_set()
-                .enable_extend_program_checked
-            {
-                return Err(InstructionError::InvalidInstructionData);
-            }
-            common_extend_program(invoke_context, additional_bytes, true)?;
+        UpgradeableLoaderInstruction::ExtendProgramChecked { .. } => {
+            // ExtendProgramChecked has been removed.
+            // This variant will be removed from the next interface release.
+            return Err(InstructionError::InvalidInstructionData);
         }
         UpgradeableLoaderInstruction::Migrate => {
             // Loader V4 has been removed.
@@ -852,8 +850,33 @@ fn common_extend_program(
         return Err(InstructionError::InvalidRealloc);
     }
 
+    if invoke_context
+        .get_feature_set()
+        .loader_v3_minimum_extend_program_size
+    {
+        // SIMD-0431: Minimum Extend Program Size
+        //
+        // All extensions must be >= 10 KiB in additional_bytes, unless
+        // MAX_PERMITTED_DATA_LENGTH - current_len < 10 KiB. In that case,
+        // additional_bytes must be equal to the remaining free space.
+        let headroom = (MAX_PERMITTED_DATA_LENGTH as usize).saturating_sub(old_len);
+        if additional_bytes < MINIMUM_EXTEND_PROGRAM_BYTES
+            && (additional_bytes as usize) != headroom
+        {
+            ic_logger_msg!(
+                log_collector,
+                "ExtendProgram requires a minimum of {} additional bytes or to extend to maximum \
+                 size, but only {} were requested",
+                MINIMUM_EXTEND_PROGRAM_BYTES,
+                additional_bytes,
+            );
+            return Err(InstructionError::InvalidArgument);
+        }
+    }
+
     let clock_slot = invoke_context
-        .get_sysvar_cache()
+        .environment_config
+        .sysvar_cache()
         .get_clock()
         .map(|clock| clock.slot)?;
 
@@ -896,7 +919,10 @@ fn common_extend_program(
 
     let required_payment = {
         let balance = programdata_account.get_lamports();
-        let rent = invoke_context.get_sysvar_cache().get_rent()?;
+        let rent = invoke_context
+            .environment_config
+            .sysvar_cache()
+            .get_rent()?;
         let min_balance = rent.minimum_balance(new_len).max(1);
         min_balance.saturating_sub(balance)
     };
@@ -1180,7 +1206,7 @@ mod tests {
             Err(InstructionError::ProgramFailedToComplete),
             Entrypoint::register,
             |invoke_context| {
-                invoke_context.mock_set_remaining(0);
+                invoke_context.compute_meter.mock_set_remaining(0);
                 test_utils::load_all_invoked_programs(invoke_context);
             },
             |_invoke_context| {},

@@ -10,7 +10,7 @@ use {
     log::warn,
     std::{
         cmp::Ordering,
-        io,
+        fmt, io,
         net::{IpAddr, Ipv4Addr},
     },
     thiserror::Error,
@@ -53,6 +53,17 @@ pub enum RouteTable {
     Local,
     Main,
     Other(u32),
+}
+
+impl std::fmt::Display for RouteTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Default => f.write_str("default"),
+            Self::Local => f.write_str("local"),
+            Self::Main => f.write_str("main"),
+            Self::Other(table) => write!(f, "{table}"),
+        }
+    }
 }
 
 impl From<RouteTable> for u32 {
@@ -394,6 +405,25 @@ pub struct Router {
     cached_gre_info: Vec<GreRouteInfo>,
 }
 
+struct RoutingTableDisplay<'a>(&'a [Route<Ipv4Addr>]);
+
+impl fmt::Display for RoutingTableDisplay<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.is_empty() {
+            return f.write_str("<empty>");
+        }
+
+        for (i, route) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str("\n")?;
+            }
+            format_route(f, route)?;
+        }
+
+        Ok(())
+    }
+}
+
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
         Self::from_tables(RoutingTables::from_netlink(RouteTable::Main)?)
@@ -430,6 +460,10 @@ impl Router {
         };
 
         Ok(router)
+    }
+
+    pub fn routing_table(&self) -> impl fmt::Display + '_ {
+        RoutingTableDisplay(self.routes.as_slice())
     }
 
     fn cached_gre_route_info(&self, if_index: u32) -> Option<&GreRouteInfo> {
@@ -564,6 +598,29 @@ impl Router {
             mac_addr,
         })
     }
+}
+
+fn format_route(f: &mut fmt::Formatter<'_>, route: &Route<Ipv4Addr>) -> fmt::Result {
+    match route.destination {
+        Some(destination) if route.dst_len == 32 => write!(f, "{destination}")?,
+        Some(destination) => write!(f, "{destination}/{}", route.dst_len)?,
+        None => f.write_str("default")?,
+    }
+
+    if let Some(gateway) = route.gateway {
+        write!(f, " via {gateway}")?;
+    }
+    if let Some(if_index) = route.out_if_index {
+        write!(f, " dev if{if_index}")?;
+    }
+    if let Some(preferred_src) = route.preferred_src {
+        write!(f, " src {preferred_src}")?;
+    }
+    if let Some(priority) = route.priority {
+        write!(f, " metric {priority}")?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -731,6 +788,40 @@ mod tests {
                 .all(|r| r.destination != Some(test_dst))
         );
         assert_eq!(tables.routes.iter().len(), before_routes_len);
+    }
+
+    #[test]
+    fn test_routing_table_display() {
+        let router = router_from_tables(
+            vec![],
+            vec![
+                Route {
+                    destination: Some(Ipv4Addr::new(10, 0, 0, 0)),
+                    gateway: Some(Ipv4Addr::new(192, 168, 1, 1)),
+                    preferred_src: Some(Ipv4Addr::new(192, 168, 1, 10)),
+                    out_if_index: Some(2),
+                    priority: Some(100),
+                    type_: 0,
+                    dst_len: 24,
+                },
+                Route {
+                    destination: None,
+                    gateway: Some(Ipv4Addr::new(192, 168, 1, 254)),
+                    preferred_src: None,
+                    out_if_index: Some(3),
+                    priority: None,
+                    type_: 0,
+                    dst_len: 0,
+                },
+            ],
+            vec![],
+        );
+
+        assert_eq!(
+            router.routing_table().to_string(),
+            "10.0.0.0/24 via 192.168.1.1 dev if2 src 192.168.1.10 metric 100\ndefault via \
+             192.168.1.254 dev if3"
+        );
     }
 
     #[test]

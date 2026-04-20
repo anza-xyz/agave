@@ -146,7 +146,6 @@ impl TimerState {
 /// Maintains all active timer states for windows of slots.
 pub(super) struct Timers {
     delta_timeout: Duration,
-    delta_block: Duration,
     /// Timers are indexed by slots.
     timers: HashMap<Slot, TimerState>,
     /// A min heap based on the time the next timer state might be ready.
@@ -158,14 +157,9 @@ pub(super) struct Timers {
 }
 
 impl Timers {
-    pub(super) fn new(
-        delta_timeout: Duration,
-        delta_block: Duration,
-        event_sender: Sender<VotorEvent>,
-    ) -> Self {
+    pub(super) fn new(delta_timeout: Duration, event_sender: Sender<VotorEvent>) -> Self {
         Self {
             delta_timeout,
-            delta_block,
             timers: HashMap::new(),
             heap: BinaryHeap::new(),
             event_sender,
@@ -176,13 +170,19 @@ impl Timers {
     /// Call to set timeouts for a new window of slots.
     /// If `standstill_slot` is provided, timeouts are extended by 5% for each leader window
     /// since standstill started.
-    pub(super) fn set_timeouts(&mut self, slot: Slot, now: Instant, standstill_slot: Option<Slot>) {
+    pub(super) fn set_timeouts(
+        &mut self,
+        slot: Slot,
+        now: Instant,
+        standstill_slot: Option<Slot>,
+        delta_block: Duration,
+    ) {
         assert_eq!(self.heap.len(), self.timers.len());
         let timeout_multiplier = calculate_timeout_multiplier(slot, standstill_slot);
         let (timer, next_fire) = TimerState::new(
             slot,
             self.delta_timeout,
-            self.delta_block,
+            delta_block,
             now,
             timeout_multiplier,
         );
@@ -245,9 +245,8 @@ impl Timers {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        crate::common::{DELTA_BLOCK, DELTA_TIMEOUT},
-        crossbeam_channel::unbounded,
+        super::*, crate::common::DELTA_TIMEOUT, crossbeam_channel::unbounded,
+        solana_clock::DEFAULT_MS_PER_SLOT,
     };
 
     #[test]
@@ -297,11 +296,11 @@ mod tests {
         let one_micro = Duration::from_micros(1);
         let mut now = Instant::now();
         let (sender, receiver) = unbounded();
-        let mut timers = Timers::new(one_micro, one_micro, sender);
+        let mut timers = Timers::new(one_micro, sender);
         assert!(timers.progress(now).is_none());
         assert!(receiver.try_recv().unwrap_err().is_empty());
 
-        timers.set_timeouts(0, now, None);
+        timers.set_timeouts(0, now, None, Duration::from_millis(DEFAULT_MS_PER_SLOT));
         while timers.progress(now).is_some() {
             now = now.checked_add(one_micro).unwrap();
         }
@@ -392,8 +391,13 @@ mod tests {
         // Use a large multiplier that would exceed MAX_TIMEOUT
         let multiplier = 1000000.0;
 
-        let (mut timer_state, next_fire) =
-            TimerState::new(100, DELTA_TIMEOUT, DELTA_BLOCK, now, multiplier);
+        let (mut timer_state, next_fire) = TimerState::new(
+            100,
+            DELTA_TIMEOUT,
+            Duration::from_millis(DEFAULT_MS_PER_SLOT),
+            now,
+            multiplier,
+        );
 
         // The first timeout should be capped at MAX_TIMEOUT
         let expected_first_fire = now + Duration::from_secs(MAX_TIMEOUT_SECS as u64);

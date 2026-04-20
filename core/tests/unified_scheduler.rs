@@ -18,7 +18,7 @@ use {
         replay_stage::{ReplayStage, TowerBFTStructures},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
-    solana_entry::entry::Entry,
+    solana_entry::{entry::Entry, entry_or_marker::EntryOrMarker},
     solana_hash::Hash,
     solana_leader_schedule::SlotLeader,
     solana_ledger::{
@@ -290,8 +290,13 @@ fn test_scheduler_producing_blocks() {
     // Verify transactions are committed and poh-recorded
     assert_eq!(tpu_bank.transaction_count(), 1);
     assert_matches!(
-        signal_receiver.into_iter().find(|(_, (entry, _))| !entry.is_tick()),
-        Some((_, (Entry {transactions, ..}, _))) if transactions == [tx.to_versioned_transaction()]
+        signal_receiver.into_iter().find(|(_, (entry_or_marker, _))| {
+            match entry_or_marker {
+                EntryOrMarker::Entry(entry) => !entry.is_tick(),
+                EntryOrMarker::Marker(_) => false,
+            }
+        }),
+        Some((_, (EntryOrMarker::Entry(Entry {transactions, ..}), _))) if transactions == [tx.to_versioned_transaction()]
     );
 
     // Stop things.

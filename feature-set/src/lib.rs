@@ -51,8 +51,6 @@ pub struct FeatureSnapshot {
     pub enable_sbpf_v3_deployment_and_execution: bool,
     pub deplete_cu_meter_on_vm_failure: bool,
     pub fix_alt_bn128_multiplication_input_length: bool,
-    pub relax_intrabatch_account_locks: bool,
-    pub enable_extend_program_checked: bool,
     pub formalize_loaded_transaction_data_size: bool,
     pub alpenglow: bool,
     pub disable_zk_elgamal_proof_program: bool,
@@ -85,6 +83,8 @@ pub struct FeatureSnapshot {
     pub validator_admission_ticket: bool,
     pub direct_account_pointers_in_program_input: bool,
     pub upgrade_bpf_stake_program_to_v5: bool,
+    pub loader_v3_minimum_extend_program_size: bool,
+    pub enable_sha512_syscall: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -152,8 +152,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             fix_alt_bn128_multiplication_input_length: is_active(
                 &fix_alt_bn128_multiplication_input_length::ID,
             ),
-            relax_intrabatch_account_locks: is_active(&relax_intrabatch_account_locks::ID),
-            enable_extend_program_checked: is_active(&enable_extend_program_checked::ID),
             formalize_loaded_transaction_data_size: is_active(
                 &formalize_loaded_transaction_data_size::ID,
             ),
@@ -196,6 +194,10 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &direct_account_pointers_in_program_input::ID,
             ),
             upgrade_bpf_stake_program_to_v5: is_active(&upgrade_bpf_stake_program_to_v5::ID),
+            loader_v3_minimum_extend_program_size: is_active(
+                &loader_v3_minimum_extend_program_size::ID,
+            ),
+            enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
         }
     }
 }
@@ -339,7 +341,6 @@ impl FeatureSet {
             fix_alt_bn128_multiplication_input_length: snapshot
                 .fix_alt_bn128_multiplication_input_length,
             increase_tx_account_lock_limit: snapshot.increase_tx_account_lock_limit,
-            enable_extend_program_checked: snapshot.enable_extend_program_checked,
             formalize_loaded_transaction_data_size: snapshot.formalize_loaded_transaction_data_size,
             disable_zk_elgamal_proof_program: snapshot.disable_zk_elgamal_proof_program,
             reenable_zk_elgamal_proof_program: snapshot.reenable_zk_elgamal_proof_program,
@@ -359,6 +360,8 @@ impl FeatureSet {
             vote_account_initialize_v2: snapshot.vote_account_initialize_v2,
             direct_account_pointers_in_program_input: snapshot
                 .direct_account_pointers_in_program_input,
+            loader_v3_minimum_extend_program_size: snapshot.loader_v3_minimum_extend_program_size,
+            enable_sha512_syscall: snapshot.enable_sha512_syscall,
         }
     }
 }
@@ -1302,7 +1305,7 @@ pub mod enshrine_slashing_program {
 }
 
 pub mod enable_extend_program_checked {
-    solana_pubkey::declare_id!("2oMRZEDWT2tqtYMofhmmfQ8SsjqUFzT6sYXppQDavxwz");
+    solana_pubkey::declare_id!("ExtendProgCheckedWi11BeDe1eted11111111111111");
 }
 
 pub mod formalize_loaded_transaction_data_size {
@@ -1374,7 +1377,7 @@ pub mod static_instruction_limit {
 }
 
 pub mod discard_unexpected_data_complete_shreds {
-    solana_pubkey::declare_id!("shredXP8xLjJWp1AWh3gAFsFn4GSH1vohhCMDHw5koU");
+    solana_pubkey::declare_id!("dcomRRWHXP1FVWPqi9Mm4oxJhF4ehC795SvAtUdA9os");
 }
 
 pub mod vote_state_v4 {
@@ -1501,7 +1504,11 @@ pub mod validator_admission_ticket {
 }
 
 pub mod direct_account_pointers_in_program_input {
-    solana_pubkey::declare_id!("ptrXWLkSDMZZmZN8GAT6W5yW4EvYByfw6cRRHbXwQNS");
+    solana_pubkey::declare_id!("ptr9umikaeAS7ZBBp2fsfRhie16F1V2jCKA2y6gXNAK");
+}
+
+pub mod loader_v3_minimum_extend_program_size {
+    solana_pubkey::declare_id!("YbbRLkvenrocjGPGyoQE4wjnvYzTgfsk38NFmcYK7a5");
 }
 
 pub mod upgrade_bpf_stake_program_to_v5 {
@@ -1510,6 +1517,10 @@ pub mod upgrade_bpf_stake_program_to_v5 {
     pub mod buffer {
         solana_pubkey::declare_id!("4EBQBjw1kqF1dqUBb6fc5Ji4tCEQgNf9ESGGX3smwXwh");
     }
+}
+
+pub mod enable_sha512_syscall {
+    solana_pubkey::declare_id!("s512oDwgx8hjMnaQjXfqqrZroVj4HvC6TkN3iSSWXCh");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2552,6 +2563,11 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             upgrade_bpf_stake_program_to_v5::id(),
             "SIMD-0490: Upgrade BPF Stake Program to v5.0.0",
         ),
+        (
+            loader_v3_minimum_extend_program_size::id(),
+            "SIMD-0431: Loader V3 minimum extend program size",
+        ),
+        (enable_sha512_syscall::id(), "SIMD-0512: SHA512 Syscall"),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
     ]

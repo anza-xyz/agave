@@ -98,13 +98,16 @@ where
 
 #[cfg(test)]
 pub mod tests {
-    use {super::*, solana_account::Account, solana_native_token::LAMPORTS_PER_SOL};
+    use {
+        super::*, solana_account::Account, solana_clock::DEFAULT_MS_PER_SLOT,
+        solana_native_token::LAMPORTS_PER_SOL,
+    };
 
     #[test]
     fn test_calculate_stake_weighted_timestamp_uses_median() {
         let recent_timestamp: UnixTimestamp = 1_578_909_061;
         let slot = 5;
-        let slot_duration = Duration::from_millis(400);
+        let slot_duration = Duration::from_millis(DEFAULT_MS_PER_SLOT);
         let pubkey0 = solana_pubkey::new_rand();
         let pubkey1 = solana_pubkey::new_rand();
         let pubkey2 = solana_pubkey::new_rand();

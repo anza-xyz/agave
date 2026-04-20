@@ -116,14 +116,8 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
         let transaction =
             ResolvedTransactionView::try_new(transaction, loaded_addresses, reserved_account_keys)
                 .map_err(|_| TransactionError::SanitizeFailure)?;
-        let mut tx = Self { transaction, meta };
-        tx.load_dynamic_metadata()?;
-
+        let tx = Self { transaction, meta };
         Ok(tx)
-    }
-
-    fn load_dynamic_metadata(&mut self) -> Result<()> {
-        Ok(())
     }
 }
 
@@ -208,12 +202,32 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
                     })
                     .collect(),
             }),
+            TransactionVersion::V1 => {
+                let config_view = self.transaction_config().expect("V1 must have config_view");
+                let config = solana_message::v1::TransactionConfig {
+                    priority_fee: config_view.priority_fee_lamports(),
+                    compute_unit_limit: config_view.compute_unit_limit(),
+                    loaded_accounts_data_size_limit: config_view.loaded_accounts_data_size_limit(),
+                    heap_size: config_view.requested_heap_size(),
+                };
+                VersionedMessage::V1(solana_message::v1::Message {
+                    header,
+                    config,
+                    lifetime_specifier: recent_blockhash,
+                    account_keys: static_account_keys,
+                    instructions,
+                })
+            }
         };
 
         VersionedTransaction {
             signatures: self.signatures().to_vec(),
             message,
         }
+    }
+
+    fn serialized_size(&self) -> usize {
+        self.transaction.data().len()
     }
 }
 
@@ -240,7 +254,7 @@ mod tests {
                 1,
                 Hash::new_unique(),
             ));
-            bincode::serialize(&transaction).unwrap()
+            wincode::serialize(&transaction).unwrap()
         };
 
         let hash = Hash::new_unique();
@@ -276,7 +290,7 @@ mod tests {
             loaded_addresses: Option<LoadedAddresses>,
             reserved_account_keys: &HashSet<Pubkey>,
         ) {
-            let bytes = bincode::serialize(&original_transaction).unwrap();
+            let bytes = wincode::serialize(&original_transaction).unwrap();
             let transaction_view =
                 SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
@@ -343,7 +357,7 @@ mod tests {
             reserved_account_keys: &HashSet<Pubkey>,
         ) {
             let bytes =
-                bincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
+                wincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
             let transaction_view =
                 SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
@@ -419,6 +433,37 @@ mod tests {
             sanitized_transaction,
             Some(loaded_addresses),
             &reserved_key_set,
+        );
+    }
+
+    #[test]
+    fn test_serialized_size() {
+        let serialized_transaction =
+            wincode::serialize(&VersionedTransaction::from(system_transaction::transfer(
+                &Keypair::new(),
+                &Pubkey::new_unique(),
+                1,
+                Hash::new_unique(),
+            )))
+            .unwrap();
+        let transaction_view =
+            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true).unwrap();
+        let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+            transaction_view,
+            MessageHash::Compute,
+            None,
+        )
+        .unwrap();
+        let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+            runtime_transaction,
+            None,
+            &ReservedAccountKeys::empty_key_set(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            runtime_transaction.serialized_size(),
+            serialized_transaction.len()
         );
     }
 }

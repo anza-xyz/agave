@@ -6,8 +6,7 @@ use qualifier_attr::qualifiers;
 use {
     self::{
         committer::Committer, consumer::Consumer, decision_maker::DecisionMaker,
-        qos_service::QosService, vote_packet_receiver::VotePacketReceiver,
-        vote_storage::VoteStorage,
+        vote_packet_receiver::VotePacketReceiver, vote_storage::VoteStorage,
     },
     crate::{
         banking_stage::{
@@ -41,7 +40,7 @@ use {
     solana_time_utils::AtomicInterval,
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
-        num::{NonZeroU64, NonZeroUsize, Saturating},
+        num::{NonZeroU64, NonZeroUsize},
         ops::Deref,
         sync::{
             Arc, RwLock,
@@ -327,30 +326,6 @@ impl BankingStageStats {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct BatchedTransactionDetails {
-    pub costs: BatchedTransactionCostDetails,
-    pub errors: BatchedTransactionErrorDetails,
-}
-
-#[derive(Debug, Default)]
-pub struct BatchedTransactionCostDetails {
-    pub batched_signature_cost: Saturating<u64>,
-    pub batched_write_lock_cost: Saturating<u64>,
-    pub batched_data_bytes_cost: Saturating<u64>,
-    pub batched_loaded_accounts_data_size_cost: Saturating<u64>,
-    pub batched_programs_execute_cost: Saturating<u64>,
-}
-
-#[derive(Debug, Default)]
-pub struct BatchedTransactionErrorDetails {
-    pub batched_retried_txs_per_block_limit_count: Saturating<u64>,
-    pub batched_retried_txs_per_vote_limit_count: Saturating<u64>,
-    pub batched_retried_txs_per_account_limit_count: Saturating<u64>,
-    pub batched_retried_txs_per_account_data_block_limit_count: Saturating<u64>,
-    pub batched_dropped_txs_per_account_data_total_limit_count: Saturating<u64>,
-}
-
 pub trait LikeClusterInfo: Send + Sync + 'static + Clone {
     fn id(&self) -> Pubkey;
 
@@ -577,7 +552,6 @@ impl BankingStage {
                 Consumer::new(
                     self.committer.clone(),
                     self.transaction_recorder.clone(),
-                    QosService::new(id),
                     self.log_messages_bytes_limit,
                 ),
                 finished_work_sender.clone(),
@@ -674,7 +648,6 @@ impl BankingStage {
         let consumer = Consumer::new(
             self.committer.clone(),
             self.transaction_recorder.clone(),
-            QosService::new(0),
             self.log_messages_bytes_limit,
         );
         let decision_maker = DecisionMaker::from(self.poh_recorder.read().unwrap().deref());
@@ -762,7 +735,6 @@ mod external {
                     Consumer::new(
                         self.committer.clone(),
                         self.transaction_recorder.clone(),
-                        QosService::new(id),
                         self.log_messages_bytes_limit,
                     ),
                     worker_to_pack,
@@ -911,7 +883,10 @@ mod tests {
         agave_banking_stage_ingress_types::BankingPacketBatch,
         crossbeam_channel::unbounded,
         itertools::Itertools,
-        solana_entry::entry::{self, EntrySlice},
+        solana_entry::{
+            entry::{self, EntrySlice},
+            entry_or_marker::EntryOrMarker,
+        },
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
@@ -1084,7 +1059,7 @@ mod tests {
         // capture the entry receiver until we've received all our entries.
         let mut entries = Vec::with_capacity(100);
         loop {
-            if let Ok((_bank, (entry, _))) = entry_receiver.try_recv() {
+            if let Ok((_bank, (EntryOrMarker::Entry(entry), _))) = entry_receiver.try_recv() {
                 let tx_entry = !entry.transactions.is_empty();
                 entries.push(entry);
                 if tx_entry {
@@ -1111,7 +1086,7 @@ mod tests {
         entries.extend(
             entry_receiver
                 .iter()
-                .map(|(_bank, (entry, _tick_height))| entry),
+                .map(|(_bank, (entry_or_marker, _tick_height))| entry_or_marker.unwrap_entry()),
         );
 
         assert!(
@@ -1229,7 +1204,7 @@ mod tests {
         // check that the balance is what we expect.
         let entries: Vec<_> = entry_receiver
             .iter()
-            .map(|(_bank, (entry, _tick_height))| entry)
+            .map(|(_bank, (entry_or_marker, _tick_height))| entry_or_marker.unwrap_entry())
             .collect();
 
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);

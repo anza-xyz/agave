@@ -6,7 +6,7 @@ use {
     std::time::{Duration, Instant},
 };
 
-/// Max number of root slots to wait before triggering reporting of stats.  At 400ms slot times, this is 4s.
+/// Max number of root slots to wait before triggering reporting of stats.
 const SLOTS_INTERVAL: Slot = 10;
 /// Max amount of seconds to wait before triggering reporting of stats.
 const DURATION_INTERVAL: Duration = Duration::from_secs(5);

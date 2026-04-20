@@ -12,7 +12,6 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
-    solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -244,7 +243,7 @@ impl ProgramCacheEntry {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let entry_stats = ProgramStatistics::default();
         #[cfg(feature = "metrics")]
-        let load_elf_time = Measure::start("load_elf_time");
+        let load_elf_time = solana_svm_measure::measure::Measure::start("load_elf_time");
         let executable = Executable::load(elf_bytes, Arc::clone(&*program_runtime_environment))?;
 
         #[cfg(feature = "metrics")]
@@ -254,7 +253,7 @@ impl ProgramCacheEntry {
 
         if !reloading {
             #[cfg(feature = "metrics")]
-            let verify_code_time = Measure::start("verify_code_time");
+            let verify_code_time = solana_svm_measure::measure::Measure::start("verify_code_time");
             executable.verify::<RequisiteVerifier>()?;
             #[cfg(feature = "metrics")]
             {
@@ -264,7 +263,7 @@ impl ProgramCacheEntry {
 
         #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
         {
-            let jit_compile_time = Measure::start("jit_compile_time");
+            let jit_compile_time = solana_svm_measure::measure::Measure::start("jit_compile_time");
             executable.jit_compile()?;
             let jit_compile_time = jit_compile_time.end_as_us();
             entry_stats.jit_compiled(jit_compile_time);

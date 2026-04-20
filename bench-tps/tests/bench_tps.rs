@@ -148,6 +148,8 @@ fn run_bench_tps(client: Arc<TpuClient<QuicPool, QuicConnectionManager, QuicConf
     assert!(tps > 100, "TPS less than expected {tps}");
 }
 
+/// Verifies the bench-tps QUIC client, faucet plumbing, and funding flow work against a
+/// real `LocalCluster`, and does not cover the lighter `TestValidator` path.
 #[test]
 #[serial]
 fn test_bench_tps_local_cluster() {

@@ -31,7 +31,6 @@ pub struct SVMFeatureSet {
     pub simplify_alt_bn128_syscall_error_codes: bool,
     pub fix_alt_bn128_multiplication_input_length: bool,
     pub increase_tx_account_lock_limit: bool,
-    pub enable_extend_program_checked: bool,
     pub formalize_loaded_transaction_data_size: bool,
     pub disable_zk_elgamal_proof_program: bool,
     pub reenable_zk_elgamal_proof_program: bool,
@@ -50,6 +49,8 @@ pub struct SVMFeatureSet {
     pub block_revenue_sharing: bool,
     pub vote_account_initialize_v2: bool,
     pub direct_account_pointers_in_program_input: bool,
+    pub loader_v3_minimum_extend_program_size: bool,
+    pub enable_sha512_syscall: bool,
 }
 
 impl SVMFeatureSet {
@@ -85,7 +86,6 @@ impl SVMFeatureSet {
             simplify_alt_bn128_syscall_error_codes: true,
             fix_alt_bn128_multiplication_input_length: true,
             increase_tx_account_lock_limit: true,
-            enable_extend_program_checked: true,
             formalize_loaded_transaction_data_size: true,
             disable_zk_elgamal_proof_program: true,
             reenable_zk_elgamal_proof_program: true,
@@ -104,6 +104,8 @@ impl SVMFeatureSet {
             block_revenue_sharing: true,
             vote_account_initialize_v2: true,
             direct_account_pointers_in_program_input: true,
+            loader_v3_minimum_extend_program_size: true,
+            enable_sha512_syscall: true,
         }
     }
 }

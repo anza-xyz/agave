@@ -15,7 +15,7 @@ use {
         vm::execute,
     },
     solana_pubkey::Pubkey,
-    solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
+    solana_sbpf::declare_builtin_function,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_svm_log_collector::{LogCollector, ic_logger_msg},
     solana_svm_measure::measure::Measure,
@@ -212,7 +212,10 @@ fn process_instruction_set_program_length(
     let required_lamports = if new_size == 0 {
         0
     } else {
-        let rent = invoke_context.get_sysvar_cache().get_rent()?;
+        let rent = invoke_context
+            .environment_config
+            .sysvar_cache()
+            .get_rent()?;
         rent.minimum_balance(LoaderV4State::program_data_offset().saturating_add(new_size as usize))
             .max(1)
     };
@@ -274,7 +277,11 @@ fn process_instruction_deploy(invoke_context: &mut InvokeContext) -> Result<(), 
         &program,
         authority_address,
     )?;
-    let current_slot = invoke_context.get_sysvar_cache().get_clock()?.slot;
+    let current_slot = invoke_context
+        .environment_config
+        .sysvar_cache()
+        .get_clock()?
+        .slot;
 
     // Slot = 0 indicates that the program hasn't been deployed yet. So no need to check for the cooldown slots.
     // (Without this check, the program deployment is failing in freshly started test validators. That's
@@ -323,7 +330,11 @@ fn process_instruction_retract(invoke_context: &mut InvokeContext) -> Result<(),
         &program,
         authority_address,
     )?;
-    let current_slot = invoke_context.get_sysvar_cache().get_clock()?.slot;
+    let current_slot = invoke_context
+        .environment_config
+        .sysvar_cache()
+        .get_clock()?
+        .slot;
     if state.slot.saturating_add(DEPLOYMENT_COOLDOWN_IN_SLOTS) > current_slot {
         ic_logger_msg!(
             log_collector,
@@ -429,7 +440,6 @@ declare_builtin_function!(
         _arg2: u64,
         _arg3: u64,
         _arg4: u64,
-        _memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Box<dyn std::error::Error>> {
         process_instruction_inner(invoke_context)
     }
@@ -444,7 +454,9 @@ fn process_instruction_inner<'a>(
     let instruction_data = instruction_context.get_instruction_data();
     let program_id = instruction_context.get_program_key()?;
     if loader_v4::check_id(program_id) {
-        invoke_context.consume_checked(DEFAULT_COMPUTE_UNITS)?;
+        invoke_context
+            .compute_meter
+            .consume_checked(DEFAULT_COMPUTE_UNITS)?;
         match limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)? {
             LoaderV4Instruction::Write { offset, bytes } => {
                 process_instruction_write(invoke_context, offset, bytes)

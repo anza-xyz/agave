@@ -18,6 +18,7 @@ name = "solana_program_runtime"
 
 [features]
 agave-unstable-api = []
+conf-stack-frame-size = ["solana-sbpf/conf-stack-frame-size"]
 dev-context-only-utils = ["dep:solana-message"]
 dummy-for-ci-check = ["metrics"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]

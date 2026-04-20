@@ -50,20 +50,20 @@ fn test_syscall_get_epoch_stake() {
             .iter()
             .map(|keypair| {
                 let node_id = keypair.node_keypair.pubkey();
-                let authorized_voter = keypair.vote_keypair.pubkey();
+                let vote_pubkey = keypair.vote_keypair.pubkey();
                 let vote_account = VoteAccount::try_from(create_v4_account_with_authorized(
                     &node_id,
-                    &authorized_voter,
+                    &vote_pubkey,
                     [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                     &node_id,
                     0,
-                    &node_id,
+                    &vote_pubkey,
                     0,
                     &node_id,
                     100,
                 ))
                 .unwrap();
-                (authorized_voter, (0, vote_account)) // No stake.
+                (vote_pubkey, (0, vote_account)) // No stake.
             })
             .collect::<HashMap<_, _>>(),
         0, // Leader schedule epoch 0

@@ -84,7 +84,7 @@ pub(super) fn get_shred_variant(shred: &[u8]) -> Result<ShredVariant, Error> {
 }
 
 #[inline]
-pub(super) fn get_shred_type(shred: &[u8]) -> Result<ShredType, Error> {
+pub fn get_shred_type(shred: &[u8]) -> Result<ShredType, Error> {
     get_shred_variant(shred).map(ShredType::from)
 }
 

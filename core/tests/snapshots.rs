@@ -211,15 +211,7 @@ where
     // Generate a snapshot package for last bank
     let snapshot_config = snapshot_controller.snapshot_config();
     let last_bank = bank_forks.read().unwrap().get(last_slot).unwrap();
-    snapshot_bank_utils::bank_to_full_snapshot_archive(
-        &snapshot_config.bank_snapshots_dir,
-        &last_bank,
-        Some(snapshot_config.snapshot_version),
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
-        snapshot_config.archive_format,
-    )
-    .unwrap();
+    snapshot_bank_utils::bank_to_full_snapshot_archive(snapshot_config, &last_bank).unwrap();
 
     // Restore bank from snapshot
     let (_tmp_dir, temporary_accounts_dir) = create_tmp_accounts_dir_for_tests();
@@ -510,14 +502,7 @@ fn make_full_snapshot_archive(
     );
     // The bank must have a block id set to take a snapshot.
     Bank::calculate_and_set_block_id_for_dcou(bank);
-    snapshot_bank_utils::bank_to_full_snapshot_archive(
-        &snapshot_config.bank_snapshots_dir,
-        bank,
-        Some(snapshot_config.snapshot_version),
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
-        snapshot_config.archive_format,
-    )?;
+    snapshot_bank_utils::bank_to_full_snapshot_archive(snapshot_config, bank)?;
     Ok(())
 }
 
@@ -534,13 +519,9 @@ fn make_incremental_snapshot_archive(
     // The bank must have a block id set to take a snapshot.
     Bank::calculate_and_set_block_id_for_dcou(bank);
     snapshot_bank_utils::bank_to_incremental_snapshot_archive(
-        &snapshot_config.bank_snapshots_dir,
+        snapshot_config,
         bank,
         incremental_snapshot_base_slot,
-        Some(snapshot_config.snapshot_version),
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
-        snapshot_config.archive_format,
     )?;
     Ok(())
 }

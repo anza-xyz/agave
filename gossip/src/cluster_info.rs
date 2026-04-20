@@ -60,7 +60,6 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
-    solana_runtime::bank_forks::BankForks,
     solana_sanitize::Sanitize,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -241,7 +240,7 @@ impl ClusterInfo {
         send_gossip_packets(pings, recycler, sender, &self.stats);
     }
 
-    // TODO kill insert_info, only used by tests
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn insert_info(&self, node: ContactInfo) {
         let entry = CrdsValue::new(CrdsData::ContactInfo(node), &self.keypair());
         if let Err(err) = {
@@ -1443,7 +1442,7 @@ impl ClusterInfo {
     /// randomly pick a node and ask them for updates asynchronously
     pub fn gossip(
         self: Arc<Self>,
-        bank_forks: Option<Arc<RwLock<BankForks>>>,
+        mut epoch_specs: Option<Box<dyn EpochSpecs>>,
         sender: impl ChannelSend<PacketBatch>,
         gossip_validators: Option<HashSet<Pubkey>>,
         exit: Arc<AtomicBool>,
@@ -1453,7 +1452,6 @@ impl ClusterInfo {
             .thread_name(|i| format!("solGossipRun{i:02}"))
             .build()
             .unwrap();
-        let mut epoch_specs = bank_forks.map(EpochSpecs::from);
         Builder::new()
             .name("solGossip".to_string())
             .spawn(move || {
@@ -1488,8 +1486,7 @@ impl ClusterInfo {
                     }
                     let stakes = epoch_specs
                         .as_mut()
-                        .map(EpochSpecs::current_epoch_staked_nodes)
-                        .cloned()
+                        .map(|es| es.current_epoch_staked_nodes())
                         .unwrap_or_default();
 
                     let _ = self.run_gossip(
@@ -1503,7 +1500,7 @@ impl ClusterInfo {
                     );
                     let epoch_duration = epoch_specs
                         .as_mut()
-                        .map(EpochSpecs::epoch_duration)
+                        .map(|es| es.epoch_duration())
                         .unwrap_or(DEFAULT_EPOCH_DURATION);
                     self.handle_purge(&thread_pool, epoch_duration, &stakes);
                     entrypoints_processed = entrypoints_processed || self.process_entrypoints();
@@ -2087,7 +2084,7 @@ impl ClusterInfo {
     fn run_socket_consume(
         &self,
         thread_pool: &ThreadPool,
-        epoch_specs: Option<&mut EpochSpecs>,
+        epoch_specs: Option<&mut Box<dyn EpochSpecs>>,
         receiver: &PacketBatchReceiver,
         sender: &impl ChannelSend<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         packet_buf: &mut Vec<PacketBatch>,
@@ -2131,8 +2128,7 @@ impl ClusterInfo {
             })
         }
         let stakes = epoch_specs
-            .map(EpochSpecs::current_epoch_staked_nodes)
-            .cloned()
+            .map(|es| es.current_epoch_staked_nodes())
             .unwrap_or_default();
         let packets_verified: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
@@ -2166,7 +2162,7 @@ impl ClusterInfo {
     fn run_listen(
         &self,
         recycler: &PacketBatchRecycler,
-        mut epoch_specs: Option<&mut EpochSpecs>,
+        epoch_specs: &mut Option<Box<dyn EpochSpecs>>,
         receiver: &Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         response_sender: &impl ChannelSend<PacketBatch>,
         thread_pool: &ThreadPool,
@@ -2185,12 +2181,12 @@ impl ClusterInfo {
             }
         }
         let stakes = epoch_specs
-            .as_mut()
-            .map(|epoch_specs| epoch_specs.current_epoch_staked_nodes())
-            .cloned()
+            .as_deref_mut()
+            .map(|es| es.current_epoch_staked_nodes())
             .unwrap_or_default();
         let epoch_duration = epoch_specs
-            .map(EpochSpecs::epoch_duration)
+            .as_deref_mut()
+            .map(|es| es.epoch_duration())
             .unwrap_or(DEFAULT_EPOCH_DURATION);
         self.process_packets(
             packet_buf,
@@ -2210,7 +2206,7 @@ impl ClusterInfo {
 
     pub(crate) fn start_socket_consume_thread(
         self: Arc<Self>,
-        bank_forks: Option<Arc<RwLock<BankForks>>>,
+        mut epoch_specs: Option<Box<dyn EpochSpecs>>,
         receiver: PacketBatchReceiver,
         sender: impl ChannelSend<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         exit: Arc<AtomicBool>,
@@ -2220,7 +2216,6 @@ impl ClusterInfo {
             .thread_name(|i| format!("solGossipCons{i:02}"))
             .build()
             .unwrap();
-        let mut epoch_specs = bank_forks.map(EpochSpecs::from);
         let mut packet_buf = Vec::with_capacity(CHANNEL_CONSUME_CAPACITY);
         let run_consume = move || {
             while !exit.load(Ordering::Relaxed) {
@@ -2249,7 +2244,7 @@ impl ClusterInfo {
 
     pub(crate) fn listen(
         self: Arc<Self>,
-        bank_forks: Option<Arc<RwLock<BankForks>>>,
+        mut epoch_specs: Option<Box<dyn EpochSpecs>>,
         requests_receiver: Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         response_sender: impl ChannelSend<PacketBatch>,
         should_check_duplicate_instance: bool,
@@ -2261,7 +2256,6 @@ impl ClusterInfo {
             .thread_name(|i| format!("solGossipWork{i:02}"))
             .build()
             .unwrap();
-        let mut epoch_specs = bank_forks.map(EpochSpecs::from);
         let mut packet_buf = Vec::with_capacity(CHANNEL_CONSUME_CAPACITY);
         Builder::new()
             .name("solGossipListen".to_string())
@@ -2269,7 +2263,7 @@ impl ClusterInfo {
                 while !exit.load(Ordering::Relaxed) {
                     let result = self.run_listen(
                         &recycler,
-                        epoch_specs.as_mut(),
+                        &mut epoch_specs,
                         &requests_receiver,
                         &response_sender,
                         &thread_pool,
@@ -2344,16 +2338,13 @@ pub struct Sockets {
     // Socket sending out local repair requests,
     // and receiving repair responses from the cluster.
     pub repair: UdpSocket,                  // udp read/write
-    pub repair_quic: UdpSocket,             // quic read/write
     pub retransmit_sockets: Vec<UdpSocket>, // udp write only
     // Socket receiving remote repair requests from the cluster,
     // and sending back repair responses.
-    pub serve_repair: UdpSocket,      // udp read/write
-    pub serve_repair_quic: UdpSocket, // quic read/write
+    pub serve_repair: UdpSocket, // udp read/write
     // Socket sending out local RepairProtocol::AncestorHashes,
     // and receiving AncestorHashesResponse from the cluster.
     pub ancestor_hashes_requests: UdpSocket, // udp read/write
-    pub ancestor_hashes_requests_quic: UdpSocket, // quic read/write
     pub tpu_quic: Vec<UdpSocket>,            // quic read only
     pub tpu_forwards_quic: Vec<UdpSocket>,   // quic read only
     pub tpu_vote_quic: Vec<UdpSocket>,       // quic read only

@@ -49,7 +49,7 @@
 //! So, given a) - c), we must restrict data shred's payload length such that the entire coding
 //! payload can fit into one coding shred / packet.
 
-pub(crate) use self::{merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH, payload::serde_bytes_payload};
+pub(crate) use self::merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH;
 use {
     self::traits::{Shred as _, ShredData as _},
     crate::blockstore::{self},
@@ -124,6 +124,9 @@ pub const SHREDS_PER_FEC_BLOCK: usize = DATA_SHREDS_PER_FEC_BLOCK + CODING_SHRED
 /// (32K shreds per slot * 4 TX per shred * 2.5 slots per sec)
 pub const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
 pub const MAX_CODE_SHREDS_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT;
+
+pub const MAX_FEC_SETS_PER_SLOT: u32 =
+    MAX_DATA_SHREDS_PER_SLOT as u32 / DATA_SHREDS_PER_FEC_BLOCK as u32;
 
 // Statically compute the typical data batch size assuming:
 // 1. 32:32 erasure coding batch
@@ -226,14 +229,12 @@ pub enum Error {
     Eq,
     Hash,
     PartialEq,
-    Deserialize,
     IntoPrimitive,
     Serialize,
     TryFromPrimitive,
     SchemaWrite,
     SchemaRead,
 )]
-#[serde(into = "u8", try_from = "u8")]
 #[wincode(tag_encoding = "u8")]
 pub enum ShredType {
     #[wincode(tag = 0b1010_0101)]
@@ -333,10 +334,10 @@ impl ShredId {
 
 /// Tuple which identifies erasure coding set that the shred belongs to.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
-pub(crate) struct ErasureSetId(Slot, /*fec_set_index:*/ u32);
+pub struct ErasureSetId(Slot, /*fec_set_index:*/ u32);
 
 impl ErasureSetId {
-    pub(crate) fn new(slot: Slot, fec_set_index: u32) -> Self {
+    pub fn new(slot: Slot, fec_set_index: u32) -> Self {
         Self(slot, fec_set_index)
     }
 

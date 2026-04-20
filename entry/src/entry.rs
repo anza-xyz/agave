@@ -96,19 +96,6 @@ pub type MaxDataShredsLen = BincodeLen<MAX_DATA_SHREDS_SIZE>;
 /// hash was computed by the world's fastest processor at that time. The hash chain is both
 /// a Verifiable Delay Function (VDF) and a Proof of Work (not to be confused with Proof of
 /// Work consensus!)
-///
-/// The solana core protocol currently requires an `Entry` to contain `transactions` that are
-/// executable in parallel. Implemented in:
-///
-/// * For TPU: `solana_core::banking_stage::BankingStage::process_and_record_transactions()`
-/// * For TVU: `solana_core::replay_stage::ReplayStage::replay_blockstore_into_bank()`
-///
-/// Until SIMD83 is activated:
-/// All transactions in the `transactions` field have to follow the read/write locking restrictions
-/// with regard to the accounts they reference. A single account can be either written by a single
-/// transaction, or read by one or more transactions, but not both.
-/// This enforcement is done via a call to `solana_runtime::accounts::Accounts::lock_accounts()`
-/// with the `txs` argument holding all the `transactions` in the `Entry`.
 #[derive(Debug, Default, PartialEq, Eq, Clone, SchemaWrite, SchemaRead)]
 pub struct Entry {
     /// The number of hashes since the previous Entry ID.
@@ -117,7 +104,7 @@ pub struct Entry {
     /// The SHA-256 hash `num_hashes` after the previous Entry ID.
     pub hash: Hash,
 
-    /// An unordered list of transactions that were observed before the Entry ID was
+    /// An ordered list of transactions that were observed before the Entry ID was
     /// generated. They may have been observed before a previous Entry ID but were
     /// pushed back into this list to ensure deterministic interpretation of the ledger.
     #[wincode(with = "WincodeVec<VersionedTransaction, MaxDataShredsLen>")]
