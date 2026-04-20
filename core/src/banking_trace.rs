@@ -2,11 +2,12 @@ use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     bincode::serialize_into,
     chrono::{DateTime, Local},
-    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError, unbounded},
+    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError, TrySendError, unbounded},
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_hash::Hash,
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{
         fs::{create_dir_all, remove_dir_all},
         io::{self, Write},
@@ -45,6 +46,7 @@ pub(crate) const BASENAME: &str = "events";
 const TRACE_FILE_ROTATE_COUNT: u64 = 14; // target 2 weeks retention under normal load
 const TRACE_FILE_WRITE_INTERVAL_MS: u64 = 100;
 const BUF_WRITER_CAPACITY: usize = 10 * 1024 * 1024;
+const BANKING_PACKET_CHANNEL_SIZE: usize = 50_000;
 pub const TRACE_FILE_DEFAULT_ROTATE_BYTE_THRESHOLD: u64 = 1024 * 1024 * 1024;
 pub const DISABLED_BAKING_TRACE_DIR: DirByteLimit = 0;
 pub const BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT: DirByteLimit =
@@ -281,7 +283,15 @@ impl BankingTracer {
         label: ChannelLabel,
         active_tracer: Option<ActiveTracer>,
     ) -> (TracedSender, Receiver<BankingPacketBatch>) {
-        let (sender, receiver) = unbounded();
+        Self::channel_with_capacity(label, active_tracer, BANKING_PACKET_CHANNEL_SIZE)
+    }
+
+    fn channel_with_capacity(
+        label: ChannelLabel,
+        active_tracer: Option<ActiveTracer>,
+        capacity: usize,
+    ) -> (TracedSender, Receiver<BankingPacketBatch>) {
+        let (sender, receiver) = EvictingSender::new_bounded(capacity);
 
         (TracedSender::new(label, sender, active_tracer), receiver)
     }
@@ -357,14 +367,14 @@ impl BankingTracer {
 #[derive(Clone)]
 pub struct TracedSender {
     label: ChannelLabel,
-    sender: Sender<BankingPacketBatch>,
+    sender: EvictingSender<BankingPacketBatch>,
     active_tracer: Option<ActiveTracer>,
 }
 
 impl TracedSender {
     fn new(
         label: ChannelLabel,
-        sender: Sender<BankingPacketBatch>,
+        sender: EvictingSender<BankingPacketBatch>,
         active_tracer: Option<ActiveTracer>,
     ) -> Self {
         Self {
@@ -388,7 +398,10 @@ impl TracedSender {
                     })?;
             }
         }
-        self.sender.send(batch)
+        match self.sender.try_send(batch) {
+            Ok(()) | Err(TrySendError::Full(_)) => Ok(()),
+            Err(TrySendError::Disconnected(batch)) => Err(SendError(batch)),
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -469,6 +482,19 @@ mod tests {
             .send(BankingPacketBatch::new(vec![]))
             .unwrap();
         for_test::terminate_tracer(tracer, None, dummy_main_thread, non_vote_sender, None);
+    }
+
+    #[test]
+    fn test_send_evicts_oldest_batch_when_full() {
+        let (sender, receiver) = BankingTracer::channel_with_capacity(ChannelLabel::Dummy, None, 1);
+        let first_batch = BankingPacketBatch::new(vec![]);
+        let second_batch = for_test::sample_packet_batch();
+
+        sender.send(first_batch).unwrap();
+        sender.send(second_batch.clone()).unwrap();
+
+        assert_eq!(receiver.len(), 1);
+        assert!(Arc::ptr_eq(&receiver.recv().unwrap(), &second_batch));
     }
 
     #[test]
