@@ -696,7 +696,7 @@ impl Bank {
         let epoch_rewards_sysvar = self.get_epoch_rewards_sysvar();
         if epoch_rewards_sysvar.active {
             let thread_pool = thread_pool_builder();
-            let (_, stake_rewards, partition_indices) =
+            let (stake_rewards, partition_indices) =
                 self.recalculate_stake_rewards(&epoch_rewards_sysvar, thread_pool.borrow());
             self.set_epoch_reward_status_distribution(
                 epoch_rewards_sysvar.distribution_starting_block_height,
@@ -713,11 +713,7 @@ impl Bank {
         &self,
         epoch_rewards_sysvar: &EpochRewards,
         thread_pool: &ThreadPool,
-    ) -> (
-        RewardCommissionAccounts,
-        Arc<PartitionedStakeRewards>,
-        Vec<Vec<usize>>,
-    ) {
+    ) -> (Arc<PartitionedStakeRewards>, Vec<Vec<usize>>) {
         assert!(epoch_rewards_sysvar.active);
         // If rewards are active, the rewarded epoch is always the immediately
         // preceding epoch.
@@ -740,7 +736,15 @@ impl Bank {
         // already been calculated and delivered, while
         // `StakeRewardCalculation::total_rewards` only reflects rewards that
         // have not yet been distributed.
-        let (reward_commission_accounts, StakeRewardCalculation { stake_rewards, .. }) = self
+        //
+        // NOTE: the `RewardCommissionAccounts` will NOT have a correct
+        // post_lamport amount if the commission account is NOT the vote account,
+        // because the commission account is loaded from the current bank, and
+        // not the start of the epoch. We don't have a snapshot of all commission
+        // accounts from the start of the epoch. For this reason, the
+        // `RewardCommissionAccounts` calculated in this function call should
+        // NOT be used ever.
+        let (_, StakeRewardCalculation { stake_rewards, .. }) = self
             .calculate_stake_rewards_and_commissions(
                 &stake_history,
                 &stake_delegations,
@@ -757,7 +761,7 @@ impl Bank {
             &epoch_rewards_sysvar.parent_blockhash,
             epoch_rewards_sysvar.num_partitions as usize,
         );
-        (reward_commission_accounts, stake_rewards, partition_indices)
+        (stake_rewards, partition_indices)
     }
 }
 
@@ -1049,13 +1053,36 @@ mod tests {
     ) -> Option<RewardInfo> {
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        let (reward_commissions, ..) =
-            bank.recalculate_stake_rewards(&epoch_rewards_sysvar, &thread_pool);
-        reward_commissions
+        assert!(epoch_rewards_sysvar.active);
+        let rewarded_epoch = bank.epoch().saturating_sub(1);
+
+        let point_value = PointValue {
+            rewards: epoch_rewards_sysvar.total_rewards,
+            points: epoch_rewards_sysvar.total_points,
+        };
+
+        let stakes = bank.stakes_cache.stakes();
+        let EpochRewardCalculateParamInfo {
+            stake_history,
+            stake_delegations,
+            cached_vote_accounts,
+        } = bank.get_epoch_params_for_recalculation(rewarded_epoch, &stakes);
+
+        let (reward_commission_accounts, ..) = bank.calculate_stake_rewards_and_commissions(
+            &stake_history,
+            &stake_delegations,
+            cached_vote_accounts,
+            rewarded_epoch,
+            point_value,
+            &thread_pool,
+            null_tracer(),
+            &mut RewardsMetrics::default(), // This is required, but not reporting anything at the moment
+        );
+        reward_commission_accounts
             .accounts_with_rewards
-            .iter()
+            .into_iter()
             .find(|(reward_address, ..)| reward_address == commission_pubkey)
-            .map(|(_, reward, _)| *reward)
+            .map(|(_, reward, _)| reward)
     }
 
     fn apply_epoch_operations(
@@ -1649,7 +1676,7 @@ mod tests {
         drop(stakes);
 
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
-        let (_, recalculated_rewards, recalculated_partition_indices) =
+        let (recalculated_rewards, recalculated_partition_indices) =
             bank.recalculate_stake_rewards(&epoch_rewards_sysvar, &thread_pool);
 
         let recalculated_rewards =
@@ -1682,7 +1709,7 @@ mod tests {
         );
 
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
-        let (_, recalculated_rewards, recalculated_partition_indices) =
+        let (recalculated_rewards, recalculated_partition_indices) =
             bank.recalculate_stake_rewards(&epoch_rewards_sysvar, &thread_pool);
 
         // Note that recalculated rewards are **NOT** the same as expected
