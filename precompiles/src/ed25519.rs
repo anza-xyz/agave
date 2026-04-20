@@ -1,6 +1,6 @@
 use {
     agave_feature_set::FeatureSet,
-    ed25519_dalek::ed25519::signature::Signature,
+    solana_ed25519::ed_sigs::{Signature, VerificationKey},
     solana_ed25519_program::{
         Ed25519SignatureOffsets, PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
         SIGNATURE_OFFSETS_START, SIGNATURE_SERIALIZED_SIZE,
@@ -49,7 +49,7 @@ pub fn verify(
         )?;
 
         let signature =
-            Signature::from_bytes(signature).map_err(|_| PrecompileError::InvalidSignature)?;
+            Signature::from_slice(signature).map_err(|_| PrecompileError::InvalidSignature)?;
 
         // Parse out pubkey
         let pubkey = get_data_slice(
@@ -60,8 +60,8 @@ pub fn verify(
             PUBKEY_SERIALIZED_SIZE,
         )?;
 
-        let publickey = ed25519_dalek::PublicKey::from_bytes(pubkey)
-            .map_err(|_| PrecompileError::InvalidPublicKey)?;
+        let publickey =
+            VerificationKey::try_from(pubkey).map_err(|_| PrecompileError::InvalidPublicKey)?;
 
         // Parse out message
         let message = get_data_slice(
@@ -72,7 +72,7 @@ pub fn verify(
             offsets.message_data_size as usize,
         )?;
         publickey
-            .verify_strict(message, &signature)
+            .verify(&signature, message)
             .map_err(|_| PrecompileError::InvalidSignature)?;
     }
     Ok(())
@@ -110,9 +110,9 @@ pub mod tests {
         super::*,
         crate::test_verify_with_alignment,
         bytemuck::bytes_of,
-        ed25519_dalek::Signer as EdSigner,
         hex,
         rand::Rng,
+        solana_ed25519::ed_sigs::SigningKey,
         solana_ed25519_program::{
             DATA_START, new_ed25519_instruction_with_signature, offsets_to_ed25519_instruction,
         },
@@ -250,10 +250,7 @@ pub mod tests {
             message_data_size: 1,
             ..Ed25519SignatureOffsets::default()
         };
-        assert_eq!(
-            test_case(1, &offsets),
-            Err(PrecompileError::InvalidSignature)
-        );
+        assert_eq!(test_case(1, &offsets), Ok(()));
 
         let offsets = Ed25519SignatureOffsets {
             message_data_offset: 100,
@@ -333,12 +330,10 @@ pub mod tests {
         agave_logger::setup();
 
         let secret_bytes: [u8; 32] = rand::random();
-        let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
-        let public: ed25519_dalek::PublicKey = (&secret).into();
-        let privkey = ed25519_dalek::Keypair { secret, public };
+        let privkey = SigningKey::from_bytes(&secret_bytes);
         let message_arr = b"hello";
         let signature = privkey.sign(message_arr).to_bytes();
-        let pubkey = privkey.public.to_bytes();
+        let pubkey: [u8; PUBKEY_SERIALIZED_SIZE] = privkey.verification_key().into();
         let mut instruction =
             new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
         let feature_set = FeatureSet::all_enabled();
@@ -379,9 +374,7 @@ pub mod tests {
         agave_logger::setup();
 
         let secret_bytes: [u8; 32] = rand::random();
-        let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
-        let public: ed25519_dalek::PublicKey = (&secret).into();
-        let privkey = ed25519_dalek::Keypair { secret, public };
+        let privkey = SigningKey::from_bytes(&secret_bytes);
         let messages: [&[u8]; 3] = [b"hello", b"IBRL", b"goodbye"];
         let data_start =
             messages.len() * SIGNATURE_OFFSETS_SERIALIZED_SIZE + SIGNATURE_OFFSETS_START;
@@ -409,8 +402,8 @@ pub mod tests {
 
         let mut instruction = offsets_to_ed25519_instruction(&offsets);
 
-        let pubkey = privkey.public.as_ref();
-        instruction.data.extend_from_slice(pubkey);
+        let pubkey: [u8; PUBKEY_SERIALIZED_SIZE] = privkey.verification_key().into();
+        instruction.data.extend_from_slice(&pubkey);
 
         for message in messages {
             let signature = privkey.sign(message).to_bytes();
@@ -455,14 +448,12 @@ pub mod tests {
     fn test_ed25519_malleability() {
         agave_logger::setup();
 
-        // sig created via ed25519_dalek: both pass
+        // a standard signature should pass
         let secret_bytes: [u8; 32] = rand::random();
-        let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
-        let public: ed25519_dalek::PublicKey = (&secret).into();
-        let privkey = ed25519_dalek::Keypair { secret, public };
+        let privkey = SigningKey::from_bytes(&secret_bytes);
         let message_arr = b"hello";
         let signature = privkey.sign(message_arr).to_bytes();
-        let pubkey = privkey.public.to_bytes();
+        let pubkey: [u8; PUBKEY_SERIALIZED_SIZE] = privkey.verification_key().into();
         let instruction = new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
 
         let feature_set = FeatureSet::default();
@@ -487,7 +478,7 @@ pub mod tests {
             .is_ok()
         );
 
-        // malleable sig: verify_strict does NOT pass
+        // ZIP-215 / zebra semantics accept this malleable signature
         // for example, test number 5:
         // https://github.com/C2SP/CCTV/tree/main/ed25519
         // R has low order (in fact R == 0)
@@ -498,7 +489,7 @@ pub mod tests {
         let message = b"ed25519vectors 3";
         let instruction = new_ed25519_instruction_raw(pubkey, signature, message);
 
-        // verify_strict does NOT pass for malleable signature
+        // verify uses the zebra + HEEA path, so this is accepted.
         let feature_set = FeatureSet::default();
         assert!(
             test_verify_with_alignment(
@@ -507,7 +498,7 @@ pub mod tests {
                 &[&instruction.data],
                 &feature_set
             )
-            .is_err()
+            .is_ok()
         );
     }
 }
