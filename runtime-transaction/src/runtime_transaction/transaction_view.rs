@@ -28,7 +28,7 @@ use {
         versioned::VersionedTransaction,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    std::{borrow::Cow, collections::HashSet, num::NonZero},
+    std::{borrow::Cow, collections::HashSet},
 };
 
 fn is_simple_vote_transaction<D: TransactionData>(
@@ -98,12 +98,9 @@ where
             VersionedTransactionConfiguration::V1(TransactionConfiguration {
                 priority_fee_lamports: transaction_config_view.priority_fee_lamports().unwrap_or(0),
                 compute_unit_limit: transaction_config_view.compute_unit_limit().unwrap_or(0),
-                loaded_accounts_data_size_limit: NonZero::new(
-                    transaction_config_view
-                        .loaded_accounts_data_size_limit()
-                        .unwrap_or(0),
-                )
-                .ok_or(TransactionError::SanitizeFailure)?,
+                loaded_accounts_data_size_limit: transaction_config_view
+                    .loaded_accounts_data_size_limit()
+                    .unwrap_or(0),
                 updated_heap_bytes: transaction_config_view
                     .requested_heap_size()
                     .unwrap_or(HEAP_LENGTH as u32),

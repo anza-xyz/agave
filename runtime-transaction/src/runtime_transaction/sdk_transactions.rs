@@ -18,7 +18,7 @@ use {
         versioned::{VersionedTransaction, sanitized::SanitizedVersionedTransaction},
     },
     solana_transaction_error::TransactionResult as Result,
-    std::{borrow::Cow, collections::HashSet, num::NonZero},
+    std::{borrow::Cow, collections::HashSet},
 };
 
 impl RuntimeTransaction<SanitizedVersionedTransaction> {
@@ -58,15 +58,13 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
 
         let versioned_transaction_config =
             if let VersionedMessage::V1(msg) = &sanitized_versioned_tx.get_message().message {
-                // NOTE: sanitized v1::message must have sanitized `config` values, or use
-                // defaults.
                 VersionedTransactionConfiguration::V1(TransactionConfiguration {
                     priority_fee_lamports: msg.config.priority_fee.unwrap_or(0),
                     compute_unit_limit: msg.config.compute_unit_limit.unwrap_or(0),
-                    loaded_accounts_data_size_limit: NonZero::new(
-                        msg.config.loaded_accounts_data_size_limit.unwrap_or(0),
-                    )
-                    .ok_or(solana_transaction_error::TransactionError::SanitizeFailure)?,
+                    loaded_accounts_data_size_limit: msg
+                        .config
+                        .loaded_accounts_data_size_limit
+                        .unwrap_or(0),
                     updated_heap_bytes: msg.config.heap_size.unwrap_or(HEAP_LENGTH as u32),
                 })
             } else {

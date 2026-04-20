@@ -17,7 +17,8 @@ use {
         MAX_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
     },
     solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
-    solana_hash::Hash, solana_message::TransactionSignatureDetails,
+    solana_hash::Hash,
+    solana_message::TransactionSignatureDetails,
     solana_transaction::TransactionError,
 };
 
@@ -87,22 +88,21 @@ impl VersionedTransactionConfiguration {
                     updated_heap_bytes: compute_budget_limits.updated_heap_bytes,
                     compute_unit_limit: compute_budget_limits.compute_unit_limit,
                     priority_fee_lamports: compute_budget_limits.get_prioritization_fee(),
-                    loaded_accounts_data_size_limit: compute_budget_limits.loaded_accounts_bytes,
+                    loaded_accounts_data_size_limit: compute_budget_limits
+                        .loaded_accounts_bytes
+                        .get(),
                 })
             }
-            Self::V1(transaction_configuration) => {
-                // NOTE: transaction_configuration is already sanitized in View
-                Ok(TransactionConfiguration {
-                    updated_heap_bytes: transaction_configuration.updated_heap_bytes,
-                    compute_unit_limit: transaction_configuration
-                        .compute_unit_limit
-                        .min(MAX_COMPUTE_UNIT_LIMIT),
-                    priority_fee_lamports: transaction_configuration.priority_fee_lamports,
-                    loaded_accounts_data_size_limit: transaction_configuration
-                        .loaded_accounts_data_size_limit
-                        .min(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES),
-                })
-            }
+            Self::V1(transaction_configuration) => Ok(TransactionConfiguration {
+                updated_heap_bytes: transaction_configuration.updated_heap_bytes,
+                compute_unit_limit: transaction_configuration
+                    .compute_unit_limit
+                    .min(MAX_COMPUTE_UNIT_LIMIT),
+                priority_fee_lamports: transaction_configuration.priority_fee_lamports,
+                loaded_accounts_data_size_limit: transaction_configuration
+                    .loaded_accounts_data_size_limit
+                    .min(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get()),
+            }),
         }
     }
 }

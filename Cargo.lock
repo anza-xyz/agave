@@ -10102,6 +10102,7 @@ dependencies = [
  "agave-transaction-view",
  "criterion",
  "rand 0.9.4",
+ "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-compute-budget-interface",
  "solana-hash 4.3.0",
