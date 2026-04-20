@@ -20,6 +20,7 @@ pub use crate::{
     client_builder::{Client, ClientBuilder, ClientError, TransactionSender},
     connection_workers_scheduler::{ConnectionWorkersScheduler, ConnectionWorkersSchedulerError},
     send_transaction_stats::SendTransactionStats,
+    workers_cache::WorkersCacheStrategy,
 };
 pub(crate) mod quic_networking;
 pub(crate) use crate::quic_networking::QuicError;
