@@ -210,13 +210,16 @@ impl Bank {
 
             // rent state transition must be checked in case the account receiving the distribution
             // doesn't exist yet.
-            if !check_static_account_rent_state_transition(
+            if check_static_account_rent_state_transition(
                 pre_balance,
                 account.lamports(),
                 account.data().len(),
                 &self.rent_collector().rent,
+                0, // account index isn't relevant and only used for error message
                 feature_snapshot.relax_post_exec_min_balance_check,
-            ) {
+            )
+            .is_err()
+            {
                 return Err(DepositFeeError::InvalidRentPayingAccount);
             }
         }
