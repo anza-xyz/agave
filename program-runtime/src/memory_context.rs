@@ -108,7 +108,7 @@ impl MemoryContexts {
     }
 
     pub fn abi_v2_regions_exist(&self) -> bool {
-        self.abiv2_mappings.get_regions().len() > 0
+        self.abiv2_mappings.get_regions().is_empty()
     }
 
     pub fn create_abi_v2_mappings<C: ContextObject>(
@@ -116,12 +116,12 @@ impl MemoryContexts {
         regions: Vec<MemoryRegion>,
         executable: &Executable<C>,
     ) {
-        self.abiv2_mappings = Box::new(MemoryMapping::new_uninitialized(
+        *self.abiv2_mappings = MemoryMapping::new_uninitialized(
             regions,
             executable.get_config(),
             executable.get_sbpf_version(),
             Box::new(default_access_violation_handler),
-        ));
+        );
     }
 }
 

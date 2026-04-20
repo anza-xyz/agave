@@ -113,7 +113,8 @@ unsafe fn configure_program_regions<C: ContextObject>(
         },
     );
     *heap_area = MemoryRegion::new(heap, MM_HEAP_START);
-    // TODO: How about only performing a check for ABIv2 instead of modifying it?
+    // TODO (to improve speed, but non blocking): How about only performing a check for ABIv2
+    // instead of (potentially) modifying it?
     mapping
         .initialize()
         .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
