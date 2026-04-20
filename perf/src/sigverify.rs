@@ -158,17 +158,6 @@ pub fn ed25519_verify(
     });
 }
 
-pub fn ed25519_verify_disabled(thread_pool: &rayon::ThreadPool, batches: &mut [PacketBatch]) {
-    let packet_count = count_packets_in_batches(batches);
-    debug!("disabled ECDSA for {packet_count}");
-
-    thread_pool.install(|| {
-        batches.par_iter_mut().flatten().for_each(|mut packet| {
-            packet.meta_mut().set_discard(false);
-        })
-    });
-}
-
 pub fn mark_disabled(batches: &mut [PacketBatch], r: &[Vec<u8>]) {
     for (batch, v) in batches.iter_mut().zip(r) {
         for (mut pkt, f) in batch.iter_mut().zip(v) {

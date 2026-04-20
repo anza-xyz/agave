@@ -2,9 +2,7 @@
 //! By default, signatures are verified in parallel using all available CPU
 //! cores.
 
-pub use solana_perf::sigverify::{
-    TxOffset, count_packets_in_batches, ed25519_verify, ed25519_verify_disabled,
-};
+pub use solana_perf::sigverify::{TxOffset, count_packets_in_batches, ed25519_verify};
 use {
     crate::{
         banking_trace::BankingPacketSender,

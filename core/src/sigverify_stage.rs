@@ -5,15 +5,12 @@
 //! transaction. All processing is done on the CPU by default.
 
 use {
-    crate::sigverify,
     core::time::Duration,
     crossbeam_channel::{Receiver, RecvTimeoutError},
-    rayon::ThreadPool,
     solana_measure::measure::Measure,
     solana_perf::{
         deduper::{self, Deduper},
         packet::PacketBatch,
-        sigverify::count_valid_packets,
     },
     solana_streamer::streamer::{self, StreamerError},
     solana_time_utils as timing,
@@ -52,11 +49,6 @@ pub trait SigVerifier {
 
     /// Return maximum number of packets that are allowed to be in the verification pool.
     fn capacity(&self) -> usize;
-}
-
-#[derive(Clone)]
-pub struct DisabledSigVerifier {
-    pub thread_pool: Arc<ThreadPool>,
 }
 
 #[derive(Default)]
@@ -182,28 +174,6 @@ impl SigVerifierStats {
         self.dedup_packets_pp_us_hist = histogram::Histogram::new();
         self.batches_hist = histogram::Histogram::new();
         self.packets_hist = histogram::Histogram::new();
-    }
-}
-
-impl SigVerifier for DisabledSigVerifier {
-    fn verify_and_send_packets(
-        &mut self,
-        mut batches: Vec<PacketBatch>,
-        _valid_packets: usize,
-        _in_flight_count: Arc<AtomicUsize>,
-        total_valid_packets: Arc<AtomicUsize>,
-        total_verify_time_us: Arc<AtomicUsize>,
-    ) -> Result<()> {
-        let mut verify_time = Measure::start("sigverify_batch_time");
-        sigverify::ed25519_verify_disabled(&self.thread_pool, &mut batches);
-        verify_time.stop();
-        total_valid_packets.fetch_add(count_valid_packets(&batches), Ordering::Relaxed);
-        total_verify_time_us.fetch_add(verify_time.as_us() as usize, Ordering::Relaxed);
-        Ok(())
-    }
-
-    fn capacity(&self) -> usize {
-        usize::MAX
     }
 }
 
