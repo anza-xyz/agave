@@ -478,8 +478,16 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         &mut self,
         new_root_slot: Slot,
         upcoming_environment: Option<ProgramRuntimeEnvironment>,
-        fork_graph: &FG,
     ) {
+        let Some(fork_graph) = self.fork_graph.clone() else {
+            error!("Program cache doesn't have fork graph.");
+            return;
+        };
+        let fork_graph = fork_graph.upgrade().unwrap();
+        let Ok(fork_graph) = fork_graph.read() else {
+            error!("Failed to lock fork graph for reading.");
+            return;
+        };
         match &mut self.index {
             IndexImplementation::V1 { entries, .. } => {
                 for second_level in entries.values_mut() {
@@ -1699,6 +1707,19 @@ pub(crate) mod tests {
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
         cache.prune(10, None, &fork_graph.read().unwrap());
+        assert!(cache.get_flattened_entries_for_tests().is_empty());
+    }
+
+    #[test]
+    fn test_prune_with_dropped_fork_graph() {
+        let mut cache = ProgramCache::<TestForkGraph>::new(0);
+        let fork_graph = Arc::new(RwLock::new(TestForkGraph {
+            relation: BlockRelation::Ancestor,
+        }));
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
+        drop(fork_graph);
+
+        cache.prune(0, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
     }
 
