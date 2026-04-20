@@ -3295,7 +3295,7 @@ fn test_bank_get_program_accounts() {
     let (parent, _bank_forks) =
         Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 
-    let genesis_accounts: Vec<_> = parent.get_all_accounts(false).unwrap();
+    let genesis_accounts: Vec<_> = parent.get_all_accounts().unwrap();
     assert!(
         genesis_accounts
             .iter()

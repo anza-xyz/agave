@@ -4670,10 +4670,8 @@ impl Bank {
     }
 
     /// Returns all the accounts this bank can load
-    pub fn get_all_accounts(&self, sort_results: bool) -> ScanResult<Vec<PubkeyAccountSlot>> {
-        self.rc
-            .accounts
-            .load_all(&self.ancestors, self.bank_id, sort_results)
+    pub fn get_all_accounts(&self) -> ScanResult<Vec<PubkeyAccountSlot>> {
+        self.rc.accounts.load_all(&self.ancestors, self.bank_id)
     }
 
     // Scans all the accounts this bank can load, applying `scan_func`
@@ -5983,7 +5981,7 @@ impl Bank {
     ///
     /// Only intended to be called by tests or when the number of accounts is small.
     pub fn calculate_accounts_data_size(&self) -> ScanResult<u64> {
-        let accounts = self.get_all_accounts(false)?;
+        let accounts = self.get_all_accounts()?;
         let accounts_data_size = accounts
             .into_iter()
             .map(|(_pubkey, account, _slot)| account.data().len() as u64)
