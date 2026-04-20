@@ -1,10 +1,12 @@
 use {
     super::Bank,
     crate::{bank::CollectorFeeDetails, reward_info::RewardInfo},
+    agave_reserved_account_keys::ReservedAccountKeys,
     log::debug,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_fee::FeeFeatures,
     solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_reward_info::RewardType,
     solana_runtime_transaction::{
         transaction_meta::TransactionConfiguration, transaction_with_meta::TransactionWithMeta,
@@ -185,7 +187,16 @@ impl Bank {
             account
                 .checked_add_lamports(fees)
                 .map_err(|_| DepositFeeError::LamportOverflow)?;
-            self.check_block_revenue_collector_account(collector_id, pre_lamports, &account)?;
+            if collector_id != &self.leader.vote_address {
+                Bank::check_collector_account(
+                    collector_id,
+                    pre_lamports,
+                    &account,
+                    &self.reserved_account_keys,
+                    &self.rent_collector().rent,
+                    false, // TODO Pass SIMD-0392 feature
+                )?;
+            }
         } else {
             if !system_program::check_id(account.owner()) {
                 return Err(DepositFeeError::InvalidAccountOwner);
@@ -217,37 +228,29 @@ impl Bank {
         Ok(account.lamports())
     }
 
-    fn check_block_revenue_collector_account(
-        &self,
+    fn check_collector_account(
         collector_id: &Pubkey,
         pre_lamports: u64,
         account: &AccountSharedData,
+        reserved_account_keys: &ReservedAccountKeys,
+        rent: &Rent,
+        relax_post_execution_balance_checks: bool,
     ) -> Result<(), DepositFeeError> {
-        if collector_id == &self.leader.vote_address {
-            return Ok(());
-        }
-
         if !system_program::check_id(account.owner()) {
             return Err(DepositFeeError::InvalidAccountOwner);
         }
 
-        if self.reserved_account_keys.is_reserved(collector_id) {
+        if reserved_account_keys.is_reserved(collector_id) {
             return Err(DepositFeeError::ReservedCollector);
         }
 
         // Don't perform rent check on the incinerator, so that the deposit
         // always works. The incinerator is cleaned right after this step
-        if *collector_id != incinerator::id() {
-            // TODO use SIMD-0392 feature
-            let relax_post_execution_balance_checks = false;
-            if !self
-                .rent_collector()
-                .rent
-                .is_exempt(account.lamports(), account.data().len())
-                && (!relax_post_execution_balance_checks || pre_lamports == 0)
-            {
-                return Err(DepositFeeError::InvalidRentPayingAccount);
-            }
+        if *collector_id != incinerator::id()
+            && !rent.is_exempt(account.lamports(), account.data().len())
+            && (!relax_post_execution_balance_checks || pre_lamports == 0)
+        {
+            return Err(DepositFeeError::InvalidRentPayingAccount);
         }
 
         Ok(())
