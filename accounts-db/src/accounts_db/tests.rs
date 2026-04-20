@@ -6449,6 +6449,6 @@ fn test_index_scan_accounts_excludes_roots_added_during_scan() {
 
     root_thread.join().unwrap();
 
-    // slot 7 was rooted after the scan guard's max_root (= 5) was established.
+    // slot 3 was rooted after the scan guard's max_root (= 2) was established.
     assert!(!found_pubkeys.contains(&pubkey_new));
 }
