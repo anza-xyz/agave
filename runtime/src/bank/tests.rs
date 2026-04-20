@@ -33,7 +33,7 @@ use {
     rayon::{ThreadPool, ThreadPoolBuilder, iter::IntoParallelIterator},
     serde::{Deserialize, Serialize},
     solana_account::{
-        Account, AccountSharedData, ReadableAccount, WritableAccount, accounts_equal,
+        Account, AccountSharedData, ReadableAccount, WritableAccount,
         create_account_shared_data_with_fields as create_account, from_account,
         state_traits::StateMut,
     },
@@ -144,24 +144,6 @@ use {
     },
     test_case::test_case,
 };
-
-impl RewardCommission {
-    pub fn new_random() -> Self {
-        let mut rng = rand::rng();
-
-        let commission_balance = rng.random_range(1..200);
-        let commission_bps: u16 = rng.random_range(100..2_000);
-
-        let mut commission_account = AccountSharedData::default();
-        commission_account.set_lamports(commission_balance);
-
-        Self {
-            commission_account,
-            commission_bps,
-            commission_lamports: rng.random_range(1..200),
-        }
-    }
-}
 
 fn create_genesis_config_no_tx_fee_no_rent(lamports: u64) -> (GenesisConfig, Keypair) {
     // genesis_util creates config with no tx fee and no rent
@@ -11158,65 +11140,6 @@ fn test_system_instruction_unsigned_transaction() {
         LAMPORTS_PER_SOL - amount
     );
     assert_eq!(bank_client.get_balance(&mallory_pubkey).unwrap(), amount);
-}
-
-#[test]
-fn test_calculate_commission_accounts_empty() {
-    let reward_commissions = HashMap::default();
-    let result = Bank::calculate_commission_accounts(reward_commissions);
-    assert!(result.accounts_with_rewards.is_empty());
-}
-
-#[test]
-fn test_calculate_commission_accounts_overflow() {
-    let mut reward_commissions = HashMap::default();
-    let pubkey = solana_pubkey::new_rand();
-    let mut commission_account = AccountSharedData::default();
-    commission_account.set_lamports(u64::MAX);
-    reward_commissions.insert(
-        pubkey,
-        RewardCommission {
-            commission_account,
-            commission_bps: 0,
-            commission_lamports: 1, // enough to overflow
-        },
-    );
-    let result = Bank::calculate_commission_accounts(reward_commissions);
-    assert!(result.accounts_with_rewards.is_empty());
-}
-
-#[test]
-fn test_calculate_commission_accounts_normal() {
-    let pubkey = solana_pubkey::new_rand();
-    for commission_bps in [0, 100] {
-        for commission_lamports in 0..2 {
-            let mut reward_commissions = HashMap::default();
-            let mut commission_account = AccountSharedData::default();
-            commission_account.set_lamports(1);
-            reward_commissions.insert(
-                pubkey,
-                RewardCommission {
-                    commission_account: commission_account.clone(),
-                    commission_bps,
-                    commission_lamports,
-                },
-            );
-            let result = Bank::calculate_commission_accounts(reward_commissions);
-            assert_eq!(result.accounts_with_rewards.len(), 1);
-            let (pubkey_result, rewards, account) = &result.accounts_with_rewards[0];
-            _ = commission_account.checked_add_lamports(commission_lamports);
-            assert!(accounts_equal(account, &commission_account));
-
-            let expected_reward_info = RewardInfo {
-                reward_type: RewardType::Voting,
-                lamports: commission_lamports as i64,
-                post_balance: commission_account.lamports(),
-                commission_bps: Some(commission_bps),
-            };
-            assert_eq!(*rewards, expected_reward_info);
-            assert_eq!(*pubkey_result, pubkey);
-        }
-    }
 }
 
 #[test]

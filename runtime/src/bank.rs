@@ -39,9 +39,7 @@ use {
         bank::{
             entry_bytes_budget::EntryBytesBudget,
             metrics::*,
-            partitioned_epoch_rewards::{
-                CachedVoteAccounts, EpochRewardStatus, RewardCommissionAccounts,
-            },
+            partitioned_epoch_rewards::{CachedVoteAccounts, EpochRewardStatus},
         },
         bank_forks::BankForks,
         block_component_processor::{
@@ -133,7 +131,7 @@ use {
         loaded_programs::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
         program_cache_entry::ProgramCacheEntry,
     },
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
@@ -969,15 +967,6 @@ pub struct Bank {
     /// read from this once replay is complete.
     pub block_component_processor: RwLock<BlockComponentProcessor>,
 }
-
-#[derive(Debug)]
-struct RewardCommission {
-    commission_account: AccountSharedData,
-    commission_bps: u16,
-    commission_lamports: u64,
-}
-
-type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
@@ -2584,60 +2573,6 @@ impl Bank {
         let validator_rate = self.inflation.read().unwrap().validator(slot_in_year);
         let epoch_duration_in_years = self.epoch_duration_in_years(epoch);
         (validator_rate * capitalization as f64 * epoch_duration_in_years) as u64
-    }
-
-    /// Convert computed RewardCommissions to RewardCommissionAccounts for storing.
-    ///
-    /// This function processes reward commissions and consolidates them into a
-    /// single structure containing the pubkey, reward info, and updated account
-    /// data for each commission account. The resulting structure is optimized
-    /// for storage by combining previously separate rewards and accounts
-    /// vectors into a single accounts_with_rewards vector.
-    fn calculate_commission_accounts(
-        reward_commissions: RewardCommissions,
-    ) -> RewardCommissionAccounts {
-        let mut result = RewardCommissionAccounts {
-            accounts_with_rewards: Vec::with_capacity(reward_commissions.len()),
-            total_reward_commission_lamports: 0,
-        };
-        for (
-            commission_pubkey,
-            RewardCommission {
-                mut commission_account,
-                commission_bps,
-                commission_lamports,
-            },
-        ) in reward_commissions
-        {
-            if let Err(err) = commission_account.checked_add_lamports(commission_lamports) {
-                debug!("reward redemption failed for {commission_pubkey}: {err:?}");
-                continue;
-            }
-
-            result.accounts_with_rewards.push((
-                commission_pubkey,
-                RewardInfo {
-                    reward_type: RewardType::Voting,
-                    lamports: commission_lamports as i64,
-                    post_balance: commission_account.lamports(),
-                    commission_bps: Some(commission_bps),
-                },
-                commission_account,
-            ));
-            result.total_reward_commission_lamports += commission_lamports;
-        }
-        result
-    }
-
-    fn update_reward_commissions(&self, reward_commission_accounts: &RewardCommissionAccounts) {
-        let mut rewards = self.rewards.write().unwrap();
-        rewards.reserve(reward_commission_accounts.accounts_with_rewards.len());
-        reward_commission_accounts
-            .accounts_with_rewards
-            .iter()
-            .for_each(|(commission_pubkey, reward_commission, _)| {
-                rewards.push((*commission_pubkey, *reward_commission));
-            });
     }
 
     fn update_recent_blockhashes_locked(&self, locked_blockhash_queue: &BlockhashQueue) {
