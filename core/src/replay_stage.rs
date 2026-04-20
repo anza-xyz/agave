@@ -2063,6 +2063,7 @@ impl ReplayStage {
                 slot_descendants
                     .iter()
                     .chain(std::iter::once(&slot_to_purge)),
+                true,
             )
         };
 
