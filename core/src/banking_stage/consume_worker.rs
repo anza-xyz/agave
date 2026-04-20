@@ -1224,6 +1224,7 @@ pub(crate) mod external {
 
             fn allocate_batch(&self, transactions: &[Vec<u8>]) -> SharedBatch {
                 type Batch<'a> = TransactionPtrBatch<'a>;
+                assert!(transactions.len() <= MAX_TRANSACTIONS_PER_MESSAGE);
 
                 let batch_ptr = self
                     .allocator
@@ -1260,8 +1261,8 @@ pub(crate) mod external {
                     unsafe {
                         // SAFETY: the batch allocation is sized for
                         // `TransactionPtrBatch::TRANSACTION_META_END`, which includes space for up
-                        // to `MAX_TRANSACTIONS_PER_MESSAGE` transaction headers. The tests only
-                        // call this helper with small batches, so `index` is in-bounds.
+                        // to `MAX_TRANSACTIONS_PER_MESSAGE` transaction headers, and the assert
+                        // above guarantees `index` is in-bounds.
                         tx_ptr.add(index).write(tx_region)
                     };
                     sharable_transactions.push(tx_region);
