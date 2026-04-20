@@ -6382,12 +6382,7 @@ fn test_index_scan_accounts_excludes_roots_added_during_scan() {
 
     let db = Arc::new(AccountsDb {
         account_indexes: spl_token_mint_index_enabled(),
-        ..AccountsDb::new_with_config(
-            Vec::new(),
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
-            None,
-            Arc::default(),
-        )
+        ..AccountsDb::default_for_tests()
     });
 
     // 50 accounts in rooted slot 1 make it very likely (~98%) that pubkey_new
@@ -6454,6 +6449,6 @@ fn test_index_scan_accounts_excludes_roots_added_during_scan() {
 
     root_thread.join().unwrap();
 
-    // slot 3 was rooted after the scan guard's max_root (= 2) was established.
+    // slot 7 was rooted after the scan guard's max_root (= 5) was established.
     assert!(!found_pubkeys.contains(&pubkey_new));
 }
