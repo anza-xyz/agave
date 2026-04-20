@@ -7937,7 +7937,6 @@ dependencies = [
  "solana-compute-budget-interface",
  "solana-compute-budget-program",
  "solana-cost-model",
- "solana-fee-structure",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash 4.3.0",
