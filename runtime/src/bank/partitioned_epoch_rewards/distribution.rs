@@ -869,7 +869,7 @@ mod tests {
             .unwrap();
         bank.store_account(&deactivating_account, &stake_account);
         let partitioned_stake_reward = PartitionedStakeReward {
-            stake_pubkey: successful_account,
+            stake_pubkey: deactivating_account,
             stake: deactivating_stake,
             stake_reward,
             commission_bps,
@@ -891,7 +891,7 @@ mod tests {
             .unwrap();
 
         let expected_stake_reward = StakeReward {
-            stake_pubkey: successful_account,
+            stake_pubkey: deactivating_account,
             stake_account: expected_stake_account,
             stake_reward_info: StakeRewardInfo {
                 reward_type: RewardType::DeactivatedStake,

@@ -215,7 +215,7 @@ impl Bank {
                 account.lamports(),
                 account.data().len(),
                 &self.rent_collector().rent,
-                false,
+                feature_snapshot.relax_post_exec_min_balance_check,
             ) {
                 return Err(DepositFeeError::InvalidRentPayingAccount);
             }
@@ -259,7 +259,7 @@ pub mod tests {
     use {
         super::*,
         crate::genesis_utils::{create_genesis_config, create_genesis_config_with_leader},
-        agave_feature_set::FeatureSet,
+        agave_feature_set::{self as feature_set, FeatureSet},
         solana_account::state_traits::StateMut,
         solana_pubkey as pubkey,
         solana_rent::Rent,
@@ -554,6 +554,55 @@ pub mod tests {
             bank.get_account(&nonexistent_pubkey).is_none(),
             "Account should still not exist after failed deposit"
         );
+    }
+
+    #[test]
+    fn test_deposit_or_burn_fee_respects_relaxed_post_exec_min_balance_check() {
+        for relax_post_exec_min_balance_check in [false, true] {
+            let mut genesis = create_genesis_config(0);
+            let rent = Rent::default();
+            genesis.genesis_config.rent = rent.clone();
+            let mut bank = Bank::new_for_tests(&genesis.genesis_config);
+
+            let data_len = 64;
+            let rent_exempt_minimum = rent.minimum_balance(data_len);
+            assert!(rent_exempt_minimum > 1);
+
+            let pre_balance = rent_exempt_minimum - 2;
+            let deposit = 1;
+            let post_balance = pre_balance + deposit;
+            let leader_id = *bank.leader_id();
+
+            let account = AccountSharedData::new(pre_balance, data_len, &system_program::id());
+            bank.store_account(&leader_id, &account);
+
+            let mut feature_set = FeatureSet::all_enabled();
+            if !relax_post_exec_min_balance_check {
+                feature_set.deactivate(&feature_set::relax_post_exec_min_balance_check::id());
+            }
+            bank.feature_set = Arc::new(feature_set);
+
+            let burned = bank.deposit_or_burn_fee(deposit);
+            let rewards = bank.rewards.read().unwrap();
+
+            // post simd-392, deposits to existing accounts are always valid because
+            // they are rent-exempt before and after the deposit takes place.
+            // pre simd-392, if a deposit to a rent-paying account isn't sufficient to
+            // make it rent-exempt then it fails and the deposit is burned.
+            if relax_post_exec_min_balance_check {
+                assert_eq!(burned, 0);
+                assert_eq!(bank.get_balance(&leader_id), post_balance);
+                assert_eq!(rewards.len(), 1, "fee should be distributed to the leader");
+                assert_eq!(rewards[0].1.post_balance, post_balance);
+            } else {
+                assert_eq!(burned, deposit);
+                assert_eq!(bank.get_balance(&leader_id), pre_balance);
+                assert!(
+                    rewards.is_empty(),
+                    "fee should be burned when the rent transition is invalid"
+                );
+            }
+        }
     }
 
     #[test]

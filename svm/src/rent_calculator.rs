@@ -16,7 +16,7 @@ use {
 pub const RENT_EXEMPT_RENT_EPOCH: Epoch = Epoch::MAX;
 
 /// Rent state of a Solana account.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum RentState {
     /// account.lamports == 0
     Uninitialized,
@@ -94,7 +94,7 @@ pub fn get_account_rent_state(
     }
 }
 
-/// Check whether a transition from the pre_exec_balance to the
+/// Returns whether a transition from the pre_exec_balance to the
 /// post_exec_balance is valid for an account that hasn't changed owner
 /// or data size.
 pub fn check_static_account_rent_state_transition(

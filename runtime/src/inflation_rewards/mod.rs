@@ -814,18 +814,18 @@ mod tests {
         post_stake: Stake,
         staker_rewards: Option<u64>,
     ) {
-        let mut vote_state = VoteStateV4::default();
+        let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
         // put 1 credit to create rewards
         vote_state.increment_credits(rewarded_epoch, 1);
-        let stake_history = &StakeHistory::default();
+        let stake_history: &StakeHistory = &StakeHistory::default();
         let new_rate_activation_epoch = None;
         let commission_rate_in_basis_points = true;
         let adjust_delegations_for_rent = true;
 
         let maybe_rewards = redeem_stake_rewards(
             &mut pre_stake,
-            vote_state.inflation_rewards_commission_bps,
-            DelegatedVoteState::from(&vote_state),
+            vote_state.as_ref_v4().inflation_rewards_commission_bps,
+            DelegatedVoteState::from(vote_state.as_ref_v4()),
             CalculationEnvironment {
                 rewarded_epoch,
                 point_value: &PointValue {
@@ -999,7 +999,7 @@ mod tests {
         // -> decrease stake
         // This case is confusing because it pays out 2 lamports in rewards,
         // so we adjust minimum up so that even with 2 lamports in rewards, the
-        // delegation goegs down.
+        // delegation goes down.
         check_rent_adjusted_stake_delegation(
             rewarded_epoch,
             Stake {
