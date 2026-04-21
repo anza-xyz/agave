@@ -2,10 +2,7 @@
 //! By default, signatures are verified in parallel using all available CPU
 //! cores.
 use {
-    crate::{
-        packet::{PacketBatch, PacketFlags, PacketRefMut},
-        recycled_vec::RecycledVec,
-    },
+    crate::packet::{PacketBatch, PacketFlags, PacketRefMut},
     agave_transaction_view::{
         transaction_data::TransactionData, transaction_version::TransactionVersion,
         transaction_view::SanitizedTransactionView,
@@ -15,8 +12,6 @@ use {
 
 // Empirically derived to constrain max verify latency to ~8ms at lower packet counts
 pub const VERIFY_PACKET_CHUNK_SIZE: usize = 128;
-
-pub type TxOffset = RecycledVec<u32>;
 
 /// Returns true if the signature on the packet verifies.
 /// Caller must do packet.set_discard(true) if this returns false.
