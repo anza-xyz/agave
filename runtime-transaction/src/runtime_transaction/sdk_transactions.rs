@@ -56,8 +56,8 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
             precompile_signature_details.num_secp256r1_instruction_signatures,
         );
 
-        let versioned_transaction_config =
-            if let VersionedMessage::V1(msg) = &sanitized_versioned_tx.get_message().message {
+        let versioned_transaction_config = match &sanitized_versioned_tx.get_message().message {
+            VersionedMessage::V1(msg) => {
                 VersionedTransactionConfiguration::V1(TransactionConfiguration {
                     priority_fee_lamports: msg.config.priority_fee.unwrap_or(0),
                     compute_unit_limit: msg.config.compute_unit_limit.unwrap_or(0),
@@ -67,16 +67,16 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
                         .unwrap_or(0),
                     updated_heap_bytes: msg.config.heap_size.unwrap_or(HEAP_LENGTH as u32),
                 })
-            } else {
-                VersionedTransactionConfiguration::LegacyAndV0(
-                    ComputeBudgetInstructionDetails::try_from(
-                        sanitized_versioned_tx
-                            .get_message()
-                            .program_instructions_iter()
-                            .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix))),
-                    )?,
-                )
-            };
+            }
+            _ => VersionedTransactionConfiguration::LegacyAndV0(
+                ComputeBudgetInstructionDetails::try_from(
+                    sanitized_versioned_tx
+                        .get_message()
+                        .program_instructions_iter()
+                        .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix))),
+                )?,
+            ),
+        };
 
         Ok(Self {
             transaction: sanitized_versioned_tx,
