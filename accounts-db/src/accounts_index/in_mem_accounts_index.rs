@@ -428,7 +428,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 .expect("Slot list has entries");
 
             let mut reclaim_count = 0;
-            slot_list.retain_and_count(|(slot, value)| {
+            let count = slot_list.retain_and_count(|(slot, value)| {
                 // keep the newest entry, and reclaim all others
                 if *slot < max_slot {
                     assert!(!value.is_cached(), "Unsafe to reclaim cached entries");
@@ -439,6 +439,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     true
                 }
             });
+
+            assert_eq!(count, 1, "Slot list should have exactly one entry after cleaning");
 
             entry.unref_by_count(reclaim_count);
             assert_eq!(
