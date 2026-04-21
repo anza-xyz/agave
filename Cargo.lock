@@ -11325,7 +11325,6 @@ version = "4.1.0-alpha.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-logger",
- "ahash 0.8.12",
  "aquamarine",
  "assert_matches",
  "crossbeam-channel",
@@ -11340,7 +11339,6 @@ dependencies = [
  "solana-hash 4.3.0",
  "solana-keypair",
  "solana-ledger",
- "solana-message",
  "solana-metrics",
  "solana-poh",
  "solana-pubkey 4.2.0",
@@ -11348,7 +11346,6 @@ dependencies = [
  "solana-runtime-transaction",
  "solana-svm",
  "solana-svm-timings",
- "solana-system-interface 3.2.0",
  "solana-system-transaction",
  "solana-transaction",
  "solana-transaction-error",

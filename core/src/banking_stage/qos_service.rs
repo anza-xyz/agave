@@ -370,14 +370,14 @@ mod tests {
                     .unwrap()
                     .in_flight_transaction_count()
             );
-            // select_transactions_per_cost doesn't consider write_lock_accounts in the
+            // select_transactions_per_cost doesn't consider written_accounts in the
             // cost tracker (only occurs post commit), so size and count should be 0 at
             // this point
             assert_eq!(
                 0,
                 bank.read_cost_tracker()
                     .unwrap()
-                    .write_lock_accounts_data_size()
+                    .written_accounts_data_size()
             );
 
             // all transactions are committed with actual units more than estimated
@@ -454,7 +454,7 @@ mod tests {
                 0,
                 bank.read_cost_tracker()
                     .unwrap()
-                    .write_lock_accounts_data_size()
+                    .written_accounts_data_size()
             );
 
             QosService::remove_or_update_costs(qos_cost_results.iter(), None, &bank);
@@ -464,7 +464,7 @@ mod tests {
                 0,
                 bank.read_cost_tracker()
                     .unwrap()
-                    .write_lock_accounts_data_size()
+                    .written_accounts_data_size()
             );
         }
     }
@@ -520,7 +520,7 @@ mod tests {
                 0,
                 bank.read_cost_tracker()
                     .unwrap()
-                    .write_lock_accounts_data_size()
+                    .written_accounts_data_size()
             );
             // Half of transactions are not committed, the rest with cost adjustment
             let committed_status: Vec<CommitTransactionDetails> = qos_cost_results

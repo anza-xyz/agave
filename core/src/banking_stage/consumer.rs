@@ -373,7 +373,10 @@ impl Consumer {
                 batch.sanitized_transactions(),
                 &processing_results,
             )
-            .expect("staging cost tracker account size updates should not fail");
+            .expect(
+                "no enforcement occurs when staging cost tracker account size updates so it \
+                 should not fail",
+            );
 
         let reserved_bytes =
             bank.entry_bytes_budget()
@@ -1124,7 +1127,7 @@ mod tests {
             24,
             bank.read_cost_tracker()
                 .unwrap()
-                .write_lock_accounts_data_size()
+                .written_accounts_data_size()
         );
 
         let writable_accounts_map = bank
@@ -1247,7 +1250,7 @@ mod tests {
         let ProcessTransactionBatchOutput {
             execute_and_commit_transactions_output,
             ..
-        } = execute_transactions_for_test(bank.clone(), transactions);
+        } = execute_transactions_for_test(bank, transactions);
 
         // All the transactions should have been replayed
         assert_eq!(

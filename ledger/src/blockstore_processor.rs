@@ -266,7 +266,7 @@ pub fn execute_batch<'a>(
             pre_commit_callback,
         )?;
 
-    let mut check_block_costs_elapsed = Measure::start("check_block_costs");
+    let mut check_block_costs_elapsed: Measure = Measure::start("check_block_costs");
     let tx_costs = if block_verification {
         // Block verification (including unified scheduler) case;
         // collect and check transaction costs
@@ -5920,7 +5920,7 @@ pub mod tests {
             .map(|(pubkey, costs)| (*pubkey, costs.data_size))
             .collect::<HashMap<_, _>>();
         assert_eq!(
-            HashMap::from_iter([(payer_pubkey, 0), (recipient, 0), (temp_account_pubkey, 10),]),
+            HashMap::from_iter([(payer_pubkey, 0), (recipient, 0), (temp_account_pubkey, 10)]),
             writable_accounts_map,
         );
     }

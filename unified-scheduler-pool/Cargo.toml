@@ -15,7 +15,6 @@ dev-context-only-utils = []
 
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
-ahash = { workspace = true }
 aquamarine = { workspace = true }
 assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -27,7 +26,6 @@ scopeguard = { workspace = true }
 solana-clock = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-ledger = { workspace = true }
-solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-poh = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -35,7 +33,6 @@ solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-svm = { workspace = true }
 solana-svm-timings = { workspace = true }
-solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }

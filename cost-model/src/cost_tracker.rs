@@ -88,7 +88,7 @@ pub struct CostTracker {
     /// removal if the transaction does not end up getting committed.
     in_flight_transaction_count: Saturating<usize>,
     secp256r1_instruction_signature_count: Saturating<u64>,
-    write_lock_accounts_data_size: Saturating<u64>,
+    written_accounts_data_size: Saturating<u64>,
 }
 
 impl Default for CostTracker {
@@ -114,7 +114,7 @@ impl Default for CostTracker {
             ed25519_instruction_signature_count: Saturating(0),
             in_flight_transaction_count: Saturating(0),
             secp256r1_instruction_signature_count: Saturating(0),
-            write_lock_accounts_data_size: Saturating(0),
+            written_accounts_data_size: Saturating(0),
         }
     }
 }
@@ -225,24 +225,51 @@ impl CostTracker {
         &self,
         updates: Vec<(&'a Pubkey, usize)>,
     ) -> Result<StagedAccountSizeUpdates<'a>, CostTrackerError> {
+        let mut deduped_updates =
+            HashMap::<&'a Pubkey, usize, ahash::RandomState>::with_capacity_and_hasher(
+                updates.len(),
+                ahash::RandomState::new(),
+            );
+        // note: we retain the last deduplicate as it overwrites previous dups
+        for (pubkey, new_size) in updates {
+            deduped_updates.insert(pubkey, new_size);
+        }
+
+        let staged_written_accounts_data_size = deduped_updates.iter().fold(
+            self.written_accounts_data_size.0,
+            |staged_written_accounts_data_size, (pubkey, new_size)| {
+                let previous_size = self
+                    .costs_by_writable_accounts
+                    .get(pubkey)
+                    .map_or(0, |costs| costs.data_size);
+                staged_written_accounts_data_size
+                    .saturating_sub(previous_size as u64)
+                    .saturating_add(*new_size as u64)
+            },
+        );
+
         // if/when a block constraint for writable account data size is introduced,
         // it will be enforced here
-        Ok(StagedAccountSizeUpdates(updates))
+
+        Ok(StagedAccountSizeUpdates {
+            updates: deduped_updates,
+            written_accounts_data_size: staged_written_accounts_data_size,
+        })
     }
 
     pub fn apply_staged_account_size_updates<'a>(
         &mut self,
         staged_updates: StagedAccountSizeUpdates<'a>,
     ) {
-        staged_updates.0.into_iter().for_each(|(pubkey, new_size)| {
-            let old_costs = self.costs_by_writable_accounts.entry(*pubkey).or_default();
-            self.write_lock_accounts_data_size.0 = self
-                .write_lock_accounts_data_size
-                .0
-                .saturating_sub(old_costs.data_size as u64)
-                .saturating_add(new_size as u64);
-            old_costs.data_size = new_size;
-        });
+        staged_updates
+            .updates
+            .into_iter()
+            .for_each(|(pubkey, new_size)| {
+                let writable_accounts_costs =
+                    self.costs_by_writable_accounts.entry(*pubkey).or_default();
+                writable_accounts_costs.data_size = new_size;
+            });
+        self.written_accounts_data_size = Saturating(staged_updates.written_accounts_data_size);
     }
 
     pub fn remove(&mut self, tx_cost: &TransactionCost<impl TransactionWithMeta>) {
@@ -265,8 +292,8 @@ impl CostTracker {
         self.transaction_count.0
     }
 
-    pub fn write_lock_accounts_data_size(&self) -> u64 {
-        self.write_lock_accounts_data_size.0
+    pub fn written_accounts_data_size(&self) -> u64 {
+        self.written_accounts_data_size.0
     }
 
     pub fn report_stats(
@@ -328,8 +355,8 @@ impl CostTracker {
             ("total_priority_fee", total_priority_fee, i64),
             ("number_of_contended_accounts", number_of_contended_accounts, i64),
             (
-                "write_lock_accounts_data_size",
-                self.write_lock_accounts_data_size.0,
+                "written_accounts_data_size",
+                self.written_accounts_data_size.0,
                 i64
             ),
         );
@@ -501,7 +528,10 @@ pub struct WritableAccountCosts {
     pub data_size: usize,
 }
 
-pub struct StagedAccountSizeUpdates<'a>(Vec<(&'a Pubkey, usize)>);
+pub struct StagedAccountSizeUpdates<'a> {
+    updates: HashMap<&'a Pubkey, usize, ahash::RandomState>,
+    written_accounts_data_size: u64,
+}
 
 /// Wrapper around blockcost to allow fast sharing of the value without locking.
 /// Value is read-only outside of cost-tracker.
@@ -1092,7 +1122,7 @@ mod tests {
     }
 
     #[test]
-    fn test_update_execution_cost_applies_write_lock_account_data_size_updates() {
+    fn test_update_execution_cost_applies_written_account_data_size_updates() {
         let mint_keypair = test_setup();
         let mint_pubkey = mint_keypair.pubkey();
         let other_pubkey = Pubkey::new_unique();
@@ -1101,7 +1131,7 @@ mod tests {
         let mut cost_tracker = CostTracker::default();
 
         assert!(cost_tracker.try_add(&tx_cost).is_ok());
-        assert_eq!(0, cost_tracker.write_lock_accounts_data_size.0);
+        assert_eq!(0, cost_tracker.written_accounts_data_size.0);
 
         cost_tracker.update_execution_cost(&tx_cost, 100, 0);
         cost_tracker.apply_staged_account_size_updates(
@@ -1109,7 +1139,7 @@ mod tests {
                 .try_stage_account_size_updates(vec![(&mint_pubkey, 10)])
                 .unwrap(),
         );
-        assert_eq!(10, cost_tracker.write_lock_accounts_data_size.0);
+        assert_eq!(10, cost_tracker.written_accounts_data_size.0);
         assert_eq!(
             Some(10),
             cost_tracker
@@ -1125,7 +1155,7 @@ mod tests {
                 .unwrap(),
         );
 
-        assert_eq!(25, cost_tracker.write_lock_accounts_data_size.0);
+        assert_eq!(25, cost_tracker.written_accounts_data_size.0);
         assert_eq!(
             Some(20),
             cost_tracker
@@ -1158,7 +1188,7 @@ mod tests {
                 .unwrap(),
         );
 
-        assert_eq!(35, cost_tracker.write_lock_accounts_data_size());
+        assert_eq!(35, cost_tracker.written_accounts_data_size());
         assert_eq!(
             Some(15),
             cost_tracker
@@ -1193,13 +1223,14 @@ mod tests {
                 (&first_pubkey, 11),
             ])
             .unwrap();
+        assert_eq!(31, staged_updates.written_accounts_data_size);
 
         // staging alone should not affect the live value
-        assert_eq!(7, cost_tracker.write_lock_accounts_data_size());
+        assert_eq!(7, cost_tracker.written_accounts_data_size());
 
         drop(staged_updates);
 
-        assert_eq!(7, cost_tracker.write_lock_accounts_data_size());
+        assert_eq!(7, cost_tracker.written_accounts_data_size());
         assert_eq!(
             Some(7),
             cost_tracker
@@ -1224,7 +1255,7 @@ mod tests {
             .unwrap();
         cost_tracker.apply_staged_account_size_updates(staged_updates);
 
-        assert_eq!(31, cost_tracker.write_lock_accounts_data_size());
+        assert_eq!(31, cost_tracker.written_accounts_data_size());
         assert_eq!(
             Some(11),
             cost_tracker
