@@ -452,6 +452,9 @@ pub mod worker_message_types {
         pub const ALREADY_PROCESSED: u8 = 1 << 3;
         /// Flag set if status checks failed due to an invalid nonce state.
         pub const INVALID_NONCE: u8 = 1 << 4;
+        /// Flag set if status checks failed due to unsupported version of
+        /// transaction was received.
+        pub const UNSUPPORTED_VERSION: u8 = 1 << 5;
     }
 
     pub mod fee_payer_balance_flags {
