@@ -269,6 +269,10 @@ impl<const SANITIZED: bool, D: TransactionData> Debug for TransactionView<SANITI
 }
 
 impl<D: TransactionData> SVMStaticMessage for TransactionView<true, D> {
+    fn version(&self) -> solana_transaction::versioned::TransactionVersion {
+        self.version().into()
+    }
+
     fn num_transaction_signatures(&self) -> u64 {
         self.num_required_signatures() as u64
     }
@@ -315,6 +319,10 @@ impl<D: TransactionData> SVMStaticMessage for TransactionView<true, D> {
 }
 
 impl<D: TransactionData> SVMStaticMessage for &TransactionView<true, D> {
+    fn version(&self) -> solana_transaction::versioned::TransactionVersion {
+        <TransactionView<true, D> as SVMStaticMessage>::version(self)
+    }
+
     fn num_transaction_signatures(&self) -> u64 {
         <TransactionView<true, D> as SVMStaticMessage>::num_transaction_signatures(self)
     }

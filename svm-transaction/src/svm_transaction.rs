@@ -1,14 +1,8 @@
-use {
-    crate::svm_message::SVMMessage, solana_signature::Signature,
-    solana_transaction::versioned::TransactionVersion,
-};
+use {crate::svm_message::SVMMessage, solana_signature::Signature};
 
 mod sanitized_transaction;
 
 pub trait SVMTransaction: SVMMessage {
-    /// Get the transaction version.
-    fn version(&self) -> TransactionVersion;
-
     /// Get the first signature of the message.
     fn signature(&self) -> &Signature;
 
