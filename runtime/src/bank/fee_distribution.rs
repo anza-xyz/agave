@@ -559,13 +559,15 @@ pub mod tests {
         );
     }
 
-    #[test]
-    fn test_deposit_or_burn_fee_respects_relaxed_post_exec_min_balance_check() {
+    #[test_case(true; "custom_commission_collector")]
+    #[test_case(false; "no_custom_commission_collector")]
+    fn test_deposit_or_burn_fee_respects_relaxed_post_exec_min_balance_check(
+        custom_commission_collector: bool,
+    ) {
         for relax_post_exec_min_balance_check in [false, true] {
-            let mut genesis = create_genesis_config(0);
+            let mut genesis = create_genesis_config_with_leader(0, &pubkey::new_rand(), 1000);
             let rent = Rent::default();
             genesis.genesis_config.rent = rent.clone();
-            let mut bank = Bank::new_for_tests(&genesis.genesis_config);
 
             let data_len = 64;
             let rent_exempt_minimum = rent.minimum_balance(data_len);
@@ -574,16 +576,39 @@ pub mod tests {
             let pre_balance = rent_exempt_minimum - 2;
             let deposit = 1;
             let post_balance = pre_balance + deposit;
-            let leader_id = *bank.leader_id();
+            let maybe_collector_id = if custom_commission_collector {
+                let mut maybe_collector_id = None;
+                for account in genesis.genesis_config.accounts.values_mut() {
+                    if account.owner == solana_sdk_ids::vote::id() {
+                        let mut vote_state =
+                            VoteStateV4::deserialize(account.data(), &Pubkey::default()).unwrap();
+                        let collector_id = Pubkey::new_unique();
+                        vote_state.block_revenue_collector = collector_id;
+                        maybe_collector_id = Some(collector_id);
+                        let versioned = VoteStateVersions::V4(Box::new(vote_state));
+                        account.set_state(&versioned).unwrap();
+                    }
+                }
+                maybe_collector_id
+            } else {
+                None
+            };
+
+            let mut bank = Bank::new_for_tests(&genesis.genesis_config);
 
             let account = AccountSharedData::new(pre_balance, data_len, &system_program::id());
-            bank.store_account(&leader_id, &account);
 
             let mut feature_set = FeatureSet::all_enabled();
+            if !custom_commission_collector {
+                feature_set.deactivate(&agave_feature_set::custom_commission_collector::id());
+            }
             if !relax_post_exec_min_balance_check {
                 feature_set.deactivate(&feature_set::relax_post_exec_min_balance_check::id());
             }
             bank.feature_set = Arc::new(feature_set);
+
+            let collector_id = maybe_collector_id.unwrap_or(*bank.leader_id());
+            bank.store_account(&collector_id, &account);
 
             let burned = bank.deposit_or_burn_fee(deposit);
             let rewards = bank.rewards.read().unwrap();
@@ -594,12 +619,12 @@ pub mod tests {
             // make it rent-exempt then it fails and the deposit is burned.
             if relax_post_exec_min_balance_check {
                 assert_eq!(burned, 0);
-                assert_eq!(bank.get_balance(&leader_id), post_balance);
+                assert_eq!(bank.get_balance(&collector_id), post_balance);
                 assert_eq!(rewards.len(), 1, "fee should be distributed to the leader");
                 assert_eq!(rewards[0].1.post_balance, post_balance);
             } else {
                 assert_eq!(burned, deposit);
-                assert_eq!(bank.get_balance(&leader_id), pre_balance);
+                assert_eq!(bank.get_balance(&collector_id), pre_balance);
                 assert!(
                     rewards.is_empty(),
                     "fee should be burned when the rent transition is invalid"
