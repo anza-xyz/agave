@@ -218,7 +218,7 @@ impl BlockProductionMethod {
         "Switch transaction scheduling method for producing ledger entries"
     }
 
-    pub fn warn_if_deprecated(&self) {
+    pub fn warn_if_deprecated_value(&self) {
         if matches!(self, Self::CentralScheduler) {
             warn!(
                 "`central-scheduler` is deprecated and will be removed in a future release; use \
