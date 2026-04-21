@@ -251,3 +251,6 @@ opt-level = 1
 # The test programs are build in release mode
 # Minimize their file size so that they fit into the account size limit
 strip = true
+
+[patch.crates-io]
+solana-sbpf = { git = "https://github.com/anza-xyz/sbpf", rev = "refs/heads/main" }
