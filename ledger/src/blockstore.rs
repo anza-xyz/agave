@@ -16,8 +16,9 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         next_slots_iterator::NextSlotsIterator,
         shred::{
-            self, DATA_SHREDS_PER_FEC_BLOCK, ErasureSetId, ProcessShredsStats, ReedSolomonCache,
-            Shred, ShredFlags, ShredId, ShredType, Shredder,
+            self, DATA_SHREDS_PER_FEC_BLOCK, ErasureSetId, Payload, ProcessShredsStats,
+            ReedSolomonCache, Shred, ShredFlags, ShredId, ShredType, Shredder,
+            filter::ShredRecoveryContext,
             merkle_tree::{MerkleTree, SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
         },
         slot_stats::{ShredSource, SlotsStats},
@@ -53,7 +54,6 @@ use {
     solana_signature::Signature,
     solana_signer::Signer,
     solana_storage_proto::{StoredExtendedRewards, StoredTransactionStatusMeta},
-    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     solana_time_utils::timestamp,
     solana_transaction::{
         TransactionVerificationMode,
@@ -1293,20 +1293,22 @@ impl Blockstore {
         })
     }
 
-    /// Performs shred recovery for `erasure_meta`
+    /// Performs shred recovery for `erasure_meta`, applying shred sanitization and filters
+    /// to the recovered shreds.
     /// Note: that we do not do recovery on the Alternate shred columns
-    fn recover_shreds<'a>(
-        &'a self,
-        index: &'a Index,
-        erasure_meta: &'a ErasureMeta,
-        prev_inserted_shreds: &'a HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
-        reed_solomon_cache: &'a ReedSolomonCache,
-    ) -> std::result::Result<impl Iterator<Item = Shred> + 'a, shred::Error> {
+    fn recover_shreds(
+        &self,
+        index: &Index,
+        erasure_meta: &ErasureMeta,
+        prev_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+        shred_recovery_ctx: &mut ShredRecoveryContext,
+        recovered_shreds: &mut Vec<Payload>,
+        recovered_data_shreds: &mut Vec<Shred>,
+    ) -> std::result::Result<(), shred::Error> {
         // Find shreds for this erasure set and try recovery
         let data = self.get_recovery_data_shreds(index, erasure_meta, prev_inserted_shreds);
         let code = self.get_recovery_coding_shreds(index, erasure_meta, prev_inserted_shreds);
-        let shreds = shred::recover(data.chain(code), reed_solomon_cache)?;
-        Ok(shreds.filter_map(std::result::Result::ok))
+        shred_recovery_ctx.recover(data.chain(code), recovered_shreds, recovered_data_shreds)
     }
 
     /// Collects and reports [`BlockstoreRocksDbColumnFamilyMetrics`] for the
@@ -1477,20 +1479,26 @@ impl Blockstore {
         metrics.insert_shreds_elapsed_us += start.as_us();
     }
 
-    fn try_shred_recovery<'a>(
-        &'a self,
-        erasure_metas: &'a BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
-        index_working_set: &'a HashMap<(BlockLocation, u64), IndexMetaWorkingSetEntry>,
-        prev_inserted_shreds: &'a HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
-        reed_solomon_cache: &'a ReedSolomonCache,
-    ) -> impl Iterator<Item = Shred> + 'a {
-        // Recovery rules:
-        // 1. Only try recovery around indexes for which new data or coding shreds are received
-        // 2. For new data shreds, check if an erasure set exists. If not, don't try recovery
-        // 3. Before trying recovery, check if enough number of shreds have been received
-        // 3a. Enough number of shreds = (#data + #coding shreds) > erasure.num_data
-        // 4. Only perform rceovery in the Original column
-        erasure_metas
+    /// Attempt shred recovery for erasure metas
+    /// Recovery rules:
+    /// 1. Only try recovery around indexes for which new data or coding shreds are received
+    /// 2. For new data shreds, check if an erasure set exists. If not, don't try recovery
+    /// 3. Before trying recovery, check if enough number of shreds have been received
+    ///    3a. Enough number of shreds = (#data + #coding shreds) > erasure.num_data
+    /// 4. Only perform rceovery in the Original column
+    ///
+    /// Returns (recovered_shreds, recovered_data_shreds)
+    fn try_shred_recovery(
+        &self,
+        erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
+        index_working_set: &HashMap<(BlockLocation, u64), IndexMetaWorkingSetEntry>,
+        prev_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+        shred_recovery_ctx: &mut ShredRecoveryContext,
+    ) -> (
+        /* recovered_shreds */ Vec<Payload>,
+        /* recovered_data_shreds */ Vec<Shred>,
+    ) {
+        let erasure_metas_to_recover = erasure_metas
             .iter()
             .filter_map(|(erasure_set, working_erasure_meta)| {
                 let erasure_meta = working_erasure_meta.as_ref();
@@ -1501,17 +1509,32 @@ impl Blockstore {
                 let index = &index_meta_entry.index;
                 erasure_meta
                     .should_recover_shreds(index)
-                    .then(|| {
-                        self.recover_shreds(
-                            index,
-                            erasure_meta,
-                            prev_inserted_shreds,
-                            reed_solomon_cache,
-                        )
-                    })?
-                    .ok()
+                    .then_some((index, erasure_meta))
             })
-            .flatten()
+            .collect_vec();
+
+        let max_recovered_shreds = erasure_metas_to_recover.len() * DATA_SHREDS_PER_FEC_BLOCK;
+        let mut recovered_shreds = Vec::with_capacity(max_recovered_shreds);
+        let mut recovered_data_shreds = Vec::with_capacity(max_recovered_shreds);
+        for (index, erasure_meta) in erasure_metas_to_recover {
+            let _ = self
+                .recover_shreds(
+                    index,
+                    erasure_meta,
+                    prev_inserted_shreds,
+                    shred_recovery_ctx,
+                    &mut recovered_shreds,
+                    &mut recovered_data_shreds,
+                )
+                .inspect_err(|e| {
+                    info!(
+                        "Unable to perform shred recovery for slot {} fec set {}: {e:?}",
+                        index.slot,
+                        erasure_meta.fec_set_index()
+                    )
+                });
+        }
+        (recovered_shreds, recovered_data_shreds)
     }
 
     /// Attempts shred recovery and does the following for recovered data
@@ -1524,42 +1547,20 @@ impl Blockstore {
     fn handle_shred_recovery(
         &self,
         leader_schedule: Option<&LeaderScheduleCache>,
-        reed_solomon_cache: &ReedSolomonCache,
+        shred_recovery_context: &mut ShredRecoveryContext,
         shred_insertion_tracker: &mut ShredInsertionTracker,
-        retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
         is_trusted: bool,
         metrics: &mut BlockstoreInsertionMetrics,
     ) {
         let mut start = Measure::start("Shred recovery");
-        let mut recovered_shreds = Vec::new();
-        let recovered_data_shreds: Vec<_> = self
-            .try_shred_recovery(
-                &shred_insertion_tracker.erasure_metas,
-                &shred_insertion_tracker.index_working_set,
-                &shred_insertion_tracker.just_inserted_shreds,
-                reed_solomon_cache,
-            )
-            .filter_map(|shred| {
-                // All shreds should be retransmitted, but because there are no
-                // more missing data shreds in the erasure batch, coding shreds
-                // are not stored in blockstore.
-                match shred.shred_type() {
-                    ShredType::Code => {
-                        // Don't need Arc overhead here!
-                        recovered_shreds.push(shred.into_payload());
-                        None
-                    }
-                    ShredType::Data => {
-                        // Verify that the cloning is cheap here.
-                        recovered_shreds.push(shred.payload().clone());
-                        Some(shred)
-                    }
-                }
-            })
-            .collect();
-        if !recovered_shreds.is_empty() {
-            let _ = retransmit_sender.try_send(recovered_shreds);
-        }
+        let (recovered_shreds, recovered_data_shreds) = self.try_shred_recovery(
+            &shred_insertion_tracker.erasure_metas,
+            &shred_insertion_tracker.index_working_set,
+            &shred_insertion_tracker.just_inserted_shreds,
+            shred_recovery_context,
+        );
+        shred_recovery_context.try_retransmit_shreds(recovered_shreds);
+
         metrics.num_recovered += recovered_data_shreds.len();
         for shred in recovered_data_shreds {
             let slot = shred.slot();
@@ -1946,17 +1947,14 @@ impl Blockstore {
     ///     pair to the `cf::Index` column family for each index_working_set_entry which insert did occur in this function call.
     ///
     /// Arguments:
-    ///  - `shreds`: the shreds to be inserted, alongside the location to insert.
-    ///  - `is_repaired`: a boolean vector aligned with `shreds` where each
-    ///    boolean indicates whether the corresponding shred is repaired or not.
+    ///  - `shreds`: the shreds to be inserted, alongside their repaired flag and
+    ///    insertion location.
     ///  - `leader_schedule`: the leader schedule
     ///  - `is_trusted`: whether the shreds come from a trusted source. If this
     ///    is set to true, then the function will skip the shred duplication and
     ///    integrity checks.
-    ///  - `retransmit_sender`: the sender for transmitting any recovered
-    ///    data shreds.
-    ///  - `handle_duplicate`: a function for handling shreds that have the same slot
-    ///    and index.
+    ///  - `shred_recovery_context`: recovery-time dependencies and policy for
+    ///    erasure recovery. `None` disables recovery.
     ///  - `metrics`: the metric for reporting detailed stats
     ///
     /// On success, the function returns an Ok result with a vector of
@@ -1975,10 +1973,7 @@ impl Blockstore {
         // retransmit channel either. Otherwise, if we are inserting shreds
         // from another leader, we need to try erasure recovery and retransmit
         // recovered shreds.
-        should_recover_shreds: Option<(
-            &ReedSolomonCache,
-            &EvictingSender<Vec<shred::Payload>>, // retransmit_sender
-        )>,
+        shred_recovery_context: Option<&mut ShredRecoveryContext>,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<InsertResults> {
         let mut total_start = Measure::start("Total elapsed");
@@ -2000,12 +1995,11 @@ impl Blockstore {
             &mut shred_insertion_tracker,
             metrics,
         );
-        if let Some((reed_solomon_cache, retransmit_sender)) = should_recover_shreds {
+        if let Some(shred_recovery_context) = shred_recovery_context {
             self.handle_shred_recovery(
                 leader_schedule,
-                reed_solomon_cache,
+                shred_recovery_context,
                 &mut shred_insertion_tracker,
-                retransmit_sender,
                 is_trusted,
                 metrics,
             );
@@ -2052,6 +2046,7 @@ impl Blockstore {
 
     /// Simlar to `insert_shreds_at_location_handle_duplicate`  but always inserts
     /// shreds in the original column specified by `BlockLocation::Original`
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn insert_shreds_handle_duplicate<'a, F>(
         &self,
         shreds: impl IntoIterator<
@@ -2060,9 +2055,8 @@ impl Blockstore {
         >,
         leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
-        retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
+        shred_recovery_context: &mut ShredRecoveryContext,
         handle_duplicate: &F,
-        reed_solomon_cache: &ReedSolomonCache,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<Vec<CompletedDataSetInfo>>
     where
@@ -2074,9 +2068,8 @@ impl Blockstore {
                 .map(|(shred, is_repaired)| (shred, is_repaired, BlockLocation::Original)),
             leader_schedule,
             is_trusted,
-            retransmit_sender,
+            shred_recovery_context,
             handle_duplicate,
-            reed_solomon_cache,
             metrics,
         )
     }
@@ -2094,9 +2087,8 @@ impl Blockstore {
         >,
         leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
-        retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
+        shred_recovery_context: &mut ShredRecoveryContext,
         handle_duplicate: &F,
-        reed_solomon_cache: &ReedSolomonCache,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<Vec<CompletedDataSetInfo>>
     where
@@ -2109,7 +2101,7 @@ impl Blockstore {
             shreds,
             leader_schedule,
             is_trusted,
-            Some((reed_solomon_cache, retransmit_sender)),
+            Some(shred_recovery_context),
             metrics,
         )?;
 
@@ -2187,7 +2179,7 @@ impl Blockstore {
             shreds,
             leader_schedule,
             is_trusted,
-            None, // (reed_solomon_cache, retransmit_sender)
+            None, // Skip recovery for locally produced shreds.
             &mut BlockstoreInsertionMetrics::default(),
         )?;
         Ok(insert_results.completed_data_set_infos)
@@ -2219,7 +2211,7 @@ impl Blockstore {
                 )],
                 Some(leader_schedule),
                 false,
-                None, // (reed_solomon_cache, retransmit_sender)
+                None, // Skip recovery for this direct insertion path.
                 &mut BlockstoreInsertionMetrics::default(),
             )
             .unwrap();
@@ -6196,10 +6188,12 @@ pub mod tests {
         crate::{
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             shred::{
-                max_ticks_per_n_shreds,
+                ShredFlags, max_ticks_per_n_shreds,
+                merkle::finish_erasure_batch_for_tests,
                 merkle_tree::{SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, verify_merkle_proof},
             },
         },
+        agave_feature_set::discard_unexpected_data_complete_shreds,
         assert_matches::assert_matches,
         crossbeam_channel::unbounded,
         rand::{rng, seq::SliceRandom},
@@ -6216,6 +6210,7 @@ pub mod tests {
         solana_shred_version::version_from_hash,
         solana_signature::Signature,
         solana_storage_proto::convert::generated,
+        solana_streamer::evicting_sender::EvictingSender,
         solana_transaction::Transaction,
         solana_transaction_context::transaction::TransactionReturnData,
         solana_transaction_error::TransactionError,
@@ -10857,6 +10852,8 @@ pub mod tests {
         let slot = 1;
         let (data_shreds, coding_shreds, leader_schedule_cache) =
             setup_erasure_shreds(slot, 0, 100);
+        let genesis_config = create_genesis_config(2).genesis_config;
+        let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
         let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
         let coding_shreds = coding_shreds.into_iter().map(|shred| {
@@ -10871,7 +10868,12 @@ pub mod tests {
                 coding_shreds,
                 Some(&leader_schedule_cache),
                 false, // is_trusted
-                Some((&ReedSolomonCache::default(), &dummy_retransmit_sender)),
+                Some(&mut ShredRecoveryContext::new(
+                    ReedSolomonCache::default(),
+                    dummy_retransmit_sender,
+                    root_bank,
+                    0, // shred_version
+                )),
                 &mut BlockstoreInsertionMetrics::default(),
             )
             .unwrap();
@@ -10888,6 +10890,113 @@ pub mod tests {
             );
         }
 
+        verify_index_integrity(&blockstore, slot);
+    }
+
+    #[test]
+    fn test_recovery_discards_unexpected_data_complete_shreds() {
+        const DATA_SHRED_FLAGS_OFFSET: usize = 85;
+
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let genesis_config = create_genesis_config(2).genesis_config;
+        let mut root_bank = Bank::new_for_tests(&genesis_config);
+        root_bank.activate_feature(&discard_unexpected_data_complete_shreds::id());
+        let root_bank = Arc::new(root_bank);
+        let slot = root_bank.get_slots_in_epoch(root_bank.epoch());
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let (data_shreds, coding_shreds, leader_keypair, leader_schedule_cache) =
+            setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot_and_keypair(
+                slot,
+                0,
+                100,
+                0,
+                Hash::new_from_array(rand::rng().random()),
+                false, // is_last_in_slot
+            );
+        assert!(data_shreds.len() >= DATA_SHREDS_PER_FEC_BLOCK);
+        assert!(coding_shreds.len() >= DATA_SHREDS_PER_FEC_BLOCK);
+
+        let mut first_fec_set: Vec<_> = data_shreds[..DATA_SHREDS_PER_FEC_BLOCK]
+            .iter()
+            .cloned()
+            .chain(coding_shreds[..DATA_SHREDS_PER_FEC_BLOCK].iter().cloned())
+            .collect();
+        let chained_merkle_root = first_fec_set[0].chained_merkle_root().unwrap();
+
+        for shred in first_fec_set.iter_mut().take(DATA_SHREDS_PER_FEC_BLOCK) {
+            let mut payload = shred.payload().clone();
+            payload.as_mut()[DATA_SHRED_FLAGS_OFFSET] |= ShredFlags::DATA_COMPLETE_SHRED.bits();
+            *shred = Shred::new_from_serialized_shred(payload).unwrap();
+        }
+        finish_erasure_batch_for_tests(
+            &leader_keypair,
+            &mut first_fec_set,
+            chained_merkle_root,
+            &reed_solomon_cache,
+        )
+        .unwrap();
+
+        let (mut data_shreds, mut coding_shreds): (Vec<_>, Vec<_>) =
+            first_fec_set.into_iter().partition(Shred::is_data);
+        data_shreds.sort_unstable_by_key(Shred::index);
+        coding_shreds.sort_unstable_by_key(Shred::index);
+
+        let valid_data_shred = data_shreds.pop().unwrap();
+        let shreds: Vec<_> = std::iter::once(valid_data_shred.clone())
+            .chain(
+                coding_shreds
+                    .into_iter()
+                    .take(DATA_SHREDS_PER_FEC_BLOCK - 1),
+            )
+            .map(|shred| {
+                (
+                    Cow::Owned(shred),
+                    /*is_repaired:*/ false,
+                    BlockLocation::Original,
+                )
+            })
+            .collect();
+        let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+        let mut metrics = BlockstoreInsertionMetrics::default();
+        blockstore
+            .do_insert_shreds(
+                shreds,
+                Some(&leader_schedule_cache),
+                false, // is_trusted
+                Some(&mut ShredRecoveryContext::new(
+                    reed_solomon_cache,
+                    dummy_retransmit_sender,
+                    root_bank,
+                    0, // shred_version
+                )),
+                &mut metrics,
+            )
+            .unwrap();
+
+        assert_eq!(metrics.num_recovered, 0);
+        assert_eq!(metrics.num_recovered_inserted, 0);
+        assert_eq!(metrics.num_recovered_failed_invalid, 0);
+
+        let index = blockstore.get_index(slot).unwrap().unwrap();
+        assert_eq!(index.data().num_shreds(), 1);
+        assert!(index.data().contains(u64::from(valid_data_shred.index())));
+        assert_eq!(
+            blockstore
+                .get_data_shred(slot, u64::from(valid_data_shred.index()))
+                .unwrap()
+                .unwrap(),
+            valid_data_shred.payload().as_ref(),
+        );
+        for shred in data_shreds {
+            assert!(
+                blockstore
+                    .get_data_shred(slot, u64::from(shred.index()))
+                    .unwrap()
+                    .is_none()
+            );
+        }
         verify_index_integrity(&blockstore, slot);
     }
 
@@ -11076,6 +11185,32 @@ pub mod tests {
         chained_merkle_root: Hash,
         is_last_in_slot: bool,
     ) -> (Vec<Shred>, Vec<Shred>, Arc<LeaderScheduleCache>) {
+        let (data_shreds, coding_shreds, _, leader_schedule_cache) =
+            setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot_and_keypair(
+                slot,
+                parent_slot,
+                num_entries,
+                fec_set_index,
+                chained_merkle_root,
+                is_last_in_slot,
+            );
+
+        (data_shreds, coding_shreds, leader_schedule_cache)
+    }
+
+    fn setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot_and_keypair(
+        slot: u64,
+        parent_slot: u64,
+        num_entries: u64,
+        fec_set_index: u32,
+        chained_merkle_root: Hash,
+        is_last_in_slot: bool,
+    ) -> (
+        Vec<Shred>,
+        Vec<Shred>,
+        Arc<Keypair>,
+        Arc<LeaderScheduleCache>,
+    ) {
         let entries = make_slot_entries_with_transactions(num_entries);
         let leader_keypair = Arc::new(Keypair::new());
         let shredder = Shredder::new(slot, parent_slot, 0, 0).unwrap();
@@ -11104,7 +11239,12 @@ pub mod tests {
         };
         leader_schedule_cache.set_fixed_leader_schedule(Some(fixed_schedule));
 
-        (data_shreds, coding_shreds, Arc::new(leader_schedule_cache))
+        (
+            data_shreds,
+            coding_shreds,
+            leader_keypair,
+            Arc::new(leader_schedule_cache),
+        )
     }
 
     fn verify_index_integrity(blockstore: &Blockstore, slot: u64) {

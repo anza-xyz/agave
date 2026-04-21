@@ -3,16 +3,19 @@
 
 use {
     super::{
-        DATA_SHREDS_PER_FEC_BLOCK, MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT,
-        ShredFetchStats, ShredFlags, ShredType, ShredVariant, layout,
+        DATA_SHREDS_PER_FEC_BLOCK, Error, MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT,
+        Payload, ReedSolomonCache, Shred, ShredFetchStats, ShredFlags, ShredType, ShredVariant,
+        layout, merkle,
     },
     crate::blockstore,
     agave_feature_set::discard_unexpected_data_complete_shreds,
+    assert_matches::debug_assert_matches,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_perf::packet::PacketRef,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{
         sync::Arc,
         time::{Duration, Instant},
@@ -97,10 +100,6 @@ impl ShredFilterContext {
             // In the future as shred limit changes we can update self.max_*_shreds_per_slot based on root
             // bank as well
         }
-    }
-
-    pub fn stats_mut(&mut self) -> &mut ShredFetchStats {
-        &mut self.stats
     }
 
     pub fn maybe_submit_stats(&mut self, metric_name: &'static str, cadence: Duration) -> bool {
@@ -314,6 +313,114 @@ fn check_fixed_fec_set(index: u32, fec_set_index: u32) -> bool {
 /// This is checked during shred ingest with `enforce_fixed_fec_set` active.
 fn check_last_data_shred_index(index: u32) -> bool {
     (index + 1).is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK as u32)
+}
+
+/// Holds the context to perform filtering on shred recovery
+pub struct ShredRecoveryContext {
+    /// Used to perform RS erasure code recovery
+    pub reed_solomon_cache: ReedSolomonCache,
+    /// Sender to retransmit the recovered shreds
+    retransmit_sender: EvictingSender<Vec<Payload>>,
+    /// Used for filtering recovered shreds
+    shred_filter_ctx: ShredFilterContext,
+}
+
+impl ShredRecoveryContext {
+    pub fn new(
+        reed_solomon_cache: ReedSolomonCache,
+        retransmit_sender: EvictingSender<Vec<Payload>>,
+        root_bank: Arc<Bank>,
+        shred_version: u16,
+    ) -> Self {
+        let shred_filter_ctx = ShredFilterContext::new(root_bank, shred_version);
+        Self {
+            reed_solomon_cache,
+            retransmit_sender,
+            shred_filter_ctx,
+        }
+    }
+
+    /// Periodically (no more than once per slot) update the context used for filtering
+    /// recovered shreds. This is not latency sensitive as feature flags and slot filtering windows
+    /// have an epoch order tolerance
+    pub fn maybe_update(&mut self, root_bank: Arc<Bank>) {
+        self.shred_filter_ctx.maybe_update(root_bank);
+    }
+
+    /// Submit stats at most every two seconds
+    pub fn maybe_submit_stats(&mut self) {
+        self.shred_filter_ctx
+            .maybe_submit_stats("shred-recovery", Duration::from_secs(2));
+    }
+
+    /// Recover shreds and apply filtering to the recovered shreds
+    pub fn recover<T: IntoIterator<Item = Shred>>(
+        &mut self,
+        shreds: T,
+        recovered_shreds: &mut Vec<Payload>,
+        recovered_data_shreds: &mut Vec<Shred>,
+    ) -> Result<(), Error> {
+        let shreds = shreds
+            .into_iter()
+            .map(|shred| {
+                debug_assert_matches!(
+                    shred.common_header().shred_variant,
+                    ShredVariant::MerkleCode { .. } | ShredVariant::MerkleData { .. }
+                );
+                merkle::Shred::try_from(shred)
+            })
+            .collect::<Result<_, _>>()?;
+
+        // With Merkle shreds, leader signs the Merkle root of the erasure batch
+        // and all shreds within the same erasure batch have the same signature.
+        // For recovered shreds, the (unique) signature is copied from shreds which
+        // were received from turbine (or repair) and are already sig-verified.
+        // The same signature also verifies for recovered shreds because when
+        // reconstructing the Merkle tree for the erasure batch, we will obtain the
+        // same Merkle root.
+        let shreds = merkle::recover(shreds, &self.reed_solomon_cache)?;
+        shreds
+            .filter_map(|shred| shred.ok().map(Shred::from))
+            .filter(|shred| !self.should_discard_shred(shred))
+            .for_each(|shred| {
+                // All shreds should be retransmitted, but because there are no
+                // more missing data shreds in the erasure batch, coding shreds
+                // are not stored in blockstore.
+                match shred.shred_type() {
+                    ShredType::Code => {
+                        // Don't need Arc overhead here!
+                        recovered_shreds.push(shred.into_payload());
+                    }
+                    ShredType::Data => {
+                        // Verify that the cloning is cheap here.
+                        recovered_shreds.push(shred.payload().clone());
+                        recovered_data_shreds.push(shred);
+                    }
+                }
+            });
+        Ok(())
+    }
+    /// Send recovered shreds for retransmit
+    pub fn try_retransmit_shreds(&self, recovered_shreds: Vec<Payload>) {
+        if !recovered_shreds.is_empty() {
+            let _ = self.retransmit_sender.try_send(recovered_shreds);
+        }
+    }
+
+    /// If SIMD-0337 is active, apply filtering rules to recovered shreds
+    pub fn should_discard_shred(&mut self, shred: &Shred) -> bool {
+        if !check_feature_activation(
+            self.shred_filter_ctx
+                .discard_unexpected_data_complete_shreds_feature_slot,
+            shred.slot(),
+            &self.shred_filter_ctx.epoch_schedule,
+        ) {
+            // Only apply filtering rules to recovered shreds when SIMD-0337 is active
+            return false;
+        }
+
+        self.shred_filter_ctx.should_discard_shred(shred.payload())
+    }
 }
 
 #[cfg(test)]

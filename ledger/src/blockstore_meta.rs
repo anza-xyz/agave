@@ -680,6 +680,10 @@ impl ErasureMeta {
         self.config
     }
 
+    pub(crate) fn fec_set_index(&self) -> u32 {
+        self.fec_set_index
+    }
+
     pub(crate) fn data_shreds_indices(&self) -> Range<u64> {
         let num_data = self.config.num_data as u64;
         let fec_set_index = u64::from(self.fec_set_index);

@@ -430,6 +430,7 @@ impl Tvu {
                 repair_info,
                 window_service_channels,
                 leader_schedule_cache.clone(),
+                tvu_config.shred_version,
                 outstanding_repair_requests,
             )
         };
