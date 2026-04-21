@@ -7273,6 +7273,7 @@ dependencies = [
  "solana-svm-type-overrides",
  "solana-syscalls",
  "solana-system-interface 3.2.0",
+ "solana-system-program",
  "solana-transaction-context",
  "static_assertions",
  "test-case",
