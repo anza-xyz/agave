@@ -40,6 +40,7 @@ pub fn spawn(
     std::thread::Builder::new()
         .name("solTpu2Pack".to_string())
         .spawn(move || {
+            solana_metrics::mark_thread_nonfatal();
             tpu_to_pack(exit, shutdown_signal, receivers, allocator, producer);
         })
         .unwrap()

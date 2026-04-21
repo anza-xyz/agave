@@ -27,6 +27,7 @@ pub fn spawn(
     std::thread::Builder::new()
         .name("solProgTrker".to_string())
         .spawn(move || {
+            solana_metrics::mark_thread_nonfatal();
             ProgressTracker::new(exit, shared_leader_state, worker_metrics, ticks_per_slot)
                 .run(&mut producer);
         })

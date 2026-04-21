@@ -8,6 +8,7 @@ use {
     solana_cluster_type::ClusterType,
     solana_sha256_hasher::hash,
     std::{
+        cell::Cell,
         cmp,
         collections::HashMap,
         convert::Into,
@@ -510,6 +511,17 @@ pub fn flush() {
     agent.flush();
 }
 
+thread_local! {
+    /// Per-thread flag: when true, the panic hook skips `process::exit(1)`.
+    static NONFATAL_ON_PANIC: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Exempt the current thread from the `set_panic_hook` process exit.
+/// The panic is still recorded, but the spawner is responsible for recovery.
+pub fn mark_thread_nonfatal() {
+    NONFATAL_ON_PANIC.with(|flag| flag.set(true));
+}
+
 /// Hook the panic handler to generate a data point on each panic
 pub fn set_panic_hook(program: &'static str, version: Option<String>) {
     static SET_HOOK: Once = Once::new();
@@ -537,6 +549,10 @@ pub fn set_panic_hook(program: &'static str, version: Option<String>) {
             // Flush metrics immediately
             flush();
 
+            // Don't exit on panic in threads marked nonfatal.
+            if NONFATAL_ON_PANIC.with(|flag| flag.get()) {
+                return;
+            }
             // Exit cleanly so the process don't limp along in a half-dead state
             std::process::exit(1);
         }));
