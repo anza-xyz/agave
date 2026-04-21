@@ -14,7 +14,8 @@
 use {
     agave_feature_set::FeatureSet,
     solana_compute_budget::compute_budget_limits::{
-        MAX_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+        MAX_COMPUTE_UNIT_LIMIT, MAX_HEAP_FRAME_BYTES, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+        MIN_HEAP_FRAME_BYTES,
     },
     solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
     solana_hash::Hash,
@@ -93,16 +94,27 @@ impl VersionedTransactionConfiguration {
                         .get(),
                 })
             }
-            Self::V1(transaction_configuration) => Ok(TransactionConfiguration {
-                updated_heap_bytes: transaction_configuration.updated_heap_bytes,
-                compute_unit_limit: transaction_configuration
-                    .compute_unit_limit
-                    .min(MAX_COMPUTE_UNIT_LIMIT),
-                priority_fee_lamports: transaction_configuration.priority_fee_lamports,
-                loaded_accounts_data_size_limit: transaction_configuration
-                    .loaded_accounts_data_size_limit
-                    .min(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get()),
-            }),
+            Self::V1(transaction_configuration) => {
+                if !(MIN_HEAP_FRAME_BYTES..=MAX_HEAP_FRAME_BYTES)
+                    .contains(&transaction_configuration.updated_heap_bytes)
+                    || !transaction_configuration
+                        .updated_heap_bytes
+                        .is_multiple_of(1024)
+                {
+                    return Err(TransactionError::SanitizeFailure);
+                }
+
+                Ok(TransactionConfiguration {
+                    updated_heap_bytes: transaction_configuration.updated_heap_bytes,
+                    compute_unit_limit: transaction_configuration
+                        .compute_unit_limit
+                        .min(MAX_COMPUTE_UNIT_LIMIT),
+                    priority_fee_lamports: transaction_configuration.priority_fee_lamports,
+                    loaded_accounts_data_size_limit: transaction_configuration
+                        .loaded_accounts_data_size_limit
+                        .min(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get()),
+                })
+            }
         }
     }
 }
@@ -222,5 +234,35 @@ mod tests {
         assert_eq!(config.updated_heap_bytes, 65_536);
         assert_eq!(config.compute_unit_limit, 123_456);
         assert_eq!(config.priority_fee_lamports, 42);
+    }
+
+    #[test]
+    fn test_try_into_config_v1_heap_size_below_min() {
+        let feature_set = FeatureSet::all_enabled();
+
+        let input = TransactionConfiguration {
+            updated_heap_bytes: MIN_HEAP_FRAME_BYTES.saturating_sub(1024),
+            compute_unit_limit: 123_456,
+            priority_fee_lamports: 42,
+            loaded_accounts_data_size_limit: 789_012,
+        };
+
+        let config = VersionedTransactionConfiguration::V1(input).try_into_config(&feature_set);
+        assert!(matches!(config, Err(TransactionError::SanitizeFailure)));
+    }
+
+    #[test]
+    fn test_try_into_config_v1_heap_size_above_max() {
+        let feature_set = FeatureSet::all_enabled();
+
+        let input = TransactionConfiguration {
+            updated_heap_bytes: MAX_HEAP_FRAME_BYTES.saturating_add(1024),
+            compute_unit_limit: 123_456,
+            priority_fee_lamports: 42,
+            loaded_accounts_data_size_limit: 789_012,
+        };
+
+        let config = VersionedTransactionConfiguration::V1(input).try_into_config(&feature_set);
+        assert!(matches!(config, Err(TransactionError::SanitizeFailure)));
     }
 }
