@@ -103,13 +103,6 @@ pub fn count_valid_packets<'a>(batches: impl IntoIterator<Item = &'a PacketBatch
         .sum()
 }
 
-pub fn count_discarded_packets(batches: &[PacketBatch]) -> usize {
-    batches
-        .iter()
-        .map(|batch| batch.iter().filter(|p| p.meta().discard()).count())
-        .sum()
-}
-
 fn is_simple_vote_transaction_view<D: TransactionData>(view: &SanitizedTransactionView<D>) -> bool {
     // vote could have 1 or 2 sigs; zero sig has already been excluded by sanitization.
     if view.num_signatures() > 2 {
