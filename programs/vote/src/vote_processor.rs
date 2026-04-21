@@ -2643,6 +2643,133 @@ mod tests {
         );
     }
 
+    // Tests (and essentially documents) BLS pubkey rotation characteristics
+    // by testing the end-to-end behavior of `Authorize::VoterWithBls` in the
+    // program.
+    //
+    // All rotations reuse the existing authorized voter to simulate an
+    // operator's desire to only change their BLS pubkey.
+    //
+    // TL;DR: Since authorized voter rotations are capped at once per epoch,
+    // so too are BLS pubkey rotations.
+    #[test]
+    fn test_bls_pubkey_rotation() {
+        let features = VoteProgramFeatures {
+            bls_pubkey_management_in_vote_account: true,
+            ..Default::default()
+        };
+
+        // Start out with no BLS pubkey set.
+        // Authorized voter is already set to vote pubkey.
+        let (vote_pubkey, vote_account) = create_test_account_no_bls_key();
+        let authorized_voter = vote_pubkey;
+
+        // Two distinct BLS keypairs for rotation.
+        let (bls_1, pop_1) = create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+        let (bls_2, pop_2) = create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+
+        let ix_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: sysvar::clock::id(),
+                is_signer: false,
+                is_writable: false,
+            },
+        ];
+
+        // Epoch: 1
+        // Leader Schedule Epoch: 2
+        //   Rotation schedules for target epoch 3
+        //   BLS pubkey is set immediately
+        let clock_epoch_1 = account::create_account_shared_data_for_test(&Clock {
+            epoch: 1,
+            leader_schedule_epoch: 2,
+            ..Clock::default()
+        });
+        let accounts = process_instruction_with_cu_check(
+            features,
+            &serialize(&VoteInstruction::Authorize(
+                authorized_voter,
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: bls_1,
+                    bls_proof_of_possession: pop_1,
+                }),
+            ))
+            .unwrap(),
+            vec![
+                (vote_pubkey, vote_account),
+                (sysvar::clock::id(), clock_epoch_1.clone()),
+            ],
+            ix_accounts.clone(),
+            Ok(()),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
+        );
+        let v4 = deserialize_vote_state_for_test(accounts[0].data(), &vote_pubkey);
+        assert_eq!(v4.as_ref_v4().bls_pubkey_compressed, Some(bls_1));
+
+        // == Same epoch again ==
+        // Epoch: 1
+        // Leader Schedule Epoch: 2
+        //   Rotation fails with `TooSoonToReauthorize`
+        //   BLS pubkey is NOT set
+        //   34,500 CUs still charged
+        let accounts = process_instruction_with_cu_check(
+            features,
+            &serialize(&VoteInstruction::Authorize(
+                authorized_voter,
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: bls_2,
+                    bls_proof_of_possession: pop_2,
+                }),
+            ))
+            .unwrap(),
+            vec![
+                (vote_pubkey, accounts[0].clone()),
+                (sysvar::clock::id(), clock_epoch_1),
+            ],
+            ix_accounts.clone(),
+            Err(VoteError::TooSoonToReauthorize.into()),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
+        );
+        let v4 = deserialize_vote_state_for_test(accounts[0].data(), &vote_pubkey);
+        assert_eq!(v4.as_ref_v4().bls_pubkey_compressed, Some(bls_1)); // <-- Still BLS key 1
+
+        // == New epoch ==
+        // Epoch: 2
+        // Leader Schedule Epoch: 3
+        //   Rotation schedules for target epoch 4
+        //   BLS pubkey is set immediately
+        let clock_epoch_2 = account::create_account_shared_data_for_test(&Clock {
+            epoch: 2,
+            leader_schedule_epoch: 3,
+            ..Clock::default()
+        });
+        let accounts = process_instruction_with_cu_check(
+            features,
+            &serialize(&VoteInstruction::Authorize(
+                authorized_voter,
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: bls_2,
+                    bls_proof_of_possession: pop_2,
+                }),
+            ))
+            .unwrap(),
+            vec![
+                (vote_pubkey, accounts[0].clone()),
+                (sysvar::clock::id(), clock_epoch_2),
+            ],
+            ix_accounts.clone(),
+            Ok(()),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
+        );
+        let v4 = deserialize_vote_state_for_test(accounts[0].data(), &vote_pubkey);
+        assert_eq!(v4.as_ref_v4().bls_pubkey_compressed, Some(bls_2)); // <-- Now BLS key 2
+    }
+
     #[test]
     fn test_authorize_withdrawer() {
         let (vote_pubkey, vote_account) = create_test_account();

@@ -60,6 +60,7 @@ pub struct RetryableIndex {
     pub immediately_retryable: bool,
 }
 
+#[cfg(test)]
 impl RetryableIndex {
     pub fn new(index: usize, immediately_retryable: bool) -> Self {
         Self {

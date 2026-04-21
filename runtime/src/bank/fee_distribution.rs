@@ -194,7 +194,7 @@ impl Bank {
                     &account,
                     &self.reserved_account_keys,
                     &self.rent_collector().rent,
-                    false, // TODO Pass SIMD-0392 feature
+                    feature_snapshot.relax_post_exec_min_balance_check,
                 )?;
             }
         } else {

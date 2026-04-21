@@ -2,10 +2,14 @@ use {
     super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
     crate::{
         instruction_meta::InstructionMeta,
-        transaction_meta::{CachedTransactionMeta, TransactionMeta},
+        transaction_meta::{
+            CachedTransactionMeta, TransactionConfiguration, TransactionMeta,
+            VersionedTransactionConfiguration,
+        },
         transaction_with_meta::TransactionWithMeta,
     },
-    solana_message::{AddressLoader, TransactionSignatureDetails},
+    solana_message::{AddressLoader, TransactionSignatureDetails, VersionedMessage},
+    solana_program_entrypoint::HEAP_LENGTH,
     solana_pubkey::Pubkey,
     solana_svm_transaction::instruction::SVMInstruction,
     solana_transaction::{
@@ -51,12 +55,28 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
             precompile_signature_details.num_ed25519_instruction_signatures,
             precompile_signature_details.num_secp256r1_instruction_signatures,
         );
-        let compute_budget_instruction_details = ComputeBudgetInstructionDetails::try_from(
-            sanitized_versioned_tx
-                .get_message()
-                .program_instructions_iter()
-                .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix))),
-        )?;
+
+        let versioned_transaction_config = match &sanitized_versioned_tx.get_message().message {
+            VersionedMessage::V1(msg) => {
+                VersionedTransactionConfiguration::V1(TransactionConfiguration {
+                    priority_fee_lamports: msg.config.priority_fee.unwrap_or(0),
+                    compute_unit_limit: msg.config.compute_unit_limit.unwrap_or(0),
+                    loaded_accounts_data_size_limit: msg
+                        .config
+                        .loaded_accounts_data_size_limit
+                        .unwrap_or(0),
+                    updated_heap_bytes: msg.config.heap_size.unwrap_or(HEAP_LENGTH as u32),
+                })
+            }
+            _ => VersionedTransactionConfiguration::LegacyAndV0(
+                ComputeBudgetInstructionDetails::try_from(
+                    sanitized_versioned_tx
+                        .get_message()
+                        .program_instructions_iter()
+                        .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix))),
+                )?,
+            ),
+        };
 
         Ok(Self {
             transaction: sanitized_versioned_tx,
@@ -64,7 +84,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
                 message_hash,
                 is_simple_vote_transaction: is_simple_vote_tx,
                 signature_details,
-                compute_budget_instruction_details,
+                versioned_transaction_config,
                 instruction_data_len,
             },
         })

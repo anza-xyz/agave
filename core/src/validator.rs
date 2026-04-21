@@ -6,7 +6,6 @@ use {
         admin_rpc_post_init::{AdminRpcRequestMetadataPostInit, KeyUpdaterType, KeyUpdaters},
         banking_stage::{
             BankingStage, transaction_scheduler::scheduler_controller::SchedulerConfig,
-            unified_scheduler::ensure_banking_stage_setup,
         },
         banking_trace::{self, BankingTracer, TraceError},
         block_creation_loop::{BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen},
@@ -140,8 +139,7 @@ use {
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
     solana_turbine::{self, XdpSender, broadcast_stage::BroadcastStageType},
-    solana_unified_scheduler_logic::SchedulingMode,
-    solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::VoteStateV4,
     std::{
@@ -217,6 +215,15 @@ impl BlockProductionMethod {
     pub fn cli_message() -> &'static str {
         "Switch transaction scheduling method for producing ledger entries"
     }
+
+    pub fn warn_if_deprecated_value(&self) {
+        if matches!(self, Self::CentralScheduler) {
+            warn!(
+                "`central-scheduler` is deprecated and will be removed in a future release; use \
+                 `central-scheduler-greedy` instead"
+            );
+        }
+    }
 }
 
 #[derive(
@@ -282,16 +289,6 @@ impl SchedulerPacing {
         match self {
             SchedulerPacing::Disabled => None,
             SchedulerPacing::FillTimeMillis(millis) => Some(Duration::from_millis(millis.get())),
-        }
-    }
-}
-
-pub fn supported_scheduling_mode(
-    (verification, production): (&BlockVerificationMethod, &BlockProductionMethod),
-) -> SupportedSchedulingMode {
-    match (verification, production) {
-        (BlockVerificationMethod::UnifiedScheduler, _) => {
-            SupportedSchedulingMode::Either(SchedulingMode::BlockVerification)
         }
     }
 }
@@ -1071,33 +1068,17 @@ impl Validator {
         }
         let banking_tracer_channels = banking_tracer.create_channels();
 
-        match (
-            &config.block_verification_method,
-            &config.block_production_method,
-        ) {
-            methods @ (BlockVerificationMethod::UnifiedScheduler, _) => {
-                let scheduler_pool = DefaultSchedulerPool::new(
-                    supported_scheduling_mode(methods),
-                    config.unified_scheduler_handler_threads,
-                    config.runtime_config.log_messages_bytes_limit,
-                    transaction_status_sender.clone(),
-                    Some(replay_vote_sender.clone()),
-                    prioritization_fee_cache.clone(),
-                );
-                ensure_banking_stage_setup(
-                    &scheduler_pool,
-                    &bank_forks,
-                    &banking_tracer_channels,
-                    &poh_recorder,
-                    transaction_recorder.clone(),
-                    config.block_production_num_workers,
-                );
-                bank_forks
-                    .write()
-                    .unwrap()
-                    .install_scheduler_pool(scheduler_pool);
-            }
-        }
+        let scheduler_pool = DefaultSchedulerPool::new(
+            config.unified_scheduler_handler_threads,
+            config.runtime_config.log_messages_bytes_limit,
+            transaction_status_sender.clone(),
+            Some(replay_vote_sender.clone()),
+            prioritization_fee_cache.clone(),
+        );
+        bank_forks
+            .write()
+            .unwrap()
+            .install_scheduler_pool(scheduler_pool);
 
         let entry_notification_sender = entry_notifier_service
             .as_ref()

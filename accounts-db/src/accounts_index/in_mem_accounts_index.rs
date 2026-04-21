@@ -382,25 +382,77 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         result
     }
 
-    /// call `user_fn` with a write lock of the slot list.
-    /// Note that whether `user_fn` modifies the slot list or not, the entry in the in-mem index will always
-    /// be marked as dirty. So, callers to this should ideally know they will be modifying the slot list.
-    pub fn slot_list_mut<RT>(
+    /// Convenience wrapper for slot_list_mut_with_entry that ignores the entry
+    pub(crate) fn slot_list_mut<RT>(
         &self,
         pubkey: &Pubkey,
         user_fn: impl FnOnce(SlotListWriteGuard<T>) -> RT,
+    ) -> Option<RT> {
+        self.slot_list_mut_with_entry(pubkey, |slot_list, _entry| user_fn(slot_list))
+    }
+
+    /// Call `user_fn` with a write lock of the slot list and the entry itself
+    /// Note that whether `user_fn` modifies the slot list or not, the entry in the in-mem index will always
+    /// be marked as dirty. So, callers to this should ideally know they will be modifying the slot list.
+    pub(crate) fn slot_list_mut_with_entry<RT>(
+        &self,
+        pubkey: &Pubkey,
+        user_fn: impl FnOnce(SlotListWriteGuard<T>, &AccountMapEntry<T>) -> RT,
     ) -> Option<RT> {
         self.get_internal_inner(pubkey, |entry| {
             (
                 true,
                 entry.map(|entry| {
-                    let result = user_fn(entry.slot_list_write_lock());
+                    let result = user_fn(entry.slot_list_write_lock(), entry);
                     // note that to be safe here, we ALWAYS mark the entry as dirty
                     entry.mark_dirty();
                     result
                 }),
             )
         })
+    }
+
+    /// Clean the slot list by removing all slot_list items older than the max_slot.
+    /// Decrease the reference count of the entry by the number of removed accounts.
+    /// Note: This must only be called on startup, and reclaims must be reclaimed.
+    pub(crate) fn clean_and_unref_slot_list_on_startup(
+        &self,
+        pubkey: &Pubkey,
+        reclaims: &mut ReclaimsSlotList<T>,
+    ) {
+        self.slot_list_mut_with_entry(pubkey, |mut slot_list, entry| {
+            let max_slot = slot_list
+                .iter()
+                .map(|(slot, _account)| *slot)
+                .max()
+                .expect("Slot list has entries");
+
+            let mut reclaim_count = 0;
+            let count = slot_list.retain_and_count(|(slot, value)| {
+                // keep the newest entry, and reclaim all others
+                if *slot < max_slot {
+                    assert!(!value.is_cached(), "Unsafe to reclaim cached entries");
+                    reclaims.push((*slot, *value));
+                    reclaim_count += 1;
+                    false
+                } else {
+                    true
+                }
+            });
+
+            assert_eq!(
+                count, 1,
+                "Slot list should have exactly one entry after cleaning"
+            );
+
+            entry.unref_by_count(reclaim_count);
+            assert_eq!(
+                entry.ref_count(),
+                1,
+                "ref count should be one after cleaning all entries"
+            );
+        })
+        .expect("Expected entry to exist in accounts index");
     }
 
     /// Insert a cached entry into the accounts index
