@@ -16,7 +16,7 @@ use {
         program as stake_program,
         state::{Delegation, StakeActivationStatus},
     },
-    solana_vote::vote_account::{VoteAccount, VoteAccounts},
+    solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::state::VoteStateVersions,
     std::{
         collections::HashMap,
@@ -236,6 +236,55 @@ impl<T: Clone> Stakes<T> {
 }
 
 impl Stakes<StakeAccount> {
+    pub(crate) fn new_from_accounts_for_genesis<'a, T: ReadableAccount + 'a>(
+        new_rate_activation_epoch: Option<Epoch>,
+        accounts: impl IntoIterator<Item = (&'a Pubkey, &'a T)>,
+    ) -> Self {
+        let stake_history = StakeHistory::default();
+        let mut vote_accounts = VoteAccountsHashMap::default();
+        let mut delegated_stakes: HashMap<Pubkey, u64> = HashMap::default();
+        let mut stake_delegations = ImblHashMap::new();
+        let epoch = 0;
+
+        for (pubkey, account) in accounts {
+            if account.lamports() == 0 {
+                continue;
+            }
+
+            if solana_vote_program::check_id(account.owner()) {
+                if VoteStateVersions::is_correct_size_and_initialized(account.data()) {
+                    if let Ok(vote_account) =
+                        VoteAccount::try_from(create_account_shared_data(account))
+                    {
+                        vote_accounts.insert(*pubkey, (0, vote_account));
+                    }
+                }
+            } else if stake_program::check_id(account.owner()) {
+                if let Ok(stake_account) =
+                    StakeAccount::try_from(create_account_shared_data(account))
+                {
+                    let delegation = stake_account.delegation();
+                    let stake = delegation.stake(epoch, &stake_history, new_rate_activation_epoch);
+                    *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
+                    stake_delegations.insert(*pubkey, stake_account);
+                }
+            }
+        }
+
+        let mut vote_accounts = VoteAccounts::from(Arc::new(vote_accounts));
+        for (vote_pubkey, stake) in delegated_stakes {
+            vote_accounts.add_stake(&vote_pubkey, stake);
+        }
+
+        Self {
+            vote_accounts,
+            stake_delegations,
+            unused: 0,
+            epoch,
+            stake_history,
+        }
+    }
+
     /// Creates a Stake<StakeAccount> from DeserializableStakes<Delegation> by loading the
     /// full account state for respective stake pubkeys. get_account function
     /// should return the account at the respective slot where stakes where
