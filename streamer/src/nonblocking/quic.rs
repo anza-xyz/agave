@@ -73,6 +73,12 @@ const TOTAL_CONNECTIONS_PER_SECOND: f64 = 2500.0;
 /// Max burst of connections above sustained rate to pass through
 const MAX_CONNECTION_BURST: u64 = 1000;
 
+/// Sustained rate of connections that can bypass RETRY per second.
+const RETRY_BYPASS_RATE_PER_SECOND: f64 = 5_000.0;
+
+/// Burst of connections allowed to bypass RETRY before it kicks in.
+const RETRY_BYPASS_BURST: u64 = 5_000;
+
 /// Timeout for connection handshake. Timer starts once we get Initial from the
 /// peer, and is canceled when we get a Handshake packet from them.
 pub(crate) const QUIC_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -261,6 +267,11 @@ where
         MAX_CONNECTION_BURST,
         TOTAL_CONNECTIONS_PER_SECOND,
     ));
+    let retry_bypass_budget = TokenBucket::new(
+        RETRY_BYPASS_BURST,
+        RETRY_BYPASS_BURST,
+        RETRY_BYPASS_RATE_PER_SECOND,
+    );
 
     const WAIT_FOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(1);
     debug!("spawn quic server");
@@ -315,25 +326,29 @@ where
                 .total_incoming_connection_attempts
                 .fetch_add(1, Ordering::Relaxed);
             if !incoming.remote_address_validated() {
-                match incoming.retry() {
-                    Ok(()) => {
-                        stats
-                            .connection_attempts_asked_to_retry
-                            .fetch_add(1, Ordering::Relaxed);
+                // Only require RETRY challenge when incoming connection rate
+                // exceeds the bypass budget. Under low load, skip RETRY to
+                // reduce latency for legitimate clients.
+                if retry_bypass_budget.consume_tokens(1).is_err() {
+                    match incoming.retry() {
+                        Ok(()) => {
+                            stats
+                                .connection_attempts_asked_to_retry
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(retry_err) => {
+                            // Client sent a token we couldn't validate (e.g., different
+                            // endpoint behind LB, key rotation race, forged token).
+                            stats
+                                .connection_retry_token_invalid
+                                .fetch_add(1, Ordering::Relaxed);
+                            retry_err.into_incoming().refuse();
+                        }
                     }
-                    Err(retry_err) => {
-                        // Client sent a token we couldn't validate (e.g., different
-                        // endpoint behind LB, key rotation race, forged token).
-                        stats
-                            .connection_retry_token_invalid
-                            .fetch_add(1, Ordering::Relaxed);
-                        retry_err.into_incoming().refuse();
-                    }
+                    continue;
                 }
-                continue;
             }
-            // After retry challenge, the client's IP is verified.
-            // We can now check if we should be admitting more connections.
+            // Check if we should be admitting more connections.
             if overall_connection_rate_limiter.consume_tokens(1).is_err() {
                 stats
                     .connection_rate_limited_across_all
@@ -345,7 +360,12 @@ where
                 incoming.ignore();
                 continue;
             }
-            if !rate_limiter.register_connection(&incoming.remote_address().ip()) {
+            // Only apply per-IP rate limiting when the address has been
+            // validated (via RETRY challenge). Unvalidated addresses are
+            // spoofable and would pollute the per-IP table.
+            if incoming.remote_address_validated()
+                && !rate_limiter.register_connection(&incoming.remote_address().ip())
+            {
                 stats
                     .connection_rate_limited_per_ipaddr
                     .fetch_add(1, Ordering::Relaxed);
