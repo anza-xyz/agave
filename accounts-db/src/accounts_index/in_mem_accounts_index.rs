@@ -440,7 +440,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 }
             });
 
-            assert_eq!(count, 1, "Slot list should have exactly one entry after cleaning");
+            assert_eq!(
+                count, 1,
+                "Slot list should have exactly one entry after cleaning"
+            );
 
             entry.unref_by_count(reclaim_count);
             assert_eq!(
