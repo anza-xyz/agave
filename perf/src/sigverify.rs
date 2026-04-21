@@ -18,31 +18,6 @@ pub const VERIFY_PACKET_CHUNK_SIZE: usize = 128;
 
 pub type TxOffset = RecycledVec<u32>;
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum PacketError {
-    InvalidLen,
-    InvalidPubkeyLen,
-    InvalidShortVec,
-    InvalidSignatureLen,
-    MismatchSignatureLen,
-    PayerNotWritable,
-    InvalidProgramIdIndex,
-    InvalidNumberOfInstructions,
-    UnsupportedVersion,
-}
-
-impl std::convert::From<std::boxed::Box<bincode::ErrorKind>> for PacketError {
-    fn from(_e: std::boxed::Box<bincode::ErrorKind>) -> PacketError {
-        PacketError::InvalidShortVec
-    }
-}
-
-impl std::convert::From<std::num::TryFromIntError> for PacketError {
-    fn from(_e: std::num::TryFromIntError) -> Self {
-        Self::InvalidLen
-    }
-}
-
 /// Returns true if the signature on the packet verifies.
 /// Caller must do packet.set_discard(true) if this returns false.
 #[must_use]
