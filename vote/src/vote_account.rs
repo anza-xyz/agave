@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::field_qualifiers;
 use {
     crate::vote_state_view::VoteStateView,
     log::*,
@@ -42,6 +44,10 @@ struct VoteAccountInner {
 pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(vote_accounts(pub))
+)]
 pub struct VoteAccounts {
     #[serde(deserialize_with = "deserialize_accounts_hash_map")]
     vote_accounts: Arc<VoteAccountsHashMap>,

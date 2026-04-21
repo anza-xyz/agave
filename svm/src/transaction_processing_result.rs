@@ -94,7 +94,7 @@ impl ProcessedTransaction {
     pub fn loaded_accounts_data_size(&self) -> u32 {
         match self {
             Self::Executed(context) => context.loaded_transaction.loaded_accounts_data_size,
-            Self::FeesOnly(details) => details.rollback_accounts.data_size() as u32,
+            Self::FeesOnly(details) => details.loaded_accounts_data_size,
         }
     }
 }

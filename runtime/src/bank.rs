@@ -37,10 +37,9 @@ use {
     crate::{
         account_saver::collect_accounts_to_store,
         bank::{
+            entry_bytes_budget::EntryBytesBudget,
             metrics::*,
-            partitioned_epoch_rewards::{
-                CachedVoteAccounts, EpochRewardStatus, RewardCommissionAccounts,
-            },
+            partitioned_epoch_rewards::{CachedVoteAccounts, EpochRewardStatus},
         },
         bank_forks::BankForks,
         block_component_processor::{
@@ -114,7 +113,7 @@ use {
     solana_feature_gate_interface as feature,
     solana_fee::FeeFeatures,
     solana_fee_calculator::FeeRateGovernor,
-    solana_fee_structure::{FeeBudgetLimits, FeeDetails, FeeStructure},
+    solana_fee_structure::{FeeDetails, FeeStructure},
     solana_genesis_config::GenesisConfig,
     solana_hard_forks::HardForks,
     solana_hash::Hash,
@@ -132,7 +131,7 @@ use {
         loaded_programs::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
         program_cache_entry::ProgramCacheEntry,
     },
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
@@ -228,6 +227,7 @@ mod address_lookup_table;
 pub mod bank_hash_details;
 pub mod builtins;
 mod check_transactions;
+pub mod entry_bytes_budget;
 mod fee_distribution;
 mod metrics;
 pub(crate) mod partitioned_epoch_rewards;
@@ -556,6 +556,7 @@ impl PartialEq for Bank {
             transaction_error_count: _,
             transaction_entries_count: _,
             transactions_per_entry_max: _,
+            entry_bytes_consumed: _,
             tick_height,
             signature_count,
             capitalization,
@@ -690,6 +691,7 @@ impl BankFieldsToSerialize {
 pub enum RewardCalculationEvent<'a, 'b> {
     Staking(&'a Pubkey, &'b InflationPointCalculationEvent),
 }
+const MAX_ENTRY_BYTES_PER_SLOT: u64 = 20 * 1024 * 1024; // 20 MiB
 
 /// type alias is not supported for trait in rust yet. As a workaround, we define the
 /// `RewardCalcTracer` trait explicitly and implement it on any type that implement
@@ -800,6 +802,9 @@ pub struct Bank {
 
     /// The max number of transaction in an entry in this slot
     transactions_per_entry_max: AtomicU64,
+
+    /// The number of entry bytes reserved for recording in this slot.
+    entry_bytes_consumed: EntryBytesBudget,
 
     /// Bank tick height
     tick_height: AtomicU64,
@@ -963,15 +968,6 @@ pub struct Bank {
     pub block_component_processor: RwLock<BlockComponentProcessor>,
 }
 
-#[derive(Debug)]
-struct RewardCommission {
-    commission_account: AccountSharedData,
-    commission_bps: u16,
-    commission_lamports: u64,
-}
-
-type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;
-
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
     pub vote_only_bank: bool,
@@ -1106,6 +1102,7 @@ impl Bank {
             transaction_error_count: AtomicU64::default(),
             transaction_entries_count: AtomicU64::default(),
             transactions_per_entry_max: AtomicU64::default(),
+            entry_bytes_consumed: EntryBytesBudget::new(MAX_ENTRY_BYTES_PER_SLOT),
             tick_height: AtomicU64::default(),
             signature_count: AtomicU64::default(),
             capitalization: AtomicU64::default(),
@@ -1362,6 +1359,7 @@ impl Bank {
             transaction_error_count: AtomicU64::new(0),
             transaction_entries_count: AtomicU64::new(0),
             transactions_per_entry_max: AtomicU64::new(0),
+            entry_bytes_consumed: EntryBytesBudget::new(parent.entry_bytes_budget().slot_limit()),
             // we will .clone_with_epoch() this soon after stake data update; so just .clone() for now
             stakes_cache,
             epoch_stakes,
@@ -1438,8 +1436,10 @@ impl Bank {
                 let leader_schedule_epoch = new.epoch_schedule().get_leader_schedule_epoch(slot);
                 new.update_epoch_stakes(leader_schedule_epoch);
             }
-            new.distribute_partitioned_epoch_rewards();
         });
+
+        let (_, distribute_rewards_time_us) =
+            measure_us!(new.distribute_partitioned_epoch_rewards());
 
         let (_, cache_preparation_time_us) =
             measure_us!(new.prepare_program_cache_for_upcoming_feature_set());
@@ -1448,7 +1448,10 @@ impl Bank {
         let (_, update_sysvars_time_us) = measure_us!({
             new.update_slot_hashes();
             new.update_stake_history(Some(parent.epoch()));
-            new.update_clock(Some(parent.epoch()));
+            // Keep setting the tower clock sysvar till we have not migrated to Alpenglow.
+            if new.get_alpenglow_genesis_certificate().is_none() {
+                new.update_clock(Some(parent.epoch()));
+            }
             new.update_last_restart_slot()
         });
 
@@ -1498,6 +1501,7 @@ impl Bank {
                 feature_set_time_us,
                 ancestors_time_us,
                 update_epoch_time_us,
+                distribute_rewards_time_us,
                 cache_preparation_time_us,
                 update_sysvars_time_us,
                 fill_sysvar_cache_time_us,
@@ -1612,7 +1616,12 @@ impl Bank {
         }
     }
 
-    pub fn prune_program_cache(&self, new_root_slot: Slot, new_root_epoch: Epoch) {
+    pub fn prune_program_cache(
+        &self,
+        new_root_slot: Slot,
+        new_root_epoch: Epoch,
+        bank_forks: &BankForks,
+    ) {
         let upcoming_environment = self
             .transaction_processor
             .epoch_boundary_preparation
@@ -1623,7 +1632,7 @@ impl Bank {
             .global_program_cache
             .write()
             .unwrap()
-            .prune(new_root_slot, upcoming_environment);
+            .prune(new_root_slot, upcoming_environment, bank_forks);
     }
 
     pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {
@@ -1948,6 +1957,7 @@ impl Bank {
             transaction_error_count: AtomicU64::default(),
             transaction_entries_count: AtomicU64::default(),
             transactions_per_entry_max: AtomicU64::default(),
+            entry_bytes_consumed: EntryBytesBudget::new(MAX_ENTRY_BYTES_PER_SLOT),
             tick_height: AtomicU64::new(fields.tick_height),
             signature_count: AtomicU64::new(fields.signature_count),
             capitalization: AtomicU64::new(fields.capitalization),
@@ -2565,60 +2575,6 @@ impl Bank {
         (validator_rate * capitalization as f64 * epoch_duration_in_years) as u64
     }
 
-    /// Convert computed RewardCommissions to RewardCommissionAccounts for storing.
-    ///
-    /// This function processes reward commissions and consolidates them into a
-    /// single structure containing the pubkey, reward info, and updated account
-    /// data for each commission account. The resulting structure is optimized
-    /// for storage by combining previously separate rewards and accounts
-    /// vectors into a single accounts_with_rewards vector.
-    fn calculate_commission_accounts(
-        reward_commissions: RewardCommissions,
-    ) -> RewardCommissionAccounts {
-        let mut result = RewardCommissionAccounts {
-            accounts_with_rewards: Vec::with_capacity(reward_commissions.len()),
-            total_reward_commission_lamports: 0,
-        };
-        for (
-            commission_pubkey,
-            RewardCommission {
-                mut commission_account,
-                commission_bps,
-                commission_lamports,
-            },
-        ) in reward_commissions
-        {
-            if let Err(err) = commission_account.checked_add_lamports(commission_lamports) {
-                debug!("reward redemption failed for {commission_pubkey}: {err:?}");
-                continue;
-            }
-
-            result.accounts_with_rewards.push((
-                commission_pubkey,
-                RewardInfo {
-                    reward_type: RewardType::Voting,
-                    lamports: commission_lamports as i64,
-                    post_balance: commission_account.lamports(),
-                    commission_bps: Some(commission_bps),
-                },
-                commission_account,
-            ));
-            result.total_reward_commission_lamports += commission_lamports;
-        }
-        result
-    }
-
-    fn update_reward_commissions(&self, reward_commission_accounts: &RewardCommissionAccounts) {
-        let mut rewards = self.rewards.write().unwrap();
-        rewards.reserve(reward_commission_accounts.accounts_with_rewards.len());
-        reward_commission_accounts
-            .accounts_with_rewards
-            .iter()
-            .for_each(|(commission_pubkey, reward_commission, _)| {
-                rewards.push((*commission_pubkey, *reward_commission));
-            });
-    }
-
     fn update_recent_blockhashes_locked(&self, locked_blockhash_queue: &BlockhashQueue) {
         #[expect(deprecated)]
         self.update_sysvar_account(&sysvar::recent_blockhashes::id(), |account| {
@@ -2978,17 +2934,16 @@ impl Bank {
         &self,
         message: &impl SVMMessage,
     ) -> u64 {
-        let fee_budget_limits = FeeBudgetLimits::from(
-            process_compute_budget_instructions(
-                message.program_instructions_iter(),
-                &self.feature_set,
-            )
-            .unwrap_or_default(),
-        );
+        let prioritization_fee = process_compute_budget_instructions(
+            message.program_instructions_iter(),
+            &self.feature_set,
+        )
+        .unwrap_or_default()
+        .get_prioritization_fee();
         solana_fee::calculate_fee(
             message,
             self.fee_structure().lamports_per_signature,
-            fee_budget_limits.prioritization_fee,
+            prioritization_fee,
             FeeFeatures::from(self.feature_set.as_ref()),
         )
     }
@@ -3083,7 +3038,10 @@ impl Bank {
     /// Get the nanosecond clock value. Returns `None` if the nanosecond clock has not been
     /// populated (i.e., before Alpenglow migration completes).
     pub fn get_nanosecond_clock(&self) -> Option<i64> {
-        self.get_account(&NANOSECOND_CLOCK_ACCOUNT).map(|acct| {
+        let acct = self.get_account(&NANOSECOND_CLOCK_ACCOUNT)?;
+        (!acct.data().is_empty()).then(|| {
+            // This address is known in advance, so the account could already exist if it was prefunded.
+            // The deserialize is only safe when the account is non-empty
             wincode::deserialize(acct.data())
                 .expect("Couldn't deserialize nanosecond resolution clock")
         })
@@ -3299,16 +3257,13 @@ impl Bank {
         tx_results: impl Iterator<Item = Result<()>>,
     ) -> Vec<Result<()>> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let relax_intrabatch_account_locks =
-            self.feature_set.snapshot().relax_intrabatch_account_locks;
 
-        // with simd83 enabled, we must fail transactions that duplicate a prior message hash
-        // previously, conflicting account locks would fail such transactions as a side effect
+        // we must fail transactions that duplicate a prior message hash
         let mut batch_message_hashes = AHashSet::with_capacity(txs.len());
         let tx_results = tx_results
             .enumerate()
             .map(|(i, tx_result)| match tx_result {
-                Ok(()) if relax_intrabatch_account_locks => {
+                Ok(()) => {
                     // `HashSet::insert()` returns `true` when the value does *not* already exist
                     if batch_message_hashes.insert(txs[i].message_hash()) {
                         Ok(())
@@ -3316,16 +3271,12 @@ impl Bank {
                         Err(TransactionError::AlreadyProcessed)
                     }
                 }
-                Ok(()) => Ok(()),
                 Err(e) => Err(e),
             });
 
-        self.rc.accounts.lock_accounts(
-            txs.iter(),
-            tx_results,
-            tx_account_lock_limit,
-            relax_intrabatch_account_locks,
-        )
+        self.rc
+            .accounts
+            .lock_accounts(txs.iter(), tx_results, tx_account_lock_limit)
     }
 
     /// Prepare a locked transaction batch from a list of sanitized transactions.
@@ -3391,6 +3342,16 @@ impl Bank {
             // Reserved key set may have changed, so we must verify that
             // no writable keys are reserved.
             self.check_reserved_keys(transaction)?;
+
+            if self.feature_set.snapshot().limit_instruction_accounts {
+                for instr in transaction.instructions_iter() {
+                    if instr.accounts.len()
+                        > solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION
+                    {
+                        return Err(solana_transaction_error::TransactionError::SanitizeFailure);
+                    }
+                }
+            }
         }
 
         if self.slot() > alt_invalidation_slot {
@@ -4659,10 +4620,8 @@ impl Bank {
     }
 
     /// Returns all the accounts this bank can load
-    pub fn get_all_accounts(&self, sort_results: bool) -> ScanResult<Vec<PubkeyAccountSlot>> {
-        self.rc
-            .accounts
-            .load_all(&self.ancestors, self.bank_id, sort_results)
+    pub fn get_all_accounts(&self) -> ScanResult<Vec<PubkeyAccountSlot>> {
+        self.rc.accounts.load_all(&self.ancestors, self.bank_id)
     }
 
     // Scans all the accounts this bank can load, applying `scan_func`
@@ -4757,6 +4716,10 @@ impl Bank {
 
     pub fn transactions_per_entry_max(&self) -> u64 {
         self.transactions_per_entry_max.load(Relaxed)
+    }
+
+    pub fn entry_bytes_budget(&self) -> &EntryBytesBudget {
+        &self.entry_bytes_consumed
     }
 
     fn increment_transaction_count(&self, tx_count: u64) {
@@ -5043,6 +5006,8 @@ impl Bank {
         let enable_instruction_account_limit =
             self.feature_set.snapshot().limit_instruction_accounts;
 
+        // WARNING: Any pending features added here most likely must also be checked in
+        //          `Bank::resanitize_transaction_minimally`.
         let sanitized_tx = {
             let size =
                 wincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
@@ -5697,16 +5662,6 @@ impl Bank {
             self.apply_cost_tracker_limits_for_active_features();
         }
 
-        if new_feature_activations.contains(&feature_set::vote_state_v4::id()) {
-            if let Err(e) = self.upgrade_core_bpf_program(
-                &solana_sdk_ids::stake::id(),
-                &feature_set::vote_state_v4::stake_program_buffer::id(),
-                "upgrade_stake_program_for_vote_state_v4",
-            ) {
-                error!("Failed to upgrade Core BPF Stake program: {e}");
-            }
-        }
-
         if new_feature_activations.contains(&feature_set::replace_spl_token_with_p_token::id()) {
             if let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
                 &feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID,
@@ -5976,7 +5931,7 @@ impl Bank {
     ///
     /// Only intended to be called by tests or when the number of accounts is small.
     pub fn calculate_accounts_data_size(&self) -> ScanResult<u64> {
-        let accounts = self.get_all_accounts(false)?;
+        let accounts = self.get_all_accounts()?;
         let accounts_data_size = accounts
             .into_iter()
             .map(|(_pubkey, account, _slot)| account.data().len() as u64)

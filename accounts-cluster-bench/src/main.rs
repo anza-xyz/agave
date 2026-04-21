@@ -1355,7 +1355,7 @@ fn main() {
             info!("Finding cluster entry: {entrypoint_addr:?}");
             let (gossip_nodes, _validators) = discover_peers(
                 None,
-                &vec![entrypoint_addr],
+                &[entrypoint_addr],
                 None,
                 Duration::from_secs(60),
                 None,
@@ -1426,7 +1426,6 @@ pub mod test {
         },
         solana_measure::measure::Measure,
         solana_native_token::LAMPORTS_PER_SOL,
-        solana_poh_config::PohConfig,
         solana_program_pack::Pack,
         solana_test_validator::TestValidator,
         spl_token_interface::state::{Account, Mint},
@@ -1458,7 +1457,6 @@ pub mod test {
         let num_nodes = 1;
         let mut config = ClusterConfig {
             mint_lamports: TEST_CLUSTER_MINT_LAMPORTS,
-            poh_config: PohConfig::new_sleep(Duration::from_millis(50)),
             node_stakes: vec![100; num_nodes],
             validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
             ..ClusterConfig::default()
@@ -1508,7 +1506,6 @@ pub mod test {
         let num_nodes = 1;
         let mut config = ClusterConfig {
             mint_lamports: TEST_CLUSTER_MINT_LAMPORTS,
-            poh_config: PohConfig::new_sleep(Duration::from_millis(50)),
             node_stakes: vec![100; num_nodes],
             validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
             ..ClusterConfig::default()

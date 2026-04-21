@@ -127,17 +127,12 @@ impl RuntimeTransaction<SanitizedTransaction> {
             reserved_account_keys,
         )?;
 
-        let mut tx = Self {
+        let tx = Self {
             transaction: sanitized_transaction,
             meta: statically_loaded_runtime_tx.meta,
         };
-        tx.load_dynamic_metadata()?;
 
         Ok(tx)
-    }
-
-    fn load_dynamic_metadata(&mut self) -> Result<()> {
-        Ok(())
     }
 }
 
@@ -150,6 +145,11 @@ impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
     #[inline]
     fn to_versioned_transaction(&self) -> VersionedTransaction {
         self.transaction.to_versioned_transaction()
+    }
+
+    fn serialized_size(&self) -> usize {
+        wincode::serialized_size(&self.to_versioned_transaction())
+            .expect("versioned transaction serialization should succeed") as usize
     }
 }
 
@@ -365,11 +365,33 @@ mod tests {
             );
             assert_eq!(
                 loaded_accounts_bytes,
-                transaction_configuration
-                    .loaded_accounts_data_size_limit
-                    .get()
+                transaction_configuration.loaded_accounts_data_size_limit
             );
         }
+    }
+
+    #[test]
+    fn test_serialized_size() {
+        let transaction = RuntimeTransaction::<SanitizedTransaction>::try_from(
+            RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
+                non_vote_sanitized_versioned_transaction(),
+                MessageHash::Compute,
+                None,
+            )
+            .unwrap(),
+            SimpleAddressLoader::Disabled,
+            &ReservedAccountKeys::empty_key_set(),
+        )
+        .unwrap();
+
+        let expected = wincode::serialized_size(&transaction.to_versioned_transaction()).unwrap();
+        assert_eq!(transaction.serialized_size(), expected as usize);
+        assert_eq!(
+            expected,
+            wincode::serialize(&transaction.to_versioned_transaction())
+                .unwrap()
+                .len() as u64
+        );
     }
 
     #[test]

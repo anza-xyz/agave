@@ -10,7 +10,6 @@ use {
     agave_feature_set::FeatureSet,
     solana_bincode::limited_deserialize,
     solana_compute_budget::compute_budget_limits::DEFAULT_HEAP_COST,
-    solana_fee_structure::FeeStructure,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_meta::TransactionMeta,
     solana_sdk_ids::system_program,
@@ -21,6 +20,8 @@ use {
     },
     std::num::Saturating,
 };
+
+const ACCOUNT_DATA_COST_PAGE_SIZE: u64 = 32_u64.saturating_mul(1024);
 
 pub struct CostModel;
 
@@ -185,7 +186,7 @@ impl CostModel {
                 Ok(config) => (
                     u64::from(config.compute_unit_limit),
                     Self::calculate_loaded_accounts_data_size_cost(
-                        config.loaded_accounts_data_size_limit.get(),
+                        config.loaded_accounts_data_size_limit,
                         feature_set,
                     ),
                 ),
@@ -200,11 +201,22 @@ impl CostModel {
         transaction.instruction_data_len() / (INSTRUCTION_DATA_BYTES_COST as u16)
     }
 
+    /// Compute the number of pages needed to contain provided number of bytes.
+    fn calculate_pages_for_bytes(bytes: u32) -> u64 {
+        u64::from(bytes)
+            .saturating_add(ACCOUNT_DATA_COST_PAGE_SIZE.saturating_sub(1))
+            .saturating_div(ACCOUNT_DATA_COST_PAGE_SIZE)
+    }
+
+    pub fn calculate_pages_cost(num_pages: u64) -> u64 {
+        num_pages.saturating_mul(DEFAULT_HEAP_COST)
+    }
+
     pub fn calculate_loaded_accounts_data_size_cost(
         loaded_accounts_data_size: u32,
         _feature_set: &FeatureSet,
     ) -> u64 {
-        FeeStructure::calculate_memory_usage_cost(loaded_accounts_data_size, DEFAULT_HEAP_COST)
+        Self::calculate_pages_cost(Self::calculate_pages_for_bytes(loaded_accounts_data_size))
     }
 
     fn calculate_account_data_size_on_deserialized_system_instruction(
@@ -320,7 +332,6 @@ mod tests {
             },
         },
         solana_compute_budget_interface::ComputeBudgetInstruction,
-        solana_fee_structure::ACCOUNT_DATA_COST_PAGE_SIZE,
         solana_hash::Hash,
         solana_instruction::Instruction,
         solana_keypair::Keypair,
@@ -913,5 +924,59 @@ mod tests {
             CostModel::get_estimated_execution_cost(&transaction, &feature_set);
 
         assert_eq!(expected_execution_cost, programs_execution_cost);
+    }
+
+    #[test]
+    fn test_zero_bytes() {
+        // 0 bytes should result in 0 pages and 0 cost
+        assert_eq!(CostModel::calculate_pages_for_bytes(0), 0);
+        assert_eq!(CostModel::calculate_pages_cost(0), 0);
+        assert_eq!(
+            CostModel::calculate_loaded_accounts_data_size_cost(0, &FeatureSet::default()),
+            0
+        );
+    }
+
+    #[test]
+    fn test_non_zero_bytes_single_page() {
+        let page_size = ACCOUNT_DATA_COST_PAGE_SIZE as u32;
+
+        // Any non-zero bytes up to page_size should be 1 page
+        assert_eq!(CostModel::calculate_pages_for_bytes(1), 1);
+        assert_eq!(CostModel::calculate_pages_for_bytes(page_size), 1);
+
+        assert_eq!(
+            CostModel::calculate_loaded_accounts_data_size_cost(1, &FeatureSet::default()),
+            CostModel::calculate_pages_cost(1)
+        );
+    }
+
+    #[test]
+    fn test_non_zero_bytes_multiple_pages() {
+        let page_size = ACCOUNT_DATA_COST_PAGE_SIZE as u32;
+
+        // Just over one page should round up to 2 pages
+        assert_eq!(CostModel::calculate_pages_for_bytes(page_size + 1), 2);
+
+        assert_eq!(
+            CostModel::calculate_loaded_accounts_data_size_cost(
+                page_size + 1,
+                &FeatureSet::default()
+            ),
+            CostModel::calculate_pages_cost(2)
+        );
+    }
+
+    #[test]
+    fn test_exact_multiple_pages() {
+        let page_size = ACCOUNT_DATA_COST_PAGE_SIZE as u32;
+
+        let bytes = page_size * 3;
+        assert_eq!(CostModel::calculate_pages_for_bytes(bytes), 3);
+
+        assert_eq!(
+            CostModel::calculate_loaded_accounts_data_size_cost(bytes, &FeatureSet::default()),
+            CostModel::calculate_pages_cost(3)
+        );
     }
 }

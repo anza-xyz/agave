@@ -167,7 +167,10 @@ snapshot slot or genesis.
 * Issues involving maliciously crafted snapshots. Snapshots have historically been
 considered trust on first use and have many shortcomings with respect to consistency
 and verifiability as a result. An effort to improve this situation is actively underway
-* For the RPC DoS category, the following classes of issue are out of scope
+* The in-built RPC service is not intended to be directly exposed to untrusted clients.
+Any environments which require features like authentication and rate-limiting _*MUST*_ be
+deployed behind a reverse proxy or similar. For the RPC DoS category, the following
+classes of issue are out of scope
   * Those requiring a call rate greater than once per `CLUSTER_SLOT_TIME_TARGET / 2`
   * Those requiring calls from multiple clients
   * Those impacting getProgramAccounts, et al. without secondary indexes enabled and/or
@@ -177,6 +180,9 @@ Alpenglow logic from a feature fork to agave master is currently underway. As
 such there are many partially migrated changes isolated to a few areas. These
 are disqualified from reports and bounties. Bugs in integration logic that impact
 the no-Alpenglow code path remain in scope
+* Loader V4 (the `loader-v4` crate and associated code paths). Loader V4 is
+being removed from the codebase and its feature ID has been stubbed out. Bugs
+relating to Loader V4 functionality are disqualified from reports and bounties.
 
 ### Eligibility:
 * Submissions _MUST_ include an exploit proof-of-concept to be considered eligible

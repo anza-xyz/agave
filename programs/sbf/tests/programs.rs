@@ -21,7 +21,7 @@ use {
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_fee_calculator::FeeRateGovernor,
-    solana_fee_structure::{FeeBin, FeeBudgetLimits, FeeStructure},
+    solana_fee_structure::{FeeBin, FeeStructure},
     solana_hash::Hash,
     solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_keypair::Keypair,
@@ -37,7 +37,7 @@ use {
         bank_forks::BankForks,
         genesis_utils::{
             GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
-            create_genesis_config_with_leader_ex,
+            create_genesis_config_with_leader, create_genesis_config_with_leader_ex,
         },
         loader_utils::{
             create_program, load_upgradeable_buffer, load_upgradeable_program_and_advance_slot,
@@ -3900,12 +3900,13 @@ fn test_program_fees() {
     agave_logger::setup();
 
     let congestion_multiplier = 1;
+    let initial_balance = 1000;
 
     let GenesisConfigInfo {
         mut genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(500_000_000);
+    } = create_genesis_config_with_leader(500_000_000, &Pubkey::new_unique(), initial_balance);
 
     genesis_config.fee_rate_governor = FeeRateGovernor::new(congestion_multiplier, 0);
     let mut bank = Bank::new_for_tests(&genesis_config);
@@ -3948,17 +3949,16 @@ fn test_program_fees() {
         &ReservedAccountKeys::empty_key_set(),
     )
     .unwrap();
-    let fee_budget_limits = FeeBudgetLimits::from(
-        process_compute_budget_instructions(
-            SVMStaticMessage::program_instructions_iter(&sanitized_message),
-            &feature_set,
-        )
-        .unwrap_or_default(),
-    );
+    let prioritization_fee = process_compute_budget_instructions(
+        SVMStaticMessage::program_instructions_iter(&sanitized_message),
+        &feature_set,
+    )
+    .unwrap_or_default()
+    .get_prioritization_fee();
     let expected_normal_fee = solana_fee::calculate_fee(
         &sanitized_message,
         fee_structure.lamports_per_signature,
-        fee_budget_limits.prioritization_fee,
+        prioritization_fee,
         bank.feature_set.as_ref().into(),
     );
     bank_client
@@ -3980,17 +3980,16 @@ fn test_program_fees() {
         &ReservedAccountKeys::empty_key_set(),
     )
     .unwrap();
-    let fee_budget_limits = FeeBudgetLimits::from(
-        process_compute_budget_instructions(
-            SVMStaticMessage::program_instructions_iter(&sanitized_message),
-            &feature_set,
-        )
-        .unwrap_or_default(),
-    );
+    let prioritization_fee = process_compute_budget_instructions(
+        SVMStaticMessage::program_instructions_iter(&sanitized_message),
+        &feature_set,
+    )
+    .unwrap_or_default()
+    .get_prioritization_fee();
     let expected_prioritized_fee = solana_fee::calculate_fee(
         &sanitized_message,
         fee_structure.lamports_per_signature,
-        fee_budget_limits.prioritization_fee,
+        prioritization_fee,
         bank.feature_set.as_ref().into(),
     );
     assert!(expected_normal_fee < expected_prioritized_fee);

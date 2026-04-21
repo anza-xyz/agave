@@ -3,9 +3,7 @@
 use {
     self::{
         broadcast_duplicates_run::{BroadcastDuplicatesConfig, BroadcastDuplicatesRun},
-        broadcast_fake_shreds_run::BroadcastFakeShredsRun,
         broadcast_metrics::*,
-        fail_entry_verification_broadcast_run::FailEntryVerificationBroadcastRun,
         standard_broadcast_run::StandardBroadcastRun,
     },
     crate::{
@@ -25,7 +23,7 @@ use {
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
     solana_net_utils::SocketAddrSpace,
-    solana_poh::poh_recorder::WorkingBankEntry,
+    solana_poh::poh_recorder::WorkingBankEntryOrMarker,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::MAX_LEADER_SCHEDULE_STAKES, bank_forks::BankForks},
     solana_streamer::sendmmsg::{SendPktsError, batch_send},
@@ -44,10 +42,8 @@ use {
 };
 
 pub mod broadcast_duplicates_run;
-mod broadcast_fake_shreds_run;
 pub mod broadcast_metrics;
 pub(crate) mod broadcast_utils;
-mod fail_entry_verification_broadcast_run;
 pub(crate) mod standard_broadcast_run;
 
 const _: () = const {
@@ -106,8 +102,6 @@ pub enum BroadcastStageReturnType {
 #[derive(Clone, Debug)]
 pub enum BroadcastStageType {
     Standard,
-    FailEntryVerification,
-    BroadcastFakeShreds,
     BroadcastDuplicates(BroadcastDuplicatesConfig),
 }
 
@@ -117,7 +111,7 @@ impl BroadcastStageType {
         &self,
         sock: Vec<UdpSocket>,
         cluster_info: Arc<ClusterInfo>,
-        receiver: Receiver<WorkingBankEntry>,
+        receiver: Receiver<WorkingBankEntryOrMarker>,
         retransmit_slots_receiver: Receiver<Slot>,
         exit_sender: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
@@ -137,30 +131,6 @@ impl BroadcastStageType {
                 blockstore,
                 bank_forks,
                 StandardBroadcastRun::new(shred_version, migration_status, votor_event_sender),
-                xdp_sender,
-            ),
-
-            BroadcastStageType::FailEntryVerification => BroadcastStage::new(
-                sock,
-                cluster_info,
-                receiver,
-                retransmit_slots_receiver,
-                exit_sender,
-                blockstore,
-                bank_forks,
-                FailEntryVerificationBroadcastRun::new(shred_version),
-                xdp_sender,
-            ),
-
-            BroadcastStageType::BroadcastFakeShreds => BroadcastStage::new(
-                sock,
-                cluster_info,
-                receiver,
-                retransmit_slots_receiver,
-                exit_sender,
-                blockstore,
-                bank_forks,
-                BroadcastFakeShredsRun::new(0, shred_version),
                 xdp_sender,
             ),
 
@@ -189,7 +159,7 @@ trait BroadcastRun {
         &mut self,
         keypair: &Keypair,
         blockstore: &Blockstore,
-        receiver: &Receiver<WorkingBankEntry>,
+        receiver: &Receiver<WorkingBankEntryOrMarker>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()>;
@@ -230,7 +200,7 @@ impl BroadcastStage {
     fn run(
         cluster_info: Arc<ClusterInfo>,
         blockstore: &Blockstore,
-        receiver: &Receiver<WorkingBankEntry>,
+        receiver: &Receiver<WorkingBankEntryOrMarker>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         mut broadcast_stage_run: impl BroadcastRun,
@@ -288,7 +258,7 @@ impl BroadcastStage {
     fn new(
         socks: Vec<UdpSocket>,
         cluster_info: Arc<ClusterInfo>,
-        receiver: Receiver<WorkingBankEntry>,
+        receiver: Receiver<WorkingBankEntryOrMarker>,
         retransmit_slots_receiver: Receiver<Slot>,
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
@@ -572,7 +542,7 @@ pub mod test {
         agave_votor_messages::migration::MigrationStatus,
         crossbeam_channel::{bounded, unbounded},
         rand::Rng,
-        solana_entry::entry::create_ticks,
+        solana_entry::{entry::create_ticks, entry_or_marker::EntryOrMarker},
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -712,7 +682,7 @@ pub mod test {
     fn setup_dummy_broadcast_service(
         leader_keypair: Arc<Keypair>,
         ledger_path: &Path,
-        entry_receiver: Receiver<WorkingBankEntry>,
+        entry_receiver: Receiver<WorkingBankEntryOrMarker>,
         retransmit_slots_receiver: Receiver<Slot>,
     ) -> MockBroadcastStage {
         // Make the database ledger
@@ -793,7 +763,7 @@ pub mod test {
             let ticks = create_ticks(max_tick_height - start_tick_height, 0, Hash::default());
             for (i, tick) in ticks.into_iter().enumerate() {
                 entry_sender
-                    .send((bank.clone(), (tick, i as u64 + 1)))
+                    .send((bank.clone(), (EntryOrMarker::Entry(tick), i as u64 + 1)))
                     .expect("Expect successful send to broadcast service");
             }
         }

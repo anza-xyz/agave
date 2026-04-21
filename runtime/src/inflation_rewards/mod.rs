@@ -279,7 +279,7 @@ mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         solana_stake_interface::{stake_history::StakeHistory, state::Delegation},
-        solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandle},
+        solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
         test_case::test_case,
     };
 
@@ -297,11 +297,16 @@ mod tests {
 
     #[test]
     fn test_stake_state_redeem_rewards() {
-        let mut vote_state = VoteStateV4::default();
+        let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
         // assume stake.stake() is right
         // bootstrap means fully-vested stake at epoch 0
         let stake_lamports = 1;
-        let mut stake = new_stake(stake_lamports, &Pubkey::default(), &vote_state, u64::MAX);
+        let mut stake = new_stake(
+            stake_lamports,
+            &Pubkey::default(),
+            vote_state.as_ref_v4(),
+            u64::MAX,
+        );
         let stake_history = &StakeHistory::default();
         let new_rate_activation_epoch = None;
         let commission_rate_in_basis_points = true;
@@ -311,8 +316,8 @@ mod tests {
             None,
             redeem_stake_rewards(
                 &mut stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 0,
                     point_value: &PointValue {
@@ -336,8 +341,8 @@ mod tests {
             Some((stake_lamports * 2, 0)),
             redeem_stake_rewards(
                 &mut stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 0,
                     point_value: &PointValue {
@@ -361,10 +366,10 @@ mod tests {
 
     #[test]
     fn test_stake_state_calculate_rewards() {
-        let mut vote_state = VoteStateV4::default();
+        let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
         // assume stake.stake() is right
         // bootstrap means fully-vested stake at epoch 0
-        let mut stake = new_stake(1, &Pubkey::default(), &vote_state, u64::MAX);
+        let mut stake = new_stake(1, &Pubkey::default(), vote_state.as_ref_v4(), u64::MAX);
 
         let stake_history = &StakeHistory::default();
         let new_rate_activation_epoch = None;
@@ -375,8 +380,8 @@ mod tests {
             None,
             calculate_stake_rewards(
                 &stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 0,
                     point_value: &PointValue {
@@ -404,8 +409,8 @@ mod tests {
             }),
             calculate_stake_rewards(
                 &stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 0,
                     point_value: &PointValue {
@@ -430,8 +435,8 @@ mod tests {
             }),
             calculate_stake_rewards(
                 &stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 0,
                     point_value: &PointValue {
@@ -459,8 +464,8 @@ mod tests {
             }),
             calculate_stake_rewards(
                 &stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 1,
                     point_value: &PointValue {
@@ -486,8 +491,8 @@ mod tests {
             }),
             calculate_stake_rewards(
                 &stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 2,
                     point_value: &PointValue {
@@ -515,8 +520,8 @@ mod tests {
             }),
             calculate_stake_rewards(
                 &stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 2,
                     point_value: &PointValue {
@@ -533,13 +538,13 @@ mod tests {
 
         // same as above, but is a really small commission out of 32 bits,
         //  verify that None comes back on small redemptions where no one gets paid
-        vote_state.inflation_rewards_commission_bps = 100;
+        vote_state.set_inflation_rewards_commission_bps(100);
         assert_eq!(
             None, // would be Some((0, 2 * 1 + 1 * 2, 4)),
             calculate_stake_rewards(
                 &stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 2,
                     point_value: &PointValue {
@@ -553,13 +558,13 @@ mod tests {
                 null_tracer(),
             )
         );
-        vote_state.inflation_rewards_commission_bps = 9900;
+        vote_state.set_inflation_rewards_commission_bps(9900);
         assert_eq!(
             None, // would be Some((0, 2 * 1 + 1 * 2, 4)),
             calculate_stake_rewards(
                 &stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 2,
                     point_value: &PointValue {
@@ -585,8 +590,8 @@ mod tests {
             }),
             calculate_stake_rewards(
                 &stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 2,
                     point_value: &PointValue {
@@ -612,8 +617,8 @@ mod tests {
             }),
             calculate_stake_rewards(
                 &stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 2,
                     point_value: &PointValue {
@@ -636,7 +641,7 @@ mod tests {
             },
             calculate_stake_points_and_credits(
                 &stake,
-                DelegatedVoteState::from(&vote_state),
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None
@@ -655,7 +660,7 @@ mod tests {
             },
             calculate_stake_points_and_credits(
                 &stake,
-                DelegatedVoteState::from(&vote_state),
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None
@@ -671,7 +676,7 @@ mod tests {
             },
             calculate_stake_points_and_credits(
                 &stake,
-                DelegatedVoteState::from(&vote_state),
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None
@@ -679,7 +684,7 @@ mod tests {
         );
 
         // get rewards and credits observed when not the activation epoch
-        vote_state.inflation_rewards_commission_bps = 0;
+        vote_state.set_inflation_rewards_commission_bps(0);
         stake.credits_observed = 3;
         stake.delegation.activation_epoch = 1;
         assert_eq!(
@@ -690,8 +695,8 @@ mod tests {
             }),
             calculate_stake_rewards(
                 &stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 2,
                     point_value: &PointValue {
@@ -718,8 +723,8 @@ mod tests {
             }),
             calculate_stake_rewards(
                 &stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 2,
                     point_value: &PointValue {
@@ -738,9 +743,9 @@ mod tests {
     #[test_case(u64::MAX, 1_000, u64::MAX => panics "Rewards intermediate calculation should fit within u128")]
     #[test_case(1, u64::MAX, u64::MAX => panics "Rewards should fit within u64")]
     fn calculate_rewards_tests(stake: u64, rewards: u64, credits: u64) {
-        let mut vote_state = VoteStateV4::default();
+        let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
 
-        let stake = new_stake(stake, &Pubkey::default(), &vote_state, u64::MAX);
+        let stake = new_stake(stake, &Pubkey::default(), vote_state.as_ref_v4(), u64::MAX);
 
         vote_state.increment_credits(0, credits);
 
@@ -750,8 +755,8 @@ mod tests {
 
         calculate_stake_rewards(
             &stake,
-            vote_state.inflation_rewards_commission_bps,
-            DelegatedVoteState::from(&vote_state),
+            vote_state.as_ref_v4().inflation_rewards_commission_bps,
+            DelegatedVoteState::from(vote_state.as_ref_v4()),
             CalculationEnvironment {
                 rewarded_epoch: 0,
                 point_value: &PointValue { rewards, points: 1 },
@@ -765,14 +770,14 @@ mod tests {
 
     #[test]
     fn test_stake_state_calculate_points_with_typical_values() {
-        let vote_state = VoteStateV4::default();
+        let vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
 
         // bootstrap means fully-vested stake at epoch 0 with
         //  10_000_000 SOL is a big but not unreasaonable stake
         let stake = new_stake(
             10_000_000 * LAMPORTS_PER_SOL,
             &Pubkey::default(),
-            &vote_state,
+            vote_state.as_ref_v4(),
             u64::MAX,
         );
         let stake_history = &StakeHistory::default();
@@ -784,8 +789,8 @@ mod tests {
             None,
             calculate_stake_rewards(
                 &stake,
-                vote_state.inflation_rewards_commission_bps,
-                DelegatedVoteState::from(&vote_state),
+                vote_state.as_ref_v4().inflation_rewards_commission_bps,
+                DelegatedVoteState::from(vote_state.as_ref_v4()),
                 CalculationEnvironment {
                     rewarded_epoch: 0,
                     point_value: &PointValue {

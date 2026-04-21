@@ -2,6 +2,7 @@ use {
     crate::parse_instruction::{
         ParsableProgram, ParseInstructionError, ParsedInstructionEnum, check_num_accounts,
     },
+    base64::{Engine, prelude::BASE64_STANDARD},
     bincode::deserialize,
     serde_json::json,
     solana_message::{AccountKeys, compiled_instruction::CompiledInstruction},
@@ -274,18 +275,20 @@ pub fn parse_vote(
             })
         }
         VoteInstruction::InitializeAccountV2(vote_init) => {
-            check_num_vote_accounts(&instruction.accounts, 2)?;
+            check_num_vote_accounts(&instruction.accounts, 4)?;
             Ok(ParsedInstructionEnum {
                 instruction_type: "initializeV2".to_string(),
                 info: json!({
                     "voteAccount": account_keys[instruction.accounts[0] as usize].to_string(),
                     "node": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "inflationRewardsCollector": account_keys[instruction.accounts[2] as usize].to_string(),
+                    "blockRevenueCollector": account_keys[instruction.accounts[3] as usize].to_string(),
                     "authorizedVoter": vote_init.authorized_voter.to_string(),
+                    "authorizedVoterBlsPubkey": BASE64_STANDARD.encode(vote_init.authorized_voter_bls_pubkey),
+                    "authorizedVoterBlsProofOfPossession": BASE64_STANDARD.encode(vote_init.authorized_voter_bls_proof_of_possession),
                     "authorizedWithdrawer": vote_init.authorized_withdrawer.to_string(),
                     "inflationRewardsCommissionBps": vote_init.inflation_rewards_commission_bps,
-                    "inflationRewardsCollector": vote_init.inflation_rewards_collector.to_string(),
                     "blockRevenueCommissionBps": vote_init.block_revenue_commission_bps,
-                    "blockRevenueCollector": vote_init.block_revenue_collector.to_string(),
                 }),
             })
         }
@@ -1081,22 +1084,24 @@ mod test {
         let authorized_withdrawer = Pubkey::new_unique();
         let inflation_rewards_collector = Pubkey::new_unique();
         let block_revenue_collector = Pubkey::new_unique();
+        let authorized_voter_bls_pubkey = [7u8; 48];
+        let authorized_voter_bls_proof_of_possession = [9u8; 96];
         let vote_init = VoteInitV2 {
             node_pubkey,
             authorized_voter,
-            authorized_voter_bls_pubkey: [0u8; 48],
-            authorized_voter_bls_proof_of_possession: [0u8; 96],
+            authorized_voter_bls_pubkey,
+            authorized_voter_bls_proof_of_possession,
             authorized_withdrawer,
             inflation_rewards_commission_bps: 500,
-            inflation_rewards_collector,
             block_revenue_commission_bps: 1000,
-            block_revenue_collector,
         };
 
         let instructions = vote_instruction::create_account_with_config_v2(
             &Pubkey::new_unique(),
             &vote_pubkey,
             &vote_init,
+            &inflation_rewards_collector,
+            &block_revenue_collector,
             lamports,
             vote_instruction::CreateVoteAccountConfig {
                 space: VoteStateV4::size_of() as u64,
@@ -1115,12 +1120,14 @@ mod test {
                 info: json!({
                     "voteAccount": vote_pubkey.to_string(),
                     "node": node_pubkey.to_string(),
+                    "inflationRewardsCollector": inflation_rewards_collector.to_string(),
+                    "blockRevenueCollector": block_revenue_collector.to_string(),
                     "authorizedVoter": authorized_voter.to_string(),
+                    "authorizedVoterBlsPubkey": BASE64_STANDARD.encode(authorized_voter_bls_pubkey),
+                    "authorizedVoterBlsProofOfPossession": BASE64_STANDARD.encode(authorized_voter_bls_proof_of_possession),
                     "authorizedWithdrawer": authorized_withdrawer.to_string(),
                     "inflationRewardsCommissionBps": 500,
-                    "inflationRewardsCollector": inflation_rewards_collector.to_string(),
                     "blockRevenueCommissionBps": 1000,
-                    "blockRevenueCollector": block_revenue_collector.to_string(),
                 }),
             }
         );

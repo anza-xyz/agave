@@ -3,10 +3,12 @@
 use {
     super::{SnapshotError, SnapshotFrom},
     crate::serde_snapshot::{
-        SerdeObsoleteAccountsMap, reconstruct_single_storage, remap_and_reconstruct_single_storage,
+        SerdeObsoleteAccounts, SerdeObsoleteAccountsMap, reconstruct_single_storage,
+        remap_and_reconstruct_single_storage,
     },
     agave_fs::FileInfo,
     crossbeam_channel::{Receiver, Sender, select, unbounded},
+    dashmap::DashMap,
     log::*,
     rayon::{
         ThreadPool, ThreadPoolBuilder,
@@ -52,7 +54,7 @@ pub(crate) struct SnapshotStorageRebuilder {
     /// specify how storages are accessed
     storage_access: StorageAccess,
     /// obsolete accounts for all storages
-    obsolete_accounts: Option<SerdeObsoleteAccountsMap>,
+    obsolete_accounts: DashMap<Slot, SerdeObsoleteAccounts>,
 }
 
 impl SnapshotStorageRebuilder {
@@ -78,7 +80,9 @@ impl SnapshotStorageRebuilder {
             num_collisions: AtomicUsize::new(0),
             snapshot_from,
             storage_access,
-            obsolete_accounts,
+            obsolete_accounts: obsolete_accounts
+                .map(|map| map.into_dashmap())
+                .unwrap_or_default(),
         }
     }
 
@@ -202,8 +206,8 @@ impl SnapshotStorageRebuilder {
                 old_append_vec_id as AccountsFileId,
                 self.storage_access,
                 self.obsolete_accounts
-                    .as_ref()
-                    .and_then(|accounts| accounts.remove(&slot)),
+                    .remove(&slot)
+                    .map(|(_, accounts)| accounts.into_tuple()),
             )?,
         };
 

@@ -231,6 +231,14 @@ impl BankForks {
         self.get(slot).map(|bank| bank.hash())
     }
 
+    pub fn block_id(&self, slot: Slot) -> Option<Hash> {
+        self.get(slot).and_then(|bank| bank.block_id())
+    }
+
+    pub fn is_frozen(&self, slot: Slot) -> bool {
+        self.get(slot).map(|bank| bank.is_frozen()).unwrap_or(false)
+    }
+
     pub fn sharable_banks(&self) -> SharableBanks {
         self.sharable_banks.clone()
     }
@@ -357,6 +365,20 @@ impl BankForks {
         Some(bank)
     }
 
+    pub fn highest_frozen_bank(&self) -> Option<Arc<Bank>> {
+        self.banks
+            .values()
+            .filter_map(|bank| {
+                if bank.is_frozen() {
+                    Some(bank.slot())
+                } else {
+                    None
+                }
+            })
+            .max()
+            .and_then(|slot| self.get(slot))
+    }
+
     pub fn highest_slot(&self) -> Slot {
         self.working_slot
     }
@@ -374,7 +396,11 @@ impl BankForks {
     }
 
     /// Clears associated banks from BankForks.
-    pub fn dump_slots<'a, I>(&mut self, slots: I) -> (Vec<(Slot, BankId)>, Vec<BankWithScheduler>)
+    pub fn dump_slots<'a, I>(
+        &mut self,
+        slots: I,
+        write_bank_hash_details: bool,
+    ) -> (Vec<(Slot, BankId)>, Vec<BankWithScheduler>)
     where
         I: Iterator<Item = &'a Slot>,
     {
@@ -384,14 +410,32 @@ impl BankForks {
                 let bank = self
                     .remove(*slot)
                     .expect("BankForks should not have been purged yet");
-                bank_hash_details::write_bank_hash_details_file(&bank)
-                    .map_err(|err| {
-                        warn!("Unable to write bank hash details file: {err}");
-                    })
-                    .ok();
+                if write_bank_hash_details {
+                    bank_hash_details::write_bank_hash_details_file(&bank)
+                        .map_err(|err| {
+                            warn!("Unable to write bank hash details file: {err}");
+                        })
+                        .ok();
+                }
                 ((*slot, bank.bank_id()), bank)
             })
             .unzip()
+    }
+
+    /// Clears a bank from bank forks. Panics if the bank is not present in bank forks
+    pub fn clear_bank(&mut self, slot: Slot, write_bank_hash_details: bool) {
+        let (slots_to_purge, removed_banks) =
+            self.dump_slots(std::iter::once(&slot), write_bank_hash_details);
+
+        let root_bank = self.root_bank();
+        root_bank.remove_unrooted_slots(&slots_to_purge);
+
+        drop(removed_banks);
+
+        for (slot, _) in slots_to_purge {
+            root_bank.clear_slot_signatures(slot);
+            root_bank.prune_program_cache_by_deployment_slot(slot);
+        }
     }
 
     fn do_set_root_return_metrics(
@@ -489,7 +533,7 @@ impl BankForks {
 
     pub fn prune_program_cache(&self, root: Slot) {
         if let Some(root_bank) = self.banks.get(&root) {
-            root_bank.prune_program_cache(root, root_bank.epoch());
+            root_bank.prune_program_cache(root, root_bank.epoch(), self);
         }
     }
 
@@ -645,19 +689,8 @@ impl BankForks {
         // We want to collect timing separately, and the 2nd collect requires
         // a unique borrow to self which is already borrowed by self.banks
         let mut prune_slots_time = Measure::start("prune_slots");
-        let highest_super_majority_root = highest_super_majority_root.unwrap_or(root);
         let prune_slots: Vec<_> = self
-            .banks
-            .keys()
-            .copied()
-            .filter(|slot| {
-                let keep = *slot == root
-                    || self.descendants[&root].contains(slot)
-                    || (*slot < root
-                        && *slot >= highest_super_majority_root
-                        && self.descendants[slot].contains(&root));
-                !keep
-            })
+            .get_non_rooted(root, highest_super_majority_root)
             .collect();
         prune_slots_time.stop();
 
@@ -673,6 +706,22 @@ impl BankForks {
             prune_slots_time.as_ms(),
             prune_remove_time.as_ms(),
         )
+    }
+
+    pub fn get_non_rooted(
+        &self,
+        root: Slot,
+        highest_super_majority_root: Option<Slot>,
+    ) -> impl Iterator<Item = Slot> + '_ {
+        let highest_super_majority_root = highest_super_majority_root.unwrap_or(root);
+        self.banks.keys().copied().filter(move |slot| {
+            let keep = *slot == root
+                || self.descendants[&root].contains(slot)
+                || (*slot < root
+                    && *slot >= highest_super_majority_root
+                    && self.descendants[slot].contains(&root));
+            !keep
+        })
     }
 }
 

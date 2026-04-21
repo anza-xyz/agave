@@ -8,8 +8,11 @@ mod secondary;
 mod stats;
 use {
     crate::{
-        accounts_scan::ScanConfig, ancestors::Ancestors, contains::Contains,
-        is_zero_lamport::IsZeroLamport, pubkey_bins::PubkeyBinCalculator24,
+        accounts_scan::ScanConfig,
+        ancestors::Ancestors,
+        contains::Contains,
+        is_zero_lamport::IsZeroLamport,
+        pubkey_bins::{PubkeyBinCalculator, PubkeyBinCalculatorBuilder},
         rolling_bit_field::RollingBitField,
     },
     account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry, SlotListWriteGuard},
@@ -226,7 +229,7 @@ pub enum AccountsIndexScanResult {
 /// U: account info type to be persisted to disk
 pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     pub account_maps: Box<[Arc<InMemAccountsIndex<T, U>>]>,
-    pub bin_calculator: PubkeyBinCalculator24,
+    pub bin_calculator: PubkeyBinCalculator,
     program_id_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     spl_token_mint_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     spl_token_owner_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
@@ -249,6 +252,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
     pub fn new(config: &AccountsIndexConfig, exit: Arc<AtomicBool>) -> Self {
         let (account_maps, bin_calculator, storage) = Self::allocate_accounts_index(config, exit);
+        info!("AccountsIndex bin calculator: {bin_calculator:?}");
         Self {
             purge_older_root_entries_one_slot_list: AtomicUsize::default(),
             account_maps,
@@ -275,12 +279,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         exit: Arc<AtomicBool>,
     ) -> (
         Box<[Arc<InMemAccountsIndex<T, U>>]>,
-        PubkeyBinCalculator24,
+        PubkeyBinCalculator,
         AccountsIndexStorage<T, U>,
     ) {
         let bins = config.bins.unwrap_or(BINS_DEFAULT);
         // create bin_calculator early to verify # bins is reasonable
-        let bin_calculator = PubkeyBinCalculator24::new(bins);
+        let bin_calculator = PubkeyBinCalculatorBuilder::with_bins(
+            NonZeroUsize::new(bins).expect("bins is non-zero"),
+        );
         let storage = AccountsIndexStorage::new(bins, config, exit);
 
         let account_maps: Box<_> = (0..bins)
@@ -314,14 +320,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     pub(crate) fn get_with_and_then<R>(
         &self,
         pubkey: &Pubkey,
-        ancestors: Option<&Ancestors>,
-        max_root: Option<Slot>,
+        ancestors: &Ancestors,
+        _max_root: Option<Slot>,
         should_add_to_in_mem_cache: bool,
         callback: impl FnOnce(SlotListItem<T>) -> R,
     ) -> Option<R> {
+        let max_root = ancestors.min_slot();
         self.get_and_then(pubkey, |entry| {
             let callback_result = entry.and_then(|entry| {
-                self.get_account_info_with_and_then(entry, ancestors, max_root, callback)
+                self.get_account_info_with_and_then(entry, Some(ancestors), max_root, callback)
             });
             (should_add_to_in_mem_cache, callback_result)
         })
@@ -352,7 +359,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     fn contains_with(
         &self,
         pubkey: &Pubkey,
-        ancestors: Option<&Ancestors>,
+        ancestors: &Ancestors,
         max_root: Option<Slot>,
     ) -> bool {
         self.get_with_and_then(pubkey, ancestors, max_root, false, |_| ())
@@ -857,7 +864,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         // lock contention.
         let bins = self.bins();
         let random_bin_offset = rng().random_range(0..bins);
-        let bin_calc = self.bin_calculator;
+        let bin_calc = &self.bin_calculator;
         items.sort_unstable_by(|(pubkey_a, _), (pubkey_b, _)| {
             ((bin_calc.bin_from_pubkey(pubkey_a) + random_bin_offset) % bins)
                 .cmp(&((bin_calc.bin_from_pubkey(pubkey_b) + random_bin_offset) % bins))
@@ -1131,7 +1138,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             "ref count should be one after cleaning all entries"
         );
 
-        entry.set_dirty(true);
+        entry.mark_dirty();
 
         // Return the last entry in the slot list, which is the only one
         *slot_list
@@ -1373,8 +1380,7 @@ mod tests {
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let ancestors = Ancestors::default();
         let key = &key;
-        assert!(!index.contains_with(key, Some(&ancestors), None));
-        assert!(!index.contains_with(key, None, None));
+        assert!(!index.contains_with(key, &ancestors, None));
 
         let mut num = 0;
         index.scan_accounts(
@@ -1451,8 +1457,7 @@ mod tests {
         assert!(gc.is_empty());
 
         let ancestors = Ancestors::default();
-        assert!(!index.contains_with(&key, Some(&ancestors), None));
-        assert!(!index.contains_with(&key, None, None));
+        assert!(!index.contains_with(&key, &ancestors, None));
 
         let mut num = 0;
         index.scan_accounts(
@@ -1513,8 +1518,7 @@ mod tests {
         index.set_startup(Startup::Normal);
 
         let mut ancestors = Ancestors::default();
-        assert!(!index.contains_with(pubkey, Some(&ancestors), None));
-        assert!(!index.contains_with(pubkey, None, None));
+        assert!(!index.contains_with(pubkey, &ancestors, None));
 
         let mut num = 0;
         index.scan_accounts(
@@ -1525,7 +1529,7 @@ mod tests {
         );
         assert_eq!(num, 0);
         ancestors.insert(slot);
-        assert!(index.contains_with(pubkey, Some(&ancestors), None));
+        assert!(index.contains_with(pubkey, &ancestors, None));
         assert_eq!(index.ref_count_from_storage(pubkey), 1);
         index.scan_accounts(
             &ancestors,
@@ -1546,8 +1550,7 @@ mod tests {
         index.set_startup(Startup::Normal);
 
         let mut ancestors = Ancestors::default();
-        assert!(!index.contains_with(pubkey, Some(&ancestors), None));
-        assert!(!index.contains_with(pubkey, None, None));
+        assert!(!index.contains_with(pubkey, &ancestors, None));
 
         let mut num = 0;
         index.scan_accounts(
@@ -1558,7 +1561,7 @@ mod tests {
         );
         assert_eq!(num, 0);
         ancestors.insert(slot);
-        assert!(index.contains_with(pubkey, Some(&ancestors), None));
+        assert!(index.contains_with(pubkey, &ancestors, None));
         assert_eq!(index.ref_count_from_storage(pubkey), 1);
         index.scan_accounts(
             &ancestors,
@@ -1955,8 +1958,7 @@ mod tests {
         assert_eq!(1, account_maps_stats_len(&index));
 
         let mut ancestors = Ancestors::default();
-        assert!(!index.contains_with(&key, Some(&ancestors), None));
-        assert!(!index.contains_with(&key, None, None));
+        assert!(!index.contains_with(&key, &ancestors, None));
         index.get_and_then(&key, |entry| {
             let (stored_slot, value) = entry.unwrap().slot_list_read_lock()[0];
             assert_eq!(stored_slot, slot);
@@ -1973,7 +1975,7 @@ mod tests {
         );
         assert_eq!(num, 0);
         ancestors.insert(slot);
-        assert!(index.contains_with(&key, Some(&ancestors), None));
+        assert!(index.contains_with(&key, &ancestors, None));
         index.scan_accounts(
             &ancestors,
             index.max_root_inclusive(),
@@ -2001,7 +2003,7 @@ mod tests {
         assert!(gc.is_empty());
 
         let ancestors = Ancestors::from(vec![1]);
-        assert!(!index.contains_with(&key, Some(&ancestors), None));
+        assert!(!index.contains_with(&key, &ancestors, None));
 
         let mut num = 0;
         index.scan_accounts(
@@ -2126,16 +2128,10 @@ mod tests {
 
         let ancestors = Ancestors::from(vec![0]);
         index
-            .get_with_and_then(
-                &key,
-                Some(&ancestors),
-                None,
-                false,
-                |(slot, account_info)| {
-                    assert_eq!(slot, 0);
-                    assert!(account_info);
-                },
-            )
+            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+                assert_eq!(slot, 0);
+                assert!(account_info);
+            })
             .unwrap();
 
         let mut num = 0;
@@ -2246,8 +2242,9 @@ mod tests {
         assert!(gc.is_empty());
 
         index.add_root(0);
+        let ancestors = Ancestors::from(vec![index.max_root_inclusive()]);
         index
-            .get_with_and_then(&key, None, None, false, |(slot, account_info)| {
+            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
                 assert_eq!(slot, 0);
                 assert!(account_info);
             })
@@ -2293,16 +2290,10 @@ mod tests {
         );
         assert!(gc.is_empty());
         index
-            .get_with_and_then(
-                &key,
-                Some(&ancestors),
-                None,
-                false,
-                |(slot, account_info)| {
-                    assert_eq!(slot, 0);
-                    assert_eq!(account_info, 1);
-                },
-            )
+            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+                assert_eq!(slot, 0);
+                assert_eq!(account_info, 1);
+            })
             .unwrap();
 
         let mut gc = ReclaimsSlotList::new();
@@ -2318,16 +2309,10 @@ mod tests {
         );
         assert_eq!(gc, ReclaimsSlotList::from([(0, 1)]));
         index
-            .get_with_and_then(
-                &key,
-                Some(&ancestors),
-                None,
-                false,
-                |(slot, account_info)| {
-                    assert_eq!(slot, 0);
-                    assert_eq!(account_info, 0);
-                },
-            )
+            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+                assert_eq!(slot, 0);
+                assert_eq!(account_info, 0);
+            })
             .unwrap();
     }
 
@@ -2361,29 +2346,17 @@ mod tests {
         );
         assert!(gc.is_empty());
         index
-            .get_with_and_then(
-                &key,
-                Some(&ancestors),
-                None,
-                false,
-                |(slot, account_info)| {
-                    assert_eq!(slot, 0);
-                    assert!(account_info);
-                },
-            )
+            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+                assert_eq!(slot, 0);
+                assert!(account_info);
+            })
             .unwrap();
         let ancestors = Ancestors::from(vec![1]);
         index
-            .get_with_and_then(
-                &key,
-                Some(&ancestors),
-                None,
-                false,
-                |(slot, account_info)| {
-                    assert_eq!(slot, 1);
-                    assert!(!account_info);
-                },
-            )
+            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+                assert_eq!(slot, 1);
+                assert!(!account_info);
+            })
             .unwrap();
     }
 
@@ -2450,8 +2423,9 @@ mod tests {
         // Updating index should not purge older roots, only purges
         // previous updates within the same slot
         assert_eq!(gc, ReclaimsSlotList::new());
+        let ancestors = Ancestors::from(vec![index.max_root_inclusive()]);
         index
-            .get_with_and_then(&key, None, None, false, |(slot, account_info)| {
+            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
                 assert_eq!(slot, 3);
                 assert!(account_info);
             })
@@ -2779,31 +2753,19 @@ mod tests {
         // Verify that the item added is in in the slot list
         let ancestors = Ancestors::from(vec![reclaim_slot]);
         index
-            .get_with_and_then(
-                &key,
-                Some(&ancestors),
-                None,
-                false,
-                |(slot, account_info)| {
-                    assert_eq!(slot, reclaim_slot);
-                    assert_eq!(account_info, account_value);
-                },
-            )
+            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+                assert_eq!(slot, reclaim_slot);
+                assert_eq!(account_info, account_value);
+            })
             .unwrap();
 
         // Verify that the newer item remains in the slot list
         let ancestors = Ancestors::from(vec![reclaim_slot + 1]);
         index
-            .get_with_and_then(
-                &key,
-                Some(&ancestors),
-                None,
-                false,
-                |(slot, account_info)| {
-                    assert_eq!(slot, reclaim_slot + 1);
-                    assert_eq!(account_info, account_value + 1);
-                },
-            )
+            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+                assert_eq!(slot, reclaim_slot + 1);
+                assert_eq!(account_info, account_value + 1);
+            })
             .unwrap();
     }
 
@@ -3634,14 +3596,5 @@ mod tests {
             index.handle_dead_keys(&[key], &AccountSecondaryIndexes::default()),
             vec![key].into_iter().collect::<HashSet<_>>()
         );
-    }
-
-    #[test]
-    #[should_panic(expected = "bins.is_power_of_two()")]
-    #[allow(clippy::field_reassign_with_default)]
-    fn test_illegal_bins() {
-        let mut config = AccountsIndexConfig::default();
-        config.bins = Some(3);
-        AccountsIndex::<bool, bool>::new(&config, Arc::default());
     }
 }

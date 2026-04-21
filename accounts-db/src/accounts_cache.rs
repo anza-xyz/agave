@@ -383,9 +383,18 @@ impl AccountsCache {
             drop(r_roots_being_flushed);
         }
 
-        // If the slot is not found in the ancestors fall back to searching roots
+        // If the slot is not found in the ancestors fall back to searching roots.
+        // Bound the search to ancestors.min_slot() so that roots from slots beyond
+        // the querying bank's ancestor chain are not visible. Using min_slot is more
+        // correct than max_slot because a root between min and max that is not an
+        // ancestor belongs to a different fork and should not be returned.
+        let max_root_slot = ancestors
+            .min_slot()
+            .unwrap_or(index_max_slot)
+            .min(index_max_slot);
+
         let r_maybe_unflushed_roots = self.maybe_unflushed_roots.read().unwrap();
-        for &slot in r_maybe_unflushed_roots.range(..=index_max_slot).rev() {
+        for &slot in r_maybe_unflushed_roots.range(..=max_root_slot).rev() {
             if let Some(account) = self.load(slot, pubkey) {
                 return Some((account, slot, SlotStatus::UnflushedRoot));
             }
@@ -393,7 +402,7 @@ impl AccountsCache {
         drop(r_maybe_unflushed_roots);
 
         let r_roots_being_flushed = self.roots_being_flushed.read().unwrap();
-        for &slot in r_roots_being_flushed.range(..=index_max_slot).rev() {
+        for &slot in r_roots_being_flushed.range(..=max_root_slot).rev() {
             if let Some(account) = self.load(slot, pubkey) {
                 return Some((account, slot, SlotStatus::RootBeingFlushed));
             }
@@ -677,19 +686,28 @@ mod tests {
     ///
     /// Ancestors always take priority over roots regardless of slot
     // None case
-    #[test_case(&[], &[], &[], None; "not ancestor not root")]
-    #[test_case(&[10], &[], &[], Some((10, SlotStatus::Ancestor)); "ancestor only")]
-    #[test_case(&[5, 10, 15], &[], &[], Some((15, SlotStatus::Ancestor)); "highest ancestor returned")]
-    #[test_case(&[], &[10, 20], &[], Some((20, SlotStatus::UnflushedRoot)); "rooted, with no ancestors")]
-    #[test_case(&[], &[], &[10], Some((10, SlotStatus::RootBeingFlushed)); "root being flushed")]
-    #[test_case(&[10], &[], &[10], Some((10, SlotStatus::AncestorBeingFlushed)); "ancestor being flushed")]
-    #[test_case(&[5], &[20], &[], Some((5, SlotStatus::Ancestor)); "ancestor wins over higher root")]
-    #[test_case(&[], &[20], &[10], Some((20, SlotStatus::UnflushedRoot));"unflushed root over flushing root")]
-    #[test_case(&[5], &[20], &[10], Some((5, SlotStatus::Ancestor));"ancestor over unflushed and flushing roots")]
+    // `uncached_ancestors` are slots added to the Ancestors set but with no account
+    // data stored in the cache. This lets us test root bounding by min_slot
+    // without the ancestor path short-circuiting the lookup.
+    #[test_case(&[], &[], &[], &[], None; "not ancestor not root")]
+    #[test_case(&[10], &[], &[], &[], Some((10, SlotStatus::Ancestor)); "ancestor only")]
+    #[test_case(&[5, 10, 15], &[], &[], &[], Some((15, SlotStatus::Ancestor)); "highest ancestor returned")]
+    #[test_case(&[], &[10, 20], &[], &[], Some((20, SlotStatus::UnflushedRoot)); "rooted, with no ancestors")]
+    #[test_case(&[], &[], &[10], &[], Some((10, SlotStatus::RootBeingFlushed)); "root being flushed")]
+    #[test_case(&[10], &[], &[10], &[], Some((10, SlotStatus::AncestorBeingFlushed)); "ancestor being flushed")]
+    #[test_case(&[5], &[20], &[], &[], Some((5, SlotStatus::Ancestor)); "ancestor wins over higher root")]
+    #[test_case(&[], &[20], &[10], &[], Some((20, SlotStatus::UnflushedRoot));"unflushed root over flushing root")]
+    #[test_case(&[5], &[20], &[10], &[], Some((5, SlotStatus::Ancestor));"ancestor over unflushed and flushing roots")]
+    // Root beyond ancestors.min_slot() is excluded; older root still found
+    #[test_case(&[], &[5, 11], &[], &[10], Some((5, SlotStatus::UnflushedRoot)); "unflushed root beyond min ancestor excluded")]
+    #[test_case(&[], &[], &[5, 11], &[10], Some((5, SlotStatus::RootBeingFlushed)); "flushing root beyond min ancestor excluded")]
+    // Root within min_slot bound is still returned
+    #[test_case(&[], &[10], &[], &[15], Some((10, SlotStatus::UnflushedRoot)); "unflushed root below min ancestor returned")]
     fn test_load_latest_slot_priority(
         ancestor_slots: &[Slot],
         unflushed_root_slots: &[Slot],
         flushing_root_slots: &[Slot],
+        uncached_ancestors: &[Slot],
         expected: Option<(Slot, SlotStatus)>,
     ) {
         let cache = AccountsCache::default();
@@ -714,7 +732,9 @@ mod tests {
             cache.begin_flush_roots(Some(max));
         }
 
-        let ancestors = Ancestors::from(ancestor_slots.to_vec());
+        let mut all_ancestors: Vec<Slot> = ancestor_slots.to_vec();
+        all_ancestors.extend_from_slice(uncached_ancestors);
+        let ancestors = Ancestors::from(all_ancestors);
         let result = cache
             .load_latest(&pk, &ancestors)
             .map(|(account, slot, status)| {

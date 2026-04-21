@@ -8,6 +8,7 @@ use {
             verify_unpacked_snapshots_dir_and_version,
         },
     },
+    agave_snapshots::SnapshotVersion,
     tempfile::TempDir,
 };
 use {
@@ -26,7 +27,7 @@ use {
     },
     agave_fs::dirs,
     agave_snapshots::{
-        ArchiveFormat, SnapshotArchiveKind, SnapshotKind, SnapshotVersion,
+        SnapshotArchiveKind, SnapshotKind,
         error::{
             SnapshotError, VerifyEpochStakesError, VerifySlotDeltasError, VerifySlotHistoryError,
         },
@@ -684,15 +685,14 @@ fn _verify_epoch_stakes(
 ///     - `bank` is complete
 ///     - `bank`'s block id is set
 pub fn bank_to_full_snapshot_archive(
-    bank_snapshots_dir: impl AsRef<Path>,
+    snapshot_config: &SnapshotConfig,
     bank: &Bank,
-    snapshot_version: Option<SnapshotVersion>,
-    full_snapshot_archives_dir: impl AsRef<Path>,
-    incremental_snapshot_archives_dir: impl AsRef<Path>,
-    archive_format: ArchiveFormat,
 ) -> agave_snapshots::Result<FullSnapshotArchiveInfo> {
-    let snapshot_version = snapshot_version.unwrap_or_default();
-    let bank_snapshots_dir = tempfile::tempdir_in(&bank_snapshots_dir)?;
+    let temp_bank_snapshots_dir = tempfile::tempdir_in(&snapshot_config.bank_snapshots_dir)?;
+    let snapshot_config = SnapshotConfig {
+        bank_snapshots_dir: temp_bank_snapshots_dir.path().to_path_buf(),
+        ..snapshot_config.clone()
+    };
 
     assert!(bank.is_complete());
     assert!(bank.block_id().is_some());
@@ -715,15 +715,6 @@ pub fn bank_to_full_snapshot_archive(
         bank.get_snapshot_storages(None),
         bank.status_cache.read().unwrap().root_slot_deltas(),
     );
-
-    let snapshot_config = SnapshotConfig {
-        full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
-        incremental_snapshot_archives_dir: incremental_snapshot_archives_dir.as_ref().to_path_buf(),
-        bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
-        archive_format,
-        snapshot_version,
-        ..Default::default()
-    };
 
     let snapshot_storages = snapshot_package.snapshot_storages;
 
@@ -756,16 +747,10 @@ pub fn bank_to_full_snapshot_archive(
 ///     - `bank`'s block id is set
 ///     - `bank`'s slot is greater than `full_snapshot_slot`
 pub fn bank_to_incremental_snapshot_archive(
-    bank_snapshots_dir: impl AsRef<Path>,
+    snapshot_config: &SnapshotConfig,
     bank: &Bank,
     full_snapshot_slot: Slot,
-    snapshot_version: Option<SnapshotVersion>,
-    full_snapshot_archives_dir: impl AsRef<Path>,
-    incremental_snapshot_archives_dir: impl AsRef<Path>,
-    archive_format: ArchiveFormat,
 ) -> agave_snapshots::Result<IncrementalSnapshotArchiveInfo> {
-    let snapshot_version = snapshot_version.unwrap_or_default();
-
     assert!(bank.is_complete());
     assert!(bank.block_id().is_some());
     assert!(bank.slot() > full_snapshot_slot);
@@ -792,14 +777,10 @@ pub fn bank_to_incremental_snapshot_archive(
     // Note: Since the snapshot_storages above are *only* the incremental storages,
     // this bank snapshot *cannot* be used by fastboot.
     // Putting the snapshot in a tempdir effectively enforces that.
-    let temp_bank_snapshots_dir = tempfile::tempdir_in(bank_snapshots_dir)?;
+    let temp_bank_snapshots_dir = tempfile::tempdir_in(&snapshot_config.bank_snapshots_dir)?;
     let snapshot_config = SnapshotConfig {
-        full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
-        incremental_snapshot_archives_dir: incremental_snapshot_archives_dir.as_ref().to_path_buf(),
         bank_snapshots_dir: temp_bank_snapshots_dir.path().to_path_buf(),
-        archive_format,
-        snapshot_version,
-        ..Default::default()
+        ..snapshot_config.clone()
     };
 
     let snapshot_storages = snapshot_package.snapshot_storages;
@@ -845,7 +826,9 @@ mod tests {
             },
             status_cache::{Status, StatusCache},
         },
-        agave_snapshots::{error::VerifySlotDeltasError, paths::get_bank_snapshot_dir},
+        agave_snapshots::{
+            SnapshotVersion, error::VerifySlotDeltasError, paths::get_bank_snapshot_dir,
+        },
         semver::Version,
         solana_accounts_db::{
             accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING, accounts_file::StorageAccess,
@@ -863,6 +846,21 @@ mod tests {
         },
         test_case::test_case,
     };
+
+    fn snapshot_config_for_tests(
+        bank_snapshots_dir: &TempDir,
+        full_snapshot_archives_dir: &TempDir,
+        incremental_snapshot_archives_dir: &TempDir,
+    ) -> SnapshotConfig {
+        SnapshotConfig {
+            full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
+                .path()
+                .to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+            ..SnapshotConfig::default()
+        }
+    }
 
     fn create_snapshot_dirs_for_tests(
         genesis_config: &GenesisConfig,
@@ -950,17 +948,14 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
-        let snapshot_archive_info = bank_to_full_snapshot_archive(
+        let snapshot_config = snapshot_config_for_tests(
             &bank_snapshots_dir,
-            &original_bank,
-            None,
-            full_snapshot_archives_dir.path(),
-            incremental_snapshot_archives_dir.path(),
-            snapshot_archive_format,
-        )
-        .unwrap();
+            &full_snapshot_archives_dir,
+            &incremental_snapshot_archives_dir,
+        );
+        let snapshot_archive_info =
+            bank_to_full_snapshot_archive(&snapshot_config, &original_bank).unwrap();
 
         let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
@@ -1034,17 +1029,14 @@ mod tests {
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
-        let full_snapshot_archive_info = bank_to_full_snapshot_archive(
-            bank_snapshots_dir.path(),
-            &bank1,
-            None,
-            snapshot_archives_dir.path(),
-            snapshot_archives_dir.path(),
-            snapshot_archive_format,
-        )
-        .unwrap();
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &snapshot_archives_dir,
+            &snapshot_archives_dir,
+        );
+        let full_snapshot_archive_info =
+            bank_to_full_snapshot_archive(&snapshot_config, &bank1).unwrap();
 
         let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
@@ -1139,17 +1131,14 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
-        let full_snapshot_archive_info = bank_to_full_snapshot_archive(
-            bank_snapshots_dir.path(),
-            &bank4,
-            None,
-            full_snapshot_archives_dir.path(),
-            incremental_snapshot_archives_dir.path(),
-            snapshot_archive_format,
-        )
-        .unwrap();
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &full_snapshot_archives_dir,
+            &incremental_snapshot_archives_dir,
+        );
+        let full_snapshot_archive_info =
+            bank_to_full_snapshot_archive(&snapshot_config, &bank4).unwrap();
 
         let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
@@ -1229,18 +1218,15 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = SnapshotConfig::default().archive_format;
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &full_snapshot_archives_dir,
+            &incremental_snapshot_archives_dir,
+        );
 
         let full_snapshot_slot = slot;
-        let full_snapshot_archive_info = bank_to_full_snapshot_archive(
-            bank_snapshots_dir.path(),
-            &bank1,
-            None,
-            full_snapshot_archives_dir.path(),
-            incremental_snapshot_archives_dir.path(),
-            snapshot_archive_format,
-        )
-        .unwrap();
+        let full_snapshot_archive_info =
+            bank_to_full_snapshot_archive(&snapshot_config, &bank1).unwrap();
 
         let slot = slot + 1;
         let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
@@ -1264,16 +1250,9 @@ mod tests {
         bank4.fill_bank_with_ticks_for_tests();
         bank4.set_block_id(Some(Hash::default()));
 
-        let incremental_snapshot_archive_info = bank_to_incremental_snapshot_archive(
-            bank_snapshots_dir.path(),
-            &bank4,
-            full_snapshot_slot,
-            None,
-            full_snapshot_archives_dir.path(),
-            incremental_snapshot_archives_dir.path(),
-            snapshot_archive_format,
-        )
-        .unwrap();
+        let incremental_snapshot_archive_info =
+            bank_to_incremental_snapshot_archive(&snapshot_config, &bank4, full_snapshot_slot)
+                .unwrap();
 
         let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
@@ -1343,18 +1322,14 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = SnapshotConfig::default().archive_format;
-
-        let full_snapshot_slot = slot;
-        bank_to_full_snapshot_archive(
+        let snapshot_config = snapshot_config_for_tests(
             &bank_snapshots_dir,
-            &bank1,
-            None,
             &full_snapshot_archives_dir,
             &incremental_snapshot_archives_dir,
-            snapshot_archive_format,
-        )
-        .unwrap();
+        );
+
+        let full_snapshot_slot = slot;
+        bank_to_full_snapshot_archive(&snapshot_config, &bank1).unwrap();
 
         let slot = slot + 1;
         let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
@@ -1378,16 +1353,7 @@ mod tests {
         bank4.fill_bank_with_ticks_for_tests();
         bank4.set_block_id(Some(Hash::default()));
 
-        bank_to_incremental_snapshot_archive(
-            &bank_snapshots_dir,
-            &bank4,
-            full_snapshot_slot,
-            None,
-            &full_snapshot_archives_dir,
-            &incremental_snapshot_archives_dir,
-            snapshot_archive_format,
-        )
-        .unwrap();
+        bank_to_incremental_snapshot_archive(&snapshot_config, &bank4, full_snapshot_slot).unwrap();
 
         let (deserialized_bank, ..) = bank_from_latest_snapshot_archives(
             &bank_snapshots_dir,
@@ -1426,15 +1392,10 @@ mod tests {
         bank.set_capitalization_for_tests(bad_capitalization);
 
         let snapshot_dir = tempfile::TempDir::new().unwrap();
-        let full_snapshot_archive_info = bank_to_full_snapshot_archive(
-            &snapshot_dir,
-            &bank,
-            None,
-            &snapshot_dir,
-            &snapshot_dir,
-            SnapshotConfig::default().archive_format,
-        )
-        .unwrap();
+        let snapshot_config =
+            snapshot_config_for_tests(&snapshot_dir, &snapshot_dir, &snapshot_dir);
+        let full_snapshot_archive_info =
+            bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
 
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
@@ -1499,7 +1460,11 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = SnapshotConfig::default().archive_format;
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &full_snapshot_archives_dir,
+            &incremental_snapshot_archives_dir,
+        );
 
         let GenesisConfigInfo {
             mut genesis_config,
@@ -1536,15 +1501,8 @@ mod tests {
         bank1.set_block_id(Some(Hash::default()));
 
         let full_snapshot_slot = slot;
-        let full_snapshot_archive_info = bank_to_full_snapshot_archive(
-            bank_snapshots_dir.path(),
-            &bank1,
-            None,
-            full_snapshot_archives_dir.path(),
-            incremental_snapshot_archives_dir.path(),
-            snapshot_archive_format,
-        )
-        .unwrap();
+        let full_snapshot_archive_info =
+            bank_to_full_snapshot_archive(&snapshot_config, &bank1).unwrap();
 
         let slot = slot + 1;
         let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
@@ -1573,16 +1531,9 @@ mod tests {
 
         // Take an incremental snapshot and then do a roundtrip on the bank and ensure it
         // deserializes correctly.
-        let incremental_snapshot_archive_info = bank_to_incremental_snapshot_archive(
-            bank_snapshots_dir.path(),
-            &bank2,
-            full_snapshot_slot,
-            None,
-            full_snapshot_archives_dir.path(),
-            incremental_snapshot_archives_dir.path(),
-            snapshot_archive_format,
-        )
-        .unwrap();
+        let incremental_snapshot_archive_info =
+            bank_to_incremental_snapshot_archive(&snapshot_config, &bank2, full_snapshot_slot)
+                .unwrap();
         let deserialized_bank = bank_from_snapshot_archives(
             slice::from_ref(&accounts_dir),
             bank_snapshots_dir.path(),
@@ -1629,16 +1580,9 @@ mod tests {
 
         // Take an incremental snapshot and then do a roundtrip on the bank and ensure it
         // deserializes correctly
-        let incremental_snapshot_archive_info = bank_to_incremental_snapshot_archive(
-            bank_snapshots_dir.path(),
-            &bank4,
-            full_snapshot_slot,
-            None,
-            full_snapshot_archives_dir.path(),
-            incremental_snapshot_archives_dir.path(),
-            snapshot_archive_format,
-        )
-        .unwrap();
+        let incremental_snapshot_archive_info =
+            bank_to_incremental_snapshot_archive(&snapshot_config, &bank4, full_snapshot_slot)
+                .unwrap();
 
         let deserialized_bank = bank_from_snapshot_archives(
             &[accounts_dir],
@@ -1694,18 +1638,11 @@ mod tests {
         bank1.set_block_id(Some(Hash::default()));
 
         let all_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
+        let snapshot_config =
+            snapshot_config_for_tests(&all_snapshots_dir, &all_snapshots_dir, &all_snapshots_dir);
         let full_snapshot_slot = slot;
-        bank_to_full_snapshot_archive(
-            &all_snapshots_dir,
-            &bank1,
-            None,
-            &all_snapshots_dir,
-            &all_snapshots_dir,
-            snapshot_archive_format,
-        )
-        .unwrap();
+        bank_to_full_snapshot_archive(&snapshot_config, &bank1).unwrap();
 
         let slot = slot + 1;
         let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
@@ -1715,16 +1652,7 @@ mod tests {
         bank2.fill_bank_with_ticks_for_tests();
         bank2.set_block_id(Some(Hash::default()));
 
-        bank_to_incremental_snapshot_archive(
-            &all_snapshots_dir,
-            &bank2,
-            full_snapshot_slot,
-            None,
-            &all_snapshots_dir,
-            &all_snapshots_dir,
-            snapshot_archive_format,
-        )
-        .unwrap();
+        bank_to_incremental_snapshot_archive(&snapshot_config, &bank2, full_snapshot_slot).unwrap();
 
         let bank_fields = bank_fields_from_snapshot_archives(
             &all_snapshots_dir,
@@ -1784,12 +1712,11 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let _bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 3, true);
 
-        let snapshot_config = SnapshotConfig {
-            bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
-            full_snapshot_archives_dir: bank_snapshots_dir.as_ref().to_path_buf(),
-            incremental_snapshot_archives_dir: bank_snapshots_dir.as_ref().to_path_buf(),
-            ..Default::default()
-        };
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &bank_snapshots_dir,
+            &bank_snapshots_dir,
+        );
 
         // Verify the snapshot is found with all files present
         let snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
@@ -1987,8 +1914,6 @@ mod tests {
 
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = SnapshotConfig::default().archive_format;
-
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -2071,15 +1996,13 @@ mod tests {
 
         // Take full snapshot and then do a roundtrip on the bank and ensure it
         // deserializes correctly
-        let full_snapshot_archive_info = bank_to_full_snapshot_archive(
-            bank_snapshots_dir.path(),
-            &bank3,
-            None,
-            full_snapshot_archives_dir.path(),
-            full_snapshot_archives_dir.path(),
-            snapshot_archive_format,
-        )
-        .unwrap();
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &full_snapshot_archives_dir,
+            &full_snapshot_archives_dir,
+        );
+        let full_snapshot_archive_info =
+            bank_to_full_snapshot_archive(&snapshot_config, &bank3).unwrap();
 
         let accounts_dir = tempfile::TempDir::new().unwrap();
         let other_bank_snapshots_dir = tempfile::TempDir::new().unwrap();

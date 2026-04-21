@@ -54,14 +54,16 @@ fn bench_g1_ops(c: &mut Criterion) {
             let (p1_bytes, p2_bytes) = add_input.split_at(96);
             let p1: PodG1Point = pod_read_unaligned(p1_bytes);
             let p2: PodG1Point = pod_read_unaligned(p2_bytes);
-            b.iter(|| bls12_381_g1_addition(Version::V0, &p1, &p2, endianness).unwrap())
+            b.iter(|| bls12_381_g1_addition_unchecked(Version::V0, &p1, &p2, endianness).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("Subtraction", label), |b| {
             let (p1_bytes, p2_bytes) = sub_input.split_at(96);
             let p1: PodG1Point = pod_read_unaligned(p1_bytes);
             let p2: PodG1Point = pod_read_unaligned(p2_bytes);
-            b.iter(|| bls12_381_g1_subtraction(Version::V0, &p1, &p2, endianness).unwrap())
+            b.iter(|| {
+                bls12_381_g1_subtraction_unchecked(Version::V0, &p1, &p2, endianness).unwrap()
+            })
         });
 
         group.bench_function(BenchmarkId::new("Multiplication", label), |b| {
@@ -116,14 +118,16 @@ fn bench_g2_ops(c: &mut Criterion) {
             let (p1_bytes, p2_bytes) = add_input.split_at(192);
             let p1: PodG2Point = pod_read_unaligned(p1_bytes);
             let p2: PodG2Point = pod_read_unaligned(p2_bytes);
-            b.iter(|| bls12_381_g2_addition(Version::V0, &p1, &p2, endianness).unwrap())
+            b.iter(|| bls12_381_g2_addition_unchecked(Version::V0, &p1, &p2, endianness).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("Subtraction", label), |b| {
             let (p1_bytes, p2_bytes) = sub_input.split_at(192);
             let p1: PodG2Point = pod_read_unaligned(p1_bytes);
             let p2: PodG2Point = pod_read_unaligned(p2_bytes);
-            b.iter(|| bls12_381_g2_subtraction(Version::V0, &p1, &p2, endianness).unwrap())
+            b.iter(|| {
+                bls12_381_g2_subtraction_unchecked(Version::V0, &p1, &p2, endianness).unwrap()
+            })
         });
 
         group.bench_function(BenchmarkId::new("Multiplication", label), |b| {

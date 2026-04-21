@@ -5,4 +5,5 @@ pub enum TransactionVersion {
     #[default]
     Legacy = u8::MAX,
     V0 = 0,
+    V1 = 1,
 }

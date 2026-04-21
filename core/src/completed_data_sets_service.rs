@@ -1,5 +1,8 @@
-//! [`CompletedDataSetsService`] is a hub, that runs different operations when a "completed data
-//! set", also known as a [`Vec<Entry>`], is received by the validator.
+//! [`CompletedDataSetsService`] is a hub that runs different operations when a completed data set
+//! is received by the validator.
+//!
+//! A completed data set is a contiguous range of data shreds whose combined payload deserializes
+//! to a single [`Vec<Entry>`].
 //!
 //! Currently, `WindowService` sends [`CompletedDataSetInfo`]s via a `completed_sets_receiver`
 //! provided to the [`CompletedDataSetsService`].
@@ -157,10 +160,14 @@ impl CompletedDataSetsService {
             .flatten()
             .map(|completed_data_set_info| {
                 let CompletedDataSetInfo { slot, indices } = completed_data_set_info;
+                let completed_data_set_starting_shred_index = indices.start;
+                let completed_data_set_ending_shred_index_exclusive = indices.end;
                 match blockstore.get_entries_in_data_block(slot, indices, /*slot_meta:*/ None) {
                     Ok(entries) => {
                         Self::notify_deshred_transactions_for_completed_data_set(
                             slot,
+                            completed_data_set_starting_shred_index,
+                            completed_data_set_ending_shred_index_exclusive,
                             &entries,
                             deshred_transaction_notifier.as_deref(),
                             root_bank.as_deref(),
@@ -207,6 +214,8 @@ impl CompletedDataSetsService {
 
     fn notify_deshred_transactions_for_completed_data_set(
         slot: u64,
+        completed_data_set_starting_shred_index: u32,
+        completed_data_set_ending_shred_index_exclusive: u32,
         entries: &[Entry],
         deshred_transaction_notifier: Option<&(dyn DeshredTransactionNotifier + Send + Sync)>,
         root_bank: Option<&solana_runtime::bank::Bank>,
@@ -251,6 +260,8 @@ impl CompletedDataSetsService {
                 let mut notify_measure = Measure::start("notify_deshred");
                 notifier.notify_deshred_transaction(
                     slot,
+                    completed_data_set_starting_shred_index,
+                    completed_data_set_ending_shred_index_exclusive,
                     signature,
                     is_vote,
                     tx,
@@ -288,7 +299,10 @@ pub mod test {
         solana_hash::Hash,
         solana_instruction::Instruction,
         solana_keypair::Keypair,
-        solana_ledger::{blockstore, blockstore::Blockstore, get_tmp_ledger_path_auto_delete},
+        solana_ledger::{
+            blockstore, blockstore::Blockstore, get_tmp_ledger_path_auto_delete,
+            shred::max_ticks_per_n_shreds,
+        },
         solana_message::{
             Message, VersionedMessage,
             v0::{self, LoadedAddresses},
@@ -312,6 +326,8 @@ pub mod test {
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct DeshredNotification {
         slot: u64,
+        completed_data_set_starting_shred_index: u32,
+        completed_data_set_ending_shred_index_exclusive: u32,
         signature: Signature,
         is_vote: bool,
         transaction: VersionedTransaction,
@@ -327,6 +343,8 @@ pub mod test {
         fn notify_deshred_transaction(
             &self,
             slot: u64,
+            completed_data_set_starting_shred_index: u32,
+            completed_data_set_ending_shred_index_exclusive: u32,
             signature: &Signature,
             is_vote: bool,
             transaction: &VersionedTransaction,
@@ -337,6 +355,8 @@ pub mod test {
                 .unwrap()
                 .push(DeshredNotification {
                     slot,
+                    completed_data_set_starting_shred_index,
+                    completed_data_set_ending_shred_index_exclusive,
                     signature: *signature,
                     is_vote,
                     transaction: transaction.clone(),
@@ -466,6 +486,8 @@ pub mod test {
 
         CompletedDataSetsService::notify_deshred_transactions_for_completed_data_set(
             42,
+            7,
+            9,
             &entries,
             Some(&notifier),
             None,
@@ -475,8 +497,18 @@ pub mod test {
         let notifications = notifier.notifications.lock().unwrap().clone();
         assert_eq!(notifications.len(), 2);
         assert_eq!(notifications[0].slot, 42);
+        assert_eq!(notifications[0].completed_data_set_starting_shred_index, 7);
+        assert_eq!(
+            notifications[0].completed_data_set_ending_shred_index_exclusive,
+            9
+        );
         assert_eq!(notifications[0].signature, legacy_vote_tx.signatures[0]);
         assert!(notifications[0].is_vote);
+        assert_eq!(notifications[1].completed_data_set_starting_shred_index, 7);
+        assert_eq!(
+            notifications[1].completed_data_set_ending_shred_index_exclusive,
+            9
+        );
         assert_eq!(notifications[1].signature, legacy_non_vote_tx.signatures[0]);
         assert!(!notifications[1].is_vote);
         assert!(
@@ -521,6 +553,7 @@ pub mod test {
         let shreds = blockstore::entries_to_test_shreds(&entries, 11, 10, true, 0);
         let completed_data_sets = blockstore.insert_shreds(shreds, None, true).unwrap();
         assert_eq!(completed_data_sets.len(), 1);
+        let completed_data_set = completed_data_sets[0].clone();
         sender.send(completed_data_sets).unwrap();
 
         CompletedDataSetsService::recv_completed_data_sets(
@@ -536,7 +569,78 @@ pub mod test {
         let notifications = test_notifier.notifications.lock().unwrap().clone();
         assert_eq!(notifications.len(), 1);
         assert_eq!(notifications[0].slot, 11);
+        assert_eq!(
+            notifications[0].completed_data_set_starting_shred_index,
+            completed_data_set.indices.start
+        );
+        assert_eq!(
+            notifications[0].completed_data_set_ending_shred_index_exclusive,
+            completed_data_set.indices.end
+        );
         assert_eq!(max_slots.shred_insert.load(Ordering::Relaxed), 11);
+    }
+
+    #[test]
+    fn test_recv_completed_data_sets_notifies_completed_data_set_range_for_multi_shred_batch() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&GenesisConfig::default()));
+        let rpc_subscriptions = RpcSubscriptions::new_for_tests_with_blockstore(
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::default()),
+            blockstore.clone(),
+            bank_forks.clone(),
+            Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests())),
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
+        );
+        let max_slots = Arc::new(MaxSlots::default());
+        let test_notifier = Arc::new(TestDeshredTransactionNotifier::default());
+        let notifier = Some(test_notifier.clone() as DeshredTransactionNotifierArc);
+        let (sender, receiver) = bounded(1);
+
+        let num_entries = max_ticks_per_n_shreds(1, None) as usize + 1;
+        let mut previous_hash = Hash::default();
+        let entries: Vec<_> = (0..num_entries)
+            .map(|_| {
+                let entry = next_versioned_entry(
+                    &previous_hash,
+                    1,
+                    vec![legacy_transaction(Instruction::new_with_bytes(
+                        Pubkey::new_unique(),
+                        &[],
+                        Vec::new(),
+                    ))],
+                );
+                previous_hash = entry.hash;
+                entry
+            })
+            .collect();
+        let shreds = blockstore::entries_to_test_shreds(&entries, 12, 11, true, 0);
+        assert!(shreds.len() > 1);
+        let completed_data_sets = blockstore.insert_shreds(shreds, None, true).unwrap();
+        assert_eq!(completed_data_sets.len(), 1);
+        let completed_data_set = completed_data_sets[0].clone();
+        sender.send(completed_data_sets).unwrap();
+
+        CompletedDataSetsService::recv_completed_data_sets(
+            &receiver,
+            &blockstore,
+            &rpc_subscriptions,
+            &notifier,
+            &max_slots,
+            &bank_forks,
+        )
+        .unwrap();
+
+        let notifications = test_notifier.notifications.lock().unwrap().clone();
+        assert_eq!(notifications.len(), num_entries);
+        assert!(notifications.iter().all(|notification| {
+            notification.slot == 12
+                && notification.completed_data_set_starting_shred_index
+                    == completed_data_set.indices.start
+                && notification.completed_data_set_ending_shred_index_exclusive
+                    == completed_data_set.indices.end
+        }));
     }
 
     #[test]
@@ -567,6 +671,8 @@ pub mod test {
 
         CompletedDataSetsService::notify_deshred_transactions_for_completed_data_set(
             10,
+            0,
+            1,
             &entries,
             Some(&notifier),
             Some(&bank),
@@ -613,6 +719,8 @@ pub mod test {
         // Pass None for root_bank, simulates ALT resolution not being opted in
         CompletedDataSetsService::notify_deshred_transactions_for_completed_data_set(
             10,
+            0,
+            1,
             &entries,
             Some(&notifier),
             None,

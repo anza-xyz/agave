@@ -11,16 +11,17 @@ use {
         vote::Vote,
     },
     crossbeam_channel::{SendError, Sender},
-    solana_bls_signatures::{
-        BlsError, keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
-    },
-    solana_clock::Slot,
+    solana_bls_signatures::{BlsError, keypair::Keypair as BLSKeypair},
+    solana_clock::{Epoch, Slot},
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
+    solana_runtime::{bank::Bank, bank_forks::SharableBanks, epoch_stakes::BLSPubkeyStakeEntry},
     solana_signer::Signer,
     solana_transaction::Transaction,
-    std::{collections::HashMap, sync::Arc},
+    std::{
+        collections::{HashMap, hash_map::Entry},
+        sync::{Arc, RwLock},
+    },
     thiserror::Error,
 };
 
@@ -45,7 +46,7 @@ pub enum GenerateVoteTxResult {
 
     // The following are misconfiguration errors
     // The authorized voter for the given pubkey and Epoch does not exist
-    NoAuthorizedVoter(Pubkey, u64),
+    NoAuthorizedVoter(Pubkey, Epoch),
     // The vote account associated with given pubkey does not exist
     VoteAccountNotFound(Pubkey),
 
@@ -113,10 +114,9 @@ pub struct VotingContext {
     pub vote_history: VoteHistory,
     pub vote_account_pubkey: Pubkey,
     pub identity_keypair: Arc<Keypair>,
-    pub authorized_voter_keypairs: Arc<std::sync::RwLock<Vec<Arc<Keypair>>>>,
+    pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
-    pub has_new_vote_been_rooted: bool,
     pub own_vote_sender: Sender<Vec<ConsensusMessage>>,
     pub bls_sender: Sender<BLSOp>,
     pub commitment_sender: Sender<CommitmentAggregationData>,
@@ -127,112 +127,96 @@ pub struct VotingContext {
 
 fn get_or_insert_bls_keypair(
     derived_bls_keypairs: &mut HashMap<Pubkey, Arc<BLSKeypair>>,
-    authorized_voter_keypair: &Arc<Keypair>,
+    authorized_voter_keypair: &Keypair,
 ) -> Result<Arc<BLSKeypair>, BlsError> {
     let pubkey = authorized_voter_keypair.pubkey();
-    if let Some(existing) = derived_bls_keypairs.get(&pubkey) {
-        return Ok(existing.clone());
+    match derived_bls_keypairs.entry(pubkey) {
+        Entry::Occupied(e) => Ok(e.get().clone()),
+        Entry::Vacant(e) => {
+            let bls_keypair = Arc::new(BLSKeypair::derive_from_signer(
+                authorized_voter_keypair,
+                BLS_KEYPAIR_DERIVE_SEED,
+            )?);
+            e.insert(bls_keypair.clone());
+            Ok(bls_keypair)
+        }
     }
-
-    let bls_keypair = Arc::new(BLSKeypair::derive_from_signer(
-        authorized_voter_keypair,
-        BLS_KEYPAIR_DERIVE_SEED,
-    )?);
-
-    derived_bls_keypairs.insert(pubkey, bls_keypair.clone());
-
-    Ok(bls_keypair)
 }
 
 pub fn generate_vote_tx(
-    vote: &Vote,
+    vote: Vote,
     bank: &Bank,
     vote_account_pubkey: Pubkey,
-    identity_keypair: &Arc<Keypair>,
-    authorized_voter_keypairs: &Arc<std::sync::RwLock<Vec<Arc<Keypair>>>>,
+    identity_keypair: &Keypair,
+    authorized_voter_keypairs: &RwLock<Vec<Arc<Keypair>>>,
     wait_to_vote_slot: Option<u64>,
     derived_bls_keypairs: &mut HashMap<Pubkey, Arc<BLSKeypair>>,
 ) -> GenerateVoteTxResult {
-    let authorized_voter_keypair;
-    let bls_pubkey_in_vote_account;
-    {
-        let authorized_voter_keypairs = authorized_voter_keypairs.read().unwrap();
-        if authorized_voter_keypairs.is_empty() {
-            return GenerateVoteTxResult::NonVoting;
+    if bank.get_vote_account(&vote_account_pubkey).is_none() {
+        return GenerateVoteTxResult::VoteAccountNotFound(vote_account_pubkey);
+    }
+    if let Some(slot) = wait_to_vote_slot {
+        if vote.slot() < slot {
+            return GenerateVoteTxResult::WaitToVoteSlot(slot);
         }
-        if let Some(slot) = wait_to_vote_slot {
-            if vote.slot() < slot {
-                return GenerateVoteTxResult::WaitToVoteSlot(slot);
-            }
-        }
-        let Some(vote_account) = bank.get_vote_account(&vote_account_pubkey) else {
-            return GenerateVoteTxResult::VoteAccountNotFound(vote_account_pubkey);
-        };
-        let vote_state_view = vote_account.vote_state_view();
-        if vote_state_view.node_pubkey() != &identity_keypair.pubkey() {
-            info!(
-                "Vote account node_pubkey mismatch: {} (expected: {}).  Unable to vote",
-                vote_state_view.node_pubkey(),
-                identity_keypair.pubkey()
-            );
-            return GenerateVoteTxResult::HotSpare;
-        }
-        let Some(bls_pubkey_serialized) = vote_state_view.bls_pubkey_compressed() else {
-            panic!(
-                "No BLS pubkey in vote account {}",
-                identity_keypair.pubkey()
-            );
-        };
-        bls_pubkey_in_vote_account =
-            (bincode::deserialize::<BLSPubkeyCompressed>(&bls_pubkey_serialized).unwrap())
-                .try_into()
-                .unwrap_or_else(|_| {
-                    panic!(
-                        "Failed to decompress BLS pubkey in vote account {}",
-                        identity_keypair.pubkey()
-                    );
-                });
-        let Some(authorized_voter_pubkey) = vote_state_view.get_authorized_voter(bank.epoch())
-        else {
-            return GenerateVoteTxResult::NoAuthorizedVoter(vote_account_pubkey, bank.epoch());
-        };
-
-        let Some(keypair) = authorized_voter_keypairs
-            .iter()
-            .find(|keypair| &keypair.pubkey() == authorized_voter_pubkey)
-        else {
-            warn!(
-                "The authorized keypair {authorized_voter_pubkey} for vote account \
-                 {vote_account_pubkey} is not available.  Unable to vote"
-            );
-            return GenerateVoteTxResult::NonVoting;
-        };
-
-        authorized_voter_keypair = keypair.clone();
     }
 
-    let bls_keypair = get_or_insert_bls_keypair(derived_bls_keypairs, &authorized_voter_keypair)
-        .unwrap_or_else(|e| panic!("Failed to derive my own BLS keypair: {e:?}"));
-    let my_bls_pubkey = bls_keypair.public;
-    if my_bls_pubkey != bls_pubkey_in_vote_account {
-        panic!(
-            "Vote account bls_pubkey mismatch: {bls_pubkey_in_vote_account:?} (expected: \
-             {my_bls_pubkey:?}).  Unable to vote"
-        );
-    }
-    let vote_serialized = bincode::serialize(&vote).unwrap();
     let rank_map = bank
-        .epoch_stakes_from_slot(vote.slot())
-        .unwrap_or_else(|| panic!("could not find epoch stakes for slot {}", vote.slot()))
-        .bls_pubkey_to_rank_map();
-    let Some(my_rank) = rank_map.get_rank(&my_bls_pubkey) else {
+        .get_rank_map(vote.slot())
+        .unwrap_or_else(|| panic!("could not find rank map for slot {}", vote.slot()));
+
+    let Some(&my_rank) = rank_map.get_rank_for_vote_pubkey(&vote_account_pubkey) else {
         return GenerateVoteTxResult::NoRankFound;
     };
+    let BLSPubkeyStakeEntry {
+        vote_account_pubkey: expected_vote_pubkey,
+        node_pubkey: expected_node_pubkey,
+        bls_pubkey: expected_bls_pubkey,
+        stake: _,
+    } = rank_map
+        .get_pubkey_stake_entry(my_rank as usize)
+        .expect("rank-map index should be valid");
 
+    if expected_vote_pubkey != &vote_account_pubkey {
+        warn!(
+            "Rank-map vote pubkey mismatch: rank={my_rank}; expected={vote_account_pubkey}; \
+             got={expected_vote_pubkey}",
+        );
+        return GenerateVoteTxResult::VoteAccountNotFound(vote_account_pubkey);
+    }
+    if expected_node_pubkey != &identity_keypair.pubkey() {
+        warn!(
+            "Rank-map node pubkey mismatch: rank={my_rank}; expected={expected_node_pubkey}; \
+             got={}",
+            identity_keypair.pubkey(),
+        );
+        return GenerateVoteTxResult::HotSpare;
+    }
+
+    let Some(bls_keypair) =
+        authorized_voter_keypairs
+            .read()
+            .unwrap()
+            .iter()
+            .find_map(|authorized_voter_keypair| {
+                let bls_keypair =
+                    get_or_insert_bls_keypair(derived_bls_keypairs, authorized_voter_keypair)
+                        .unwrap_or_else(|e| panic!("Failed to derive my own BLS keypair: {e}"));
+                (&bls_keypair.public == expected_bls_pubkey).then_some(bls_keypair)
+            })
+    else {
+        warn!(
+            "No authorized voter keypair matches rank-map BLS key for vote account \
+             {vote_account_pubkey}. Unable to vote"
+        );
+        return GenerateVoteTxResult::NonVoting;
+    };
+
+    let vote_serialized = wincode::serialize(&vote).unwrap();
     GenerateVoteTxResult::ConsensusMessage(ConsensusMessage::Vote(VoteMessage {
-        vote: *vote,
+        vote,
         signature: bls_keypair.sign(&vote_serialized).into(),
-        rank: *my_rank,
+        rank: my_rank,
     }))
 }
 
@@ -258,7 +242,7 @@ fn insert_vote_and_create_bls_message(
 
     let bank = context.sharable_banks.root();
     let message = match generate_vote_tx(
-        &vote,
+        vote,
         &bank,
         context.vote_account_pubkey,
         &context.identity_keypair,
@@ -386,7 +370,6 @@ mod tests {
                 my_keys.vote_keypair.insecure_clone(),
             )])),
             derived_bls_keypairs: HashMap::new(),
-            has_new_vote_been_rooted: false,
             own_vote_sender,
             bls_sender,
             commitment_sender,
@@ -570,31 +553,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Vote account bls_pubkey mismatch")]
-    fn test_wrong_bls_pubkey() {
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
-        // Create 10 node validatorvotekeypairs vec
-        let validator_keypairs = (0..10)
-            .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
-            .collect::<Vec<_>>();
-        let my_index = 0;
-        let mut voting_context =
-            setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
-
-        voting_context.derived_bls_keypairs.insert(
-            validator_keypairs[my_index].vote_keypair.pubkey(),
-            Arc::new(BLSKeypair::new()),
-        );
-        let vote = Vote::new_notarization_vote(8, Hash::new_unique());
-        assert!(
-            generate_vote_message(vote, true, &mut voting_context)
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "could not find epoch stakes for slot 1000000000")]
+    #[should_panic(expected = "could not find rank map for slot 1000000000")]
     fn test_panic_on_future_slot() {
         agave_logger::setup();
         let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();

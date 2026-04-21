@@ -12,8 +12,15 @@ use {
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
     crossbeam_channel::{Sender, TrySendError},
-    solana_perf::{packet::PacketBatch, sigverify},
-    std::sync::Arc,
+    solana_measure::measure::Measure,
+    solana_perf::{
+        packet::PacketBatch,
+        sigverify::{self},
+    },
+    std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 pub struct TransactionSigVerifier {
@@ -49,39 +56,61 @@ impl TransactionSigVerifier {
 }
 
 impl SigVerifier for TransactionSigVerifier {
-    type SendType = BankingPacketBatch;
-
-    fn send_packets(
+    fn verify_and_send_packets(
         &mut self,
-        packet_batches: Vec<PacketBatch>,
-    ) -> Result<(), SigVerifyServiceError<Self::SendType>> {
-        let banking_packet_batch = BankingPacketBatch::new(packet_batches);
-        if let Some(forward_stage_sender) = &self.forward_stage_sender {
-            self.banking_stage_sender
-                .send(banking_packet_batch.clone())?;
-            if let Err(TrySendError::Full(_)) =
-                forward_stage_sender.try_send((banking_packet_batch, self.reject_non_vote))
-            {
-                warn!("forwarding stage channel is full, dropping packets.");
+        batches: Vec<PacketBatch>,
+        valid_packets: usize,
+        in_flight_count: Arc<AtomicUsize>,
+        total_valid_packets: Arc<AtomicUsize>,
+        total_verify_time_us: Arc<AtomicUsize>,
+    ) -> Result<(), SigVerifyServiceError> {
+        let thread_pool = self.thread_pool.clone();
+        let banking_stage_sender = self.banking_stage_sender.clone();
+        let forward_stage_sender = self.forward_stage_sender.clone();
+        let reject_non_vote = self.reject_non_vote;
+
+        in_flight_count.fetch_add(valid_packets, Ordering::Release);
+
+        self.thread_pool.spawn(move || {
+            let mut verify_time = Measure::start("sigverify_batch_time");
+            let mut batches = batches;
+            sigverify::ed25519_verify(&thread_pool, &mut batches, reject_non_vote, valid_packets);
+            verify_time.stop();
+            let num_valid_packets = sigverify::count_valid_packets(&batches);
+
+            let banking_packet_batch = BankingPacketBatch::new(batches);
+            if let Some(forward_stage_sender) = &forward_stage_sender {
+                if let Err(err) = banking_stage_sender.send(banking_packet_batch.clone()) {
+                    error!("sigverify send failed: {err:?}");
+                    in_flight_count.fetch_sub(valid_packets, Ordering::Release);
+                    return;
+                }
+                if let Err(TrySendError::Full(_)) =
+                    forward_stage_sender.try_send((banking_packet_batch, reject_non_vote))
+                {
+                    warn!("forwarding stage channel is full, dropping packets.");
+                }
+            } else if let Err(err) = banking_stage_sender.send(banking_packet_batch) {
+                error!("sigverify send failed: {err:?}");
+                in_flight_count.fetch_sub(valid_packets, Ordering::Release);
+                return;
             }
-        } else {
-            self.banking_stage_sender.send(banking_packet_batch)?;
-        }
+
+            total_valid_packets.fetch_add(num_valid_packets, Ordering::Relaxed);
+            total_verify_time_us.fetch_add(verify_time.as_us() as usize, Ordering::Relaxed);
+            in_flight_count.fetch_sub(valid_packets, Ordering::Release);
+        });
 
         Ok(())
     }
 
-    fn verify_batches(
-        &self,
-        mut batches: Vec<PacketBatch>,
-        valid_packets: usize,
-    ) -> Vec<PacketBatch> {
-        sigverify::ed25519_verify(
-            &self.thread_pool,
-            &mut batches,
-            self.reject_non_vote,
-            valid_packets,
-        );
-        batches
+    fn capacity(&self) -> usize {
+        const CAPACITY_PER_THREAD: usize = {
+            15_000 // ~15k packets per second throughput
+            * 2 // 2 seconds worth
+        };
+        self.thread_pool
+            .current_num_threads()
+            .saturating_mul(CAPACITY_PER_THREAD)
     }
 }

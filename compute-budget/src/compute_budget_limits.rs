@@ -4,7 +4,7 @@ pub use solana_program_runtime::execution_budget::{
     MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, MIN_HEAP_FRAME_BYTES,
 };
 use {
-    solana_fee_structure::{FeeBudgetLimits, FeeDetails},
+    solana_fee_structure::FeeDetails,
     solana_program_runtime::execution_budget::{
         SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
     },
@@ -48,7 +48,7 @@ impl ComputeBudgetLimits {
                 heap_size: self.updated_heap_bytes,
                 ..SVMTransactionExecutionBudget::new_with_defaults(simd_0268_active)
             },
-            loaded_accounts_data_size_limit,
+            loaded_accounts_data_size_limit: loaded_accounts_data_size_limit.get(),
             fee_details,
         }
     }
@@ -66,34 +66,6 @@ fn get_prioritization_fee(compute_unit_price: u64, compute_unit_limit: u64) -> u
         .checked_div(MICRO_LAMPORTS_PER_LAMPORT as u128)
         .and_then(|fee| u64::try_from(fee).ok())
         .unwrap_or(u64::MAX)
-}
-
-impl From<ComputeBudgetLimits> for FeeBudgetLimits {
-    fn from(val: ComputeBudgetLimits) -> Self {
-        let prioritization_fee =
-            get_prioritization_fee(val.compute_unit_price, u64::from(val.compute_unit_limit));
-
-        FeeBudgetLimits {
-            loaded_accounts_data_size_limit: val.loaded_accounts_bytes,
-            heap_cost: DEFAULT_HEAP_COST,
-            compute_unit_limit: u64::from(val.compute_unit_limit),
-            prioritization_fee,
-        }
-    }
-}
-
-impl From<&ComputeBudgetLimits> for FeeBudgetLimits {
-    fn from(val: &ComputeBudgetLimits) -> Self {
-        let prioritization_fee =
-            get_prioritization_fee(val.compute_unit_price, u64::from(val.compute_unit_limit));
-
-        FeeBudgetLimits {
-            loaded_accounts_data_size_limit: val.loaded_accounts_bytes,
-            heap_cost: DEFAULT_HEAP_COST,
-            compute_unit_limit: u64::from(val.compute_unit_limit),
-            prioritization_fee,
-        }
-    }
 }
 
 #[cfg(test)]

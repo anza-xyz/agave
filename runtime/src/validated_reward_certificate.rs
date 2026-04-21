@@ -94,7 +94,7 @@ impl ValidatedRewardCert {
 
         let mut rank_map = |ind: usize| {
             rank_map.get_pubkey_stake_entry(ind).map(|entry| {
-                validators.push(entry.pubkey);
+                validators.push(entry.vote_account_pubkey);
                 entry.bls_pubkey
             })
         };

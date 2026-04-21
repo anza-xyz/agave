@@ -394,22 +394,6 @@ fn default_stable_step(parallel: u64) -> buildkite::Step {
             ..Default::default()
         }));
 
-    group
-        .steps
-        .push(buildkite::Step::Command(buildkite::CommandStep {
-            name: String::from("platform-tools-sdk"),
-            command: String::from(
-                "ci/docker-run-default-image.sh cargo nextest run --profile ci --manifest-path \
-                 ./platform-tools-sdk/Cargo.toml",
-            ),
-            agents: Some(HashMap::from([(
-                String::from("queue"),
-                String::from("default"),
-            )])),
-            timeout_in_minutes: Some(35),
-            ..Default::default()
-        }));
-
     buildkite::Step::Group(group)
 }
 

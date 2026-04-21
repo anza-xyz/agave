@@ -36,6 +36,7 @@ use {
     solana_transaction_error::TransportError,
     std::{
         net::{SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         sync::{Arc, RwLock},
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
@@ -123,7 +124,7 @@ pub(crate) struct SpawnForwardingStageResult {
 
 pub(crate) fn spawn_forwarding_stage(
     receiver: Receiver<(BankingPacketBatch, bool)>,
-    tpu_forwaring_client_config: ForwardingClientConfig<'_>,
+    tpu_forwarding_client_config: ForwardingClientConfig<'_>,
     vote_client_udp_socket: UdpSocket,
     sharable_banks: SharableBanks,
     forward_address_getter: ForwardAddressGetter,
@@ -136,7 +137,7 @@ pub(crate) fn spawn_forwarding_stage(
         runtime_handle,
         cancel,
         node_multihoming,
-    } = tpu_forwaring_client_config;
+    } = tpu_forwarding_client_config;
 
     // Create TPU clients for each socket provided.
     // Number of clients is same as number of bind IP addresses.
@@ -540,7 +541,7 @@ impl TpuClientNextClient {
             stake_identity: stake_identity.map(StakeIdentity::new),
             // Cache size of 128 covers all nodes above the P90 slot count threshold,
             // which together account for ~75% of total slots in the epoch.
-            num_connections: 128,
+            num_connections: NonZeroUsize::new(128).unwrap(),
             skip_check_transaction_age: true,
             worker_channel_size: 2,
             max_reconnect_attempts: 4,

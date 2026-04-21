@@ -339,7 +339,7 @@ mod tests {
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{
             self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4,
-            VoteStateVersions, process_slot_vote_unchecked,
+            VoteStateVersions, handler::VoteStateHandler, process_slot_vote_unchecked,
         },
     };
 
@@ -550,19 +550,22 @@ mod tests {
         // Create bank
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
-        let mut vote_state1 = VoteStateV4::deserialize(vote_account1.data(), &pk1).unwrap();
+        let mut vote_state1 =
+            VoteStateHandler::new_v4(VoteStateV4::deserialize(vote_account1.data(), &pk1).unwrap());
         process_slot_vote_unchecked(&mut vote_state1, 3);
         process_slot_vote_unchecked(&mut vote_state1, 5);
+        let vote_state1 = vote_state1.unwrap_v4();
         if !with_node_vote_state {
             let versioned = VoteStateVersions::new_v4(vote_state1.clone());
             vote_account1.set_state(&versioned).unwrap();
             bank.store_account(&pk1, &vote_account1);
         }
 
-        let mut vote_state2 = VoteStateV4::deserialize(vote_account2.data(), &pk2).unwrap();
+        let mut vote_state2 =
+            VoteStateHandler::new_v4(VoteStateV4::deserialize(vote_account2.data(), &pk2).unwrap());
         process_slot_vote_unchecked(&mut vote_state2, 9);
         process_slot_vote_unchecked(&mut vote_state2, 10);
-        let versioned = VoteStateVersions::new_v4(vote_state2);
+        let versioned = VoteStateVersions::new_v4(vote_state2.unwrap_v4());
         vote_account2.set_state(&versioned).unwrap();
         bank.store_account(&pk2, &vote_account2);
 
