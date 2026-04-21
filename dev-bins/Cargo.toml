@@ -117,7 +117,7 @@ solana-instruction = "3.4.0"
 solana-instruction-error = "2.3.0"
 solana-keypair = "3.1.2"
 solana-ledger = { path = "../ledger", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-solana-loader-v3-interface = "6.1.1"
+solana-loader-v3-interface = "7.0.0"
 solana-loader-v4-interface = "3.1.0"
 solana-loader-v4-program = { path = "../programs/loader-v4", version = "=4.1.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-local-cluster = { path = "../local-cluster", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }

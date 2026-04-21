@@ -759,16 +759,6 @@ fn process_loader_upgradeable_instruction(
         UpgradeableLoaderInstruction::ExtendProgram { additional_bytes } => {
             common_extend_program(invoke_context, additional_bytes, false)?;
         }
-        UpgradeableLoaderInstruction::ExtendProgramChecked { .. } => {
-            // ExtendProgramChecked has been removed.
-            // This variant will be removed from the next interface release.
-            return Err(InstructionError::InvalidInstructionData);
-        }
-        UpgradeableLoaderInstruction::Migrate => {
-            // Loader V4 has been removed.
-            // This variant will be removed from the next interface release.
-            return Err(InstructionError::InvalidInstructionData);
-        }
     }
 
     Ok(())
