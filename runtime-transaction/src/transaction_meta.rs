@@ -106,3 +106,121 @@ impl VersionedTransactionConfiguration {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_keypair::Keypair,
+        solana_message::Message,
+        solana_program_entrypoint::HEAP_LENGTH,
+        solana_signer::Signer,
+        solana_svm_transaction::svm_message::SVMStaticMessage,
+        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
+    };
+
+    #[test]
+    fn test_try_into_config_legacy_and_v0() {
+        let feature_set = FeatureSet::all_enabled();
+
+        let payer_keypair = Keypair::new();
+        let tx = SanitizedTransaction::from_transaction_for_tests(Transaction::new_unsigned(
+            Message::new(
+                &[
+                    ComputeBudgetInstruction::set_compute_unit_price(2_000_000),
+                    ComputeBudgetInstruction::set_compute_unit_limit(123_456),
+                    ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(456_789),
+                    ComputeBudgetInstruction::request_heap_frame(
+                        (HEAP_LENGTH as u32).saturating_mul(2),
+                    ),
+                ],
+                Some(&payer_keypair.pubkey()),
+            ),
+        ));
+        let details = ComputeBudgetInstructionDetails::try_from(
+            SVMStaticMessage::program_instructions_iter(&tx),
+        )
+        .unwrap();
+
+        let config = VersionedTransactionConfiguration::LegacyAndV0(details)
+            .try_into_config(&feature_set)
+            .unwrap();
+
+        assert_eq!(
+            config.updated_heap_bytes,
+            (HEAP_LENGTH as u32).saturating_mul(2)
+        );
+        assert_eq!(config.compute_unit_limit, 123_456);
+        assert_eq!(config.priority_fee_lamports, 2 * 123_456);
+        assert_eq!(config.loaded_accounts_data_size_limit, 456_789);
+    }
+
+    #[test]
+    fn test_try_into_config_v1_no_clamping() {
+        let feature_set = FeatureSet::all_enabled();
+
+        let input = TransactionConfiguration {
+            updated_heap_bytes: 65_536,
+            compute_unit_limit: 123_456,
+            priority_fee_lamports: 42,
+            loaded_accounts_data_size_limit: 789_012,
+        };
+
+        let config = VersionedTransactionConfiguration::V1(input)
+            .try_into_config(&feature_set)
+            .unwrap();
+
+        assert_eq!(config.updated_heap_bytes, 65_536);
+        assert_eq!(config.compute_unit_limit, 123_456);
+        assert_eq!(config.priority_fee_lamports, 42);
+        assert_eq!(config.loaded_accounts_data_size_limit, 789_012);
+    }
+
+    #[test]
+    fn test_try_into_config_v1_clamps_compute_unit_limit() {
+        let feature_set = FeatureSet::all_enabled();
+
+        let input = TransactionConfiguration {
+            updated_heap_bytes: 65_536,
+            compute_unit_limit: MAX_COMPUTE_UNIT_LIMIT.saturating_add(1),
+            priority_fee_lamports: 42,
+            loaded_accounts_data_size_limit: 1,
+        };
+
+        let config = VersionedTransactionConfiguration::V1(input)
+            .try_into_config(&feature_set)
+            .unwrap();
+
+        assert_eq!(config.compute_unit_limit, MAX_COMPUTE_UNIT_LIMIT);
+        assert_eq!(config.updated_heap_bytes, 65_536);
+        assert_eq!(config.priority_fee_lamports, 42);
+        assert_eq!(config.loaded_accounts_data_size_limit, 1);
+    }
+
+    #[test]
+    fn test_try_into_config_v1_clamps_loaded_accounts_data_size_limit() {
+        let feature_set = FeatureSet::all_enabled();
+
+        let max_loaded_accounts_data_size = MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get();
+
+        let input = TransactionConfiguration {
+            updated_heap_bytes: 65_536,
+            compute_unit_limit: 123_456,
+            priority_fee_lamports: 42,
+            loaded_accounts_data_size_limit: max_loaded_accounts_data_size.saturating_add(1),
+        };
+
+        let config = VersionedTransactionConfiguration::V1(input)
+            .try_into_config(&feature_set)
+            .unwrap();
+
+        assert_eq!(
+            config.loaded_accounts_data_size_limit,
+            max_loaded_accounts_data_size
+        );
+        assert_eq!(config.updated_heap_bytes, 65_536);
+        assert_eq!(config.compute_unit_limit, 123_456);
+        assert_eq!(config.priority_fee_lamports, 42);
+    }
+}
