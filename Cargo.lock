@@ -6515,8 +6515,7 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 [[package]]
 name = "rustls-webpki"
 version = "0.101.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765"
+source = "git+https://github.com/anza-xyz/rustls-webpki?tag=anza-0.101.7-1#37e66ef34b2a3aabb82ec65ed7582ce689b9b43c"
 dependencies = [
  "ring",
  "untrusted",
@@ -6525,7 +6524,7 @@ dependencies = [
 [[package]]
 name = "rustls-webpki"
 version = "0.103.6"
-source = "git+https://github.com/anza-xyz/rustls-webpki?tag=anza-rustsec-2026-0049-0.103.6#aea57bff30e8085466e72ccaab42678100a92005"
+source = "git+https://github.com/anza-xyz/rustls-webpki?tag=anza-0.103.6-2#9a34ffb45c7d402536909d86b25c0d1adf0324f1"
 dependencies = [
  "ring",
  "rustls-pki-types",
