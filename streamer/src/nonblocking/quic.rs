@@ -75,7 +75,7 @@ const MAX_CONNECTION_BURST: u64 = 1000;
 
 /// Timeout for connection handshake. Timer starts once we get Initial from the
 /// peer, and is canceled when we get a Handshake packet from them.
-const QUIC_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const QUIC_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Absolute max RTT to allow for a legitimate connection.
 /// Enough to cover any non-malicious link on Earth.
@@ -314,9 +314,27 @@ where
             stats
                 .total_incoming_connection_attempts
                 .fetch_add(1, Ordering::Relaxed);
-
-            // check overall connection request rate limiter
-            if overall_connection_rate_limiter.current_tokens() == 0 {
+            if !incoming.remote_address_validated() {
+                match incoming.retry() {
+                    Ok(()) => {
+                        stats
+                            .connection_attempts_asked_to_retry
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(retry_err) => {
+                        // Client sent a token we couldn't validate (e.g., different
+                        // endpoint behind LB, key rotation race, forged token).
+                        stats
+                            .connection_retry_token_invalid
+                            .fetch_add(1, Ordering::Relaxed);
+                        retry_err.into_incoming().refuse();
+                    }
+                }
+                continue;
+            }
+            // After retry challenge, the client's IP is verified.
+            // We can now check if we should be admitting more connections.
+            if overall_connection_rate_limiter.consume_tokens(1).is_err() {
                 stats
                     .connection_rate_limited_across_all
                     .fetch_add(1, Ordering::Relaxed);
@@ -327,8 +345,7 @@ where
                 incoming.ignore();
                 continue;
             }
-            // then perform per IpAddr rate limiting
-            if !rate_limiter.is_allowed(&incoming.remote_address().ip()) {
+            if !rate_limiter.register_connection(&incoming.remote_address().ip()) {
                 stats
                     .connection_rate_limited_per_ipaddr
                     .fetch_add(1, Ordering::Relaxed);
@@ -336,6 +353,8 @@ where
                     "Ignoring incoming connection from {} due to per-IP rate limiting.",
                     incoming.remote_address()
                 );
+                // refund the overall rate limiter
+                overall_connection_rate_limiter.add_tokens(1);
                 incoming.ignore();
                 continue;
             }
@@ -356,12 +375,8 @@ where
             let connecting = incoming.accept();
             match connecting {
                 Ok(connecting) => {
-                    let rate_limiter = rate_limiter.clone();
-                    let overall_connection_rate_limiter = overall_connection_rate_limiter.clone();
                     tasks.spawn(setup_connection(
                         connecting,
-                        rate_limiter,
-                        overall_connection_rate_limiter,
                         client_connection_tracker,
                         packet_batch_sender.clone(),
                         stats.clone(),
@@ -439,8 +454,6 @@ pub(crate) fn update_open_connections_stat<S: OpaqueStreamerCounter>(
 #[allow(clippy::too_many_arguments)]
 async fn setup_connection<Q, C>(
     connecting: Connecting,
-    rate_limiter: Arc<ConnectionRateLimiter>,
-    overall_connection_rate_limiter: Arc<TokenBucket>,
     client_connection_tracker: ClientConnectionTracker,
     packet_sender: Sender<PacketBatch>,
     stats: Arc<StreamerStats>,
@@ -460,36 +473,6 @@ async fn setup_connection<Q, C>(
         match connecting_result {
             Ok(new_connection) => {
                 debug!("Got a connection {from:?}");
-                // now that we have observed the handshake we can be certain
-                // that the initiator owns an IP address, we can update rate
-                // limiters on the server
-                if !rate_limiter.register_connection(&from.ip()) {
-                    debug!("Reject connection from {from:?} -- rate limiting exceeded");
-                    stats
-                        .connection_rate_limited_per_ipaddr
-                        .fetch_add(1, Ordering::Relaxed);
-                    new_connection.close(
-                        CONNECTION_CLOSE_CODE_DISALLOWED.into(),
-                        CONNECTION_CLOSE_REASON_DISALLOWED,
-                    );
-                    return;
-                }
-
-                if overall_connection_rate_limiter.consume_tokens(1).is_err() {
-                    debug!(
-                        "Reject connection from {:?} -- total rate limiting exceeded",
-                        from.ip()
-                    );
-                    stats
-                        .connection_rate_limited_across_all
-                        .fetch_add(1, Ordering::Relaxed);
-                    new_connection.close(
-                        CONNECTION_CLOSE_CODE_DISALLOWED.into(),
-                        CONNECTION_CLOSE_REASON_DISALLOWED,
-                    );
-                    return;
-                }
-
                 stats.total_new_connections.fetch_add(1, Ordering::Relaxed);
 
                 let mut conn_context = qos.build_connection_context(&new_connection);
