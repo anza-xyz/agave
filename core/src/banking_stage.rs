@@ -1,8 +1,6 @@
 //! The `banking_stage` processes Transaction messages. It is intended to be used
 //! to construct a software pipeline.
 
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     self::{
         committer::Committer, consumer::Consumer, decision_maker::DecisionMaker,
@@ -59,32 +57,21 @@ use {
     vote_worker::VoteWorker,
 };
 
-// Below modules are pub to allow use by banking_stage bench
-pub mod committer;
-pub mod consumer;
-pub mod leader_slot_metrics;
-pub mod qos_service;
-pub mod vote_storage;
-
-mod consume_worker;
-mod vote_worker;
-
-#[cfg(feature = "dev-context-only-utils")]
-pub mod decision_maker;
-#[cfg(not(feature = "dev-context-only-utils"))]
-mod decision_maker;
-
-mod latest_validator_vote_packet;
-mod leader_slot_timing_metrics;
-mod read_write_account_set;
-mod vote_packet_receiver;
-
-#[cfg(feature = "dev-context-only-utils")]
-pub mod scheduler_messages;
-#[cfg(not(feature = "dev-context-only-utils"))]
-mod scheduler_messages;
-
 pub mod transaction_scheduler;
+
+mod committer;
+mod consume_worker;
+mod consumer;
+mod decision_maker;
+mod latest_validator_vote_packet;
+mod leader_slot_metrics;
+mod leader_slot_timing_metrics;
+mod qos_service;
+mod read_write_account_set;
+mod scheduler_messages;
+mod vote_packet_receiver;
+mod vote_storage;
+mod vote_worker;
 
 #[cfg(unix)]
 mod progress_tracker;
@@ -97,7 +84,6 @@ mod tpu_to_pack;
 const MAX_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 const DEFAULT_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
 const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 
@@ -796,7 +782,6 @@ pub enum BankingControlMsg {
     },
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     bank_forks: &RwLock<BankForks>,
     poh_controller: &mut PohController,
