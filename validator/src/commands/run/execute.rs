@@ -901,6 +901,9 @@ pub fn execute(
             i8
         ),
     };
+    validator_config
+        .block_production_method
+        .warn_if_deprecated_value();
 
     let vote_account = pubkey_of(matches, "vote_account").unwrap_or_else(|| {
         if !validator_config.voting_disabled {

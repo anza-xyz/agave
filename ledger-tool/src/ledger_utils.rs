@@ -388,6 +388,7 @@ pub fn load_and_process_ledger(
         BlockProductionMethod
     )
     .unwrap_or_default();
+    block_production_method.warn_if_deprecated_value();
     info!(
         "Using: block-verification-method: {block_verification_method}, block-production-method: \
          {block_production_method}",

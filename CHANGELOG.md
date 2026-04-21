@@ -102,6 +102,7 @@ prerelease version. The new interpretation is as follows:
 * `agave-validator exit` now saves bank state before exiting. This enables restarts from local state when snapshot generation is disabled.
 * Added `--accounts-index-limit` to specify the memory limit of the accounts index.
 * Snapshot archive unpacking now uses direct I/O by default to improve performance by bypassing the OS page cache. Use `--no-accounts-db-snapshots-direct-io` to opt out if your file system does not support `O_DIRECT`. Direct I/O will be extended to snapshot creation in a future release.
+* `--block-production-method central-scheduler` is now deprecated and will be removed in a future release. Use `central-scheduler-greedy` instead.
 ### CLI
 #### Breaking
 * Removed deprecated arguments
