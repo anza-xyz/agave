@@ -6087,17 +6087,14 @@ dependencies = [
 name = "solana-banks-server"
 version = "4.1.0-alpha.0"
 dependencies = [
- "agave-feature-set",
  "bincode",
  "crossbeam-channel",
- "futures 0.3.32",
  "solana-account 4.2.0",
  "solana-banks-interface",
  "solana-clock",
  "solana-commitment-config",
  "solana-hash 4.3.0",
  "solana-message",
- "solana-net-utils",
  "solana-pubkey 4.2.0",
  "solana-runtime",
  "solana-runtime-transaction",
@@ -6107,8 +6104,6 @@ dependencies = [
  "solana-transaction-error",
  "tarpc",
  "tokio",
- "tokio-serde",
- "tokio-util 0.7.18",
 ]
 
 [[package]]
