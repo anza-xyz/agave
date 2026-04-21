@@ -257,7 +257,7 @@ impl ShredFetchStage {
         turbine_disabled: Arc<AtomicBool>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let recycler = PacketBatchRecycler::warmed(100, 1024);
+        let recycler = PacketBatchRecycler::new();
         let repair_context = RepairContext {
             repair_socket: repair_socket.clone(),
             cluster_info,
