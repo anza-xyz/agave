@@ -923,13 +923,19 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
             let mut callee_account = instruction_context
                 .try_borrow_instruction_account(translated_account.index_in_caller)?;
             if translated_account.update_caller_account_region {
-                update_caller_account_region(
-                    memory_mapping,
-                    check_aligned,
-                    &translated_account.caller_account,
-                    &mut callee_account,
-                    account_data_direct_mapping,
-                )?;
+                unsafe {
+                    // SAFETY: lifetime is valid by construction: we're resetting the caller memory
+                    // region back to the account that was here before the CPI call, meaning that
+                    // the memory region was guaranteed to be live for sufficient duration upon
+                    // call of this function.
+                    update_caller_account_region(
+                        memory_mapping,
+                        check_aligned,
+                        &translated_account.caller_account,
+                        &mut callee_account,
+                        account_data_direct_mapping,
+                    )?;
+                }
             }
         }
     }
@@ -1217,7 +1223,11 @@ fn update_callee_account(
     Ok(must_update_caller)
 }
 
-fn update_caller_account_region(
+/// # Safety
+///
+/// The the account data pointed to by `callee_account` must outlive the uses of the
+/// [`MemoryMapping`].
+unsafe fn update_caller_account_region(
     memory_mapping: &mut MemoryMapping,
     check_aligned: bool,
     caller_account: &CallerAccount,
@@ -1249,7 +1259,10 @@ fn update_caller_account_region(
             new_region = create_memory_region_of_account(callee_account, region.vm_addr)?;
         }
         unsafe {
-            // TODO(nagisa): SAFETY
+            // SAFETY: the lifetime invariants are delegated to the callers of this function. Both
+            // `modify_memory_region_of_account` and `create_memory_region_of_account` create memory
+            // regions pointing to valid buffers by the virtue of the region being produced out of
+            // an intermediate slice, which itself must be wholly valid.
             memory_mapping.replace_region(region_index, new_region)?;
         }
     }
