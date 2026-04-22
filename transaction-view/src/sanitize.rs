@@ -1,22 +1,98 @@
-use crate::{
-    result::{Result, TransactionViewError},
-    transaction_data::TransactionData,
-    transaction_view::UnsanitizedTransactionView,
+use {
+    crate::{
+        result::{Result, TransactionViewError},
+        signature_frame::MAX_SIGNATURES_PER_PACKET,
+        transaction_data::TransactionData,
+        transaction_version::TransactionVersion,
+        transaction_view::UnsanitizedTransactionView,
+    },
+    solana_program_runtime::execution_budget::{MAX_HEAP_FRAME_BYTES, MIN_HEAP_FRAME_BYTES},
 };
 
 pub(crate) fn sanitize(
     view: &UnsanitizedTransactionView<impl TransactionData>,
     enable_instruction_accounts_limit: bool,
 ) -> Result<()> {
+    sanitize_transaction_size(view)?;
+    sanitize_message_header(view)?;
+    sanitize_config(view)?;
     sanitize_signatures(view)?;
     sanitize_account_access(view)?;
     sanitize_instructions(view, enable_instruction_accounts_limit)?;
     sanitize_address_table_lookups(view)
 }
 
+/// Transaction constraints:
+/// * size <= 4096 bytes
+fn sanitize_transaction_size(
+    view: &UnsanitizedTransactionView<impl TransactionData>,
+) -> Result<()> {
+    let max_transaction_size = match view.version() {
+        TransactionVersion::Legacy | TransactionVersion::V0 => solana_packet::PACKET_DATA_SIZE,
+        TransactionVersion::V1 => solana_message::v1::MAX_TRANSACTION_SIZE,
+    };
+
+    if view.data().len() > max_transaction_size {
+        return Err(TransactionViewError::SanitizeError);
+    }
+    Ok(())
+}
+
+/// message header constraints:
+/// * num_required_signatures >= 1
+/// * num_readonly_signed_accounts < num_required_signatures (fee payer must be writable)
+/// * num_readonly_unsigned_accounts <= (num_addresses - num_required_signatures)
+fn sanitize_message_header(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
+    if view.num_required_signatures() < 1 {
+        return Err(TransactionViewError::SanitizeError);
+    }
+
+    if view.num_readonly_signed_static_accounts() >= view.num_required_signatures() {
+        return Err(TransactionViewError::SanitizeError);
+    }
+
+    // Check there is no overlap of signing area and readonly non-signing area.
+    // We have already checked that `num_required_signatures` is less than or equal to `num_static_account_keys`,
+    // so it is safe to use wrapping arithmetic.
+    if view.num_readonly_unsigned_static_accounts()
+        > view
+            .num_static_account_keys()
+            .wrapping_sub(view.num_required_signatures())
+    {
+        return Err(TransactionViewError::SanitizeError);
+    }
+
+    Ok(())
+}
+
+/// Config Constraints:
+/// * heap_size must be multiples of 1024, if specified
+fn sanitize_config(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
+    #[allow(clippy::collapsible_if)]
+    if let Some(requested_heap_bytes) = view
+        .transaction_config()
+        .and_then(|config| config.requested_heap_size())
+    {
+        if !(MIN_HEAP_FRAME_BYTES..=MAX_HEAP_FRAME_BYTES).contains(&requested_heap_bytes)
+            || !requested_heap_bytes.is_multiple_of(1024)
+        {
+            return Err(TransactionViewError::SanitizeError);
+        }
+    }
+
+    Ok(())
+}
+
+/// Sigantures Constraint:
+/// * Number of signatures must equal: num_required_signatures
+/// * Max signatures <= 12
 fn sanitize_signatures(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
     // Check the required number of signatures matches the number of signatures.
     if view.num_signatures() != view.num_required_signatures() {
+        return Err(TransactionViewError::SanitizeError);
+    }
+
+    if view.num_signatures() > MAX_SIGNATURES_PER_PACKET {
         return Err(TransactionViewError::SanitizeError);
     }
 
@@ -29,31 +105,32 @@ fn sanitize_signatures(view: &UnsanitizedTransactionView<impl TransactionData>) 
     Ok(())
 }
 
+/// Accounts (aka Addresses) Constraints:
+/// * for v1: 1 <= NumAddresses <= 64
+///   * legacy/v0 uses current limits of: num_accounts <= 256 (u8 bound)
+/// * No duplicate addresses
 fn sanitize_account_access(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
-    // Check there is no overlap of signing area and readonly non-signing area.
-    // We have already checked that `num_required_signatures` is less than or equal to `num_static_account_keys`,
-    // so it is safe to use wrapping arithmetic.
-    if view.num_readonly_unsigned_static_accounts()
-        > view
-            .num_static_account_keys()
-            .wrapping_sub(view.num_required_signatures())
-    {
+    let addresses_limit = match view.version() {
+        TransactionVersion::Legacy | TransactionVersion::V0 => 256,
+        TransactionVersion::V1 => 64,
+    };
+
+    if total_number_of_accounts(view) > addresses_limit {
         return Err(TransactionViewError::SanitizeError);
     }
 
-    // Check there is at least 1 writable fee-payer account.
-    if view.num_readonly_signed_static_accounts() >= view.num_required_signatures() {
-        return Err(TransactionViewError::SanitizeError);
-    }
-
-    // Check there are not more than 256 accounts.
-    if total_number_of_accounts(view) > 256 {
-        return Err(TransactionViewError::SanitizeError);
-    }
+    // No duplicated accounts
+    // Note: This check is performed downstream in `validate_account_locks()`.
+    // It is skipped here to avoid redundant work on the hot path.
 
     Ok(())
 }
 
+/// Instructions Constraints
+/// * NumInstructions <= 64
+/// * Per instruction:
+///   * 0 < program_id_index < MaxProgramIdIndex
+///   * all account indices < MaxAccountIndex
 fn sanitize_instructions(
     view: &UnsanitizedTransactionView<impl TransactionData>,
     enable_instruction_accounts_limit: bool,
@@ -129,6 +206,7 @@ mod tests {
             Message, MessageHeader, VersionedMessage,
             compiled_instruction::CompiledInstruction,
             v0::{self, MessageAddressTableLookup},
+            v1::{self, TransactionConfig},
         },
         solana_pubkey::Pubkey,
         solana_signature::Signature,
@@ -172,6 +250,25 @@ mod tests {
         }
     }
 
+    fn create_v1_transaction(
+        num_signatures: u8,
+        header: MessageHeader,
+        account_keys: Vec<Pubkey>,
+        instructions: Vec<CompiledInstruction>,
+        config: TransactionConfig,
+    ) -> VersionedTransaction {
+        VersionedTransaction {
+            signatures: vec![Signature::default(); num_signatures as usize],
+            message: VersionedMessage::V1(v1::Message {
+                header,
+                account_keys,
+                lifetime_specifier: Hash::default(),
+                instructions,
+                config,
+            }),
+        }
+    }
+
     fn multiple_transfers() -> VersionedTransaction {
         let payer = Pubkey::new_unique();
         VersionedTransaction {
@@ -189,9 +286,34 @@ mod tests {
     #[test]
     fn test_sanitize_multiple_transfers() {
         let transaction = multiple_transfers();
-        let data = bincode::serialize(&transaction).unwrap();
+        let data = wincode::serialize(&transaction).unwrap();
         let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
         assert!(view.sanitize(true).is_ok());
+    }
+
+    #[test]
+    fn test_sanitize_transaction_size_too_large() {
+        let account_keys = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+        let transaction = create_legacy_transaction(
+            1,
+            MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 1,
+            },
+            account_keys,
+            vec![CompiledInstruction {
+                program_id_index: 1,
+                accounts: vec![0],
+                data: vec![0; 5000],
+            }],
+        );
+        let data = wincode::serialize(&transaction).unwrap();
+        let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+        assert_eq!(
+            sanitize_transaction_size(&view),
+            Err(TransactionViewError::SanitizeError)
+        );
     }
 
     #[test]
@@ -208,7 +330,7 @@ mod tests {
                 (0..3).map(|_| Pubkey::new_unique()).collect(),
                 vec![],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_signatures(&view),
@@ -228,7 +350,7 @@ mod tests {
                 (0..3).map(|_| Pubkey::new_unique()).collect(),
                 vec![],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_signatures(&view),
@@ -248,7 +370,66 @@ mod tests {
                 (0..1).map(|_| Pubkey::new_unique()).collect(),
                 vec![],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert_eq!(
+                sanitize_signatures(&view),
+                Err(TransactionViewError::SanitizeError)
+            );
+        }
+
+        // More than 12 signatures.
+        {
+            let transaction = create_legacy_transaction(
+                13,
+                MessageHeader {
+                    num_required_signatures: 13,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                (0..13).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+            );
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref());
+            // SignatureFrame validates number of signatures, it throw ParseError if
+            // it is less than 12
+            assert!(matches!(view, Err(TransactionViewError::ParseError)));
+        }
+
+        {
+            let transaction = create_v1_transaction(
+                13,
+                MessageHeader {
+                    num_required_signatures: 13,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                (0..13).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+                TransactionConfig::empty(),
+            );
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert_eq!(
+                sanitize_signatures(&view),
+                Err(TransactionViewError::SanitizeError)
+            );
+        }
+
+        // Not enough static accounts.
+        {
+            let transaction = create_legacy_transaction(
+                2,
+                MessageHeader {
+                    num_required_signatures: 2,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                (0..1).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+            );
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_signatures(&view),
@@ -273,7 +454,7 @@ mod tests {
                     readonly_indexes: vec![6, 7, 8],
                 }],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_signatures(&view),
@@ -284,6 +465,44 @@ mod tests {
 
     #[test]
     fn test_sanitize_account_access() {
+        // num_required_signatures must be >= 1.
+        {
+            let transaction = create_legacy_transaction(
+                0,
+                MessageHeader {
+                    num_required_signatures: 0,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                vec![Pubkey::new_unique()],
+                vec![],
+            );
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref());
+            // SignatureFrame validates number of signatures, it throw ParseError if
+            // it is less than 1
+            assert!(matches!(view, Err(TransactionViewError::ParseError)));
+        }
+        {
+            let transaction = create_v1_transaction(
+                0,
+                MessageHeader {
+                    num_required_signatures: 0,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                vec![Pubkey::new_unique()],
+                vec![],
+                TransactionConfig::empty(),
+            );
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert_eq!(
+                sanitize_message_header(&view),
+                Err(TransactionViewError::SanitizeError)
+            );
+        }
+
         // Overlap of signing and readonly non-signing accounts.
         {
             let transaction = create_legacy_transaction(
@@ -296,10 +515,10 @@ mod tests {
                 (0..2).map(|_| Pubkey::new_unique()).collect(),
                 vec![],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
-                sanitize_account_access(&view),
+                sanitize_message_header(&view),
                 Err(TransactionViewError::SanitizeError)
             );
         }
@@ -316,15 +535,15 @@ mod tests {
                 (0..2).map(|_| Pubkey::new_unique()).collect(),
                 vec![],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
-                sanitize_account_access(&view),
+                sanitize_message_header(&view),
                 Err(TransactionViewError::SanitizeError)
             );
         }
 
-        // Too many accounts.
+        // Too many accounts in legacy/v0
         {
             let transaction = create_v0_transaction(
                 2,
@@ -348,7 +567,28 @@ mod tests {
                     },
                 ],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert_eq!(
+                sanitize_account_access(&view),
+                Err(TransactionViewError::SanitizeError)
+            );
+        }
+
+        // V1: too many static accounts.
+        {
+            let transaction = create_v1_transaction(
+                1,
+                MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 63,
+                },
+                (0..65).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+                TransactionConfig::empty(),
+            );
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_account_access(&view),
@@ -396,7 +636,7 @@ mod tests {
                 account_keys.clone(),
                 valid_instructions.clone(),
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert!(sanitize_instructions(&view, true).is_ok());
 
@@ -407,7 +647,7 @@ mod tests {
                 valid_instructions.clone(),
                 atls.clone(),
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert!(sanitize_instructions(&view, true).is_ok());
         }
@@ -423,7 +663,7 @@ mod tests {
                     account_keys.clone(),
                     instructions,
                 );
-                let data = bincode::serialize(&transaction).unwrap();
+                let data = wincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
                     sanitize_instructions(&view, true),
@@ -442,7 +682,7 @@ mod tests {
                     instructions,
                     atls.clone(),
                 );
-                let data = bincode::serialize(&transaction).unwrap();
+                let data = wincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
                     sanitize_instructions(&view, true),
@@ -460,7 +700,7 @@ mod tests {
                     account_keys.clone(),
                     instructions,
                 );
-                let data = bincode::serialize(&transaction).unwrap();
+                let data = wincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
                     sanitize_instructions(&view, true),
@@ -480,7 +720,7 @@ mod tests {
                     account_keys.clone(),
                     instructions,
                 );
-                let data = bincode::serialize(&transaction).unwrap();
+                let data = wincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
                     sanitize_instructions(&view, true),
@@ -504,7 +744,7 @@ mod tests {
                     instructions,
                     atls.clone(),
                 );
-                let data = bincode::serialize(&transaction).unwrap();
+                let data = wincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
                     sanitize_instructions(&view, true),
@@ -527,7 +767,7 @@ mod tests {
                 account_keys.clone(),
                 too_many_instructions.clone(),
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_instructions(&view, true),
@@ -541,7 +781,7 @@ mod tests {
                 too_many_instructions.clone(),
                 atls.clone(),
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_instructions(&view, true),
@@ -561,7 +801,7 @@ mod tests {
                 account_keys.clone(),
                 vec![instr],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_instructions(&view, true),
@@ -580,7 +820,7 @@ mod tests {
                 account_keys.clone(),
                 vec![instr],
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             // Exactly 255 accounts must pass sanitization.
             assert!(sanitize_instructions(&view, true).is_ok());
@@ -623,12 +863,132 @@ mod tests {
                 transaction.message.address_table_lookups().unwrap().len(),
                 2
             );
-            let data = bincode::serialize(&transaction).unwrap();
+            let data = wincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_address_table_lookups(&view),
                 Err(TransactionViewError::SanitizeError)
             );
+        }
+    }
+
+    #[test]
+    fn test_sanitize_config() {
+        // Valid min heap size.
+        {
+            let transaction = create_v1_transaction(
+                1,
+                MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                (0..2).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+                TransactionConfig::empty().with_heap_size(MIN_HEAP_FRAME_BYTES),
+            );
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert!(sanitize_config(&view).is_ok());
+        }
+
+        // Valid max heap size.
+        {
+            let transaction = create_v1_transaction(
+                1,
+                MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                (0..2).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+                TransactionConfig::empty().with_heap_size(MAX_HEAP_FRAME_BYTES),
+            );
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert!(sanitize_config(&view).is_ok());
+        }
+
+        // Heap size below min.
+        {
+            let transaction = create_v1_transaction(
+                1,
+                MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                (0..2).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+                TransactionConfig::empty().with_heap_size(MIN_HEAP_FRAME_BYTES - 1),
+            );
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert_eq!(
+                sanitize_config(&view),
+                Err(TransactionViewError::SanitizeError)
+            );
+        }
+
+        // Heap size above max.
+        {
+            let transaction = create_v1_transaction(
+                1,
+                MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                (0..2).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+                TransactionConfig::empty().with_heap_size(MAX_HEAP_FRAME_BYTES + 1),
+            );
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert_eq!(
+                sanitize_config(&view),
+                Err(TransactionViewError::SanitizeError)
+            );
+        }
+
+        // Heap size not multiple of 1024.
+        {
+            let transaction = create_v1_transaction(
+                1,
+                MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                (0..2).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+                TransactionConfig::empty().with_heap_size(MIN_HEAP_FRAME_BYTES + 1),
+            );
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert_eq!(
+                sanitize_config(&view),
+                Err(TransactionViewError::SanitizeError)
+            );
+        }
+
+        // Config is not set, default is OK
+        {
+            let transaction = create_v1_transaction(
+                1,
+                MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                (0..2).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+                TransactionConfig::empty(),
+            );
+            let data = wincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert!(sanitize_config(&view).is_ok());
         }
     }
 }

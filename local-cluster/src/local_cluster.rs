@@ -5,9 +5,8 @@ use {
         integration_tests::{DEFAULT_NODE_STAKE, ValidatorKeys},
         validator_configs::*,
     },
-    agave_feature_set::{FeatureSet, bls_pubkey_management_in_vote_account, vote_state_v4},
+    agave_feature_set::{FeatureSet, bls_pubkey_management_in_vote_account},
     agave_snapshots::{paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig},
-    agave_votor_messages::migration::GENESIS_CERTIFICATE_ACCOUNT,
     itertools::izip,
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount},
@@ -21,6 +20,7 @@ use {
         validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
     solana_epoch_schedule::EpochSchedule,
+    solana_fee_structure::FeeStructure,
     solana_genesis_config::GenesisConfig,
     solana_gossip::{
         contact_info::{ContactInfo, Protocol},
@@ -28,7 +28,7 @@ use {
         node::Node,
     },
     solana_keypair::Keypair,
-    solana_ledger::{create_new_tmp_ledger_with_size, shred::Shred},
+    solana_ledger::{create_new_tmp_ledger, shred::Shred},
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
@@ -78,10 +78,8 @@ const DUMMY_SNAPSHOT_CONFIG_PATH_MARKER: &str = "dummy";
 pub enum AlpenglowMode {
     /// No alpenglow
     Disabled,
-    /// Full alpenglow - creates vote accounts w/ bls pubkeys and activates alpenglow feature and set GenesisCertificate
+    /// Full alpenglow - Activates alpenglow feature and set GenesisCertificate
     Enabled,
-    /// Pre-migration mode - creates V4 vote accounts w/ bls pubkeys but does NOT activate alpenglow feature or set GenesisCertificate
-    PreMigration,
 }
 
 pub struct ClusterConfig {
@@ -190,6 +188,7 @@ impl LocalCluster {
                 .0,
         ];
         config.tower_storage = Arc::new(FileTowerStorage::new(ledger_path.to_path_buf()));
+        config.accounts_db_config.bank_hash_details_dir = ledger_path.to_path_buf();
 
         let snapshot_config = &mut config.snapshot_config;
         let dummy: PathBuf = DUMMY_SNAPSHOT_CONFIG_PATH_MARKER.into();
@@ -207,13 +206,6 @@ impl LocalCluster {
 
     pub fn new_alpenglow(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
         Self::init(config, socket_addr_space, AlpenglowMode::Enabled)
-    }
-
-    pub fn new_pre_migration_alpenglow(
-        config: &mut ClusterConfig,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self::init(config, socket_addr_space, AlpenglowMode::PreMigration)
     }
 
     pub fn init(
@@ -320,6 +312,7 @@ impl LocalCluster {
 
         let feature_set = FeatureSet::all_enabled();
 
+        let stakes_in_genesis_for_funding = stakes_in_genesis.clone();
         let GenesisConfigInfo {
             mut genesis_config,
             mint_keypair,
@@ -330,15 +323,37 @@ impl LocalCluster {
             stakes_in_genesis,
             config.cluster_type,
             &feature_set,
-            !matches!(alpenglow_mode, AlpenglowMode::Disabled), /* is_alpenglow */
+            matches!(alpenglow_mode, AlpenglowMode::Enabled), /* is_alpenglow */
         );
 
-        // Remove the alpenglow feature and genesis certificate for PreMigration mode
-        if alpenglow_mode == AlpenglowMode::PreMigration {
-            genesis_config
+        // In-genesis validators only receive the generic validator account funding from the
+        // genesis helpers. Top them up here so they have the same vote-fee budget as validators
+        // added later via `required_validator_funding()`.
+        let mut additional_validator_funding: u64 = 0;
+        for (validator_vote_keypairs, stake) in
+            keys_in_genesis.iter().zip(&stakes_in_genesis_for_funding)
+        {
+            let validator_pubkey = validator_vote_keypairs.node_keypair.pubkey();
+            let required_funding = Self::required_validator_funding(*stake);
+            let validator_account = genesis_config
                 .accounts
-                .remove(&agave_feature_set::alpenglow::id());
-            genesis_config.accounts.remove(&GENESIS_CERTIFICATE_ACCOUNT);
+                .get_mut(&validator_pubkey)
+                .expect("validator account must exist in genesis");
+            let funding_delta = required_funding.saturating_sub(validator_account.lamports);
+            validator_account.lamports = validator_account.lamports.saturating_add(funding_delta);
+            additional_validator_funding =
+                additional_validator_funding.saturating_add(funding_delta);
+        }
+        if additional_validator_funding > 0 {
+            let mint_account = genesis_config
+                .accounts
+                .get_mut(&mint_keypair.pubkey())
+                .expect("mint account must exist in genesis");
+            assert!(
+                mint_account.lamports >= additional_validator_funding,
+                "mint requires additional lamports to fund in-genesis validators"
+            );
+            mint_account.lamports -= additional_validator_funding;
         }
 
         genesis_config.accounts.extend(
@@ -356,10 +371,7 @@ impl LocalCluster {
         genesis_config.poh_config = config.poh_config.clone();
 
         let mut leader_config = safe_clone_config(&config.validator_configs[0]);
-        let (leader_ledger_path, _blockhash) = create_new_tmp_ledger_with_size!(
-            &genesis_config,
-            leader_config.max_genesis_archive_unpacked_size,
-        );
+        let (leader_ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
 
         leader_config.rpc_addrs = Some((
             leader_node.info.rpc().unwrap(),
@@ -512,7 +524,7 @@ impl LocalCluster {
 
         discover_peers(
             None,
-            &vec![cluster.entry_point_info.gossip().unwrap()],
+            &[cluster.entry_point_info.gossip().unwrap()],
             Some(config.node_stakes.len() + config.num_listeners as usize),
             Duration::from_secs(120),
             None,
@@ -608,10 +620,7 @@ impl LocalCluster {
         let validator_pubkey = validator_keypair.pubkey();
         let validator_node = Node::new_localhost_with_pubkey(&validator_pubkey);
         let contact_info = validator_node.info.clone();
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_with_size!(
-            &self.genesis_config,
-            validator_config.max_genesis_archive_unpacked_size,
-        );
+        let (ledger_path, _blockhash) = create_new_tmp_ledger!(&self.genesis_config);
 
         // Give the validator some lamports to setup vote accounts
         if is_listener {
@@ -763,10 +772,7 @@ impl LocalCluster {
 
                 let validator_node = Node::new_localhost_with_pubkey(&validator_keypair.pubkey());
                 let contact_info = validator_node.info.clone();
-                let (ledger_path, _blockhash) = create_new_tmp_ledger_with_size!(
-                    &genesis_config,
-                    validator_config.max_genesis_archive_unpacked_size,
-                );
+                let (ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
 
                 let mut config = validator_config;
                 config.rpc_addrs = Some((
@@ -1071,7 +1077,6 @@ impl LocalCluster {
 
     fn is_bls_pubkey_feature_enabled(rpc_client: &RpcClient) -> bool {
         Self::is_feature_active(rpc_client, &bls_pubkey_management_in_vote_account::id())
-            && Self::is_feature_active(rpc_client, &vote_state_v4::id())
     }
 
     fn setup_vote_and_stake_accounts(
@@ -1272,7 +1277,10 @@ impl LocalCluster {
     }
 
     fn required_validator_funding(stake: u64) -> u64 {
-        stake.saturating_mul(2).saturating_add(2)
+        stake
+            .saturating_mul(2)
+            .saturating_add(2) // 1 lamport for each new account
+            .saturating_add(10_000 * 2 * FeeStructure::default().lamports_per_signature) // vote txs are paid by the node identity and carry two signatures
     }
 }
 

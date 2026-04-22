@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     super::{
         scheduler::{PreLockFilterAction, Scheduler, SchedulingSummary},
@@ -45,7 +43,6 @@ type SchedulerPrioGraph = PrioGraph<
     fn(&TransactionPriorityId, &GraphNode<TransactionPriorityId>) -> TransactionPriorityId,
 >;
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct PrioGraphSchedulerConfig {
     pub max_scheduled_cus: u64,
     pub max_scanned_transactions_per_scheduling_pass: usize,
@@ -64,7 +61,6 @@ impl Default for PrioGraphSchedulerConfig {
     }
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct PrioGraphScheduler<Tx> {
     common: SchedulingCommon<Tx>,
     prio_graph: SchedulerPrioGraph,
@@ -72,7 +68,6 @@ pub(crate) struct PrioGraphScheduler<Tx> {
 }
 
 impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new(
         consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
         finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
@@ -111,7 +106,6 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         &mut self,
         container: &mut S,
         budget: u64,
-        _relax_intrabatch_account_locks: bool,
         pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
         pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError> {
@@ -585,7 +579,6 @@ mod tests {
             scheduler.schedule(
                 &mut container,
                 u64::MAX, // no budget
-                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter
             ),
@@ -605,7 +598,6 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -627,7 +619,6 @@ mod tests {
             .schedule(
                 &mut container,
                 0, // zero budget. nothing should be scheduled
-                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -649,7 +640,6 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -672,7 +662,6 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -700,7 +689,6 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -747,7 +735,6 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -763,7 +750,6 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -783,7 +769,6 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -812,7 +797,6 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )

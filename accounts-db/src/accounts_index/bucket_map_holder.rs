@@ -487,7 +487,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
                     let index = self.next_bucket_to_flush();
                     in_mem[index].flush(can_advance_age);
                 }
-                self.stats.report_stats(self);
+                self.stats.report_stats(self, &in_mem);
                 if self.all_buckets_flushed_at_current_age() {
                     break;
                 }

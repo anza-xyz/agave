@@ -85,6 +85,10 @@ struct LocalContext {
     pub(crate) finalized_blocks: BTreeSet<Block>,
     pub(crate) received_shred: BTreeSet<Slot>,
     pub(crate) stats: EventHandlerStats,
+    /// When in standstill, tracks the highest parent ready slot at the time standstill was detected.
+    /// Used to calculate dynamic timeout extensions (5% per leader window since standstill).
+    /// Reset to None when a finalization event is received.
+    pub(crate) standstill_slot: Option<Slot>,
 }
 
 impl EventHandler {
@@ -119,6 +123,7 @@ impl EventHandler {
             finalized_blocks: BTreeSet::default(),
             received_shred: BTreeSet::default(),
             stats: EventHandlerStats::new(),
+            standstill_slot: None,
         };
 
         // Wait until migration has completed
@@ -210,7 +215,10 @@ impl EventHandler {
         let should_set_timeouts = vctx.vote_history.add_parent_ready(slot, parent_block);
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
         if should_set_timeouts {
-            timer_manager.write().set_timeouts(slot);
+            let delta_block = Duration::from_nanos_u128(vctx.sharable_banks.root().ns_per_slot);
+            timer_manager
+                .write()
+                .set_timeouts(slot, local_context.standstill_slot, delta_block);
             local_context.stats.timeout_set = local_context.stats.timeout_set.saturating_add(1);
         }
 
@@ -238,6 +246,7 @@ impl EventHandler {
             ref mut finalized_blocks,
             ref mut received_shred,
             ref mut stats,
+            ref mut standstill_slot,
         } = local_context;
         match event {
             // Block has completed replay
@@ -304,6 +313,10 @@ impl EventHandler {
                 info!("{my_pubkey}: Block Notarized {block:?}");
                 vctx.vote_history.add_block_notarized(block);
                 Self::try_final(my_pubkey, block, vctx, &mut votes)?;
+            }
+
+            VotorEvent::BlockNotarFallback(block) => {
+                info!("{my_pubkey}: Block notar-fallback {block:?}");
             }
 
             VotorEvent::FirstShred(slot) => {
@@ -412,6 +425,15 @@ impl EventHandler {
                     received_shred,
                     stats,
                 );
+
+                if let Some(slot) = standstill_slot.take() {
+                    info!(
+                        "{my_pubkey}: Standstill initially detected at slot={slot} has ended at \
+                         slot={}. Ending timeout extension",
+                        block.0
+                    );
+                }
+
                 if let Some(parent_block) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
@@ -436,6 +458,14 @@ impl EventHandler {
             // We have not observed a finalization certificate in a while, refresh our votes
             VotorEvent::Standstill(highest_finalized_slot) => {
                 info!("{my_pubkey}: Standstill {highest_finalized_slot}");
+                // Record the highest parent ready slot for dynamic timeout extension.
+                if standstill_slot.is_none() {
+                    let (highest_parent_ready, _) = *ctx.highest_parent_ready.read().unwrap();
+                    *standstill_slot = Some(highest_parent_ready);
+                    info!(
+                        "{my_pubkey}: Extending timeouts starting at slot {highest_parent_ready}"
+                    );
+                }
                 // certs refresh happens in CertificatePoolService
                 Self::refresh_votes(my_pubkey, highest_finalized_slot, vctx, &mut votes)?;
             }
@@ -821,7 +851,7 @@ mod tests {
         },
         solana_net_utils::SocketAddrSpace,
         solana_runtime::{
-            bank::Bank,
+            bank::{Bank, SlotLeader},
             bank_forks::BankForks,
             genesis_utils::{
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
@@ -927,7 +957,6 @@ mod tests {
             wait_to_vote_slot: None,
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(my_vote_keypair)])),
             derived_bls_keypairs: HashMap::new(),
-            has_new_vote_been_rooted: false,
             own_vote_sender,
             consensus_metrics_sender,
         };
@@ -947,6 +976,7 @@ mod tests {
             finalized_blocks: BTreeSet::new(),
             received_shred: BTreeSet::new(),
             stats: EventHandlerStats::default(),
+            standstill_slot: None,
         };
 
         EventHandlerTestContext {
@@ -1085,7 +1115,7 @@ mod tests {
                     start_slot,
                     end_slot,
                     parent_block,
-                    skip_timer: Instant::now(),
+                    block_timer: Instant::now(),
                 }),
                 &self.timer_manager,
                 &self.shared_context,
@@ -1137,7 +1167,7 @@ mod tests {
         }
 
         fn create_block_only(&mut self, slot: Slot, parent_bank: Arc<Bank>) -> Arc<Bank> {
-            let bank = Bank::new_from_parent(parent_bank, &Pubkey::new_unique(), slot);
+            let bank = Bank::new_from_parent(parent_bank, SlotLeader::new_unique(), slot);
             bank.set_block_id(Some(Hash::new_unique()));
             bank.freeze();
             let mut bank_forks_w = self.bank_forks.write().unwrap();
@@ -1646,5 +1676,42 @@ mod tests {
         for file in files_to_remove {
             let _ = remove_file(file);
         }
+    }
+
+    #[test]
+    fn test_standstill_slot_tracking() {
+        let mut test_context = setup();
+
+        // Initially standstill_slot should be None
+        assert!(test_context.local_context.standstill_slot.is_none());
+
+        // Set up some state
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
+        let block_id_1 = bank1.block_id().unwrap();
+        test_context.send_parent_ready_event(1, (0, Hash::default()));
+        test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1));
+
+        // Send standstill event - should record the standstill slot
+        test_context.send_standstill_event(0);
+
+        // The standstill_slot should now be set to the highest parent ready
+        assert!(test_context.local_context.standstill_slot.is_some());
+        let standstill_slot = test_context.local_context.standstill_slot.unwrap();
+        // The highest parent ready should be 1 since we sent parent_ready for slot 1
+        assert_eq!(standstill_slot, 1);
+
+        // Send another standstill event - should not overwrite the existing standstill_slot
+        test_context.send_standstill_event(0);
+        assert_eq!(test_context.local_context.standstill_slot, Some(1));
+
+        // Send a finalized event - should reset standstill_slot
+        test_context.send_finalized_event((1, block_id_1), false);
+        assert!(test_context.local_context.standstill_slot.is_none());
     }
 }

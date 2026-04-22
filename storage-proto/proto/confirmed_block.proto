@@ -129,6 +129,7 @@ enum RewardType {
     Rent = 2;
     Staking = 3;
     Voting = 4;
+    DeactivatedStake = 5;
 }
 
 message Reward {

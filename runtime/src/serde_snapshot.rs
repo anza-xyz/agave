@@ -38,6 +38,7 @@ use {
     solana_hash::Hash,
     solana_inflation::Inflation,
     solana_lattice_hash::lt_hash::LtHash,
+    solana_leader_schedule::SlotLeader,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_serde::default_on_eof,
@@ -56,6 +57,7 @@ use {
     },
     storage::SerializableStorage,
     types::{SerdeAccountsLtHash, UnusedRentCollector},
+    wincode::{SchemaReadOwned, SchemaWrite, io::std_write::WriteAdapter},
 };
 
 mod obsolete_accounts;
@@ -66,12 +68,13 @@ mod types;
 mod utils;
 
 pub(crate) use {
-    obsolete_accounts::SerdeObsoleteAccountsMap,
+    obsolete_accounts::{SerdeObsoleteAccounts, SerdeObsoleteAccountsMap},
     status_cache::{deserialize_status_cache, serialize_status_cache},
     storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
 };
 
-const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
+const MAX_STREAM_SIZE: usize = 32 * 1024 * 1024 * 1024;
+type MaxStreamSizeConfig = wincode::config::Configuration<true, MAX_STREAM_SIZE>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Deserialize)]
@@ -219,6 +222,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             versioned_epoch_stakes: vec![], // populated from ExtraFieldsToDeserialize
             accounts_lt_hash: AccountsLtHash(LT_HASH_CANARY), // populated from ExtraFieldsToDeserialize
             bank_hash_stats: BankHashStats::default(),        // populated from AccountsDbFields
+            block_id: None, // populated from ExtraFieldsToDeserialize
         }
     }
 }
@@ -371,15 +375,20 @@ impl<T> SnapshotAccountsDbFields<T> {
     }
 }
 
-pub(crate) fn serialize_into<W, T>(writer: W, value: &T) -> bincode::Result<()>
+pub(crate) fn serialize_into<W, T>(writer: W, value: &T) -> wincode::WriteResult<()>
 where
     W: Write,
-    T: Serialize,
+    T: SchemaWrite<MaxStreamSizeConfig, Src = T>,
 {
-    bincode::options()
-        .with_fixint_encoding()
-        .with_limit(MAX_STREAM_SIZE)
-        .serialize_into(writer, value)
+    wincode::config::serialize_into(WriteAdapter::new(writer), value, MaxStreamSizeConfig::new())
+}
+
+pub(crate) fn deserialize_wincode_from<R, T>(reader: R) -> wincode::ReadResult<T>
+where
+    R: Read,
+    T: SchemaReadOwned<MaxStreamSizeConfig, Dst = T>,
+{
+    wincode::config::deserialize_from(io::BufReader::new(reader), MaxStreamSizeConfig::new())
 }
 
 pub(crate) fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
@@ -388,7 +397,7 @@ where
     T: DeserializeOwned,
 {
     bincode::options()
-        .with_limit(MAX_STREAM_SIZE)
+        .with_limit(MAX_STREAM_SIZE as u64)
         .with_fixint_encoding()
         .allow_trailing_bytes()
         .deserialize_from::<R, T>(reader)
@@ -422,14 +431,6 @@ struct ExtraFieldsToDeserialize {
     versioned_epoch_stakes: Vec<(u64, DeserializableVersionedEpochStakes)>,
     #[serde(deserialize_with = "default_on_eof")]
     accounts_lt_hash: Option<SerdeAccountsLtHash>,
-    /// In order to maintain snapshot compatibility between adjacent versions
-    /// (edge <-> beta, and beta <-> stable), we must be able to deserialize
-    /// (and ignore) this new field (block id) in adjacent versions *before*
-    /// we serialize the new field into snapshots.
-    /// Hence the annotation to allow dead code.
-    /// This code is not truly dead though, as it enables newer versions to
-    /// populate this field and have older versions still load the snapshot.
-    #[expect(dead_code)]
     #[serde(deserialize_with = "default_on_eof")]
     block_id: Option<Hash>,
 }
@@ -449,6 +450,7 @@ pub struct ExtraFieldsToSerialize {
     pub unused_epoch_accounts_hash: Option<Hash>,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     pub accounts_lt_hash: Option<SerdeAccountsLtHash>,
+    pub block_id: Option<Hash>,
 }
 
 fn deserialize_bank_fields<R>(
@@ -480,7 +482,7 @@ where
         _unused_epoch_accounts_hash,
         versioned_epoch_stakes,
         accounts_lt_hash,
-        block_id: _,
+        block_id,
     } = extra_fields;
 
     bank_fields.fee_rate_governor = bank_fields
@@ -490,6 +492,7 @@ where
     bank_fields.accounts_lt_hash = accounts_lt_hash
         .expect("snapshot must have accounts_lt_hash")
         .into();
+    bank_fields.block_id = block_id;
 
     Ok((bank_fields, accounts_db_fields))
 }
@@ -572,6 +575,7 @@ where
         account_paths,
         storage_and_next_append_vec_id,
         debug_keys,
+        None, // leader_for_tests
         limit_load_slot_count_from_snapshot,
         verify_index,
         accounts_db_config,
@@ -664,6 +668,7 @@ impl Serialize for SerializableBankAndStorage<'_> {
         let lamports_per_signature = bank_fields.fee_rate_governor.lamports_per_signature;
         let versioned_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
         let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
+        let block_id = Some(bank_fields.block_id);
         let bank_fields_to_serialize = (
             SerializableVersionedBank::from(bank_fields),
             SerializableAccountsDb::<'_> {
@@ -677,6 +682,7 @@ impl Serialize for SerializableBankAndStorage<'_> {
                 unused_epoch_accounts_hash: None,
                 versioned_epoch_stakes,
                 accounts_lt_hash,
+                block_id,
             },
         );
         bank_fields_to_serialize.serialize(serializer)
@@ -796,6 +802,7 @@ pub(crate) fn reconstruct_bank_from_fields<E>(
     account_paths: &[PathBuf],
     storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
+    leader_for_tests: Option<SlotLeader>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
     accounts_db_config: AccountsDbConfig,
@@ -837,6 +844,7 @@ where
         genesis_config,
         runtime_config,
         bank_fields,
+        leader_for_tests,
         debug_keys,
         reconstructed_accounts_db_info.accounts_data_len,
         epoch_stakes,

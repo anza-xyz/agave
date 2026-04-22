@@ -9,10 +9,8 @@ use {
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
-        account_info::{AccountInfo, StorageLocation},
         accounts::{AccountAddressFilter, Accounts},
-        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, AccountFromStorage, AccountsDb},
-        accounts_index::ScanConfig,
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, AccountsDb},
         ancestors::Ancestors,
     },
     solana_hash::Hash,
@@ -137,7 +135,6 @@ fn bench_concurrent_scan_write(bencher: &mut Bencher) {
                         &Ancestors::default(),
                         0,
                         AccountSharedData::default().owner(),
-                        &ScanConfig::default(),
                     )
                     .unwrap(),
             );
@@ -220,54 +217,6 @@ fn bench_load_largest_accounts(b: &mut Bencher) {
             20,
             &HashSet::new(),
             AccountAddressFilter::Exclude,
-            false,
         )
     });
-}
-
-#[bench]
-fn bench_sort_and_remove_dups(b: &mut Bencher) {
-    fn generate_sample_account_from_storage(i: u8) -> AccountFromStorage {
-        // offset has to be 8 byte aligned
-        let offset = (i as usize) * std::mem::size_of::<u64>();
-        AccountFromStorage {
-            index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i == 0),
-            data_len: i as u64,
-            pubkey: Pubkey::new_from_array([i; 32]),
-        }
-    }
-
-    use rand::prelude::*;
-    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234);
-    let accounts: Vec<_> =
-        std::iter::repeat_with(|| generate_sample_account_from_storage(rng.random::<u8>()))
-            .take(1000)
-            .collect();
-
-    b.iter(|| AccountsDb::sort_and_remove_dups(&mut accounts.clone()));
-}
-
-#[bench]
-fn bench_sort_and_remove_dups_no_dups(b: &mut Bencher) {
-    fn generate_sample_account_from_storage(i: u8) -> AccountFromStorage {
-        // offset has to be 8 byte aligned
-        let offset = (i as usize) * std::mem::size_of::<u64>();
-        AccountFromStorage {
-            index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i == 0),
-            data_len: i as u64,
-            pubkey: Pubkey::new_unique(),
-        }
-    }
-
-    use rand::prelude::*;
-
-    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234);
-    let mut accounts: Vec<_> =
-        std::iter::repeat_with(|| generate_sample_account_from_storage(rng.random::<u8>()))
-            .take(1000)
-            .collect();
-
-    accounts.shuffle(&mut rng);
-
-    b.iter(|| AccountsDb::sort_and_remove_dups(&mut accounts.clone()));
 }

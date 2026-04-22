@@ -11,6 +11,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::{
+        blockstore_meta::BlockLocation,
         leader_schedule_cache::LeaderScheduleCache,
         shred::{
             self,
@@ -22,7 +23,7 @@ use {
     solana_perf::{
         self,
         deduper::Deduper,
-        packet::{PacketBatch, PacketRefMut},
+        packet::{PacketBatch, PacketRef, PacketRefMut},
     },
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
@@ -73,13 +74,16 @@ enum ResignError {
     Shred(#[from] shred::Error),
 }
 
+pub type RepairNonceLocationLookup = dyn Fn(shred::Nonce) -> Option<BlockLocation> + Send + Sync;
+
 pub fn spawn_shred_sigverify(
     cluster_info: Arc<ClusterInfo>,
     bank_forks: Arc<RwLock<BankForks>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     shred_fetch_receiver: Receiver<PacketBatch>,
     retransmit_sender: EvictingSender<Vec<shred::Payload>>,
-    verified_sender: Sender<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
+    verified_sender: Sender<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
+    repair_nonce_location_lookup: Arc<RepairNonceLocationLookup>,
     num_sigverify_threads: NonZeroUsize,
 ) -> JoinHandle<()> {
     let mut stats = ShredSigVerifyStats::new(Instant::now());
@@ -115,6 +119,7 @@ pub fn spawn_shred_sigverify(
                 &retransmit_sender,
                 &verified_sender,
                 &cluster_nodes_cache,
+                repair_nonce_location_lookup.as_ref(),
                 &cache,
                 &mut stats,
                 &mut shred_buffer,
@@ -143,8 +148,9 @@ fn run_shred_sigverify<const K: usize>(
     deduper: &Deduper<K, [u8]>,
     shred_fetch_receiver: &Receiver<PacketBatch>,
     retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
-    verified_sender: &Sender<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
+    verified_sender: &Sender<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
+    repair_nonce_location_lookup: &RepairNonceLocationLookup,
     cache: &RwLock<LruCache>,
     stats: &mut ShredSigVerifyStats,
     shred_buffer: &mut Vec<PacketBatch>,
@@ -237,20 +243,24 @@ fn run_shred_sigverify<const K: usize>(
         .flat_map(|batch| batch.iter())
         .filter(|packet| !packet.meta().discard())
         .filter_map(|packet| {
-            let shred = shred::layout::get_shred(packet)?.to_vec();
-            Some((shred, packet.meta().repair()))
+            extract_shred_and_location(packet, repair_nonce_location_lookup, stats)
         })
-        .partition_map(|(shred, repair)| {
-            if repair {
+        .partition_map(|(shred, location)| {
+            if let Some(location) = location {
                 // No need for Arc overhead here because repaired shreds are
                 // not retranmitted.
-                Either::Right(shred::Payload::from(shred))
+                Either::Right((
+                    shred::Payload::from(shred),
+                    /* is_repaired */ true,
+                    location,
+                ))
             } else {
                 // Share the payload between the retransmit-stage and the
                 // window-service.
                 Either::Left(shred::Payload::from(shred))
             }
         });
+
     // Repaired shreds are not retransmitted.
     stats.num_retransmit_shreds += shreds.len();
     if let Err(send_err) = retransmit_sender.try_send(shreds.clone()) {
@@ -264,14 +274,34 @@ fn run_shred_sigverify<const K: usize>(
     // Send all shreds to window service to be inserted into blockstore.
     let shreds = shreds
         .into_iter()
-        .map(|shred| (shred, /*is_repaired:*/ false));
-    let repairs = repairs
-        .into_iter()
-        .map(|shred| (shred, /*is_repaired:*/ true));
+        .map(|shred| (shred, /*is_repaired:*/ false, BlockLocation::Original));
     verified_sender.send(shreds.chain(repairs).collect())?;
     stats.elapsed_micros += now.elapsed().as_micros() as u64;
     shred_buffer.clear();
     Ok(())
+}
+
+/// Extracts shred bytes and, for repaired shreds, the location where the shred
+/// should be inserted into blockstore.
+fn extract_shred_and_location(
+    packet: PacketRef,
+    repair_nonce_location_lookup: &RepairNonceLocationLookup,
+    stats: &mut ShredSigVerifyStats,
+) -> Option<(Vec<u8>, Option<BlockLocation>)> {
+    let (shred, nonce) = shred::layout::get_shred_and_repair_nonce(packet)?;
+    let Some(nonce) = nonce else {
+        // Turbine shred.
+        return Some((shred.to_vec(), None));
+    };
+
+    // Repair shred.
+    if let Some(location) = repair_nonce_location_lookup(nonce) {
+        Some((shred.to_vec(), Some(location)))
+    } else {
+        // This indicates the request entry was evicted before consumption.
+        stats.num_unknown_block_location += 1;
+        None
+    }
 }
 
 /// Checks whether the shred in the given `packet` is of resigned variant. If
@@ -467,6 +497,9 @@ struct ShredSigVerifyStats {
     num_retranmitter_signature_verified: AtomicUsize,
     num_retransmit_stage_overflow_shreds: usize,
     num_retransmit_shreds: usize,
+    /// This means the OutstandingRequests cache is saturated and we
+    /// threw away a verified shred due to being unable to fetch the storage location
+    num_unknown_block_location: usize,
     num_unknown_slot_leader: AtomicUsize,
     num_unknown_turbine_parent: AtomicUsize,
     elapsed_micros: u64,
@@ -491,6 +524,7 @@ impl ShredSigVerifyStats {
             num_retranmitter_signature_verified: AtomicUsize::default(),
             num_retransmit_stage_overflow_shreds: 0usize,
             num_retransmit_shreds: 0usize,
+            num_unknown_block_location: 0usize,
             num_unknown_slot_leader: AtomicUsize::default(),
             num_unknown_turbine_parent: AtomicUsize::default(),
             elapsed_micros: 0u64,
@@ -534,6 +568,11 @@ impl ShredSigVerifyStats {
                 i64
             ),
             ("num_retransmit_shreds", self.num_retransmit_shreds, i64),
+            (
+                "num_unknown_block_location",
+                self.num_unknown_block_location,
+                i64
+            ),
             (
                 "num_unknown_slot_leader",
                 self.num_unknown_slot_leader.load(Ordering::Relaxed),

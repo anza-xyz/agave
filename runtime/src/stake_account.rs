@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi::abi_example::AbiExample;
 use {
@@ -47,6 +49,7 @@ impl<T> StakeAccount<T> {
 
 impl StakeAccount<Delegation> {
     #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn delegation(&self) -> &Delegation {
         // Safe to unwrap here because StakeAccount<Delegation> will always
         // only wrap a stake-state which is a delegation.

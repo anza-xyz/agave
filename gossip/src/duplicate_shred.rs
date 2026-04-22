@@ -83,8 +83,10 @@ pub enum Error {
     NumChunksMismatch,
     #[error("missing data chunk")]
     MissingDataChunk,
-    #[error("(de)serialization error")]
-    SerializationError(#[from] bincode::Error),
+    #[error("wincode deserialization error")]
+    WincodeReadError(#[from] wincode::ReadError),
+    #[error("wincode serialization error")]
+    WincodeWriteError(#[from] wincode::WriteError),
     #[error("shred type mismatch")]
     ShredTypeMismatch,
     #[error("slot mismatch")]
@@ -115,7 +117,8 @@ impl Error {
             | Self::InvalidShred(_)
             | Self::NumChunksMismatch
             | Self::MissingDataChunk
-            | Self::SerializationError(_)
+            | Self::WincodeReadError(_)
+            | Self::WincodeWriteError(_)
             | Self::TryFromIntError(_)
             | Self::UnknownSlotLeader(_) => false,
         }
@@ -229,7 +232,7 @@ where
         shred1: shred.into_payload(),
         shred2: other_shred.into_payload(),
     };
-    let data = bincode::serialize(&proof)?;
+    let data = wincode::serialize(&proof)?;
     let chunk_size = if DUPLICATE_SHRED_HEADER_SIZE < max_size {
         max_size - DUPLICATE_SHRED_HEADER_SIZE
     } else {
@@ -306,7 +309,7 @@ pub(crate) fn into_shreds(
         return Err(Error::MissingDataChunk);
     }
     let data = (0..num_chunks).map(|k| data.remove(&k).unwrap()).concat();
-    let proof: DuplicateSlotProof = bincode::deserialize(&data)?;
+    let proof: DuplicateSlotProof = wincode::deserialize(&data)?;
     if proof.shred1 == proof.shred2 {
         return Err(Error::InvalidDuplicateSlotProof);
     }
@@ -478,7 +481,7 @@ pub(crate) mod tests {
             shred1: shred.into_payload(),
             shred2: other_shred.into_payload(),
         };
-        let data = bincode::serialize(&proof)?;
+        let data = wincode::serialize(&proof)?;
         let chunk_size = max_size - DUPLICATE_SHRED_HEADER_SIZE;
         let chunks: Vec<_> = data.chunks(chunk_size).map(Vec::from).collect();
         let num_chunks = u8::try_from(chunks.len())?;

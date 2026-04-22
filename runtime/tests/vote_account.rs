@@ -6,117 +6,23 @@ use {
     bincode::Options,
     rand::Rng,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-    solana_bls_signatures::{
-        keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
-    },
     solana_pubkey::Pubkey,
-    solana_runtime::bank::{MAX_ALPENGLOW_VOTE_ACCOUNTS, VAT_TO_BURN_PER_EPOCH},
+    solana_runtime::{
+        bank::{MAX_ALPENGLOW_VOTE_ACCOUNTS, VAT_TO_BURN_PER_EPOCH},
+        test_utils::{
+            new_rand_vote_account, new_rand_vote_accounts, new_staked_vote_accounts, staked_nodes,
+        },
+    },
     solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::{
         authorized_voters::AuthorizedVoters,
         state::{VoteInit, VoteStateV4, VoteStateVersions},
     },
-    std::{collections::HashMap, iter::repeat_with, sync::Arc},
+    std::{collections::HashMap, sync::Arc},
 };
 
 const MIN_STAKE_FOR_STAKED_ACCOUNT: u64 = 1;
 const MAX_STAKE_FOR_STAKED_ACCOUNT: u64 = 997;
-
-/// Creates a vote account
-/// `set_bls_pubkey`: controls whether the bls pubkey is None or Some
-fn new_rand_vote_account<R: Rng>(
-    rng: &mut R,
-    node_pubkey: Option<Pubkey>,
-    set_bls_pubkey: bool,
-) -> AccountSharedData {
-    let vote_init = VoteInit {
-        node_pubkey: node_pubkey.unwrap_or_else(Pubkey::new_unique),
-        authorized_voter: Pubkey::new_unique(),
-        authorized_withdrawer: Pubkey::new_unique(),
-        commission: rng.random(),
-    };
-    let bls_pubkey_compressed = if set_bls_pubkey {
-        let bls_pubkey: BLSPubkeyCompressed = BLSKeypair::new().public.into();
-        let bls_pubkey_buffer = bincode::serialize(&bls_pubkey).unwrap();
-        Some(bls_pubkey_buffer.try_into().unwrap())
-    } else {
-        None
-    };
-    let vote_state = VoteStateV4 {
-        node_pubkey: vote_init.node_pubkey,
-        authorized_voters: AuthorizedVoters::new(0, vote_init.authorized_voter),
-        authorized_withdrawer: vote_init.authorized_withdrawer,
-        bls_pubkey_compressed,
-        ..VoteStateV4::default()
-    };
-
-    AccountSharedData::new_data(
-        rng.random(), // lamports
-        &VoteStateVersions::new_v4(vote_state),
-        &solana_sdk_ids::vote::id(), // owner
-    )
-    .unwrap()
-}
-
-fn new_rand_vote_accounts<R: Rng>(
-    rng: &mut R,
-    num_nodes: usize,
-) -> impl Iterator<Item = (Pubkey, (/*stake:*/ u64, VoteAccount))> + '_ {
-    let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(num_nodes).collect();
-    repeat_with(move || {
-        let node = nodes[rng.random_range(0..nodes.len())];
-        let account = new_rand_vote_account(rng, Some(node), true);
-        let stake = rng.random_range(0..MAX_STAKE_FOR_STAKED_ACCOUNT);
-        let vote_account = VoteAccount::try_from(account).unwrap();
-        (Pubkey::new_unique(), (stake, vote_account))
-    })
-}
-
-/// Creates `num_nodes` random vote accounts with the specified stake.
-/// The first `num_nodes_with_bls_pubkeys` have the bls_pubkeys set while the rest are unset.
-/// If `stake_per_node` is specified, then each node will have that stake, otherwise a random amount
-/// between `MIN_STAKE_FOR_STAKED_ACCOUNT` and `MAX_STAKE_FOR_STAKED_ACCOUNT` is chosen.
-fn new_staked_vote_accounts<R: Rng, F>(
-    rng: &mut R,
-    num_nodes: usize,
-    num_nodes_with_bls_pubkeys: usize,
-    stake_per_node: Option<u64>,
-    lamports_per_node: F,
-) -> VoteAccounts
-where
-    F: Fn(usize) -> u64,
-{
-    let mut vote_accounts = VoteAccounts::default();
-    for index in 0..num_nodes {
-        let pubkey = Pubkey::new_unique();
-        let stake = stake_per_node.unwrap_or_else(|| {
-            rng.random_range(MIN_STAKE_FOR_STAKED_ACCOUNT..MAX_STAKE_FOR_STAKED_ACCOUNT)
-        });
-        let node_pubkey = Pubkey::new_unique();
-        let set_bls_pubkey = index < num_nodes_with_bls_pubkeys;
-        let mut account = new_rand_vote_account(rng, Some(node_pubkey), set_bls_pubkey);
-        account.set_lamports(lamports_per_node(index));
-        vote_accounts.insert(pubkey, VoteAccount::try_from(account).unwrap(), || stake);
-    }
-    vote_accounts
-}
-
-fn staked_nodes<'a, I>(vote_accounts: I) -> HashMap<Pubkey, u64>
-where
-    I: IntoIterator<Item = &'a (Pubkey, (u64, VoteAccount))>,
-{
-    let mut staked_nodes = HashMap::new();
-    for (_, (stake, vote_account)) in vote_accounts
-        .into_iter()
-        .filter(|(_, (stake, _))| *stake != 0)
-    {
-        staked_nodes
-            .entry(*vote_account.node_pubkey())
-            .and_modify(|s: &mut u64| *s = s.saturating_add(*stake))
-            .or_insert(*stake);
-    }
-    staked_nodes
-}
 
 #[test]
 fn test_vote_account_try_from() {
@@ -153,7 +59,9 @@ fn test_vote_account_serialize() {
 fn test_vote_accounts_serialize() {
     let mut rng = rand::rng();
     let vote_accounts_hash_map: VoteAccountsHashMap =
-        new_rand_vote_accounts(&mut rng, 64).take(1024).collect();
+        new_rand_vote_accounts(&mut rng, 64, MAX_STAKE_FOR_STAKED_ACCOUNT)
+            .take(1024)
+            .collect();
     let vote_accounts = VoteAccounts::from(Arc::new(vote_accounts_hash_map.clone()));
     assert!(vote_accounts.staked_nodes().len() > 32);
     assert_eq!(
@@ -172,7 +80,9 @@ fn test_vote_accounts_serialize() {
 fn test_vote_accounts_deserialize() {
     let mut rng = rand::rng();
     let vote_accounts_hash_map: VoteAccountsHashMap =
-        new_rand_vote_accounts(&mut rng, 64).take(1024).collect();
+        new_rand_vote_accounts(&mut rng, 64, MAX_STAKE_FOR_STAKED_ACCOUNT)
+            .take(1024)
+            .collect();
     let data = bincode::serialize(&vote_accounts_hash_map).unwrap();
     let vote_accounts: VoteAccounts = bincode::deserialize(&data).unwrap();
     assert!(vote_accounts.staked_nodes().len() > 32);
@@ -216,7 +126,9 @@ fn test_vote_accounts_deserialize_invalid_account() {
 #[test]
 fn test_staked_nodes() {
     let mut rng = rand::rng();
-    let mut accounts: Vec<_> = new_rand_vote_accounts(&mut rng, 64).take(1024).collect();
+    let mut accounts: Vec<_> = new_rand_vote_accounts(&mut rng, 64, MAX_STAKE_FOR_STAKED_ACCOUNT)
+        .take(1024)
+        .collect();
     let mut vote_accounts = VoteAccounts::default();
     // Add vote accounts.
     for (k, (pubkey, (stake, vote_account))) in accounts.iter().enumerate() {
@@ -347,7 +259,7 @@ fn test_staked_nodes_zero_stake() {
 #[test]
 fn test_staked_nodes_cow() {
     let mut rng = rand::rng();
-    let mut accounts = new_rand_vote_accounts(&mut rng, 64);
+    let mut accounts = new_rand_vote_accounts(&mut rng, 64, MAX_STAKE_FOR_STAKED_ACCOUNT);
     // Add vote accounts.
     let mut vote_accounts = VoteAccounts::default();
     for (pubkey, (stake, vote_account)) in (&mut accounts).take(1024) {
@@ -379,7 +291,7 @@ fn test_staked_nodes_cow() {
 #[test]
 fn test_vote_accounts_cow() {
     let mut rng = rand::rng();
-    let mut accounts = new_rand_vote_accounts(&mut rng, 64);
+    let mut accounts = new_rand_vote_accounts(&mut rng, 64, MAX_STAKE_FOR_STAKED_ACCOUNT);
     // Add vote accounts.
     let mut vote_accounts = VoteAccounts::default();
     for (pubkey, (stake, vote_account)) in (&mut accounts).take(1024) {
@@ -413,10 +325,15 @@ fn test_vote_accounts_cow() {
 fn test_clone_and_filter_for_vat_truncates() {
     let mut rng = rand::rng();
     let current_limit = 3000;
-    let vote_accounts =
-        new_staked_vote_accounts(&mut rng, current_limit, current_limit, None, |_| {
-            10_000_000_000
-        });
+    let vote_accounts = new_staked_vote_accounts(
+        &mut rng,
+        current_limit,
+        current_limit,
+        None,
+        MIN_STAKE_FOR_STAKED_ACCOUNT,
+        MAX_STAKE_FOR_STAKED_ACCOUNT,
+        |_| 10_000_000_000,
+    );
     // All vote accounts should be returned if the limit is high enough.
     let filtered =
         vote_accounts.clone_and_filter_for_vat(current_limit + 500, MIN_STAKE_FOR_STAKED_ACCOUNT);
@@ -456,6 +373,8 @@ fn test_clone_and_filter_for_vat_filters_non_alpenglow() {
         num_nodes,
         MAX_ALPENGLOW_VOTE_ACCOUNTS,
         None,
+        MIN_STAKE_FOR_STAKED_ACCOUNT,
+        MAX_STAKE_FOR_STAKED_ACCOUNT,
         |_| 10_000_000_000,
     );
     let new_limit = MAX_ALPENGLOW_VOTE_ACCOUNTS + 500;
@@ -522,6 +441,8 @@ fn test_clone_and_filter_for_vat_not_enough_lamports() {
         MAX_ALPENGLOW_VOTE_ACCOUNTS,
         MAX_ALPENGLOW_VOTE_ACCOUNTS,
         None,
+        MIN_STAKE_FOR_STAKED_ACCOUNT,
+        MAX_STAKE_FOR_STAKED_ACCOUNT,
         |index| {
             if index < entries_to_modify {
                 VAT_TO_BURN_PER_EPOCH - 1
@@ -544,6 +465,8 @@ fn test_clone_and_filter_for_vat_empty_accounts() {
         current_limit,
         current_limit,
         Some(100), // Set all vote accounts to equal stake of 100.
+        MIN_STAKE_FOR_STAKED_ACCOUNT,
+        MAX_STAKE_FOR_STAKED_ACCOUNT,
         |_| 10_000_000_000,
     );
     // Since everyone has the same stake and the limit is 500 less than number of accounts,

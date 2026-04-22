@@ -94,7 +94,7 @@ impl ValidatedRewardCert {
 
         let mut rank_map = |ind: usize| {
             rank_map.get_pubkey_stake_entry(ind).map(|entry| {
-                validators.push(entry.pubkey);
+                validators.push(entry.vote_account_pubkey);
                 entry.bls_pubkey
             })
         };
@@ -153,8 +153,9 @@ mod tests {
             pubkey::PubkeyCompressed as BLSPubkeyCompressed,
         },
         solana_hash::Hash,
+        solana_leader_schedule::SlotLeader,
         solana_signer_store::encode_base2,
-        std::{collections::HashMap, sync::Arc},
+        std::collections::HashMap,
     };
 
     fn new_vote(vote: Vote, rank: usize, keypair: &BlsKeypair) -> VoteMessage {
@@ -208,8 +209,9 @@ mod tests {
             &validator_keypairs,
             vec![100; validator_keypairs.len()],
         );
-        let bank = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
-        let bank = Bank::new_from_parent(bank, &Pubkey::default(), bank_slot);
+        let (bank, _bank_forks) =
+            Bank::new_for_tests(&genesis.genesis_config).wrap_with_bank_forks_for_tests();
+        let bank = Bank::new_from_parent(bank, SlotLeader::default(), bank_slot);
 
         let rank_map = bank
             .epoch_stakes_from_slot(reward_slot)

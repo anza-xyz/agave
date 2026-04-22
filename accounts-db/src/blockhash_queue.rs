@@ -110,12 +110,7 @@ impl BlockhashQueue {
 
     pub fn register_hash(&mut self, hash: &Hash, lamports_per_signature: u64) {
         self.last_hash_index += 1;
-        if self.hashes.len() >= self.max_age {
-            self.hashes.retain(|_, info| {
-                Self::is_hash_index_valid(self.last_hash_index, self.max_age, info.hash_index)
-            });
-        }
-
+        self.purge();
         self.hashes.insert(
             *hash,
             HashInfo {
@@ -126,6 +121,20 @@ impl BlockhashQueue {
         );
 
         self.last_hash = Some(*hash);
+    }
+
+    fn purge(&mut self) {
+        if self.hashes.len() >= self.max_age {
+            self.hashes.retain(|_, info| {
+                Self::is_hash_index_valid(self.last_hash_index, self.max_age, info.hash_index)
+            });
+        }
+    }
+
+    pub fn set_max_age(&mut self, max_age: usize) {
+        assert!(max_age > 0, "max blockhash age must be >0");
+        self.max_age = max_age;
+        self.purge();
     }
 
     #[deprecated(
@@ -186,7 +195,7 @@ mod tests {
     use solana_sysvar::recent_blockhashes::IterItem;
     use {
         super::*, bincode::serialize, solana_clock::MAX_RECENT_BLOCKHASHES,
-        solana_sha256_hasher::hash,
+        solana_sha256_hasher::hash, std::iter,
     };
 
     #[test]
@@ -361,5 +370,36 @@ mod tests {
                 .get_hash_info_if_valid(&hash_list[MAX_AGE - 1], 0)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn test_change_max_age() {
+        // Setup and fill the hash queue.
+        let max_age = 10;
+        let mut hash_queue = BlockhashQueue::new(max_age);
+        let hashes: Vec<Hash> = iter::repeat_n(Hash::new_unique(), max_age).collect();
+        for hash in &hashes {
+            hash_queue.register_hash(hash, 0);
+        }
+        assert!(hash_queue.is_hash_valid_for_age(hashes.first().unwrap(), max_age));
+        assert_eq!(hash_queue.last_hash_index, max_age as u64);
+
+        // Double max age and fill the queue.
+        hash_queue.set_max_age(max_age * 2);
+        for hash in iter::repeat_n(Hash::new_unique(), max_age) {
+            hash_queue.register_hash(&hash, 0);
+        }
+        assert!(hash_queue.is_hash_valid_for_age(hashes.first().unwrap(), max_age));
+        assert_eq!(hash_queue.last_hash_index, (max_age * 2) as u64);
+
+        // Bump the first hash out of range and verify it is no longer valid.
+        hash_queue.register_hash(&Hash::new_unique(), 0);
+        assert!(!hash_queue.is_hash_valid_for_age(hashes.first().unwrap(), max_age));
+
+        // Reduce max age and verify old entries are invalid.
+        hash_queue.set_max_age(max_age + 1);
+        for hash in &hashes {
+            assert!(!hash_queue.is_hash_valid_for_age(hash, max_age));
+        }
     }
 }

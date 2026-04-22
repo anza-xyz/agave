@@ -12,7 +12,7 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
     },
     agave_votor::vote_history_storage,
-    agave_xdp::{set_cpu_affinity, xdp_retransmitter::XdpConfig},
+    agave_xdp::{set_cpu_affinity, transmitter::XdpConfig},
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
@@ -94,6 +94,7 @@ pub fn execute(
     matches: &ArgMatches,
     solana_version: &str,
     operation: Operation,
+    config: super::Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Debugging panics is easier with a backtrace
     if env::var_os("RUST_BACKTRACE").is_none() {
@@ -262,25 +263,35 @@ pub fn execute(
 
     let exit = Arc::new(AtomicBool::new(false));
 
+    #[cfg(not(target_os = "linux"))]
+    let _ = config;
+
     #[cfg(target_os = "linux")]
-    let maybe_xdp_retransmit_builder = {
+    let xdp_builder_with_src_addr = {
         use {
-            agave_xdp::xdp_retransmitter::{XdpRetransmitBuilder, master_ip_if_bonded},
+            agave_xdp::transmitter::TransmitterBuilder,
             caps::{
                 CapSet,
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
             },
         };
 
+        let super::Config { primordial_caps } = config;
+
         let mut required_caps = HashSet::new();
         let mut retained_caps = HashSet::new();
-        let supported_caps = HashSet::from_iter([
+        let mut supported_caps = HashSet::from_iter([
             CAP_BPF,
             CAP_NET_ADMIN,
             CAP_NET_RAW,
             CAP_PERFMON,
             CAP_SYS_NICE,
         ]);
+
+        // make sure we keep any primordial caps
+        supported_caps.extend(primordial_caps.clone());
+        required_caps.extend(primordial_caps.clone());
+        retained_caps.extend(primordial_caps.clone());
 
         if let Some(xdp_config) = retransmit_xdp.as_ref() {
             required_caps.insert(CAP_NET_ADMIN);
@@ -328,39 +339,59 @@ pub fn execute(
                  consider removing them from your operational configuration.",
             );
         }
+
         // drop all caps that the current configuration does not require
+        caps::set(None, CapSet::Effective, &required_caps)
+            .expect("linux allows effective capset to be set");
         caps::set(None, CapSet::Permitted, &required_caps)
-            .expect("permitted capset to be writable");
+            .expect("linux allows permitted capset to be set");
 
         // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
         // capabilities do not leak, leaving the process in a state where it could
         // potentially be used as a privilege escalation gadget
-        let maybe_xdp_retransmit_builder = retransmit_xdp.clone().map(|xdp_config| {
+        let xdp_builder_with_src_addr = retransmit_xdp.clone().map(|xdp_config| {
+            use {
+                agave_xdp::{default_device_ipv4, interface_ipv4},
+                std::net::SocketAddrV4,
+            };
+
             let src_port = node.sockets.retransmit_sockets[0]
                 .local_addr()
                 .expect("failed to get local address")
                 .port();
             let src_ip = match node.bind_ip_addrs.active() {
-                IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
-                IpAddr::V4(_unspecified) => xdp_config
-                    .interface
-                    .as_ref()
-                    .and_then(|iface| master_ip_if_bonded(iface)),
+                IpAddr::V4(ip) if !ip.is_unspecified() => ip,
+                IpAddr::V4(_unspecified) => {
+                    if let Some(interface) = xdp_config.interface.as_ref() {
+                        interface_ipv4(interface).expect(
+                            "configured interface should exist and have an IPv4 address assigned",
+                        )
+                    } else {
+                        default_device_ipv4().expect(
+                            "default route device should exist and have an IPv4 address assigned",
+                        )
+                    }
+                }
                 _ => panic!("IPv6 not supported"),
             };
-            XdpRetransmitBuilder::new(xdp_config, src_port, src_ip, exit.clone())
-                .expect("failed to create xdp retransmitter")
+            (
+                TransmitterBuilder::new(xdp_config, exit.clone())
+                    .expect("failed to create xdp transmitter"),
+                SocketAddrV4::new(src_ip, src_port),
+            )
         });
 
         // we're done with caps needed to init xdp now. remove them from our process
+        caps::set(None, CapSet::Effective, &retained_caps)
+            .expect("linux allows effective capset to be set");
         caps::set(None, CapSet::Permitted, &retained_caps)
             .expect("linux allows permitted capset to be set");
 
-        maybe_xdp_retransmit_builder
+        xdp_builder_with_src_addr
     };
 
     #[cfg(not(target_os = "linux"))]
-    let maybe_xdp_retransmit_builder = None;
+    let xdp_builder_with_src_addr = None;
 
     let reserved = retransmit_xdp
         .map(|xdp| xdp.cpus.clone())
@@ -603,10 +634,6 @@ pub fn execute(
     }
 
     const MB: usize = 1_024 * 1_024;
-    accounts_index_config.scan_results_limit_bytes =
-        value_t!(matches, "accounts_index_scan_results_limit_mb", usize)
-            .ok()
-            .map(|mb| mb * MB);
 
     let account_shrink_paths: Option<Vec<PathBuf>> =
         values_t!(matches, "account_shrink_path", String)
@@ -876,6 +903,9 @@ pub fn execute(
             i8
         ),
     };
+    validator_config
+        .block_production_method
+        .warn_if_deprecated_value();
 
     let vote_account = pubkey_of(matches, "vote_account").unwrap_or_else(|| {
         if !validator_config.voting_disabled {
@@ -1114,7 +1144,7 @@ pub fn execute(
             sigverify_threads: tpu_sigverify_threads,
         },
         admin_service_post_init,
-        maybe_xdp_retransmit_builder,
+        xdp_builder_with_src_addr,
         exit,
     )
     .map_err(|err| format!("{err:?}"))?;

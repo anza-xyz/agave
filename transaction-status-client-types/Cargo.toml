@@ -24,13 +24,14 @@ serde_json = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-instruction = { workspace = true }
-solana-message = { workspace = true }
-solana-reward-info = { workspace = true, features = ["serde"] }
+solana-message = { workspace = true, features = ["wincode"] }
+solana-reward-info = { workspace = true, features = ["serde", "wincode"] }
 solana-signature = { workspace = true, default-features = false }
-solana-transaction = { workspace = true, features = ["serde"] }
+solana-transaction = { workspace = true, features = ["serde", "wincode"] }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 test-case = { workspace = true }

@@ -5,10 +5,8 @@
 //! for a given time time_slice.
 
 use {
-    bincode::{deserialize, serialize, serialized_size},
     crossbeam_channel::Sender,
     log::*,
-    serde::{Deserialize, Serialize},
     solana_cli_output::display::build_balance_message,
     solana_hash::Hash,
     solana_instruction::Instruction,
@@ -32,6 +30,7 @@ use {
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream as TokioTcpStream},
     },
+    wincode::{SchemaRead, SchemaWrite, deserialize, serialize, serialized_size},
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {crossbeam_channel::unbounded, std::net::Ipv4Addr, std::thread};
@@ -58,7 +57,10 @@ pub enum FaucetError {
     IoError(#[from] std::io::Error),
 
     #[error("serialization error: {0}")]
-    Serialize(#[from] bincode::Error),
+    Serialize(#[from] wincode::WriteError),
+
+    #[error("deserialization error: {0}")]
+    Deserialize(#[from] wincode::ReadError),
 
     #[error("transaction_length from faucet exceeds limit: {0}")]
     TransactionDataTooLarge(usize),
@@ -73,7 +75,7 @@ pub enum FaucetError {
     PerTimeCapExceeded(String, String, String, String),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, SchemaRead, SchemaWrite)]
 pub enum FaucetRequest {
     GetAirdrop {
         lamports: u64,
@@ -249,7 +251,7 @@ impl Faucet {
                         tx
                     }
                 };
-                let response_vec = bincode::serialize(&tx)?;
+                let response_vec = wincode::serialize(&tx)?;
 
                 let mut response_vec_with_length =
                     (response_vec.len() as u16).to_le_bytes().to_vec();

@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     core::borrow::Borrow,
     solana_account::AccountSharedData,
@@ -129,6 +131,7 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
     }
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn collect_accounts_for_failed_tx<'a>(
     collected_accounts: &mut Vec<(&'a Pubkey, &'a AccountSharedData)>,
     collected_account_transactions: &mut Option<Vec<&'a SanitizedTransaction>>,
@@ -164,7 +167,9 @@ mod tests {
         solana_signer::{Signer, signers::Signers},
         solana_svm::{
             account_loader::{FeesOnlyTransaction, LoadedTransaction},
-            transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
+            transaction_execution_result::{
+                AccountsDeltas, ExecutedTransaction, TransactionExecutionDetails,
+            },
         },
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
@@ -188,6 +193,10 @@ mod tests {
         status: Result<()>,
         loaded_transaction: LoadedTransaction,
     ) -> TransactionProcessingResult {
+        let accounts_deltas = status.as_ref().is_ok().then_some(AccountsDeltas {
+            accounts_resize_delta: 0,
+            accounts_uninitialized_size: 0,
+        });
         Ok(ProcessedTransaction::Executed(Box::new(
             ExecutedTransaction {
                 execution_details: TransactionExecutionDetails {
@@ -196,7 +205,7 @@ mod tests {
                     inner_instructions: None,
                     return_data: None,
                     executed_units: 0,
-                    accounts_data_len_delta: 0,
+                    accounts_deltas,
                 },
                 loaded_transaction,
                 programs_modified_by_tx: HashMap::new(),
@@ -245,7 +254,6 @@ mod tests {
 
         let loaded0 = LoadedTransaction {
             accounts: transaction_accounts0,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -254,7 +262,6 @@ mod tests {
 
         let loaded1 = LoadedTransaction {
             accounts: transaction_accounts1,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -317,7 +324,6 @@ mod tests {
 
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::FeePayerOnly {
                 fee_payer: (from_address, from_account_pre.clone()),
@@ -408,7 +414,6 @@ mod tests {
 
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::SeparateNonceAndFeePayer {
                 nonce: (nonce_address, nonce_account_pre.clone()),
@@ -516,7 +521,6 @@ mod tests {
 
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
-            program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::SameNonceAndFeePayer {
                 nonce: (nonce_address, nonce_account_pre.clone()),
@@ -589,6 +593,7 @@ mod tests {
                 rollback_accounts: RollbackAccounts::FeePayerOnly {
                     fee_payer: (from_address, from_account_pre.clone()),
                 },
+                loaded_accounts_data_size: 0,
             },
         )))];
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);

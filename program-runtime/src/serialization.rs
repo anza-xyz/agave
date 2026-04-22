@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    crate::invoke_context::SerializedAccountMetadata,
+    crate::memory_context::SerializedAccountMetadata,
     solana_instruction::error::InstructionError,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER},
     solana_pubkey::Pubkey,
@@ -373,7 +373,7 @@ fn serialize_parameters_for_abiv0(
                 s.write(position as u8);
             }
             SerializeAccount::Account(_, mut account) => {
-                s.write::<u8>(NON_DUP_MARKER);
+                let vm_addr = s.write::<u8>(NON_DUP_MARKER);
                 s.write::<u8>(account.is_signer() as u8);
                 s.write::<u8>(account.is_writable() as u8);
                 let vm_key_addr = s.write_all(account.get_key().as_ref());
@@ -386,6 +386,7 @@ fn serialize_parameters_for_abiv0(
                 let rent_epoch = u64::MAX;
                 s.write::<u64>(rent_epoch.to_le());
                 accounts_metadata.push(SerializedAccountMetadata {
+                    vm_addr,
                     original_data_len: account.get_data().len(),
                     vm_key_addr,
                     vm_lamports_addr,
@@ -416,9 +417,8 @@ fn deserialize_parameters_for_abiv0<I: IntoIterator<Item = usize>>(
     account_lengths: I,
 ) -> Result<(), InstructionError> {
     let mut start = size_of::<u64>(); // number of accounts
-    for (instruction_account_index, pre_len) in (0..instruction_context
-        .get_number_of_instruction_accounts())
-        .zip(account_lengths.into_iter())
+    for (instruction_account_index, pre_len) in
+        (0..instruction_context.get_number_of_instruction_accounts()).zip(account_lengths)
     {
         let duplicate =
             instruction_context.is_instruction_account_duplicate(instruction_account_index)?;
@@ -540,7 +540,7 @@ fn serialize_parameters_for_abiv1(
     for account in accounts {
         match account {
             SerializeAccount::Account(_, mut borrowed_account) => {
-                s.write::<u8>(NON_DUP_MARKER);
+                let vm_addr = s.write::<u8>(NON_DUP_MARKER);
                 s.write::<u8>(borrowed_account.is_signer() as u8);
                 s.write::<u8>(borrowed_account.is_writable() as u8);
                 #[expect(deprecated)]
@@ -554,6 +554,7 @@ fn serialize_parameters_for_abiv1(
                 let rent_epoch = u64::MAX;
                 s.write::<u64>(rent_epoch.to_le());
                 accounts_metadata.push(SerializedAccountMetadata {
+                    vm_addr,
                     original_data_len: borrowed_account.get_data().len(),
                     vm_key_addr,
                     vm_owner_addr,
@@ -578,7 +579,7 @@ fn serialize_parameters_for_abiv1(
         s.fill_write(offset, 0)
             .map_err(|_| InstructionError::InvalidArgument)?;
         for entry in accounts_metadata.iter() {
-            s.write::<u64>(entry.vm_data_addr.to_le());
+            s.write::<u64>(entry.vm_addr.to_le());
         }
     }
 
@@ -599,9 +600,8 @@ fn deserialize_parameters_for_abiv1<I: IntoIterator<Item = usize>>(
     account_lengths: I,
 ) -> Result<(), InstructionError> {
     let mut start = size_of::<u64>(); // number of accounts
-    for (instruction_account_index, pre_len) in (0..instruction_context
-        .get_number_of_instruction_accounts())
-        .zip(account_lengths.into_iter())
+    for (instruction_account_index, pre_len) in
+        (0..instruction_context.get_number_of_instruction_accounts()).zip(account_lengths)
     {
         let duplicate =
             instruction_context.is_instruction_account_duplicate(instruction_account_index)?;

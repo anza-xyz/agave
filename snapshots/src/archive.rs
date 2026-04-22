@@ -1,7 +1,8 @@
 use {
     crate::{
         ArchiveFormat, Result, SnapshotArchiveKind, error::ArchiveSnapshotPackageError, paths,
-        snapshot_archive_info::SnapshotArchiveInfo, snapshot_hash::SnapshotHash,
+        snapshot_archive_info::SnapshotArchiveInfo, snapshot_config::SnapshotConfig,
+        snapshot_hash::SnapshotHash,
     },
     agave_fs::buffered_writer::large_file_buf_writer,
     log::info,
@@ -28,7 +29,7 @@ pub fn archive_snapshot(
     snapshot_storages: &[Arc<AccountStorageEntry>],
     bank_snapshot_dir: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
-    archive_format: ArchiveFormat,
+    snapshot_config: &SnapshotConfig,
 ) -> Result<SnapshotArchiveInfo> {
     use ArchiveSnapshotPackageError as E;
     const ACCOUNTS_DIR: &str = "accounts";
@@ -80,6 +81,7 @@ pub fn archive_snapshot(
     })?;
 
     // Tar the staging directory into the archive at `staging_archive_path`
+    let archive_format = snapshot_config.archive_format;
     let staging_archive_path = tar_dir.join(format!(
         "{}{}.{}",
         staging_dir_prefix,

@@ -16,7 +16,7 @@ use {
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::{
         ArchiveFormat, DEFAULT_ARCHIVE_COMPRESSION, SUPPORTED_ARCHIVE_COMPRESSION, SnapshotVersion,
-        snapshot_archive_info::SnapshotArchiveInfoGetter as _,
+        snapshot_archive_info::SnapshotArchiveInfoGetter as _, snapshot_config::SnapshotConfig,
     },
     clap::{
         App, AppSettings, Arg, ArgMatches, SubCommand, crate_description, crate_name, value_t,
@@ -26,7 +26,6 @@ use {
     log::*,
     serde::Serialize,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut},
-    solana_accounts_db::accounts_index::{ScanConfig, ScanOrder},
     solana_clap_utils::{
         input_parsers::{cluster_type_of, pubkey_of, pubkeys_of},
         input_validators::{
@@ -82,7 +81,7 @@ use {
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::{
         self,
-        vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV3, VoteStateV4},
+        vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     },
     std::{
         collections::{HashMap, HashSet},
@@ -467,7 +466,7 @@ fn compute_slot_cost(
                     None,
                     SimpleAddressLoader::Disabled,
                     &reserved_account_keys.active,
-                    feature_set.is_active(&agave_feature_set::limit_instruction_accounts::id()),
+                    feature_set.snapshot().limit_instruction_accounts,
                 )
                 .map_err(|err| {
                     warn!("Failed to compute cost of transaction: {err:?}");
@@ -2203,7 +2202,7 @@ fn main() {
 
                     if child_bank_required {
                         let mut child_bank =
-                            Bank::new_from_parent(bank.clone(), bank.leader_id(), bank.slot() + 1);
+                            Bank::new_from_parent(bank.clone(), *bank.leader(), bank.slot() + 1);
 
                         if let Ok(rent_burn_percentage) = rent_burn_percentage {
                             child_bank.set_rent_burn_percentage(rent_burn_percentage);
@@ -2258,10 +2257,7 @@ fn main() {
 
                     if remove_stake_accounts {
                         for (address, mut account) in bank
-                            .get_program_accounts(
-                                &stake::program::id(),
-                                &ScanConfig::new(ScanOrder::Sorted),
-                            )
+                            .get_program_accounts(&stake::program::id())
                             .unwrap()
                             .into_iter()
                         {
@@ -2285,10 +2281,7 @@ fn main() {
 
                     if !vote_accounts_to_destake.is_empty() {
                         for (address, mut account) in bank
-                            .get_program_accounts(
-                                &stake::program::id(),
-                                &ScanConfig::new(ScanOrder::Sorted),
-                            )
+                            .get_program_accounts(&stake::program::id())
                             .unwrap()
                             .into_iter()
                         {
@@ -2368,10 +2361,7 @@ fn main() {
 
                         // Delete existing vote accounts
                         for (address, mut account) in bank
-                            .get_program_accounts(
-                                &solana_vote_program::id(),
-                                &ScanConfig::new(ScanOrder::Sorted),
-                            )
+                            .get_program_accounts(&solana_vote_program::id())
                             .unwrap()
                             .into_iter()
                         {
@@ -2396,30 +2386,17 @@ fn main() {
                                 ),
                             );
 
-                            let vote_account = if bank
-                                .feature_set
-                                .is_active(&feature_set::vote_state_v4::id())
-                            {
-                                vote_state::create_v4_account_with_authorized(
-                                    identity_pubkey,
-                                    identity_pubkey,
-                                    [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-                                    identity_pubkey,
-                                    10000,
-                                    identity_pubkey,
-                                    0,
-                                    identity_pubkey,
-                                    rent.minimum_balance(VoteStateV4::size_of()).max(1),
-                                )
-                            } else {
-                                vote_state::create_v3_account_with_authorized(
-                                    identity_pubkey,
-                                    identity_pubkey,
-                                    identity_pubkey,
-                                    100,
-                                    rent.minimum_balance(VoteStateV3::size_of()).max(1),
-                                )
-                            };
+                            let vote_account = vote_state::create_v4_account_with_authorized(
+                                identity_pubkey,
+                                identity_pubkey,
+                                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                                identity_pubkey,
+                                10000,
+                                vote_pubkey,
+                                0,
+                                identity_pubkey,
+                                rent.minimum_balance(VoteStateV4::size_of()).max(1),
+                            );
 
                             bank.store_account(
                                 stake_pubkey,
@@ -2503,7 +2480,7 @@ fn main() {
                         bank.force_flush_accounts_cache();
                         Arc::new(Bank::warp_from_parent(
                             bank.clone(),
-                            bank.leader_id(),
+                            *bank.leader(),
                             warp_slot,
                         ))
                     } else {
@@ -2529,6 +2506,18 @@ fn main() {
                         bank.slot(),
                     );
 
+                    // The bank must have a block id set to take a snapshot.
+                    Bank::calculate_and_set_block_id_for_dcou(&bank);
+
+                    let snapshot_config = SnapshotConfig {
+                        bank_snapshots_dir: ledger_path.clone(),
+                        full_snapshot_archives_dir: output_directory.clone(),
+                        incremental_snapshot_archives_dir: output_directory.clone(),
+                        archive_format: snapshot_archive_format,
+                        snapshot_version,
+                        ..SnapshotConfig::default()
+                    };
+
                     if is_incremental {
                         if starting_snapshot_hashes.is_none() {
                             eprintln!(
@@ -2550,13 +2539,9 @@ fn main() {
 
                         let incremental_snapshot_archive_info =
                             snapshot_bank_utils::bank_to_incremental_snapshot_archive(
-                                ledger_path,
+                                &snapshot_config,
                                 &bank,
                                 full_snapshot_slot,
-                                Some(snapshot_version),
-                                output_directory.clone(),
-                                output_directory,
-                                snapshot_archive_format,
                             )
                             .unwrap_or_else(|err| {
                                 eprintln!("Unable to create incremental snapshot: {err}");
@@ -2574,12 +2559,8 @@ fn main() {
                     } else {
                         let full_snapshot_archive_info =
                             snapshot_bank_utils::bank_to_full_snapshot_archive(
-                                ledger_path,
+                                &snapshot_config,
                                 &bank,
-                                Some(snapshot_version),
-                                output_directory.clone(),
-                                output_directory,
-                                snapshot_archive_format,
                             )
                             .unwrap_or_else(|err| {
                                 eprintln!("Unable to create snapshot: {err}");
@@ -2657,17 +2638,14 @@ fn main() {
                         AccessType::PrimaryForMaintenance,
                     ));
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
-                    let LoadAndProcessLedgerOutput {
-                        bank_forks,
-                        unified_scheduler_pool,
-                        ..
-                    } = load_and_process_ledger_or_exit(
-                        arg_matches,
-                        &genesis_config,
-                        blockstore.clone(),
-                        process_options,
-                        None, // transaction status sender
-                    );
+                    let LoadAndProcessLedgerOutput { bank_forks, .. } =
+                        load_and_process_ledger_or_exit(
+                            arg_matches,
+                            &genesis_config,
+                            blockstore.clone(),
+                            process_options,
+                            None, // transaction status sender
+                        );
 
                     let block_production_method = value_t_or_exit!(
                         arg_matches,
@@ -2682,7 +2660,6 @@ fn main() {
                         bank_forks,
                         blockstore,
                         block_production_method,
-                        unified_scheduler_pool,
                     ) {
                         Ok(()) => println!("Ok"),
                         Err(error) => {
@@ -2995,7 +2972,7 @@ fn main() {
                         };
                         let warped_bank = Bank::new_from_parent_with_tracer(
                             base_bank.clone(),
-                            base_bank.leader_id(),
+                            *base_bank.leader(),
                             next_epoch,
                             tracer,
                         );

@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     super::{
         scheduler_common::SchedulingCommon, scheduler_error::SchedulerError,
@@ -9,7 +7,6 @@ use {
     std::num::Saturating,
 };
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
     /// Schedule transactions from `container`.
     /// pre-graph and pre-lock filters may be passed to be applied
@@ -18,7 +15,6 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
         &mut self,
         container: &mut S,
         budget: u64,
-        relax_intrabatch_account_locks: bool,
         pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
         pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError>;
@@ -52,7 +48,6 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
 }
 
 /// Action to be taken by pre-lock filter.
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) enum PreLockFilterAction {
     /// Attempt to schedule the transaction.
     AttemptToSchedule,
@@ -60,7 +55,6 @@ pub(crate) enum PreLockFilterAction {
 
 /// Metrics from scheduling transactions.
 #[derive(Default, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct SchedulingSummary {
     /// Starting queue size
     pub starting_queue_size: usize,

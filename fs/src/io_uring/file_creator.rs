@@ -33,9 +33,10 @@ use {
 // 32 pages (Maximum Data Transfer Size) * page size (MPSMIN = Memory Page Size) = 128KiB.
 pub const DEFAULT_WRITE_SIZE: IoSize = 512 * 1024;
 
-// Write size and file offset alignment for use with direct IO - all modern file systems
-// effectively use this constant.
-const DIRECT_IO_WRITE_LEN_ALIGNMENT: IoSize = 512;
+// O_DIRECT requires I/O length, offset, and buffer address to be aligned to the device's logical
+// block size: 512 bytes on most block devices, but 4096 on some NVMes. Use 4096 to avoid
+// per-device detection at runtime.
+pub(super) const DIRECT_IO_WRITE_LEN_ALIGNMENT: IoSize = 4096;
 
 // Status flags (updatable on file-descriptor) used as default upon file creation.
 const DEFAULT_STATUS_FLAGS: libc::c_int = O_NOATIME;
@@ -240,7 +241,12 @@ impl IoUringFileCreator<'_> {
     /// Schedule opening file at `path` with `mode` permissions.
     ///
     /// Returns key that can be used for scheduling writes for it.
-    fn open(&mut self, path: PathBuf, mode: u32, dir_handle: Arc<File>) -> io::Result<usize> {
+    pub(super) fn open(
+        &mut self,
+        path: PathBuf,
+        mode: u32,
+        dir_handle: Arc<File>,
+    ) -> io::Result<usize> {
         let file = PendingFile::from_path(path);
         let path_cstring = Pin::new(file.path_cstring());
 
@@ -297,7 +303,7 @@ impl IoUringFileCreator<'_> {
     /// buffer size.
     ///
     /// Write operation can be immediately added to ring or put into file state for future execution.
-    fn schedule_write(
+    pub(super) fn schedule_write(
         &mut self,
         file_key: usize,
         file_offset: FileSize,
@@ -366,7 +372,7 @@ impl IoUringFileCreator<'_> {
         Ok(())
     }
 
-    fn wait_free_buf(&mut self) -> io::Result<IoBufferChunk> {
+    pub(super) fn wait_free_buf(&mut self) -> io::Result<IoBufferChunk> {
         loop {
             self.ring.process_completions()?;
             let state = self.ring.context_mut();

@@ -154,7 +154,7 @@ pub trait RpcSolPubSub {
         id: PubSubSubscriptionId,
     ) -> Result<bool>;
 
-    // Get notification when slot is encountered
+    // Get notification when processing of a slot begins
     #[pubsub(subscription = "slotNotification", subscribe, name = "slotSubscribe")]
     fn slot_subscribe(&self, meta: Self::Metadata, subscriber: Subscriber<SlotInfo>);
 
@@ -308,7 +308,7 @@ mod internal {
         #[rpc(name = "signatureUnsubscribe")]
         fn signature_unsubscribe(&self, id: SubscriptionId) -> Result<bool>;
 
-        // Get notification when slot is encountered
+        // Get notification when processing of a slot begins
         #[rpc(name = "slotSubscribe")]
         fn slot_subscribe(&self) -> Result<SubscriptionId>;
 
@@ -634,7 +634,7 @@ mod tests {
             ProcessedSignatureResult, ReceivedSignatureResult, RpcSignatureResult, SlotInfo,
         },
         solana_runtime::{
-            bank::Bank,
+            bank::{Bank, SlotLeader},
             bank_forks::BankForks,
             commitment::{BlockCommitmentCache, CommitmentSlots},
             genesis_utils::{
@@ -881,7 +881,7 @@ mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let rpc_subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
@@ -997,7 +997,7 @@ mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let rpc_subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
@@ -1180,7 +1180,7 @@ mod tests {
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bob = Keypair::new();
 

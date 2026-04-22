@@ -8,7 +8,6 @@ use {
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         stats::Stats,
     },
-    crate::pubkey_bins::PubkeyBinCalculator24,
     rand::{Rng, rng},
     solana_bucket_map::bucket_api::BucketApi,
     solana_clock::Slot,
@@ -40,8 +39,6 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     map_internal: RwLock<HashMap<Pubkey, Box<AccountMapEntry<T>>, ahash::RandomState>>,
     storage: Arc<BucketMapHolder<T, U>>,
     _bin: usize,
-    pub(crate) lowest_pubkey: Pubkey,
-    pub(crate) highest_pubkey: Pubkey,
 
     bucket: Option<Arc<BucketApi<(Slot, U)>>>,
 
@@ -116,9 +113,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         num_initial_accounts: Option<usize>,
     ) -> Self {
         let num_ages_to_distribute_flushes = Age::MAX - storage.ages_to_stay_in_cache;
-        let bin_calc = PubkeyBinCalculator24::new(storage.bins);
-        let lowest_pubkey = bin_calc.lowest_pubkey_from_bin(bin);
-        let highest_pubkey = bin_calc.highest_pubkey_from_bin(bin);
 
         let map_internal = if let Some(num_initial_accounts) = num_initial_accounts {
             let capacity_per_bin = num_initial_accounts / storage.bins;
@@ -134,8 +128,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             map_internal,
             storage: Arc::clone(storage),
             _bin: bin,
-            lowest_pubkey,
-            highest_pubkey,
             bucket: storage
                 .disk
                 .as_ref()
@@ -390,25 +382,77 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         result
     }
 
-    /// call `user_fn` with a write lock of the slot list.
-    /// Note that whether `user_fn` modifies the slot list or not, the entry in the in-mem index will always
-    /// be marked as dirty. So, callers to this should ideally know they will be modifying the slot list.
-    pub fn slot_list_mut<RT>(
+    /// Convenience wrapper for slot_list_mut_with_entry that ignores the entry
+    pub(crate) fn slot_list_mut<RT>(
         &self,
         pubkey: &Pubkey,
         user_fn: impl FnOnce(SlotListWriteGuard<T>) -> RT,
+    ) -> Option<RT> {
+        self.slot_list_mut_with_entry(pubkey, |slot_list, _entry| user_fn(slot_list))
+    }
+
+    /// Call `user_fn` with a write lock of the slot list and the entry itself
+    /// Note that whether `user_fn` modifies the slot list or not, the entry in the in-mem index will always
+    /// be marked as dirty. So, callers to this should ideally know they will be modifying the slot list.
+    pub(crate) fn slot_list_mut_with_entry<RT>(
+        &self,
+        pubkey: &Pubkey,
+        user_fn: impl FnOnce(SlotListWriteGuard<T>, &AccountMapEntry<T>) -> RT,
     ) -> Option<RT> {
         self.get_internal_inner(pubkey, |entry| {
             (
                 true,
                 entry.map(|entry| {
-                    let result = user_fn(entry.slot_list_write_lock());
+                    let result = user_fn(entry.slot_list_write_lock(), entry);
                     // note that to be safe here, we ALWAYS mark the entry as dirty
-                    entry.set_dirty(true);
+                    entry.mark_dirty();
                     result
                 }),
             )
         })
+    }
+
+    /// Clean the slot list by removing all slot_list items older than the max_slot.
+    /// Decrease the reference count of the entry by the number of removed accounts.
+    /// Note: This must only be called on startup, and reclaims must be reclaimed.
+    pub(crate) fn clean_and_unref_slot_list_on_startup(
+        &self,
+        pubkey: &Pubkey,
+        reclaims: &mut ReclaimsSlotList<T>,
+    ) {
+        self.slot_list_mut_with_entry(pubkey, |mut slot_list, entry| {
+            let max_slot = slot_list
+                .iter()
+                .map(|(slot, _account)| *slot)
+                .max()
+                .expect("Slot list has entries");
+
+            let mut reclaim_count = 0;
+            let count = slot_list.retain_and_count(|(slot, value)| {
+                // keep the newest entry, and reclaim all others
+                if *slot < max_slot {
+                    assert!(!value.is_cached(), "Unsafe to reclaim cached entries");
+                    reclaims.push((*slot, *value));
+                    reclaim_count += 1;
+                    false
+                } else {
+                    true
+                }
+            });
+
+            assert_eq!(
+                count, 1,
+                "Slot list should have exactly one entry after cleaning"
+            );
+
+            entry.unref_by_count(reclaim_count);
+            assert_eq!(
+                entry.ref_count(),
+                1,
+                "ref count should be one after cleaning all entries"
+            );
+        })
+        .expect("Expected entry to exist in accounts index");
     }
 
     /// Insert a cached entry into the accounts index
@@ -422,7 +466,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         } else {
             slot_list.push((slot, new_entry));
         }
-        current.set_dirty(true);
+        current.mark_dirty();
     }
 
     pub fn upsert(
@@ -570,7 +614,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 current.unref_by_count(ref_count_change.unsigned_abs());
             }
         }
-        current.set_dirty(true);
+        current.mark_dirty();
         slot_list_len
     }
 
@@ -850,7 +894,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         // Step 4: Extract the data to perform disk update outside the lock
         //
         // Race condition handling: If a parallel operation dirties the item again after scanning,
-        // then we will set_dirty(true) and skip the disk update. The dirty flag will ensure the
+        // then we will mark_dirty() and skip the disk update. The dirty flag will ensure the
         // next flush picks up the item again. If the item becomes dirty during our disk write,
         // that's ok - the dirty flag will be picked up on the next flush and prevent us from
         // evicting the item from the cache.
@@ -879,13 +923,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         // re-check the ref count after locking the slot list
         if entry.ref_count() != 1 {
-            entry.set_dirty(true);
+            entry.mark_dirty();
             return ShouldFlush::No(ReasonToNotFlush::RefCount);
         }
 
         if slot_list.len() != 1 {
             // we only flush regular entries, i.e. slot list len == 1
-            entry.set_dirty(true);
+            entry.mark_dirty();
             return ShouldFlush::No(ReasonToNotFlush::SlotListLen);
         }
 
@@ -894,7 +938,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         if slot_list_elem.1.is_cached() {
             // we only flush regular entries, i.e. slot list does not contain any cached entries
-            entry.set_dirty(true);
+            entry.mark_dirty();
             return ShouldFlush::No(ReasonToNotFlush::SlotListCached);
         }
 
@@ -1341,6 +1385,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     pub(crate) fn len_and_cap_for_startup(&self) -> (usize, usize) {
         let map = self.map_internal.read().unwrap();
         (map.len(), map.capacity())
+    }
+
+    /// Returns the number of entries currently held in memory for this bin.
+    pub(crate) fn len(&self) -> usize {
+        self.map_internal.read().unwrap().len()
     }
 }
 
@@ -1950,7 +1999,7 @@ mod tests {
                     ref_count,
                     AccountMapEntryMeta::default(),
                 ));
-                entry.set_dirty(true);
+                entry.mark_dirty();
                 entry.set_age(age);
                 (Pubkey::new_unique(), entry)
             })
@@ -1962,7 +2011,7 @@ mod tests {
                     ref_count,
                     AccountMapEntryMeta::default(),
                 ));
-                entry.set_dirty(false);
+                assert!(!entry.dirty());
                 entry.set_age(age);
                 (Pubkey::new_unique(), entry)
             })
@@ -2047,7 +2096,7 @@ mod tests {
                     AccountMapEntryMeta::default(),
                 ));
                 if i % 2 == 0 {
-                    one_element_slot_list_entry.set_dirty(true);
+                    one_element_slot_list_entry.mark_dirty();
                 }
                 one_element_slot_list_entry.set_age(current_age);
                 (pk, one_element_slot_list_entry)
@@ -2096,7 +2145,7 @@ mod tests {
                 /*ref count*/ 1,
                 AccountMapEntryMeta::default(),
             );
-            entry.set_dirty(true);
+            entry.mark_dirty();
 
             let entry_for_flush = bucket.try_make_entry_for_flush(&entry, 0, 0);
             assert_eq!(entry_for_flush, ShouldFlush::Yes((slot, account_info)));
@@ -2109,7 +2158,7 @@ mod tests {
                 /*ref count*/ 1,
                 AccountMapEntryMeta::default(),
             );
-            entry.set_dirty(false);
+            assert!(!entry.dirty());
 
             let entry_for_flush = bucket.try_make_entry_for_flush(&entry, 0, 0);
             assert_eq!(entry_for_flush, ShouldFlush::No(ReasonToNotFlush::Clean),);
@@ -2134,7 +2183,7 @@ mod tests {
                 /*ref count*/ 2,
                 AccountMapEntryMeta::default(),
             );
-            entry.set_dirty(true);
+            entry.mark_dirty();
 
             let entry_for_flush = bucket.try_make_entry_for_flush(&entry, 0, 0);
             assert_eq!(entry_for_flush, ShouldFlush::No(ReasonToNotFlush::RefCount),);
@@ -2147,7 +2196,7 @@ mod tests {
                 /*ref count*/ 1,
                 AccountMapEntryMeta::default(),
             );
-            entry.set_dirty(true);
+            entry.mark_dirty();
 
             let entry_for_flush = bucket.try_make_entry_for_flush(&entry, 0, 0);
             assert_eq!(
@@ -2163,7 +2212,7 @@ mod tests {
                 /*ref count*/ 1,
                 AccountMapEntryMeta::default(),
             );
-            entry.set_dirty(true);
+            entry.mark_dirty();
 
             let entry_for_flush = bucket.try_make_entry_for_flush(&entry, 0, 0);
             assert_eq!(
@@ -2180,7 +2229,7 @@ mod tests {
                 /*ref count*/ 1,
                 AccountMapEntryMeta::default(),
             );
-            entry.set_dirty(true);
+            entry.mark_dirty();
 
             let entry_for_flush = bucket.try_make_entry_for_flush(&entry, 0, 0);
             assert_eq!(

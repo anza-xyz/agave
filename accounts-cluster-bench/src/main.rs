@@ -1355,7 +1355,7 @@ fn main() {
             info!("Finding cluster entry: {entrypoint_addr:?}");
             let (gossip_nodes, _validators) = discover_peers(
                 None,
-                &vec![entrypoint_addr],
+                &[entrypoint_addr],
                 None,
                 Duration::from_secs(60),
                 None,
@@ -1426,7 +1426,6 @@ pub mod test {
         },
         solana_measure::measure::Measure,
         solana_native_token::LAMPORTS_PER_SOL,
-        solana_poh_config::PohConfig,
         solana_program_pack::Pack,
         solana_test_validator::TestValidator,
         spl_token_interface::state::{Account, Mint},
@@ -1448,6 +1447,8 @@ pub mod test {
         indexes.indexes.insert(AccountIndex::ProgramId);
     }
 
+    const TEST_CLUSTER_MINT_LAMPORTS: u64 = 200 * LAMPORTS_PER_SOL;
+
     #[test]
     fn test_accounts_cluster_bench() {
         agave_logger::setup();
@@ -1455,8 +1456,7 @@ pub mod test {
         initialize_and_add_secondary_indexes(&mut validator_config);
         let num_nodes = 1;
         let mut config = ClusterConfig {
-            mint_lamports: 10_000_000,
-            poh_config: PohConfig::new_sleep(Duration::from_millis(50)),
+            mint_lamports: TEST_CLUSTER_MINT_LAMPORTS,
             node_stakes: vec![100; num_nodes],
             validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
             ..ClusterConfig::default()
@@ -1505,8 +1505,7 @@ pub mod test {
         initialize_and_add_secondary_indexes(&mut validator_config);
         let num_nodes = 1;
         let mut config = ClusterConfig {
-            mint_lamports: 10_000_000,
-            poh_config: PohConfig::new_sleep(Duration::from_millis(50)),
+            mint_lamports: TEST_CLUSTER_MINT_LAMPORTS,
             node_stakes: vec![100; num_nodes],
             validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
             ..ClusterConfig::default()
@@ -1558,9 +1557,8 @@ pub mod test {
             None, /* per_time_cap */
             0,    /* port */
         );
-        let test_validator = TestValidator::with_custom_fees(
+        let test_validator = TestValidator::start_with_config(
             mint_pubkey,
-            1,
             Some(faucet_addr),
             SocketAddrSpace::Unspecified,
         );

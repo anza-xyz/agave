@@ -52,7 +52,7 @@ pub struct SimpleQosBanlist {
 }
 
 impl SimpleQosBanlist {
-    fn new() -> (Self, Receiver<Pubkey>) {
+    pub fn new() -> (Self, Receiver<Pubkey>) {
         let (eviction_sender, eviction_receiver) = channel(MAX_IN_FLIGHT_EVICTIONS);
         (
             Self {
@@ -63,8 +63,11 @@ impl SimpleQosBanlist {
         )
     }
 
-    pub fn ban(&self, pubkey: Pubkey, timeout: Duration) {
-        self.banlist.ban(pubkey, timeout);
+    /// Ban the `pubkey` for the specified `timeout`
+    ///
+    /// Returns `true` if the `id` was already banned else `false`.
+    pub fn ban(&self, pubkey: Pubkey, timeout: Duration) -> bool {
+        let ret = self.banlist.ban(pubkey, timeout);
         match self.eviction_sender.try_send(pubkey) {
             Ok(()) => {}
             Err(TrySendError::Full(pubkey)) => {
@@ -80,6 +83,7 @@ impl SimpleQosBanlist {
                 );
             }
         }
+        ret
     }
 
     pub fn is_banned(&self, pubkey: &Pubkey) -> bool {

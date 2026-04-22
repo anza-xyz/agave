@@ -79,7 +79,7 @@ pub fn fund_keys<T: 'static + TpsClient + Send + Sync + ?Sized>(
             let dests: Vec<_> = not_funded.drain(start..).collect();
             let spends: Vec<_> = dests.iter().map(|k| (k.pubkey(), to_lamports)).collect();
             to_fund.push((f, spends));
-            new_funded.extend(dests.into_iter());
+            new_funded.extend(dests);
         }
 
         to_fund.chunks(FUND_CHUNK_LEN).for_each(|chunk| {
@@ -245,7 +245,10 @@ where
 
     fn send<C: TpsClient + ?Sized>(&self, client: &Arc<C>) {
         let mut send_txs = Measure::start("send_and_clone_txs");
-        let batch: Vec<_> = self.iter().map(|(_keypair, tx)| tx.clone()).collect();
+        let batch: Vec<_> = self
+            .iter()
+            .map(|(_keypair, tx)| tx.clone().into())
+            .collect();
         let result = client.send_batch(batch);
         send_txs.stop();
         if result.is_err() {

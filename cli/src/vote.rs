@@ -824,7 +824,7 @@ pub fn parse_withdraw_from_vote_account(
         pubkey_of_signer(matches, "vote_account_pubkey", wallet_manager)?.unwrap();
     let destination_account_pubkey =
         pubkey_of_signer(matches, "destination_account_pubkey", wallet_manager)?.unwrap();
-    let mut withdraw_amount = SpendAmount::new_from_matches(matches, "amount");
+    let mut withdraw_amount = SpendAmount::new_from_matches(matches, "amount")?;
     // As a safeguard for vote accounts for running validators, `ALL` withdraws only the amount in
     // excess of the rent-exempt minimum. In order to close the account with this subcommand, a
     // validator must specify the withdrawal amount precisely.
@@ -1040,18 +1040,19 @@ pub async fn process_create_vote_account(
                 inflation_rewards_commission_bps: inflation_rewards_commission_bps
                     .or_else(|| commission.map(|c| (c as u16).saturating_mul(100))) // u16::MAX > u8::MAX * 100
                     .unwrap_or(10000),
-                inflation_rewards_collector: inflation_rewards_collector
-                    .copied()
-                    .unwrap_or(vote_account_address),
                 block_revenue_commission_bps: block_revenue_commission_bps.unwrap_or(10000),
-                block_revenue_collector: block_revenue_collector
-                    .copied()
-                    .unwrap_or(identity_pubkey),
             };
+            let inflation_rewards_collector_key = inflation_rewards_collector
+                .copied()
+                .unwrap_or(vote_account_address);
+            let block_revenue_collector_key =
+                block_revenue_collector.copied().unwrap_or(identity_pubkey);
             vote_instruction::create_account_with_config_v2(
                 &config.signers[0].pubkey(),
                 to,
                 &vote_init,
+                &inflation_rewards_collector_key,
+                &block_revenue_collector_key,
                 lamports,
                 create_vote_account_config,
             )
@@ -1666,7 +1667,10 @@ pub async fn process_show_vote_account(
         authorized_voters: (&vote_state.authorized_voters).into(),
         authorized_withdrawer: vote_state.authorized_withdrawer.to_string(),
         credits: vote_state.credits(),
-        commission: (vote_state.inflation_rewards_commission_bps / 100) as u8,
+        commission: vote_state
+            .inflation_rewards_commission_bps
+            .div_ceil(100)
+            .min(u8::MAX as u16) as u8,
         root_slot: vote_state.root_slot,
         recent_timestamp: vote_state.last_timestamp.clone(),
         votes,

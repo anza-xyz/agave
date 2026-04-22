@@ -21,6 +21,7 @@ use {
         },
         validator::SchedulerPacing,
     },
+    solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
@@ -52,8 +53,9 @@ impl Default for SchedulerConfig {
     }
 }
 
+const DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS: u64 = 50;
 pub(crate) const DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS: NonZeroU64 =
-    NonZeroU64::new(350).unwrap();
+    NonZeroU64::new(DEFAULT_MS_PER_SLOT - DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS).unwrap();
 
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
 pub(crate) struct SchedulerController<R, S>
@@ -167,8 +169,12 @@ where
                                 pacing_fill_time, b.ns_per_slot,
                             );
                             self.config.scheduler_pacing = SchedulerPacing::FillTimeMillis(
-                                NonZeroU64::new(b.ns_per_slot as u64 / 1_000_000)
-                                    .unwrap_or(NonZeroU64::new(1).unwrap()),
+                                NonZeroU64::new(
+                                    (b.ns_per_slot as u64 / 1_000_000).saturating_sub(
+                                        DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS,
+                                    ),
+                                )
+                                .unwrap_or(NonZeroU64::new(1).unwrap()),
                             );
                         }
                     }
@@ -225,18 +231,14 @@ where
                 let scheduling_budget = cost_pacer
                     .expect("cost pacer must be set for Consume")
                     .scheduling_budget(now);
-                let (scheduling_summary, schedule_time_us) = measure_us!(
-                    self.scheduler.schedule(
-                        &mut self.container,
-                        scheduling_budget,
-                        bank.feature_set
-                            .is_active(&agave_feature_set::relax_intrabatch_account_locks::ID),
-                        |txs, results| {
-                            Self::pre_graph_filter(txs, results, bank, bank.max_processing_age())
-                        },
-                        |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
-                    )?
-                );
+                let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
+                    &mut self.container,
+                    scheduling_budget,
+                    |txs, results| {
+                        Self::pre_graph_filter(txs, results, bank, bank.max_processing_age())
+                    },
+                    |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
+                )?);
 
                 self.count_metrics.update(|count_metrics| {
                     count_metrics.num_scheduled += scheduling_summary.num_scheduled;
@@ -492,7 +494,7 @@ mod tests {
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
-        solana_runtime_transaction::transaction_meta::StaticMeta,
+        solana_runtime_transaction::transaction_meta::TransactionMeta,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::Transaction,
@@ -638,6 +640,10 @@ mod tests {
             .unwrap_or_default()
         {}
         let now = Instant::now();
+        let slot_time = decision
+            .bank()
+            .map(|bank| Duration::from_nanos_u128(bank.ns_per_slot))
+            .unwrap();
         assert!(
             scheduler_controller
                 .process_transactions(
@@ -645,8 +651,10 @@ mod tests {
                     Some(&CostPacer {
                         block_limit: u64::MAX,
                         shared_block_cost: SharedBlockCost::new(0),
-                        detection_time: now.checked_sub(Duration::from_millis(400)).unwrap(),
-                        fill_time: Some(Duration::from_millis(300)),
+                        detection_time: now.checked_sub(slot_time).unwrap(),
+                        fill_time: Some(slot_time.saturating_sub(Duration::from_millis(
+                            DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS
+                        ))),
                     }),
                     &now
                 )

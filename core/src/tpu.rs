@@ -25,7 +25,6 @@ use {
         validator::{BlockProductionMethod, GeneratorConfig},
     },
     agave_votor::event::VotorEventSender,
-    agave_xdp::xdp_retransmitter::XdpSender,
     crossbeam_channel::{Receiver, bounded, unbounded},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -35,7 +34,7 @@ use {
         entry_notifier_service::EntryNotifierSender,
     },
     solana_poh::{
-        poh_recorder::{PohRecorder, WorkingBankEntry},
+        poh_recorder::{PohRecorder, WorkingBankEntryOrMarker},
         transaction_recorder::TransactionRecorder,
     },
     solana_pubkey::Pubkey,
@@ -56,7 +55,10 @@ use {
         quic_socket::QuicSocket,
         streamer::StakedNodes,
     },
-    solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
+    solana_turbine::{
+        XdpSender,
+        broadcast_stage::{BroadcastStage, BroadcastStageType},
+    },
     std::{
         collections::HashMap,
         net::UdpSocket,
@@ -108,7 +110,7 @@ impl Tpu {
         cluster_info: &Arc<ClusterInfo>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
-        entry_receiver: Receiver<WorkingBankEntry>,
+        entry_receiver: Receiver<WorkingBankEntryOrMarker>,
         retransmit_slots_receiver: Receiver<Slot>,
         sockets: TpuSockets,
         subscriptions: Option<Arc<RpcSubscriptions>>,
@@ -116,7 +118,7 @@ impl Tpu {
         entry_notification_sender: Option<EntryNotifierSender>,
         blockstore: Arc<Blockstore>,
         broadcast_type: &BroadcastStageType,
-        xdp_sender: Option<XdpSender>,
+        turbine_xdp_sender: Option<XdpSender>,
         exit: Arc<AtomicBool>,
         shred_version: u16,
         vote_tracker: Arc<VoteTracker>,
@@ -127,7 +129,7 @@ impl Tpu {
         replay_vote_sender: ReplayVoteSender,
         bank_notification_sender: Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
-        tpu_forwaring_client_config: ForwardingClientConfig,
+        tpu_forwarding_client_config: ForwardingClientConfig,
         keypair: &Keypair,
         log_messages_bytes_limit: Option<usize>,
         staked_nodes: &Arc<RwLock<StakedNodes>>,
@@ -334,7 +336,7 @@ impl Tpu {
             client_updater,
         } = spawn_forwarding_stage(
             forward_stage_receiver,
-            tpu_forwaring_client_config,
+            tpu_forwarding_client_config,
             vote_forwarding_client_socket,
             bank_forks.read().unwrap().sharable_banks(),
             ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
@@ -363,7 +365,7 @@ impl Tpu {
             blockstore,
             bank_forks,
             shred_version,
-            xdp_sender,
+            turbine_xdp_sender,
             votor_event_sender,
         );
 

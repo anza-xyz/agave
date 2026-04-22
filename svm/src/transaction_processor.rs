@@ -1,24 +1,28 @@
 use {
     crate::{
         account_loader::{
-            AccountLoader, CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
-            TransactionLoadResult, ValidatedTransactionDetails, load_transaction,
-            update_rent_exempt_status_for_account, validate_fee_payer,
+            AccountLoader, CheckedTransactionDetails, LoadedTransaction, PROGRAM_OWNERS,
+            TransactionCheckResult, TransactionLoadResult, ValidatedTransactionDetails,
+            load_transaction, update_rent_exempt_status_for_account, validate_fee_payer,
         },
         account_overrides::AccountOverrides,
         message_processor::process_message,
         nonce_info::NonceInfo,
         program_loader::{get_program_deployment_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
-        transaction_account_state_info::TransactionAccountStateInfo,
+        transaction_account_state_info::{
+            TransactionAccountStateInfo, get_uninitialized_accounts_size,
+        },
         transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
+        transaction_execution_result::{
+            AccountsDeltas, ExecutedTransaction, TransactionExecutionDetails,
+        },
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
     log::debug,
     percentage::Percentage,
-    solana_account::{AccountSharedData, PROGRAM_OWNERS, ReadableAccount, state_traits::StateMut},
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
@@ -38,9 +42,10 @@ use {
         },
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
-            EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheEntry,
-            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+            EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheForTxBatch,
+            ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
         },
+        program_cache_entry::ProgramCacheEntry,
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
     },
@@ -64,7 +69,6 @@ use {
 #[cfg(feature = "dev-context-only-utils")]
 use {
     qualifier_attr::{field_qualifiers, qualifiers},
-    solana_program_runtime::loaded_programs::get_mock_program_runtime_environment,
     std::sync::Weak,
 };
 
@@ -148,15 +152,14 @@ pub struct TransactionProcessingEnvironment {
     /// change transaction fees. For this reason, it is recommended to use the
     /// `fee_per_signature` field to adjust transaction fees.
     pub blockhash_lamports_per_signature: u64,
+    /// Whether the alpenglow migration has completed for this bank context.
+    pub alpenglow_migration_succeeded: bool,
     /// The total stake for the current epoch.
     pub epoch_total_stake: u64,
     /// Runtime feature set to use for the transaction batch.
     pub feature_set: SVMFeatureSet,
-    /// The current ProgramRuntimeEnvironment derived from the SVMFeatureSet.
-    pub program_runtime_environment_for_execution: ProgramRuntimeEnvironment,
-    /// Depending on the next slot this is either the current or the upcoming
-    /// ProgramRuntimeEnvironment.
-    pub program_runtime_environment_for_deployment: ProgramRuntimeEnvironment,
+    /// Program runtime environments for execution and deployment.
+    pub program_runtime_environments: ProgramRuntimeEnvironments,
     /// Rent calculator to use for the transaction batch.
     pub rent: Rent,
 }
@@ -166,10 +169,10 @@ pub fn get_mock_transaction_processing_environment() -> TransactionProcessingEnv
     TransactionProcessingEnvironment {
         blockhash: Hash::default(),
         blockhash_lamports_per_signature: 0,
+        alpenglow_migration_succeeded: false,
         epoch_total_stake: 0,
         feature_set: SVMFeatureSet::default(),
-        program_runtime_environment_for_execution: get_mock_program_runtime_environment(),
-        program_runtime_environment_for_deployment: get_mock_program_runtime_environment(),
+        program_runtime_environments: ProgramRuntimeEnvironments::mock(),
         rent: Rent::default(),
     }
 }
@@ -203,6 +206,11 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// Builtin program ids
     pub builtin_program_ids: RwLock<HashSet<Pubkey>>,
 
+    /// Cached ProgramCacheForTxBatch pre-populated with builtin entries.
+    /// Populated once per block in `new_from()` from the global program cache,
+    /// avoiding re-acquiring the lock and re-running extract() on every batch.
+    builtin_program_cache: RwLock<ProgramCacheForTxBatch>,
+
     execution_cost: SVMTransactionExecutionCost,
 }
 
@@ -225,8 +233,11 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
             sysvar_cache: RwLock::<SysvarCache>::default(),
             epoch_boundary_preparation: Arc::new(RwLock::new(EpochBoundaryPreparation::default())),
             global_program_cache: Arc::new(RwLock::new(ProgramCache::new(Slot::default()))),
-            program_runtime_environment: Arc::new(BuiltinProgram::new_loader(VmConfig::default())),
+            program_runtime_environment: ProgramRuntimeEnvironment::from(
+                BuiltinProgram::new_loader(VmConfig::default()),
+            ),
             builtin_program_ids: RwLock::new(HashSet::new()),
+            builtin_program_cache: RwLock::new(ProgramCacheForTxBatch::new(Slot::default())),
             execution_cost: SVMTransactionExecutionCost::default(),
         }
     }
@@ -250,6 +261,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             epoch,
             epoch_boundary_preparation,
             global_program_cache: Arc::new(RwLock::new(ProgramCache::new(slot))),
+            builtin_program_cache: RwLock::new(ProgramCacheForTxBatch::new(slot)),
             ..Self::default()
         }
     }
@@ -275,7 +287,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .write()
             .unwrap()
             .set_fork_graph(fork_graph);
-        let empty_loader = || Arc::new(BuiltinProgram::new_loader(VmConfig::default()));
+        let empty_loader = || ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
         processor
             .global_program_cache
             .write()
@@ -298,14 +310,33 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ///   instance.
     /// * Resets the sysvar cache.
     pub fn new_from(&self, slot: Slot, epoch: Epoch) -> Self {
+        let builtin_program_ids = self.builtin_program_ids.read().unwrap().clone();
+        let environments = self.program_runtime_environment.clone();
+
+        // Pre-populate the builtin program cache from the global cache.
+        // This is done once per block rather than once per batch.
+        let mut builtin_program_cache = ProgramCacheForTxBatch::new(slot);
+        let mut search_for: Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> = builtin_program_ids
+            .iter()
+            .map(|key| (*key, ProgramCacheMatchCriteria::NoCriteria, 0))
+            .collect();
+        self.global_program_cache.read().unwrap().extract(
+            &mut search_for,
+            &mut builtin_program_cache,
+            &environments,
+            false,
+            false,
+        );
+
         Self {
             slot,
             epoch,
             sysvar_cache: RwLock::<SysvarCache>::default(),
             epoch_boundary_preparation: self.epoch_boundary_preparation.clone(),
             global_program_cache: self.global_program_cache.clone(),
-            program_runtime_environment: self.program_runtime_environment.clone(),
-            builtin_program_ids: RwLock::new(self.builtin_program_ids.read().unwrap().clone()),
+            program_runtime_environment: environments,
+            builtin_program_ids: RwLock::new(builtin_program_ids),
+            builtin_program_cache: RwLock::new(builtin_program_cache),
             execution_cost: self.execution_cost,
         }
     }
@@ -318,20 +349,24 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
     /// Updates the environments when entering a new Epoch.
     pub fn set_program_runtime_environment(&mut self, new_environment: ProgramRuntimeEnvironment) {
-        // First update the parts of the environments which changed
-        if self.program_runtime_environment != new_environment {
+        // First update the environment only if it is different
+        if *self.program_runtime_environment != *new_environment {
             self.program_runtime_environment = new_environment;
         }
-        // Then try to consolidate with the upcoming environments (to reuse their address)
+        // Then try to consolidate with the upcoming environment (to reuse the address)
         if let Some(upcoming_environment) = &self
             .epoch_boundary_preparation
             .read()
             .unwrap()
             .upcoming_environment
-            && &self.program_runtime_environment == upcoming_environment
-            && !Arc::ptr_eq(&self.program_runtime_environment, upcoming_environment)
         {
-            self.program_runtime_environment = upcoming_environment.clone();
+            let upcoming_environment = ProgramRuntimeEnvironment::clone(upcoming_environment);
+            if self.program_runtime_environment != upcoming_environment
+                && *self.program_runtime_environment == *upcoming_environment
+            {
+                // Use the prediction if equal but not identical
+                self.program_runtime_environment = upcoming_environment;
+            }
         }
     }
 
@@ -342,7 +377,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .read()
             .unwrap()
             .get_upcoming_environment_for_epoch(epoch)
-            .unwrap_or_else(|| self.program_runtime_environment.clone())
+            .unwrap_or_else(|| ProgramRuntimeEnvironment::clone(&self.program_runtime_environment))
     }
 
     pub fn sysvar_cache(&self) -> RwLockReadGuard<'_, SysvarCache> {
@@ -392,29 +427,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .enable_transaction_balance_recording
             .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
 
-        // Create the batch-local program cache.
-        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
-        let builtins = self
-            .builtin_program_ids
-            .read()
-            .unwrap()
-            .iter()
-            .map(|key| (*key, 0))
-            .collect::<HashMap<Pubkey, Slot>>();
-        let ((), program_cache_us) = measure_us!({
-            self.replenish_program_cache(
-                &account_loader,
-                &builtins,
-                &environment.program_runtime_environment_for_execution,
-                &mut program_cache_for_tx_batch,
-                &mut execute_timings,
-                config.check_program_deployment_slot,
-                config.limit_to_load_programs,
-                false, // increment_usage_counter
-            );
-        });
-        execute_timings
-            .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
+        // Clone the batch-local program cache (builtins already populated in new_from()).
+        // User-deployed programs are loaded per-transaction via replenish_program_cache
+        // in the transaction loop below.
+        let mut program_cache_for_tx_batch = self.builtin_program_cache.read().unwrap().clone();
 
         if program_cache_for_tx_batch.hit_max_limit {
             return LoadAndExecuteSanitizedTransactionsOutput {
@@ -495,7 +511,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         self.replenish_program_cache(
                             &account_loader,
                             &program_accounts_set,
-                            &environment.program_runtime_environment_for_execution,
+                            environment
+                                .program_runtime_environments
+                                .get_env_for_execution(),
                             &mut program_cache_for_tx_batch,
                             &mut execute_timings,
                             config.check_program_deployment_slot,
@@ -612,7 +630,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             self.global_program_cache
                 .write()
                 .unwrap()
-                .evict_using_2s_random_selection(
+                .evict_using_random_selection(
                     Percentage::from(SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE),
                     self.slot,
                 );
@@ -801,7 +819,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut program_accounts_set = HashMap::default();
         for account_key in tx.account_keys().iter() {
             if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
-                cache_entry.tx_usage_counter.fetch_add(1, Ordering::Relaxed);
+                cache_entry.stats.uses.fetch_add(1, Ordering::Relaxed);
             } else if let Some((account, last_modification_slot)) =
                 account_loader.get_account_shared_data(account_key)
                 && PROGRAM_OWNERS.contains(account.owner())
@@ -968,10 +986,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             EnvironmentConfig::new(
                 environment.blockhash,
                 environment.blockhash_lamports_per_signature,
+                environment.alpenglow_migration_succeeded,
                 callback,
                 &environment.feature_set,
-                &environment.program_runtime_environment_for_execution,
-                &environment.program_runtime_environment_for_deployment,
+                &environment.program_runtime_environments,
                 sysvar_cache,
             ),
             log_collector.clone(),
@@ -982,7 +1000,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut process_message_time = Measure::start("process_message_time");
         let process_result = process_message(
             tx,
-            &loaded_transaction.program_indices,
             &mut invoke_context,
             execute_timings,
             &mut executed_units,
@@ -993,8 +1010,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         execute_timings.execute_accessories.process_message_us += process_message_time.as_us();
 
-        let mut status = process_result
-            .and_then(|info| {
+        let mut post_account_state_info_result = process_result
+            .and_then(|_| {
                 let post_account_state_info =
                     TransactionAccountStateInfo::new(&transaction_context, tx, &environment.rent);
                 TransactionAccountStateInfo::verify_changes(
@@ -1002,7 +1019,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     &post_account_state_info,
                     &transaction_context,
                 )
-                .map(|_| info)
+                .map(|_| post_account_state_info)
             })
             .map_err(|err| {
                 match err {
@@ -1036,17 +1053,32 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             accounts,
             return_data,
             touched_account_count,
-            accounts_resize_delta: accounts_data_len_delta,
+            accounts_resize_delta,
         } = execution_record;
 
-        if status.is_ok()
+        if post_account_state_info_result.is_ok()
             && transaction_accounts_lamports_sum(&accounts)
                 .filter(|lamports_after_tx| lamports_before_tx == *lamports_after_tx)
                 .is_none()
         {
-            status = Err(TransactionError::UnbalancedTransaction);
+            post_account_state_info_result = Err(TransactionError::UnbalancedTransaction);
         }
-        let status = status.map(|_| ());
+
+        // accounts_resize_delta and accounts_uninitialized_size must be set to None
+        // in the result if status is an error
+        let (status, accounts_deltas) = post_account_state_info_result
+            .map(|post_state_info| {
+                (
+                    Ok(()),
+                    Some(AccountsDeltas {
+                        accounts_resize_delta,
+                        accounts_uninitialized_size: get_uninitialized_accounts_size(
+                            &post_state_info,
+                        ),
+                    }),
+                )
+            })
+            .unwrap_or_else(|err| (Err(err), None));
 
         loaded_transaction.accounts = accounts;
         execute_timings.details.total_account_count += loaded_transaction.accounts.len() as u64;
@@ -1067,7 +1099,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 inner_instructions,
                 return_data,
                 executed_units,
-                accounts_data_len_delta,
+                accounts_deltas,
             },
             loaded_transaction,
             programs_modified_by_tx: program_cache_for_tx_batch.drain_modified_entries(),
@@ -1103,7 +1135,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 vec![Vec::new(); top_level_ixs_num];
             for (cpi_num, ((ix_in_trace, ix_data), ix_accounts)) in ix_trace
                 .into_iter()
-                .zip(ix_data_trace.into_iter())
+                .zip(ix_data_trace)
                 .zip(accounts)
                 .skip(top_level_ixs_num)
                 .enumerate()
@@ -1190,12 +1222,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// Add a built-in program
     pub fn add_builtin(&self, program_id: Pubkey, builtin: ProgramCacheEntry) {
         self.builtin_program_ids.write().unwrap().insert(program_id);
+        let entry = Arc::new(builtin);
         self.global_program_cache.write().unwrap().assign_program(
             &self.program_runtime_environment,
             program_id,
             0,
-            Arc::new(builtin),
+            Arc::clone(&entry),
         );
+        self.builtin_program_cache
+            .write()
+            .unwrap()
+            .replenish(program_id, entry);
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -1235,10 +1272,12 @@ mod tests {
                 SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
             },
             invoke_context::BuiltinFunctionRegisterer,
-            loaded_programs::{BlockRelation, ProgramCacheEntryType},
+            loaded_programs::BlockRelation,
+            program_cache_entry::ProgramCacheEntryType,
         },
         solana_rent::Rent,
-        solana_sdk_ids::{bpf_loader, loader_v4, system_program, sysvar},
+        solana_sbpf::vm,
+        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, system_program, sysvar},
         solana_signature::Signature,
         solana_svm_callback::{AccountState, InvokeContextCallback},
         solana_system_interface::instruction as system_instruction,
@@ -1545,7 +1584,6 @@ mod tests {
 
         let loaded_transaction = LoadedTransaction {
             accounts: vec![(Pubkey::new_unique(), AccountSharedData::default())],
-            program_indices: vec![0],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -1640,7 +1678,6 @@ mod tests {
                 (key1, AccountSharedData::default()),
                 (key2, AccountSharedData::default()),
             ],
-            program_indices: vec![0],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -1753,7 +1790,7 @@ mod tests {
         let key1 = Pubkey::new_unique();
         let owner1 = bpf_loader::id();
         let key2 = Pubkey::new_unique();
-        let owner2 = loader_v4::id();
+        let owner2 = bpf_loader_upgradeable::id();
 
         let mut data1 = AccountSharedData::default();
         data1.set_owner(owner1);
@@ -1813,7 +1850,7 @@ mod tests {
         let non_program_pubkey1 = Pubkey::new_unique();
         let non_program_pubkey2 = Pubkey::new_unique();
         let program1_pubkey = bpf_loader::id();
-        let program2_pubkey = loader_v4::id();
+        let program2_pubkey = bpf_loader_upgradeable::id();
         let account1_pubkey = Pubkey::new_unique();
         let account2_pubkey = Pubkey::new_unique();
         let account3_pubkey = Pubkey::new_unique();
@@ -2657,6 +2694,57 @@ mod tests {
         assert_eq!(
             actual_inspected_accounts.as_slice(),
             &[(fee_payer_address, vec![(Some(fee_payer_account), true)])],
+        );
+    }
+
+    #[test]
+    fn test_set_program_runtime_environment() {
+        let mut transaction_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let current_environment =
+            ProgramRuntimeEnvironment::clone(&transaction_processor.program_runtime_environment);
+        let new_environment = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
+        let config = vm::Config {
+            enable_symbol_and_section_labels: true,
+            ..vm::Config::default()
+        };
+        let new_environment2 = ProgramRuntimeEnvironment::from(BuiltinProgram::new_loader(config));
+        assert_ne!(current_environment, new_environment);
+        assert_ne!(current_environment, new_environment2);
+        assert_ne!(new_environment, new_environment2);
+        // Assign an equal and identical environment: No changes
+        transaction_processor.set_program_runtime_environment(ProgramRuntimeEnvironment::clone(
+            &current_environment,
+        ));
+        assert_eq!(
+            transaction_processor.program_runtime_environment,
+            current_environment,
+        );
+        // Assign an equal but not identical environment: No changes
+        transaction_processor
+            .set_program_runtime_environment(ProgramRuntimeEnvironment::clone(&new_environment));
+        assert_eq!(
+            transaction_processor.program_runtime_environment,
+            current_environment,
+        );
+        // Assign a different and not identical environment: Overwritten
+        transaction_processor
+            .set_program_runtime_environment(ProgramRuntimeEnvironment::clone(&new_environment2));
+        assert_eq!(
+            transaction_processor.program_runtime_environment,
+            new_environment2,
+        );
+        // Assign an environment which is equal to the upcoming_environment: Overwritten
+        transaction_processor
+            .epoch_boundary_preparation
+            .write()
+            .unwrap()
+            .upcoming_environment = Some(ProgramRuntimeEnvironment::clone(&new_environment));
+        transaction_processor.set_program_runtime_environment(ProgramRuntimeEnvironment::clone(
+            &current_environment,
+        ));
+        assert_eq!(
+            transaction_processor.program_runtime_environment,
+            new_environment,
         );
     }
 }

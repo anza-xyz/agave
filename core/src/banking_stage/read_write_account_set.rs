@@ -41,12 +41,6 @@ impl ReadWriteAccountSet {
             })
     }
 
-    /// Clears the read and write sets
-    pub fn clear(&mut self) {
-        self.read_set.clear();
-        self.write_set.clear();
-    }
-
     /// Check if an account can be read-locked
     fn can_read(&self, pubkey: &Pubkey) -> bool {
         !self.write_set.contains(pubkey)
@@ -87,6 +81,7 @@ mod tests {
         },
         solana_hash::Hash,
         solana_keypair::Keypair,
+        solana_leader_schedule::SlotLeader,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::{
             MessageHeader, VersionedMessage,
@@ -167,7 +162,7 @@ mod tests {
 
         let slot = bank.slot() + 1;
         (
-            Arc::new(Bank::new_from_parent(bank, &Pubkey::new_unique(), slot)),
+            Arc::new(Bank::new_from_parent(bank, SlotLeader::new_unique(), slot)),
             address_table_key,
         )
     }

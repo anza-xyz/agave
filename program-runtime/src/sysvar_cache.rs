@@ -302,7 +302,7 @@ pub mod get_sysvar_with_account_check {
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<Clock>, InstructionError> {
         check_sysvar_account::<Clock>(instruction_context, instruction_account_index)?;
-        invoke_context.get_sysvar_cache().get_clock()
+        invoke_context.environment_config.sysvar_cache().get_clock()
     }
 
     pub fn rent(
@@ -311,7 +311,7 @@ pub mod get_sysvar_with_account_check {
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<Rent>, InstructionError> {
         check_sysvar_account::<Rent>(instruction_context, instruction_account_index)?;
-        invoke_context.get_sysvar_cache().get_rent()
+        invoke_context.environment_config.sysvar_cache().get_rent()
     }
 
     pub fn slot_hashes(
@@ -320,7 +320,10 @@ pub mod get_sysvar_with_account_check {
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<SlotHashes>, InstructionError> {
         check_sysvar_account::<SlotHashes>(instruction_context, instruction_account_index)?;
-        invoke_context.get_sysvar_cache().get_slot_hashes()
+        invoke_context
+            .environment_config
+            .sysvar_cache()
+            .get_slot_hashes()
     }
 
     #[expect(deprecated)]
@@ -330,7 +333,10 @@ pub mod get_sysvar_with_account_check {
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<RecentBlockhashes>, InstructionError> {
         check_sysvar_account::<RecentBlockhashes>(instruction_context, instruction_account_index)?;
-        invoke_context.get_sysvar_cache().get_recent_blockhashes()
+        invoke_context
+            .environment_config
+            .sysvar_cache()
+            .get_recent_blockhashes()
     }
 
     pub fn stake_history(
@@ -339,7 +345,10 @@ pub mod get_sysvar_with_account_check {
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<StakeHistory>, InstructionError> {
         check_sysvar_account::<StakeHistory>(instruction_context, instruction_account_index)?;
-        invoke_context.get_sysvar_cache().get_stake_history()
+        invoke_context
+            .environment_config
+            .sysvar_cache()
+            .get_stake_history()
     }
 
     pub fn last_restart_slot(
@@ -348,7 +357,10 @@ pub mod get_sysvar_with_account_check {
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<LastRestartSlot>, InstructionError> {
         check_sysvar_account::<LastRestartSlot>(instruction_context, instruction_account_index)?;
-        invoke_context.get_sysvar_cache().get_last_restart_slot()
+        invoke_context
+            .environment_config
+            .sysvar_cache()
+            .get_last_restart_slot()
     }
 }
 

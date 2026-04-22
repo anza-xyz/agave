@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::field_qualifiers;
 use {
     crate::vote_state_view::VoteStateView,
     log::*,
@@ -42,6 +44,10 @@ struct VoteAccountInner {
 pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(vote_accounts(pub))
+)]
 pub struct VoteAccounts {
     #[serde(deserialize_with = "deserialize_accounts_hash_map")]
     vote_accounts: Arc<VoteAccountsHashMap>,
@@ -258,10 +264,10 @@ impl VoteAccounts {
             .map(|(vote_pubkey, (stake, _vote_account))| (vote_pubkey, *stake))
     }
 
-    pub fn find_max_by_delegated_stake(&self) -> Option<&VoteAccount> {
-        let key = |(_pubkey, (stake, _vote_account)): &(_, &(u64, _))| *stake;
-        let (_pubkey, (_stake, vote_account)) = self.vote_accounts.iter().max_by_key(key)?;
-        Some(vote_account)
+    pub fn find_max_by_delegated_stake(&self) -> Option<(&Pubkey, &VoteAccount)> {
+        let key = |(pubkey, (stake, _vote_account)): &(_, &(u64, _))| (*stake, *pubkey);
+        let (vote_address, (_stake, vote_account)) = self.vote_accounts.iter().max_by_key(key)?;
+        Some((vote_address, vote_account))
     }
 
     pub fn insert(

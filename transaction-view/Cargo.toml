@@ -17,11 +17,13 @@ dev-context-only-utils = []
 solana-hash = { workspace = true }
 solana-message = { workspace = true }
 solana-packet = { workspace = true }
+solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 
 [dev-dependencies]
@@ -34,8 +36,9 @@ solana-keypair = { workspace = true }
 solana-message = { workspace = true, features = ["serde"] }
 solana-signature = { workspace = true, features = ["serde"] }
 solana-signer = { workspace = true }
-solana-system-interface = { workspace = true, features = ["bincode"] }
-solana-transaction = { workspace = true, features = ["wincode"] }
+solana-system-interface = { workspace = true, features = ["wincode"] }
+solana-transaction = { workspace = true, features = ["serde", "wincode"] }
+wincode = { workspace = true }
 
 [[bench]]
 name = "bytes"

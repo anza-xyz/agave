@@ -18,7 +18,7 @@ name = "solana_vote_program"
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = []
+dev-context-only-utils = ["dep:qualifier_attr"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
@@ -30,6 +30,7 @@ frozen-abi = [
 agave-feature-set = { workspace = true }
 bincode = { workspace = true }
 log = { workspace = true }
+qualifier_attr = { workspace = true, optional = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-bls-signatures = { workspace = true }

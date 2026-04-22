@@ -13,5 +13,5 @@ source ../ci/rust-version.sh
 ./set-solana-release-tag.sh
 
 # Build from /src into /build
-npm run build
+pnpm run build
 echo $?

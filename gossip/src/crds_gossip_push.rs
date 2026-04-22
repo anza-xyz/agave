@@ -267,11 +267,10 @@ impl CrdsGossipPush {
             ping_cache,
             pings,
         );
-        let nodes = crds_gossip::dedup_gossip_addresses(nodes, stakes)
-            .into_values()
-            .map(|(_stake, node)| *node.pubkey())
-            .collect::<Vec<_>>();
-        if nodes.is_empty() {
+        let nodes = crds_gossip::dedup_gossip_addresses(nodes)
+            .into_iter()
+            .map(|(_gossip, stake, pubkey)| (stake, pubkey));
+        if nodes.len() == 0 {
             return;
         }
         let cluster_size = crds.read().unwrap().num_pubkeys().max(stakes.len());
@@ -280,8 +279,7 @@ impl CrdsGossipPush {
             &mut rng,
             CRDS_GOSSIP_PUSH_ACTIVE_SET_SIZE,
             cluster_size,
-            &nodes,
-            stakes,
+            nodes,
         )
     }
 }

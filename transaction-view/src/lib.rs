@@ -13,6 +13,7 @@ pub mod result;
 mod sanitize;
 mod signature_frame;
 pub mod static_account_keys_frame;
+mod transaction_config_frame;
 pub mod transaction_data;
 mod transaction_frame;
 pub mod transaction_version;

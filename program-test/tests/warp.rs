@@ -228,7 +228,7 @@ async fn stake_rewards_filter_bench_core(num_stake_accounts: u64) {
         0,
         &vote_address,
         0,
-        &vote_address,
+        &node_address,
         1_000_000_000,
     );
     program_test.add_account(vote_address, vote_account.clone().into());

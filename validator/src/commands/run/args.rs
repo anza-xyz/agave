@@ -254,14 +254,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("account_shrink_path")
-            .long("account-shrink-path")
-            .value_name("PATH")
-            .takes_value(true)
-            .multiple(true)
-            .help("Path to accounts shrink path which can hold a compacted account set."),
-    )
-    .arg(
         Arg::with_name("snapshots")
             .long("snapshots")
             .value_name("DIR")
@@ -1023,17 +1015,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  processsing. Direct I/O can improve performance by bypassing OS page cache, but \
                  requires the file systems hosting snapshots and accounts-db directories to \
                  support files opened with the O_DIRECT flag.",
-            ),
-    )
-    .arg(
-        Arg::with_name("accounts_index_scan_results_limit_mb")
-            .long("accounts-index-scan-results-limit-mb")
-            .value_name("MEGABYTES")
-            .validator(is_parsable::<usize>)
-            .takes_value(true)
-            .help(
-                "How large accumulated results from an accounts index scan can become. If this is \
-                 exceeded, the scan aborts.",
             ),
     )
     .arg(

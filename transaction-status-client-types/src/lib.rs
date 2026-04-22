@@ -20,7 +20,10 @@ use {
     },
     solana_reward_info::RewardType,
     solana_signature::Signature,
-    solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
+    solana_transaction::{
+        SchemaRead, SchemaWrite,
+        versioned::{TransactionVersion, VersionedTransaction},
+    },
     solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::{TransactionError, TransactionResult},
     thiserror::Error,
@@ -199,7 +202,7 @@ pub struct EncodedTransactionWithStatusMeta {
     pub version: Option<TransactionVersion>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 #[serde(rename_all = "camelCase")]
 pub struct Reward {
     pub pubkey: String,
@@ -642,7 +645,7 @@ impl From<InnerInstructions> for UiInnerInstructions {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct InnerInstructions {
     /// Transaction instruction index
     pub index: u8,
@@ -650,7 +653,7 @@ pub struct InnerInstructions {
     pub instructions: Vec<InnerInstruction>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct InnerInstruction {
     /// Compiled instruction
     pub instruction: CompiledInstruction,

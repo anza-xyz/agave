@@ -1,10 +1,10 @@
 use {
     super::{Bank, BankStatusCache},
-    agave_feature_set::{FeatureSet, raise_cpi_nesting_limit_to_8},
+    agave_feature_set::FeatureSet,
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_clock::{MAX_TRANSACTION_FORWARDING_DELAY, Slot},
+    solana_compute_budget::compute_budget::SVMTransactionExecutionBudget,
     solana_fee::{FeeFeatures, calculate_fee_details},
-    solana_fee_structure::{FeeBudgetLimits, FeeDetails},
     solana_nonce::state::{Data as NonceData, DurableNonce},
     solana_nonce_account as nonce_account,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
@@ -37,7 +37,7 @@ impl Bank {
         self.check_transactions(
             transactions,
             filter,
-            self.max_processing_age
+            self.max_processing_age()
                 .saturating_sub(max_tx_fwd_delay)
                 .saturating_sub(forward_transactions_to_leader_at_slot_offset as usize),
             &mut error_counters,
@@ -95,9 +95,10 @@ impl Bank {
         let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
 
         let feature_set: &FeatureSet = &self.feature_set;
+        let feature_snapshot = feature_set.snapshot();
         let fee_features = FeeFeatures::from(feature_set);
 
-        let raise_cpi_limit = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
+        let raise_cpi_limit = feature_snapshot.raise_cpi_nesting_limit_to_8;
 
         sanitized_txs
             .iter()
@@ -106,15 +107,12 @@ impl Bank {
                 Ok(()) => {
                     let compute_budget_and_limits = tx
                         .borrow()
-                        .compute_budget_instruction_details()
-                        .sanitize_and_convert_to_compute_budget_limits(feature_set)
-                        .map(|limit| {
-                            let fee_budget = FeeBudgetLimits::from(limit);
+                        .transaction_configuration(feature_set)
+                        .map(|config| {
                             let fee_details = calculate_fee_details(
                                 tx.borrow(),
-                                false,
                                 self.fee_structure.lamports_per_signature,
-                                fee_budget.prioritization_fee,
+                                config.priority_fee_lamports,
                                 fee_features,
                             );
                             if let Some(compute_budget) = self.compute_budget {
@@ -122,15 +120,22 @@ impl Bank {
                                 // It should be removed along with the change to favor transaction's compute budget limits
                                 // over configured compute budget in Bank.
                                 compute_budget.get_compute_budget_and_limits(
-                                    fee_budget.loaded_accounts_data_size_limit,
+                                    config.loaded_accounts_data_size_limit,
                                     fee_details,
                                 )
                             } else {
-                                limit.get_compute_budget_and_limits(
-                                    fee_budget.loaded_accounts_data_size_limit,
+                                SVMTransactionExecutionAndFeeBudgetLimits {
+                                    budget: SVMTransactionExecutionBudget {
+                                        compute_unit_limit: u64::from(config.compute_unit_limit),
+                                        heap_size: config.updated_heap_bytes,
+                                        ..SVMTransactionExecutionBudget::new_with_defaults(
+                                            raise_cpi_limit,
+                                        )
+                                    },
+                                    loaded_accounts_data_size_limit: config
+                                        .loaded_accounts_data_size_limit,
                                     fee_details,
-                                    raise_cpi_limit,
-                                )
+                                }
                             }
                         })
                         .inspect_err(|_err| {
@@ -150,20 +155,6 @@ impl Bank {
             .collect()
     }
 
-    fn checked_transactions_details_with_test_override(
-        nonce_address: Option<Pubkey>,
-        lamports_per_signature: u64,
-        mut compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
-    ) -> CheckedTransactionDetails {
-        // This is done to support legacy tests. The tests should be updated, and check
-        // for 0 lamports_per_signature should be removed from the code.
-        if lamports_per_signature == 0 {
-            compute_budget_and_limits.fee_details = FeeDetails::default();
-        }
-
-        CheckedTransactionDetails::new(nonce_address, compute_budget_and_limits)
-    }
-
     fn check_transaction_age(
         &self,
         tx: &impl SVMMessage,
@@ -174,18 +165,16 @@ impl Bank {
         compute_budget: SVMTransactionExecutionAndFeeBudgetLimits,
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.recent_blockhash();
-        if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
-            Ok(Self::checked_transactions_details_with_test_override(
-                None,
-                hash_info.lamports_per_signature(),
-                compute_budget,
-            ))
-        } else if let Some((nonce_address, previous_lamports_per_signature)) =
+        if hash_queue
+            .get_hash_info_if_valid(recent_blockhash, max_age)
+            .is_some()
+        {
+            Ok(CheckedTransactionDetails::new(None, compute_budget))
+        } else if let Some((nonce_address, _)) =
             self.check_nonce_transaction_validity(tx, next_durable_nonce)
         {
-            Ok(Self::checked_transactions_details_with_test_override(
+            Ok(CheckedTransactionDetails::new(
                 Some(nonce_address),
-                previous_lamports_per_signature,
                 compute_budget,
             ))
         } else {
