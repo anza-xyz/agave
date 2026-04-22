@@ -6,6 +6,7 @@ use {
         scheduler_messages::MaxAge,
     },
     itertools::Itertools,
+    solana_cost_model::cost_tracker::StagedAccountSizeUpdates,
     solana_fee::FeeFeatures,
     solana_measure::measure_us,
     solana_poh::{
@@ -368,22 +369,30 @@ impl Consumer {
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
 
         // hold onto the staged updates so they can be applied if Record is successful
-        let staged_account_size_updates = bank
-            .try_stage_cost_tracker_account_size_updates(
-                batch.sanitized_transactions(),
-                &processing_results,
-            )
-            .expect(
-                "no enforcement occurs when staging cost tracker account size updates so it \
-                 should not fail",
-            );
-
-        let reserved_bytes =
-            bank.entry_bytes_budget()
-                .reserve(entry_bytes)
-                .map_err(|err| match err {
-                    EntryBytesReserveError::ExceedsSlotLimit => PohRecorderError::MaxHeightReached,
-                });
+        let staged_account_size_updates = bank.try_stage_cost_tracker_account_size_updates(
+            batch.sanitized_transactions(),
+            &processing_results,
+        );
+        // calculate reserved_bytes and propagate error from cost tracker check if one occurs
+        let (reserved_bytes, staged_account_size_updates) = staged_account_size_updates.map_or(
+            (
+                Err(PohRecorderError::PreRecordCostTrackerCheckFailed),
+                StagedAccountSizeUpdates::default(),
+            ),
+            |updates| {
+                (
+                    bank.entry_bytes_budget()
+                        .reserve(entry_bytes)
+                        .map_err(|err| match err {
+                            EntryBytesReserveError::ExceedsSlotLimit => {
+                                PohRecorderError::MaxHeightReached
+                            }
+                        }),
+                    updates,
+                )
+            },
+        );
+        // again, propagate error if on ocurred when reserving bytes above
         let (record_transactions_summary, record_us) = measure_us!(reserved_bytes.map(|_| {
             self.transaction_recorder
                 .record_transactions(bank.bank_id(), processed_transactions)
@@ -407,9 +416,17 @@ impl Consumer {
         if let Err(recorder_err) = recording_result {
             retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
                 |(index, processing_result)| {
+                    // transactions failing due to cost tracker errors should be retried in
+                    // the next slot as it's likely they'll fail to satisfy block constraints
+                    // if retried in the same slot
+                    // All other recording errors are immediately retryable
+                    let immediately_retryable = !matches!(
+                        recorder_err,
+                        PohRecorderError::PreRecordCostTrackerCheckFailed
+                    );
                     processing_result.was_processed().then_some(RetryableIndex {
                         index,
-                        immediately_retryable: true, // recording errors are always immediately retryable
+                        immediately_retryable,
                     })
                 },
             ));

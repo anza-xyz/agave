@@ -528,6 +528,7 @@ pub struct WritableAccountCosts {
     pub data_size: usize,
 }
 
+#[derive(Debug, Default)]
 pub struct StagedAccountSizeUpdates<'a> {
     updates: HashMap<&'a Pubkey, usize, ahash::RandomState>,
     written_accounts_data_size: u64,

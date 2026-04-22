@@ -66,6 +66,9 @@ pub enum PohRecorderError {
 
     #[error("channel disconnected")]
     ChannelDisconnected,
+
+    #[error("failed cost tracker checks")]
+    PreRecordCostTrackerCheckFailed,
 }
 
 pub(crate) type Result<T> = std::result::Result<T, PohRecorderError>;
