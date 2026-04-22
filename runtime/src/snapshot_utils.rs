@@ -515,7 +515,7 @@ pub fn archive_snapshot_package(
         snapshot_storages.as_slice(),
         &bank_snapshot_dir,
         snapshot_archive_path,
-        snapshot_config,
+        snapshot_config.archive_format,
     )?;
 
     Ok(snapshot_archive_info)
