@@ -10,10 +10,8 @@ use {
     base64::{Engine, prelude::BASE64_STANDARD},
     chrono_humanize::{Accuracy, HumanTime, Tense},
     log::*,
-    solana_account::{
-        Account, AccountSharedData, ReadableAccount, create_account_shared_data_for_test,
-        state_traits::StateMut,
-    },
+    serde::Serialize,
+    solana_account::{Account, AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_account_info::AccountInfo,
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
     solana_address::Address,
@@ -38,8 +36,14 @@ use {
     solana_program_entrypoint::{SUCCESS, deserialize},
     solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
-        invoke_context::BuiltinFunctionRegisterer, program_cache_entry::ProgramCacheEntry,
-        serialization::serialize_parameters, stable_log, sysvar_cache::SysvarCache,
+        invoke_context::BuiltinFunctionRegisterer,
+        program_cache_entry::ProgramCacheEntry,
+        serialization::serialize_parameters,
+        stable_log,
+        sysvar_account::{
+            SysvarAccountSize, create_account_shared_data_for_test, sysvar_account_data_len,
+        },
+        sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -53,7 +57,7 @@ use {
     solana_signer::Signer,
     solana_svm_log_collector::ic_msg,
     solana_svm_timings::ExecuteTimings,
-    solana_sysvar::{SysvarSerialize, last_restart_slot::LastRestartSlot},
+    solana_sysvar::last_restart_slot::LastRestartSlot,
     solana_sysvar_id::SysvarId,
     solana_vote_program::vote_state::{VoteStateV4, VoteStateVersions},
     std::{
@@ -248,14 +252,20 @@ macro_rules! processor {
     }};
 }
 
-fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned + Clone>(
+fn get_sysvar<T: Default + SysvarAccountSize + Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
     var_addr: *mut u8,
 ) -> u64 {
     let invoke_context = get_invoke_context();
+    let sysvar_size = sysvar_account_data_len(&T::default()) as u64;
     if invoke_context
         .compute_meter
-        .consume_checked(invoke_context.get_execution_cost().sysvar_base_cost + T::size_of() as u64)
+        .consume_checked(
+            invoke_context
+                .get_execution_cost()
+                .sysvar_base_cost
+                .saturating_add(sysvar_size),
+        )
         .is_err()
     {
         panic!("Exceeded compute budget");
@@ -273,7 +283,7 @@ fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned
 struct SyscallStubs {}
 
 impl SyscallStubs {
-    fn fetch_and_write_sysvar<T: SysvarSerialize>(
+    fn fetch_and_write_sysvar<T: Serialize>(
         &self,
         var_addr: *mut u8,
         offset: u64,
@@ -764,7 +774,7 @@ impl ProgramTest {
         );
     }
 
-    pub fn add_sysvar_account<S: SysvarSerialize>(&mut self, address: Pubkey, sysvar: &S) {
+    pub fn add_sysvar_account<S: SysvarAccountSize>(&mut self, address: Pubkey, sysvar: &S) {
         let account = create_account_shared_data_for_test(sysvar);
         self.add_account(address, account.into());
     }
@@ -1326,7 +1336,7 @@ impl ProgramTestContext {
     /// that would be difficult to replicate on a new test cluster. Beware
     /// that it can be used to create states that would not be reachable
     /// under normal conditions!
-    pub fn set_sysvar<T: SysvarId + SysvarSerialize>(&self, sysvar: &T) {
+    pub fn set_sysvar<T: SysvarAccountSize>(&self, sysvar: &T) {
         let bank_forks = self.bank_forks.read().unwrap();
         let bank = bank_forks.working_bank();
         bank.set_sysvar_for_tests(sysvar);

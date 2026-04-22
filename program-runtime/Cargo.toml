@@ -37,7 +37,7 @@ percentage = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true }
 serde = { workspace = true }
-solana-account = { workspace = true, features = ["bincode"] }
+solana-account = { workspace = true }
 solana-account-info = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-rewards = { workspace = true }
@@ -70,7 +70,7 @@ solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-sysvar = { workspace = true, features = ["bincode"] }
+solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
 thiserror = { workspace = true }

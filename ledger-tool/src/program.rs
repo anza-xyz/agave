@@ -4,9 +4,7 @@ use {
     log::*,
     serde::{Deserialize, Serialize},
     serde_json::Result,
-    solana_account::{
-        AccountSharedData, create_account_shared_data_for_test, state_traits::StateMut,
-    },
+    solana_account::{AccountSharedData, state_traits::StateMut},
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_clock::Slot,
     solana_ledger::blockstore_options::AccessType,
@@ -21,6 +19,7 @@ use {
         },
         program_metrics::LoadProgramMetrics,
         serialization::serialize_parameters,
+        sysvar_account::create_account_shared_data_for_test,
         with_mock_invoke_context,
     },
     solana_pubkey::Pubkey,

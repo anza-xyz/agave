@@ -266,9 +266,18 @@ mod test {
     #[allow(deprecated)]
     use solana_sysvar::recent_blockhashes::IterItem;
     use {
-        super::*, solana_account::create_account_for_test, solana_fee_calculator::FeeCalculator,
-        solana_hash::Hash,
+        super::*, solana_account::Account, solana_fee_calculator::FeeCalculator, solana_hash::Hash,
     };
+
+    fn create_account_for_test<T: Serialize>(sysvar_data: &T) -> Account {
+        Account {
+            lamports: 1,
+            data: bincode::serialize(sysvar_data).unwrap(),
+            owner: sysvar::id(),
+            executable: false,
+            rent_epoch: 0,
+        }
+    }
 
     #[test]
     fn test_parse_sysvars() {

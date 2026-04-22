@@ -449,8 +449,7 @@ mod tests {
         },
         bincode::serialize,
         solana_account::{
-            self as account, Account, AccountSharedData, ReadableAccount, WritableAccount,
-            state_traits::StateMut,
+            Account, AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
         },
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
@@ -460,6 +459,7 @@ mod tests {
             invoke_context::mock_process_instruction_with_feature_set,
             program_cache_entry::ProgramCacheEntry,
             solana_sbpf::{program::BuiltinFunctionDefinition, vm::ContextObject},
+            sysvar_account::create_account_shared_data_for_test,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
@@ -638,15 +638,13 @@ mod tests {
                 (
                     *pubkey,
                     if sysvar::clock::check_id(pubkey) {
-                        account::create_account_shared_data_for_test(&Clock::default())
+                        create_account_shared_data_for_test(&Clock::default())
                     } else if sysvar::epoch_schedule::check_id(pubkey) {
-                        account::create_account_shared_data_for_test(
-                            &EpochSchedule::without_warmup(),
-                        )
+                        create_account_shared_data_for_test(&EpochSchedule::without_warmup())
                     } else if sysvar::slot_hashes::check_id(pubkey) {
-                        account::create_account_shared_data_for_test(&SlotHashes::default())
+                        create_account_shared_data_for_test(&SlotHashes::default())
                     } else if sysvar::rent::check_id(pubkey) {
-                        account::create_account_shared_data_for_test(&Rent::free())
+                        create_account_shared_data_for_test(&Rent::free())
                     } else if *pubkey == invalid_vote_state_pubkey() {
                         AccountSharedData::from(Account {
                             owner: invalid_vote_state_pubkey(),
@@ -676,11 +674,11 @@ mod tests {
     }
 
     fn create_default_rent_account() -> AccountSharedData {
-        account::create_account_shared_data_for_test(&Rent::free())
+        create_account_shared_data_for_test(&Rent::free())
     }
 
     fn create_default_clock_account() -> AccountSharedData {
-        account::create_account_shared_data_for_test(&Clock::default())
+        create_account_shared_data_for_test(&Clock::default())
     }
 
     fn create_test_account() -> (Pubkey, AccountSharedData) {
@@ -1470,11 +1468,11 @@ mod tests {
             // Add the sysvar accounts so they're in the cache for mock processing
             (
                 sysvar::clock::id(),
-                account::create_account_shared_data_for_test(&Clock::default()),
+                create_account_shared_data_for_test(&Clock::default()),
             ),
             (
                 sysvar::epoch_schedule::id(),
-                account::create_account_shared_data_for_test(&EpochSchedule::without_warmup()),
+                create_account_shared_data_for_test(&EpochSchedule::without_warmup()),
             ),
         ];
         let mut instruction_accounts = vec![
@@ -1704,7 +1702,7 @@ mod tests {
         // Create a valid collector account: system-owned and rent-exempt.
         let new_collector_pubkey = Pubkey::new_unique();
         let rent = Rent::default();
-        let rent_sysvar_account = account::create_account_shared_data_for_test(&rent);
+        let rent_sysvar_account = create_account_shared_data_for_test(&rent);
         let collector_lamports = rent.minimum_balance(0);
         let new_collector_account =
             AccountSharedData::new(collector_lamports, 0, &solana_sdk_ids::system_program::id());
@@ -2139,7 +2137,7 @@ mod tests {
         let (vote_pubkey, vote_account) = create_test_account();
         let (vote, instruction_datas) = create_serialized_votes();
         let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
-        let slot_hashes_account = account::create_account_shared_data_for_test(&slot_hashes);
+        let slot_hashes_account = create_account_shared_data_for_test(&slot_hashes);
         let mut instruction_accounts = vec![
             AccountMeta {
                 pubkey: vote_pubkey,
@@ -2211,7 +2209,7 @@ mod tests {
             // should fail, wrong hash
             transaction_accounts[1] = (
                 sysvar::slot_hashes::id(),
-                account::create_account_shared_data_for_test(&SlotHashes::new(&[(
+                create_account_shared_data_for_test(&SlotHashes::new(&[(
                     *vote.slots.last().unwrap(),
                     solana_sha256_hasher::hash(&[0u8]),
                 )])),
@@ -2227,7 +2225,7 @@ mod tests {
             // should fail, wrong slot
             transaction_accounts[1] = (
                 sysvar::slot_hashes::id(),
-                account::create_account_shared_data_for_test(&SlotHashes::new(&[(0, vote.hash)])),
+                create_account_shared_data_for_test(&SlotHashes::new(&[(0, vote.hash)])),
             );
             process_instruction(
                 features,
@@ -2240,7 +2238,7 @@ mod tests {
             // should fail, empty slot_hashes
             transaction_accounts[1] = (
                 sysvar::slot_hashes::id(),
-                account::create_account_shared_data_for_test(&SlotHashes::new(&[])),
+                create_account_shared_data_for_test(&SlotHashes::new(&[])),
             );
             process_instruction(
                 features,
@@ -2273,7 +2271,7 @@ mod tests {
             leader_schedule_epoch: 2,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_account_shared_data_for_test(&clock);
         let instruction_data = serialize(&VoteInstruction::Authorize(
             authorized_voter_pubkey,
             VoteAuthorize::Voter,
@@ -2387,7 +2385,7 @@ mod tests {
             leader_schedule_epoch: 4,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_account_shared_data_for_test(&clock);
         transaction_accounts[1] = (sysvar::clock::id(), clock_account);
         process_instruction(
             features,
@@ -2402,7 +2400,7 @@ mod tests {
         // should fail, not signed by authorized voter
         let (vote, instruction_datas) = create_serialized_votes();
         let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
-        let slot_hashes_account = account::create_account_shared_data_for_test(&slot_hashes);
+        let slot_hashes_account = create_account_shared_data_for_test(&slot_hashes);
         transaction_accounts.push((sysvar::slot_hashes::id(), slot_hashes_account));
         instruction_accounts.insert(
             1,
@@ -2457,7 +2455,7 @@ mod tests {
             leader_schedule_epoch: 2,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_account_shared_data_for_test(&clock);
         let (bls_pubkey, bls_proof_of_possession) =
             create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
         let instruction_data = serialize(&VoteInstruction::Authorize(
@@ -2629,7 +2627,7 @@ mod tests {
             leader_schedule_epoch: 4,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_account_shared_data_for_test(&clock);
         transaction_accounts[1] = (sysvar::clock::id(), clock_account);
         process_instruction_with_cu_check(
             features,
@@ -2645,7 +2643,7 @@ mod tests {
         // should fail, not signed by authorized voter
         let (vote, instruction_datas) = create_serialized_votes();
         let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
-        let slot_hashes_account = account::create_account_shared_data_for_test(&slot_hashes);
+        let slot_hashes_account = create_account_shared_data_for_test(&slot_hashes);
         transaction_accounts.push((sysvar::slot_hashes::id(), slot_hashes_account));
         instruction_accounts.insert(
             1,
@@ -2699,7 +2697,7 @@ mod tests {
             leader_schedule_epoch: 2,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_account_shared_data_for_test(&clock);
         let transaction_accounts = vec![
             (vote_pubkey, vote_account),
             (sysvar::clock::id(), clock_account),
@@ -2782,7 +2780,7 @@ mod tests {
         // Leader Schedule Epoch: 2
         //   Rotation schedules for target epoch 3
         //   BLS pubkey is set immediately
-        let clock_epoch_1 = account::create_account_shared_data_for_test(&Clock {
+        let clock_epoch_1 = create_account_shared_data_for_test(&Clock {
             epoch: 1,
             leader_schedule_epoch: 2,
             ..Clock::default()
@@ -2840,7 +2838,7 @@ mod tests {
         // Leader Schedule Epoch: 3
         //   Rotation schedules for target epoch 4
         //   BLS pubkey is set immediately
-        let clock_epoch_2 = account::create_account_shared_data_for_test(&Clock {
+        let clock_epoch_2 = create_account_shared_data_for_test(&Clock {
             epoch: 2,
             leader_schedule_epoch: 3,
             ..Clock::default()
@@ -3064,7 +3062,7 @@ mod tests {
             epoch: 3,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_account_shared_data_for_test(&clock);
         let rent_sysvar = Rent::default();
         let minimum_balance = rent_sysvar
             .minimum_balance(vote_account_with_epoch_credits_1.data().len())
@@ -3076,7 +3074,7 @@ mod tests {
             (sysvar::clock::id(), clock_account),
             (
                 sysvar::rent::id(),
-                account::create_account_shared_data_for_test(&rent_sysvar),
+                create_account_shared_data_for_test(&rent_sysvar),
             ),
             (authorized_withdrawer_pubkey, AccountSharedData::default()),
         ];
@@ -3191,7 +3189,7 @@ mod tests {
         assert!(deinitialized_vote_account.data().iter().all(|&b| b == 0));
 
         // Authorize should fail on the deinitialized account.
-        let clock_account = account::create_account_shared_data_for_test(&Clock {
+        let clock_account = create_account_shared_data_for_test(&Clock {
             epoch: 100,
             ..Clock::default()
         });
@@ -3345,7 +3343,7 @@ mod tests {
                 (sysvar::clock::id(), create_default_clock_account()),
                 (
                     sysvar::epoch_schedule::id(),
-                    account::create_account_shared_data_for_test(
+                    create_account_shared_data_for_test(
                         &solana_epoch_schedule::EpochSchedule::without_warmup(),
                     ),
                 ),
@@ -3501,7 +3499,7 @@ mod tests {
             leader_schedule_epoch: 2,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_account_shared_data_for_test(&clock);
         let transaction_accounts = vec![
             (vote_pubkey, vote_account),
             (sysvar::clock::id(), clock_account),
@@ -3625,7 +3623,7 @@ mod tests {
             leader_schedule_epoch: 2,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_account_shared_data_for_test(&clock);
         let transaction_accounts = vec![
             (vote_pubkey, vote_account),
             (sysvar::clock::id(), clock_account),
@@ -3839,7 +3837,7 @@ mod tests {
             leader_schedule_epoch: 2,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_account_shared_data_for_test(&clock);
         let transaction_accounts = vec![
             (vote_pubkey, vote_account),
             (sysvar::clock::id(), clock_account),
@@ -3993,7 +3991,7 @@ mod tests {
             leader_schedule_epoch: 2,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_account_shared_data_for_test(&clock);
         let transaction_accounts = vec![
             (vote_pubkey, vote_account),
             (sysvar::clock::id(), clock_account),
@@ -4447,7 +4445,7 @@ mod tests {
             &default_authorized_pubkey,
         );
         let clock_address = sysvar::clock::id();
-        let clock_account = account::create_account_shared_data_for_test(&Clock::default());
+        let clock_account = create_account_shared_data_for_test(&Clock::default());
         let authorized_account = create_default_account();
         let new_authorized_account = create_default_account();
         let transaction_accounts = vec![
@@ -4722,11 +4720,11 @@ mod tests {
                 (authorized_withdrawer, AccountSharedData::default()),
                 (
                     sysvar::clock::id(),
-                    account::create_account_shared_data_for_test(&Clock::default()),
+                    create_account_shared_data_for_test(&Clock::default()),
                 ),
                 (
                     sysvar::epoch_schedule::id(),
-                    account::create_account_shared_data_for_test(&EpochSchedule::without_warmup()),
+                    create_account_shared_data_for_test(&EpochSchedule::without_warmup()),
                 ),
             ];
 
@@ -5254,7 +5252,7 @@ mod tests {
             },
         ];
 
-        let rent_account = account::create_account_shared_data_for_test(&rent_sysvar);
+        let rent_account = create_account_shared_data_for_test(&rent_sysvar);
         let transaction_accounts = vec![
             (vote_pubkey, vote_account.clone()),
             (authorized_withdrawer, AccountSharedData::default()),

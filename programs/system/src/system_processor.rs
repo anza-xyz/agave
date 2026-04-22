@@ -572,15 +572,19 @@ mod tests {
         solana_nonce_account::{SystemAccountKind, get_system_account_kind},
         solana_program_runtime::{
             invoke_context::mock_process_instruction,
-            solana_sbpf::program::BuiltinFunctionDefinition, with_mock_invoke_context,
+            solana_sbpf::program::BuiltinFunctionDefinition,
+            sysvar_account::{
+                create_account_shared_data_for_test, create_account_shared_data_with_fields,
+                to_account,
+            },
+            with_mock_invoke_context,
         },
         std::collections::BinaryHeap,
     };
     #[allow(deprecated)]
     use {
         solana_account::{
-            self as account, Account, AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
-            ReadableAccount, create_account_shared_data_with_fields, to_account,
+            Account, AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS, ReadableAccount,
         },
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
@@ -656,7 +660,7 @@ mod tests {
         ])
     }
     fn create_default_rent_account() -> AccountSharedData {
-        account::create_account_shared_data_for_test(&Rent::free())
+        create_account_shared_data_for_test(&Rent::free())
     }
 
     #[test]
@@ -1524,7 +1528,7 @@ mod tests {
                     if sysvar::recent_blockhashes::check_id(&meta.pubkey) {
                         create_default_recent_blockhashes_account()
                     } else if sysvar::rent::check_id(&meta.pubkey) {
-                        account::create_account_shared_data_for_test(&Rent::free())
+                        create_account_shared_data_for_test(&Rent::free())
                     } else {
                         AccountSharedData::new(0, 0, &Pubkey::new_unique())
                     },

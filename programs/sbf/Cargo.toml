@@ -149,6 +149,7 @@ solana-svm-transaction = { path = "../../svm-transaction", version = "=4.2.0-alp
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.2.0-alpha.0" }
 solana-system-interface = { version = "=3.2", features = ["bincode"] }
 solana-sysvar = "=4.0.0"
+solana-sysvar-id = "3.1.0"
 solana-vote = { path = "../../vote", version = "=4.2.0-alpha.0" }
 solana-vote-interface = "6.0.0"
 solana-vote-program = { path = "../../programs/vote", version = "=4.2.0-alpha.0" }

@@ -1,5 +1,6 @@
 use {
     crate::{
+        account_state::StateMut,
         checks::*,
         cli::{
             CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
@@ -15,7 +16,6 @@ use {
     bip39::{Language, Mnemonic, MnemonicType, Seed},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
-    solana_account::state_traits::StateMut,
     solana_account_decoder::{UiAccount, UiAccountEncoding, UiDataSliceConfig},
     solana_clap_utils::{
         self,

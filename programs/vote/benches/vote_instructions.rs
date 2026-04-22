@@ -2,7 +2,7 @@ use {
     agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
     bincode::serialize,
     criterion::{Criterion, criterion_group, criterion_main},
-    solana_account::{self as account, Account, AccountSharedData, create_account_for_test},
+    solana_account::{Account, AccountSharedData},
     solana_clock::{Clock, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -10,6 +10,7 @@ use {
     solana_program_runtime::{
         invoke_context::{mock_process_instruction, mock_process_instruction_with_feature_set},
         solana_sbpf::program::BuiltinFunctionDefinition,
+        sysvar_account::{create_account_for_test, create_account_shared_data_for_test},
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -30,11 +31,11 @@ use {
 };
 
 fn create_default_rent_account() -> AccountSharedData {
-    account::create_account_shared_data_for_test(&Rent::free())
+    create_account_shared_data_for_test(&Rent::free())
 }
 
 fn create_default_clock_account() -> AccountSharedData {
-    account::create_account_shared_data_for_test(&Clock::default())
+    create_account_shared_data_for_test(&Clock::default())
 }
 
 fn create_accounts() -> (
@@ -232,7 +233,7 @@ impl BenchAuthorize {
             leader_schedule_epoch: 2,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_account_shared_data_for_test(&clock);
         let instruction_data = serialize(&VoteInstruction::Authorize(
             authorized_voter_pubkey,
             VoteAuthorize::Voter,
@@ -506,11 +507,11 @@ impl BenchUpdateCommission {
             // Add the sysvar accounts so they're in the cache for mock processing
             (
                 sysvar::clock::id(),
-                account::create_account_shared_data_for_test(&Clock::default()),
+                create_account_shared_data_for_test(&Clock::default()),
             ),
             (
                 sysvar::epoch_schedule::id(),
-                account::create_account_shared_data_for_test(&EpochSchedule::without_warmup()),
+                create_account_shared_data_for_test(&EpochSchedule::without_warmup()),
             ),
         ];
         let instruction_accounts = vec![
@@ -601,7 +602,7 @@ impl BenchAuthorizeChecked {
         let new_authorized_pubkey = Pubkey::new_unique();
         let vote_account = AccountSharedData::new(100, VoteStateV3::size_of(), &id());
         let clock_address = sysvar::clock::id();
-        let clock_account = account::create_account_shared_data_for_test(&Clock::default());
+        let clock_account = create_account_shared_data_for_test(&Clock::default());
         let default_authorized_pubkey = Pubkey::default();
         let authorized_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
         let new_authorized_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
@@ -748,7 +749,7 @@ impl BenchAuthorizeWithSeed {
             &node_pubkey,
             100,
         );
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_account_shared_data_for_test(&clock);
         let transaction_accounts = vec![
             (vote_pubkey, vote_account),
             (sysvar::clock::id(), clock_account),
@@ -847,7 +848,7 @@ impl BenchAuthorizeCheckedWithSeed {
             leader_schedule_epoch: 2,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_account_shared_data_for_test(&clock);
         let transaction_accounts = vec![
             (vote_pubkey, vote_account),
             (sysvar::clock::id(), clock_account),
@@ -916,7 +917,7 @@ impl BenchCompactUpdateVoteState {
         let vote = Vote::new(vec![1], Hash::default());
         let vote_state_update = VoteStateUpdate::from(vec![(1, 1)]);
         let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
-        let slot_hashes_account = account::create_account_shared_data_for_test(&slot_hashes);
+        let slot_hashes_account = create_account_shared_data_for_test(&slot_hashes);
         let instruction_accounts = vec![
             AccountMeta {
                 pubkey: vote_pubkey,
@@ -978,7 +979,7 @@ impl BenchTowerSync {
         let (vote_pubkey, vote_account) = create_test_account();
         let vote = Vote::new(vec![1], Hash::default());
         let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
-        let slot_hashes_account = account::create_account_shared_data_for_test(&slot_hashes);
+        let slot_hashes_account = create_account_shared_data_for_test(&slot_hashes);
         let instruction_accounts = vec![
             AccountMeta {
                 pubkey: vote_pubkey,

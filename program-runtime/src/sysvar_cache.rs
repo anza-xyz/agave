@@ -2,7 +2,7 @@
 use solana_sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes};
 use {
     crate::invoke_context::InvokeContext,
-    serde::de::DeserializeOwned,
+    serde::{Serialize, de::DeserializeOwned},
     solana_clock::Clock,
     solana_epoch_rewards::EpochRewards,
     solana_epoch_schedule::EpochSchedule,
@@ -14,7 +14,6 @@ use {
     solana_slot_hashes::SlotHashes,
     solana_stake_interface::stake_history::StakeHistory,
     solana_svm_type_overrides::sync::Arc,
-    solana_sysvar::SysvarSerialize,
     solana_sysvar_id::SysvarId,
     solana_transaction_context::{IndexOfAccount, instruction::InstructionContext},
 };
@@ -60,7 +59,7 @@ const RECENT_BLOCKHASHES_ID: Pubkey =
 impl SysvarCache {
     /// Overwrite a sysvar. For testing purposes only.
     #[expect(deprecated)]
-    pub fn set_sysvar_for_tests<T: SysvarSerialize + SysvarId>(&mut self, sysvar: &T) {
+    pub fn set_sysvar_for_tests<T: Serialize + SysvarId>(&mut self, sysvar: &T) {
         let data = bincode::serialize(sysvar).expect("Failed to serialize sysvar.");
         let sysvar_id = T::id();
         match sysvar_id {
@@ -366,7 +365,11 @@ pub mod get_sysvar_with_account_check {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, test_case::test_case};
+    use {
+        super::*,
+        crate::sysvar_account::{SysvarAccountSize, sysvar_account_data_len},
+        test_case::test_case,
+    };
 
     // sysvar cache provides the full account data of a sysvar
     // the setters MUST NOT be changed to serialize an object representation
@@ -382,9 +385,9 @@ mod tests {
     #[test_case(SlotHashes::default(); "slot_hashes")]
     #[test_case(StakeHistory::default(); "stake_history")]
     #[test_case(LastRestartSlot::default(); "last_restart_slot")]
-    fn test_sysvar_cache_preserves_bytes<T: SysvarSerialize>(_: T) {
+    fn test_sysvar_cache_preserves_bytes<T: SysvarAccountSize>(sysvar: T) {
         let id = T::id();
-        let size = T::size_of().saturating_mul(2);
+        let size = sysvar_account_data_len(&sysvar).saturating_mul(2);
         let in_buf = vec![0; size];
 
         let mut sysvar_cache = SysvarCache::default();

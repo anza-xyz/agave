@@ -12,7 +12,7 @@ use {
         consensus_message::{BLS_KEYPAIR_DERIVE_SEED, Certificate, CertificateType},
         migration::GENESIS_CERTIFICATE_ACCOUNT,
     },
-    bincode::serialize,
+    bincode::{serialize, serialized_size},
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_bls_signatures::{
@@ -35,10 +35,7 @@ use {
     solana_signer::Signer,
     solana_stake_interface::state::{Authorized, Lockup, Meta, StakeStateV2},
     solana_system_interface::program as system_program,
-    solana_sysvar::{
-        SysvarSerialize,
-        epoch_rewards::{self, EpochRewards},
-    },
+    solana_sysvar::epoch_rewards::{self, EpochRewards},
     solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     solana_vote_program::vote_state,
     std::{borrow::Borrow, sync::Arc},
@@ -559,7 +556,7 @@ pub fn add_genesis_stake_config_account(genesis_config: &mut GenesisConfig) -> u
 }
 
 pub fn add_genesis_epoch_rewards_account(genesis_config: &mut GenesisConfig) -> u64 {
-    let data = vec![0; EpochRewards::size_of()];
+    let data = vec![0; serialized_size(&EpochRewards::default()).unwrap() as usize];
     let lamports = std::cmp::max(genesis_config.rent.minimum_balance(data.len()), 1);
 
     let account = AccountSharedData::create_from_existing_shared_data(

@@ -56,7 +56,7 @@ zstd = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-solana-account = { workspace = true, features = ["bincode"] }
+solana-account = { workspace = true }
 solana-hash = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 spl-pod = { workspace = true }

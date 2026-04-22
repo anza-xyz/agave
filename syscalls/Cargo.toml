@@ -54,7 +54,6 @@ solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-sysvar = { workspace = true }
-solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 thiserror = { workspace = true }
 
@@ -69,6 +68,7 @@ solana-program-runtime = { path = "../program-runtime", features = ["agave-unsta
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-slot-hashes = { workspace = true }
 solana-svm-callback = { path = "../svm-callback", features = ["agave-unstable-api"] }
+solana-sysvar-id = { workspace = true }
 solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
 test-case = { workspace = true }
 

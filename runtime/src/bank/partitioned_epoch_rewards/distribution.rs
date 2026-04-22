@@ -369,11 +369,11 @@ mod tests {
             stake_utils,
         },
         rand::Rng,
-        solana_account::from_account,
         solana_accounts_db::stake_rewards::StakeReward,
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_native_token::LAMPORTS_PER_SOL,
+        solana_program_runtime::sysvar_account::from_account,
         solana_reward_info::RewardType,
         solana_stake_interface::{
             stake_flags::StakeFlags,

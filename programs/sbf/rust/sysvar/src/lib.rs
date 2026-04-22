@@ -3,6 +3,7 @@
 #[allow(deprecated)]
 use solana_sysvar::recent_blockhashes::RecentBlockhashes;
 use {
+    serde::{Serialize, de::DeserializeOwned},
     solana_account_info::AccountInfo,
     solana_instruction::{AccountMeta, Instruction},
     solana_instructions_sysvar as instructions,
@@ -15,7 +16,7 @@ use {
         sysvar::stake_history::StakeHistorySysvar,
     },
     solana_sysvar::{
-        Sysvar, SysvarSerialize,
+        Sysvar,
         clock::Clock,
         epoch_rewards::EpochRewards,
         epoch_schedule::EpochSchedule,
@@ -23,13 +24,17 @@ use {
         slot_hashes::{PodSlotHashes, SlotHashes},
         slot_history::SlotHistory,
     },
+    solana_sysvar_id::SysvarId,
 };
+
+mod sysvar_account;
+use sysvar_account::deserialize_sysvar_account;
 
 // Adapted from `solana_sysvar::get_sysvar` (private).
 #[cfg(target_os = "solana")]
 fn sol_get_sysvar_handler<T>(dst: &mut [u8], offset: u64, length: u64) -> Result<(), ProgramError>
 where
-    T: SysvarSerialize,
+    T: SysvarId,
 {
     let sysvar_id = &T::id() as *const _ as *const u8;
     let var_addr = dst as *mut _ as *mut u8;
@@ -47,11 +52,11 @@ where
 // Double-helper arrangement is easier to write to a mutable slice.
 fn sol_get_sysvar<T>() -> Result<T, ProgramError>
 where
-    T: SysvarSerialize,
+    T: Default + Serialize + DeserializeOwned + SysvarId,
 {
     #[cfg(target_os = "solana")]
     {
-        let len = T::size_of();
+        let len = bincode::serialized_size(&T::default()).unwrap() as usize;
         let mut data = vec![0; len];
 
         sol_get_sysvar_handler::<T>(&mut data, 0, len as u64)?;
@@ -81,7 +86,7 @@ pub fn process_instruction(
             {
                 msg!("Clock identifier:");
                 sysvar::clock::id().log();
-                let clock = Clock::from_account_info(&accounts[2]).unwrap();
+                let clock: Clock = deserialize_sysvar_account(&accounts[2]).unwrap();
                 assert_ne!(clock, Clock::default());
                 let got_clock = Clock::get()?;
                 assert_eq!(clock, got_clock);
@@ -94,7 +99,8 @@ pub fn process_instruction(
             {
                 msg!("EpochRewards identifier:");
                 sysvar::epoch_rewards::id().log();
-                let epoch_rewards = EpochRewards::from_account_info(&accounts[10]).unwrap();
+                let epoch_rewards: EpochRewards =
+                    deserialize_sysvar_account(&accounts[10]).unwrap();
                 let got_epoch_rewards = EpochRewards::get()?;
                 assert_eq!(epoch_rewards, got_epoch_rewards);
                 // Syscall `sol_get_sysvar`.
@@ -106,7 +112,8 @@ pub fn process_instruction(
             {
                 msg!("EpochSchedule identifier:");
                 sysvar::epoch_schedule::id().log();
-                let epoch_schedule = EpochSchedule::from_account_info(&accounts[3]).unwrap();
+                let epoch_schedule: EpochSchedule =
+                    deserialize_sysvar_account(&accounts[3]).unwrap();
                 assert_eq!(epoch_schedule, EpochSchedule::default());
                 let got_epoch_schedule = EpochSchedule::get()?;
                 assert_eq!(epoch_schedule, got_epoch_schedule);
@@ -120,8 +127,8 @@ pub fn process_instruction(
             {
                 msg!("RecentBlockhashes identifier:");
                 sysvar::recent_blockhashes::id().log();
-                let recent_blockhashes =
-                    RecentBlockhashes::from_account_info(&accounts[5]).unwrap();
+                let recent_blockhashes: RecentBlockhashes =
+                    deserialize_sysvar_account(&accounts[5]).unwrap();
                 assert_ne!(recent_blockhashes, RecentBlockhashes::default());
             }
 
@@ -129,7 +136,7 @@ pub fn process_instruction(
             {
                 msg!("Rent identifier:");
                 sysvar::rent::id().log();
-                let rent = Rent::from_account_info(&accounts[6]).unwrap();
+                let rent: Rent = deserialize_sysvar_account(&accounts[6]).unwrap();
                 let got_rent = Rent::get()?;
                 assert_eq!(rent, got_rent);
                 // Syscall `sol_get_sysvar`.
@@ -143,7 +150,7 @@ pub fn process_instruction(
             sysvar::slot_history::id().log();
             assert_eq!(
                 Err(ProgramError::UnsupportedSysvar),
-                SlotHistory::from_account_info(&accounts[8])
+                deserialize_sysvar_account::<SlotHistory>(&accounts[8])
             );
 
             Ok(())
@@ -185,7 +192,7 @@ pub fn process_instruction(
             {
                 msg!("StakeHistory identifier:");
                 sysvar::stake_history::id().log();
-                let _ = StakeHistory::from_account_info(&accounts[9]).unwrap();
+                let _: StakeHistory = deserialize_sysvar_account(&accounts[9]).unwrap();
                 // Syscall `sol_get_sysvar`.
                 let stake_history_sysvar = StakeHistorySysvar(1);
                 assert!(stake_history_sysvar.get_entry(0).is_some());
@@ -200,7 +207,7 @@ pub fn process_instruction(
                 sysvar::slot_hashes::id().log();
                 assert_eq!(
                     Err(ProgramError::UnsupportedSysvar),
-                    SlotHashes::from_account_info(&accounts[7])
+                    deserialize_sysvar_account::<SlotHashes>(&accounts[7])
                 );
                 // Syscall `sol_get_sysvar`.
                 let pod_slot_hashes = PodSlotHashes::fetch()?;

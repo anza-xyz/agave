@@ -17,6 +17,7 @@ pub mod program_cache_entry;
 pub mod program_metrics;
 pub mod serialization;
 pub mod stable_log;
+pub mod sysvar_account;
 pub mod sysvar_cache;
 pub mod vm;
 

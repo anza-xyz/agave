@@ -2479,8 +2479,7 @@ fn test_delete_dependencies() {
 
 #[test]
 fn test_account_balance_for_capitalization_sysvar() {
-    let normal_sysvar =
-        solana_account::create_account_for_test(&solana_slot_history::SlotHistory::default());
+    let normal_sysvar = AccountSharedData::new(1, 0, &solana_sdk_ids::sysvar::id());
     assert_eq!(normal_sysvar.lamports(), 1);
 }
 

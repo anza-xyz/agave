@@ -6030,8 +6030,10 @@ dependencies = [
 name = "solana-banks-client"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "bincode",
  "borsh",
  "futures 0.3.32",
+ "serde",
  "solana-account 4.3.0",
  "solana-banks-interface",
  "solana-clock",
@@ -6042,7 +6044,7 @@ dependencies = [
  "solana-pubkey 4.2.0",
  "solana-rent",
  "solana-signature",
- "solana-sysvar",
+ "solana-sysvar-id",
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
@@ -8140,6 +8142,7 @@ dependencies = [
 name = "solana-rpc-client-nonce-utils"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "bincode",
  "solana-account 4.3.0",
  "solana-commitment-config",
  "solana-hash 4.3.0",
@@ -8960,6 +8963,7 @@ dependencies = [
 name = "solana-sbf-rust-simulation"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "bincode",
  "solana-account-info",
  "solana-clock",
  "solana-msg",
@@ -8998,6 +9002,7 @@ name = "solana-sbf-rust-sysvar"
 version = "4.2.0-alpha.0"
 dependencies = [
  "bincode",
+ "serde",
  "solana-account-info",
  "solana-define-syscall 3.0.0",
  "solana-instruction",
@@ -9009,6 +9014,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-stake-interface",
  "solana-sysvar",
+ "solana-sysvar-id",
 ]
 
 [[package]]
@@ -9596,7 +9602,6 @@ dependencies = [
  "solana-svm-log-collector",
  "solana-svm-type-overrides",
  "solana-sysvar",
- "solana-sysvar-id",
  "solana-transaction-context",
  "thiserror 2.0.18",
 ]

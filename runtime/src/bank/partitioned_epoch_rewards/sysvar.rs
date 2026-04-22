@@ -2,7 +2,9 @@ use {
     super::Bank,
     crate::inflation_rewards::points::PointValue,
     log::info,
-    solana_account::{create_account_shared_data_with_fields as create_account, from_account},
+    solana_program_runtime::sysvar_account::{
+        create_account_shared_data_with_fields as create_account, from_account,
+    },
     solana_sysvar as sysvar,
 };
 
