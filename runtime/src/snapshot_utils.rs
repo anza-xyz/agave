@@ -1054,6 +1054,11 @@ pub fn verify_and_unarchive_snapshots(
         incremental_snapshot_archive_info,
     )?;
 
+    let io_setup = IoSetupState::default()
+        .with_shared_sqpoll()?
+        .with_direct_io(accounts_db_config.snapshots_use_direct_io)
+        .with_buffers_registered(accounts_db_config.use_registered_io_uring_buffers);
+
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
     let UnarchivedSnapshot {
         unpack_dir: full_unpack_dir,
@@ -1072,6 +1077,7 @@ pub fn verify_and_unarchive_snapshots(
         next_append_vec_id.clone(),
         None,
         accounts_db_config,
+        &io_setup,
     )?;
 
     let (
@@ -1099,6 +1105,7 @@ pub fn verify_and_unarchive_snapshots(
             next_append_vec_id.clone(),
             Some(incremental_snapshot_archive_info.base_slot()),
             accounts_db_config,
+            &io_setup,
         )?;
         (
             Some(unpack_dir),
@@ -1290,69 +1297,68 @@ fn unarchive_snapshot(
     next_append_vec_id: Arc<AtomicAccountsFileId>,
     base_slot: Option<Slot>,
     accounts_db_config: &AccountsDbConfig,
+    io_setup: &IoSetupState,
 ) -> Result<UnarchivedSnapshot> {
     let unpack_dir = tempfile::Builder::new()
         .prefix(unpacked_snapshots_dir_prefix)
         .tempdir_in(bank_snapshots_dir)?;
     let unpacked_snapshots_dir = unpack_dir.path().join(snapshot_paths::BANK_SNAPSHOTS_DIR);
 
-    let io_setup = IoSetupState::default()
-        .with_shared_sqpoll()?
-        .with_direct_io(accounts_db_config.snapshots_use_direct_io)
-        .with_buffers_registered(accounts_db_config.use_registered_io_uring_buffers);
-
     let (file_sender, file_receiver) = crossbeam_channel::unbounded();
-    let unarchive_handle = streaming_unarchive_snapshot(
-        file_sender,
-        account_paths.to_vec(),
-        unpack_dir.path().to_path_buf(),
-        snapshot_archive_path.as_ref().to_path_buf(),
-        archive_format,
-        io_setup,
-    );
+    thread::scope(|scope| {
+        let unarchive_handle = streaming_unarchive_snapshot(
+            scope,
+            file_sender,
+            account_paths.to_vec(),
+            unpack_dir.path().to_path_buf(),
+            snapshot_archive_path.as_ref().to_path_buf(),
+            archive_format,
+            io_setup,
+        );
 
-    let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
-    let snapshot_result = snapshot_fields_from_files(&file_receiver).and_then(
-        |SnapshotFieldsBundle {
-             snapshot_version,
-             bank_fields,
-             accounts_db_fields,
-             append_vec_files,
-             ..
-         }| {
-            let snapshot_storage_lengths =
-                accounts_db_fields.get_storage_lengths_for_snapshot_slots(base_slot)?;
-            let (storage, measure_untar) = measure_time!(
-                SnapshotStorageRebuilder::spawn_rebuilder_threads(
-                    snapshot_storage_lengths,
-                    append_vec_files,
-                    file_receiver,
-                    num_rebuilder_threads,
-                    next_append_vec_id,
-                    SnapshotFrom::Archive,
-                    accounts_db_config.storage_access,
-                    None,
-                )?,
-                measure_name
-            );
-            info!("{measure_untar}");
-            create_snapshot_meta_files_for_unarchived_snapshot(&unpack_dir)?;
+        let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
+        let snapshot_result = snapshot_fields_from_files(&file_receiver).and_then(
+            |SnapshotFieldsBundle {
+                 snapshot_version,
+                 bank_fields,
+                 accounts_db_fields,
+                 append_vec_files,
+                 ..
+             }| {
+                let snapshot_storage_lengths =
+                    accounts_db_fields.get_storage_lengths_for_snapshot_slots(base_slot)?;
+                let (storage, measure_untar) = measure_time!(
+                    SnapshotStorageRebuilder::spawn_rebuilder_threads(
+                        snapshot_storage_lengths,
+                        append_vec_files,
+                        file_receiver,
+                        num_rebuilder_threads,
+                        next_append_vec_id,
+                        SnapshotFrom::Archive,
+                        accounts_db_config.storage_access,
+                        None,
+                    )?,
+                    measure_name
+                );
+                info!("{measure_untar}");
+                create_snapshot_meta_files_for_unarchived_snapshot(&unpack_dir)?;
 
-            Ok(UnarchivedSnapshot {
-                unpack_dir,
-                storage,
-                bank_fields,
-                accounts_db_fields,
-                unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion {
-                    unpacked_snapshots_dir,
-                    snapshot_version,
-                },
-                measure_untar,
-            })
-        },
-    );
-    unarchive_handle.join().unwrap()?;
-    snapshot_result
+                Ok(UnarchivedSnapshot {
+                    unpack_dir,
+                    storage,
+                    bank_fields,
+                    accounts_db_fields,
+                    unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion {
+                        unpacked_snapshots_dir,
+                        snapshot_version,
+                    },
+                    measure_untar,
+                })
+            },
+        );
+        unarchive_handle.join().unwrap()?;
+        snapshot_result
+    })
 }
 
 /// Spawn thread that streams snapshot dir files across channel

@@ -10,7 +10,7 @@ use {
         fs,
         io::{self, BufRead, BufReader},
         path::{Path, PathBuf},
-        thread::{self, JoinHandle},
+        thread::{self, Scope, ScopedJoinHandle},
         time::Instant,
     },
 };
@@ -25,14 +25,15 @@ const MAX_SNAPSHOT_READER_BUF_SIZE: usize = 128 * 1024 * 1024;
 const MAX_UNPACK_WRITE_BUF_SIZE: usize = 512 * 1024 * 1024;
 
 /// Streams unpacked files across channel
-pub fn streaming_unarchive_snapshot(
+pub fn streaming_unarchive_snapshot<'scope, 'env: 'scope>(
+    scope: &'scope Scope<'scope, 'env>,
     file_sender: Sender<FileInfo>,
     account_paths: Vec<PathBuf>,
     ledger_dir: PathBuf,
     snapshot_archive_path: PathBuf,
     archive_format: ArchiveFormat,
-    io_setup: IoSetupState,
-) -> JoinHandle<Result<(), UnpackError>> {
+    io_setup: &'env IoSetupState,
+) -> ScopedJoinHandle<'scope, Result<(), UnpackError>> {
     let do_unpack = move |archive_path: &Path| {
         let (decompressor, file_creator) = {
             // Bound the buffers based on input archive size (decompression multiplies content size,
@@ -42,10 +43,10 @@ pub fn streaming_unarchive_snapshot(
             let write_buf_size = MAX_UNPACK_WRITE_BUF_SIZE.min(archive_size);
 
             let decompressor =
-                decompressed_tar_reader(archive_format, archive_path, read_buf_size, &io_setup)?;
+                decompressed_tar_reader(archive_format, archive_path, read_buf_size, io_setup)?;
             (
                 decompressor,
-                file_creator(write_buf_size, &io_setup, move |file_info| {
+                file_creator(write_buf_size, io_setup, move |file_info| {
                     let result = file_sender.send(file_info);
                     if let Err(err) = result {
                         panic!(
@@ -69,7 +70,7 @@ pub fn streaming_unarchive_snapshot(
 
     thread::Builder::new()
         .name("solTarUnpack".to_string())
-        .spawn(move || {
+        .spawn_scoped(scope, move || {
             do_unpack(&snapshot_archive_path)
                 .map_err(|err| UnpackError::Unpack(Box::new(err), snapshot_archive_path))
         })
