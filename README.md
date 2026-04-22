@@ -53,6 +53,20 @@ $ ./cargo build
 > [!NOTE]
 > Note that this builds a debug version that is **not suitable for running a testnet or mainnet validator**. Please read [`docs/src/cli/install.md`](docs/src/cli/install.md#build-from-source) for instructions to build a release version for test and production uses.
 
+## **4. Grant capabilities for XDP (Linux-only).**
+
+XDP transmit is enabled on Linux by default and requires extra capabilities. After building, grant them to the validator binary:
+
+```bash
+$ sudo setcap 'cap_net_admin,cap_net_raw+eip' <path-to-agave-validator-binary>
+```
+
+For XDP zero-copy mode (`--xdp-zero-copy`), additional capabilities are needed:
+
+```bash
+$ sudo setcap 'cap_net_admin,cap_net_raw,cap_bpf,cap_perfmon+eip' <path-to-agave-validator-binary>
+```
+
 # Testing
 
 **Run the test suite:**

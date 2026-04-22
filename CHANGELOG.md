@@ -27,6 +27,11 @@ Release channels have their own copy of this changelog:
   `getLatestBlockhash` response together with its context (notably `context.slot`).
 ### Validator
 #### Breaking
+* XDP transmit in SKB (copy) mode is now enabled by default on Linux. The validator requires
+  `CAP_NET_ADMIN` and `CAP_NET_RAW` capabilities (plus `CAP_BPF` and `CAP_PERFMON` for
+  `--xdp-zero-copy`). Pass `--no-xdp` to fall back to UDP sockets. The XDP CPU
+  core is auto-selected to avoid overlapping the PoH core; passing `--xdp-cpu-cores`
+  with a core that conflicts with the PoH core is an error.
 #### Deprecations
 * `--accounts-db-access-storages-method` is now deprecated and a no-op (the `mmap` value was
   deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
