@@ -188,6 +188,26 @@ struct TxVerificationData {
     serialized_message: Vec<u8>,
 }
 
+/// TODO: we will move this API into solana-sdk.
+fn batch_verify<'a>(
+    signatures: impl Iterator<Item = &'a Signature>,
+    pubkeys: impl Iterator<Item = &'a Address>,
+    serialized_messages: impl Iterator<Item = &'a [u8]>,
+) -> Result<()> {
+    signatures
+        .zip(pubkeys)
+        .zip(serialized_messages)
+        .collect::<Vec<_>>()
+        .into_par_iter()
+        .try_for_each(|((signature, pubkey), serialized_message)| {
+            if signature.verify(pubkey.as_ref(), serialized_message) {
+                Ok(())
+            } else {
+                Err(TransactionError::SignatureFailure)
+            }
+        })
+}
+
 pub struct UnverifiedSignatures {
     signatures: Vec<TxVerificationData>,
 }
@@ -200,6 +220,34 @@ impl UnverifiedSignatures {
     }
 
     pub fn verify(&self) -> Result<()> {
+        let signatures = self.signatures.iter().flat_map(|tx_signatures| {
+            tx_signatures
+                .signatures
+                .iter()
+                .take(tx_signatures.signer_pubkeys.len())
+        });
+        let pubkeys = self.signatures.iter().flat_map(|tx_signatures| {
+            tx_signatures
+                .signer_pubkeys
+                .iter()
+                .take(tx_signatures.signatures.len())
+        });
+        let serialized_messages = self.signatures.iter().flat_map(|tx_signatures| {
+            std::iter::repeat_n(
+                tx_signatures.serialized_message.as_slice(),
+                tx_signatures
+                    .signatures
+                    .len()
+                    .min(tx_signatures.signer_pubkeys.len()),
+            )
+        });
+
+        batch_verify(signatures, pubkeys, serialized_messages)
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    /// todo: this function is for benches only and will be removed after we move the batch verify logic to sdk
+    pub fn verify_single_loop_for_benches(&self) -> Result<()> {
         self.signatures.par_iter().try_for_each(|tx_signatures| {
             if tx_signatures
                 .signatures

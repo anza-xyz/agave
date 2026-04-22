@@ -8096,6 +8096,7 @@ dependencies = [
  "agave-reserved-account-keys",
  "agave-votor-messages",
  "assert_matches",
+ "criterion",
  "crossbeam-channel",
  "dlopen2",
  "log",
