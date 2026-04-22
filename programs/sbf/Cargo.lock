@@ -9093,7 +9093,7 @@ dependencies = [
 [[package]]
 name = "solana-sbpf"
 version = "0.19.0"
-source = "git+https://github.com/anza-xyz/sbpf?rev=refs%2Fpull%2F171%2Fhead#0be2c0e05460ca5728a140882f8e1bc01b12d07a"
+source = "git+https://github.com/anza-xyz/sbpf?rev=refs%2Fheads%2Fmain#95c5d180409646fbc881eb4839a57222f634239a"
 dependencies = [
  "byteorder",
  "combine 3.8.1",
