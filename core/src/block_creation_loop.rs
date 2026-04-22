@@ -10,9 +10,13 @@ use {
         replay_stage::{Finalizer, ReplayStage},
     },
     agave_votor::event::LeaderWindowInfo,
-    crossbeam_channel::Receiver,
+    agave_votor_messages::reward_certificate::{
+        BuildRewardCertsRequest, BuildRewardCertsRespSucc, BuildRewardCertsResponse,
+        NotarRewardCertificate, SkipRewardCertificate,
+    },
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     solana_clock::Slot,
-    solana_entry::block_component::{BlockMarkerV1, GenesisCertificate, VersionedBlockMarker},
+    solana_entry::block_component::{BlockFooterV1, GenesisCertificate, VersionedBlockMarker},
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
@@ -26,9 +30,11 @@ use {
     solana_runtime::{
         bank::{Bank, NewBankOptions},
         bank_forks::BankForks,
+        block_component_processor::BlockComponentProcessor,
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
         validated_block_finalization::ValidatedBlockFinalizationCert,
     },
+    solana_version::version,
     stats::{LoopMetrics, SlotMetrics},
     std::{
         sync::{
@@ -36,7 +42,7 @@ use {
             atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
-        time::{Duration, Instant},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
     thiserror::Error,
 };
@@ -89,6 +95,11 @@ pub struct BlockCreationLoopConfig {
 
     // Channel to receive RecordReceiver from PohService
     pub record_receiver_receiver: Receiver<RecordReceiver>,
+
+    /// Channel to send the request to build reward certs.
+    pub build_reward_certs_sender: Sender<BuildRewardCertsRequest>,
+    /// Channel to receive the built reward certs.
+    pub reward_certs_receiver: Receiver<BuildRewardCertsResponse>,
 }
 
 struct LeaderContext {
@@ -107,6 +118,8 @@ struct LeaderContext {
     slot_status_notifier: Option<SlotStatusNotifier>,
     banking_tracer: Arc<BankingTracer>,
     replay_highest_frozen: Arc<ReplayHighestFrozen>,
+    build_reward_certs_sender: Sender<BuildRewardCertsRequest>,
+    reward_certs_receiver: Receiver<BuildRewardCertsResponse>,
 
     // Metrics
     metrics: LoopMetrics,
@@ -156,10 +169,12 @@ fn start_loop(config: BlockCreationLoopConfig) {
         rpc_subscriptions,
         banking_tracer,
         slot_status_notifier,
-        leader_window_info_receiver,
-        highest_parent_ready,
-        replay_highest_frozen,
         record_receiver_receiver,
+        leader_window_info_receiver,
+        replay_highest_frozen,
+        highest_parent_ready,
+        build_reward_certs_sender,
+        reward_certs_receiver,
         highest_finalized,
     } = config;
 
@@ -170,6 +185,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
     let mut my_pubkey = cluster_info.id();
 
     info!("{my_pubkey}: Block creation loop initialized");
+
     // Wait for PohService to be shutdown
     let record_receiver = match record_receiver_receiver.recv() {
         Ok(receiver) => receiver,
@@ -193,11 +209,11 @@ fn start_loop(config: BlockCreationLoopConfig) {
     let mut ctx = LeaderContext {
         exit,
         my_pubkey,
-        leader_window_info_receiver,
         highest_parent_ready,
+        leader_window_info_receiver,
         blockstore,
+        poh_recorder: poh_recorder.clone(),
         record_receiver,
-        poh_recorder,
         leader_schedule_cache,
         bank_forks,
         rpc_subscriptions,
@@ -208,6 +224,8 @@ fn start_loop(config: BlockCreationLoopConfig) {
         slot_metrics: SlotMetrics::default(),
         highest_finalized,
         genesis_cert,
+        build_reward_certs_sender,
+        reward_certs_receiver,
     };
 
     // Setup poh
@@ -239,35 +257,39 @@ fn start_loop(config: BlockCreationLoopConfig) {
         let LeaderWindowInfo {
             start_slot,
             end_slot,
-            parent_block: (parent_slot, _),
+            parent_block: (parent_slot, parent_hash),
             block_timer,
         } = {
-            // Drain all pending messages and keep the latest one
-            let Some(info) = ctx
+            match ctx
                 .leader_window_info_receiver
                 // Timeout so we can check the exit flag
                 .recv_timeout(Duration::from_secs(1))
-                .ok()
-                .and_then(|window| {
-                    ctx.leader_window_info_receiver
-                        .try_iter()
-                        .last()
-                        .or(Some(window))
-                })
-            else {
-                continue;
-            };
-
-            info
+            {
+                Ok(m) => ctx
+                    .leader_window_info_receiver
+                    .try_iter()
+                    .last()
+                    .unwrap_or(m),
+                Err(e) => match e {
+                    RecvTimeoutError::Disconnected => break,
+                    RecvTimeoutError::Timeout => continue,
+                },
+            }
         };
 
-        trace!("Received window notification for {start_slot} to {end_slot} parent: {parent_slot}");
-        if let Err(e) = produce_window(start_slot, end_slot, parent_slot, block_timer, &mut ctx) {
-            // Give up on this leader window
-            error!(
-                "{my_pubkey}: Unable to produce window {start_slot}-{end_slot}, skipping window: \
-                 {e:?}"
-            );
+        trace!(
+            "Received window notification for start_slot={start_slot}: end_slot={end_slot} for \
+             parent_slot={parent_slot}: parent_hash={parent_hash}"
+        );
+        match produce_window(start_slot, end_slot, parent_slot, block_timer, &mut ctx) {
+            Ok(()) => (),
+            Err(e) => {
+                // Give up on this leader window
+                error!(
+                    "{my_pubkey}: produce_window({start_slot}, {end_slot}, {parent_slot}: \
+                     {parent_hash}, {block_timer:#?}) failed with {e}.  skipping window."
+                );
+            }
         }
 
         ctx.metrics.loop_count += 1;
@@ -305,37 +327,39 @@ fn block_timeout(bank: &Bank, leader_block_index: usize) -> Duration {
 }
 
 /// Produces the leader window from `start_slot` -> `end_slot` using parent
-/// `parent_slot` while abiding to the `skip_timer`
+/// `parent_slot` while abiding to the `block_timer`
 fn produce_window(
     start_slot: Slot,
     end_slot: Slot,
-    mut parent_slot: Slot,
+    parent_slot: Slot,
     block_timer: Instant,
     ctx: &mut LeaderContext,
 ) -> Result<(), StartLeaderError> {
-    let my_pubkey = ctx.my_pubkey;
+    // Insert the first bank
+    let mut working_bank =
+        start_leader_wait_for_parent_replay(start_slot, parent_slot, block_timer, ctx)?;
     let mut window_production_start = Measure::start("window_production");
-    let mut slot = start_slot;
 
-    while !ctx.exit.load(Ordering::Relaxed) && slot <= end_slot {
-        // Insert the bank. In case `replay_stage` is slow and `parent_slot` is not
-        // yet frozen, we wait up until the timeout.
-        let working_bank =
-            start_leader_wait_for_parent_replay(slot, parent_slot, block_timer, ctx)?;
+    for slot in start_slot..=end_slot {
+        if ctx.exit.load(Ordering::Relaxed) {
+            break;
+        }
         let timeout = block_timeout(&working_bank, leader_slot_index(slot));
         trace!(
-            "{my_pubkey}: waiting for leader bank {slot} to finish, remaining time: {}",
-            timeout.saturating_sub(block_timer.elapsed()).as_millis(),
+            "{}: waiting for leader bank {slot} to finish, remaining time: {}ms",
+            ctx.my_pubkey,
+            timeout.saturating_sub(block_timer.elapsed()).as_millis()
         );
 
         let mut bank_completion_measure = Measure::start("bank_completion");
-        if let Err(e) = record_and_complete_block(
-            ctx.poh_recorder.as_ref(),
-            &mut ctx.record_receiver,
-            block_timer,
-            timeout,
-        ) {
-            panic!("PohRecorder record failed: {e:?}");
+        match record_and_complete_block(ctx, slot, block_timer, timeout) {
+            Ok(()) => (),
+            Err(e) => {
+                panic!(
+                    "record_and_complete_block(slot={slot}, block_timer={block_timer:#?}, \
+                     timeout={timeout:#?}) failed with {e}"
+                );
+            }
         }
         assert!(!ctx.poh_recorder.read().unwrap().has_bank());
         bank_completion_measure.stop();
@@ -345,23 +369,92 @@ fn produce_window(
         let _ = ctx
             .metrics
             .bank_timeout_completion_elapsed_hist
-            .increment(bank_completion_measure.as_us())
-            .inspect_err(|e| {
-                error!(
-                    "{}: unable to increment bank completion histogram {e:?}",
-                    ctx.my_pubkey
-                );
-            });
+            .increment(bank_completion_measure.as_us());
 
-        // Produce our next slot
-        parent_slot = slot;
-        slot += 1;
+        // Although `slot` has been cleared from `poh_recorder`, it might not have finished processing in
+        // `replay_stage`, which is why we use `start_leader_retry_replay`
+        working_bank = start_leader_wait_for_parent_replay(slot, slot, block_timer, ctx)?;
     }
-    trace!("{my_pubkey}: finished leader window {start_slot}-{end_slot}");
 
     window_production_start.stop();
     ctx.metrics.window_production_elapsed += window_production_start.as_us();
     Ok(())
+}
+
+/// Clamps the block producer timestamp to ensure that the leader produces a timestamp that conforms
+/// to Alpenglow clock bounds.
+fn skew_block_producer_time_nanos(
+    parent_slot: Slot,
+    parent_time_nanos: i64,
+    working_bank_slot: Slot,
+    working_bank_time_nanos: i64,
+    ns_per_slot: u64,
+) -> i64 {
+    let (min_working_bank_time, max_working_bank_time) =
+        BlockComponentProcessor::nanosecond_time_bounds(
+            parent_slot,
+            parent_time_nanos,
+            working_bank_slot,
+            ns_per_slot,
+        );
+
+    working_bank_time_nanos
+        .max(min_working_bank_time)
+        .min(max_working_bank_time)
+}
+
+/// Produces a block footer with the current timestamp; version; reward certs; and finalization cert.
+/// The bank_hash field is left as default and will be filled in after the bank freezes.
+fn produce_block_footer(
+    bank: Arc<Bank>,
+    skip_reward_cert: Option<SkipRewardCertificate>,
+    notar_reward_cert: Option<NotarRewardCertificate>,
+    highest_finalized: &RwLock<Option<ValidatedBlockFinalizationCert>>,
+) -> BlockFooterV1 {
+    let mut block_producer_time_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Misconfigured system clock; couldn't measure block producer time.")
+        .as_nanos() as i64;
+
+    let slot = bank.slot();
+
+    if let Some(parent_bank) = bank.parent() {
+        // Get parent time from alpenglow clock (nanoseconds) or fall back to clock sysvar (seconds -> nanoseconds)
+        let parent_time_nanos = bank
+            .get_nanosecond_clock()
+            .unwrap_or_else(|| bank.clock().unix_timestamp.saturating_mul(1_000_000_000));
+        let parent_slot = parent_bank.slot();
+        let ns_per_slot = u64::try_from(bank.ns_per_slot).unwrap_or(u64::MAX);
+
+        block_producer_time_nanos = skew_block_producer_time_nanos(
+            parent_slot,
+            parent_time_nanos,
+            slot,
+            block_producer_time_nanos,
+            ns_per_slot,
+        );
+    }
+
+    // Convert finalization certs into block marker
+    let final_cert = highest_finalized
+        .read()
+        .unwrap()
+        .as_ref()
+        .map(ValidatedBlockFinalizationCert::to_final_certificate);
+
+    BlockFooterV1 {
+        bank_hash: Hash::default(),
+        block_producer_time_nanos: block_producer_time_nanos as u64,
+        block_user_agent: format!("agave/{}", version!()).into_bytes(),
+        final_cert,
+        skip_reward_cert,
+        notar_reward_cert,
+    }
+}
+
+/// Returns the time remaining until timeout.
+fn time_left(block_timer: Instant, timeout: Duration) -> Duration {
+    timeout.saturating_sub(block_timer.elapsed())
 }
 
 /// Records incoming transactions until we reach the block timeout.
@@ -371,20 +464,23 @@ fn produce_window(
 /// - Insert the alpentick
 /// - Clear the working bank
 fn record_and_complete_block(
-    poh_recorder: &RwLock<PohRecorder>,
-    record_receiver: &mut RecordReceiver,
+    ctx: &mut LeaderContext,
+    bank_slot: Slot,
     block_timer: Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
+    ctx.build_reward_certs_sender
+        .send(BuildRewardCertsRequest { bank_slot })
+        .map_err(|_| PohRecorderError::ChannelDisconnected)?;
     // loop until we hit the block timeout
     while !block_timeout
         .saturating_sub(block_timer.elapsed())
         .is_zero()
     {
-        let Ok(record) = record_receiver.try_recv() else {
+        let Ok(record) = ctx.record_receiver.try_recv() else {
             continue;
         };
-        poh_recorder.write().unwrap().record(
+        ctx.poh_recorder.write().unwrap().record(
             record.bank_id,
             record.mixins,
             record.transaction_batches,
@@ -392,17 +488,13 @@ fn record_and_complete_block(
     }
 
     // Shutdown and clear any inflight records
-    record_receiver.shutdown();
-    for record in record_receiver.drain() {
-        poh_recorder.write().unwrap().record(
-            record.bank_id,
-            record.mixins,
-            record.transaction_batches,
-        )?;
+    ctx.record_receiver.shutdown();
+    let mut w_poh_recorder = ctx.poh_recorder.write().unwrap();
+    for record in ctx.record_receiver.drain() {
+        w_poh_recorder.record(record.bank_id, record.mixins, record.transaction_batches)?;
     }
 
     // Alpentick and clear bank
-    let mut w_poh_recorder = poh_recorder.write().unwrap();
     let bank = w_poh_recorder
         .bank()
         .expect("Bank cannot have been cleared as BlockCreationLoop is the only modifier");
@@ -418,8 +510,36 @@ fn record_and_complete_block(
     // will properly increment the tick_height to max_tick_height.
     bank.set_tick_height(max_tick_height - 1);
     // Write the single tick for this slot
+
+    let BuildRewardCertsRespSucc {
+        skip,
+        notar,
+        validators,
+    } = ctx
+        .reward_certs_receiver
+        .recv()
+        .map_err(|_| PohRecorderError::ChannelDisconnected)??;
+    let reward_slot_and_validators = match (&skip, &notar) {
+        (None, None) => None,
+        (Some(skip), None) => Some((skip.slot, validators)),
+        (None, Some(notar)) => Some((notar.slot, validators)),
+        (Some(skip), Some(notar)) => {
+            assert_eq!(skip.slot, notar.slot);
+            Some((skip.slot, validators))
+        }
+    };
+    let footer = produce_block_footer(bank.clone(), skip, notar, &ctx.highest_finalized);
+
+    BlockComponentProcessor::update_bank_with_footer_fields(
+        &bank,
+        footer.block_producer_time_nanos as i64,
+        Hash::default(), // Banks we produce do not need the bank hash mismatch check
+        reward_slot_and_validators,
+        ctx.highest_finalized.read().unwrap().as_ref(),
+    );
+
     drop(bank);
-    w_poh_recorder.tick_alpenglow(max_tick_height);
+    w_poh_recorder.tick_alpenglow(max_tick_height, footer);
 
     Ok(())
 }
@@ -444,7 +564,7 @@ fn start_leader_wait_for_parent_replay(
     let end_slot = last_of_consecutive_leader_slots(slot);
 
     let mut slot_delay_start = Measure::start("slot_delay");
-    while !timeout.saturating_sub(block_timer.elapsed()).is_zero() {
+    while !time_left(block_timer, timeout).is_zero() {
         ctx.slot_metrics.attempt_start_leader_count += 1;
 
         // Check if the entire window is skipped.
@@ -475,6 +595,7 @@ fn start_leader_wait_for_parent_replay(
                         );
                     });
 
+                ctx.slot_metrics.report();
                 return Ok(ctx
                     .poh_recorder
                     .read()
@@ -484,8 +605,8 @@ fn start_leader_wait_for_parent_replay(
             }
             Err(StartLeaderError::ReplayIsBehind(_, _)) => {
                 trace!(
-                    "{my_pubkey}: Attempting to produce slot {slot}, however replay of the the \
-                     parent {parent_slot} is not yet finished, waiting. Skip timer {}",
+                    "{my_pubkey}: Attempting to produce slot {slot}, however replay of the parent \
+                     {parent_slot} is not yet finished, waiting. Block timer {}",
                     block_timer.elapsed().as_millis()
                 );
                 let highest_frozen_slot = ctx
@@ -494,17 +615,15 @@ fn start_leader_wait_for_parent_replay(
                     .lock()
                     .unwrap();
 
-                // We wait until either we finish replay of the parent or the skip timer finishes
+                // We wait until either we finish replay of the parent or the block timer finishes
                 let mut wait_start = Measure::start("replay_is_behind");
-                let _unused = ctx
-                    .replay_highest_frozen
-                    .freeze_notification
-                    .wait_timeout_while(
-                        highest_frozen_slot,
-                        timeout.saturating_sub(block_timer.elapsed()),
-                        |hfs| *hfs < parent_slot,
-                    )
-                    .unwrap();
+                let _unused = {
+                    let timeout = time_left(block_timer, timeout);
+                    ctx.replay_highest_frozen
+                        .freeze_notification
+                        .wait_timeout_while(highest_frozen_slot, timeout, |hfs| *hfs < parent_slot)
+                        .unwrap()
+                };
                 wait_start.stop();
                 ctx.slot_metrics.replay_is_behind_cumulative_wait_elapsed += wait_start.as_us();
                 let _ = ctx
@@ -591,6 +710,14 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
         );
     }
 
+    if ctx.poh_recorder.read().unwrap().start_slot() != parent_slot {
+        // Important to keep Poh somewhat accurate for
+        // parts of the system relying on PohRecorder::would_be_leader()
+        reset_poh_recorder(&parent_bank, ctx);
+    }
+
+    // After potentially resetting, there should be no working bank.
+    // If there still is one, something has gone wrong.
     if let Some(bank) = ctx.poh_recorder.read().unwrap().bank() {
         panic!(
             "{}: Attempting to produce a block for {slot}, however we still are in production of \
@@ -598,12 +725,6 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
             ctx.my_pubkey,
             bank.slot(),
         );
-    }
-
-    if ctx.poh_recorder.read().unwrap().start_slot() != parent_slot {
-        // Important to keep Poh somewhat accurate for
-        // parts of the system relying on PohRecorder::would_be_leader()
-        reset_poh_recorder(&parent_bank, ctx);
     }
 
     let tpu_bank = ReplayStage::new_bank_from_parent_with_notify(
@@ -649,12 +770,10 @@ fn maybe_include_genesis_certificate(parent_slot: Slot, ctx: &LeaderContext) {
     if parent_slot != ctx.genesis_cert.slot || parent_slot == 0 {
         return;
     }
-    let genesis_marker = VersionedBlockMarker::V1(BlockMarkerV1::new_genesis_certificate(
-        ctx.genesis_cert.clone(),
-    ));
 
-    let mut poh_recorder = ctx.poh_recorder.write().unwrap();
     // Send the genesis certificate
+    let genesis_marker = VersionedBlockMarker::new_genesis_certificate(ctx.genesis_cert.clone());
+    let mut poh_recorder = ctx.poh_recorder.write().unwrap();
     poh_recorder
         .send_marker(genesis_marker)
         .expect("Max tick height cannot have been reached");
