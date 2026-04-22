@@ -77,6 +77,15 @@ pub trait FileBufRead<'a>: BufRead {
     /// This offset represents the position within the underlying file where data
     /// will be consumed from.
     fn get_file_offset(&self) -> FileSize;
+
+    /// Advance the offset by `amt` bytes, potentially skipping past the current buffer
+    /// into the underlying file.
+    ///
+    /// Unlike `BufRead::consume`, `amt` is not constrained by the size of the buffer
+    /// returned by `fill_buf` — any bytes beyond what is currently buffered are skipped
+    /// by advancing the file read offset, so the next `fill_buf` starts at the correct
+    /// position.
+    fn consume_or_skip(&mut self, n: usize);
 }
 
 /// An extension of the `BufRead` trait for readers that require stronger control
@@ -160,6 +169,16 @@ impl<'a, const N: usize> FileBufRead<'a> for BufferedReader<'a, N> {
             self.file_last_offset + self.buf_valid_bytes.start as FileSize
         }
     }
+
+    fn consume_or_skip(&mut self, amt: usize) {
+        if self.buf_valid_bytes.len() >= amt {
+            self.buf_valid_bytes.start += amt;
+        } else {
+            let additional_amount_to_skip = amt - self.buf_valid_bytes.len();
+            self.buf_valid_bytes = 0..0;
+            self.file_offset_of_next_read += additional_amount_to_skip as FileSize;
+        }
+    }
 }
 
 impl<const N: usize> BufferedReader<'_, N> {
@@ -218,7 +237,7 @@ impl<const N: usize> io::Read for BufferedReader<'_, N> {
         )?;
         let filled_len = bytes_read + available_len;
         // Buffer was successfully filled, drop buffered data and move offset.
-        self.consume(filled_len);
+        self.consume_or_skip(filled_len);
         Ok(filled_len)
     }
 }
@@ -233,19 +252,16 @@ impl<const N: usize> BufRead for BufferedReader<'_, N> {
         Ok(self.valid_slice())
     }
 
-    /// Advance the offset by `amt` to a `file` position where next `fill_buf` buffer should
-    /// start at.
+    /// Advance the buffer position by `amt`, clamped to the end of the currently buffered data.
     ///
-    /// Note that `amt` is not constrained by the size of the buffer returned by `fill_buf`
-    /// and can be thus used to seek/skip reads from the underlying file.
+    /// This follows the standard `BufRead::consume` contract: `amt` must not exceed the buffer
+    /// length returned by the preceding `fill_buf`. To skip bytes beyond the current buffer,
+    /// use [`FileBufRead::consume_or_skip`] instead.
     fn consume(&mut self, amt: usize) {
-        if self.buf_valid_bytes.len() >= amt {
-            self.buf_valid_bytes.start += amt;
-        } else {
-            let additional_amount_to_skip = amt - self.buf_valid_bytes.len();
-            self.buf_valid_bytes = 0..0;
-            self.file_offset_of_next_read += additional_amount_to_skip as FileSize;
-        }
+        self.buf_valid_bytes.start = self
+            .buf_valid_bytes
+            .end
+            .min(self.buf_valid_bytes.start + amt)
     }
 }
 
@@ -344,6 +360,17 @@ impl<'a, R: FileBufRead<'a>> FileBufRead<'a> for BufReaderWithOverflow<R> {
 
     fn get_file_offset(&self) -> FileSize {
         self.reader.get_file_offset() - self.overflow_buf.len() as FileSize
+    }
+
+    fn consume_or_skip(&mut self, mut amt: usize) {
+        let overflow_len = self.overflow_buf.len();
+        if overflow_len > 0 {
+            amt = amt
+                .checked_sub(overflow_len)
+                .expect("should consume all previously required bytes");
+            self.overflow_buf.clear();
+        }
+        self.reader.consume_or_skip(amt);
     }
 }
 
@@ -519,7 +546,7 @@ mod tests {
         // Consume the data and attempt read next 16 bytes, expect to hit `valid_len`, and only read 14 bytes
         let mut advance = 16;
         let mut required_data_len = 16;
-        reader.consume(advance);
+        reader.consume_or_skip(advance);
         let offset = reader.get_file_offset();
         expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
@@ -534,7 +561,7 @@ mod tests {
         // Continue reading should yield EOF.
         advance = 14;
         required_data_len = 16;
-        reader.consume(advance);
+        reader.consume_or_skip(advance);
         let offset = reader.get_file_offset();
         expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
@@ -549,7 +576,7 @@ mod tests {
         // Move the offset passed `valid_len`, expect to hit EOF.
         advance = 1;
         required_data_len = 8;
-        reader.consume(advance);
+        reader.consume_or_skip(advance);
         let offset = reader.get_file_offset();
         expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
@@ -564,7 +591,7 @@ mod tests {
         // Move the offset passed file_len, expect to hit EOF.
         advance = 3;
         required_data_len = 8;
-        reader.consume(advance);
+        reader.consume_or_skip(advance);
         let offset = reader.get_file_offset();
         expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
@@ -723,7 +750,7 @@ mod tests {
         assert_eq!(&slice[..required_len], &bytes[..required_len]);
 
         // Consume part of the buffer to simulate partial reading
-        reader.consume(required_len);
+        reader.consume_or_skip(required_len);
 
         // Case 2: required_len > buffer_size (overflow required)
         let required_len = BUFFER_SIZE + 8;
@@ -734,7 +761,7 @@ mod tests {
         assert_eq!(slice, &bytes[8..8 + required_len]);
 
         // Consume everything to reach EOF
-        reader.consume(required_len);
+        reader.consume_or_skip(required_len);
 
         // Case 3: required_len larger than remaining data (expect UnexpectedEof)
         let required_len = 64;
@@ -766,7 +793,7 @@ mod tests {
         let buf = reader.fill_buf().unwrap();
         assert_eq!(buf, &bytes[0..BUFFER_SIZE]);
 
-        reader.consume(8);
+        reader.consume_or_skip(8);
         let mut buf = [0; 8];
         assert_eq!(reader.read(&mut buf).unwrap(), 8);
         assert_eq!(buf, &bytes[8..BUFFER_SIZE]);
