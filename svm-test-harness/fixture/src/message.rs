@@ -21,7 +21,10 @@ use {
         v0::{self, LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
     },
     solana_pubkey::Pubkey,
-    std::{cmp::max, collections::HashSet},
+    std::{
+        cmp::max,
+        collections::{HashMap, HashSet},
+    },
 };
 
 impl From<&ProtoMessageHeader> for MessageHeader {
@@ -75,14 +78,21 @@ fn resolve_address_table_lookups(
     lookups: &[MessageAddressTableLookup],
     accounts: &[(Pubkey, Account)],
 ) -> Result<LoadedAddresses, FixtureError> {
+    if lookups.is_empty() {
+        return Ok(LoadedAddresses::default());
+    }
+
+    let account_map: HashMap<&Pubkey, &Account> = accounts
+        .iter()
+        .map(|(pubkey, account)| (pubkey, account))
+        .collect();
+
     let mut writable = Vec::new();
     let mut readonly = Vec::new();
 
     for lookup in lookups {
-        let alt_account = accounts
-            .iter()
-            .find(|(pubkey, _)| *pubkey == lookup.account_key)
-            .map(|(_, account)| account)
+        let alt_account = account_map
+            .get(&lookup.account_key)
             .ok_or(FixtureError::InvalidAddressLookupTable)?;
 
         let alt = AddressLookupTable::deserialize(&alt_account.data)
