@@ -2971,12 +2971,17 @@ mod tests {
             );
         }
         assert_eq!(index.map_internal.read().unwrap().len(), 3);
-        // Confirm all entries are clean (write-through fired).
+
+        // Confirm all entries are clean (write-through fired) and present on disk.
         for pubkey in &initial_pubkeys {
             index.get_only_in_mem(pubkey, false, |entry| {
                 let entry = entry.expect("entry should be in memory");
                 assert!(!entry.dirty());
             });
+            assert!(
+                index.load_from_disk(pubkey).is_some(),
+                "entry should be on disk after write-through upsert"
+            );
         }
 
         // Insert a 4th new pubkey, this should lead to eviction
@@ -3015,6 +3020,7 @@ mod tests {
             evicted_count, 1,
             "exactly one original entry should have been evicted"
         );
+
         // The evicted entry should still be on disk (it was written through before eviction).
         let evicted_pubkey = initial_pubkeys
             .iter()
