@@ -258,7 +258,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
             start_slot,
             end_slot,
             parent_block: (parent_slot, parent_hash),
-            block_timer,
+            block_timer: start_of_window,
         } = {
             match ctx
                 .leader_window_info_receiver
@@ -281,13 +281,13 @@ fn start_loop(config: BlockCreationLoopConfig) {
             "Received window notification for start_slot={start_slot}: end_slot={end_slot} for \
              parent_slot={parent_slot}: parent_hash={parent_hash}"
         );
-        match produce_window(start_slot, end_slot, parent_slot, block_timer, &mut ctx) {
+        match produce_window(start_slot, end_slot, parent_slot, start_of_window, &mut ctx) {
             Ok(()) => (),
             Err(e) => {
                 // Give up on this leader window
                 error!(
                     "{my_pubkey}: produce_window({start_slot}, {end_slot}, {parent_slot}: \
-                     {parent_hash}, {block_timer:#?}) failed with {e}.  skipping window."
+                     {parent_hash}, {start_of_window:?}) failed with {e}.  skipping window."
                 );
             }
         }
@@ -321,32 +321,26 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
 /// index within the leader window, returns the duration after which we should
 /// publish the final shred for the block with starting point being the start of
 /// the leader window.
-fn block_timeout(_bank: &Bank, leader_block_index: usize) -> Duration {
-    let duration = Duration::from_millis(400);
-    // let ns_per_slot = bank.ns_per_slot;
-    // let duration = Duration::from_nanos_u128(ns_per_slot);
-    // println!(
-    //     "\n\nblock_timeout: ns_per_slot={ns_per_slot} duration={}\n\n",
-    //     duration.as_millis()
-    // );
-    duration.saturating_mul((leader_block_index as u32).saturating_add(1))
+fn block_timeout(bank: &Bank, leader_block_index: usize) -> Duration {
+    Duration::from_nanos_u128(bank.ns_per_slot)
+        .saturating_mul((leader_block_index as u32).saturating_add(1))
 }
 
-/// Produces the leader window from `start_slot` -> `end_slot` using parent
-/// `parent_slot` while abiding to the `block_timer`
+/// Produces blocks for the leader window from `start_slot` to `end_slot` inclusive.  
+/// The leader window started at `start_of_window`.
 fn produce_window(
     start_slot: Slot,
     end_slot: Slot,
     parent_slot: Slot,
-    block_timer: Instant,
+    start_of_window: Instant,
     ctx: &mut LeaderContext,
 ) -> Result<(), StartLeaderError> {
     // Insert the first bank
     let mut working_bank =
-        start_leader_wait_for_parent_replay(start_slot, parent_slot, block_timer, ctx)?;
+        start_leader_wait_for_parent_replay(start_slot, parent_slot, start_of_window, ctx)?;
     let mut window_production_start = Measure::start("window_production");
 
-    for slot in start_slot..=end_slot {
+    for slot in (start_slot + 1)..=end_slot {
         if ctx.exit.load(Ordering::Relaxed) {
             break;
         }
@@ -354,15 +348,17 @@ fn produce_window(
         trace!(
             "{}: waiting for leader bank {slot} to finish, remaining time: {}ms",
             ctx.my_pubkey,
-            timeout.saturating_sub(block_timer.elapsed()).as_millis()
+            timeout
+                .saturating_sub(start_of_window.elapsed())
+                .as_millis()
         );
 
         let mut bank_completion_measure = Measure::start("bank_completion");
-        match record_and_complete_block(ctx, slot, block_timer, timeout) {
+        match record_and_complete_block(ctx, slot, start_of_window, timeout) {
             Ok(()) => (),
             Err(e) => {
                 panic!(
-                    "record_and_complete_block(slot={slot}, block_timer={block_timer:#?}, \
+                    "record_and_complete_block(slot={slot}, start_of_window={start_of_window:?}, \
                      timeout={timeout:#?}) failed with {e}"
                 );
             }
@@ -380,7 +376,7 @@ fn produce_window(
         println!("produce_window: slot={slot} 1");
         // Although `slot` has been cleared from `poh_recorder`, it might not have finished processing in
         // `replay_stage`, which is why we use `start_leader_retry_replay`
-        working_bank = start_leader_wait_for_parent_replay(slot, slot, block_timer, ctx)?;
+        working_bank = start_leader_wait_for_parent_replay(slot, slot - 1, start_of_window, ctx)?;
         println!("produce_window: slot={slot} 2");
     }
 
@@ -474,7 +470,7 @@ fn time_left(block_timer: Instant, timeout: Duration) -> Duration {
 fn record_and_complete_block(
     ctx: &mut LeaderContext,
     bank_slot: Slot,
-    block_timer: Instant,
+    start_of_window: Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
     println!("\n\nrecord_and_complete_block: called, bank_slot={bank_slot}");
@@ -483,7 +479,7 @@ fn record_and_complete_block(
         .map_err(|_| PohRecorderError::ChannelDisconnected)?;
 
     loop {
-        let timeout = time_left(block_timer, block_timeout);
+        let timeout = time_left(start_of_window, block_timeout);
         if timeout.is_zero() {
             break;
         }
@@ -587,7 +583,7 @@ fn record_and_complete_block(
 fn start_leader_wait_for_parent_replay(
     slot: Slot,
     parent_slot: Slot,
-    block_timer: Instant,
+    start_of_window: Instant,
     ctx: &mut LeaderContext,
 ) -> Result<Arc<Bank>, StartLeaderError> {
     trace!(
@@ -595,16 +591,20 @@ fn start_leader_wait_for_parent_replay(
         ctx.my_pubkey
     );
     let my_pubkey = ctx.my_pubkey;
-    let timeout = block_timeout(
-        &ctx.bank_forks.read().unwrap().root_bank(),
-        leader_slot_index(slot),
-    );
+    let end_of_block = start_of_window
+        + block_timeout(
+            &ctx.bank_forks.read().unwrap().root_bank(),
+            leader_slot_index(slot),
+        );
     let end_slot = last_of_consecutive_leader_slots(slot);
 
-    println!("\n\nwait_for_parent_replay: timer={block_timer:?} timeout={timeout:?}\n\n");
+    println!(
+        "\n\nwait_for_parent_replay: start_of_window={start_of_window:?} end_of_block={end_of_block:?}\n\n"
+    );
 
     let mut slot_delay_start = Measure::start("slot_delay");
-    while !time_left(block_timer, timeout).is_zero() {
+    while Instant::now() < end_of_block {
+        println!("wait_for_parent:replay: in while loop");
         ctx.slot_metrics.attempt_start_leader_count += 1;
 
         // Check if the entire window is skipped.
@@ -620,9 +620,11 @@ fn start_leader_wait_for_parent_replay(
                 slot,
             ));
         }
+        println!("wait_for_parent:replay: in while loop 1");
 
         match maybe_start_leader(slot, parent_slot, ctx) {
             Ok(()) => {
+                println!("wait_for_parent:replay: in while loop 2");
                 slot_delay_start.stop();
                 let _ = ctx
                     .slot_metrics
@@ -644,10 +646,10 @@ fn start_leader_wait_for_parent_replay(
                     .expect("We just started the leader, so the bank must exist"));
             }
             Err(StartLeaderError::ReplayIsBehind(_, _)) => {
+                println!("wait_for_parent:replay: in while loop 3");
                 trace!(
                     "{my_pubkey}: Attempting to produce slot {slot}, however replay of the parent \
-                     {parent_slot} is not yet finished, waiting. Block timer {}",
-                    block_timer.elapsed().as_millis()
+                     {parent_slot} is not yet finished, waiting.",
                 );
                 let highest_frozen_slot = ctx
                     .replay_highest_frozen
@@ -658,10 +660,13 @@ fn start_leader_wait_for_parent_replay(
                 // We wait until either we finish replay of the parent or the block timer finishes
                 let mut wait_start = Measure::start("replay_is_behind");
                 let _unused = {
-                    let timeout = time_left(block_timer, timeout);
                     ctx.replay_highest_frozen
                         .freeze_notification
-                        .wait_timeout_while(highest_frozen_slot, timeout, |hfs| *hfs < parent_slot)
+                        .wait_timeout_while(
+                            highest_frozen_slot,
+                            Instant::now() - end_of_block,
+                            |hfs| *hfs < parent_slot,
+                        )
                         .unwrap()
                 };
                 wait_start.stop();
@@ -677,13 +682,18 @@ fn start_leader_wait_for_parent_replay(
                         );
                     });
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                println!("wait_for_parent:replay: in while loop 4");
+                return Err(e);
+            }
         }
     }
 
     trace!(
         "{my_pubkey}: Skipping production of {slot}: Unable to replay parent {parent_slot} in time"
     );
+
+    println!("\n\n****wait_for_parent_replay: parent_slot={parent_slot} slot={slot} failed\n\n");
     Err(StartLeaderError::ReplayIsBehind(parent_slot, slot))
 }
 
