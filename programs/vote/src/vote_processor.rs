@@ -389,6 +389,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 return Err(InstructionError::InvalidInstructionData);
             }
 
+            instruction_context.check_number_of_instruction_accounts(2)?;
             let new_collector = read_new_collector_account(&instruction_context, &me, 1)?;
 
             let rent = invoke_context
@@ -1871,7 +1872,29 @@ mod tests {
         );
         assert_eq!(
             get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
-            original_inflation_collector
+            original_inflation_collector, // Unchanged
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            original_block_revenue_collector, // Unchanged
+        );
+
+        // Should fail - fewer than 2 account inputs (SIMD-0232).
+        let too_few_instruction_accounts = vec![AccountMeta {
+            pubkey: vote_pubkey,
+            is_signer: false,
+            is_writable: true,
+        }];
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            transaction_accounts.clone(),
+            too_few_instruction_accounts,
+            Err(InstructionError::MissingAccount),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            original_inflation_collector, // Unchanged
         );
         assert_eq!(
             get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
