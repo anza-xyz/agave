@@ -99,7 +99,7 @@ pub fn bank_fields_from_snapshot_archives(
         &full_snapshot_archive_info,
         incremental_snapshot_archive_info.as_ref(),
         &account_paths,
-        accounts_db_config,
+        accounts_db_config.storage_access,
         &io_setup,
     )?;
 
@@ -190,7 +190,7 @@ pub fn bank_from_snapshot_archives(
         full_snapshot_archive_info,
         incremental_snapshot_archive_info,
         account_paths,
-        &accounts_db_config,
+        accounts_db_config.storage_access,
         &io_setup,
     )?;
 

@@ -41,7 +41,7 @@ use {
     solana_accounts_db::{
         account_storage::AccountStorageMap,
         account_storage_entry::AccountStorageEntry,
-        accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
+        accounts_db::AtomicAccountsFileId,
         accounts_file::{AccountsFile, StorageAccess},
         utils::{ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR, move_and_async_delete_path},
     },
@@ -1047,7 +1047,7 @@ pub fn verify_and_unarchive_snapshots(
     full_snapshot_archive_info: &FullSnapshotArchiveInfo,
     incremental_snapshot_archive_info: Option<&IncrementalSnapshotArchiveInfo>,
     account_paths: &[PathBuf],
-    accounts_db_config: &AccountsDbConfig,
+    storage_access: StorageAccess,
     io_setup: &IoSetupState,
 ) -> Result<(UnarchivedSnapshots, UnarchivedSnapshotsGuard)> {
     check_are_snapshots_compatible(
@@ -1072,8 +1072,8 @@ pub fn verify_and_unarchive_snapshots(
         full_snapshot_archive_info.archive_format(),
         next_append_vec_id.clone(),
         None,
-        accounts_db_config,
-        &io_setup,
+        storage_access,
+        io_setup,
     )?;
 
     let (
@@ -1100,8 +1100,8 @@ pub fn verify_and_unarchive_snapshots(
             incremental_snapshot_archive_info.archive_format(),
             next_append_vec_id.clone(),
             Some(incremental_snapshot_archive_info.base_slot()),
-            accounts_db_config,
-            &io_setup,
+            storage_access,
+            io_setup,
         )?;
         (
             Some(unpack_dir),
@@ -1283,6 +1283,7 @@ fn create_snapshot_meta_files_for_unarchived_snapshot(unpack_dir: impl AsRef<Pat
 /// Perform the common tasks when unarchiving a snapshot.  Handles creating the temporary
 /// directories, untaring, reading the version file, and then returning those fields plus the
 /// rebuilt storage
+#[allow(clippy::too_many_arguments)]
 fn unarchive_snapshot(
     bank_snapshots_dir: impl AsRef<Path>,
     unpacked_snapshots_dir_prefix: &'static str,
@@ -1292,7 +1293,7 @@ fn unarchive_snapshot(
     archive_format: ArchiveFormat,
     next_append_vec_id: Arc<AtomicAccountsFileId>,
     base_slot: Option<Slot>,
-    accounts_db_config: &AccountsDbConfig,
+    storage_access: StorageAccess,
     io_setup: &IoSetupState,
 ) -> Result<UnarchivedSnapshot> {
     let unpack_dir = tempfile::Builder::new()
@@ -1331,7 +1332,7 @@ fn unarchive_snapshot(
                         num_rebuilder_threads,
                         next_append_vec_id,
                         SnapshotFrom::Archive,
-                        accounts_db_config.storage_access,
+                        storage_access,
                         None,
                     )?,
                     measure_name
