@@ -384,7 +384,7 @@ pub fn bls_pubkey_to_compressed_bytes(
     bincode::serialize(&key).unwrap().try_into().unwrap()
 }
 
-fn create_validator(
+pub(crate) fn create_validator(
     rent: &Rent,
     node_pubkey: Pubkey,
     node_lamports: u64,

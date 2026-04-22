@@ -1,10 +1,12 @@
 //! Information about stake and voter rewards based on stake state.
-
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     self::points::{
         CalculatedStakePoints, CalculationEnvironment, DelegatedVoteState,
         InflationPointCalculationEvent, SkippedReason, calculate_stake_points_and_credits,
     },
+    crate::inflation_rewards::points::AlpenglowStakeState,
     solana_instruction::error::InstructionError,
     solana_stake_interface::{
         error::StakeError,
@@ -34,6 +36,7 @@ pub(crate) fn redeem_rewards<'a>(
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     stake_account_lamports_for_trace: u64,
+    ag_stake_state: Option<AlpenglowStakeState>,
 ) -> Result<(u64, u64, Stake), InstructionError> {
     if let StakeStateV2::Stake(_meta, stake, _stake_flags) = stake_state {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
@@ -73,6 +76,7 @@ pub(crate) fn redeem_rewards<'a>(
             vote_state,
             calculation_environment,
             inflation_point_calc_tracer,
+            ag_stake_state,
         ) {
             Ok((stakers_reward, voters_reward, stake))
         } else {
@@ -89,6 +93,7 @@ fn redeem_stake_rewards<'a>(
     vote_state: DelegatedVoteState,
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
+    ag_stake_state: Option<AlpenglowStakeState>,
 ) -> Option<(u64, u64)> {
     if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
         inflation_point_calc_tracer(&InflationPointCalculationEvent::CreditsObserved(
@@ -102,6 +107,7 @@ fn redeem_stake_rewards<'a>(
         vote_state,
         calculation_environment,
         inflation_point_calc_tracer.as_ref(),
+        ag_stake_state,
     )
     .map(|calculated_stake_rewards| {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer {
@@ -132,6 +138,7 @@ fn calculate_stake_rewards<'a>(
     vote_state: DelegatedVoteState,
     calculation_environment: CalculationEnvironment<'a>,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
+    ag_stake_state: Option<AlpenglowStakeState>,
 ) -> Option<CalculatedStakeRewards> {
     let CalculationEnvironment {
         stake_history,
@@ -140,6 +147,7 @@ fn calculate_stake_rewards<'a>(
         rewarded_epoch,
         ..
     } = calculation_environment;
+
     // ensure to run to trigger (optional) inflation_point_calc_tracer
     let CalculatedStakePoints {
         points,
@@ -151,6 +159,7 @@ fn calculate_stake_rewards<'a>(
         stake_history,
         inflation_point_calc_tracer.as_ref(),
         new_rate_activation_epoch,
+        &ag_stake_state,
     );
 
     // Drive credits_observed forward unconditionally when rewards are disabled
@@ -189,12 +198,19 @@ fn calculate_stake_rewards<'a>(
         return None;
     }
 
-    // The final unwrap is safe, as points_value.points is guaranteed to be non zero above.
-    let rewards = points
-        .checked_mul(u128::from(point_value.rewards))
-        .expect("Rewards intermediate calculation should fit within u128")
-        .checked_div(point_value.points)
-        .unwrap();
+    let rewards = if ag_stake_state.is_some() {
+        // In alpenglow, `points` represents the actual reward that this `vote_state` earned.
+        points
+    } else {
+        // In tower, `points` still needs to be scaled by `point_value` to calculate this
+        // `vote_state` earned.
+        // The final unwrap is safe, as points_value.points is guaranteed to be non zero above.
+        points
+            .checked_mul(u128::from(point_value.rewards))
+            .expect("Rewards intermediate calculation should fit within u128")
+            .checked_div(point_value.points)
+            .unwrap()
+    };
 
     let rewards = u64::try_from(rewards).expect("Rewards should fit within u64");
 
@@ -238,6 +254,7 @@ fn calculate_stake_rewards<'a>(
 ///   indicate with false for was_split
 ///
 /// DEVELOPER NOTE:  This function used to be a method on VoteState, but was moved here
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn commission_split(commission_bps: u16, on: u64) -> (u64, u64, bool) {
     const MAX_BPS: u16 = 10_000;
     const MAX_BPS_U128: u128 = MAX_BPS as u128;
@@ -329,6 +346,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
 
@@ -354,6 +372,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
 
@@ -393,6 +412,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
 
@@ -422,6 +442,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
 
@@ -448,6 +469,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
 
@@ -477,6 +499,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
 
@@ -504,6 +527,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
 
@@ -533,6 +557,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
 
@@ -556,6 +581,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
         vote_state.set_inflation_rewards_commission_bps(9900);
@@ -576,6 +602,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
 
@@ -603,6 +630,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
 
@@ -630,6 +658,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
 
@@ -644,7 +673,8 @@ mod tests {
                 DelegatedVoteState::from(vote_state.as_ref_v4()),
                 &StakeHistory::default(),
                 null_tracer(),
-                None
+                None,
+                &None
             )
         );
 
@@ -663,7 +693,8 @@ mod tests {
                 DelegatedVoteState::from(vote_state.as_ref_v4()),
                 &StakeHistory::default(),
                 null_tracer(),
-                None
+                None,
+                &None
             )
         );
         // this is new behavior 2; don't hint when credits both from stake and vote are identical
@@ -679,7 +710,8 @@ mod tests {
                 DelegatedVoteState::from(vote_state.as_ref_v4()),
                 &StakeHistory::default(),
                 null_tracer(),
-                None
+                None,
+                &None,
             )
         );
 
@@ -708,6 +740,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
 
@@ -736,6 +769,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
     }
@@ -765,6 +799,7 @@ mod tests {
                 commission_rate_in_basis_points,
             },
             null_tracer(),
+            None,
         );
     }
 
@@ -802,6 +837,7 @@ mod tests {
                     commission_rate_in_basis_points,
                 },
                 null_tracer(),
+                None,
             )
         );
     }

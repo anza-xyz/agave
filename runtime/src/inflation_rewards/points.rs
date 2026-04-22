@@ -1,6 +1,8 @@
 //! Information about points calculation based on stake state.
 
 use {
+    crate::epoch_stakes::VersionedEpochStakes,
+    log::error,
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
@@ -9,7 +11,7 @@ use {
         state::{Delegation, Stake, StakeStateV2},
     },
     solana_vote::vote_state_view::VoteStateView,
-    std::cmp::Ordering,
+    std::{cmp::Ordering, collections::HashMap},
 };
 
 /// captures a rewards round as lamports to be awarded
@@ -69,6 +71,7 @@ pub enum SkippedReason {
     ZeroCreditsAndReturnZero,
     ZeroCreditsAndReturnCurrent,
     ZeroCreditsAndReturnRewound,
+    GetTotalStakeFailed(GetTotalStakeError),
 }
 
 impl From<SkippedReason> for InflationPointCalculationEvent {
@@ -125,8 +128,59 @@ fn calculate_stake_points(
         stake_history,
         inflation_point_calc_tracer,
         new_rate_activation_epoch,
+        &None,
     )
     .points
+}
+
+/// State needed to compute rewards for alpenglow.
+#[derive(Debug)]
+pub(crate) struct AlpenglowStakeState<'a> {
+    /// `epoch_stakes` from the current bank.
+    pub(crate) epoch_stakes: &'a HashMap<Epoch, VersionedEpochStakes>,
+}
+
+/// Different errors possible in `AlpenglowStakeState::get_total_stake()`.
+#[derive(Debug)]
+pub enum GetTotalStakeError {
+    NoEpochStakes {
+        epoch: Epoch,
+    },
+    RankForVotePubkeyNotFound {
+        epoch: Epoch,
+        vote_pubkey: Pubkey,
+    },
+    EntryForRankNotFound {
+        epoch: Epoch,
+        vote_pubkey: Pubkey,
+        rank: u16,
+    },
+}
+
+impl<'a> AlpenglowStakeState<'a> {
+    /// Returns the total stake delegated to `self.vote_pubkey` in the given epoch.
+    fn get_total_stake(
+        &self,
+        epoch: Epoch,
+        vote_pubkey: Pubkey,
+    ) -> Result<u64, GetTotalStakeError> {
+        let rank_map = self
+            .epoch_stakes
+            .get(&epoch)
+            .ok_or(GetTotalStakeError::NoEpochStakes { epoch })?
+            .bls_pubkey_to_rank_map();
+        let rank = *rank_map
+            .get_rank_for_vote_pubkey(&vote_pubkey)
+            .ok_or(GetTotalStakeError::RankForVotePubkeyNotFound { epoch, vote_pubkey })?;
+        let entry = rank_map.get_pubkey_stake_entry(rank as usize).ok_or(
+            GetTotalStakeError::EntryForRankNotFound {
+                epoch,
+                vote_pubkey,
+                rank,
+            },
+        )?;
+        Ok(entry.stake)
+    }
 }
 
 /// for a given stake and vote_state, calculate how many
@@ -138,6 +192,7 @@ pub(crate) fn calculate_stake_points_and_credits(
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
+    ag_stake_state: &Option<AlpenglowStakeState>,
 ) -> CalculatedStakePoints {
     let credits_in_stake = stake.credits_observed;
     let credits_in_vote = vote_state.credits;
@@ -215,7 +270,55 @@ pub(crate) fn calculate_stake_points_and_credits(
         new_credits_observed = new_credits_observed.max(final_epoch_credits);
 
         // finally calculate points for this epoch
-        let earned_points = stake_amount * earned_credits;
+        let earned_points = match &ag_stake_state {
+            None => {
+                // in tower, the stake has to be included to calculate the total points this `vote_state` earned.
+                stake_amount * earned_credits
+            }
+            Some(state) => {
+                // in alpenglow, points represent the total reward that this `vote_state` has earned.
+                // `earned_credits` has already taken the stake into account.  It still has to be
+                // scaled by the stake that this staker delegated to the `vote_state`.
+                if earned_credits == 0 {
+                    // If earned_credits is 0, no need to look up total stake which can potentially fail.
+                    earned_credits
+                } else {
+                    // the earned_credits needs to be scaled by the portion of this staker's delegation.
+                    let total_stake =
+                        match state.get_total_stake(epoch, stake.delegation.voter_pubkey) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                // assuming that we only do the calculations for the latest epoch, this
+                                // failure should be unlikely.
+                                let message = format!(
+                                    "get_total_stake(epoch={epoch}, voter={}) failed with {e:?}. \
+                                     Rewards payout will be skipped",
+                                    stake.delegation.voter_pubkey
+                                );
+                                error!("{message}");
+                                datapoint_error!(
+                                    "PER-total-stake-calculation-failure",
+                                    ("error", message, String)
+                                );
+                                if let Some(inflation_point_calc_tracer) =
+                                    inflation_point_calc_tracer.as_ref()
+                                {
+                                    inflation_point_calc_tracer(
+                                        &SkippedReason::GetTotalStakeFailed(e).into(),
+                                    );
+                                }
+                                return CalculatedStakePoints {
+                                    points: 0,
+                                    new_credits_observed,
+                                    force_credits_update_with_skipped_reward: true,
+                                };
+                            }
+                        };
+                    earned_credits * stake_amount / total_stake as u128
+                }
+            }
+        };
+
         points += earned_points;
 
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {

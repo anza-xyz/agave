@@ -8,7 +8,7 @@ use {
     solana_vote::vote_account::VoteAccount,
     solana_vote_interface::state::{LandedVote, Lockout},
     solana_vote_program::vote_state::handler::VoteStateHandler,
-    std::collections::VecDeque,
+    std::collections::{HashSet, VecDeque},
     thiserror::Error,
 };
 
@@ -61,6 +61,11 @@ pub(super) fn calculate_and_pay_voting_reward_and_update_vote_state(
     let Some((reward_slot, validators_to_reward)) = reward_slot_and_validators else {
         return Ok(());
     };
+
+    debug_assert_eq!(
+        validators_to_reward.len(),
+        validators_to_reward.iter().collect::<HashSet<_>>().len()
+    );
 
     let current_slot = bank.slot();
     let (reward_slot_accounts, reward_slot_total_stake) = {
@@ -280,22 +285,30 @@ mod tests {
     use {
         super::*,
         crate::{
+            bank::VAT_TO_BURN_PER_EPOCH,
             bank_forks::BankForks,
             genesis_utils::{
-                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
+                ValidatorVoteKeypairs, activate_all_features_alpenglow,
+                create_genesis_config_with_alpenglow_vote_accounts,
+                create_genesis_config_with_leader_ex, create_validator,
             },
+            inflation_rewards::commission_split,
+            stake_utils,
             test_utils::new_rand_vote_account,
             validated_block_finalization::ValidatedBlockFinalizationCert,
         },
+        agave_feature_set::FeatureSet,
         agave_votor_messages::{
             consensus_message::{Certificate, CertificateType},
             reward_certificate::NUM_SLOTS_FOR_REWARD,
         },
         bitvec::prelude::*,
         rand::seq::IndexedRandom,
-        solana_account::ReadableAccount,
+        solana_account::{Account, ReadableAccount, WritableAccount},
         solana_bls_signatures::Signature as BLSSignature,
+        solana_cluster_type::ClusterType,
         solana_epoch_schedule::EpochSchedule,
+        solana_fee_calculator::FeeRateGovernor,
         solana_genesis_config::GenesisConfig,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -304,14 +317,24 @@ mod tests {
         solana_rent::Rent,
         solana_signer::Signer,
         solana_signer_store::encode_base2,
-        solana_vote_interface::state::VoteStateVersions,
+        solana_stake_interface::state::StakeStateV2,
+        solana_vote_interface::state::{VoteStateV4, VoteStateVersions},
+        std::{
+            collections::HashMap,
+            sync::{Arc, RwLock},
+        },
+        test_case::test_matrix,
     };
 
-    fn get_vote_state_handler(bank: &Bank, vote_pubkey: &Pubkey) -> VoteStateHandler {
+    fn vote_state_from_account(account: &AccountSharedData) -> VoteStateHandler {
+        let versions = bincode::deserialize(account.data()).unwrap();
+        VoteStateHandler::try_new_from_vote_state_versions(versions).unwrap()
+    }
+
+    fn vote_state_from_bank(bank: &Bank, vote_pubkey: &Pubkey) -> VoteStateHandler {
         let vote_accounts = bank.vote_accounts();
         let (_, vote_account) = vote_accounts.get(vote_pubkey).unwrap();
-        let versions = bincode::deserialize(vote_account.account().data()).unwrap();
-        VoteStateHandler::try_new_from_vote_state_versions(versions).unwrap()
+        vote_state_from_account(vote_account.account())
     }
 
     fn build_fast_finalization_cert(
@@ -377,12 +400,8 @@ mod tests {
         let reward = 3453423;
         let account_shared_data =
             update_vote_account(epoch, 0, &account, Pubkey::default(), reward, None).unwrap();
-        let vote_state_versions: VoteStateVersions =
-            bincode::deserialize(&account_shared_data.data_clone()).unwrap();
-        let VoteStateVersions::V4(vote_state) = vote_state_versions else {
-            panic!("unexpected state version: {vote_state_versions:?}");
-        };
-        assert_eq!(reward, vote_state.epoch_credits.last().unwrap().1);
+        let vote_state = vote_state_from_account(&account_shared_data);
+        assert_eq!(reward, vote_state.epoch_credits().last().unwrap().1);
     }
 
     fn calc_reward_for_test(
@@ -453,13 +472,9 @@ mod tests {
             .iter()
             .map(|validator| {
                 let (_, vote_account) = vote_accounts.get(validator).unwrap();
-                let data = vote_account.account().data();
-                let vote_state_versions = bincode::deserialize(data).unwrap();
-                let VoteStateVersions::V4(vote_state) = vote_state_versions else {
-                    panic!();
-                };
-                assert_eq!(vote_state.epoch_credits.len(), 1);
-                let got_reward = vote_state.epoch_credits[0].1;
+                let vote_state = vote_state_from_account(vote_account.account());
+                assert_eq!(vote_state.epoch_credits().len(), 1);
+                let got_reward = vote_state.epoch_credits()[0].1;
                 let total_stake = bank
                     .epoch_stakes_from_slot(reward_slot)
                     .unwrap()
@@ -532,7 +547,7 @@ mod tests {
         )
         .unwrap();
 
-        let handle = get_vote_state_handler(&bank, &target_vote_pubkey);
+        let handle = vote_state_from_bank(&bank, &target_vote_pubkey);
         assert_eq!(handle.root_slot(), Some(final_cert.slot()));
         assert_eq!(handle.votes().len(), 1);
         assert_eq!(
@@ -596,7 +611,7 @@ mod tests {
         )
         .unwrap();
 
-        let vote_state = get_vote_state_handler(&bank, &target_vote_pubkey);
+        let vote_state = vote_state_from_bank(&bank, &target_vote_pubkey);
         assert_eq!(vote_state.root_slot(), None);
         assert_eq!(vote_state.votes().len(), 1);
         assert_eq!(
@@ -652,16 +667,639 @@ mod tests {
         .unwrap();
         let vote_accounts = bank.vote_accounts();
         for (add, (_, vote_account)) in vote_accounts.iter() {
-            let data = vote_account.account().data();
-            let vote_state_versions = bincode::deserialize(data).unwrap();
-            let VoteStateVersions::V4(vote_state) = vote_state_versions else {
+            let vote_state = vote_state_from_account(vote_account.account());
+            if add == &vote_pubkey {
+                assert!(!vote_state.epoch_credits().is_empty());
+            } else {
+                assert!(vote_state.epoch_credits().is_empty());
+            }
+        }
+    }
+
+    fn set_commission(
+        genesis_config: &mut GenesisConfig,
+        validators: &[ValidatorVoteKeypairs],
+        commission_bps: u16,
+    ) {
+        for validator in validators {
+            let vote_pubkey = validator.vote_keypair.pubkey();
+            let account = genesis_config.accounts.get_mut(&vote_pubkey).unwrap();
+            let vote_state_versions = bincode::deserialize(&account.data).unwrap();
+            let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
                 panic!();
             };
-            if add == &vote_pubkey {
-                assert!(!vote_state.epoch_credits.is_empty());
-            } else {
-                assert!(vote_state.epoch_credits.is_empty());
+            vote_state.inflation_rewards_commission_bps = commission_bps;
+            VoteStateV4::serialize(
+                &VoteStateVersions::V4(vote_state),
+                account.data_as_mut_slice(),
+            )
+            .unwrap();
+        }
+    }
+
+    #[derive(Debug)]
+    struct Staker {
+        lamports: u64,
+        expected_rewards: u64,
+    }
+
+    impl Staker {
+        /// Creates a new `Staker`.
+        ///
+        /// Returns a `Staker` and the share of the rewards for the voter.
+        fn new(
+            rent: &Rent,
+            bank: &Bank,
+            commission_bps: u16,
+            pubkey: Pubkey,
+            validator_reward: u64,
+            validator_stake: u64,
+        ) -> (Self, u64) {
+            let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
+            let lamports = bank.get_account(&pubkey).unwrap().lamports();
+            if lamports <= LAMPORTS_PER_SOL + rent_exempt_reserve {
+                return (
+                    Self {
+                        lamports,
+                        expected_rewards: 0,
+                    },
+                    0,
+                );
             }
+            let stake = lamports - rent_exempt_reserve;
+            let stake_weighted_reward = validator_reward * stake / validator_stake;
+            let (voter_reward, staker_reward, is_split) =
+                commission_split(commission_bps, stake_weighted_reward);
+            assert!(is_split);
+            (
+                Self {
+                    lamports,
+                    expected_rewards: staker_reward,
+                },
+                voter_reward,
+            )
+        }
+    }
+
+    #[derive(Debug)]
+    struct StateEntry {
+        voter_lamports: u64,
+        voter_expected_reward: u64,
+        stakers: HashMap<Pubkey, Staker>,
+    }
+
+    impl StateEntry {
+        /// Creates a new `StateEntry` for when the voter is not the block leader.
+        ///
+        /// Returns a `StateEntry` and the share of the rewards for the block leader.
+        fn new_not_leader(
+            bank: &Bank,
+            reward_epoch: Epoch,
+            voter_pubkey: Pubkey,
+            staker_pubkeys: &[Pubkey],
+            rent: &Rent,
+            commission_bps: u16,
+            num_reward_slots: u64,
+        ) -> (Self, u64) {
+            let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
+            let voter_lamports = bank.get_account(&voter_pubkey).unwrap().lamports();
+            let validator_stake = staker_pubkeys
+                .iter()
+                .map(|pubkey| {
+                    let lamports = bank.get_account(pubkey).unwrap().lamports();
+                    lamports - rent_exempt_reserve
+                })
+                .sum::<u64>();
+
+            let epoch_state = EpochInflationAccountState::new_from_bank(bank)
+                .unwrap()
+                .get_epoch_state(bank.epoch())
+                .unwrap();
+            let total_stake = bank.epoch_stakes(reward_epoch).unwrap().total_stake();
+            let (validator_reward, leader_reward) =
+                calculate_reward(&epoch_state, total_stake, validator_stake);
+            let vote_rewards = validator_reward * num_reward_slots;
+            let leader_reward = leader_reward * num_reward_slots;
+
+            let mut voter_expected_reward = 0;
+            let mut stakers = HashMap::new();
+            for staker_pubkey in staker_pubkeys {
+                let (staker, voter_reward) = Staker::new(
+                    rent,
+                    bank,
+                    commission_bps,
+                    *staker_pubkey,
+                    vote_rewards,
+                    validator_stake,
+                );
+                voter_expected_reward += voter_reward;
+                stakers.insert(*staker_pubkey, staker);
+            }
+
+            (
+                Self {
+                    voter_lamports,
+                    stakers,
+                    voter_expected_reward,
+                },
+                leader_reward,
+            )
+        }
+
+        /// Creates a `StateEntry` for when the validator is the leader.
+        fn new_leader(
+            bank: &Bank,
+            reward_epoch: Epoch,
+            voter_pubkey: Pubkey,
+            staker_pubkeys: &[Pubkey],
+            rent: &Rent,
+            commission_bps: u16,
+            num_reward_slots: u64,
+            add_leader_reward: u64,
+        ) -> Self {
+            let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
+            let voter_lamports = bank.get_account(&voter_pubkey).unwrap().lamports();
+            let validator_stake = staker_pubkeys
+                .iter()
+                .map(|pubkey| {
+                    let lamports = bank.get_account(pubkey).unwrap().lamports();
+                    lamports - rent_exempt_reserve
+                })
+                .sum::<u64>();
+
+            let epoch_state = EpochInflationAccountState::new_from_bank(bank)
+                .unwrap()
+                .get_epoch_state(bank.epoch())
+                .unwrap();
+            let total_stake = bank.epoch_stakes(reward_epoch).unwrap().total_stake();
+            let (validator_reward, leader_reward) =
+                calculate_reward(&epoch_state, total_stake, validator_stake);
+            let vote_rewards =
+                (validator_reward + leader_reward) * num_reward_slots + add_leader_reward;
+
+            let mut voter_expected_reward = 0;
+            let mut stakers = HashMap::new();
+            for staker_pubkey in staker_pubkeys {
+                let (staker, voter_reward) = Staker::new(
+                    rent,
+                    bank,
+                    commission_bps,
+                    *staker_pubkey,
+                    vote_rewards,
+                    validator_stake,
+                );
+                voter_expected_reward += voter_reward;
+                stakers.insert(*staker_pubkey, staker);
+            }
+
+            Self {
+                voter_lamports,
+                stakers,
+                voter_expected_reward,
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct State {
+        entries: HashMap<Pubkey, StateEntry>,
+    }
+
+    impl State {
+        fn new(
+            bank: &Bank,
+            reward_epoch: Epoch,
+            staker_pubkeys: &HashMap<Pubkey, Vec<Pubkey>>,
+            rent: &Rent,
+            leader: Pubkey,
+            commission_bps: u16,
+            num_reward_slots: u64,
+        ) -> Self {
+            let mut entries = HashMap::new();
+
+            let mut add_leader_reward = 0;
+            for (voter_pubkey, stakers) in staker_pubkeys {
+                if voter_pubkey == &leader {
+                    continue;
+                }
+                let (state_entry, leader_reward) = StateEntry::new_not_leader(
+                    bank,
+                    reward_epoch,
+                    *voter_pubkey,
+                    stakers,
+                    rent,
+                    commission_bps,
+                    num_reward_slots,
+                );
+                add_leader_reward += leader_reward;
+                entries.insert(*voter_pubkey, state_entry);
+            }
+
+            if let Some(stakers) = staker_pubkeys.get(&leader) {
+                let state_entry = StateEntry::new_leader(
+                    bank,
+                    reward_epoch,
+                    leader,
+                    stakers,
+                    rent,
+                    commission_bps,
+                    num_reward_slots,
+                    add_leader_reward,
+                );
+                entries.insert(leader, state_entry);
+            }
+
+            Self { entries }
+        }
+    }
+
+    #[derive(Debug)]
+    struct RewardState {
+        vote_pubkey: Pubkey,
+        stake_prev_lamports: u64,
+        vote_prev_lamports: u64,
+        expected_reward: u64,
+    }
+
+    impl RewardState {
+        fn new(keypair: &ValidatorVoteKeypairs, bank: &Bank) -> Self {
+            let stake_pubkey = keypair.stake_keypair.pubkey();
+            let vote_pubkey = keypair.vote_keypair.pubkey();
+
+            let stake_account = bank.get_account(&stake_pubkey).unwrap();
+            let vote_account = bank.get_account(&vote_pubkey).unwrap();
+
+            let stake_prev_lamports = stake_account.lamports();
+            let vote_prev_lamports = vote_account.lamports();
+
+            let vote_account = bank.get_account(&vote_pubkey).unwrap();
+            let vote_state = vote_state_from_account(&vote_account);
+            assert_eq!(vote_state.epoch_credits().len(), 1);
+            let (epoch, final_credit, initial_credit) = vote_state.epoch_credits()[0];
+
+            assert_eq!(epoch, bank.epoch());
+            assert_eq!(initial_credit, 0);
+            let expected_reward = final_credit;
+
+            Self {
+                vote_pubkey,
+                stake_prev_lamports,
+                vote_prev_lamports,
+                expected_reward,
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct ValidatorRewardState {
+        prev_lamports: u64,
+        expected_rewards: u64,
+    }
+
+    fn initial_state(
+        validator_keypairs: &[ValidatorVoteKeypairs],
+        commission_bps: u16,
+    ) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
+        let per_validator_stake = LAMPORTS_PER_SOL;
+        let mut genesis_config_info = create_genesis_config_with_alpenglow_vote_accounts(
+            1_000_000_000,
+            validator_keypairs,
+            vec![per_validator_stake; validator_keypairs.len()],
+        );
+        genesis_config_info.genesis_config.epoch_schedule = EpochSchedule::without_warmup();
+        genesis_config_info.genesis_config.rent = Rent::default();
+        set_commission(
+            &mut genesis_config_info.genesis_config,
+            validator_keypairs,
+            commission_bps,
+        );
+
+        let (bank_epoch0, bank_forks) =
+            Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config);
+        assert_eq!(bank_epoch0.epoch(), 0);
+
+        let epoch1_slot = bank_epoch0.epoch_schedule.get_first_slot_in_epoch(1);
+        let bank_epoch1 = Arc::new(Bank::new_from_parent(
+            bank_epoch0,
+            SlotLeader::new_unique(),
+            epoch1_slot,
+        ));
+        assert_eq!(bank_epoch1.epoch(), 1);
+        (bank_epoch1, bank_forks)
+    }
+
+    fn reward_validators(
+        bank: Arc<Bank>,
+        validators: &[ValidatorVoteKeypairs],
+        num_reward_slots: u64,
+    ) -> (Arc<Bank>, HashMap<Pubkey, RewardState>) {
+        let validators_to_reward = validators
+            .iter()
+            .map(|k| k.vote_keypair.pubkey())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        let mut looping_bank = bank;
+        for _ in 0..num_reward_slots {
+            calculate_and_pay_voting_reward_and_update_vote_state(
+                &looping_bank,
+                Some((looping_bank.slot() - 100, validators_to_reward.clone())),
+                None,
+            )
+            .unwrap();
+
+            let leader = *looping_bank.leader();
+            let slot = looping_bank.slot() + 1;
+            looping_bank = Arc::new(Bank::new_from_parent(looping_bank, leader, slot));
+        }
+
+        let map = validators
+            .iter()
+            .map(|keypair| {
+                let stake_pubkey = keypair.stake_keypair.pubkey();
+                let reward_state = RewardState::new(keypair, &looping_bank);
+                (stake_pubkey, reward_state)
+            })
+            .collect::<HashMap<_, _>>();
+        (looping_bank, map)
+    }
+
+    fn test_vote_reward_payout_impl(
+        validators: &[ValidatorVoteKeypairs],
+        leader: SlotLeader,
+        commission_bps: u16,
+        initial_bank: Option<(Arc<Bank>, Arc<RwLock<BankForks>>)>,
+        num_reward_slots: u64,
+    ) -> (Arc<Bank>, HashMap<Pubkey, RewardState>) {
+        let (initial_bank, _bank_forks) =
+            initial_bank.unwrap_or(initial_state(validators, commission_bps));
+
+        let reward_epoch = initial_bank.epoch() + 1;
+        let reward_epoch_slot = initial_bank
+            .epoch_schedule
+            .get_first_slot_in_epoch(reward_epoch);
+        let reward_bank = Arc::new(Bank::new_from_parent(
+            initial_bank,
+            leader,
+            reward_epoch_slot,
+        ));
+        assert_eq!(reward_bank.epoch(), reward_epoch);
+
+        let (reward_bank, rewarded_validators) =
+            reward_validators(reward_bank, validators, num_reward_slots);
+
+        let payout_epoch = reward_bank.epoch() + 1;
+        let payout_epoch_slot = reward_bank
+            .epoch_schedule
+            .get_first_slot_in_epoch(payout_epoch);
+        let payout_bank = Bank::new_from_parent(reward_bank, leader, payout_epoch_slot);
+        assert_eq!(payout_bank.epoch(), payout_epoch);
+
+        // Need to progress banks a few times for the rewards to be paid.
+        let mut prev_bank = Arc::new(payout_bank);
+        for i in 0..10 {
+            let leader = *prev_bank.leader();
+            let slot = prev_bank.slot() + 1 + i;
+            prev_bank = Arc::new(Bank::new_from_parent(prev_bank, leader, slot));
+        }
+
+        (prev_bank, rewarded_validators)
+    }
+
+    #[test_matrix([true, false], [1_000, 5_000])]
+    fn test_vote_reward_payout(pay_leader: bool, commission_bps: u16) {
+        let num_validators = 3;
+        let num_reward_slots = 10;
+        let validators = (0..num_validators)
+            .map(|_| ValidatorVoteKeypairs::new_rand())
+            .collect::<Vec<_>>();
+        let leader = if pay_leader {
+            let vote_pubkey = validators[0].vote_keypair.pubkey();
+            let node_pubkey = validators[0].node_keypair.pubkey();
+            SlotLeader {
+                id: node_pubkey,
+                vote_address: vote_pubkey,
+            }
+        } else {
+            SlotLeader::new_unique()
+        };
+        let (final_bank, rewarded_validators) = test_vote_reward_payout_impl(
+            &validators,
+            leader,
+            commission_bps,
+            None,
+            num_reward_slots,
+        );
+        let mut voter_rewards = HashMap::new();
+
+        for (stake_pubkey, reward_state) in rewarded_validators {
+            let stake_account = final_bank.get_account(&stake_pubkey).unwrap();
+            let stake_cur = stake_account.lamports();
+
+            let (vote_expected_reward, stake_expected_reward, is_split) =
+                commission_split(commission_bps, reward_state.expected_reward);
+
+            let validator_reward_state =
+                voter_rewards
+                    .entry(reward_state.vote_pubkey)
+                    .or_insert(ValidatorRewardState {
+                        prev_lamports: reward_state.vote_prev_lamports,
+                        expected_rewards: 0,
+                    });
+            validator_reward_state.expected_rewards += vote_expected_reward;
+
+            assert!(is_split);
+            assert_ne!(
+                stake_expected_reward, 0,
+                "stake_expected_reward {stake_expected_reward} should not be 0"
+            );
+            assert_ne!(
+                vote_expected_reward, 0,
+                "vote_expected_reward {vote_expected_reward} should not be 0"
+            );
+            assert_eq!(
+                stake_cur - reward_state.stake_prev_lamports,
+                stake_expected_reward
+            );
+
+            // Due to rounding issues, off by 1 errors are possible.
+            let total_reward = stake_expected_reward + vote_expected_reward;
+            assert!(
+                total_reward.max(reward_state.expected_reward)
+                    - total_reward.min(reward_state.expected_reward)
+                    <= 1
+            );
+        }
+
+        for (vote_pubkey, state) in voter_rewards {
+            let vote_account = final_bank.get_account(&vote_pubkey).unwrap();
+            let vote_cur = vote_account.lamports();
+            assert_eq!(vote_cur - state.prev_lamports, state.expected_rewards);
+        }
+    }
+
+    #[test_matrix([true, false], [1_000, 5_000])]
+    fn test_multiple_delegators(pay_leader: bool, commission_bps: u16) {
+        let num_validators = 2;
+        let num_reward_slots = 10;
+        let lamports = LAMPORTS_PER_SOL * 20;
+        let mint_keypair = Keypair::new();
+        let validators = (0..num_validators)
+            .map(|_| ValidatorVoteKeypairs::new_rand())
+            .collect::<Vec<_>>();
+        let leader = if pay_leader {
+            let vote_pubkey = validators[0].vote_keypair.pubkey();
+            let node_pubkey = validators[0].node_keypair.pubkey();
+            SlotLeader {
+                id: node_pubkey,
+                vote_address: vote_pubkey,
+            }
+        } else {
+            SlotLeader::new_unique()
+        };
+        let mut genesis_config = create_genesis_config_with_leader_ex(
+            lamports,
+            &mint_keypair.pubkey(),
+            &validators[0].node_keypair.pubkey(),
+            &validators[0].vote_keypair.pubkey(),
+            &validators[0].stake_keypair.pubkey(),
+            Some(validators[0].bls_keypair.public.to_bytes_compressed()),
+            lamports,
+            lamports,
+            FeeRateGovernor::new(0, 0),
+            Rent::default(),
+            ClusterType::Development,
+            &FeatureSet::all_enabled(),
+            vec![],
+        );
+        genesis_config.epoch_schedule = EpochSchedule::without_warmup();
+        activate_all_features_alpenglow(&mut genesis_config);
+        for (ind, keypair) in validators.iter().enumerate().skip(1) {
+            let node_pubkey = keypair.node_keypair.pubkey();
+            let vote_pubkey = keypair.vote_keypair.pubkey();
+            let stake_pubkey = keypair.stake_keypair.pubkey();
+            let bls_pubkey = Some(keypair.bls_keypair.public.to_bytes_compressed());
+            let lamports = lamports + ind as u64 * LAMPORTS_PER_SOL;
+            let accounts = create_validator(
+                &genesis_config.rent,
+                node_pubkey,
+                lamports,
+                vote_pubkey,
+                lamports,
+                stake_pubkey,
+                lamports,
+                bls_pubkey,
+            )
+            .into_iter()
+            .map(|(pubkey, account)| (pubkey, Account::from(account)));
+            genesis_config.accounts.extend(accounts);
+        }
+        set_commission(&mut genesis_config, &validators, commission_bps);
+
+        let vote_account = genesis_config
+            .accounts
+            .get(&validators[0].vote_keypair.pubkey())
+            .unwrap()
+            .clone()
+            .into();
+
+        let staker_keypairs = (0..5).map(|_| Keypair::new()).collect::<Vec<_>>();
+        for (ind, keypair) in staker_keypairs.iter().enumerate() {
+            let stake_pubkey = keypair.pubkey();
+            let account = Account::from(stake_utils::create_stake_account(
+                &stake_pubkey,
+                &validators[0].vote_keypair.pubkey(),
+                &vote_account,
+                &genesis_config.rent,
+                lamports + (ind as u64 + 1) * lamports,
+            ));
+            genesis_config.accounts.insert(stake_pubkey, account);
+        }
+
+        let (bank_epoch0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        assert_eq!(bank_epoch0.epoch(), 0);
+
+        let epoch1_slot = bank_epoch0.epoch_schedule.get_first_slot_in_epoch(1);
+        let initial_bank = Arc::new(Bank::new_from_parent(
+            bank_epoch0,
+            SlotLeader::new_unique(),
+            epoch1_slot,
+        ));
+        assert_eq!(initial_bank.epoch(), 1);
+
+        let staker_pubkeys = {
+            let mut staker_pubkeys = validators
+                .iter()
+                .map(|keypair| {
+                    (
+                        keypair.vote_keypair.pubkey(),
+                        vec![keypair.stake_keypair.pubkey()],
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+            for staker_keypair in &staker_keypairs {
+                let staker_pubkey = staker_keypair.pubkey();
+                staker_pubkeys
+                    .get_mut(&validators[0].vote_keypair.pubkey())
+                    .unwrap()
+                    .push(staker_pubkey);
+            }
+            staker_pubkeys
+        };
+
+        let reward_epoch = initial_bank.epoch() + 1;
+
+        let prev_state = State::new(
+            &initial_bank,
+            reward_epoch,
+            &staker_pubkeys,
+            &genesis_config.rent,
+            leader.vote_address,
+            commission_bps,
+            num_reward_slots,
+        );
+
+        let (final_bank, _) = test_vote_reward_payout_impl(
+            &validators,
+            leader,
+            commission_bps,
+            Some((initial_bank, bank_forks)),
+            num_reward_slots,
+        );
+
+        let final_state = State::new(
+            &final_bank,
+            reward_epoch,
+            &staker_pubkeys,
+            &genesis_config.rent,
+            leader.vote_address,
+            commission_bps,
+            num_reward_slots,
+        );
+
+        for (vote_pubkey, prev_entry) in &prev_state.entries {
+            let final_entry = final_state.entries.get(vote_pubkey).unwrap();
+            for (staker_pubkey, prev_staker) in &prev_entry.stakers {
+                let final_staker = final_entry.stakers.get(staker_pubkey).unwrap();
+                let diff = final_staker.lamports - prev_staker.lamports;
+                assert_eq!(
+                    diff, prev_staker.expected_rewards,
+                    "before={} after={} diff={diff} expected={}",
+                    prev_staker.lamports, final_staker.lamports, prev_staker.expected_rewards
+                );
+            }
+
+            let voter_diff =
+                final_entry.voter_lamports + VAT_TO_BURN_PER_EPOCH - prev_entry.voter_lamports;
+            // Due to rounding issues, off by 1 errors are possible.
+            assert!(
+                voter_diff.abs_diff(prev_entry.voter_expected_reward) <= 1,
+                "final_lamports={} prev_lamports={} diff={voter_diff} expected={}",
+                final_entry.voter_lamports,
+                prev_entry.voter_lamports,
+                prev_entry.voter_expected_reward
+            );
         }
     }
 }

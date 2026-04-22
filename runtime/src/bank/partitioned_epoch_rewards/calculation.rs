@@ -9,7 +9,10 @@ use {
     crate::{
         bank::{RewardCalcTracer, RewardCalculationEvent, RewardsMetrics, null_tracer},
         inflation_rewards::{
-            points::{CalculationEnvironment, DelegatedVoteState, PointValue, calculate_points},
+            points::{
+                AlpenglowStakeState, CalculationEnvironment, DelegatedVoteState, PointValue,
+                calculate_points,
+            },
             redeem_rewards,
         },
         reward_info::RewardInfo,
@@ -35,6 +38,16 @@ use {
         sync::{Arc, atomic::Ordering::Relaxed},
     },
 };
+
+/// Returned from `Bank::is_alpenglow_active_in_epoch()`.
+enum AlpenglowEpochStatus {
+    /// This is a full tower epoch
+    Tower,
+    /// The epoch started in tower and then switched to alpenglow
+    MigrationEpoch,
+    /// This is a full alpenglow epoch
+    FullAlpenglow,
+}
 
 #[derive(Debug)]
 struct DelegationRewards {
@@ -444,6 +457,7 @@ impl Bank {
         new_rate_activation_epoch: Option<Epoch>,
         delay_commission_updates: bool,
         commission_rate_in_basis_points: bool,
+        ag_activation_status: &AlpenglowEpochStatus,
     ) -> Option<DelegationRewards> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
@@ -491,6 +505,15 @@ impl Bank {
             vote_state.commission() as u16 * 100
         };
 
+        let ag_stake_state = match ag_activation_status {
+            AlpenglowEpochStatus::Tower => None,
+            // TODO: handle rewards migration epoch.  Currently it is treated as tower.
+            AlpenglowEpochStatus::MigrationEpoch => None,
+            AlpenglowEpochStatus::FullAlpenglow => Some(AlpenglowStakeState {
+                epoch_stakes: &self.epoch_stakes,
+            }),
+        };
+
         match redeem_rewards(
             stake_state,
             commission_bps,
@@ -504,6 +527,7 @@ impl Bank {
             },
             reward_calc_tracer,
             stake_account.lamports(),
+            ag_stake_state,
         ) {
             Ok((stake_reward, commission_lamports, stake)) => {
                 let stake_reward = PartitionedStakeReward {
@@ -531,6 +555,22 @@ impl Bank {
         }
     }
 
+    /// Returns the status of alpenglow activation in `epoch`.
+    fn is_alpenglow_active_in_epoch(&self, epoch: Epoch) -> AlpenglowEpochStatus {
+        let Some(genesis_cert) = self.get_alpenglow_genesis_certificate() else {
+            return AlpenglowEpochStatus::Tower;
+        };
+        let cert_slot = genesis_cert.cert_type.slot();
+        match (
+            cert_slot <= self.epoch_schedule.get_first_slot_in_epoch(epoch),
+            cert_slot <= self.epoch_schedule.get_last_slot_in_epoch(epoch),
+        ) {
+            (true, _) => AlpenglowEpochStatus::FullAlpenglow,
+            (false, true) => AlpenglowEpochStatus::MigrationEpoch,
+            (false, false) => AlpenglowEpochStatus::Tower,
+        }
+    }
+
     /// Calculates epoch rewards for stake/commission accounts
     /// Returns commission accounts, stake rewards, and the sum of all stake rewards in lamports
     fn calculate_stake_rewards_and_commissions<'a>(
@@ -548,6 +588,7 @@ impl Bank {
         let feature_snapshot = self.feature_set.snapshot();
         let delay_commission_updates = feature_snapshot.delay_commission_updates;
         let commission_rate_in_basis_points = feature_snapshot.commission_rate_in_basis_points;
+        let ag_activation_status = self.is_alpenglow_active_in_epoch(rewarded_epoch);
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
         // For N stake delegations, where N is >1,000,000, we produce:
@@ -579,6 +620,7 @@ impl Bank {
                                 new_warmup_cooldown_rate_epoch,
                                 delay_commission_updates,
                                 commission_rate_in_basis_points,
+                                &ag_activation_status,
                             )
                         });
                     let (stake_reward, maybe_reward_record) = match maybe_reward_record {
