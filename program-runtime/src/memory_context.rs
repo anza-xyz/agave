@@ -11,14 +11,14 @@ enum MemoryContextType {
 
 pub struct MemoryContexts {
     contexts: Vec<MemoryContextType>,
-    abiv2_mappings: Box<MemoryMapping>,
+    abi_v2_mapping: Box<MemoryMapping>,
 }
 
 impl MemoryContexts {
     pub(crate) fn new() -> Self {
         Self {
             contexts: Vec::new(),
-            abiv2_mappings: Box::new(
+            abi_v2_mapping: Box::new(
                 MemoryMapping::new(Vec::new(), &Config::default(), SBPFVersion::Reserved).unwrap(),
             ),
         }
@@ -59,7 +59,7 @@ impl MemoryContexts {
     pub fn memory_mapping(&self) -> Result<&MemoryMapping, InstructionError> {
         let mapping = match self.contexts.last().ok_or(InstructionError::CallDepth)? {
             MemoryContextType::ABIv1(ctx) => &ctx.memory_mapping,
-            MemoryContextType::ABIv2 => &self.abiv2_mappings,
+            MemoryContextType::ABIv2 => &self.abi_v2_mapping,
         };
 
         Ok(mapping)
@@ -72,7 +72,7 @@ impl MemoryContexts {
             .ok_or(InstructionError::CallDepth)?
         {
             MemoryContextType::ABIv1(ctx) => &mut ctx.memory_mapping,
-            MemoryContextType::ABIv2 => &mut self.abiv2_mappings,
+            MemoryContextType::ABIv2 => &mut self.abi_v2_mapping,
         };
 
         Ok(mapping)

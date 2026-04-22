@@ -7981,7 +7981,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(
             (invoke_context.get_execution_cost().sha256_base_cost
                 + invoke_context.get_execution_cost().mem_op_base_cost.max(
