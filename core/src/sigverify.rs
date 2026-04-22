@@ -4,10 +4,7 @@
 
 pub use solana_perf::sigverify::{count_packets_in_batches, ed25519_verify};
 use {
-    crate::{
-        banking_trace::BankingPacketSender,
-        sigverify_stage::{SigVerifier, SigVerifyServiceError},
-    },
+    crate::{banking_trace::BankingPacketSender, sigverify_stage::SigVerifyServiceError},
     agave_banking_stage_ingress_types::BankingPacketBatch,
     crossbeam_channel::{Sender, TrySendError},
     solana_measure::measure::Measure,
@@ -51,10 +48,8 @@ impl TransactionSigVerifier {
             reject_non_vote: false,
         }
     }
-}
 
-impl SigVerifier for TransactionSigVerifier {
-    fn verify_and_send_packets(
+    pub(crate) fn verify_and_send_packets(
         &mut self,
         batches: Vec<PacketBatch>,
         valid_packets: usize,
@@ -102,7 +97,7 @@ impl SigVerifier for TransactionSigVerifier {
         Ok(())
     }
 
-    fn capacity(&self) -> usize {
+    pub(crate) fn capacity(&self) -> usize {
         const CAPACITY_PER_THREAD: usize = {
             15_000 // ~15k packets per second throughput
             * 2 // 2 seconds worth
