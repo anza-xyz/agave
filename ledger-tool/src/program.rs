@@ -548,8 +548,10 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         ))
         .unwrap();
 
-    create_vm!(vm, &verified_executable, &mut invoke_context,);
-    let (mut vm, _, _) = vm.unwrap();
+    let (mut vm, _stack, _heap) = unsafe {
+        create_vm!(vm, &verified_executable, &mut invoke_context,);
+        vm.unwrap()
+    };
     let start_time = Instant::now();
 
     let mode = matches.value_of("mode").unwrap();

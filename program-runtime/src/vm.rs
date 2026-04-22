@@ -46,15 +46,22 @@ pub fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
 }
 
 /// Only used in macro, do not use directly!
+///
+/// # Safety
+///
+/// Refer to [`configure_program_regions`].
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-pub fn create_vm<'a, 'b>(
+pub unsafe fn create_vm<'a, 'b>(
     program: &'a Executable<InvokeContext<'b, 'b>>,
     invoke_context: &'a mut InvokeContext<'b, 'b>,
-    stack: &mut [u8],
-    heap: &mut [u8],
+    stack: *mut [u8],
+    heap: *mut [u8],
 ) -> Result<EbpfVm<'a, InvokeContext<'b, 'b>>, Box<dyn std::error::Error>> {
     let stack_size = stack.len();
-    configure_program_regions(invoke_context, program, stack, heap)?;
+    unsafe {
+        // SAFETY: invariants delegated to the caller.
+        configure_program_regions(invoke_context, program, stack, heap)?;
+    }
     Ok(EbpfVm::new(
         program.get_loader().clone(),
         program.get_sbpf_version(),
@@ -63,7 +70,12 @@ pub fn create_vm<'a, 'b>(
     ))
 }
 
-fn configure_program_regions<C: ContextObject>(
+/// # Safety
+///
+/// The `executable`, `stack` and `heap` arguments must remain allocated for at least the lifetime
+/// of [`MemoryMapping`] (or until after the `MemoryMapping` is reconfigured with different
+/// `executable`, `stack` and `heap`).
+unsafe fn configure_program_regions<C: ContextObject>(
     invoke_context: &mut InvokeContext,
     executable: &Executable<C>,
     stack: *mut [u8],
@@ -270,14 +282,19 @@ pub fn execute<'a, 'b: 'a>(
         }
 
         let compute_meter_prev = invoke_context.get_remaining();
-        create_vm!(vm, executable, invoke_context);
-        let (mut vm, stack, heap) = match vm {
-            Ok(info) => info,
-            Err(e) => {
-                ic_logger_msg!(log_collector, "Failed to create SBF VM: {}", e);
-                return Err(Box::new(InstructionError::ProgramEnvironmentSetupFailure));
+        let (mut vm, stack, heap) = unsafe {
+            // SAFETY: The `stack`, `heap` and `executable` live past the lifetime of
+            // `invoke_context`.
+            create_vm!(vm, executable, invoke_context);
+            match vm {
+                Ok(info) => info,
+                Err(e) => {
+                    ic_logger_msg!(log_collector, "Failed to create SBF VM: {}", e);
+                    return Err(Box::new(InstructionError::ProgramEnvironmentSetupFailure));
+                }
             }
         };
+
         create_vm_time.stop();
         #[cfg(feature = "sbpf-debugger")]
         {
