@@ -23,6 +23,7 @@ use {
     log::*,
     solana_clock::{BankId, Slot},
     solana_entry::{
+        block_component::VersionedBlockMarker,
         entry::Entry,
         entry_or_marker::EntryOrMarker,
         poh::{Poh, PohEntry},
@@ -303,6 +304,24 @@ impl PohRecorder {
         )));
 
         self.leader_last_tick_height = leader_last_tick_height;
+    }
+
+    /// Send the block marker to be broadcast
+    pub fn send_marker(&mut self, marker: VersionedBlockMarker) -> Result<()> {
+        let tick_height = self.tick_height();
+        let working_bank = self
+            .working_bank
+            .as_mut()
+            .ok_or(PohRecorderError::MaxHeightReached)?;
+
+        self.working_bank_sender
+            .send((
+                working_bank.bank.clone(),
+                (EntryOrMarker::Marker(marker), tick_height),
+            ))
+            .unwrap();
+
+        Ok(())
     }
 
     // Returns the index of `transactions.first()` in the slot, if being tracked by WorkingBank

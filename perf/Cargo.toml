@@ -100,10 +100,6 @@ name = "reset"
 harness = false
 
 [[bench]]
-name = "shrink"
-harness = false
-
-[[bench]]
 name = "sigverify"
 harness = false
 

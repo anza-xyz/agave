@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     super::{
         scheduler::{PreLockFilterAction, Scheduler, SchedulingSummary},
@@ -45,7 +43,6 @@ type SchedulerPrioGraph = PrioGraph<
     fn(&TransactionPriorityId, &GraphNode<TransactionPriorityId>) -> TransactionPriorityId,
 >;
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct PrioGraphSchedulerConfig {
     pub max_scheduled_cus: u64,
     pub max_scanned_transactions_per_scheduling_pass: usize,
@@ -64,7 +61,6 @@ impl Default for PrioGraphSchedulerConfig {
     }
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct PrioGraphScheduler<Tx> {
     common: SchedulingCommon<Tx>,
     prio_graph: SchedulerPrioGraph,
@@ -72,7 +68,6 @@ pub(crate) struct PrioGraphScheduler<Tx> {
 }
 
 impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new(
         consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
         finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,

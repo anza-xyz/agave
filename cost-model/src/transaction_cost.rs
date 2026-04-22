@@ -191,6 +191,10 @@ impl WritableKeysTransaction {
 
 #[cfg(feature = "dev-context-only-utils")]
 impl solana_svm_transaction::svm_message::SVMStaticMessage for WritableKeysTransaction {
+    fn version(&self) -> solana_transaction::versioned::TransactionVersion {
+        unimplemented!("WritableKeysTransaction::version")
+    }
+
     fn num_transaction_signatures(&self) -> u64 {
         unimplemented!("WritableKeysTransaction::num_transaction_signatures")
     }
@@ -427,7 +431,7 @@ mod tests {
             // and it has default loaded_account_data_size
             let loaded_accounts_data_size_cost =
                 CostModel::calculate_loaded_accounts_data_size_cost(
-                    MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.into(),
+                    MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
                     &feature_set,
                 );
             let vote_program_usage_details = UsageCostDetails {

@@ -3528,26 +3528,27 @@ impl Blockstore {
                 transaction
             });
 
-        let parent_slot_entries = slot_meta
-            .parent_slot
-            .and_then(|parent_slot| {
-                self.get_slot_entries_with_shred_info(
-                    parent_slot,
-                    /*shred_start_index:*/ 0,
-                    allow_dead_slots,
-                )
-                .ok()
-                .map(|(entries, _, _)| entries)
+        let previous_blockhash = slot_meta.parent_slot.and_then(|parent_slot| {
+            self.get_slot_entries_with_shred_info(
+                parent_slot,
+                /*shred_start_index:*/ 0,
+                allow_dead_slots,
+            )
+            .ok()
+            .and_then(|(entries, _, is_full)| {
+                // The blockhash is specifically the final entry hash in a
+                // block so ensure the block is full
+                if is_full {
+                    entries.last().map(|entry| entry.hash)
+                } else {
+                    None
+                }
             })
-            .unwrap_or_default();
-        if parent_slot_entries.is_empty() && require_previous_blockhash {
+        });
+        if previous_blockhash.is_none() && require_previous_blockhash {
             return Err(BlockstoreError::ParentEntriesUnavailable);
         }
-        let previous_blockhash = if !parent_slot_entries.is_empty() {
-            get_last_hash(parent_slot_entries.iter()).unwrap()
-        } else {
-            Hash::default()
-        };
+        let previous_blockhash = previous_blockhash.unwrap_or_else(Hash::default);
 
         let (rewards, num_partitions) = self
             .rewards_cf
@@ -5316,10 +5317,6 @@ fn update_slot_meta<'a>(
     )
 }
 
-fn get_last_hash<'a>(iterator: impl Iterator<Item = &'a Entry> + 'a) -> Option<Hash> {
-    iterator.last().map(|entry| entry.hash)
-}
-
 fn send_signals(
     new_shreds_signals: &[Sender<bool>],
     completed_slots_senders: &[Sender<Vec<u64>>],
@@ -5835,7 +5832,7 @@ pub mod tests {
         crossbeam_channel::unbounded,
         rand::{rng, seq::SliceRandom},
         solana_account_decoder::parse_token::UiTokenAmount,
-        solana_entry::entry::{next_entry, next_entry_mut},
+        solana_entry::entry::next_entry_mut,
         solana_genesis_utils::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, open_genesis_config},
         solana_hash::Hash,
         solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
@@ -8554,9 +8551,37 @@ pub mod tests {
 
     #[test]
     fn test_get_rooted_block() {
-        let slot = 10;
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
         let entries = make_slot_entries_with_transactions(100);
-        let blockhash = get_last_hash(entries.iter()).unwrap();
+        let blockhash = entries.last().unwrap().hash;
+
+        // Insert a partially full slot
+        let slot = 5;
+        let shreds = entries_to_test_shreds(
+            &entries,
+            slot,
+            slot - 1, // parent_slot
+            false,    // is_full_slot
+            0,        // version
+        );
+        blockstore.insert_shreds(shreds, None, false).unwrap();
+        // Root the partially full slot and its parent
+        blockstore.set_roots([slot - 1, slot].iter()).unwrap();
+        // An empty slot will return an error even if the slot is rooted
+        assert_matches!(
+            blockstore.get_rooted_block(slot - 1, true),
+            Err(BlockstoreError::SlotUnavailable)
+        );
+        // A partially full slot will return an error even if the slot is rooted
+        assert_matches!(
+            blockstore.get_rooted_block(slot, true),
+            Err(BlockstoreError::SlotUnavailable)
+        );
+
+        // Insert a full slot
+        let slot = 10;
         let shreds = entries_to_test_shreds(
             &entries,
             slot,
@@ -8564,13 +8589,61 @@ pub mod tests {
             true,     // is_full_slot
             0,        // version
         );
-        let more_shreds = entries_to_test_shreds(
+        blockstore.insert_shreds(shreds, None, false).unwrap();
+        // Root both the full slot and its empty parent slot
+        blockstore.set_roots([slot - 1, slot].iter()).unwrap();
+        // A full slot will return an error if the previous blockhash is
+        // required and the parent slot is empty
+        assert_matches!(
+            blockstore.get_rooted_block(slot, true),
+            Err(BlockstoreError::ParentEntriesUnavailable)
+        );
+
+        // Insert a full slot with a partially full parent
+        let slot = 15;
+        let shreds = entries_to_test_shreds(
+            &entries,
+            slot - 1,
+            slot - 2, // parent_slot
+            false,    // is_full_slot
+            0,        // version
+        );
+        blockstore.insert_shreds(shreds, None, false).unwrap();
+        let shreds = entries_to_test_shreds(
+            &entries,
+            slot,
+            slot - 1, // parent_slot
+            true,     // is_full_slot
+            0,        // version
+        );
+        blockstore.insert_shreds(shreds, None, false).unwrap();
+        // Root both the full slot and its partially full parent slot
+        blockstore.set_roots([slot - 1, slot].iter()).unwrap();
+        // A full root will return an error if the previous blockhash is
+        // required and the parent slot is partially full
+        assert_matches!(
+            blockstore.get_rooted_block(slot, true),
+            Err(BlockstoreError::ParentEntriesUnavailable)
+        );
+
+        // Insert several successive full slots and populate the metadata
+        let slot = 20;
+        let shreds = entries_to_test_shreds(
+            &entries,
+            slot,
+            slot - 1, // parent_slot
+            true,     // is_full_slot
+            0,        // version
+        );
+        blockstore.insert_shreds(shreds, None, false).unwrap();
+        let shreds = entries_to_test_shreds(
             &entries,
             slot + 1,
             slot, // parent_slot
             true, // is_full_slot
             0,    // version
         );
+        blockstore.insert_shreds(shreds, None, false).unwrap();
         let unrooted_shreds = entries_to_test_shreds(
             &entries,
             slot + 2,
@@ -8578,20 +8651,10 @@ pub mod tests {
             true,     // is_full_slot
             0,        // version
         );
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        blockstore.insert_shreds(shreds, None, false).unwrap();
-        blockstore.insert_shreds(more_shreds, None, false).unwrap();
         blockstore
             .insert_shreds(unrooted_shreds, None, false)
             .unwrap();
-        blockstore
-            .set_roots([slot - 1, slot, slot + 1].iter())
-            .unwrap();
-
-        let parent_meta = SlotMeta::default();
-        blockstore.put_meta(slot - 1, &parent_meta).unwrap();
-
+        blockstore.set_roots([slot, slot + 1].iter()).unwrap();
         let expected_transactions: Vec<VersionedTransactionWithStatusMeta> = entries
             .iter()
             .filter(|entry| !entry.is_tick())
@@ -8688,22 +8751,11 @@ pub mod tests {
             })
             .collect();
 
-        // Even if marked as root, a slot that is empty of entries should return an error
-        assert_matches!(
-            blockstore.get_rooted_block(slot - 1, true),
-            Err(BlockstoreError::SlotUnavailable)
-        );
-
-        // The previous_blockhash of `expected_block` is default because its parent slot is a root,
-        // but empty of entries (eg. snapshot root slots). This now returns an error.
-        assert_matches!(
-            blockstore.get_rooted_block(slot, true),
-            Err(BlockstoreError::ParentEntriesUnavailable)
-        );
-
-        // Test if require_previous_blockhash is false
+        // Test for a slot where the parent is empty and previous blockhash is
+        // not required
         let confirmed_block = blockstore.get_rooted_block(slot, false).unwrap();
         assert_eq!(confirmed_block.transactions.len(), 100);
+
         let expected_block = VersionedConfirmedBlock {
             transactions: expected_transactions.clone(),
             parent_slot: slot - 1,
@@ -10186,22 +10238,6 @@ pub mod tests {
             .unwrap();
         assert!(!sig_infos.found_before);
         assert!(sig_infos.infos.is_empty());
-    }
-
-    #[test]
-    fn test_get_last_hash() {
-        let entries: Vec<Entry> = vec![];
-        let empty_entries_iterator = entries.iter();
-        assert!(get_last_hash(empty_entries_iterator).is_none());
-
-        let entry = next_entry(&solana_sha256_hasher::hash(&[42u8]), 1, vec![]);
-        let entries: Vec<Entry> = std::iter::successors(Some(entry), |entry| {
-            Some(next_entry(&entry.hash, 1, vec![]))
-        })
-        .take(10)
-        .collect();
-        let entries_iterator = entries.iter();
-        assert_eq!(get_last_hash(entries_iterator).unwrap(), entries[9].hash);
     }
 
     #[test]

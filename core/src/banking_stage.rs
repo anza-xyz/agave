@@ -1,8 +1,6 @@
 //! The `banking_stage` processes Transaction messages. It is intended to be used
 //! to construct a software pipeline.
 
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     self::{
         committer::Committer, consumer::Consumer, decision_maker::DecisionMaker,
@@ -59,39 +57,25 @@ use {
     vote_worker::VoteWorker,
 };
 
-// Below modules are pub to allow use by banking_stage bench
-pub mod committer;
-pub mod consumer;
-pub mod leader_slot_metrics;
-pub mod qos_service;
-pub mod vote_storage;
-
-mod consume_worker;
-mod vote_worker;
-
-#[cfg(feature = "dev-context-only-utils")]
-pub mod decision_maker;
-#[cfg(not(feature = "dev-context-only-utils"))]
-mod decision_maker;
-
-mod latest_validator_vote_packet;
-mod leader_slot_timing_metrics;
-mod read_write_account_set;
-mod vote_packet_receiver;
-
-#[cfg(feature = "dev-context-only-utils")]
-pub mod scheduler_messages;
-#[cfg(not(feature = "dev-context-only-utils"))]
-mod scheduler_messages;
-
 pub mod transaction_scheduler;
 
-#[cfg(feature = "dev-context-only-utils")]
-pub mod unified_scheduler;
-#[cfg(not(feature = "dev-context-only-utils"))]
-pub(crate) mod unified_scheduler;
+mod committer;
+mod consume_worker;
+mod consumer;
+mod decision_maker;
+mod latest_validator_vote_packet;
+mod leader_slot_metrics;
+mod leader_slot_timing_metrics;
+mod qos_service;
+mod read_write_account_set;
+mod scheduler_messages;
+mod vote_packet_receiver;
+mod vote_storage;
+mod vote_worker;
 
+#[cfg(unix)]
 mod progress_tracker;
+#[cfg(unix)]
 mod tpu_to_pack;
 
 /// The maximum number of worker threads that can be spawned by banking stage.
@@ -100,7 +84,6 @@ mod tpu_to_pack;
 const MAX_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 const DEFAULT_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
 const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 
@@ -515,9 +498,6 @@ impl BankingStage {
         scheduler_config: SchedulerConfig,
     ) -> Result<Vec<JoinHandle<()>>, ()> {
         info!("Spawning internal central scheduler");
-        // Toggling unified scheduler into the disabled state should always be a safe and idempotent
-        // operation.
-        assert!(self.toggle_internal_unified(false));
 
         assert!(num_workers <= BankingStage::max_num_workers());
         let num_workers = num_workers.get();
@@ -634,13 +614,6 @@ impl BankingStage {
         Ok(threads)
     }
 
-    fn toggle_internal_unified(&self, enable: bool) -> bool {
-        self.bank_forks
-            .read()
-            .unwrap()
-            .toggle_unified_scheduler_block_production_mode(enable)
-    }
-
     fn spawn_vote_worker(&self) -> JoinHandle<()> {
         let vote_storage = VoteStorage::new(&self.bank_forks.read().unwrap().working_bank());
         let tpu_receiver = VotePacketReceiver::new(self.tpu_vote_receiver.clone());
@@ -706,9 +679,6 @@ mod external {
             }: AgaveSession,
         ) -> Result<Vec<JoinHandle<()>>, ()> {
             info!("Spawning external scheduler");
-            // Toggling unified scheduler into the disabled state should always be a safe and
-            // idempotent operation.
-            assert!(self.toggle_internal_unified(false));
 
             static_assertions::const_assert!(
                 agave_scheduling_utils::handshake::MAX_WORKERS
@@ -812,7 +782,6 @@ pub enum BankingControlMsg {
     },
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     bank_forks: &RwLock<BankForks>,
     poh_controller: &mut PohController,
@@ -823,18 +792,10 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
         .unwrap()
         .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
     let tpu_bank_for_poh = tpu_bank.clone_with_scheduler();
-    let set_bank_res = if tpu_bank.has_installed_active_bp_scheduler() {
-        // Waiting here is needed because unified scheduler assumes bank exists in poh immediately
-        // after calling unpause_new_block_production_scheduler(). Otherwise, it wrongly thinks poh
-        // reached to the max tick height.
-        poh_controller.set_bank_sync(tpu_bank_for_poh)
-    } else {
-        poh_controller.set_bank(tpu_bank_for_poh)
-    };
+    let set_bank_res = poh_controller.set_bank(tpu_bank_for_poh);
     if set_bank_res.is_err() {
         warn!("Failed to set poh bank, poh service is disconnected");
     }
-    tpu_bank.unpause_new_block_production_scheduler();
 }
 
 #[derive(Debug)]

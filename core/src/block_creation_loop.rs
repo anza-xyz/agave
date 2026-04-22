@@ -12,6 +12,7 @@ use {
     agave_votor::event::LeaderWindowInfo,
     crossbeam_channel::Receiver,
     solana_clock::Slot,
+    solana_entry::block_component::{BlockMarkerV1, GenesisCertificate, VersionedBlockMarker},
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
@@ -110,6 +111,9 @@ struct LeaderContext {
     // Metrics
     metrics: LoopMetrics,
     slot_metrics: SlotMetrics,
+
+    // Migration information
+    genesis_cert: GenesisCertificate,
 }
 
 #[derive(Default)]
@@ -175,6 +179,15 @@ fn start_loop(config: BlockCreationLoopConfig) {
         }
     };
 
+    let genesis_cert = bank_forks
+        .read()
+        .unwrap()
+        .migration_status()
+        .genesis_certificate()
+        .expect("Migration complete, genesis certificate must exist");
+    let genesis_cert = GenesisCertificate::try_from((*genesis_cert).clone())
+        .expect("Genesis certificate must be valid");
+
     info!("{my_pubkey}: PohService has shutdown, BlockCreationLoop is enabled");
 
     let mut ctx = LeaderContext {
@@ -194,6 +207,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
         metrics: LoopMetrics::default(),
         slot_metrics: SlotMetrics::default(),
         highest_finalized,
+        genesis_cert,
     };
 
     // Setup poh
@@ -613,6 +627,11 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
     let tpu_bank = ctx.bank_forks.write().unwrap().insert(tpu_bank);
     let bank_id = tpu_bank.bank_id();
     ctx.poh_recorder.write().unwrap().set_bank(tpu_bank);
+
+    // If this is the first alpenglow block, emit the genesis certificate marker
+    maybe_include_genesis_certificate(parent_slot, ctx);
+
+    // Wakeup banking stage
     ctx.record_receiver.restart(bank_id);
     ctx.slot_metrics.reset(slot);
 
@@ -620,4 +639,34 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
         "{}: new fork:{} parent:{} (leader) root:{}",
         ctx.my_pubkey, slot, parent_slot, root_slot
     );
+}
+
+///  If this the very first alpenglow block, include the genesis certificate
+///  Note: if the alpenglow genesis is 0, then this is a test cluster with Alpenglow enabled
+///  by default. No need to put in the genesis marker as the genesis account is already populated
+///  during cluster creation.
+fn maybe_include_genesis_certificate(parent_slot: Slot, ctx: &LeaderContext) {
+    if parent_slot != ctx.genesis_cert.slot || parent_slot == 0 {
+        return;
+    }
+    let genesis_marker = VersionedBlockMarker::V1(BlockMarkerV1::new_genesis_certificate(
+        ctx.genesis_cert.clone(),
+    ));
+
+    let mut poh_recorder = ctx.poh_recorder.write().unwrap();
+    // Send the genesis certificate
+    poh_recorder
+        .send_marker(genesis_marker)
+        .expect("Max tick height cannot have been reached");
+
+    // Process the genesis certificate
+    let bank = poh_recorder.bank().expect("Bank cannot have been cleared");
+    let processor = bank.block_component_processor.read().unwrap();
+    processor
+        .on_genesis_certificate(
+            bank.clone(),
+            ctx.genesis_cert.clone(),
+            &ctx.bank_forks.read().unwrap().migration_status(),
+        )
+        .expect("Recording genesis certificate should not fail");
 }

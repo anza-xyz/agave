@@ -33,7 +33,7 @@ use {
     rayon::{ThreadPool, ThreadPoolBuilder, iter::IntoParallelIterator},
     serde::{Deserialize, Serialize},
     solana_account::{
-        Account, AccountSharedData, ReadableAccount, WritableAccount, accounts_equal,
+        Account, AccountSharedData, ReadableAccount, WritableAccount,
         create_account_shared_data_with_fields as create_account, from_account,
         state_traits::StateMut,
     },
@@ -144,24 +144,6 @@ use {
     },
     test_case::test_case,
 };
-
-impl RewardCommission {
-    pub fn new_random() -> Self {
-        let mut rng = rand::rng();
-
-        let commission_balance = rng.random_range(1..200);
-        let commission_bps: u16 = rng.random_range(100..2_000);
-
-        let mut commission_account = AccountSharedData::default();
-        commission_account.set_lamports(commission_balance);
-
-        Self {
-            commission_account,
-            commission_bps,
-            commission_lamports: rng.random_range(1..200),
-        }
-    }
-}
 
 fn create_genesis_config_no_tx_fee_no_rent(lamports: u64) -> (GenesisConfig, Keypair) {
     // genesis_util creates config with no tx fee and no rent
@@ -1446,6 +1428,10 @@ fn test_bank_tx_fee() {
 
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.set_fee_structure(&fee_structure);
+
+    let leader = *bank.leader();
+    let collector_id = leader.id;
+
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     let capitalization = bank.capitalization();
@@ -1458,7 +1444,7 @@ fn test_bank_tx_fee() {
         bank.last_blockhash(),
     );
 
-    let initial_balance = bank.get_balance(&leader.id);
+    let initial_balance = bank.get_balance(&collector_id);
     assert_eq!(bank.process_transaction(&tx), Ok(()));
     assert_eq!(bank.get_balance(&key), arbitrary_transfer_amount);
     assert_eq!(
@@ -1466,11 +1452,11 @@ fn test_bank_tx_fee() {
         mint - arbitrary_transfer_amount - expected_fee_paid
     );
 
-    assert_eq!(bank.get_balance(&leader.id), initial_balance);
+    assert_eq!(bank.get_balance(&collector_id), initial_balance);
     goto_end_of_slot(bank.clone());
     assert_eq!(bank.signature_count(), 1);
     assert_eq!(
-        bank.get_balance(&leader.id),
+        bank.get_balance(&collector_id),
         initial_balance + expected_fee_collected
     ); // Leader collects fee after the bank is frozen
 
@@ -1484,7 +1470,7 @@ fn test_bank_tx_fee() {
     assert_eq!(
         *bank.rewards.read().unwrap(),
         vec![(
-            leader.id,
+            collector_id,
             RewardInfo {
                 reward_type: RewardType::Fee,
                 lamports: expected_fee_collected as i64,
@@ -1512,14 +1498,14 @@ fn test_bank_tx_fee() {
 
     // Profit! 2 transaction signatures processed at 3 lamports each
     assert_eq!(
-        bank.get_balance(&leader.id),
+        bank.get_balance(&collector_id),
         initial_balance + 2 * expected_fee_collected
     );
 
     assert_eq!(
         *bank.rewards.read().unwrap(),
         vec![(
-            leader.id,
+            collector_id,
             RewardInfo {
                 reward_type: RewardType::Fee,
                 lamports: expected_fee_collected as i64,
@@ -1547,6 +1533,9 @@ fn test_bank_tx_compute_unit_fee() {
 
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
+    let leader = *bank.leader();
+    let collector_id = leader.id;
+
     let expected_fee_paid = calculate_test_fee(
         &new_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique()))),
         bank.fee_structure(),
@@ -1564,7 +1553,7 @@ fn test_bank_tx_compute_unit_fee() {
         bank.last_blockhash(),
     );
 
-    let initial_balance = bank.get_balance(&leader.id);
+    let initial_balance = bank.get_balance(&collector_id);
     assert_eq!(bank.process_transaction(&tx), Ok(()));
     assert_eq!(bank.get_balance(&key), arbitrary_transfer_amount);
     assert_eq!(
@@ -1572,11 +1561,11 @@ fn test_bank_tx_compute_unit_fee() {
         mint - arbitrary_transfer_amount - expected_fee_paid
     );
 
-    assert_eq!(bank.get_balance(&leader.id), initial_balance);
+    assert_eq!(bank.get_balance(&collector_id), initial_balance);
     goto_end_of_slot(bank.clone());
     assert_eq!(bank.signature_count(), 1);
     assert_eq!(
-        bank.get_balance(&leader.id),
+        bank.get_balance(&collector_id),
         initial_balance + expected_fee_collected
     ); // Leader collects fee after the bank is frozen
 
@@ -1590,7 +1579,7 @@ fn test_bank_tx_compute_unit_fee() {
     assert_eq!(
         *bank.rewards.read().unwrap(),
         vec![(
-            leader.id,
+            collector_id,
             RewardInfo {
                 reward_type: RewardType::Fee,
                 lamports: expected_fee_collected as i64,
@@ -1618,14 +1607,14 @@ fn test_bank_tx_compute_unit_fee() {
 
     // Profit! 2 transaction signatures processed at 3 lamports each
     assert_eq!(
-        bank.get_balance(&leader.id),
+        bank.get_balance(&collector_id),
         initial_balance + 2 * expected_fee_collected
     );
 
     assert_eq!(
         *bank.rewards.read().unwrap(),
         vec![(
-            leader.id,
+            collector_id,
             RewardInfo {
                 reward_type: RewardType::Fee,
                 lamports: expected_fee_collected as i64,
@@ -3295,7 +3284,7 @@ fn test_bank_get_program_accounts() {
     let (parent, _bank_forks) =
         Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 
-    let genesis_accounts: Vec<_> = parent.get_all_accounts(false).unwrap();
+    let genesis_accounts: Vec<_> = parent.get_all_accounts().unwrap();
     assert!(
         genesis_accounts
             .iter()
@@ -5834,7 +5823,6 @@ fn test_bank_load_program() {
     }
 }
 
-#[allow(deprecated)]
 #[test]
 fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
@@ -5925,11 +5913,6 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let program_account = AccountSharedData::new(
         min_program_balance,
         UpgradeableLoaderState::size_of_program(),
-        &bpf_loader_upgradeable::id(),
-    );
-    let programdata_account = AccountSharedData::new(
-        min_programdata_balance,
-        UpgradeableLoaderState::size_of_programdata(elf.len()),
         &bpf_loader_upgradeable::id(),
     );
 
@@ -6098,523 +6081,6 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
             ProgramCacheEntryType::Loaded(_),
         ));
     }
-
-    // Test initialized program account
-    bank.clear_signatures();
-    bank.store_account(&buffer_address, &buffer_account);
-    let bank = bank_client
-        .advance_slot(1, bank_forks.as_ref(), SlotLeader::default())
-        .unwrap();
-    let message = Message::new(
-        &[Instruction::new_with_bincode(
-            bpf_loader_upgradeable::id(),
-            &UpgradeableLoaderInstruction::DeployWithMaxDataLen {
-                max_data_len: elf.len(),
-            },
-            vec![
-                AccountMeta::new(mint_keypair.pubkey(), true),
-                AccountMeta::new(programdata_address, false),
-                AccountMeta::new(program_keypair.pubkey(), false),
-                AccountMeta::new(buffer_address, false),
-                AccountMeta::new_readonly(sysvar::rent::id(), false),
-                AccountMeta::new_readonly(sysvar::clock::id(), false),
-                AccountMeta::new_readonly(system_program::id(), false),
-                AccountMeta::new_readonly(upgrade_authority_keypair.pubkey(), true),
-            ],
-        )],
-        Some(&mint_keypair.pubkey()),
-    );
-    assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::AccountAlreadyInitialized),
-        bank_client
-            .send_and_confirm_message(&[&mint_keypair, &upgrade_authority_keypair], message)
-            .unwrap_err()
-            .unwrap()
-    );
-
-    // Test initialized ProgramData account
-    bank.clear_signatures();
-    bank.store_account(&buffer_address, &buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    let message = Message::new(
-        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-            &mint_keypair.pubkey(),
-            &program_keypair.pubkey(),
-            &buffer_address,
-            &upgrade_authority_keypair.pubkey(),
-            min_program_balance,
-            elf.len(),
-        )
-        .unwrap(),
-        Some(&mint_keypair.pubkey()),
-    );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::Custom(0)),
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .unwrap_err()
-            .unwrap()
-    );
-
-    // Test deploy no authority
-    bank.clear_signatures();
-    bank.store_account(&buffer_address, &buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &program_account);
-    bank.store_account(&programdata_address, &programdata_account);
-    let message = Message::new(
-        &[Instruction::new_with_bincode(
-            bpf_loader_upgradeable::id(),
-            &UpgradeableLoaderInstruction::DeployWithMaxDataLen {
-                max_data_len: elf.len(),
-            },
-            vec![
-                AccountMeta::new(mint_keypair.pubkey(), true),
-                AccountMeta::new(programdata_address, false),
-                AccountMeta::new(program_keypair.pubkey(), false),
-                AccountMeta::new(buffer_address, false),
-                AccountMeta::new_readonly(sysvar::rent::id(), false),
-                AccountMeta::new_readonly(sysvar::clock::id(), false),
-                AccountMeta::new_readonly(system_program::id(), false),
-            ],
-        )],
-        Some(&mint_keypair.pubkey()),
-    );
-    assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::MissingAccount),
-        bank_client
-            .send_and_confirm_message(&[&mint_keypair], message)
-            .unwrap_err()
-            .unwrap()
-    );
-
-    // Test deploy authority not a signer
-    bank.clear_signatures();
-    bank.store_account(&buffer_address, &buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &program_account);
-    bank.store_account(&programdata_address, &programdata_account);
-    let message = Message::new(
-        &[Instruction::new_with_bincode(
-            bpf_loader_upgradeable::id(),
-            &UpgradeableLoaderInstruction::DeployWithMaxDataLen {
-                max_data_len: elf.len(),
-            },
-            vec![
-                AccountMeta::new(mint_keypair.pubkey(), true),
-                AccountMeta::new(programdata_address, false),
-                AccountMeta::new(program_keypair.pubkey(), false),
-                AccountMeta::new(buffer_address, false),
-                AccountMeta::new_readonly(sysvar::rent::id(), false),
-                AccountMeta::new_readonly(sysvar::clock::id(), false),
-                AccountMeta::new_readonly(system_program::id(), false),
-                AccountMeta::new_readonly(upgrade_authority_keypair.pubkey(), false),
-            ],
-        )],
-        Some(&mint_keypair.pubkey()),
-    );
-    assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::MissingRequiredSignature),
-        bank_client
-            .send_and_confirm_message(&[&mint_keypair], message)
-            .unwrap_err()
-            .unwrap()
-    );
-
-    // Test invalid Buffer account state
-    bank.clear_signatures();
-    bank.store_account(&buffer_address, &AccountSharedData::default());
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
-    let message = Message::new(
-        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-            &mint_keypair.pubkey(),
-            &program_keypair.pubkey(),
-            &buffer_address,
-            &upgrade_authority_keypair.pubkey(),
-            min_program_balance,
-            elf.len(),
-        )
-        .unwrap(),
-        Some(&mint_keypair.pubkey()),
-    );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::InvalidAccountData),
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .unwrap_err()
-            .unwrap()
-    );
-
-    // Test program account not rent exempt
-    bank.clear_signatures();
-    bank.store_account(&buffer_address, &buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
-    let message = Message::new(
-        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-            &mint_keypair.pubkey(),
-            &program_keypair.pubkey(),
-            &buffer_address,
-            &upgrade_authority_keypair.pubkey(),
-            min_program_balance.saturating_sub(1),
-            elf.len(),
-        )
-        .unwrap(),
-        Some(&mint_keypair.pubkey()),
-    );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::ExecutableAccountNotRentExempt),
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .unwrap_err()
-            .unwrap()
-    );
-
-    // Test program account not rent exempt because data is larger than needed
-    bank.clear_signatures();
-    bank.store_account(&buffer_address, &buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
-    let mut instructions = solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-        &mint_keypair.pubkey(),
-        &program_keypair.pubkey(),
-        &buffer_address,
-        &upgrade_authority_keypair.pubkey(),
-        min_program_balance,
-        elf.len(),
-    )
-    .unwrap();
-    *instructions.get_mut(0).unwrap() = system_instruction::create_account(
-        &mint_keypair.pubkey(),
-        &program_keypair.pubkey(),
-        min_program_balance,
-        (UpgradeableLoaderState::size_of_program() as u64).saturating_add(1),
-        &bpf_loader_upgradeable::id(),
-    );
-    let message = Message::new(&instructions, Some(&mint_keypair.pubkey()));
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::ExecutableAccountNotRentExempt),
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .unwrap_err()
-            .unwrap()
-    );
-
-    // Test program account too small
-    bank.clear_signatures();
-    bank.store_account(&buffer_address, &buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
-    let mut instructions = solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-        &mint_keypair.pubkey(),
-        &program_keypair.pubkey(),
-        &buffer_address,
-        &upgrade_authority_keypair.pubkey(),
-        min_program_balance,
-        elf.len(),
-    )
-    .unwrap();
-    *instructions.get_mut(0).unwrap() = system_instruction::create_account(
-        &mint_keypair.pubkey(),
-        &program_keypair.pubkey(),
-        min_program_balance,
-        (UpgradeableLoaderState::size_of_program() as u64).saturating_sub(1),
-        &bpf_loader_upgradeable::id(),
-    );
-    let message = Message::new(&instructions, Some(&mint_keypair.pubkey()));
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::AccountDataTooSmall),
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .unwrap_err()
-            .unwrap()
-    );
-
-    // Test Insufficient payer funds (need more funds to cover the
-    // difference between buffer lamports and programdata lamports)
-    bank.clear_signatures();
-    bank.store_account(
-        &mint_keypair.pubkey(),
-        &AccountSharedData::new(
-            deploy_fees.saturating_add(min_program_balance),
-            0,
-            &system_program::id(),
-        ),
-    );
-    bank.store_account(&buffer_address, &buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
-    let message = Message::new(
-        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-            &mint_keypair.pubkey(),
-            &program_keypair.pubkey(),
-            &buffer_address,
-            &upgrade_authority_keypair.pubkey(),
-            min_program_balance,
-            elf.len(),
-        )
-        .unwrap(),
-        Some(&mint_keypair.pubkey()),
-    );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::Custom(1)),
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .unwrap_err()
-            .unwrap()
-    );
-    bank.store_account(
-        &mint_keypair.pubkey(),
-        &AccountSharedData::new(1_000_000_000, 0, &system_program::id()),
-    );
-
-    // Test max_data_len
-    bank.clear_signatures();
-    bank.store_account(&buffer_address, &buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
-    let message = Message::new(
-        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-            &mint_keypair.pubkey(),
-            &program_keypair.pubkey(),
-            &buffer_address,
-            &upgrade_authority_keypair.pubkey(),
-            min_program_balance,
-            elf.len().saturating_sub(1),
-        )
-        .unwrap(),
-        Some(&mint_keypair.pubkey()),
-    );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::AccountDataTooSmall),
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .unwrap_err()
-            .unwrap()
-    );
-
-    // Test max_data_len too large
-    bank.clear_signatures();
-    bank.store_account(
-        &mint_keypair.pubkey(),
-        &AccountSharedData::new(u64::MAX / 2, 0, &system_program::id()),
-    );
-    let mut modified_buffer_account = buffer_account.clone();
-    modified_buffer_account.set_lamports(u64::MAX / 2);
-    bank.store_account(&buffer_address, &modified_buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
-    let message = Message::new(
-        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-            &mint_keypair.pubkey(),
-            &program_keypair.pubkey(),
-            &buffer_address,
-            &upgrade_authority_keypair.pubkey(),
-            min_program_balance,
-            usize::MAX,
-        )
-        .unwrap(),
-        Some(&mint_keypair.pubkey()),
-    );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::InvalidArgument),
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .unwrap_err()
-            .unwrap()
-    );
-
-    fn truncate_data(account: &mut AccountSharedData, len: usize) {
-        let mut data = account.data().to_vec();
-        data.truncate(len);
-        account.set_data(data);
-    }
-
-    // Test Bad ELF data
-    bank.clear_signatures();
-    let mut modified_buffer_account = buffer_account;
-    truncate_data(
-        &mut modified_buffer_account,
-        UpgradeableLoaderState::size_of_buffer(1),
-    );
-    bank.store_account(&buffer_address, &modified_buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
-    let message = Message::new(
-        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-            &mint_keypair.pubkey(),
-            &program_keypair.pubkey(),
-            &buffer_address,
-            &upgrade_authority_keypair.pubkey(),
-            min_program_balance,
-            elf.len(),
-        )
-        .unwrap(),
-        Some(&mint_keypair.pubkey()),
-    );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::InvalidAccountData),
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .unwrap_err()
-            .unwrap()
-    );
-
-    // Test small buffer account
-    bank.clear_signatures();
-    let mut modified_buffer_account = AccountSharedData::new(
-        min_programdata_balance,
-        UpgradeableLoaderState::size_of_buffer(elf.len()),
-        &bpf_loader_upgradeable::id(),
-    );
-    modified_buffer_account
-        .set_state(&UpgradeableLoaderState::Buffer {
-            authority_address: Some(upgrade_authority_keypair.pubkey()),
-        })
-        .unwrap();
-    modified_buffer_account
-        .data_as_mut_slice()
-        .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
-        .unwrap()
-        .copy_from_slice(&elf);
-    truncate_data(&mut modified_buffer_account, 5);
-    bank.store_account(&buffer_address, &modified_buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
-    let message = Message::new(
-        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-            &mint_keypair.pubkey(),
-            &program_keypair.pubkey(),
-            &buffer_address,
-            &upgrade_authority_keypair.pubkey(),
-            min_program_balance,
-            elf.len(),
-        )
-        .unwrap(),
-        Some(&mint_keypair.pubkey()),
-    );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::InvalidAccountData),
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .unwrap_err()
-            .unwrap()
-    );
-
-    // Mismatched buffer and program authority
-    bank.clear_signatures();
-    let mut modified_buffer_account = AccountSharedData::new(
-        min_programdata_balance,
-        UpgradeableLoaderState::size_of_buffer(elf.len()),
-        &bpf_loader_upgradeable::id(),
-    );
-    modified_buffer_account
-        .set_state(&UpgradeableLoaderState::Buffer {
-            authority_address: Some(buffer_address),
-        })
-        .unwrap();
-    modified_buffer_account
-        .data_as_mut_slice()
-        .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
-        .unwrap()
-        .copy_from_slice(&elf);
-    bank.store_account(&buffer_address, &modified_buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
-    let message = Message::new(
-        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-            &mint_keypair.pubkey(),
-            &program_keypair.pubkey(),
-            &buffer_address,
-            &upgrade_authority_keypair.pubkey(),
-            min_program_balance,
-            elf.len(),
-        )
-        .unwrap(),
-        Some(&mint_keypair.pubkey()),
-    );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::IncorrectAuthority),
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .unwrap_err()
-            .unwrap()
-    );
-
-    // Deploy buffer with mismatched None authority
-    bank.clear_signatures();
-    let mut modified_buffer_account = AccountSharedData::new(
-        min_programdata_balance,
-        UpgradeableLoaderState::size_of_buffer(elf.len()),
-        &bpf_loader_upgradeable::id(),
-    );
-    modified_buffer_account
-        .set_state(&UpgradeableLoaderState::Buffer {
-            authority_address: None,
-        })
-        .unwrap();
-    modified_buffer_account
-        .data_as_mut_slice()
-        .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
-        .unwrap()
-        .copy_from_slice(&elf);
-    bank.store_account(&buffer_address, &modified_buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
-    let message = Message::new(
-        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-            &mint_keypair.pubkey(),
-            &program_keypair.pubkey(),
-            &buffer_address,
-            &upgrade_authority_keypair.pubkey(),
-            min_program_balance,
-            elf.len(),
-        )
-        .unwrap(),
-        Some(&mint_keypair.pubkey()),
-    );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::IncorrectAuthority),
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .unwrap_err()
-            .unwrap()
-    );
 }
 
 #[test]
@@ -11151,65 +10617,6 @@ fn test_system_instruction_unsigned_transaction() {
         LAMPORTS_PER_SOL - amount
     );
     assert_eq!(bank_client.get_balance(&mallory_pubkey).unwrap(), amount);
-}
-
-#[test]
-fn test_calculate_commission_accounts_empty() {
-    let reward_commissions = HashMap::default();
-    let result = Bank::calculate_commission_accounts(reward_commissions);
-    assert!(result.accounts_with_rewards.is_empty());
-}
-
-#[test]
-fn test_calculate_commission_accounts_overflow() {
-    let mut reward_commissions = HashMap::default();
-    let pubkey = solana_pubkey::new_rand();
-    let mut commission_account = AccountSharedData::default();
-    commission_account.set_lamports(u64::MAX);
-    reward_commissions.insert(
-        pubkey,
-        RewardCommission {
-            commission_account,
-            commission_bps: 0,
-            commission_lamports: 1, // enough to overflow
-        },
-    );
-    let result = Bank::calculate_commission_accounts(reward_commissions);
-    assert!(result.accounts_with_rewards.is_empty());
-}
-
-#[test]
-fn test_calculate_commission_accounts_normal() {
-    let pubkey = solana_pubkey::new_rand();
-    for commission_bps in [0, 100] {
-        for commission_lamports in 0..2 {
-            let mut reward_commissions = HashMap::default();
-            let mut commission_account = AccountSharedData::default();
-            commission_account.set_lamports(1);
-            reward_commissions.insert(
-                pubkey,
-                RewardCommission {
-                    commission_account: commission_account.clone(),
-                    commission_bps,
-                    commission_lamports,
-                },
-            );
-            let result = Bank::calculate_commission_accounts(reward_commissions);
-            assert_eq!(result.accounts_with_rewards.len(), 1);
-            let (pubkey_result, rewards, account) = &result.accounts_with_rewards[0];
-            _ = commission_account.checked_add_lamports(commission_lamports);
-            assert!(accounts_equal(account, &commission_account));
-
-            let expected_reward_info = RewardInfo {
-                reward_type: RewardType::Voting,
-                lamports: commission_lamports as i64,
-                post_balance: commission_account.lamports(),
-                commission_bps: Some(commission_bps),
-            };
-            assert_eq!(*rewards, expected_reward_info);
-            assert_eq!(*pubkey_result, pubkey);
-        }
-    }
 }
 
 #[test]

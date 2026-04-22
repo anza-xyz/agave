@@ -231,6 +231,14 @@ impl BankForks {
         self.get(slot).map(|bank| bank.hash())
     }
 
+    pub fn block_id(&self, slot: Slot) -> Option<Hash> {
+        self.get(slot).and_then(|bank| bank.block_id())
+    }
+
+    pub fn is_frozen(&self, slot: Slot) -> bool {
+        self.get(slot).map(|bank| bank.is_frozen()).unwrap_or(false)
+    }
+
     pub fn sharable_banks(&self) -> SharableBanks {
         self.sharable_banks.clone()
     }
@@ -286,7 +294,7 @@ impl BankForks {
         mode: SchedulingMode,
         bank: Arc<Bank>,
     ) -> BankWithScheduler {
-        let context = SchedulingContext::new_with_mode(mode, bank.clone());
+        let context = SchedulingContext::new(bank.clone());
         let Some(scheduler) = scheduler_pool.take_scheduler(context) else {
             return BankWithScheduler::new_without_scheduler(bank);
         };
@@ -299,31 +307,6 @@ impl BankForks {
             scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
         }
         bank_with_scheduler
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn reinstall_block_production_scheduler_into_working_genesis_bank(
-        &mut self,
-    ) -> BankWithScheduler {
-        let bank = self.working_bank();
-        assert!(self.banks.len() == 1 && bank.slot() == 0 && !bank.is_frozen());
-        let pool = self.scheduler_pool.as_ref().unwrap();
-        let mode = SchedulingMode::BlockProduction;
-        let bank = Self::install_scheduler_into_bank(pool, mode, bank);
-        self.banks
-            .insert(bank.slot(), bank.clone_with_scheduler())
-            .expect("some removed bank");
-        bank.unpause_new_block_production_scheduler();
-        bank
-    }
-
-    #[must_use]
-    pub fn toggle_unified_scheduler_block_production_mode(&self, enable: bool) -> bool {
-        if let Some(scheduler_pool) = &self.scheduler_pool {
-            scheduler_pool.toggle_block_production_mode(enable)
-        } else {
-            !enable
-        }
     }
 
     pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {
@@ -357,6 +340,20 @@ impl BankForks {
         Some(bank)
     }
 
+    pub fn highest_frozen_bank(&self) -> Option<Arc<Bank>> {
+        self.banks
+            .values()
+            .filter_map(|bank| {
+                if bank.is_frozen() {
+                    Some(bank.slot())
+                } else {
+                    None
+                }
+            })
+            .max()
+            .and_then(|slot| self.get(slot))
+    }
+
     pub fn highest_slot(&self) -> Slot {
         self.working_slot
     }
@@ -374,7 +371,11 @@ impl BankForks {
     }
 
     /// Clears associated banks from BankForks.
-    pub fn dump_slots<'a, I>(&mut self, slots: I) -> (Vec<(Slot, BankId)>, Vec<BankWithScheduler>)
+    pub fn dump_slots<'a, I>(
+        &mut self,
+        slots: I,
+        write_bank_hash_details: bool,
+    ) -> (Vec<(Slot, BankId)>, Vec<BankWithScheduler>)
     where
         I: Iterator<Item = &'a Slot>,
     {
@@ -384,14 +385,32 @@ impl BankForks {
                 let bank = self
                     .remove(*slot)
                     .expect("BankForks should not have been purged yet");
-                bank_hash_details::write_bank_hash_details_file(&bank)
-                    .map_err(|err| {
-                        warn!("Unable to write bank hash details file: {err}");
-                    })
-                    .ok();
+                if write_bank_hash_details {
+                    bank_hash_details::write_bank_hash_details_file(&bank)
+                        .map_err(|err| {
+                            warn!("Unable to write bank hash details file: {err}");
+                        })
+                        .ok();
+                }
                 ((*slot, bank.bank_id()), bank)
             })
             .unzip()
+    }
+
+    /// Clears a bank from bank forks. Panics if the bank is not present in bank forks
+    pub fn clear_bank(&mut self, slot: Slot, write_bank_hash_details: bool) {
+        let (slots_to_purge, removed_banks) =
+            self.dump_slots(std::iter::once(&slot), write_bank_hash_details);
+
+        let root_bank = self.root_bank();
+        root_bank.remove_unrooted_slots(&slots_to_purge);
+
+        drop(removed_banks);
+
+        for (slot, _) in slots_to_purge {
+            root_bank.clear_slot_signatures(slot);
+            root_bank.prune_program_cache_by_deployment_slot(slot);
+        }
     }
 
     fn do_set_root_return_metrics(

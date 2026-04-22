@@ -159,6 +159,10 @@ not limited to;
   * Any and all web properties (See domain ToC page for contact)
   * [SPL member projects](https://github.com/solana-program) (See repo security tab)
   * [Solana SDK crates](https://github.com/anza-xyz/solana-sdk) (See security tab)
+* Findings that require a Geyser plugin or `scheduler-bindings` external
+process to violate interface requirements. These integrations are operator-trusted
+components, and validator crashes or other instability caused by non-conforming
+implementations are out of scope.
 * Issues that have been previously disclosed in a public venue
 * Issues that affect node stability during the bootstrap phase and can be trivially
 mitigated by configuration adjustments. The bootstrap phase is defined as the time
@@ -167,7 +171,10 @@ snapshot slot or genesis.
 * Issues involving maliciously crafted snapshots. Snapshots have historically been
 considered trust on first use and have many shortcomings with respect to consistency
 and verifiability as a result. An effort to improve this situation is actively underway
-* For the RPC DoS category, the following classes of issue are out of scope
+* The in-built RPC service is not intended to be directly exposed to untrusted clients.
+Any environments which require features like authentication and rate-limiting _*MUST*_ be
+deployed behind a reverse proxy or similar. For the RPC DoS category, the following
+classes of issue are out of scope
   * Those requiring a call rate greater than once per `CLUSTER_SLOT_TIME_TARGET / 2`
   * Those requiring calls from multiple clients
   * Those impacting getProgramAccounts, et al. without secondary indexes enabled and/or

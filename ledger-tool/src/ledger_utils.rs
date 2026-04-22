@@ -13,9 +13,7 @@ use {
         validate_account_paths_for_direct_io,
     },
     solana_clock::Slot,
-    solana_core::validator::{
-        BlockProductionMethod, BlockVerificationMethod, supported_scheduling_mode,
-    },
+    solana_core::validator::{BlockProductionMethod, BlockVerificationMethod},
     solana_genesis_config::GenesisConfig,
     solana_genesis_utils::open_genesis_config,
     solana_geyser_plugin_manager::geyser_plugin_service::{
@@ -44,7 +42,6 @@ use {
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
     solana_transaction::versioned::VersionedTransaction,
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         path::{Path, PathBuf},
         process::exit,
@@ -67,7 +64,6 @@ pub struct LoadAndProcessLedgerOutput {
     // not. It is safe to let ABS continue in the background, and ABS will stop
     // if/when it finally checks the exit flag
     pub accounts_background_service: AccountsBackgroundService,
-    pub unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
 }
 
 const PROCESS_SLOTS_HELP_STRING: &str =
@@ -388,31 +384,11 @@ pub fn load_and_process_ledger(
         BlockProductionMethod
     )
     .unwrap_or_default();
+    block_production_method.warn_if_deprecated_value();
     info!(
         "Using: block-verification-method: {block_verification_method}, block-production-method: \
          {block_production_method}",
     );
-    let unified_scheduler_handler_threads =
-        value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
-    let unified_scheduler_pool = match (&block_verification_method, &block_production_method) {
-        methods @ (BlockVerificationMethod::UnifiedScheduler, _) => {
-            let no_replay_vote_sender = None;
-
-            let pool = DefaultSchedulerPool::new(
-                supported_scheduling_mode(methods),
-                unified_scheduler_handler_threads,
-                process_options.runtime_config.log_messages_bytes_limit,
-                transaction_status_sender.clone(),
-                no_replay_vote_sender,
-                None,
-            );
-            bank_forks
-                .write()
-                .unwrap()
-                .install_scheduler_pool(pool.clone());
-            Some(pool)
-        }
-    };
 
     let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
 
@@ -461,7 +437,6 @@ pub fn load_and_process_ledger(
         bank_forks,
         starting_snapshot_hashes,
         accounts_background_service,
-        unified_scheduler_pool,
     })
     .map_err(LoadAndProcessLedgerError::ProcessBlockstoreFromRoot);
 
@@ -638,16 +613,13 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         bank.fill_bank_with_ticks_for_tests();
         Bank::calculate_and_set_block_id_for_dcou(&bank);
-        let archive_format = SnapshotConfig::default().archive_format;
-        snapshot_bank_utils::bank_to_full_snapshot_archive(
-            &bank_snapshots_dir,
-            &bank,
-            None,
-            ledger_path,
-            ledger_path,
-            archive_format,
-        )
-        .unwrap();
+        let snapshot_config = SnapshotConfig {
+            full_snapshot_archives_dir: ledger_path.to_path_buf(),
+            incremental_snapshot_archives_dir: ledger_path.to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.clone(),
+            ..SnapshotConfig::default()
+        };
+        snapshot_bank_utils::bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
 
         // Open the blockstore so load_and_process_ledger can pass it to process_blockstore.
         let blockstore = Arc::new(Blockstore::open(ledger_path).unwrap());

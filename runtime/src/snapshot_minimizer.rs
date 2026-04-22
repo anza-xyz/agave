@@ -635,18 +635,16 @@ mod tests {
         );
 
         // take a snapshot of the minimized bank, then load it
-        let snapshot_config = SnapshotConfig::default();
         let bank_snapshots_dir = TempDir::new().unwrap();
         let snapshot_archives_dir = TempDir::new().unwrap();
-        let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
-            &bank_snapshots_dir,
-            &bank,
-            Some(snapshot_config.snapshot_version),
-            &snapshot_archives_dir,
-            &snapshot_archives_dir,
-            snapshot_config.archive_format,
-        )
-        .unwrap();
+        let snapshot_config = SnapshotConfig {
+            full_snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+            ..SnapshotConfig::default()
+        };
+        let snapshot =
+            snapshot_bank_utils::bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
         let accounts_db_config = AccountsDbConfig {
             // must skip accounts verification if we did not recalculate the accounts lt hash

@@ -215,12 +215,6 @@ test-case = { workspace = true }
 jemallocator = { workspace = true }
 
 [[bench]]
-name = "banking_stage"
-
-[[bench]]
-name = "gen_keys"
-
-[[bench]]
 name = "sigverify_stage"
 harness = false
 
@@ -230,10 +224,6 @@ harness = false
 
 [[bench]]
 name = "shredder"
-harness = false
-
-[[bench]]
-name = "receive_and_buffer"
 harness = false
 
 [lints]

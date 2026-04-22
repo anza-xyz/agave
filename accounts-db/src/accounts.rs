@@ -440,7 +440,6 @@ impl Accounts {
         &self,
         ancestors: &Ancestors,
         bank_id: BankId,
-        sort_results: bool,
     ) -> ScanResult<Vec<PubkeyAccountSlot>> {
         let mut collector = Vec::new();
         self.accounts_db.scan_accounts(
@@ -455,10 +454,6 @@ impl Accounts {
             },
             &ScanConfig::default(),
         )?;
-        if sort_results {
-            // Avoid copying pubkeys (using Ord::cmp(a, b) silences clippy::unnecessary_sort_by).
-            collector.sort_unstable_by(|(addr_a, _, _), (addr_b, _, _)| Ord::cmp(addr_a, addr_b));
-        }
         Ok(collector)
     }
 

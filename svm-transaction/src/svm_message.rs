@@ -7,6 +7,7 @@ use {
     solana_message::AccountKeys,
     solana_pubkey::Pubkey,
     solana_sdk_ids::{ed25519_program, secp256k1_program, secp256r1_program, system_program},
+    solana_transaction::versioned::TransactionVersion,
 };
 
 mod sanitized_message;
@@ -20,6 +21,9 @@ static_assertions::const_assert_eq!(
 const NONCED_TX_MARKER_IX_INDEX: u8 = 0;
 
 pub trait SVMStaticMessage {
+    /// Get the transaction version.
+    fn version(&self) -> TransactionVersion;
+
     /// Return the number of transaction-level signatures in the message.
     fn num_transaction_signatures(&self) -> u64;
     /// Return the number of ed25519 precompile signatures in the message.

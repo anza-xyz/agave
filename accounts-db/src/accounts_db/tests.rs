@@ -6359,3 +6359,96 @@ fn test_load_does_not_return_data_from_non_ancestor_root() {
     );
     assert_eq!(account.lamports(), 100);
 }
+
+/// Verifies that `index_scan_accounts` does not surface accounts whose slot was
+/// rooted *after* the scan guard was created.
+#[test]
+fn test_index_scan_accounts_excludes_roots_added_during_scan() {
+    const SPL_TOKEN_INITIALIZED_OFFSET: usize = 108;
+    let mint_key = Pubkey::new_unique();
+    let mut account_data = vec![0; spl_generic_token::token::Account::get_packed_len()];
+    account_data[..PUBKEY_BYTES].clone_from_slice(&mint_key.to_bytes());
+    account_data[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
+
+    let make_token_account = |lamports: u64| {
+        let mut acct = AccountSharedData::new(
+            lamports,
+            spl_generic_token::token::Account::get_packed_len(),
+            &spl_generic_token::token::id(),
+        );
+        acct.set_data(account_data.clone());
+        acct
+    };
+
+    let db = Arc::new(AccountsDb {
+        account_indexes: spl_token_mint_index_enabled(),
+        ..AccountsDb::default_for_tests()
+    });
+
+    // 50 accounts in rooted slot 1 make it very likely (~98%) that pubkey_new
+    // is visited after the handshake fires and slot 3 is rooted mid-scan.
+    for _ in 0..50 {
+        let pubkey = Pubkey::new_unique();
+        db.store_for_tests((1, &[(&pubkey, &make_token_account(1))][..]));
+    }
+    db.add_root_and_flush_write_cache(1);
+
+    // Store pubkey_new at slot 3, which is not yet a root.
+    let pubkey_new = Pubkey::new_unique();
+    db.store_for_tests((3, &[(&pubkey_new, &make_token_account(99))][..]));
+
+    // Root slot 2 last — the scan guard will capture max_root = 2 because slot 3
+    // is still unrooted when index_scan_accounts is called below.
+    db.add_root_and_flush_write_cache(2);
+
+    // The root thread waits for a signal from inside the scan callback, then
+    // roots slot 3 mid-scan. The scan must not surface pubkey_new despite slot 3
+    // becoming a root before the scan finishes.
+    let start_rooting = Arc::new(AtomicBool::new(false));
+    let done_rooting = Arc::new(AtomicBool::new(false));
+
+    let root_thread = {
+        let rooting_db = db.clone();
+        let start_rooting = start_rooting.clone();
+        let done_rooting = done_rooting.clone();
+        Builder::new()
+            .name("root-slot-3".into())
+            .spawn(move || {
+                while !start_rooting.load(Ordering::Acquire) {
+                    thread::yield_now();
+                }
+                rooting_db.add_root_and_flush_write_cache(3);
+                done_rooting.store(true, Ordering::Release);
+            })
+            .unwrap()
+    };
+
+    let ancestors = Ancestors::from(vec![0, 1]);
+    let mut found_pubkeys = vec![];
+    let mut signalled = false;
+
+    db.index_scan_accounts(
+        &ancestors,
+        0,
+        IndexKey::SplTokenMint(mint_key),
+        |maybe_account| {
+            if let Some((pubkey, _, _)) = maybe_account {
+                if !signalled {
+                    signalled = true;
+                    start_rooting.store(true, Ordering::Release);
+                    while !done_rooting.load(Ordering::Acquire) {
+                        thread::yield_now();
+                    }
+                }
+                found_pubkeys.push(*pubkey);
+            }
+        },
+        &ScanConfig::default(),
+    )
+    .unwrap();
+
+    root_thread.join().unwrap();
+
+    // slot 3 was rooted after the scan guard's max_root (= 2) was established.
+    assert!(!found_pubkeys.contains(&pubkey_new));
+}

@@ -8,7 +8,6 @@ use {
     crate::sigverify,
     core::time::Duration,
     crossbeam_channel::{Receiver, RecvTimeoutError},
-    itertools::Itertools,
     rayon::ThreadPool,
     solana_measure::measure::Measure,
     solana_perf::{
@@ -220,31 +219,6 @@ impl SigVerifyStage {
         Self { thread_hdl }
     }
 
-    pub fn discard_excess_packets(batches: &mut [PacketBatch], mut max_packets: usize) {
-        // Group packets by their incoming IP address.
-        let mut addrs = batches
-            .iter_mut()
-            .rev()
-            .flat_map(|batch| batch.iter_mut().rev())
-            .filter(|packet| !packet.meta().discard())
-            .map(|packet| (packet.meta().addr, packet))
-            .into_group_map();
-        // Allocate max_packets evenly across addresses.
-        while max_packets > 0 && !addrs.is_empty() {
-            let num_addrs = addrs.len();
-            addrs.retain(|_, packets| {
-                let cap = max_packets.div_ceil(num_addrs);
-                max_packets -= packets.len().min(cap);
-                packets.truncate(packets.len().saturating_sub(cap));
-                !packets.is_empty()
-            });
-        }
-        // Discard excess packets from each address.
-        for mut packet in addrs.into_values().flatten() {
-            packet.meta_mut().set_discard(true);
-        }
-    }
-
     fn verifier<const K: usize, T: SigVerifier>(
         deduper: &Deduper<K, [u8]>,
         recvr: &Receiver<PacketBatch>,
@@ -369,41 +343,9 @@ mod tests {
         super::*,
         crate::{banking_trace::BankingTracer, sigverify::TransactionSigVerifier},
         crossbeam_channel::unbounded,
-        solana_perf::{
-            packet::{Packet, RecycledPacketBatch, to_packet_batches},
-            sigverify,
-            test_tx::test_tx,
-        },
+        solana_perf::{packet::to_packet_batches, sigverify, test_tx::test_tx},
         std::sync::Arc,
     };
-
-    fn count_non_discard(packet_batches: &[PacketBatch]) -> usize {
-        packet_batches
-            .iter()
-            .flatten()
-            .filter(|p| !p.meta().discard())
-            .count()
-    }
-
-    #[test]
-    fn test_packet_discard() {
-        agave_logger::setup();
-        let batch_size = 10;
-        let mut batch = RecycledPacketBatch::with_capacity(batch_size);
-        let packet = Packet::default();
-        batch.resize(batch_size, packet);
-        batch[3].meta_mut().addr = std::net::IpAddr::from([1u16; 8]);
-        batch[3].meta_mut().set_discard(true);
-        batch[4].meta_mut().addr = std::net::IpAddr::from([2u16; 8]);
-        let mut batches = vec![PacketBatch::from(batch)];
-        let max = 3;
-        SigVerifyStage::discard_excess_packets(&mut batches, max);
-        let total_non_discard = count_non_discard(&batches);
-        assert_eq!(total_non_discard, max);
-        assert!(!batches[0].get(0).unwrap().meta().discard());
-        assert!(batches[0].get(3).unwrap().meta().discard());
-        assert!(!batches[0].get(4).unwrap().meta().discard());
-    }
 
     fn gen_batches(
         use_same_tx: bool,
