@@ -698,6 +698,17 @@ fn process_loader_upgradeable_instruction(
             ic_logger_msg!(log_collector, "New authority {:?}", new_authority_key);
         }
         UpgradeableLoaderInstruction::Close => {
+            let enable_reclaim_closed_program = invoke_context
+                .get_feature_set()
+                .loader_v3_reclaim_closed_program;
+            let tombstone = if enable_reclaim_closed_program {
+                // SIMD-0432: Use provided tombstone flag.
+                read_trailing_bool(instruction_data, CLOSE_OFFSET)?.unwrap_or(false)
+            } else {
+                // Legacy: Default behavior is tombstone=true.
+                true
+            };
+
             instruction_context.check_number_of_instruction_accounts(2)?;
             if instruction_context.get_index_of_instruction_account_in_transaction(0)?
                 == instruction_context.get_index_of_instruction_account_in_transaction(1)?
@@ -714,17 +725,106 @@ fn process_loader_upgradeable_instruction(
             close_account.set_data_length(UpgradeableLoaderState::size_of_uninitialized())?;
             match close_account_state {
                 UpgradeableLoaderState::Uninitialized => {
-                    let mut recipient_account =
-                        instruction_context.try_borrow_instruction_account(1)?;
-                    recipient_account.checked_add_lamports(close_account.get_lamports())?;
-                    close_account.set_lamports(0)?;
+                    // Check if this is a legacy tombstone reclamation:
+                    // * SIMD-0432 must be active
+                    // * Program account must be provided (account index 3)
+                    // * Program state must be:
+                    //   * Program account: `Program` with programdata address
+                    //     matching programdata account
+                    //   * Programdata account: `Uninitialized` (zeroed)
+                    let is_legacy_tombstone_reclaim = enable_reclaim_closed_program
+                        && instruction_context.get_number_of_instruction_accounts() >= 4
+                        && {
+                            // We already know the programdata is `Uninitialized`.
+                            // Check the program account.
+                            let program_account =
+                                instruction_context.try_borrow_instruction_account(3).ok();
+                            program_account.is_some_and(|acc| {
+                                matches!(
+                                    acc.get_state(),
+                                    Ok(UpgradeableLoaderState::Program {
+                                        programdata_address
+                                    }) if programdata_address == close_key
+                                )
+                            })
+                        };
 
-                    ic_logger_msg!(log_collector, "Closed Uninitialized {}", close_key);
+                    if is_legacy_tombstone_reclaim {
+                        // Legacy tombstone reclamation.
+                        // Authority signer must be the program keypair.
+                        instruction_context.check_number_of_instruction_accounts(4)?;
+                        drop(close_account);
+
+                        let program_account =
+                            instruction_context.try_borrow_instruction_account(3)?;
+                        let program_key = *program_account.get_key();
+
+                        if !program_account.is_writable() {
+                            ic_logger_msg!(log_collector, "Program account is not writable");
+                            return Err(InstructionError::InvalidArgument);
+                        }
+
+                        if program_account.get_owner() != program_id {
+                            ic_logger_msg!(log_collector, "Program account not owned by loader");
+                            return Err(InstructionError::IncorrectProgramId);
+                        }
+
+                        // Verify the signer at index 2 is the program keypair.
+                        let authority_key =
+                            instruction_context.get_key_of_instruction_account(2)?;
+                        if authority_key != &program_key {
+                            ic_logger_msg!(
+                                log_collector,
+                                "Legacy tombstone reclamation requires program keypair as \
+                                 authority"
+                            );
+                            return Err(InstructionError::IncorrectAuthority);
+                        }
+                        if !instruction_context.is_instruction_account_signer(2)? {
+                            ic_logger_msg!(log_collector, "Program keypair did not sign");
+                            return Err(InstructionError::MissingRequiredSignature);
+                        }
+
+                        // Close the programdata account.
+                        // Authority check is skipped because we've already verified the
+                        // program keypair signed above.
+                        drop(program_account);
+                        common_close_account(
+                            CloseAccountAuthority::Skip,
+                            &instruction_context,
+                            &log_collector,
+                        )?;
+
+                        close_program_account_post(
+                            invoke_context,
+                            &instruction_context,
+                            tombstone,
+                            &program_key,
+                        )?;
+
+                        ic_logger_msg!(
+                            log_collector,
+                            "Reclaimed legacy tombstone Program {}",
+                            program_key
+                        );
+                    } else {
+                        // Standard uninitialized account close.
+                        let mut recipient_account =
+                            instruction_context.try_borrow_instruction_account(1)?;
+                        recipient_account.checked_add_lamports(close_account.get_lamports())?;
+                        close_account.set_lamports(0)?;
+
+                        ic_logger_msg!(log_collector, "Closed Uninitialized {}", close_key);
+                    }
                 }
                 UpgradeableLoaderState::Buffer { authority_address } => {
                     instruction_context.check_number_of_instruction_accounts(3)?;
                     drop(close_account);
-                    common_close_account(&authority_address, &instruction_context, &log_collector)?;
+                    common_close_account(
+                        CloseAccountAuthority::Check(&authority_address),
+                        &instruction_context,
+                        &log_collector,
+                    )?;
 
                     ic_logger_msg!(log_collector, "Closed Buffer {}", close_key);
                 }
@@ -745,13 +845,23 @@ fn process_loader_upgradeable_instruction(
                         ic_logger_msg!(log_collector, "Program account not owned by loader");
                         return Err(InstructionError::IncorrectProgramId);
                     }
+
                     let clock = invoke_context
                         .environment_config
                         .sysvar_cache()
                         .get_clock()?;
-                    if clock.slot == slot {
-                        ic_logger_msg!(log_collector, "Program was deployed in this block already");
-                        return Err(InstructionError::InvalidArgument);
+
+                    if !tombstone {
+                        // If it's not going to be a tombstone, it can't be
+                        // closed if it was deployed in this same slot.
+                        if clock.slot == slot {
+                            ic_logger_msg!(
+                                log_collector,
+                                "Program was deployed in this slot, cannot close without \
+                                 tombstoning"
+                            );
+                            return Err(InstructionError::InvalidArgument);
+                        }
                     }
 
                     match program_account.get_state()? {
@@ -766,12 +876,26 @@ fn process_loader_upgradeable_instruction(
                                 return Err(InstructionError::InvalidArgument);
                             }
 
+                            // Close the programdata account.
                             drop(program_account);
                             common_close_account(
-                                &authority_address,
+                                CloseAccountAuthority::Check(&authority_address),
                                 &instruction_context,
                                 &log_collector,
                             )?;
+
+                            // Handle the program account based on tombstone flag.
+                            // Only do this when the feature is enabled; legacy behavior
+                            // leaves the program account untouched.
+                            if enable_reclaim_closed_program {
+                                close_program_account_post(
+                                    invoke_context,
+                                    &instruction_context,
+                                    tombstone,
+                                    &program_key,
+                                )?;
+                            }
+
                             let clock = invoke_context
                                 .environment_config
                                 .sysvar_cache()
@@ -813,6 +937,8 @@ fn process_loader_upgradeable_instruction(
 const DEPLOY_WITH_MAX_DATA_LEN_OFFSET: usize = 12;
 // u32 discriminator
 const UPGRADE_OFFSET: usize = 4;
+// u32 discriminator
+const CLOSE_OFFSET: usize = 4;
 
 fn read_trailing_bool(
     instruction_data: &[u8],
@@ -1033,22 +1159,70 @@ fn common_extend_program(
     Ok(())
 }
 
+enum CloseAccountAuthority<'a> {
+    Skip,
+    Check(&'a Option<Pubkey>),
+}
+
+fn close_program_account_post(
+    invoke_context: &InvokeContext,
+    instruction_context: &InstructionContext,
+    tombstone: bool,
+    program_key: &Pubkey,
+) -> Result<(), InstructionError> {
+    let mut program_account = instruction_context.try_borrow_instruction_account(3)?;
+    program_account.set_data_length(0)?;
+
+    if tombstone {
+        // Tombstone: retain rent-exempt minimum and assign to itself.
+        let rent = invoke_context
+            .environment_config
+            .sysvar_cache()
+            .get_rent()?;
+        let rent_exempt_reserve = rent.minimum_balance(0);
+        let spill_lamports = program_account
+            .get_lamports()
+            .saturating_sub(rent_exempt_reserve);
+
+        if spill_lamports > 0 {
+            let mut recipient_account = instruction_context.try_borrow_instruction_account(1)?;
+            recipient_account.checked_add_lamports(spill_lamports)?;
+            drop(recipient_account);
+            program_account.set_lamports(rent_exempt_reserve)?;
+        }
+
+        program_account.set_owner(program_key.as_ref())?;
+    } else {
+        // Non-tombstone: withdraw all lamports and let the program account be
+        // garbage-collected.
+        let program_lamports = program_account.get_lamports();
+        let mut recipient_account = instruction_context.try_borrow_instruction_account(1)?;
+        recipient_account.checked_add_lamports(program_lamports)?;
+        drop(recipient_account);
+        program_account.set_lamports(0)?;
+    }
+
+    Ok(())
+}
+
 fn common_close_account(
-    authority_address: &Option<Pubkey>,
+    authority: CloseAccountAuthority,
     instruction_context: &InstructionContext,
     log_collector: &Option<Rc<RefCell<LogCollector>>>,
 ) -> Result<(), InstructionError> {
-    if authority_address.is_none() {
-        ic_logger_msg!(log_collector, "Account is immutable");
-        return Err(InstructionError::Immutable);
-    }
-    if *authority_address != Some(*instruction_context.get_key_of_instruction_account(2)?) {
-        ic_logger_msg!(log_collector, "Incorrect authority provided");
-        return Err(InstructionError::IncorrectAuthority);
-    }
-    if !instruction_context.is_instruction_account_signer(2)? {
-        ic_logger_msg!(log_collector, "Authority did not sign");
-        return Err(InstructionError::MissingRequiredSignature);
+    if let CloseAccountAuthority::Check(authority_address) = authority {
+        if authority_address.is_none() {
+            ic_logger_msg!(log_collector, "Account is immutable");
+            return Err(InstructionError::Immutable);
+        }
+        if *authority_address != Some(*instruction_context.get_key_of_instruction_account(2)?) {
+            ic_logger_msg!(log_collector, "Incorrect authority provided");
+            return Err(InstructionError::IncorrectAuthority);
+        }
+        if !instruction_context.is_instruction_account_signer(2)? {
+            ic_logger_msg!(log_collector, "Authority did not sign");
+            return Err(InstructionError::MissingRequiredSignature);
+        }
     }
 
     let mut close_account = instruction_context.try_borrow_instruction_account(0)?;
@@ -1171,13 +1345,23 @@ mod tests {
     struct LoaderV3Features {
         // SIMD-0430: Relax Program Buffer Constraints
         loader_v3_relax_program_buffer_constraints: bool,
+        // SIMD-0432: Reclaim Closed Program
+        loader_v3_reclaim_closed_program: bool,
     }
 
     impl LoaderV3Features {
+        fn all_enabled() -> Self {
+            Self {
+                loader_v3_relax_program_buffer_constraints: true,
+                loader_v3_reclaim_closed_program: true,
+            }
+        }
+
         fn svm_feature_set(&self) -> SVMFeatureSet {
             SVMFeatureSet {
                 loader_v3_relax_program_buffer_constraints: self
                     .loader_v3_relax_program_buffer_constraints,
+                loader_v3_reclaim_closed_program: self.loader_v3_reclaim_closed_program,
                 ..SVMFeatureSet::all_enabled()
             }
         }
@@ -1690,6 +1874,7 @@ mod tests {
     fn test_bpf_loader_upgradeable_upgrade(simd_0430_enabled: bool, close_buffer: Option<bool>) {
         let features = LoaderV3Features {
             loader_v3_relax_program_buffer_constraints: simd_0430_enabled,
+            ..LoaderV3Features::all_enabled()
         };
         let mut file = File::open("test_elfs/out/sbpfv3_return_ok.so").expect("file open failed");
         let mut elf_orig = Vec::new();
@@ -2361,6 +2546,7 @@ mod tests {
     ) {
         let features = LoaderV3Features {
             loader_v3_relax_program_buffer_constraints: simd_0430_enabled,
+            ..LoaderV3Features::all_enabled()
         };
         let mut file = File::open("test_elfs/out/sbpfv3_return_ok.so").expect("file open failed");
         let mut elf = Vec::new();
@@ -3773,9 +3959,43 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_bpf_loader_upgradeable_close() {
-        let instruction = bincode::serialize(&UpgradeableLoaderInstruction::Close).unwrap();
+    #[test_matrix(
+        [true, false],
+        [None, Some(true), Some(false)]
+    )]
+    fn test_bpf_loader_upgradeable_close(simd_0432_enabled: bool, tombstone: Option<bool>) {
+        fn process_instruction(
+            features: &LoaderV3Features,
+            program_id: &Pubkey,
+            instruction_data: &[u8],
+            transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+            instruction_accounts: Vec<AccountMeta>,
+            expected_result: Result<(), InstructionError>,
+        ) -> Vec<AccountSharedData> {
+            mock_process_instruction_with_feature_set(
+                program_id,
+                instruction_data,
+                transaction_accounts,
+                instruction_accounts,
+                expected_result,
+                Entrypoint::register,
+                |invoke_context| {
+                    test_utils::load_all_invoked_programs(invoke_context);
+                },
+                |_invoke_context| {},
+                &features.svm_feature_set(),
+            )
+        }
+
+        let features = LoaderV3Features {
+            loader_v3_reclaim_closed_program: simd_0432_enabled,
+            ..LoaderV3Features::all_enabled()
+        };
+
+        let mut instruction = bincode::serialize(&UpgradeableLoaderInstruction::Close).unwrap();
+        if let Some(tombstone) = tombstone {
+            instruction.push(tombstone.into());
+        };
         let loader_id = bpf_loader_upgradeable::id();
         let invalid_authority_address = Pubkey::new_unique();
         let authority_address = Pubkey::new_unique();
@@ -3824,6 +4044,7 @@ mod tests {
             slot: 1,
             ..Clock::default()
         });
+        let rent_account = create_account_for_test(&Rent::default());
         let transaction_accounts = vec![
             (buffer_address, buffer_account.clone()),
             (recipient_address, recipient_account.clone()),
@@ -3847,6 +4068,7 @@ mod tests {
 
         // Case: close a buffer account
         let accounts = process_instruction(
+            &features,
             &loader_id,
             &instruction,
             transaction_accounts,
@@ -3868,6 +4090,7 @@ mod tests {
 
         // Case: close with wrong authority
         process_instruction(
+            &features,
             &loader_id,
             &instruction,
             vec![
@@ -3889,6 +4112,7 @@ mod tests {
 
         // Case: close an uninitialized account
         let accounts = process_instruction(
+            &features,
             &loader_id,
             &instruction,
             vec![
@@ -3918,6 +4142,7 @@ mod tests {
 
         // Case: close a program account
         let accounts = process_instruction(
+            &features,
             &loader_id,
             &instruction,
             vec![
@@ -3926,6 +4151,7 @@ mod tests {
                 (authority_address, authority_account.clone()),
                 (program_address, program_account.clone()),
                 (sysvar::clock::id(), clock_account.clone()),
+                (sysvar::rent::id(), rent_account.clone()),
             ],
             vec![
                 AccountMeta {
@@ -3944,7 +4170,22 @@ mod tests {
             Ok(()),
         );
         assert_eq!(0, accounts.first().unwrap().lamports());
-        assert_eq!(2, accounts.get(1).unwrap().lamports());
+
+        // Verify recipient lamports based on effective close behavior.
+        if !simd_0432_enabled {
+            // Legacy: only programdata lamports transferred.
+            // recipient: 1 initial + 1 from programdata = 2
+            assert_eq!(2, accounts.get(1).unwrap().lamports());
+        } else if matches!(tombstone, Some(true)) {
+            // Tombstone: programdata + program excess (program keeps rent-exempt min).
+            // recipient: 1 initial + 1 from programdata + 0 from program (1 < rent_exempt_min) = 2
+            assert_eq!(2, accounts.get(1).unwrap().lamports());
+        } else {
+            // Reclaim: programdata + all program lamports.
+            // recipient: 1 initial + 1 from programdata + 1 from program = 3
+            assert_eq!(3, accounts.get(1).unwrap().lamports());
+        }
+
         let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
         assert_eq!(state, UpgradeableLoaderState::Uninitialized);
         assert_eq!(
@@ -3952,10 +4193,31 @@ mod tests {
             accounts.first().unwrap().data().len()
         );
 
+        // Verify program account state based on effective close behavior.
+        let program_result = accounts.get(3).unwrap();
+        if !simd_0432_enabled {
+            // Legacy: program account untouched.
+            assert_eq!(1, program_result.lamports());
+            assert_eq!(
+                UpgradeableLoaderState::size_of_program(),
+                program_result.data().len()
+            );
+        } else if matches!(tombstone, Some(true)) {
+            // Tombstone: program assigned to itself, keeps lamports (< rent exempt min).
+            assert_eq!(program_result.owner(), &program_address);
+            assert_eq!(1, program_result.lamports());
+            assert_eq!(0, program_result.data().len());
+        } else {
+            // Reclaim: program fully drained.
+            assert_eq!(0, program_result.lamports());
+            assert_eq!(0, program_result.data().len());
+        }
+
         // Try to invoke closed account
         programdata_account = accounts.first().unwrap().clone();
         program_account = accounts.get(3).unwrap().clone();
         process_instruction(
+            &features,
             &program_address,
             &[],
             vec![
@@ -3967,7 +4229,15 @@ mod tests {
         );
 
         // Case: Reopen should fail
+        let expected_reopen_error = if !simd_0432_enabled {
+            // Program account still has Program state
+            InstructionError::AccountAlreadyInitialized
+        } else {
+            // - Program account has 0 data
+            InstructionError::InvalidAccountData
+        };
         process_instruction(
+            &features,
             &loader_id,
             &bincode::serialize(&UpgradeableLoaderInstruction::DeployWithMaxDataLen {
                 max_data_len: 0,
@@ -3983,6 +4253,7 @@ mod tests {
                     create_account_for_test(&Rent::default()),
                 ),
                 (sysvar::clock::id(), clock_account),
+                (sysvar::rent::id(), rent_account.clone()),
                 (
                     system_program::id(),
                     AccountSharedData::new(0, 0, &system_program::id()),
@@ -4031,8 +4302,175 @@ mod tests {
                     is_writable: false,
                 },
             ],
-            Err(InstructionError::AccountAlreadyInitialized),
+            Err(expected_reopen_error),
         );
+    }
+
+    #[test_matrix([true, false])]
+    fn test_bpf_loader_upgradeable_close_legacy_tombstone_reclamation(simd_0432_enabled: bool) {
+        fn process_instruction(
+            features: &LoaderV3Features,
+            program_id: &Pubkey,
+            instruction_data: &[u8],
+            transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+            instruction_accounts: Vec<AccountMeta>,
+            expected_result: Result<(), InstructionError>,
+        ) -> Vec<AccountSharedData> {
+            mock_process_instruction_with_feature_set(
+                program_id,
+                instruction_data,
+                transaction_accounts,
+                instruction_accounts,
+                expected_result,
+                Entrypoint::register,
+                |invoke_context| {
+                    test_utils::load_all_invoked_programs(invoke_context);
+                },
+                |_invoke_context| {},
+                &features.svm_feature_set(),
+            )
+        }
+
+        let features = LoaderV3Features {
+            loader_v3_reclaim_closed_program: simd_0432_enabled,
+            ..LoaderV3Features::all_enabled()
+        };
+
+        // Test reclaiming a legacy tombstone.
+        // No trailing byte defaults to `tombstone=false` when SIMD-0432 is
+        // enabled.
+        let instruction = bincode::serialize(&UpgradeableLoaderInstruction::Close).unwrap();
+        let loader_id = bpf_loader_upgradeable::id();
+        let recipient_address = Pubkey::new_unique();
+        let recipient_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+        let programdata_address = Pubkey::new_unique();
+        let mut programdata_account = AccountSharedData::new(
+            500,
+            UpgradeableLoaderState::size_of_programdata(0),
+            &loader_id,
+        );
+        programdata_account
+            .set_state(&UpgradeableLoaderState::Uninitialized)
+            .unwrap();
+        let program_address = Pubkey::new_unique();
+        let mut program_account =
+            AccountSharedData::new(500, UpgradeableLoaderState::size_of_program(), &loader_id);
+        program_account.set_executable(true);
+        program_account
+            .set_state(&UpgradeableLoaderState::Program {
+                programdata_address,
+            })
+            .unwrap();
+
+        let programdata_meta = AccountMeta {
+            pubkey: programdata_address,
+            is_signer: false,
+            is_writable: true,
+        };
+        let recipient_meta = AccountMeta {
+            pubkey: recipient_address,
+            is_signer: false,
+            is_writable: true,
+        };
+        let program_meta = AccountMeta {
+            pubkey: program_address,
+            is_signer: false,
+            is_writable: true,
+        };
+        let program_signer_meta = AccountMeta {
+            pubkey: program_address,
+            is_signer: true,
+            is_writable: false,
+        };
+
+        // Wrong authority.
+        //
+        // SIMD-0432 on: reclamation authority must be the program keypair, so
+        // a non-program signer fails with IncorrectAuthority.
+        //
+        // SIMD-0432 off: the legacy close path for an Uninitialized programdata
+        // performs no authority check and ignores accounts past index 1, so the
+        // close succeeds regardless of the signer at index 2.
+        {
+            let wrong_authority_address = Pubkey::new_unique();
+            let wrong_authority_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
+            let wrong_authority_meta = AccountMeta {
+                pubkey: wrong_authority_address,
+                is_signer: true,
+                is_writable: false,
+            };
+
+            let expected_result = if simd_0432_enabled {
+                Err(InstructionError::IncorrectAuthority)
+            } else {
+                Ok(())
+            };
+
+            process_instruction(
+                &features,
+                &loader_id,
+                &instruction,
+                vec![
+                    (programdata_address, programdata_account.clone()),
+                    (recipient_address, recipient_account.clone()),
+                    (wrong_authority_address, wrong_authority_account),
+                    (program_address, program_account.clone()),
+                ],
+                vec![
+                    programdata_meta.clone(),
+                    recipient_meta.clone(),
+                    wrong_authority_meta,
+                    program_meta.clone(),
+                ],
+                expected_result,
+            );
+        }
+
+        // Correct authority (program keypair) - should succeed.
+        let accounts = process_instruction(
+            &features,
+            &loader_id,
+            &instruction,
+            vec![
+                (programdata_address, programdata_account),
+                (recipient_address, recipient_account),
+                (program_address, program_account),
+            ],
+            vec![
+                programdata_meta,
+                recipient_meta,
+                program_signer_meta,
+                program_meta,
+            ],
+            Ok(()),
+        );
+
+        // Programdata is drained to the recipient in both modes.
+        let programdata_result = accounts.first().unwrap();
+        assert_eq!(programdata_result.lamports(), 0);
+        assert_eq!(
+            programdata_result.state(),
+            Ok(UpgradeableLoaderState::Uninitialized)
+        );
+
+        let program_result = accounts.get(2).unwrap();
+        let recipient_result = accounts.get(1).unwrap();
+        if simd_0432_enabled {
+            // Reclaimed: program account fully drained; recipient collects
+            // programdata + program lamports.
+            assert_eq!(program_result.lamports(), 0);
+            assert_eq!(program_result.data().len(), 0);
+            assert_eq!(recipient_result.lamports(), 1001); // 1 + 500 + 500
+        } else {
+            // Legacy: Uninitialized close ignores the program account entirely;
+            // only programdata is transferred.
+            assert_eq!(program_result.lamports(), 500);
+            assert_eq!(
+                program_result.data().len(),
+                UpgradeableLoaderState::size_of_program()
+            );
+            assert_eq!(recipient_result.lamports(), 501); // 1 + 500
+        }
     }
 
     /// fuzzing utility function

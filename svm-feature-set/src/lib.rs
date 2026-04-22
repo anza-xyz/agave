@@ -53,6 +53,7 @@ pub struct SVMFeatureSet {
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
     pub loader_v3_relax_program_buffer_constraints: bool,
+    pub loader_v3_reclaim_closed_program: bool,
 }
 
 impl SVMFeatureSet {
@@ -110,6 +111,7 @@ impl SVMFeatureSet {
             enable_sha512_syscall: true,
             relax_post_exec_min_balance_check: true,
             loader_v3_relax_program_buffer_constraints: true,
+            loader_v3_reclaim_closed_program: true,
         }
     }
 }

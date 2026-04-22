@@ -87,6 +87,7 @@ pub struct FeatureSnapshot {
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
     pub loader_v3_relax_program_buffer_constraints: bool,
+    pub loader_v3_reclaim_closed_program: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -204,6 +205,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             loader_v3_relax_program_buffer_constraints: is_active(
                 &loader_v3_relax_program_buffer_constraints::ID,
             ),
+            loader_v3_reclaim_closed_program: is_active(&loader_v3_reclaim_closed_program::id()),
         }
     }
 }
@@ -371,6 +373,7 @@ impl FeatureSet {
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
             loader_v3_relax_program_buffer_constraints: snapshot
                 .loader_v3_relax_program_buffer_constraints,
+            loader_v3_reclaim_closed_program: snapshot.loader_v3_reclaim_closed_program,
         }
     }
 }
@@ -1540,6 +1543,10 @@ pub mod loader_v3_relax_program_buffer_constraints {
     solana_pubkey::declare_id!("H5AgGhTzvHp2GH9SVGZYBpjeQPy1V9bqYQ4MmTtiCWr9");
 }
 
+pub mod loader_v3_reclaim_closed_program {
+    solana_pubkey::declare_id!("Q3HXoz4yrao46vwMEJxqCV72MeB3m24hkTXZTh8kX9L");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2592,6 +2599,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             loader_v3_relax_program_buffer_constraints::id(),
             "SIMD-0430: Loader V3: Relax Program Buffer Constraints",
+        ),
+        (
+            loader_v3_reclaim_closed_program::id(),
+            "SIMD-0432: Loader V3: Reclaim Closed Program",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
