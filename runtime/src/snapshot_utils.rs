@@ -1048,16 +1048,12 @@ pub fn verify_and_unarchive_snapshots(
     incremental_snapshot_archive_info: Option<&IncrementalSnapshotArchiveInfo>,
     account_paths: &[PathBuf],
     accounts_db_config: &AccountsDbConfig,
+    io_setup: &IoSetupState,
 ) -> Result<(UnarchivedSnapshots, UnarchivedSnapshotsGuard)> {
     check_are_snapshots_compatible(
         full_snapshot_archive_info,
         incremental_snapshot_archive_info,
     )?;
-
-    let io_setup = IoSetupState::default()
-        .with_shared_sqpoll()?
-        .with_direct_io(accounts_db_config.snapshots_use_direct_io)
-        .with_buffers_registered(accounts_db_config.use_registered_io_uring_buffers);
 
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
     let UnarchivedSnapshot {

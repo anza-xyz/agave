@@ -25,7 +25,7 @@ use {
             rebuild_storages_from_snapshot_dir, verify_and_unarchive_snapshots,
         },
     },
-    agave_fs::dirs,
+    agave_fs::{dirs, io_setup::IoSetupState},
     agave_snapshots::{
         SnapshotArchiveKind, SnapshotKind,
         error::{
@@ -83,6 +83,10 @@ pub fn bank_fields_from_snapshot_archives(
 
     let account_paths = vec![temp_accounts_dir.path().to_path_buf()];
 
+    let io_setup = IoSetupState::default()
+        .with_shared_sqpoll()?
+        .with_direct_io(accounts_db_config.snapshots_use_direct_io)
+        .with_buffers_registered(accounts_db_config.use_registered_io_uring_buffers);
     let (
         UnarchivedSnapshots {
             full_unpacked_snapshots_dir_and_version,
@@ -96,6 +100,7 @@ pub fn bank_fields_from_snapshot_archives(
         incremental_snapshot_archive_info.as_ref(),
         &account_paths,
         accounts_db_config,
+        &io_setup,
     )?;
 
     bank_fields_from_snapshots(
@@ -162,6 +167,10 @@ pub fn bank_from_snapshot_archives(
             )
     );
 
+    let io_setup = IoSetupState::default()
+        .with_shared_sqpoll()?
+        .with_direct_io(accounts_db_config.snapshots_use_direct_io)
+        .with_buffers_registered(accounts_db_config.use_registered_io_uring_buffers);
     let (
         UnarchivedSnapshots {
             full_storage: mut storage,
@@ -182,6 +191,7 @@ pub fn bank_from_snapshot_archives(
         incremental_snapshot_archive_info,
         account_paths,
         &accounts_db_config,
+        &io_setup,
     )?;
 
     if let Some(incremental_storage) = incremental_storage {
