@@ -65,7 +65,7 @@ pub const SAFE_TO_NOTAR_MIN_NOTARIZE_AND_SKIP: Fraction = Fraction::from_percent
 pub const SAFE_TO_SKIP_THRESHOLD: Fraction = Fraction::from_percentage(40);
 
 /// Time bound assumed on network transmission delays during periods of synchrony.
-pub(crate) const DELTA: Duration = Duration::from_millis(250);
+pub const DELTA: Duration = Duration::from_millis(250);
 
 /// Base timeout for when leader's first slice should arrive if they sent it immediately.
 pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();

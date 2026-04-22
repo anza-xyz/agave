@@ -1566,6 +1566,7 @@ impl Validator {
                 fetch: node.sockets.tvu,
                 ancestor_hashes_requests: node.sockets.ancestor_hashes_requests,
                 alpenglow: alpenglow_socket,
+                block_id_repair: node.sockets.block_id_repair,
             },
             blockstore.clone(),
             ledger_signal_receiver,

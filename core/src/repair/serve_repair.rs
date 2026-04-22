@@ -222,7 +222,6 @@ pub enum BlockIdRepairType {
     },
 }
 
-#[allow(dead_code)]
 impl BlockIdRepairType {
     pub(crate) fn block(&self) -> Block {
         match self {
@@ -423,7 +422,7 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
     derive(AbiEnumVisitor, AbiExample, StableAbi),
     frozen_abi(
         api_digest = "2wGmauKxLKD81QzmBo7CtW1tKVr9P5WgMs7RzJA9kvpd",
-        abi_digest = "7DpV7t5vZAWSZEshJ4hAVTHnR37jzLwUMYhs1fGrX3G5"
+        abi_digest = "BsMRWhu8GZNcZEbHMvaBJhw6emrd2nY5DwoxuHfRFjRx"
     )
 )]
 #[derive(Debug, Deserialize, Serialize)]
@@ -480,7 +479,7 @@ impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
 {
     fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> RepairProtocol {
         use ping_pong::{Ping, Pong};
-        let variant = rng.random_range(7..=11);
+        let variant = rng.random_range(7..=14);
         match variant {
             // we never actually use any of the Legacy_ variants
             // so we don't need to sample them here
@@ -508,6 +507,24 @@ impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
             11 => RepairProtocol::AncestorHashes {
                 header: rng.random(),
                 slot: rng.random(),
+            },
+            12 => RepairProtocol::ParentAndFecSetCount {
+                header: rng.random(),
+                slot: rng.random(),
+                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+            },
+            13 => RepairProtocol::FecSetRoot {
+                header: rng.random(),
+                slot: rng.random(),
+                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+                fec_set_index: rng.random(),
+            },
+            14 => RepairProtocol::WindowIndexForBlockId {
+                header: rng.random(),
+                slot: rng.random(),
+                shred_index: rng.random(),
+                fec_set_merkle_root: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
             },
             _ => unreachable!(),
         }
@@ -1560,7 +1577,6 @@ impl ServeRepair {
 
     /// Similar to [`Self::repair_request`] but for [`BlockIdRepairType`] requests.
     /// Uses stake-weighted peer selection rather than cluster_slots weights.
-    #[allow(dead_code)]
     pub(crate) fn block_id_repair_request(
         &self,
         repair_validators: &Option<HashSet<Pubkey>>,
@@ -1569,7 +1585,7 @@ impl ServeRepair {
         outstanding_requests: &mut OutstandingRequests<BlockIdRepairType>,
         identity_keypair: &Keypair,
         staked_nodes: &HashMap<Pubkey, u64>,
-    ) -> Result<(Vec<u8>, SocketAddr)> {
+    ) -> Result<(Vec<u8>, SocketAddr, Pubkey)> {
         let slot = repair_request.slot();
         let repair_peers = match peers_cache.get(&slot) {
             Some(entry) if entry.asof.elapsed() < REPAIR_PEERS_CACHE_TTL => entry,
@@ -1601,7 +1617,7 @@ impl ServeRepair {
             peer.pubkey,
             repair_request
         );
-        Ok((out, peer.serve_repair))
+        Ok((out, peer.serve_repair, peer.pubkey))
     }
 
     pub(crate) fn repair_request_ancestor_hashes_sample_peers(
@@ -1710,7 +1726,6 @@ impl ServeRepair {
     }
 
     /// Transforms a [`BlockIdRepairType`] into a signed repair protocol message.
-    #[allow(dead_code)]
     pub(crate) fn map_block_id_repair_request(
         &self,
         repair_request: &BlockIdRepairType,
@@ -1897,6 +1912,55 @@ mod tests {
         } else {
             assert!(res.is_err());
         }
+    }
+
+    #[test]
+    fn test_block_id_repair_requests_use_ping_challenge() {
+        let identity_keypair = Keypair::new();
+        let remote_keypair = Keypair::new();
+        let from_addr = socketaddr!(Ipv4Addr::LOCALHOST, 1234);
+        let mut ping_cache = PingCache::new(
+            &mut rand::rng(),
+            Instant::now(),
+            REPAIR_PING_CACHE_TTL,
+            REPAIR_PING_CACHE_RATE_LIMIT_DELAY,
+            REPAIR_PING_CACHE_CAPACITY,
+        );
+        let slot = 42;
+        let block_id = Hash::new_unique();
+        let header = |nonce| {
+            RepairRequestHeader::new(
+                remote_keypair.pubkey(),
+                identity_keypair.pubkey(),
+                timestamp(),
+                nonce,
+            )
+        };
+
+        let request = RepairProtocol::ParentAndFecSetCount {
+            header: header(1),
+            slot,
+            block_id,
+        };
+        let (check, ping_pkt) =
+            ServeRepair::check_ping_cache(&mut ping_cache, &request, &from_addr, &identity_keypair);
+        assert!(!check);
+        let response: BlockIdRepairResponse = ping_pkt.unwrap().deserialize_slice(..).unwrap();
+        match response {
+            BlockIdRepairResponse::Ping { ping } => assert!(ping.verify()),
+            response => panic!("Expected Ping challenge, got {response:?}"),
+        }
+
+        let request = RepairProtocol::FecSetRoot {
+            header: header(2),
+            slot,
+            block_id,
+            fec_set_index: 0,
+        };
+        let (check, ping_pkt) =
+            ServeRepair::check_ping_cache(&mut ping_cache, &request, &from_addr, &identity_keypair);
+        assert!(!check);
+        assert!(ping_pkt.is_none());
     }
 
     fn repair_request_header_for_tests() -> RepairRequestHeader {
