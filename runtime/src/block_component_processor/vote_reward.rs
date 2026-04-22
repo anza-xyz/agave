@@ -59,6 +59,7 @@ pub(super) fn calculate_and_pay_voting_reward_and_update_vote_state(
     final_cert: Option<&ValidatedBlockFinalizationCert>,
 ) -> Result<(), PayVoteRewardError> {
     let Some((reward_slot, validators_to_reward)) = reward_slot_and_validators else {
+        println!("\n\n\ncalc called with None\n\n\n");
         return Ok(());
     };
 

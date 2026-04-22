@@ -109,12 +109,12 @@ impl ConsensusRewards {
                         Ok(msg) => {
                             let resp = self.build_certs(msg.bank_slot);
                             if self.reward_certs_sender.send(resp).is_err() {
-                                warn!("cert sender channel is disconnected; exiting.");
+                                error!("my_pubkey={}: cert sender channel is disconnected; exiting.", self.cluster_info.id());
                                 break;
                             }
                         }
                         Err(_) => {
-                            warn!("build reward certs channel is disconnected; exiting.");
+                            error!("my_pubkey={}: build reward certs channel is disconnected; exiting.", self.cluster_info.id());
                             break;
                         }
                     }

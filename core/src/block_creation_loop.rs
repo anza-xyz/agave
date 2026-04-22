@@ -14,7 +14,7 @@ use {
         BuildRewardCertsRequest, BuildRewardCertsRespSucc, BuildRewardCertsResponse,
         NotarRewardCertificate, SkipRewardCertificate,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, select_biased},
     solana_clock::Slot,
     solana_entry::block_component::{BlockFooterV1, GenesisCertificate, VersionedBlockMarker},
     solana_gossip::cluster_info::ClusterInfo,
@@ -321,9 +321,15 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
 /// index within the leader window, returns the duration after which we should
 /// publish the final shred for the block with starting point being the start of
 /// the leader window.
-fn block_timeout(bank: &Bank, leader_block_index: usize) -> Duration {
-    Duration::from_nanos_u128(bank.ns_per_slot)
-        .saturating_mul((leader_block_index as u32).saturating_add(1))
+fn block_timeout(_bank: &Bank, leader_block_index: usize) -> Duration {
+    let duration = Duration::from_millis(400);
+    // let ns_per_slot = bank.ns_per_slot;
+    // let duration = Duration::from_nanos_u128(ns_per_slot);
+    // println!(
+    //     "\n\nblock_timeout: ns_per_slot={ns_per_slot} duration={}\n\n",
+    //     duration.as_millis()
+    // );
+    duration.saturating_mul((leader_block_index as u32).saturating_add(1))
 }
 
 /// Produces the leader window from `start_slot` -> `end_slot` using parent
@@ -371,9 +377,11 @@ fn produce_window(
             .bank_timeout_completion_elapsed_hist
             .increment(bank_completion_measure.as_us());
 
+        println!("produce_window: slot={slot} 1");
         // Although `slot` has been cleared from `poh_recorder`, it might not have finished processing in
         // `replay_stage`, which is why we use `start_leader_retry_replay`
         working_bank = start_leader_wait_for_parent_replay(slot, slot, block_timer, ctx)?;
+        println!("produce_window: slot={slot} 2");
     }
 
     window_production_start.stop();
@@ -469,23 +477,45 @@ fn record_and_complete_block(
     block_timer: Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
+    println!("\n\nrecord_and_complete_block: called, bank_slot={bank_slot}");
     ctx.build_reward_certs_sender
         .send(BuildRewardCertsRequest { bank_slot })
         .map_err(|_| PohRecorderError::ChannelDisconnected)?;
-    // loop until we hit the block timeout
-    while !block_timeout
-        .saturating_sub(block_timer.elapsed())
-        .is_zero()
-    {
-        let Ok(record) = ctx.record_receiver.try_recv() else {
-            continue;
-        };
-        ctx.poh_recorder.write().unwrap().record(
-            record.bank_id,
-            record.mixins,
-            record.transaction_batches,
-        )?;
+
+    loop {
+        let timeout = time_left(block_timer, block_timeout);
+        if timeout.is_zero() {
+            break;
+        }
+
+        select_biased! {
+            recv(ctx.leader_window_info_receiver) -> msg => {
+                match msg.ok() {
+                    Some(info) => {
+                        if info.start_slot > bank_slot {
+                            // Window has moved on; we're behind
+                            break;
+                        }
+                    }
+                    None => continue,
+                }
+            },
+            recv(ctx.record_receiver.inner()) -> msg => {
+                if let Ok(record) = msg {
+                    ctx.record_receiver
+                        .on_received_record(record.transaction_batches.len() as u64);
+                    ctx.poh_recorder.write().unwrap().record(
+                        record.bank_id,
+                        record.mixins,
+                        record.transaction_batches,
+                    )?;
+                }
+            },
+            default(timeout) => {},
+        }
     }
+
+    println!("\n\nrecord_and_complete_block: 1");
 
     // Shutdown and clear any inflight records
     ctx.record_receiver.shutdown();
@@ -494,6 +524,7 @@ fn record_and_complete_block(
         w_poh_recorder.record(record.bank_id, record.mixins, record.transaction_batches)?;
     }
 
+    println!("\n\nrecord_and_complete_block: 2");
     // Alpentick and clear bank
     let bank = w_poh_recorder
         .bank()
@@ -504,6 +535,7 @@ fn record_and_complete_block(
         bank.leader_id(),
         bank.slot()
     );
+    println!("\n\nrecord_and_complete_block: 3");
 
     let max_tick_height = bank.max_tick_height();
     // Set the tick height for the bank to max_tick_height - 1, so that PohRecorder::flush_cache()
@@ -511,6 +543,7 @@ fn record_and_complete_block(
     bank.set_tick_height(max_tick_height - 1);
     // Write the single tick for this slot
 
+    println!("\n\nrecord_and_complete_block: 4");
     let BuildRewardCertsRespSucc {
         skip,
         notar,
@@ -528,7 +561,12 @@ fn record_and_complete_block(
             Some((skip.slot, validators))
         }
     };
+    println!("\n\nrecord_and_complete_block: 5");
     let footer = produce_block_footer(bank.clone(), skip, notar, &ctx.highest_finalized);
+
+    println!(
+        "\n\nrecord_and_complete_block: calling update_bank with rewards={reward_slot_and_validators:?}\n\n"
+    );
 
     BlockComponentProcessor::update_bank_with_footer_fields(
         &bank,
@@ -562,6 +600,8 @@ fn start_leader_wait_for_parent_replay(
         leader_slot_index(slot),
     );
     let end_slot = last_of_consecutive_leader_slots(slot);
+
+    println!("\n\nwait_for_parent_replay: timer={block_timer:?} timeout={timeout:?}\n\n");
 
     let mut slot_delay_start = Measure::start("slot_delay");
     while !time_left(block_timer, timeout).is_zero() {
