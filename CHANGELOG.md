@@ -42,6 +42,9 @@ Release channels have their own copy of this changelog:
 #### Breaking
 * `--block-production-method central-scheduler` is no longer supported. If passed, a warning is emitted and behavior
   will default to the greedy-scheduler implementation.
+* XDP transmit is now enabled by default on Linux. The validator requires `CAP_NET_ADMIN` and
+  `CAP_NET_RAW` capabilities (plus `CAP_BPF` and `CAP_PERFMON` for `--xdp-zero-copy`). Pass
+  `--disable-xdp` to disable XDP and fall back to UDP sockets.
 * scheduler-bindings version has been increased to 4. Connecting external schedulers must be updated.
 * Validator now requires 26 ports, `--dynamic-port-range` must be at least 26 wide.
 #### Deprecations
@@ -49,9 +52,16 @@ Release channels have their own copy of this changelog:
 * `--account-shrink-path` is now deprecated.
 * `sbf-sdk.tar.bz2` is not included anymore in the Agave release tarball. The file will be made available in the new
   [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
-* XDP support is no longer experimental. The `--experimental-retransmit-xdp-interface`, `--experimental-retransmit-xdp-cpu-cores`, and
-  `--experimental-retransmit-xdp-zero-copy` flags have been deprecated. Use `--xdp-interface`, `--xdp-cpu-cores`, and `--xdp-zero-copy` instead. Behavior is unchanged: pass `--xdp-cpu-cores` to enable XDP on the specified cores.
+* The `--experimental-retransmit-xdp-interface`, `--experimental-retransmit-xdp-cpu-cores`, and
+  `--experimental-retransmit-xdp-zero-copy` flags have been deprecated. Use `--xdp-interface`,
+  `--xdp-cpu-cores`, and `--xdp-zero-copy` instead. XDP is now enabled by default; use `--disable-xdp` to opt out.
 #### Changes
+* Added `--disable-xdp` flag to disable XDP transmit and fall back to UDP sockets.
+* Added `--xdp-interface` to specify the network interface for XDP transmit (auto-detected from
+  default route if not specified).
+* Added `--xdp-cpu-cores` to specify CPU cores for XDP transmit (defaults to 1 auto-selected core
+  that avoids the PoH core and its hyperthread sibling).
+* Added `--xdp-zero-copy` to enable XDP zero-copy mode (requires hardware/driver support).
 
 ## 4.0.0
 ### RPC
