@@ -15,6 +15,9 @@ pub enum FixtureError {
     #[error("Invalid hash bytes")]
     InvalidHashBytes(Vec<u8>),
 
+    #[error("Invalid signature bytes")]
+    InvalidSignatureBytes(Vec<u8>),
+
     #[error("An account is missing for instruction account index {0}")]
     AccountMissingForInstrAccount(usize),
 

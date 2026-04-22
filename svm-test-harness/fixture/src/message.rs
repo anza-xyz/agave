@@ -44,10 +44,19 @@ impl From<&ProtoCompiledInstruction> for CompiledInstruction {
     }
 }
 
-impl From<&ProtoMessageAddressTableLookup> for MessageAddressTableLookup {
-    fn from(value: &ProtoMessageAddressTableLookup) -> Self {
-        MessageAddressTableLookup {
-            account_key: Pubkey::new_from_array(value.account_key.clone().try_into().unwrap()),
+impl TryFrom<&ProtoMessageAddressTableLookup> for MessageAddressTableLookup {
+    type Error = FixtureError;
+
+    fn try_from(value: &ProtoMessageAddressTableLookup) -> Result<Self, Self::Error> {
+        let account_key = Pubkey::new_from_array(
+            value
+                .account_key
+                .clone()
+                .try_into()
+                .map_err(FixtureError::InvalidPubkeyBytes)?,
+        );
+        Ok(MessageAddressTableLookup {
+            account_key,
             writable_indexes: value
                 .writable_indexes
                 .iter()
@@ -58,7 +67,7 @@ impl From<&ProtoMessageAddressTableLookup> for MessageAddressTableLookup {
                 .iter()
                 .map(|idx| *idx as u8)
                 .collect(),
-        }
+        })
     }
 }
 
@@ -102,26 +111,34 @@ pub fn build_sanitized_message(
     value: &ProtoTransactionMessage,
     accounts: &[(Pubkey, Account)],
 ) -> Result<SanitizedMessage, FixtureError> {
-    let header = if let Some(ref value_header) = value.header {
-        MessageHeader::from(value_header)
-    } else {
-        MessageHeader {
-            num_required_signatures: 1,
-            num_readonly_signed_accounts: 0,
-            num_readonly_unsigned_accounts: 0,
-        }
-    };
+    let header = value
+        .header
+        .as_ref()
+        .map(MessageHeader::from)
+        .ok_or(FixtureError::InvalidFixtureInput)?;
 
     let account_keys = value
         .account_keys
         .iter()
-        .map(|key| Pubkey::new_from_array(key.clone().try_into().unwrap()))
-        .collect::<Vec<Pubkey>>();
+        .map(|key| {
+            Ok(Pubkey::new_from_array(
+                key.clone()
+                    .try_into()
+                    .map_err(FixtureError::InvalidPubkeyBytes)?,
+            ))
+        })
+        .collect::<Result<Vec<Pubkey>, FixtureError>>()?;
 
     let recent_blockhash = if value.recent_blockhash.is_empty() {
         Hash::new_from_array([0u8; 32])
     } else {
-        Hash::new_from_array(value.recent_blockhash.clone().try_into().unwrap())
+        Hash::new_from_array(
+            value
+                .recent_blockhash
+                .clone()
+                .try_into()
+                .map_err(FixtureError::InvalidHashBytes)?,
+        )
     };
 
     let instructions = value
@@ -145,8 +162,8 @@ pub fn build_sanitized_message(
         let address_table_lookups = value
             .address_table_lookups
             .iter()
-            .map(MessageAddressTableLookup::from)
-            .collect::<Vec<MessageAddressTableLookup>>();
+            .map(MessageAddressTableLookup::try_from)
+            .collect::<Result<Vec<MessageAddressTableLookup>, FixtureError>>()?;
 
         let loaded_addresses = resolve_address_table_lookups(&address_table_lookups, accounts)?;
 

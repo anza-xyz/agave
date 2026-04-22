@@ -28,14 +28,35 @@ use {
     solana_transaction_error::TransactionError,
 };
 
+/// Numeric error codes derived from a [`TransactionError`], matching the
+/// proto fixture format.
 #[cfg(feature = "fuzz")]
-fn transaction_error_to_err_nums(error: &TransactionError) -> (u32, u32, u32, u32) {
-    let (instr_err_no, custom_err_no, instr_err_idx) = match error.clone() {
+struct TransactionErrorNums {
+    /// Discriminant of the top-level `TransactionError`, offset by +1 so that
+    /// `0` stays reserved for success.
+    txn_err: u32,
+    /// Discriminant of the inner `InstructionError` (if any), offset by +1 so
+    /// that `0` stays reserved for "no instruction error".
+    instr_err: u32,
+    /// Payload of `InstructionError::Custom`, zero otherwise.
+    custom_err: u32,
+    /// Index of the instruction that failed, zero if the error is not an
+    /// `InstructionError`.
+    instr_err_idx: u32,
+}
+
+#[cfg(feature = "fuzz")]
+fn transaction_error_to_err_nums(error: &TransactionError) -> TransactionErrorNums {
+    let (instr_err, custom_err, instr_err_idx) = match error.clone() {
         TransactionError::InstructionError(idx, instr_err) => {
-            let instr_err_no = {
-                let serialized = bincode::serialize(&instr_err).unwrap_or(vec![0, 0, 0, 0]);
-                u32::from_le_bytes(serialized[0..4].try_into().unwrap()).saturating_add(1)
-            };
+            let instr_err_no = bincode::serialize(&instr_err)
+                .ok()
+                .and_then(|b| {
+                    b.get(0..4)
+                        .map(|s| u32::from_le_bytes(s.try_into().unwrap()))
+                })
+                .map(|n| n.saturating_add(1))
+                .unwrap_or(0);
             let custom_err_no = match instr_err {
                 InstructionError::Custom(code) => code,
                 _ => 0,
@@ -45,17 +66,21 @@ fn transaction_error_to_err_nums(error: &TransactionError) -> (u32, u32, u32, u3
         _ => (0, 0, 0),
     };
 
-    let txn_err_no = {
-        let serialized = bincode::serialize(error).unwrap_or(vec![0, 0, 0, 0]);
-        u32::from_le_bytes(serialized[0..4].try_into().unwrap()).saturating_add(1)
-    };
+    let txn_err = bincode::serialize(error)
+        .ok()
+        .and_then(|b| {
+            b.get(0..4)
+                .map(|s| u32::from_le_bytes(s.try_into().unwrap()))
+        })
+        .map(|n| n.saturating_add(1))
+        .unwrap_or(0);
 
-    (
-        txn_err_no,
-        instr_err_no,
-        custom_err_no,
-        instr_err_idx.into(),
-    )
+    TransactionErrorNums {
+        txn_err,
+        instr_err,
+        custom_err,
+        instr_err_idx: instr_err_idx.into(),
+    }
 }
 
 /// Convert a `TxnResult` to a protobuf `TxnResult`, filtering accounts to only
@@ -70,55 +95,55 @@ pub fn txn_result_to_proto(result: TxnResult, message: &impl SVMMessage) -> Prot
         .map(|(_, acct)| acct.into())
         .collect();
 
-    let (
-        executed,
-        sanitization_error,
-        is_ok,
-        status,
-        instruction_error,
-        instruction_error_index,
-        custom_error,
-    ) = match &result.status {
-        Ok(()) => (true, false, true, 0, 0, 0, 0),
-        Err(err) => {
-            let (status, instr_err, custom_err, instr_err_idx) = transaction_error_to_err_nums(err);
-            // Set custom err to 0 if the failing instruction is a precompile.
-            let custom_err = message
-                .instructions_iter()
-                .nth(instr_err_idx as usize)
-                .and_then(|instr| {
-                    message
-                        .account_keys()
-                        .get(usize::from(instr.program_id_index))
-                        .map(|program_id| {
-                            if get_precompile(program_id, |_| true).is_some() {
-                                0
-                            } else {
-                                custom_err
-                            }
-                        })
-                })
-                .unwrap_or(custom_err);
-            (
-                true,
-                false,
-                false,
-                status,
-                instr_err,
-                instr_err_idx,
-                custom_err,
-            )
-        }
-    };
+    let (executed, is_ok, status, instruction_error, instruction_error_index, custom_error) =
+        match &result.status {
+            Ok(()) => (true, true, 0, 0, 0, 0),
+            Err(err) => {
+                let nums = transaction_error_to_err_nums(err);
+                // Set custom err to 0 if the failing instruction is a precompile.
+                let custom_err = message
+                    .instructions_iter()
+                    .nth(nums.instr_err_idx as usize)
+                    .and_then(|instr| {
+                        message
+                            .account_keys()
+                            .get(usize::from(instr.program_id_index))
+                            .map(|program_id| {
+                                if get_precompile(program_id, |_| true).is_some() {
+                                    0
+                                } else {
+                                    nums.custom_err
+                                }
+                            })
+                    })
+                    .unwrap_or(nums.custom_err);
+                (
+                    true,
+                    false,
+                    nums.txn_err,
+                    nums.instr_err,
+                    nums.instr_err_idx,
+                    custom_err,
+                )
+            }
+        };
 
     ProtoTxnResult {
         executed,
-        sanitization_error,
+        // TODO: Duplicate of `executed`; remove from proto definition on next
+        // protosol crate bump.
+        sanitization_error: false,
         resulting_state: Some(ProtoResultingState {
             acct_states,
+            // TODO: Rent fields are stubbed; they are being removed from the
+            // proto definition and will go away once the protosol crate is
+            // bumped.
             rent_debits: vec![],
             transaction_rent: 0,
         }),
+        // TODO: Rent fields are stubbed; they are being removed from the
+        // proto definition and will go away once the protosol crate is
+        // bumped.
         rent: 0,
         is_ok,
         status,

@@ -101,21 +101,17 @@ impl TryFrom<ProtoTxnContext> for TxnContext {
             Hash::new_from_array(hash_array)
         };
 
-        let mut signatures: Vec<Signature> = proto_tx
+        let signatures: Vec<Signature> = proto_tx
             .signatures
             .iter()
             .map(|sig_bytes| {
                 let sig_array: [u8; 64] = sig_bytes
                     .clone()
                     .try_into()
-                    .map_err(|_| FixtureError::InvalidFixtureInput)?;
+                    .map_err(FixtureError::InvalidSignatureBytes)?;
                 Ok(Signature::from(sig_array))
             })
             .collect::<Result<Vec<_>, FixtureError>>()?;
-
-        if signatures.is_empty() {
-            signatures.push(Signature::default());
-        }
 
         let transaction = SanitizedTransaction::try_new_from_fields(
             message,
