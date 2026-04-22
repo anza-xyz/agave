@@ -54,6 +54,7 @@ pub struct UiMeta {
 impl From<Meta> for UiMeta {
     fn from(meta: Meta) -> Self {
         Self {
+            #[expect(deprecated)]
             rent_exempt_reserve: meta.rent_exempt_reserve.to_string(),
             authorized: meta.authorized.into(),
             lockup: meta.lockup.into(),
