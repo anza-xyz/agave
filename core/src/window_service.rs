@@ -26,7 +26,6 @@ use {
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::BankForks,
     solana_streamer::evicting_sender::EvictingSender,
-    solana_turbine::cluster_nodes,
     std::{
         borrow::Cow,
         net::UdpSocket,
@@ -121,7 +120,7 @@ fn run_check_duplicate(
             root_bank = bank_forks.read().unwrap().root_bank();
         }
         let shred_slot = shred.slot();
-        let validate_chained_block_id = cluster_nodes::check_feature_activation(
+        let validate_chained_block_id = shred::filter::check_feature_activation_from_bank(
             &feature_set::validate_chained_block_id::id(),
             shred_slot,
             &root_bank,

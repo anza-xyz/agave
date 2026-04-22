@@ -52,7 +52,6 @@
 pub(crate) use self::merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH;
 use {
     self::traits::{Shred as _, ShredData as _},
-    crate::blockstore::{self},
     assert_matches::debug_assert_matches,
     bitflags::bitflags,
     num_enum::{IntoPrimitive, TryFromPrimitive},
@@ -60,7 +59,6 @@ use {
     solana_clock::Slot,
     solana_entry::entry::{Entry, create_ticks},
     solana_hash::Hash,
-    solana_perf::packet::PacketRef,
     solana_pubkey::Pubkey,
     solana_sha256_hasher::hashv,
     solana_signature::{SIGNATURE_BYTES, Signature},
@@ -81,10 +79,13 @@ pub use {
     },
     crate::shredder::{ReedSolomonCache, Shredder},
 };
+#[cfg(test)]
+use {rand::Rng, rayon::ThreadPoolBuilder};
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 use {solana_keypair::Keypair, solana_perf::packet::Packet, solana_signer::Signer};
 
 mod common;
+pub mod filter;
 pub mod merkle;
 pub mod merkle_tree;
 mod payload;
@@ -720,196 +721,6 @@ pub fn recover<T: IntoIterator<Item = Shred>>(
     Ok(shreds.map(|shred| shred.map(Shred::from)))
 }
 
-// Accepts shreds in the slot range [root + 1, max_slot].
-#[must_use]
-pub fn should_discard_shred<'a, P>(
-    packet: P,
-    root: Slot,
-    max_slot: Slot,
-    shred_version: u16,
-    discard_unexpected_data_complete_shreds: impl Fn(Slot) -> bool,
-    stats: &mut ShredFetchStats,
-) -> bool
-where
-    P: Into<PacketRef<'a>>,
-{
-    should_discard_shred_with_custom_shred_limits(
-        packet,
-        root,
-        max_slot,
-        shred_version,
-        discard_unexpected_data_complete_shreds,
-        |_| MAX_DATA_SHREDS_PER_SLOT as u32,
-        |_| MAX_CODE_SHREDS_PER_SLOT as u32,
-        stats,
-    )
-}
-
-#[must_use]
-pub fn should_discard_shred_with_custom_shred_limits<'a, P>(
-    packet: P,
-    root: Slot,
-    max_slot: Slot,
-    shred_version: u16,
-    discard_unexpected_data_complete_shreds: impl Fn(Slot) -> bool,
-    max_data_shreds_per_slot: impl Fn(Slot) -> u32,
-    max_code_shreds_per_slot: impl Fn(Slot) -> u32,
-    stats: &mut ShredFetchStats,
-) -> bool
-where
-    P: Into<PacketRef<'a>>,
-{
-    debug_assert!(root < max_slot);
-    let Some(shred) = layout::get_shred(packet) else {
-        stats.index_overrun += 1;
-        return true;
-    };
-    match layout::get_version(shred) {
-        None => {
-            stats.index_overrun += 1;
-            return true;
-        }
-        Some(version) => {
-            if version != shred_version {
-                stats.shred_version_mismatch += 1;
-                return true;
-            }
-        }
-    }
-    let Ok(shred_variant) = layout::get_shred_variant(shred) else {
-        stats.bad_shred_type += 1;
-        return true;
-    };
-    let slot = match layout::get_slot(shred) {
-        Some(slot) => {
-            if slot > max_slot {
-                stats.slot_out_of_range += 1;
-                return true;
-            }
-            slot
-        }
-        None => {
-            stats.slot_bad_deserialize += 1;
-            return true;
-        }
-    };
-    let Some(index) = layout::get_index(shred) else {
-        stats.index_bad_deserialize += 1;
-        return true;
-    };
-    let Some(fec_set_index) = layout::get_fec_set_index(shred) else {
-        stats.fec_set_index_bad_deserialize += 1;
-        return true;
-    };
-
-    match ShredType::from(shred_variant) {
-        ShredType::Code => {
-            if index >= max_code_shreds_per_slot(slot) {
-                stats.index_out_of_bounds += 1;
-                return true;
-            }
-            if slot <= root {
-                stats.slot_out_of_range += 1;
-                return true;
-            }
-
-            let Ok(erasure_config) = layout::get_erasure_config(shred) else {
-                stats.erasure_config_bad_deserialize += 1;
-                return true;
-            };
-
-            if !erasure_config.is_fixed() {
-                stats.misaligned_erasure_config += 1;
-                return true;
-            }
-        }
-        ShredType::Data => {
-            if index >= max_data_shreds_per_slot(slot) {
-                stats.index_out_of_bounds += 1;
-                return true;
-            }
-            let Some(parent_offset) = layout::get_parent_offset(shred) else {
-                stats.bad_parent_offset += 1;
-                return true;
-            };
-            let Some(parent) = slot.checked_sub(Slot::from(parent_offset)) else {
-                stats.bad_parent_offset += 1;
-                return true;
-            };
-            if !blockstore::verify_shred_slots(slot, parent, root) {
-                stats.slot_out_of_range += 1;
-                return true;
-            }
-
-            let Ok(shred_flags) = layout::get_flags(shred) else {
-                stats.shred_flags_bad_deserialize += 1;
-                return true;
-            };
-
-            let expected_data_complete_index = fec_set_index
-                .checked_add(DATA_SHREDS_PER_FEC_BLOCK as u32)
-                .and_then(|index| index.checked_sub(1));
-            if shred_flags.contains(ShredFlags::DATA_COMPLETE_SHRED)
-                && (expected_data_complete_index != Some(index))
-            {
-                stats.unexpected_data_complete_shred += 1;
-
-                if discard_unexpected_data_complete_shreds(slot) {
-                    return true;
-                }
-            }
-
-            if shred_flags.contains(ShredFlags::LAST_SHRED_IN_SLOT)
-                && !check_last_data_shred_index(index)
-            {
-                stats.misaligned_last_data_index += 1;
-                return true;
-            }
-        }
-    }
-
-    if !check_fixed_fec_set(index, fec_set_index) {
-        stats.misaligned_fec_set += 1;
-        return true;
-    }
-
-    match shred_variant {
-        ShredVariant::MerkleCode { .. } => {
-            stats.num_shreds_merkle_code_chained =
-                stats.num_shreds_merkle_code_chained.saturating_add(1);
-        }
-        ShredVariant::MerkleData { .. } => {
-            stats.num_shreds_merkle_data_chained =
-                stats.num_shreds_merkle_data_chained.saturating_add(1);
-        }
-    }
-    false
-}
-
-/// Returns true if `index` and `fec_set_index` are valid under the assumption that
-/// all erasure sets contain exactly `DATA_SHREDS_PER_FEC_BLOCK` data and coding shreds:
-/// - `index` is between `fec_set_index` and `fec_set_index + DATA_SHREDS_PER_FEC_BLOCK`
-/// - `fec_set_index` is a multiple of `DATA_SHREDS_PER_FEC_BLOCK`
-fn check_fixed_fec_set(index: u32, fec_set_index: u32) -> bool {
-    let Some(fec_set_end_exclusive) = fec_set_index.checked_add(DATA_SHREDS_PER_FEC_BLOCK as u32)
-    else {
-        return false;
-    };
-    index >= fec_set_index
-        && index < fec_set_end_exclusive
-        && fec_set_index.is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK as u32)
-}
-
-/// Returns true if `index` of the last data shred is valid under the assumption that
-/// all erasure sets contain exactly `DATA_SHREDS_PER_FEC_BLOCK` data and coding shreds:
-/// - `index + 1` must be a multiple of `DATA_SHREDS_PER_FEC_BLOCK`
-///
-/// Note: this check is critical to verify that the last fec set is sufficiently sized.
-/// This is checked during shred ingest with `enforce_fixed_fec_set` active.
-fn check_last_data_shred_index(index: u32) -> bool {
-    (index + 1).is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK as u32)
-}
-
 pub fn max_ticks_per_n_shreds(num_shreds: u64, shred_data_size: Option<usize>) -> u64 {
     let ticks = create_ticks(1, 0, Hash::default());
     max_entries_per_n_shred(&ticks[0], num_shreds, shred_data_size)
@@ -991,65 +802,63 @@ pub fn verify_test_data_shred(
 }
 
 #[cfg(test)]
+pub(crate) fn make_merkle_shreds_for_tests<R: Rng>(
+    rng: &mut R,
+    slot: Slot,
+    data_size: usize,
+    is_last_in_slot: bool,
+) -> Result<Vec<merkle::Shred>, Error> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+    let chained_merkle_root = Hash::new_from_array(rng.random());
+    let parent_offset = rng.random_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
+    let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
+    let mut data = vec![0u8; data_size];
+    let fec_set_index = rng.random_range(0..21) * DATA_SHREDS_PER_FEC_BLOCK as u32;
+    rng.fill(&mut data[..]);
+    merkle::make_shreds_from_data(
+        &thread_pool,
+        &Keypair::new(),
+        chained_merkle_root,
+        &data[..],
+        slot,
+        parent_slot,
+        rng.random(),            // shred_version
+        rng.random_range(1..64), // reference_tick
+        is_last_in_slot,
+        fec_set_index, // next_shred_index
+        fec_set_index, // next_code_index
+        &ReedSolomonCache::default(),
+        &mut ProcessShredsStats::default(),
+    )
+}
+
+#[cfg(test)]
 mod tests {
     use {
         super::*,
         assert_matches::assert_matches,
-        itertools::Itertools,
-        rand::Rng,
         rand_chacha::{ChaChaRng, rand_core::SeedableRng},
-        rayon::ThreadPoolBuilder,
         solana_keypair::keypair_from_seed,
-        std::io::{Cursor, Seek, SeekFrom, Write},
         test_case::test_case,
     };
 
-    const SIZE_OF_SHRED_INDEX: usize = 4;
-    const SIZE_OF_SHRED_SLOT: usize = 8;
-    const SIZE_OF_SHRED_VARIANT: usize = 1;
-    const SIZE_OF_VERSION: usize = 2;
-    const SIZE_OF_FEC_SET_INDEX: usize = 4;
-    const SIZE_OF_PARENT_OFFSET: usize = 2;
+    pub(super) const SIZE_OF_SHRED_INDEX: usize = 4;
+    pub(super) const SIZE_OF_SHRED_SLOT: usize = 8;
+    pub(super) const SIZE_OF_SHRED_VARIANT: usize = 1;
+    pub(super) const SIZE_OF_VERSION: usize = 2;
+    pub(super) const SIZE_OF_FEC_SET_INDEX: usize = 4;
+    pub(super) const SIZE_OF_PARENT_OFFSET: usize = 2;
 
-    const OFFSET_OF_SHRED_VARIANT: usize = SIZE_OF_SIGNATURE;
-    const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_VARIANT;
-    const OFFSET_OF_SHRED_INDEX: usize = OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT;
-    const OFFSET_OF_FEC_SET_INDEX: usize =
+    pub(super) const OFFSET_OF_SHRED_VARIANT: usize = SIZE_OF_SIGNATURE;
+    pub(super) const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_VARIANT;
+    pub(super) const OFFSET_OF_SHRED_INDEX: usize = OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT;
+    pub(super) const OFFSET_OF_FEC_SET_INDEX: usize =
         OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX + SIZE_OF_VERSION;
-    const OFFSET_OF_NUM_DATA: usize = OFFSET_OF_FEC_SET_INDEX + SIZE_OF_FEC_SET_INDEX;
+    pub(super) const OFFSET_OF_NUM_DATA: usize = OFFSET_OF_FEC_SET_INDEX + SIZE_OF_FEC_SET_INDEX;
 
-    const OFFSET_OF_PARENT_OFFSET: usize = OFFSET_OF_FEC_SET_INDEX + SIZE_OF_FEC_SET_INDEX;
-    const OFFSET_OF_SHRED_FLAGS: usize = OFFSET_OF_PARENT_OFFSET + SIZE_OF_PARENT_OFFSET;
-
-    pub(super) fn make_merkle_shreds_for_tests<R: Rng>(
-        rng: &mut R,
-        slot: Slot,
-        data_size: usize,
-        is_last_in_slot: bool,
-    ) -> Result<Vec<merkle::Shred>, Error> {
-        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
-        let chained_merkle_root = Hash::new_from_array(rng.random());
-        let parent_offset = rng.random_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
-        let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
-        let mut data = vec![0u8; data_size];
-        let fec_set_index = rng.random_range(0..21) * DATA_SHREDS_PER_FEC_BLOCK as u32;
-        rng.fill(&mut data[..]);
-        merkle::make_shreds_from_data(
-            &thread_pool,
-            &Keypair::new(),
-            chained_merkle_root,
-            &data[..],
-            slot,
-            parent_slot,
-            rng.random(),            // shred_version
-            rng.random_range(1..64), // reference_tick
-            is_last_in_slot,
-            fec_set_index, // next_shred_index
-            fec_set_index, // next_code_index
-            &ReedSolomonCache::default(),
-            &mut ProcessShredsStats::default(),
-        )
-    }
+    pub(super) const OFFSET_OF_PARENT_OFFSET: usize =
+        OFFSET_OF_FEC_SET_INDEX + SIZE_OF_FEC_SET_INDEX;
+    pub(super) const OFFSET_OF_SHRED_FLAGS: usize = OFFSET_OF_PARENT_OFFSET + SIZE_OF_PARENT_OFFSET;
 
     #[test]
     fn test_shred_constants() {
@@ -1141,457 +950,6 @@ mod tests {
                 parent_offset: 1000
             })
         );
-    }
-
-    #[test_case(true ; "last_in_slot")]
-    #[test_case(false ; "not_last_in_slot")]
-    fn test_should_discard_shred(is_last_in_slot: bool) {
-        agave_logger::setup();
-        let mut rng = rand::rng();
-        let slot = 18_291;
-        let shreds = make_merkle_shreds_for_tests(
-            &mut rng,
-            slot,
-            1200 * 5, // data_size
-            is_last_in_slot,
-        )
-        .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
-        assert_eq!(shreds.iter().map(Shred::fec_set_index).dedup().count(), 1);
-
-        assert_matches!(shreds[0].shred_type(), ShredType::Data);
-        let parent_slot = shreds[0].parent().unwrap();
-        let shred_version = shreds[0].common_header().version;
-
-        let root = rng.random_range(0..parent_slot);
-        let max_slot = slot + rng.random_range(1..65536);
-        let mut packet = Packet::default();
-
-        // Data shred sanity checks!
-        {
-            let shred = shreds.first().unwrap();
-            assert_eq!(shred.shred_type(), ShredType::Data);
-            shred.copy_to_packet(&mut packet);
-            let mut stats = ShredFetchStats::default();
-            assert!(!should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version,
-                |_| false,
-                &mut stats
-            ));
-        }
-        {
-            let mut packet = packet.clone();
-            let mut stats = ShredFetchStats::default();
-            packet.meta_mut().size = OFFSET_OF_SHRED_VARIANT;
-            assert!(should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version,
-                |_| false,
-                &mut stats
-            ));
-            assert_eq!(stats.index_overrun, 1);
-
-            packet.meta_mut().size = OFFSET_OF_SHRED_INDEX;
-            assert!(should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version,
-                |_| false,
-                &mut stats
-            ));
-            assert_eq!(stats.index_overrun, 2);
-
-            packet.meta_mut().size = OFFSET_OF_SHRED_INDEX + 1;
-            assert!(should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version,
-                |_| false,
-                &mut stats
-            ));
-            assert_eq!(stats.index_overrun, 3);
-
-            packet.meta_mut().size = OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX - 1;
-            assert!(should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version,
-                |_| false,
-                &mut stats
-            ));
-            assert_eq!(stats.index_overrun, 4);
-
-            packet.meta_mut().size = OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX + 2;
-            assert!(should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version,
-                |_| false,
-                &mut stats
-            ));
-            assert_eq!(stats.index_overrun, 5);
-        }
-        {
-            let mut stats = ShredFetchStats::default();
-            assert!(should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version.wrapping_add(1),
-                |_| false,
-                &mut stats
-            ));
-            assert_eq!(stats.shred_version_mismatch, 1);
-        }
-        {
-            let mut stats = ShredFetchStats::default();
-            assert!(should_discard_shred(
-                &packet,
-                parent_slot + 1, // root
-                max_slot,
-                shred_version,
-                |_| false,
-                &mut stats
-            ));
-            assert_eq!(stats.slot_out_of_range, 1);
-        }
-        {
-            let parent_offset = 0u16;
-            {
-                let mut cursor = Cursor::new(packet.buffer_mut());
-                cursor.seek(SeekFrom::Start(83)).unwrap();
-                cursor.write_all(&parent_offset.to_le_bytes()).unwrap();
-            }
-            assert_eq!(
-                layout::get_parent_offset(packet.data(..).unwrap()),
-                Some(parent_offset)
-            );
-            let mut stats = ShredFetchStats::default();
-            assert!(should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version,
-                |_| false,
-                &mut stats
-            ));
-            assert_eq!(stats.slot_out_of_range, 1);
-        }
-        {
-            let parent_offset = u16::try_from(slot + 1).unwrap();
-            {
-                let mut cursor = Cursor::new(packet.buffer_mut());
-                cursor.seek(SeekFrom::Start(83)).unwrap();
-                cursor.write_all(&parent_offset.to_le_bytes()).unwrap();
-            }
-            assert_eq!(
-                layout::get_parent_offset(packet.data(..).unwrap()),
-                Some(parent_offset)
-            );
-            let mut stats = ShredFetchStats::default();
-            assert!(should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version,
-                |_| false,
-                &mut stats
-            ));
-            assert_eq!(stats.bad_parent_offset, 1);
-        }
-        {
-            let index = u32::MAX - 10;
-            {
-                let mut cursor = Cursor::new(packet.buffer_mut());
-                cursor
-                    .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
-                    .unwrap();
-                cursor.write_all(&index.to_le_bytes()).unwrap();
-            }
-            assert_eq!(layout::get_index(packet.data(..).unwrap()), Some(index));
-            let mut stats = ShredFetchStats::default();
-            assert!(should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version,
-                |_| true,
-                &mut stats
-            ));
-            assert_eq!(stats.index_out_of_bounds, 1);
-        }
-
-        // Coding shred sanity checks!
-        {
-            let shred = shreds.last().unwrap();
-            assert_eq!(shred.shred_type(), ShredType::Code);
-            shreds.last().unwrap().copy_to_packet(&mut packet);
-            let mut stats = ShredFetchStats::default();
-            assert!(!should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version,
-                |_| false,
-                &mut stats
-            ));
-        }
-        {
-            let mut stats = ShredFetchStats::default();
-            assert!(should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version.wrapping_add(1),
-                |_| false,
-                &mut stats
-            ));
-            assert_eq!(stats.shred_version_mismatch, 1);
-        }
-        {
-            let mut stats = ShredFetchStats::default();
-            assert!(should_discard_shred(
-                &packet,
-                slot, // root
-                max_slot,
-                shred_version,
-                |_| true,
-                &mut stats
-            ));
-            assert_eq!(stats.slot_out_of_range, 1);
-        }
-        {
-            let index = u32::try_from(MAX_CODE_SHREDS_PER_SLOT).unwrap();
-            {
-                let mut cursor = Cursor::new(packet.buffer_mut());
-                cursor
-                    .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
-                    .unwrap();
-                cursor.write_all(&index.to_le_bytes()).unwrap();
-            }
-            assert_eq!(layout::get_index(packet.data(..).unwrap()), Some(index));
-            let mut stats = ShredFetchStats::default();
-            assert!(should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version,
-                |_| false,
-                &mut stats
-            ));
-            assert_eq!(stats.index_out_of_bounds, 1);
-        }
-    }
-
-    #[test]
-    fn test_should_discard_shred_fec_set_checks() {
-        agave_logger::setup();
-        let mut rng = rand::rng();
-        let slot = 18_291;
-        let shreds = make_merkle_shreds_for_tests(
-            &mut rng,
-            slot,
-            1200 * 5, // data_size
-            false,    // is_last_in_slot
-        )
-        .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
-        assert_eq!(shreds.iter().map(Shred::fec_set_index).dedup().count(), 1);
-
-        assert_matches!(shreds[0].shred_type(), ShredType::Data);
-        let parent_slot = shreds[0].parent().unwrap();
-        let shred_version = shreds[0].common_header().version;
-        let root = rng.random_range(0..parent_slot);
-        let max_slot = slot + rng.random_range(1..65536);
-
-        // fec_set_index not multiple of 32
-        {
-            let mut packet = Packet::default();
-            shreds[0].copy_to_packet(&mut packet);
-
-            let bad_fec_set_index = 5u32;
-            {
-                let mut cursor = Cursor::new(packet.buffer_mut());
-                cursor
-                    .seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64))
-                    .unwrap();
-                cursor.write_all(&bad_fec_set_index.to_le_bytes()).unwrap();
-            }
-
-            let mut stats = ShredFetchStats::default();
-            let should_discard = should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version,
-                |_| false,
-                &mut stats,
-            );
-            assert!(should_discard);
-            assert_eq!(stats.misaligned_fec_set, 1);
-        }
-
-        // index not in range [fec_set_index, fec_set_index + 32)
-        {
-            let mut packet = Packet::default();
-            shreds[0].copy_to_packet(&mut packet);
-
-            let fec_set_index = 64u32; // Multiple of 32
-            let bad_index = 100u32; // Outside [64, 96)
-            {
-                let mut cursor = Cursor::new(packet.buffer_mut());
-                cursor
-                    .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
-                    .unwrap();
-                cursor.write_all(&bad_index.to_le_bytes()).unwrap();
-                cursor
-                    .seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64))
-                    .unwrap();
-                cursor.write_all(&fec_set_index.to_le_bytes()).unwrap();
-            }
-
-            let mut stats = ShredFetchStats::default();
-            let should_discard = should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version,
-                |_| false,
-                &mut stats,
-            );
-            assert!(should_discard);
-            assert_eq!(stats.misaligned_fec_set, 1);
-        }
-
-        // bad erasure config 16:32
-        {
-            let code_shred = shreds
-                .iter()
-                .find(|s| s.shred_type() == ShredType::Code)
-                .unwrap();
-            let mut packet = Packet::default();
-            code_shred.copy_to_packet(&mut packet);
-
-            let bad_num_data = 16u16;
-            {
-                let mut cursor = Cursor::new(packet.buffer_mut());
-                cursor
-                    .seek(SeekFrom::Start(OFFSET_OF_NUM_DATA as u64))
-                    .unwrap();
-                cursor.write_all(&bad_num_data.to_le_bytes()).unwrap();
-            }
-
-            let mut stats = ShredFetchStats::default();
-            let should_discard = should_discard_shred(
-                &packet,
-                root,
-                max_slot,
-                shred_version,
-                |_| false,
-                &mut stats,
-            );
-            assert!(should_discard);
-            assert_eq!(stats.misaligned_erasure_config, 1);
-        }
-
-        // data shred with LAST_SHRED_IN_SLOT flag on shred 30
-        let shreds = make_merkle_shreds_for_tests(
-            &mut rng,
-            slot,
-            1200 * 5, // data_size
-            true,     // is_last_in_slot
-        )
-        .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
-        let parent_slot = shreds[0].parent().unwrap();
-        let shred_version = shreds[0].common_header().version;
-        let root = rng.random_range(0..parent_slot);
-        let data_shreds: Vec<_> = shreds
-            .iter()
-            .filter(|s| s.shred_type() == ShredType::Data)
-            .collect();
-        let last_data_shred = data_shreds.last().unwrap();
-        assert!(last_data_shred.last_in_slot());
-        let mut packet = Packet::default();
-        last_data_shred.copy_to_packet(&mut packet);
-
-        let bad_last_index = 30u32;
-        let fec_set_index = 0u32;
-        {
-            let mut cursor = Cursor::new(packet.buffer_mut());
-            cursor
-                .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
-                .unwrap();
-            cursor.write_all(&bad_last_index.to_le_bytes()).unwrap();
-            cursor
-                .seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64))
-                .unwrap();
-            cursor.write_all(&fec_set_index.to_le_bytes()).unwrap();
-        }
-
-        let mut stats = ShredFetchStats::default();
-        let should_discard = should_discard_shred(
-            &packet,
-            root,
-            max_slot,
-            shred_version,
-            |_| false,
-            &mut stats,
-        );
-        assert!(should_discard);
-        assert_eq!(stats.misaligned_last_data_index, 1);
-    }
-
-    #[test]
-    fn test_should_discard_shred_with_custom_shred_limits() {
-        agave_logger::setup();
-
-        // Create some shreds
-        let mut rng = rand::rng();
-        let slot = 42;
-        let shreds = make_merkle_shreds_for_tests(&mut rng, slot, 10_000, false).unwrap();
-
-        // Grab the first shred in packet form
-        let shred = Shred::from(shreds[0].clone());
-        let index = shred.common_header().index;
-        let shred_version = shred.common_header().version;
-        let mut packet = Packet::default();
-        shred.copy_to_packet(&mut packet);
-
-        // Verify index in bounds passes the discard check.
-        assert!(!should_discard_shred_with_custom_shred_limits(
-            &packet,
-            0,        // root
-            slot + 1, // max_slot
-            shred_version,
-            |_| false,
-            |_| index + 1,
-            |_| index + 1,
-            &mut ShredFetchStats::default(),
-        ));
-
-        // Verify index out of bounds is rejected.
-        let mut stats = ShredFetchStats::default();
-        assert!(should_discard_shred_with_custom_shred_limits(
-            &packet,
-            0,        // root
-            slot + 1, // max_slot
-            shred_version,
-            |_| false,
-            |_| index,
-            |_| index,
-            &mut stats,
-        ));
-        assert_eq!(stats.index_out_of_bounds, 1);
     }
 
     // Asserts that ShredType is backward compatible with u8.
@@ -2025,84 +1383,5 @@ mod tests {
             assert!(shred.is_shred_duplicate(&other));
             assert!(other.is_shred_duplicate(shred));
         }
-    }
-
-    #[test]
-    fn test_data_complete_shred_index_validation() {
-        agave_logger::setup();
-        let mut rng = rand::rng();
-        let slot = 18_291;
-        let shreds = make_merkle_shreds_for_tests(
-            &mut rng,
-            slot,
-            1200 * 5, // data_size
-            false,    // is_last_in_slot
-        )
-        .unwrap();
-        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
-
-        let data_shred = shreds
-            .iter()
-            .find(|s| s.shred_type() == ShredType::Data)
-            .unwrap();
-
-        let parent_slot = data_shred.parent().unwrap();
-        let shred_version = data_shred.common_header().version;
-        let root = rng.random_range(0..parent_slot);
-        let max_slot = slot + rng.random_range(1..65536);
-
-        // Test case where DATA_COMPLETE_SHRED flag is set but index is not at expected position
-        let mut packet = Packet::default();
-        data_shred.copy_to_packet(&mut packet);
-
-        let fec_set_index = 64u32;
-        let wrong_index = fec_set_index + 10; // Should be fec_set_index + 31 for DATA_COMPLETE_SHRED
-
-        // Modify the packet to have DATA_COMPLETE_SHRED flag with wrong index
-        {
-            let mut cursor = Cursor::new(packet.buffer_mut());
-            cursor
-                .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
-                .unwrap();
-            cursor.write_all(&wrong_index.to_le_bytes()).unwrap();
-            cursor
-                .seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64))
-                .unwrap();
-            cursor.write_all(&fec_set_index.to_le_bytes()).unwrap();
-
-            // Flags offset is at 85, where:
-            //
-            //     85 = SIZE_OF_COMMON_SHRED_HEADER (83) + size of parent offset (i.e., 2)
-            //
-            // See the top-level comments, which articulate data shred layout, for more details.
-            cursor
-                .seek(SeekFrom::Start(OFFSET_OF_SHRED_FLAGS as u64))
-                .unwrap(); // flags offset
-            cursor
-                .write_all(&[ShredFlags::DATA_COMPLETE_SHRED.bits()])
-                .unwrap();
-        }
-
-        let mut stats = ShredFetchStats::default();
-        let should_discard =
-            should_discard_shred(&packet, root, max_slot, shred_version, |_| true, &mut stats);
-        assert!(should_discard);
-        assert_eq!(stats.unexpected_data_complete_shred, 1);
-
-        // Test case where DATA_COMPLETE_SHRED flag is set with correct index
-        let correct_index = fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32 - 1;
-        {
-            let mut cursor = Cursor::new(packet.buffer_mut());
-            cursor
-                .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
-                .unwrap();
-            cursor.write_all(&correct_index.to_le_bytes()).unwrap();
-        }
-
-        let mut stats = ShredFetchStats::default();
-        let should_discard =
-            should_discard_shred(&packet, root, max_slot, shred_version, |_| true, &mut stats);
-        assert!(!should_discard);
-        assert_eq!(stats.unexpected_data_complete_shred, 0);
     }
 }
