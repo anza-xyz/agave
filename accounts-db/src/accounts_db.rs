@@ -3361,6 +3361,10 @@ impl AccountsDb {
         }
     }
 
+    /// Scans all accounts visible from `ancestors`, invoking `scan_func` for each.
+    /// Pre-scans the write cache to capture entries not yet flushed to the accounts index, then
+    /// deduplicates against the index scan, calling `scan_func` with the newest version of each
+    /// account
     pub(crate) fn scan_accounts<F>(
         &self,
         ancestors: &Ancestors,
@@ -3390,6 +3394,27 @@ impl AccountsDb {
             &max_root_ancestors
         };
 
+        // Step 1: Pre-scan the cache index to find the newest visible cached version of each
+        // pubkey. Hold the Arc<CachedAccount> to keep the data alive even if the cache flushes
+        // between now and step 3 (Arc clone is just a refcount bump).
+        let cached_pubkeys = self.accounts_cache.cached_pubkeys();
+        let mut cache_versions: HashMap<Pubkey, (Arc<CachedAccount>, Slot), PubkeyHasherBuilder> =
+            HashMap::with_capacity_and_hasher(cached_pubkeys.len(), PubkeyHasherBuilder::default());
+        for pubkey in cached_pubkeys {
+            if config.is_aborted() {
+                break;
+            }
+
+            if let Some((cached_account, slot, _)) =
+                self.accounts_cache.load_latest(&pubkey, ancestors)
+            {
+                cache_versions.insert(pubkey, (cached_account, slot));
+            }
+        }
+
+        // Step 2: Scan the accounts_index. For each pubkey, return the newest version found in
+        // either the storage or the cache. If both versions are the same, use the cached version
+        // to avoid a redundant load from storage.
         // Bound max_root by ancestors.min_slot() so that roots from slots
         // beyond the querying bank's ancestor chain are not visible.
         let mut max_root = scan_guard.max_root();
@@ -3400,6 +3425,13 @@ impl AccountsDb {
             ancestors,
             max_root,
             |pubkey, (account_info, slot)| {
+                if let Some((cached_account, cache_slot)) = cache_versions.remove(pubkey) {
+                    if cache_slot >= slot {
+                        scan_func(Some((pubkey, cached_account.account.clone(), cache_slot)));
+                        return;
+                    }
+                }
+
                 let mut account_accessor =
                     self.get_account_accessor(slot, pubkey, &account_info.storage_location());
 
@@ -3413,6 +3445,15 @@ impl AccountsDb {
             },
             config,
         );
+
+        // Step 3: Call scan_func on cache-only entries — pubkeys that exist in the cache but not
+        // in the accounts index at all.
+        for (pubkey, (cached_account, slot)) in cache_versions {
+            if config.is_aborted() {
+                break;
+            }
+            scan_func(Some((&pubkey, cached_account.account.clone(), slot)));
+        }
 
         // Check whether the bank was removed while the scan was in progress.
         if scan_guard.was_scan_corrupted() {
