@@ -1155,7 +1155,7 @@ pub fn execute(
     info!("Validator initialized");
     validator.listen_for_signals()?;
     validator.join();
-    info!("Validator exiting..");
+    info!("Validator exiting...");
 
     Ok(())
 }

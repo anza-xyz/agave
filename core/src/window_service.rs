@@ -57,9 +57,11 @@ struct WindowServiceMetrics {
 }
 
 impl WindowServiceMetrics {
-    fn report_metrics(&self, metric_name: &'static str) {
+    const NAME: &str = "recv-window-insert-shreds";
+
+    fn report_metrics(&self) {
         datapoint_info!(
-            metric_name,
+            Self::NAME,
             (
                 "handle_packets_elapsed_us",
                 self.handle_packets_elapsed_us,
@@ -399,9 +401,9 @@ impl WindowService {
                     }
 
                     if last_print.elapsed().as_secs() > 2 {
-                        metrics.report_metrics("blockstore-insert-shreds");
+                        metrics.report_metrics();
                         metrics = BlockstoreInsertionMetrics::default();
-                        ws_metrics.report_metrics("recv-window-insert-shreds");
+                        ws_metrics.report_metrics();
                         ws_metrics = WindowServiceMetrics::default();
                         last_print = Instant::now();
                     }
