@@ -189,23 +189,14 @@ struct TxVerificationData {
 }
 
 /// TODO: we will move this API into solana-sdk.
-fn batch_verify<'a>(
-    signatures: impl Iterator<Item = &'a Signature>,
-    pubkeys: impl Iterator<Item = &'a Address>,
-    serialized_messages: impl Iterator<Item = &'a [u8]>,
-) -> Result<()> {
-    signatures
-        .zip(pubkeys)
-        .zip(serialized_messages)
-        .collect::<Vec<_>>()
+#[inline]
+pub fn batch_verify<'a, I>(items: I) -> bool
+where
+    I: IntoParallelIterator<Item = (&'a Signature, &'a Address, &'a [u8])>,
+{
+    items
         .into_par_iter()
-        .try_for_each(|((signature, pubkey), serialized_message)| {
-            if signature.verify(pubkey.as_ref(), serialized_message) {
-                Ok(())
-            } else {
-                Err(TransactionError::SignatureFailure)
-            }
-        })
+        .all(|(signature, pubkey, message)| signature.verify(pubkey.as_ref(), message))
 }
 
 pub struct UnverifiedSignatures {
@@ -220,29 +211,18 @@ impl UnverifiedSignatures {
     }
 
     pub fn verify(&self) -> Result<()> {
-        let signatures = self.signatures.iter().flat_map(|tx_signatures| {
-            tx_signatures
-                .signatures
-                .iter()
-                .take(tx_signatures.signer_pubkeys.len())
-        });
-        let pubkeys = self.signatures.iter().flat_map(|tx_signatures| {
-            tx_signatures
-                .signer_pubkeys
-                .iter()
-                .take(tx_signatures.signatures.len())
-        });
-        let serialized_messages = self.signatures.iter().flat_map(|tx_signatures| {
-            std::iter::repeat_n(
-                tx_signatures.serialized_message.as_slice(),
-                tx_signatures
-                    .signatures
-                    .len()
-                    .min(tx_signatures.signer_pubkeys.len()),
-            )
+        let verification_items = self.signatures.par_iter().flat_map_iter(|tx| {
+            let message = tx.serialized_message.as_slice();
+            let len = tx.signatures.len();
+
+            (0..len).map(move |i| (&tx.signatures[i], &tx.signer_pubkeys[i], message))
         });
 
-        batch_verify(signatures, pubkeys, serialized_messages)
+        if batch_verify(verification_items) {
+            Ok(())
+        } else {
+            Err(TransactionError::SignatureFailure)
+        }
     }
 
     #[cfg(feature = "dev-context-only-utils")]
