@@ -30,7 +30,7 @@ solana-clock = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-loader-v2-interface = { workspace = true, features = ["bincode"] }
-solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
+solana-loader-v3-interface = { workspace = true, features = ["wincode"] }
 solana-message = { workspace = true }
 solana-program-option = { workspace = true }
 solana-pubkey = { workspace = true }

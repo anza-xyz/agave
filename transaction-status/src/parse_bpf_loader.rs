@@ -92,12 +92,16 @@ pub fn parse_bpf_upgradeable_loader(
                 }),
             })
         }
-        UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len } => {
+        UpgradeableLoaderInstruction::DeployWithMaxDataLen {
+            max_data_len,
+            close_buffer,
+        } => {
             check_num_bpf_upgradeable_loader_accounts(&instruction.accounts, 8)?;
             Ok(ParsedInstructionEnum {
                 instruction_type: "deployWithMaxDataLen".to_string(),
                 info: json!({
                     "maxDataLen": max_data_len,
+                    "closeBuffer": close_buffer,
                     "payerAccount": account_keys[instruction.accounts[0] as usize].to_string(),
                     "programDataAccount": account_keys[instruction.accounts[1] as usize].to_string(),
                     "programAccount": account_keys[instruction.accounts[2] as usize].to_string(),
@@ -109,11 +113,12 @@ pub fn parse_bpf_upgradeable_loader(
                 }),
             })
         }
-        UpgradeableLoaderInstruction::Upgrade => {
+        UpgradeableLoaderInstruction::Upgrade { close_buffer } => {
             check_num_bpf_upgradeable_loader_accounts(&instruction.accounts, 7)?;
             Ok(ParsedInstructionEnum {
                 instruction_type: "upgrade".to_string(),
                 info: json!({
+                    "closeBuffer": close_buffer,
                     "programDataAccount": account_keys[instruction.accounts[0] as usize].to_string(),
                     "programAccount": account_keys[instruction.accounts[1] as usize].to_string(),
                     "bufferAccount": account_keys[instruction.accounts[2] as usize].to_string(),
@@ -150,11 +155,12 @@ pub fn parse_bpf_upgradeable_loader(
                 }),
             })
         }
-        UpgradeableLoaderInstruction::Close => {
+        UpgradeableLoaderInstruction::Close { tombstone } => {
             check_num_bpf_upgradeable_loader_accounts(&instruction.accounts, 3)?;
             Ok(ParsedInstructionEnum {
                 instruction_type: "close".to_string(),
                 info: json!({
+                    "tombstone": tombstone,
                     "account": account_keys[instruction.accounts[0] as usize].to_string(),
                     "recipient": account_keys[instruction.accounts[1] as usize].to_string(),
                     "authority": account_keys[instruction.accounts[2] as usize].to_string(),
@@ -428,6 +434,7 @@ mod test {
             &upgrade_authority_address,
             55,
             max_data_len,
+            true, // close_buffer
         )
         .unwrap();
         let mut message = Message::new(&instructions, None);
@@ -441,6 +448,7 @@ mod test {
                 instruction_type: "deployWithMaxDataLen".to_string(),
                 info: json!({
                     "maxDataLen": max_data_len,
+                    "closeBuffer": true,
                     "payerAccount": payer_address.to_string(),
                     "programAccount": program_address.to_string(),
                     "authority": upgrade_authority_address.to_string(),
@@ -483,6 +491,7 @@ mod test {
             &buffer_address,
             &authority_address,
             &spill_address,
+            true, // close_buffer
         );
         let mut message = Message::new(&[instruction], None);
         assert_eq!(
@@ -494,6 +503,7 @@ mod test {
             ParsedInstructionEnum {
                 instruction_type: "upgrade".to_string(),
                 info: json!({
+                    "closeBuffer": true,
                     "authority": authority_address.to_string(),
                     "programDataAccount": programdata_address.to_string(),
                     "programAccount": program_address.to_string(),
@@ -722,8 +732,12 @@ mod test {
         let close_address = Pubkey::new_unique();
         let recipient_address = Pubkey::new_unique();
         let authority_address = Pubkey::new_unique();
-        let instruction =
-            bpf_loader_upgradeable::close(&close_address, &recipient_address, &authority_address);
+        let instruction = bpf_loader_upgradeable::close(
+            &close_address,
+            &recipient_address,
+            &authority_address,
+            true, // tombstone
+        );
         let mut message = Message::new(&[instruction], None);
         assert_eq!(
             parse_bpf_upgradeable_loader(
@@ -734,6 +748,7 @@ mod test {
             ParsedInstructionEnum {
                 instruction_type: "close".to_string(),
                 info: json!({
+                    "tombstone": true,
                     "account": close_address.to_string(),
                     "recipient": recipient_address.to_string(),
                     "authority": authority_address.to_string(),
@@ -767,6 +782,7 @@ mod test {
             &recipient_address,
             Some(&authority_address),
             Some(&program_address),
+            true, // tombstone
         );
         let mut message = Message::new(&[instruction], None);
         assert_eq!(
@@ -778,6 +794,7 @@ mod test {
             ParsedInstructionEnum {
                 instruction_type: "close".to_string(),
                 info: json!({
+                    "tombstone": true,
                     "account": close_address.to_string(),
                     "recipient": recipient_address.to_string(),
                     "authority": authority_address.to_string(),

@@ -1599,6 +1599,7 @@ async fn process_program_upgrade(
             &buffer_pubkey,
             &upgrade_authority_signer.pubkey(),
             &fee_payer_signer.pubkey(),
+            true, // close_buffer: pre-SIMD-0430 default
         )],
         Some(&fee_payer_signer.pubkey()),
         &blockhash,
@@ -2220,6 +2221,7 @@ async fn close(
             recipient_pubkey,
             Some(&authority_signer.pubkey()),
             program_pubkey,
+            true, // tombstone: pre-SIMD-0432 default
         )],
         Some(&config.signers[0].pubkey()),
     ));
@@ -2620,6 +2622,7 @@ async fn do_process_program_deploy(
                 .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
                 .await?,
             program_data_max_len,
+            true, // close_buffer: pre-SIMD-0430 default
         )?
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
@@ -2883,6 +2886,7 @@ async fn do_process_program_upgrade(
         buffer_pubkey,
         &upgrade_authority.pubkey(),
         &fee_payer_signer.pubkey(),
+        true, // close_buffer: pre-SIMD-0430 default
     )]
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,

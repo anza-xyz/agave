@@ -2172,6 +2172,7 @@ async fn test_cli_program_write_buffer() {
             &keypair.pubkey(),
             Some(&keypair.pubkey()),
             None,
+            true, // tombstone: pre-SIMD-0432 default
         )],
         Some(&keypair.pubkey()),
     );
