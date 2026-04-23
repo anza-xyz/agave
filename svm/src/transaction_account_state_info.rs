@@ -25,7 +25,7 @@ impl TransactionAccountStateInfo {
         rent: &Rent,
         relax_post_exec_min_balance_check: bool,
     ) -> Vec<Self> {
-        write_iter_accounts(transaction_context, message)
+        iter_writable_accounts(transaction_context, message)
             .map(|acct_ref| {
                 let info = acct_ref.map(|account| {
                     let balance = account.lamports();
@@ -64,7 +64,7 @@ impl TransactionAccountStateInfo {
     ) -> Vec<Self> {
         debug_assert_eq!(pre_exec_state_infos.len(), message.account_keys().len());
 
-        write_iter_accounts(transaction_context, message)
+        iter_writable_accounts(transaction_context, message)
             .zip(pre_exec_state_infos)
             .map(|(acct_ref, pre_exec_state_info)| {
                 let info = acct_ref.map(|account| {
@@ -148,7 +148,7 @@ pub(crate) struct WritableTransactionAccountStateInfo {
     owner: Pubkey,
 }
 
-fn write_iter_accounts<'a>(
+fn iter_writable_accounts<'a>(
     transaction_context: &'a TransactionContext,
     message: &impl SVMMessage,
 ) -> impl Iterator<Item = Option<solana_transaction_context::transaction_accounts::AccountRef<'a>>>
