@@ -1,7 +1,10 @@
 use {
     solana_core::validator::ValidatorConfig,
     solana_validator_exit::Exit,
-    std::sync::{Arc, RwLock, atomic::AtomicBool},
+    std::{
+        num::NonZeroUsize,
+        sync::{Arc, RwLock, atomic::AtomicBool},
+    },
 };
 
 pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
@@ -73,7 +76,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         use_snapshot_archives_at_startup: config.use_snapshot_archives_at_startup,
         unified_scheduler_handler_threads: config.unified_scheduler_handler_threads,
         ip_echo_server_threads: config.ip_echo_server_threads,
-        rayon_global_threads: config.rayon_global_threads,
+        rayon_global_threads: NonZeroUsize::new(4).unwrap(),
         replay_forks_threads: config.replay_forks_threads,
         replay_transactions_threads: config.replay_transactions_threads,
         tvu_shred_sigverify_threads: config.tvu_shred_sigverify_threads,

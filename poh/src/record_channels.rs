@@ -182,6 +182,12 @@ pub struct RecordReceiver {
 }
 
 impl RecordReceiver {
+    /// Returns a reference to the inner receiver for use in `select!` macros.
+    /// After receiving from this, you must call `on_received_record` manually.
+    pub fn inner(&self) -> &Receiver<Record> {
+        &self.receiver
+    }
+
     /// Returns true if the channel should be shutdown.
     pub fn should_shutdown(&self, remaining_hashes_in_slot: u64, ticks_per_slot: u64) -> bool {
         // This channel must guarantee that all sent records are recorded.
@@ -286,7 +292,9 @@ impl RecordReceiver {
         Ok(record)
     }
 
-    fn on_received_record(&self, num_batches: u64) {
+    /// Notify that a record has been received.
+    /// Must be called after receiving a record from `inner()` directly.
+    pub fn on_received_record(&self, num_batches: u64) {
         // The record has been received and processed, so increment the number
         // of allowed insertions, so that new records can be sent.
         self.bank_id_allowed_insertions

@@ -315,13 +315,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         self.get_bin(pubkey).get_internal_inner(pubkey, callback)
     }
 
-    /// Gets the index's entry for `pubkey`, with `ancestors` and `max_root`,
+    /// Gets the index's entry for `pubkey`, with `ancestors`,
     /// and applies `callback` to it
     pub(crate) fn get_with_and_then<R>(
         &self,
         pubkey: &Pubkey,
         ancestors: &Ancestors,
-        _max_root: Option<Slot>,
         should_add_to_in_mem_cache: bool,
         callback: impl FnOnce(SlotListItem<T>) -> R,
     ) -> Option<R> {
@@ -354,15 +353,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         self.get_and_then(pubkey, |entry| (false, entry.is_some()))
     }
 
-    /// Is `pubkey`, with `ancestors` and `max_root`, in the index?
+    /// Is `pubkey`, with `ancestors`, in the index?
     #[cfg(test)]
-    fn contains_with(
-        &self,
-        pubkey: &Pubkey,
-        ancestors: &Ancestors,
-        max_root: Option<Slot>,
-    ) -> bool {
-        self.get_with_and_then(pubkey, ancestors, max_root, false, |_| ())
+    fn contains_with(&self, pubkey: &Pubkey, ancestors: &Ancestors) -> bool {
+        self.get_with_and_then(pubkey, ancestors, false, |_| ())
             .is_some()
     }
 
@@ -1293,7 +1287,7 @@ mod tests {
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let ancestors = Ancestors::default();
         let key = &key;
-        assert!(!index.contains_with(key, &ancestors, None));
+        assert!(!index.contains_with(key, &ancestors));
 
         let mut num = 0;
         index.scan_accounts(
@@ -1370,7 +1364,7 @@ mod tests {
         assert!(gc.is_empty());
 
         let ancestors = Ancestors::default();
-        assert!(!index.contains_with(&key, &ancestors, None));
+        assert!(!index.contains_with(&key, &ancestors));
 
         let mut num = 0;
         index.scan_accounts(
@@ -1431,7 +1425,7 @@ mod tests {
         index.set_startup(Startup::Normal);
 
         let mut ancestors = Ancestors::default();
-        assert!(!index.contains_with(pubkey, &ancestors, None));
+        assert!(!index.contains_with(pubkey, &ancestors));
 
         let mut num = 0;
         index.scan_accounts(
@@ -1442,7 +1436,7 @@ mod tests {
         );
         assert_eq!(num, 0);
         ancestors.insert(slot);
-        assert!(index.contains_with(pubkey, &ancestors, None));
+        assert!(index.contains_with(pubkey, &ancestors));
         assert_eq!(index.ref_count_from_storage(pubkey), 1);
         index.scan_accounts(
             &ancestors,
@@ -1463,7 +1457,7 @@ mod tests {
         index.set_startup(Startup::Normal);
 
         let mut ancestors = Ancestors::default();
-        assert!(!index.contains_with(pubkey, &ancestors, None));
+        assert!(!index.contains_with(pubkey, &ancestors));
 
         let mut num = 0;
         index.scan_accounts(
@@ -1474,7 +1468,7 @@ mod tests {
         );
         assert_eq!(num, 0);
         ancestors.insert(slot);
-        assert!(index.contains_with(pubkey, &ancestors, None));
+        assert!(index.contains_with(pubkey, &ancestors));
         assert_eq!(index.ref_count_from_storage(pubkey), 1);
         index.scan_accounts(
             &ancestors,
@@ -1871,7 +1865,7 @@ mod tests {
         assert_eq!(1, account_maps_stats_len(&index));
 
         let mut ancestors = Ancestors::default();
-        assert!(!index.contains_with(&key, &ancestors, None));
+        assert!(!index.contains_with(&key, &ancestors));
         index.get_and_then(&key, |entry| {
             let (stored_slot, value) = entry.unwrap().slot_list_read_lock()[0];
             assert_eq!(stored_slot, slot);
@@ -1888,7 +1882,7 @@ mod tests {
         );
         assert_eq!(num, 0);
         ancestors.insert(slot);
-        assert!(index.contains_with(&key, &ancestors, None));
+        assert!(index.contains_with(&key, &ancestors));
         index.scan_accounts(
             &ancestors,
             index.max_root_inclusive(),
@@ -1916,7 +1910,7 @@ mod tests {
         assert!(gc.is_empty());
 
         let ancestors = Ancestors::from(vec![1]);
-        assert!(!index.contains_with(&key, &ancestors, None));
+        assert!(!index.contains_with(&key, &ancestors));
 
         let mut num = 0;
         index.scan_accounts(
@@ -2041,7 +2035,7 @@ mod tests {
 
         let ancestors = Ancestors::from(vec![0]);
         index
-            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
                 assert_eq!(slot, 0);
                 assert!(account_info);
             })
@@ -2157,7 +2151,7 @@ mod tests {
         index.add_root(0);
         let ancestors = Ancestors::from(vec![index.max_root_inclusive()]);
         index
-            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
                 assert_eq!(slot, 0);
                 assert!(account_info);
             })
@@ -2203,7 +2197,7 @@ mod tests {
         );
         assert!(gc.is_empty());
         index
-            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
                 assert_eq!(slot, 0);
                 assert_eq!(account_info, 1);
             })
@@ -2222,7 +2216,7 @@ mod tests {
         );
         assert_eq!(gc, ReclaimsSlotList::from([(0, 1)]));
         index
-            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
                 assert_eq!(slot, 0);
                 assert_eq!(account_info, 0);
             })
@@ -2259,14 +2253,14 @@ mod tests {
         );
         assert!(gc.is_empty());
         index
-            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
                 assert_eq!(slot, 0);
                 assert!(account_info);
             })
             .unwrap();
         let ancestors = Ancestors::from(vec![1]);
         index
-            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
                 assert_eq!(slot, 1);
                 assert!(!account_info);
             })
@@ -2338,7 +2332,7 @@ mod tests {
         assert_eq!(gc, ReclaimsSlotList::new());
         let ancestors = Ancestors::from(vec![index.max_root_inclusive()]);
         index
-            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
                 assert_eq!(slot, 3);
                 assert!(account_info);
             })
@@ -2666,7 +2660,7 @@ mod tests {
         // Verify that the item added is in in the slot list
         let ancestors = Ancestors::from(vec![reclaim_slot]);
         index
-            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
                 assert_eq!(slot, reclaim_slot);
                 assert_eq!(account_info, account_value);
             })
@@ -2675,7 +2669,7 @@ mod tests {
         // Verify that the newer item remains in the slot list
         let ancestors = Ancestors::from(vec![reclaim_slot + 1]);
         index
-            .get_with_and_then(&key, &ancestors, None, false, |(slot, account_info)| {
+            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
                 assert_eq!(slot, reclaim_slot + 1);
                 assert_eq!(account_info, account_value + 1);
             })

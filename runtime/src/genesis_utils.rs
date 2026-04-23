@@ -595,6 +595,7 @@ pub fn create_lockup_stake_account(
         .set_state(&StakeStateV2::Initialized(Meta {
             authorized: *authorized,
             lockup: *lockup,
+            #[expect(deprecated)]
             rent_exempt_reserve,
         }))
         .expect("set_state");

@@ -871,13 +871,13 @@ fn test_clean_zero_lamport_and_dead_slot() {
     let ancestors = Ancestors::from(vec![0]);
     let (slot1, account_info1) = accounts
         .accounts_index
-        .get_with_and_then(&pubkey1, &ancestors, None, false, |(slot, account_info)| {
+        .get_with_and_then(&pubkey1, &ancestors, false, |(slot, account_info)| {
             (slot, account_info)
         })
         .unwrap();
     let (slot2, account_info2) = accounts
         .accounts_index
-        .get_with_and_then(&pubkey2, &ancestors, None, false, |(slot, account_info)| {
+        .get_with_and_then(&pubkey2, &ancestors, false, |(slot, account_info)| {
             (slot, account_info)
         })
         .unwrap();
@@ -1499,13 +1499,13 @@ fn test_accounts_db_purge_keep_live() {
     let ancestors = Ancestors::from(vec![accounts.accounts_index.max_root_inclusive()]);
     let (slot1, account_info1) = accounts
         .accounts_index
-        .get_with_and_then(&pubkey, &ancestors, None, false, |(slot, account_info)| {
+        .get_with_and_then(&pubkey, &ancestors, false, |(slot, account_info)| {
             (slot, account_info)
         })
         .unwrap();
     let (slot2, account_info2) = accounts
         .accounts_index
-        .get_with_and_then(&pubkey2, &ancestors, None, false, |(slot, account_info)| {
+        .get_with_and_then(&pubkey2, &ancestors, false, |(slot, account_info)| {
             (slot, account_info)
         })
         .unwrap();
@@ -1581,12 +1581,12 @@ fn test_accounts_db_purge1() {
 
     let ancestors = linear_ancestors(current_slot);
     info!("ancestors: {ancestors:?}");
-    let hash = accounts.calculate_accounts_lt_hash_at_startup_from_index(&ancestors, current_slot);
+    let hash = accounts.calculate_accounts_lt_hash_at_startup_from_index(&ancestors);
 
     accounts.clean_accounts_for_tests();
 
     assert_eq!(
-        accounts.calculate_accounts_lt_hash_at_startup_from_index(&ancestors, current_slot),
+        accounts.calculate_accounts_lt_hash_at_startup_from_index(&ancestors),
         hash
     );
 
@@ -1762,7 +1762,7 @@ fn test_verify_bank_capitalization() {
             db.add_root_and_flush_write_cache(some_slot);
 
             assert_eq!(
-                db.calculate_capitalization_at_startup_from_index(&ancestors, some_slot),
+                db.calculate_capitalization_at_startup_from_index(&ancestors),
                 1
             );
             continue;
@@ -1780,7 +1780,7 @@ fn test_verify_bank_capitalization() {
         db.add_root_and_flush_write_cache(some_slot);
 
         assert_eq!(
-            db.calculate_capitalization_at_startup_from_index(&ancestors, some_slot),
+            db.calculate_capitalization_at_startup_from_index(&ancestors),
             2
         );
     }
@@ -3281,13 +3281,9 @@ impl AccountsDb {
         let mut ancestors = Ancestors::default();
         ancestors.insert(slot);
 
-        // Limit the max root to the slot being queried to avoid returning newer rooted slots
-        let max_root = Some(slot);
-
         self.accounts_index.get_with_and_then(
             pubkey,
             &ancestors,
-            max_root,
             false,
             |(slot_found, account_info)| {
                 // If a slot was found, ensure it was the requested slot
@@ -3502,7 +3498,7 @@ fn test_accounts_db_cache_clean_dead_slots() {
         assert!(
             accounts_db
                 .accounts_index
-                .get_with_and_then(key, &ancestors, None, false, |_| {})
+                .get_with_and_then(key, &ancestors, false, |_| {})
                 .is_some()
         );
     }
@@ -3518,13 +3514,12 @@ fn test_accounts_db_cache_clean_dead_slots() {
         alive_slot,
     );
 
-    // Specifying a max_root < alive_slot, should not return any more entries,
-    // as those have been purged from the accounts index for the dead slots.
+    // Dead slots have been purged from the accounts index, so these keys should not be found.
     for key in &keys {
         assert!(
             accounts_db
                 .accounts_index
-                .get_with_and_then(key, &ancestors, Some(last_dead_slot), false, |_| {})
+                .get_with_and_then(key, &ancestors, false, |_| {})
                 .is_none()
         );
     }
@@ -5494,7 +5489,7 @@ fn test_shrink_collect_with_obsolete_accounts() {
         if i % 5 == 0 {
             // Lookup the pubkey in the database and find the AccountInfo
             db.accounts_index
-                .get_with_and_then(pubkey, &ancestors, None, false, |account_info| {
+                .get_with_and_then(pubkey, &ancestors, false, |account_info| {
                     db.remove_dead_accounts(
                         [account_info].iter(),
                         None,
@@ -5910,7 +5905,7 @@ fn test_calculate_capitalization_simple() {
         .as_slice(),
     ));
     assert_eq!(
-        accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0, 1]), 1),
+        accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0, 1])),
         123 + 456,
     );
 }
@@ -5924,7 +5919,7 @@ fn test_calculate_capitalization_overflow_intra_slot() {
     let account = AccountSharedData::new(u64::MAX - 1, 0, &Pubkey::default());
     accounts_db.store_for_tests((0, [(&Pubkey::new_unique(), &account)].as_slice()));
     accounts_db.store_for_tests((0, [(&Pubkey::new_unique(), &account)].as_slice()));
-    accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0]), 0);
+    accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0]));
 }
 
 /// Ensure that calculating capitalization panics of there is an overflow
@@ -5936,7 +5931,7 @@ fn test_calculate_capitalization_overflow_inter_slot() {
     let account = AccountSharedData::new(u64::MAX - 1, 0, &Pubkey::default());
     accounts_db.store_for_tests((0, [(&Pubkey::new_unique(), &account)].as_slice()));
     accounts_db.store_for_tests((1, [(&Pubkey::new_unique(), &account)].as_slice()));
-    accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0, 1]), 1);
+    accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0, 1]));
 }
 
 #[test]

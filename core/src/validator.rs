@@ -127,6 +127,7 @@ use {
         snapshot_bank_utils,
         snapshot_controller::SnapshotController,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
+        validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
@@ -801,7 +802,7 @@ impl Validator {
         let genesis_config = load_genesis(config, ledger_path)?;
         metrics_config_sanity_check(genesis_config.cluster_type)?;
 
-        info!("Validating and cleaning accounts paths..");
+        info!("Validating and cleaning accounts paths...");
         *start_progress.write().unwrap() = ValidatorStartProgress::CleaningAccounts;
         let mut timer = Measure::start("validate_and_clean_accounts_paths");
         validate_account_paths(config)?;
@@ -814,7 +815,7 @@ impl Validator {
             &config.snapshot_config.bank_snapshots_dir,
         );
 
-        info!("Cleaning orphaned account snapshot directories..");
+        info!("Cleaning orphaned account snapshot directories...");
         let mut timer = Measure::start("clean_orphaned_account_snapshot_dirs");
         clean_orphaned_account_snapshot_dirs(
             &config.snapshot_config.bank_snapshots_dir,
@@ -1447,7 +1448,15 @@ impl Validator {
 
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let highest_parent_ready = Arc::new(RwLock::default());
-        let highest_finalized = Arc::new(RwLock::new(None));
+        let (optimistic_parent_sender, _optimistic_parent_receiver) = unbounded();
+        // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsRequest`] to 1 message.
+        let (build_reward_certs_sender, build_reward_certs_receiver) = bounded(1);
+        // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsResponse`] to 1 message.
+        let (reward_certs_sender, reward_certs_receiver) = bounded(1);
+
+        // Shared state for highest finalized certificates (updated by Votor, read by block creation loop)
+        let highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>> =
+            Arc::new(RwLock::new(None));
 
         let block_creation_loop_config = BlockCreationLoopConfig {
             exit: exit.clone(),
@@ -1459,10 +1468,12 @@ impl Validator {
             rpc_subscriptions: rpc_subscriptions.clone(),
             banking_tracer: banking_tracer.clone(),
             slot_status_notifier: slot_status_notifier.clone(),
-            leader_window_info_receiver,
-            highest_parent_ready: highest_parent_ready.clone(),
-            replay_highest_frozen: replay_highest_frozen.clone(),
             record_receiver_receiver,
+            leader_window_info_receiver: leader_window_info_receiver.clone(),
+            replay_highest_frozen: replay_highest_frozen.clone(),
+            highest_parent_ready: highest_parent_ready.clone(),
+            build_reward_certs_sender,
+            reward_certs_receiver,
             highest_finalized: highest_finalized.clone(),
         };
         let block_creation_loop = BlockCreationLoop::new(block_creation_loop_config);
@@ -1598,6 +1609,7 @@ impl Validator {
             vote_connection_cache,
             AlpenglowInitializationState {
                 leader_window_info_sender,
+                optimistic_parent_sender,
                 replay_highest_frozen,
                 highest_parent_ready,
                 votor_event_sender: votor_event_sender.clone(),
@@ -1608,6 +1620,8 @@ impl Validator {
                 bls_connection_cache,
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
+                build_reward_certs_receiver,
+                reward_certs_sender,
             },
         )
         .map_err(ValidatorError::Other)?;

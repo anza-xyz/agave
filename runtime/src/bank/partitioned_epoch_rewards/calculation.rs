@@ -1258,6 +1258,7 @@ mod tests {
 
                 let meta = Meta {
                     authorized: Authorized::auto(&Pubkey::new_unique()),
+                    #[expect(deprecated)]
                     rent_exempt_reserve,
                     ..Meta::default()
                 };

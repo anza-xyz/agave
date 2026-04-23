@@ -78,10 +78,7 @@ impl<'a> SnapshotMinimizer<'a> {
             // Since the account state has changed, the accounts lt hash must be recalculated
             let new_accounts_lt_hash = minimizer
                 .accounts_db()
-                .calculate_accounts_lt_hash_at_startup_from_index(
-                    &minimizer.bank.ancestors,
-                    minimizer.bank.slot(),
-                );
+                .calculate_accounts_lt_hash_at_startup_from_index(&minimizer.bank.ancestors);
             bank.set_accounts_lt_hash_for_snapshot_minimizer(new_accounts_lt_hash);
         }
     }

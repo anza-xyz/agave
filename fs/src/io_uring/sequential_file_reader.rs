@@ -428,7 +428,7 @@ impl<'a> Read for SequentialFileReader<'a> {
             return Ok(0); // EOF or empty `buf`
         }
         buf[..bytes_to_read].copy_from_slice(&available[..bytes_to_read]);
-        self.consume(bytes_to_read);
+        self.state.consume_in_current_buf(bytes_to_read);
         Ok(bytes_to_read)
     }
 }
@@ -444,8 +444,9 @@ impl<'a> BufRead for SequentialFileReader<'a> {
         Ok(current_buf.slice(self.state.current_buf_pos, self.state.current_buf_remaining))
     }
 
+    #[inline]
     fn consume(&mut self, amt: usize) {
-        self.state.consume(amt);
+        self.state.consume_in_current_buf(amt);
     }
 }
 
@@ -470,6 +471,10 @@ impl<'a> FileBufRead<'a> for SequentialFileReader<'a> {
 
     fn get_file_offset(&self) -> FileSize {
         self.state.current_offset
+    }
+
+    fn consume_or_skip(&mut self, amt: usize) {
+        self.state.consume_or_skip(amt);
     }
 }
 
@@ -536,7 +541,14 @@ struct SequentialFileReaderState {
 }
 
 impl SequentialFileReaderState {
-    fn consume(&mut self, amt: usize) {
+    #[inline]
+    fn consume_in_current_buf(&mut self, amt: usize) {
+        self.current_offset += amt as FileSize;
+        self.current_buf_pos += amt as IoSize;
+        self.current_buf_remaining -= amt as IoSize;
+    }
+
+    fn consume_or_skip(&mut self, amt: usize) {
         if amt == 0 || self.files.is_empty() {
             return;
         }
@@ -1069,18 +1081,18 @@ mod tests {
         assert_eq!(reader.fill_buf().unwrap(), &pattern[..512]);
         assert_eq!(0, reader.get_file_offset());
 
-        reader.consume(600);
+        reader.consume_or_skip(600);
         assert_eq!(600, reader.get_file_offset());
         assert_eq!(reader.fill_buf().unwrap(), &pattern[600..1024]);
 
-        reader.consume(400);
+        reader.consume_or_skip(400);
         assert_eq!(1000, reader.get_file_offset());
         assert_eq!(reader.fill_buf().unwrap(), &pattern[1000..1024]);
 
-        reader.consume(25);
+        reader.consume_or_skip(25);
         assert_eq!(reader.fill_buf().unwrap(), &pattern[1025..1536]);
 
-        reader.consume(2000);
+        reader.consume_or_skip(2000);
         assert_eq!(reader.fill_buf().unwrap(), &pattern[3025..3072]);
     }
 
