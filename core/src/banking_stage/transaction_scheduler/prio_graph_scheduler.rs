@@ -728,7 +728,7 @@ mod tests {
         // [1] / ------/
         // [2]
         // [3]
-        // Because the look-ahead window is shortened to a size of 4, the scheduler does
+        // Because the look-ahead window is shortened to a size of 2, the scheduler does
         // not have knowledge of the joining at transaction [4] until after [0] and [1]
         // have been scheduled.
         let scheduling_summary = scheduler
