@@ -107,7 +107,6 @@ pub fn process_instruction(
                 msg!("EpochSchedule identifier:");
                 sysvar::epoch_schedule::id().log();
                 let epoch_schedule = EpochSchedule::from_account_info(&accounts[3]).unwrap();
-                assert_eq!(epoch_schedule, EpochSchedule::default());
                 let got_epoch_schedule = EpochSchedule::get()?;
                 assert_eq!(epoch_schedule, got_epoch_schedule);
                 // Syscall `sol_get_sysvar`.

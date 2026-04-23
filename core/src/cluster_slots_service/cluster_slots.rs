@@ -6,12 +6,15 @@
 use {
     crate::{cluster_slots_service::slot_supporters::SlotSupporters, consensus::Stake},
     solana_clock::{Epoch, Slot},
-    solana_epoch_schedule::EpochSchedule,
     solana_gossip::{
         cluster_info::ClusterInfo, contact_info::ContactInfo, crds::Cursor, epoch_slots::EpochSlots,
     },
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, epoch_stakes::VersionedEpochStakes},
+    solana_runtime::{
+        bank::Bank,
+        epoch_stakes::VersionedEpochStakes,
+        slot_timing::{SlotTimingEpochSegment, slot_timing_epoch_segment_for_slot},
+    },
     solana_time_utils::AtomicInterval,
     std::{
         collections::{HashMap, VecDeque},
@@ -72,7 +75,7 @@ impl EpochStakeInfo {
 /// Holds schedule of the epoch where root bank currently sits
 struct RootEpoch {
     number: Epoch,
-    schedule: EpochSchedule,
+    slot_timing_epoch_segments: Vec<SlotTimingEpochSegment>,
 }
 
 pub struct ClusterSlots {
@@ -203,15 +206,13 @@ impl ClusterSlots {
             );
         }
         *self.root_epoch.write().unwrap() = Some(RootEpoch {
-            schedule: root_bank.epoch_schedule().clone(),
+            slot_timing_epoch_segments: root_bank.slot_timing_epoch_segments(),
             number: root_epoch,
         });
 
         let next_epoch = root_epoch.wrapping_add(1);
         let next_epoch_info = EpochStakeInfo::from(&epoch_stakes_map[&next_epoch]);
-        let mut first_slot = root_bank
-            .epoch_schedule()
-            .get_first_slot_in_epoch(next_epoch);
+        let mut first_slot = root_bank.get_first_slot_in_epoch(next_epoch);
         let mut cluster_slots = self.cluster_slots.write().unwrap();
         let mut patched = 0;
         loop {
@@ -244,9 +245,14 @@ impl ClusterSlots {
             self.root_epoch.read().unwrap().is_none(),
             "Can not use fake epoch initialization more than once!"
         );
-        let sched = EpochSchedule::without_warmup();
+        let sched = solana_epoch_schedule::EpochSchedule::without_warmup();
         *self.root_epoch.write().unwrap() = Some(RootEpoch {
-            schedule: sched,
+            slot_timing_epoch_segments: vec![SlotTimingEpochSegment {
+                first_epoch: 0,
+                first_slot: 0,
+                epoch_schedule: sched,
+                slot_timing_config: solana_runtime::slot_timing::DEFAULT_SLOT_TIMING_CONFIG,
+            }],
             number: 0,
         });
         let total_stake = validator_stakes.values().sum();
@@ -433,7 +439,11 @@ impl ClusterSlots {
     }
 
     fn get_epoch_for_slot(&self, slot: Slot) -> Option<u64> {
-        self.with_root_epoch(|b| b.schedule.get_epoch_and_slot_index(slot).0)
+        self.with_root_epoch(|root_epoch| {
+            slot_timing_epoch_segment_for_slot(&root_epoch.slot_timing_epoch_segments, slot)
+                .map(|segment| segment.epoch_schedule.get_epoch_and_slot_index(slot).0)
+        })
+        .flatten()
     }
 
     #[cfg(test)]
@@ -515,7 +525,12 @@ impl ClusterSlots {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        agave_feature_set::{FeatureSet, slot_time_200ms_8_slot_span, slot_time_320ms_5_slot_span},
+        solana_epoch_schedule::EpochSchedule,
+        solana_runtime::slot_timing::slot_timing_epoch_segments,
+    };
 
     #[test]
     fn test_default() {
@@ -745,6 +760,46 @@ mod tests {
             vec![42 / 2, 1],
             "weights should be halved, but never zero"
         );
+    }
+
+    #[test]
+    fn test_get_epoch_for_slot_uses_slot_timing_segments() {
+        let cs = ClusterSlots::default();
+        let mut feature_set = FeatureSet::default();
+        feature_set.activate(&slot_time_320ms_5_slot_span::id(), 32);
+
+        *cs.root_epoch.write().unwrap() = Some(RootEpoch {
+            number: 1,
+            slot_timing_epoch_segments: slot_timing_epoch_segments(
+                &feature_set,
+                &EpochSchedule::new(32),
+            ),
+        });
+
+        assert_eq!(cs.get_epoch_for_slot(31), Some(0));
+        assert_eq!(cs.get_epoch_for_slot(32), Some(1));
+        assert_eq!(cs.get_epoch_for_slot(63), Some(1));
+        assert_eq!(cs.get_epoch_for_slot(64), Some(2));
+        assert_eq!(cs.get_epoch_for_slot(103), Some(2));
+        assert_eq!(cs.get_epoch_for_slot(104), Some(3));
+
+        feature_set.activate(&slot_time_200ms_8_slot_span::id(), 72);
+        *cs.root_epoch.write().unwrap() = Some(RootEpoch {
+            number: 2,
+            slot_timing_epoch_segments: slot_timing_epoch_segments(
+                &feature_set,
+                &EpochSchedule::new(32),
+            ),
+        });
+
+        assert_eq!(cs.get_epoch_for_slot(31), Some(0));
+        assert_eq!(cs.get_epoch_for_slot(32), Some(1));
+        assert_eq!(cs.get_epoch_for_slot(63), Some(1));
+        assert_eq!(cs.get_epoch_for_slot(64), Some(2));
+        assert_eq!(cs.get_epoch_for_slot(103), Some(2));
+        assert_eq!(cs.get_epoch_for_slot(104), Some(3));
+        assert_eq!(cs.get_epoch_for_slot(167), Some(3));
+        assert_eq!(cs.get_epoch_for_slot(168), Some(4));
     }
 
     #[test]

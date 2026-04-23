@@ -1,5 +1,4 @@
 use {
-    solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
     solana_poh::poh_recorder::PohRecorder,
     solana_pubkey::Pubkey,
@@ -42,9 +41,7 @@ impl TpuInfo for ClusterTpuInfo {
 
     fn get_leader_tpus(&self, max_count: u64) -> Vec<&SocketAddr> {
         let recorder = self.poh_recorder.read().unwrap();
-        let leaders: Vec<_> = (0..max_count)
-            .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
-            .collect();
+        let leaders = recorder.leaders_after_n_windows(0, max_count);
         drop(recorder);
         let mut unique_leaders = vec![];
         for leader in leaders.iter() {
@@ -59,9 +56,7 @@ impl TpuInfo for ClusterTpuInfo {
 
     fn get_not_unique_leader_tpus(&self, max_count: u64) -> Vec<&SocketAddr> {
         let recorder = self.poh_recorder.read().unwrap();
-        let leader_pubkeys: Vec<_> = (0..max_count)
-            .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
-            .collect();
+        let leader_pubkeys = recorder.leaders_after_n_windows(0, max_count);
         drop(recorder);
         leader_pubkeys
             .iter()
@@ -87,6 +82,7 @@ mod test {
             genesis_utils::{
                 GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
             },
+            leader_schedule_utils,
         },
         solana_signer::Signer,
         solana_time_utils::timestamp,
@@ -227,8 +223,12 @@ mod test {
         };
 
         let slot = bank.slot();
-        let first_leader =
-            solana_runtime::leader_schedule_utils::slot_leader_at(slot, &bank).unwrap();
+        let first_leader = leader_schedule_utils::slot_leader_at(slot, &bank).unwrap();
+        let second_window_start =
+            leader_schedule_utils::last_of_consecutive_leader_slots(slot, &bank).saturating_add(1);
+        let third_window_start =
+            leader_schedule_utils::last_of_consecutive_leader_slots(second_window_start, &bank)
+                .saturating_add(1);
         assert_eq!(
             leader_info.get_leader_tpus(1),
             vec![recent_peers.get(&first_leader).unwrap()]
@@ -238,11 +238,8 @@ mod test {
             vec![recent_peers.get(&first_leader).unwrap()]
         );
 
-        let second_leader = solana_runtime::leader_schedule_utils::slot_leader_at(
-            slot + NUM_CONSECUTIVE_LEADER_SLOTS,
-            &bank,
-        )
-        .unwrap();
+        let second_leader =
+            leader_schedule_utils::slot_leader_at(second_window_start, &bank).unwrap();
         let mut expected_leader_sockets = vec![
             recent_peers.get(&first_leader).unwrap(),
             recent_peers.get(&second_leader).unwrap(),
@@ -254,11 +251,8 @@ mod test {
             expected_leader_sockets
         );
 
-        let third_leader = solana_runtime::leader_schedule_utils::slot_leader_at(
-            slot + (2 * NUM_CONSECUTIVE_LEADER_SLOTS),
-            &bank,
-        )
-        .unwrap();
+        let third_leader =
+            leader_schedule_utils::slot_leader_at(third_window_start, &bank).unwrap();
         let expected_leader_sockets = vec![
             recent_peers.get(&first_leader).unwrap(),
             recent_peers.get(&second_leader).unwrap(),

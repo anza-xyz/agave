@@ -56,6 +56,11 @@ use {
         rent_collector::RentCollector,
         reward_info::RewardInfo,
         runtime_config::RuntimeConfig,
+        slot_timing::{
+            DEFAULT_SLOT_TIMING_CONFIG, SlotTimingConfig, SlotTimingEpochSegment,
+            slot_timing_epoch_segment_for_epoch, slot_timing_epoch_segment_for_slot,
+            slot_timing_epoch_segments, slot_timing_segment_first_slot_in_epoch,
+        },
         stake_account::StakeAccount,
         stake_history::StakeHistory as CowStakeHistory,
         stake_weighted_timestamp::{
@@ -75,7 +80,7 @@ use {
     agave_votor_messages::{
         consensus_message::Certificate, migration::GENESIS_CERTIFICATE_ACCOUNT,
     },
-    ahash::AHashSet,
+    ahash::{AHashMap, AHashSet},
     dashmap::DashMap,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
@@ -243,7 +248,6 @@ mod sysvar_cache;
 pub(crate) mod tests;
 
 pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
-pub(crate) const HALVE_SLOT_TIMES_FACTOR: u64 = 2;
 
 pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 
@@ -262,6 +266,42 @@ static NANOSECOND_CLOCK_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
         Pubkey::find_program_address(&[b"alpenclock"], &agave_feature_set::alpenglow::id());
     pubkey
 });
+
+/// Round down.
+fn mul_div_u64_floor(value: u64, numerator: u64, denominator: u64) -> u64 {
+    value
+        .saturating_mul(numerator)
+        .saturating_div(denominator.max(1))
+}
+
+/// Round to nearest.
+fn mul_div_u64_round(value: u64, numerator: u64, denominator: u64) -> u64 {
+    let denominator = denominator.max(1);
+    let scaled = u128::from(value)
+        .saturating_mul(u128::from(numerator))
+        .saturating_add(u128::from(denominator / 2))
+        .saturating_div(u128::from(denominator));
+    u64::try_from(scaled).expect("scaled value must fit in u64")
+}
+
+/// Round to nearest.
+fn mul_div_u128_round(value: u128, numerator: u64, denominator: u64) -> u128 {
+    let denominator = denominator.max(1);
+    value
+        .saturating_mul(u128::from(numerator))
+        .saturating_add(u128::from(denominator / 2))
+        .saturating_div(u128::from(denominator))
+}
+
+/// Round up.
+fn mul_div_usize_ceil(value: usize, numerator: u64, denominator: u64) -> usize {
+    let denominator = denominator.max(1);
+    let scaled = (value as u128)
+        .saturating_mul(u128::from(numerator))
+        .saturating_add(u128::from(denominator.saturating_sub(1)))
+        .saturating_div(u128::from(denominator));
+    usize::try_from(scaled).expect("scaled value must fit in usize")
+}
 
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
@@ -582,6 +622,8 @@ impl PartialEq for Bank {
             fee_rate_governor,
             rent_collector,
             epoch_schedule,
+            slot_timing_config,
+            slot_timing_base_epoch_schedule,
             inflation,
             stakes_cache,
             epoch_stakes,
@@ -647,6 +689,8 @@ impl PartialEq for Bank {
             && fee_rate_governor == &other.fee_rate_governor
             && rent_collector == &other.rent_collector
             && epoch_schedule == &other.epoch_schedule
+            && slot_timing_config == &other.slot_timing_config
+            && slot_timing_base_epoch_schedule == &other.slot_timing_base_epoch_schedule
             && *inflation.read().unwrap() == *other.inflation.read().unwrap()
             && *stakes_cache.stakes() == *other.stakes_cache.stakes()
             && epoch_stakes == &other.epoch_stakes
@@ -867,8 +911,14 @@ pub struct Bank {
     /// latest rent collector, knows the epoch
     rent_collector: RentCollector,
 
-    /// initialized from genesis
+    /// Epoch schedule currently persisted in this bank.
     pub(crate) epoch_schedule: EpochSchedule,
+
+    /// Slot timing config currently applied to persisted bank fields.
+    slot_timing_config: SlotTimingConfig,
+
+    /// Original epoch schedule before any slot timing transitions are applied.
+    slot_timing_base_epoch_schedule: EpochSchedule,
 
     /// inflation specs
     inflation: Arc<RwLock<Inflation>>,
@@ -1139,6 +1189,8 @@ impl Bank {
             fee_rate_governor: FeeRateGovernor::default(),
             rent_collector: RentCollector::default(),
             epoch_schedule: EpochSchedule::default(),
+            slot_timing_config: DEFAULT_SLOT_TIMING_CONFIG,
+            slot_timing_base_epoch_schedule: EpochSchedule::default(),
             inflation: Arc::<RwLock<Inflation>>::default(),
             stakes_cache: StakesCache::default(),
             epoch_stakes: HashMap::<Epoch, VersionedEpochStakes>::default(),
@@ -1303,7 +1355,7 @@ impl Bank {
         assert_ne!(slot, parent.slot());
 
         let epoch_schedule = parent.epoch_schedule().clone();
-        let epoch = epoch_schedule.get_epoch(slot);
+        let epoch = parent.get_epoch(slot);
 
         let (rc, bank_rc_creation_time_us) = measure_us!({
             let accounts_db = Arc::clone(&parent.rc.accounts.accounts_db);
@@ -1359,6 +1411,8 @@ impl Bank {
             genesis_creation_time: parent.genesis_creation_time,
             slots_per_year: parent.slots_per_year,
             epoch_schedule,
+            slot_timing_config: parent.slot_timing_config,
+            slot_timing_base_epoch_schedule: parent.slot_timing_base_epoch_schedule.clone(),
             rent_collector: Self::get_rent_collector_from(&parent.rent_collector, epoch),
             max_tick_height: slot
                 .checked_add(1)
@@ -1454,7 +1508,7 @@ impl Bank {
                 );
             } else {
                 // Save a snapshot of stakes for use in consensus and stake weighted networking
-                let leader_schedule_epoch = new.epoch_schedule().get_leader_schedule_epoch(slot);
+                let leader_schedule_epoch = new.get_leader_schedule_epoch(slot);
                 new.update_epoch_stakes(leader_schedule_epoch);
             }
         });
@@ -1558,9 +1612,8 @@ impl Bank {
     }
 
     fn prepare_program_cache_for_upcoming_feature_set(&self) {
-        let (_epoch, slot_index) = self.epoch_schedule.get_epoch_and_slot_index(self.slot);
-        let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(self.epoch);
-        let (upcoming_feature_set, _newly_activated) = self.compute_active_feature_set(true);
+        let (_epoch, slot_index) = self.get_epoch_and_slot_index(self.slot);
+        let slots_in_epoch = self.get_slots_in_epoch(self.epoch);
 
         // Recompile loaded programs one at a time before the next epoch hits
         let slots_in_recompilation_phase =
@@ -1568,6 +1621,22 @@ impl Bank {
                 .min(slots_in_epoch)
                 .checked_div(2)
                 .unwrap();
+
+        let within_recompilation_phase =
+            slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch;
+        if !within_recompilation_phase
+            && self
+                .transaction_processor
+                .epoch_boundary_preparation
+                .read()
+                .unwrap()
+                .upcoming_environment
+                .is_none()
+        {
+            return;
+        }
+
+        let (upcoming_feature_set, _newly_activated) = self.compute_active_feature_set(true);
 
         let program_cache = self
             .transaction_processor
@@ -1609,7 +1678,7 @@ impl Bank {
                     );
                 }
             }
-        } else if slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch {
+        } else if within_recompilation_phase {
             // Anticipate the upcoming program runtime environment for the next epoch,
             // so we can try to recompile loaded programs before the feature transition hits.
             let new_environment = self.create_program_runtime_environment(&upcoming_feature_set);
@@ -1784,7 +1853,7 @@ impl Bank {
             .activate_epoch(epoch, stake_history, vote_accounts);
 
         // Save a snapshot of stakes for use in consensus and stake weighted networking
-        let leader_schedule_epoch = self.epoch_schedule.get_leader_schedule_epoch(slot);
+        let leader_schedule_epoch = self.get_leader_schedule_epoch(slot);
         let (_, update_epoch_stakes_time_us) =
             measure_us!(self.update_epoch_stakes(leader_schedule_epoch));
 
@@ -1858,7 +1927,7 @@ impl Bank {
         parent.freeze();
         let parent_timestamp = parent.clock().unix_timestamp;
         let mut new = Bank::new_from_parent(parent, leader, slot);
-        new.update_epoch_stakes(new.epoch_schedule().get_epoch(slot));
+        new.update_epoch_stakes(new.get_epoch(slot));
         new.tick_height.store(new.max_tick_height(), Relaxed);
 
         let mut clock = new.clock();
@@ -1889,8 +1958,20 @@ impl Bank {
     ) -> Self {
         let now = Instant::now();
         let slot = fields.slot;
-        let epoch = fields.epoch_schedule.get_epoch(slot);
         let ancestors = Ancestors::from(vec![slot]);
+        let (restored_feature_set, _) = Self::compute_active_feature_set_from_accounts(
+            &bank_rc.accounts,
+            &ancestors,
+            slot,
+            false,
+        );
+        let slot_timing_segment = Self::slot_timing_epoch_segment_for_slot_from_base(
+            &restored_feature_set,
+            &genesis_config.epoch_schedule,
+            slot,
+        );
+        let epoch = slot_timing_segment.epoch_schedule.get_epoch(slot);
+        let slot_timing_config = slot_timing_segment.slot_timing_config;
         // For backward compatibility, we can only serialize and deserialize
         // Stakes<Delegation> in BankFieldsTo{Serialize,Deserialize}. But Bank
         // caches Stakes<StakeAccount>. Below Stakes<StakeAccount> is obtained
@@ -1934,7 +2015,8 @@ impl Bank {
             } else {
                 Self::slot_leader_from_epoch_stakes(
                     fields.slot,
-                    &fields.epoch_schedule,
+                    &slot_timing_segment.epoch_schedule,
+                    slot_timing_config.num_consecutive_leader_slots,
                     &epoch_stakes,
                 )
             }
@@ -2007,6 +2089,8 @@ impl Bank {
                 rent,
             ),
             epoch_schedule: fields.epoch_schedule,
+            slot_timing_config,
+            slot_timing_base_epoch_schedule: genesis_config.epoch_schedule.clone(),
             inflation: Arc::new(RwLock::new(fields.inflation)),
             stakes_cache: StakesCache::new(stakes),
             epoch_stakes,
@@ -2057,7 +2141,6 @@ impl Bank {
         );
         assert_eq!(bank.ticks_per_slot, genesis_config.ticks_per_slot);
         assert_eq!(bank.max_tick_height, (bank.slot + 1) * bank.ticks_per_slot);
-        assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
 
         bank.initialize_after_snapshot_restore(|| {
             ThreadPoolBuilder::new()
@@ -2091,6 +2174,7 @@ impl Bank {
     fn slot_leader_from_epoch_stakes(
         slot: Slot,
         epoch_schedule: &EpochSchedule,
+        num_consecutive_leader_slots: u64,
         epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
     ) -> SlotLeader {
         let (epoch, slot_index) = epoch_schedule.get_epoch_and_slot_index(slot);
@@ -2099,9 +2183,13 @@ impl Bank {
             .expect("epoch stakes should contain current epoch")
             .stakes()
             .vote_accounts();
-        let leader_schedule =
-            leader_schedule_from_vote_accounts(epoch, epoch_schedule, epoch_vote_accounts.as_ref())
-                .expect("leader schedule should be computable from epoch stakes");
+        let leader_schedule = leader_schedule_from_vote_accounts(
+            epoch,
+            epoch_schedule.get_slots_in_epoch(epoch),
+            num_consecutive_leader_slots,
+            epoch_vote_accounts.as_ref(),
+        )
+        .expect("leader schedule should be computable from epoch stakes");
         leader_schedule.get_slot_leader_at_index(slot_index as usize)
     }
 
@@ -2208,7 +2296,7 @@ impl Bank {
 
     /// Returns a reference to the [`VersionedEpochStakes`] corresponding to the given [`Slot`].
     pub fn epoch_stakes_from_slot(&self, slot: Slot) -> Option<&VersionedEpochStakes> {
-        let epoch = self.epoch_schedule().get_epoch(slot);
+        let epoch = self.get_epoch(slot);
         self.epoch_stakes(epoch)
     }
 
@@ -2266,7 +2354,7 @@ impl Bank {
             } else {
                 self.epoch()
             };
-            let first_slot_in_epoch = self.epoch_schedule().get_first_slot_in_epoch(epoch);
+            let first_slot_in_epoch = self.get_first_slot_in_epoch(epoch);
             Some((first_slot_in_epoch, self.clock().epoch_start_timestamp))
         };
         let max_allowable_drift = MaxAllowableDrift {
@@ -2304,8 +2392,8 @@ impl Bank {
         let clock = sysvar::clock::Clock {
             slot: self.slot,
             epoch_start_timestamp,
-            epoch: self.epoch_schedule().get_epoch(self.slot),
-            leader_schedule_epoch: self.epoch_schedule().get_leader_schedule_epoch(self.slot),
+            epoch: self.get_epoch(self.slot),
+            leader_schedule_epoch: self.get_leader_schedule_epoch(self.slot),
             unix_timestamp,
         };
         self.update_sysvar_account(&sysvar::clock::id(), |account| {
@@ -2508,7 +2596,7 @@ impl Bank {
     fn update_epoch_schedule(&self) {
         self.update_sysvar_account(&sysvar::epoch_schedule::id(), |account| {
             create_account(
-                self.epoch_schedule(),
+                &self.epoch_schedule,
                 self.inherit_specially_retained_account_fields(account),
             )
         });
@@ -2527,32 +2615,78 @@ impl Bank {
         });
     }
 
-    // Get number of slots per year when slots were 400ms.
-    fn pre_halve_slot_times_slots_per_year(&self) -> f64 {
-        debug_assert!(
-            self.halve_slot_times_slot().is_some(),
-            "pre_halve_slot_times_slots_per_year should only be called when the feature is active"
-        );
-        self.slots_per_year / HALVE_SLOT_TIMES_FACTOR as f64
+    /// Return the slot timing config currently applied to this bank's persisted fields.
+    pub fn current_slot_timing_config(&self) -> SlotTimingConfig {
+        self.slot_timing_config
     }
 
-    // Get slots per year given slot times during this epoch.
-    fn slots_per_year_for_epoch(&self, epoch: Epoch) -> f64 {
-        let Some(activation_slot) = self.halve_slot_times_slot() else {
-            return self.slots_per_year;
-        };
-        let activation_epoch = self.epoch_schedule().get_epoch(activation_slot);
-        if epoch < activation_epoch {
-            self.pre_halve_slot_times_slots_per_year()
-        } else {
-            self.slots_per_year
-        }
+    /// Return the legacy epoch schedule used as the base for all segments.
+    fn slot_timing_base_epoch_schedule(&self) -> EpochSchedule {
+        self.slot_timing_base_epoch_schedule.clone()
+    }
+
+    /// Recover the legacy slots/year value from the bank's current value.
+    fn slot_timing_base_slots_per_year(&self) -> f64 {
+        let current_slot_timing_config = self.current_slot_timing_config();
+        self.slots_per_year * current_slot_timing_config.slot_time_numerator as f64
+            / current_slot_timing_config.slot_time_denominator as f64
+    }
+
+    /// Return slots/year for a particular slot timing config.
+    fn slots_per_year_for_slot_timing_config(&self, slot_timing_config: SlotTimingConfig) -> f64 {
+        self.slot_timing_base_slots_per_year() * slot_timing_config.slot_time_denominator as f64
+            / slot_timing_config.slot_time_numerator as f64
+    }
+
+    /// Build slot timing segments for this bank's feature set.
+    pub fn slot_timing_epoch_segments(&self) -> Vec<SlotTimingEpochSegment> {
+        slot_timing_epoch_segments(&self.feature_set, &self.slot_timing_base_epoch_schedule())
+    }
+
+    /// Return the slot timing segment for `slot` using an explicit base schedule.
+    fn slot_timing_epoch_segment_for_slot_from_base(
+        feature_set: &FeatureSet,
+        base_epoch_schedule: &EpochSchedule,
+        slot: Slot,
+    ) -> SlotTimingEpochSegment {
+        slot_timing_epoch_segment_for_slot(
+            &slot_timing_epoch_segments(feature_set, base_epoch_schedule),
+            slot,
+        )
+        .cloned()
+        .expect("slot timing segments must always contain the queried slot")
+    }
+
+    /// Return the slot timing segment for `epoch`.
+    fn slot_timing_epoch_segment_for_epoch(&self, epoch: Epoch) -> SlotTimingEpochSegment {
+        slot_timing_epoch_segment_for_epoch(&self.slot_timing_epoch_segments(), epoch)
+            .cloned()
+            .expect("slot timing segments must always contain the queried epoch")
+    }
+
+    /// Return the slot timing segment for `slot`.
+    fn slot_timing_epoch_segment_for_slot(&self, slot: Slot) -> SlotTimingEpochSegment {
+        slot_timing_epoch_segment_for_slot(&self.slot_timing_epoch_segments(), slot)
+            .cloned()
+            .expect("slot timing segments must always contain the queried slot")
+    }
+
+    /// Return the slot timing config effective for `slot`.
+    pub fn slot_timing_config_at_slot(&self, slot: Slot) -> SlotTimingConfig {
+        self.slot_timing_epoch_segment_for_slot(slot)
+            .slot_timing_config
+    }
+
+    /// Return the slot timing config effective for `epoch`.
+    fn slot_timing_config_for_epoch(&self, epoch: Epoch) -> SlotTimingConfig {
+        self.slot_timing_epoch_segment_for_epoch(epoch)
+            .slot_timing_config
     }
 
     // Get epoch duration in years given slot times during this epoch.
     pub fn epoch_duration_in_years(&self, epoch: Epoch) -> f64 {
-        self.epoch_schedule().get_slots_in_epoch(epoch) as f64
-            / self.slots_per_year_for_epoch(epoch)
+        self.get_slots_in_epoch(epoch) as f64
+            / self.slots_per_year_for_slot_timing_config(self.slot_timing_config_for_epoch(epoch))
     }
 
     pub fn max_processing_age(&self) -> usize {
@@ -2560,11 +2694,12 @@ impl Bank {
     }
 
     fn max_recent_blockhashes_for_active_features(&self) -> usize {
-        if self.halve_slot_times_active() {
-            MAX_RECENT_BLOCKHASHES.saturating_mul(HALVE_SLOT_TIMES_FACTOR as usize)
-        } else {
-            MAX_RECENT_BLOCKHASHES
-        }
+        let current_slot_timing_config = self.current_slot_timing_config();
+        mul_div_usize_ceil(
+            MAX_RECENT_BLOCKHASHES,
+            current_slot_timing_config.slot_time_denominator,
+            current_slot_timing_config.slot_time_numerator,
+        )
     }
 
     fn max_status_cache_entries_for_active_features(&self) -> usize {
@@ -2593,41 +2728,25 @@ impl Bank {
 
     // Number of slots since inflation started, aligned to the first slot of the
     // epoch for rewards calculation.
+    #[cfg(test)]
     fn get_inflation_num_slots(&self) -> u64 {
         let inflation_start_slot = self.inflation_start_slot_aligned_to_rewards();
-        self.epoch_schedule().get_first_slot_in_epoch(self.epoch()) - inflation_start_slot
+        self.get_first_slot_in_epoch(self.epoch()) - inflation_start_slot
     }
 
     // The starting slot for inflation rewards calculation, aligned to the first
     // slot of the epoch.
     fn inflation_start_slot_aligned_to_rewards(&self) -> Slot {
         let inflation_activation_slot = self.get_inflation_start_slot();
-        self.epoch_schedule().get_first_slot_in_epoch(
-            self.epoch_schedule()
-                .get_epoch(inflation_activation_slot)
-                .saturating_sub(1),
-        )
+        self.get_first_slot_in_epoch(self.get_epoch(inflation_activation_slot).saturating_sub(1))
     }
 
     // Since the time inflation started, translate number of slots --> years.
     pub fn slot_in_year_for_inflation(&self) -> f64 {
-        let num_slots = self.get_inflation_num_slots();
-
-        if let Some(activation_slot) = self.halve_slot_times_slot() {
-            // Need to understand how many slots were ~400ms vs ~200ms to
-            // translate the slot range properly to number of years.
-            let inflation_start_slot = self.inflation_start_slot_aligned_to_rewards();
-            if activation_slot > inflation_start_slot {
-                let slots_before_feature = activation_slot - inflation_start_slot;
-                let slots_after_feature = num_slots.saturating_sub(slots_before_feature);
-                let pre_halve_slots_per_year = self.pre_halve_slot_times_slots_per_year();
-                return slots_before_feature as f64 / pre_halve_slots_per_year
-                    + slots_after_feature as f64 / self.slots_per_year;
-            }
-        }
-
-        // calculated as: num_slots / (slots / year)
-        num_slots as f64 / self.slots_per_year
+        let start_epoch = self.get_epoch(self.inflation_start_slot_aligned_to_rewards());
+        (start_epoch..self.epoch())
+            .map(|epoch| self.epoch_duration_in_years(epoch))
+            .sum()
     }
 
     /// For a given `capitalization` (total_supply in lamports) and `epoch`, returns the
@@ -2665,7 +2784,7 @@ impl Bank {
         epoch_start_timestamp: Option<(Slot, UnixTimestamp)>,
     ) -> Option<UnixTimestamp> {
         let mut get_timestamp_estimate_time = Measure::start("get_timestamp_estimate");
-        let slots_per_epoch = self.epoch_schedule().slots_per_epoch;
+        let slots_per_epoch = self.get_slots_in_epoch(self.epoch());
         let vote_accounts = self.vote_accounts();
         let recent_timestamps = vote_accounts.iter().filter_map(|(pubkey, (_, account))| {
             let vote_state = account.vote_state_view();
@@ -2675,7 +2794,7 @@ impl Bank {
                 .then_some((*pubkey, (last_timestamp.slot, last_timestamp.timestamp)))
         });
         let slot_duration = Duration::from_nanos(self.ns_per_slot as u64);
-        let epoch = self.epoch_schedule().get_epoch(self.slot());
+        let epoch = self.get_epoch(self.slot());
         let stakes = self.epoch_vote_accounts(epoch)?;
         let stake_weighted_timestamp = calculate_stake_weighted_timestamp(
             recent_timestamps,
@@ -2887,6 +3006,7 @@ impl Bank {
         self.slots_per_year = genesis_config.slots_per_year();
 
         self.epoch_schedule = genesis_config.epoch_schedule.clone();
+        self.slot_timing_base_epoch_schedule = genesis_config.epoch_schedule.clone();
 
         self.inflation = Arc::new(RwLock::new(genesis_config.inflation));
 
@@ -3082,8 +3202,8 @@ impl Bank {
         let clock = sysvar::clock::Clock {
             slot: self.slot,
             epoch_start_timestamp,
-            epoch: self.epoch_schedule().get_epoch(self.slot),
-            leader_schedule_epoch: self.epoch_schedule().get_leader_schedule_epoch(self.slot),
+            epoch: self.get_epoch(self.slot),
+            leader_schedule_epoch: self.get_leader_schedule_epoch(self.slot),
             unix_timestamp: unix_timestamp_s,
         };
 
@@ -3655,10 +3775,9 @@ impl Bank {
 
         let (blockhash, blockhash_lamports_per_signature) =
             self.last_blockhash_and_lamports_per_signature();
-        let effective_epoch_of_deployments =
-            self.epoch_schedule().get_epoch(self.slot.saturating_add(
-                solana_program_runtime::program_cache_entry::DELAY_VISIBILITY_SLOT_OFFSET,
-            ));
+        let effective_epoch_of_deployments = self.get_epoch(self.slot.saturating_add(
+            solana_program_runtime::program_cache_entry::DELAY_VISIBILITY_SLOT_OFFSET,
+        ));
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature,
@@ -4443,17 +4562,27 @@ impl Bank {
         self.rc.accounts.clone()
     }
 
-    pub fn halve_slot_times_active(&self) -> bool {
-        self.feature_set
-            .is_active(&feature_set::halve_slot_times::id())
+    /// Return the leader-window size currently applied to this bank.
+    pub fn num_consecutive_leader_slots(&self) -> u64 {
+        self.current_slot_timing_config()
+            .num_consecutive_leader_slots
     }
 
-    fn halve_slot_times_slot(&self) -> Option<u64> {
-        self.feature_set
-            .activated_slot(&feature_set::halve_slot_times::id())
+    /// Return the leader-window size effective for `slot`.
+    pub fn num_consecutive_leader_slots_at_slot(&self, slot: Slot) -> u64 {
+        self.slot_timing_config_at_slot(slot)
+            .num_consecutive_leader_slots
     }
 
+    /// Return the leader-window size effective for `epoch`.
+    pub fn num_consecutive_leader_slots_for_epoch(&self, epoch: Epoch) -> u64 {
+        self.slot_timing_config_for_epoch(epoch)
+            .num_consecutive_leader_slots
+    }
+
+    /// Apply compute-cost limits implied by the active feature set and slot timing.
     fn apply_cost_tracker_limits_for_active_features(&mut self) {
+        let current_slot_timing_config = self.current_slot_timing_config();
         let mut block_cost_limit = if self
             .feature_set
             .is_active(&feature_set::raise_block_limits_to_100m::id())
@@ -4466,13 +4595,30 @@ impl Bank {
         let mut vote_cost_limit = MAX_VOTE_UNITS;
         let mut allocated_data_size_limit = MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA;
 
-        if self.halve_slot_times_active() {
-            block_cost_limit = block_cost_limit.saturating_div(HALVE_SLOT_TIMES_FACTOR);
-            account_cost_limit = account_cost_limit.saturating_div(HALVE_SLOT_TIMES_FACTOR);
-            vote_cost_limit = vote_cost_limit.saturating_div(HALVE_SLOT_TIMES_FACTOR);
-            allocated_data_size_limit =
-                allocated_data_size_limit.saturating_div(HALVE_SLOT_TIMES_FACTOR);
-        }
+        block_cost_limit = mul_div_u64_floor(
+            block_cost_limit,
+            current_slot_timing_config.slot_time_numerator,
+            current_slot_timing_config.slot_time_denominator,
+        )
+        .max(1);
+        account_cost_limit = mul_div_u64_floor(
+            account_cost_limit,
+            current_slot_timing_config.slot_time_numerator,
+            current_slot_timing_config.slot_time_denominator,
+        )
+        .max(1);
+        vote_cost_limit = mul_div_u64_floor(
+            vote_cost_limit,
+            current_slot_timing_config.slot_time_numerator,
+            current_slot_timing_config.slot_time_denominator,
+        )
+        .max(1);
+        allocated_data_size_limit = mul_div_u64_floor(
+            allocated_data_size_limit,
+            current_slot_timing_config.slot_time_numerator,
+            current_slot_timing_config.slot_time_denominator,
+        )
+        .max(1);
 
         let mut cost_tracker = self.write_cost_tracker().unwrap();
         cost_tracker.set_limits(
@@ -4483,6 +4629,7 @@ impl Bank {
         );
     }
 
+    /// Apply the status-cache root retention limit implied by slot timing.
     fn apply_status_cache_limits_for_active_features(&self) {
         self.status_cache.write().unwrap().set_max_root_entries(
             NonZeroUsize::new(self.max_status_cache_entries_for_active_features())
@@ -4490,49 +4637,125 @@ impl Bank {
         );
     }
 
+    /// Apply partitioned-reward write limits implied by slot timing.
     fn apply_partitioned_epoch_rewards_config_for_active_features(&mut self) {
-        if self.halve_slot_times_active() {
-            self.partitioned_rewards_stake_account_stores_per_block = self
-                .rc
+        let current_slot_timing_config = self.current_slot_timing_config();
+        self.partitioned_rewards_stake_account_stores_per_block = mul_div_u64_floor(
+            self.rc
                 .accounts
                 .accounts_db
                 .partitioned_epoch_rewards_config
-                .stake_account_stores_per_block
-                .saturating_div(HALVE_SLOT_TIMES_FACTOR)
-                .max(1)
-        }
+                .stake_account_stores_per_block,
+            current_slot_timing_config.slot_time_numerator,
+            current_slot_timing_config.slot_time_denominator,
+        )
+        .max(1);
     }
 
-    // These fields are persisted across restarts.
-    fn apply_halve_slot_times_persistent_changes(&mut self) {
-        self.ns_per_slot = self
-            .ns_per_slot
-            .saturating_div(u128::from(HALVE_SLOT_TIMES_FACTOR));
-        self.slots_per_year *= HALVE_SLOT_TIMES_FACTOR as f64;
-        self.rent_collector.slots_per_year *= HALVE_SLOT_TIMES_FACTOR as f64;
+    /// Apply slot-timing changes that are persisted in bank snapshots.
+    fn apply_slot_timing_persistent_changes(
+        &mut self,
+        previous_slot_timing_config: SlotTimingConfig,
+        next_slot_timing_config: SlotTimingConfig,
+    ) {
+        self.ns_per_slot = mul_div_u128_round(
+            self.ns_per_slot,
+            next_slot_timing_config
+                .slot_time_numerator
+                .saturating_mul(previous_slot_timing_config.slot_time_denominator),
+            next_slot_timing_config
+                .slot_time_denominator
+                .saturating_mul(previous_slot_timing_config.slot_time_numerator),
+        );
+        self.slots_per_year *= previous_slot_timing_config.slot_time_numerator as f64
+            * next_slot_timing_config.slot_time_denominator as f64
+            / (previous_slot_timing_config.slot_time_denominator as f64
+                * next_slot_timing_config.slot_time_numerator as f64);
         if !self.feature_set.is_active(&feature_set::alpenglow::id()) {
             if let Some(hashes_per_tick) = self.hashes_per_tick {
+                let base_hashes_per_tick = mul_div_u64_round(
+                    hashes_per_tick,
+                    previous_slot_timing_config.slot_time_denominator,
+                    previous_slot_timing_config.slot_time_numerator,
+                );
                 self.hashes_per_tick = Some(
-                    hashes_per_tick
-                        .saturating_div(HALVE_SLOT_TIMES_FACTOR)
-                        .max(1),
+                    mul_div_u64_floor(
+                        base_hashes_per_tick,
+                        next_slot_timing_config.slot_time_numerator,
+                        next_slot_timing_config.slot_time_denominator,
+                    )
+                    .max(1),
                 );
             }
         }
         if self.fee_rate_governor.target_signatures_per_slot > 0 {
-            self.fee_rate_governor.target_signatures_per_slot = self
-                .fee_rate_governor
-                .target_signatures_per_slot
-                .saturating_div(HALVE_SLOT_TIMES_FACTOR)
-                .max(1);
+            self.fee_rate_governor.target_signatures_per_slot = mul_div_u64_floor(
+                self.fee_rate_governor.target_signatures_per_slot,
+                next_slot_timing_config
+                    .slot_time_numerator
+                    .saturating_mul(previous_slot_timing_config.slot_time_denominator),
+                next_slot_timing_config
+                    .slot_time_denominator
+                    .saturating_mul(previous_slot_timing_config.slot_time_numerator),
+            )
+            .max(1);
         }
+
+        if previous_slot_timing_config.slots_per_epoch_numerator
+            != next_slot_timing_config.slots_per_epoch_numerator
+            || previous_slot_timing_config.slots_per_epoch_denominator
+                != next_slot_timing_config.slots_per_epoch_denominator
+        {
+            self.epoch_schedule = EpochSchedule {
+                slots_per_epoch: mul_div_u64_round(
+                    self.epoch_schedule.slots_per_epoch,
+                    next_slot_timing_config
+                        .slots_per_epoch_numerator
+                        .saturating_mul(previous_slot_timing_config.slots_per_epoch_denominator),
+                    next_slot_timing_config
+                        .slots_per_epoch_denominator
+                        .saturating_mul(previous_slot_timing_config.slots_per_epoch_numerator),
+                ),
+                leader_schedule_slot_offset: mul_div_u64_round(
+                    self.epoch_schedule.leader_schedule_slot_offset,
+                    next_slot_timing_config
+                        .slots_per_epoch_numerator
+                        .saturating_mul(previous_slot_timing_config.slots_per_epoch_denominator),
+                    next_slot_timing_config
+                        .slots_per_epoch_denominator
+                        .saturating_mul(previous_slot_timing_config.slots_per_epoch_numerator),
+                ),
+                warmup: false,
+                first_normal_epoch: self.epoch,
+                first_normal_slot: self.slot,
+            };
+            self.update_epoch_schedule();
+        }
+
+        self.slot_timing_config = next_slot_timing_config;
+
+        // Rent collection uses the current epoch schedule and slots/year to translate slot
+        // counts into wall-clock time. Keep the in-memory collector aligned with staged slot
+        // timing changes so restored banks and live banks behave identically.
+        self.rent_collector = RentCollector::new(
+            self.epoch,
+            self.epoch_schedule.clone(),
+            self.slots_per_year,
+            self.rent_collector.rent.clone(),
+        );
     }
 
-    // These fields are not persisted across restarts and must be reactivated.
-    // This function is idempotent.
-    fn apply_halve_slot_times_runtime_changes(&mut self) {
-        self.max_processing_age =
-            MAX_PROCESSING_AGE.saturating_mul(HALVE_SLOT_TIMES_FACTOR as usize);
+    /// Apply slot-timing changes for runtime-only caches and limits.
+    ///
+    /// These fields are not persisted across restarts and must be reactivated.
+    /// This function is idempotent.
+    fn apply_slot_timing_runtime_changes(&mut self) {
+        let current_slot_timing_config = self.current_slot_timing_config();
+        self.max_processing_age = mul_div_usize_ceil(
+            MAX_PROCESSING_AGE,
+            current_slot_timing_config.slot_time_denominator,
+            current_slot_timing_config.slot_time_numerator,
+        );
         self.blockhash_queue
             .write()
             .unwrap()
@@ -4569,14 +4792,7 @@ impl Bank {
         // Many fields are not serialized in snapshot or any configs.
         // We must apply previously activated features related to values here
         // so that the initial bank state is consistent with the feature set.
-        if self.halve_slot_times_active() {
-            // Cost tracker and status cache limits are updated as part of halve
-            // slot times updates.
-            self.apply_halve_slot_times_runtime_changes();
-        } else {
-            self.apply_cost_tracker_limits_for_active_features();
-            self.apply_status_cache_limits_for_active_features();
-        }
+        self.apply_slot_timing_runtime_changes();
         self.apply_simd_0339_invoke_cost_changes();
 
         let program_runtime_environment =
@@ -5354,15 +5570,35 @@ impl Bank {
         self.block_height
     }
 
-    /// Return the number of slots per epoch for the given epoch
+    /// Return the number of slots in `epoch`, accounting for delayed slot timing transitions.
     pub fn get_slots_in_epoch(&self, epoch: Epoch) -> u64 {
-        self.epoch_schedule().get_slots_in_epoch(epoch)
+        let segment = self.slot_timing_epoch_segment_for_epoch(epoch);
+        segment.epoch_schedule.get_slots_in_epoch(epoch)
     }
 
-    /// returns the epoch for which this bank's leader_schedule_slot_offset and slot would
-    ///  need to cache leader_schedule
+    /// Return the first slot in `epoch`, accounting for delayed slot timing transitions.
+    pub fn get_first_slot_in_epoch(&self, epoch: Epoch) -> Slot {
+        let segment = self.slot_timing_epoch_segment_for_epoch(epoch);
+        slot_timing_segment_first_slot_in_epoch(&segment, epoch)
+    }
+
+    /// Return the last slot in `epoch`, accounting for delayed slot timing transitions.
+    pub fn get_last_slot_in_epoch(&self, epoch: Epoch) -> Slot {
+        self.get_first_slot_in_epoch(epoch)
+            .saturating_add(self.get_slots_in_epoch(epoch))
+            .saturating_sub(1)
+    }
+
+    /// Return the epoch containing `slot`, accounting for delayed slot timing transitions.
+    pub fn get_epoch(&self, slot: Slot) -> Epoch {
+        let segment = self.slot_timing_epoch_segment_for_slot(slot);
+        segment.epoch_schedule.get_epoch(slot)
+    }
+
+    /// Return the epoch whose leader schedule should be cached from `slot`.
     pub fn get_leader_schedule_epoch(&self, slot: Slot) -> Epoch {
-        self.epoch_schedule().get_leader_schedule_epoch(slot)
+        let segment = self.slot_timing_epoch_segment_for_slot(slot);
+        segment.epoch_schedule.get_leader_schedule_epoch(slot)
     }
 
     /// a bank-level cache of vote accounts and stake delegation info
@@ -5539,8 +5775,10 @@ impl Bank {
     ///
     ///  ( slot/slots_per_epoch, slot % slots_per_epoch )
     ///
+    /// Return `(epoch, slot_index)` for `slot`, accounting for timing transitions.
     pub fn get_epoch_and_slot_index(&self, slot: Slot) -> (Epoch, SlotIndex) {
-        self.epoch_schedule().get_epoch_and_slot_index(slot)
+        let segment = self.slot_timing_epoch_segment_for_slot(slot);
+        segment.epoch_schedule.get_epoch_and_slot_index(slot)
     }
 
     pub fn get_epoch_info(&self) -> EpochInfo {
@@ -5703,8 +5941,12 @@ impl Bank {
             self.rent_collector.deprecate_rent_exemption_threshold();
         }
 
-        if self.halve_slot_times_active() {
-            self.apply_halve_slot_times_persistent_changes();
+        let current_slot_timing_config = self.slot_timing_config_at_slot(self.slot());
+        if current_slot_timing_config != DEFAULT_SLOT_TIMING_CONFIG {
+            self.apply_slot_timing_persistent_changes(
+                DEFAULT_SLOT_TIMING_CONFIG,
+                current_slot_timing_config,
+            );
         }
 
         // Add built-in program accounts to the bank if they don't already exist
@@ -5726,6 +5968,7 @@ impl Bank {
     /// This is called from each epoch boundary
     fn compute_and_apply_new_feature_activations(&mut self) {
         let include_pending = true;
+        let previous_slot_timing_config = self.current_slot_timing_config();
         let (feature_set, new_feature_activations) =
             self.compute_active_feature_set(include_pending);
         self.feature_set = Arc::new(feature_set);
@@ -5801,9 +6044,13 @@ impl Bank {
             self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT;
         }
 
-        if new_feature_activations.contains(&feature_set::halve_slot_times::id()) {
-            self.apply_halve_slot_times_persistent_changes();
-            self.apply_halve_slot_times_runtime_changes();
+        let current_slot_timing_config = self.slot_timing_config_at_slot(self.slot());
+        if current_slot_timing_config != previous_slot_timing_config {
+            self.apply_slot_timing_persistent_changes(
+                previous_slot_timing_config,
+                current_slot_timing_config,
+            );
+            self.apply_slot_timing_runtime_changes();
         } else if new_feature_activations.contains(&feature_set::raise_block_limits_to_100m::id()) {
             self.apply_cost_tracker_limits_for_active_features();
         }
@@ -5917,23 +6164,36 @@ impl Bank {
     /// Compute the active feature set based on the current bank state,
     /// and return it together with the set of newly activated features.
     fn compute_active_feature_set(&self, include_pending: bool) -> (FeatureSet, AHashSet<Pubkey>) {
-        let mut active = self.feature_set.active().clone();
+        Self::compute_active_feature_set_from_accounts(
+            &self.rc.accounts,
+            &self.ancestors,
+            self.slot(),
+            include_pending,
+        )
+    }
+
+    fn compute_active_feature_set_from_accounts(
+        accounts: &Accounts,
+        ancestors: &Ancestors,
+        slot: Slot,
+        include_pending: bool,
+    ) -> (FeatureSet, AHashSet<Pubkey>) {
+        let mut active = AHashMap::new();
         let mut inactive = AHashSet::new();
         let mut pending = AHashSet::new();
-        let slot = self.slot();
 
-        for feature_id in self.feature_set.inactive() {
+        for feature_id in feature_set::FEATURE_NAMES.keys() {
             let mut activated = None;
-            if let Some(account) = self.get_account_with_fixed_root(feature_id) {
+            if let Some((account, _)) =
+                accounts.load_with_fixed_root_do_not_populate_read_cache(ancestors, feature_id)
+            {
                 if let Some(feature) = feature::state::from_account(&account) {
                     match feature.activated_at {
                         None if include_pending => {
-                            // Feature activation is pending
                             pending.insert(*feature_id);
                             activated = Some(slot);
                         }
                         Some(activation_slot) if slot >= activation_slot => {
-                            // Feature has been activated already
                             activated = Some(activation_slot);
                         }
                         _ => {}
@@ -5961,7 +6221,7 @@ impl Bank {
         }
         // Feature will be active at the next epoch boundary
         let active_epoch = self.epoch + 1;
-        Some(self.epoch_schedule.get_first_slot_in_epoch(active_epoch))
+        Some(self.get_first_slot_in_epoch(active_epoch))
     }
 
     fn add_active_builtin_programs(&mut self) {

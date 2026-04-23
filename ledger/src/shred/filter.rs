@@ -3,8 +3,8 @@
 
 use {
     super::{
-        DATA_SHREDS_PER_FEC_BLOCK, MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT,
-        ShredFetchStats, ShredFlags, ShredType, ShredVariant, layout,
+        DATA_SHREDS_PER_FEC_BLOCK, ShredFetchStats, ShredFlags, ShredType, ShredVariant, layout,
+        max_shred_index,
     },
     crate::blockstore,
     agave_feature_set::discard_unexpected_data_complete_shreds,
@@ -12,7 +12,10 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_perf::packet::PacketRef,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_runtime::{
+        bank::Bank,
+        slot_timing::{SlotTimingEpochSegment, slot_timing_epoch_segment_for_slot},
+    },
     std::{
         sync::Arc,
         time::{Duration, Instant},
@@ -25,7 +28,9 @@ pub struct ShredFilterContext {
     // Fields for slot range filtering updated via the root bank
     root: Slot,
     max_slot: Slot,
-    epoch_schedule: EpochSchedule,
+    // Cached from the root bank so per-packet filtering can derive the effective
+    // slot timing for arbitrary future shred slots without querying the bank.
+    slot_timing_epoch_segments: Vec<SlotTimingEpochSegment>,
 
     // Static from startup, filter out shreds of invalid version
     shred_version: u16,
@@ -34,31 +39,11 @@ pub struct ShredFilterContext {
     // but specify DATA_COMPLETE
     discard_unexpected_data_complete_shreds_feature_slot: Option<Slot>,
 
-    // The shred limits per slot. At the moment these are hard coded
-    // In the future we could replace these with feature activation
-    // slots to case on what the limits should be
-    max_data_shreds_per_slot: u32,
-    max_code_shreds_per_slot: u32,
-
     pub stats: ShredFetchStats,
 }
 
 impl ShredFilterContext {
     pub fn new(root_bank: Arc<Bank>, shred_version: u16) -> Self {
-        Self::new_with_custom_shred_limits(
-            root_bank,
-            shred_version,
-            MAX_DATA_SHREDS_PER_SLOT as u32,
-            MAX_CODE_SHREDS_PER_SLOT as u32,
-        )
-    }
-
-    pub fn new_with_custom_shred_limits(
-        root_bank: Arc<Bank>,
-        shred_version: u16,
-        max_data_shreds_per_slot: u32,
-        max_code_shreds_per_slot: u32,
-    ) -> Self {
         let root = root_bank.slot();
         let max_slot = max_shred_slot(root, root_bank.get_slots_in_epoch(root_bank.epoch()));
         let discard_unexpected_data_complete_shreds_feature_slot = root_bank
@@ -69,11 +54,9 @@ impl ShredFilterContext {
             last_updated: Instant::now(),
             root,
             max_slot,
-            epoch_schedule: root_bank.epoch_schedule().clone(),
+            slot_timing_epoch_segments: root_bank.slot_timing_epoch_segments(),
             shred_version,
             discard_unexpected_data_complete_shreds_feature_slot,
-            max_data_shreds_per_slot,
-            max_code_shreds_per_slot,
             stats: ShredFetchStats::default(),
         }
     }
@@ -89,13 +72,10 @@ impl ShredFilterContext {
                 max_shred_slot(self.root, root_bank.get_slots_in_epoch(root_bank.epoch()));
             debug_assert!(self.root < self.max_slot);
 
-            self.epoch_schedule = root_bank.epoch_schedule().clone();
+            self.slot_timing_epoch_segments = root_bank.slot_timing_epoch_segments();
             self.discard_unexpected_data_complete_shreds_feature_slot = root_bank
                 .feature_set
                 .activated_slot(&discard_unexpected_data_complete_shreds::id());
-
-            // In the future as shred limit changes we can update self.max_*_shreds_per_slot based on root
-            // bank as well
         }
     }
 
@@ -105,6 +85,40 @@ impl ShredFilterContext {
 
     pub fn maybe_submit_stats(&mut self, metric_name: &'static str, cadence: Duration) -> bool {
         self.stats.maybe_submit(metric_name, cadence)
+    }
+
+    fn slot_timing_epoch_segment_at_slot(&self, slot: Slot) -> &SlotTimingEpochSegment {
+        slot_timing_epoch_segment_for_slot(&self.slot_timing_epoch_segments, slot)
+            .expect("slot timing segments must cover every slot")
+    }
+
+    fn slot_timing_config_at_slot(
+        &self,
+        slot: Slot,
+    ) -> solana_runtime::slot_timing::SlotTimingConfig {
+        self.slot_timing_epoch_segment_at_slot(slot)
+            .slot_timing_config
+    }
+
+    fn epoch_for_slot(&self, slot: Slot) -> u64 {
+        self.slot_timing_epoch_segment_at_slot(slot)
+            .epoch_schedule
+            .get_epoch(slot)
+    }
+
+    fn max_shreds_per_slot(&self, slot: Slot) -> u32 {
+        let slot_timing_config = self.slot_timing_config_at_slot(slot);
+        max_shred_index(
+            slot_timing_config.slot_time_numerator,
+            slot_timing_config.slot_time_denominator,
+        )
+    }
+
+    fn check_feature_activation(&self, feature_slot: Option<Slot>, shred_slot: Slot) -> bool {
+        let Some(feature_slot) = feature_slot else {
+            return false;
+        };
+        self.epoch_for_slot(feature_slot) < self.epoch_for_slot(shred_slot)
     }
 
     #[must_use]
@@ -161,7 +175,7 @@ impl ShredFilterContext {
 
         match ShredType::from(shred_variant) {
             ShredType::Code => {
-                if index >= self.max_code_shreds_per_slot {
+                if index >= self.max_shreds_per_slot(slot) {
                     self.stats.index_out_of_bounds += 1;
                     return true;
                 }
@@ -181,7 +195,7 @@ impl ShredFilterContext {
                 }
             }
             ShredType::Data => {
-                if index >= self.max_data_shreds_per_slot {
+                if index >= self.max_shreds_per_slot(slot) {
                     self.stats.index_out_of_bounds += 1;
                     return true;
                 }
@@ -211,10 +225,9 @@ impl ShredFilterContext {
                 {
                     self.stats.unexpected_data_complete_shred += 1;
 
-                    if check_feature_activation(
+                    if self.check_feature_activation(
                         self.discard_unexpected_data_complete_shreds_feature_slot,
                         slot,
-                        &self.epoch_schedule,
                     ) {
                         return true;
                     }
@@ -256,15 +269,16 @@ pub fn check_feature_activation_from_bank(
     shred_slot: Slot,
     root_bank: &Bank,
 ) -> bool {
-    check_feature_activation(
-        root_bank.feature_set.activated_slot(feature),
-        shred_slot,
-        root_bank.epoch_schedule(),
-    )
+    let Some(feature_slot) = root_bank.feature_set.activated_slot(feature) else {
+        return false;
+    };
+    root_bank.get_epoch(feature_slot) < root_bank.get_epoch(shred_slot)
 }
 
 /// Returns true if the feature is effective for the shred slot.
 /// Note: unlike normal feature flags, shred feature flags take effect 1 epoch after activation.
+/// Callers with staged slot timing should prefer `check_feature_activation_from_bank()`,
+/// which uses the bank's slot-timing-aware epoch mapping instead of a fixed schedule.
 #[must_use]
 pub fn check_feature_activation(
     feature_slot: Option<Slot>,
@@ -320,7 +334,9 @@ fn check_last_data_shred_index(index: u32) -> bool {
 mod tests {
     use {
         super::{
-            super::{Shred, make_merkle_shreds_for_tests},
+            super::{
+                MAX_CODE_SHREDS_PER_SLOT, Shred, make_merkle_shreds_for_tests, max_shred_index,
+            },
             *,
         },
         crate::{genesis_utils::create_genesis_config, shred::tests::*},
@@ -328,7 +344,7 @@ mod tests {
         itertools::Itertools,
         solana_leader_schedule::SlotLeader,
         solana_perf::packet::Packet,
-        solana_runtime::bank::Bank,
+        solana_runtime::{bank::Bank, genesis_utils::activate_feature},
         std::{
             io::{Cursor, Seek, SeekFrom, Write},
             sync::Arc,
@@ -629,34 +645,63 @@ mod tests {
     }
 
     #[test]
-    fn test_should_discard_shred_with_custom_shred_limits() {
+    fn test_shred_limits_scale_with_slot_timing() {
         agave_logger::setup();
 
-        let mut rng = rand::rng();
-        let root_bank = new_test_bank(0, false);
-        let slot = 42;
-        let shreds = make_merkle_shreds_for_tests(&mut rng, slot, 10_000, false).unwrap();
+        let mut genesis_config = create_genesis_config(1).genesis_config;
+        activate_feature(
+            &mut genesis_config,
+            agave_feature_set::slot_time_200ms_8_slot_span::id(),
+        );
+        let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
+        let mut rng = rand::rng();
+        let slot = 42;
+        let shreds = make_merkle_shreds_for_tests(&mut rng, slot, 1200 * 5, false).unwrap();
         let shred = Shred::from(shreds[0].clone());
-        let index = shred.common_header().index;
         let shred_version = shred.common_header().version;
         let mut packet = Packet::default();
         shred.copy_to_packet(&mut packet);
 
-        let mut shred_filter_context = ShredFilterContext::new_with_custom_shred_limits(
-            root_bank.clone(),
-            shred_version,
-            index + 1,
-            index + 1,
-        );
+        let max_scaled_index = max_shred_index(1, 2);
+        let max_valid_index = max_scaled_index - 1;
+        let max_valid_fec_set_index =
+            max_valid_index - max_valid_index % DATA_SHREDS_PER_FEC_BLOCK as u32;
+        {
+            let mut cursor = Cursor::new(packet.buffer_mut());
+            cursor
+                .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                .unwrap();
+            cursor.write_all(&max_valid_index.to_le_bytes()).unwrap();
+            cursor
+                .seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64))
+                .unwrap();
+            cursor
+                .write_all(&max_valid_fec_set_index.to_le_bytes())
+                .unwrap();
+        }
+
+        let mut shred_filter_context = ShredFilterContext::new(root_bank.clone(), shred_version);
         assert!(!shred_filter_context.should_discard_packet(&packet));
 
-        let mut shred_filter_context = ShredFilterContext::new_with_custom_shred_limits(
-            root_bank,
-            shred_version,
-            index,
-            index,
-        );
+        let invalid_index = max_scaled_index;
+        let invalid_fec_set_index =
+            invalid_index - invalid_index % DATA_SHREDS_PER_FEC_BLOCK as u32;
+        {
+            let mut cursor = Cursor::new(packet.buffer_mut());
+            cursor
+                .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                .unwrap();
+            cursor.write_all(&invalid_index.to_le_bytes()).unwrap();
+            cursor
+                .seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64))
+                .unwrap();
+            cursor
+                .write_all(&invalid_fec_set_index.to_le_bytes())
+                .unwrap();
+        }
+
+        let mut shred_filter_context = ShredFilterContext::new(root_bank, shred_version);
         assert!(shred_filter_context.should_discard_packet(&packet));
         assert_eq!(shred_filter_context.stats.index_out_of_bounds, 1);
     }

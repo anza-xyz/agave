@@ -529,7 +529,6 @@ impl ClusterInfoVoteListener {
             votes.len(),
         );
         let root_bank = sharable_banks.root();
-        let epoch_schedule = root_bank.epoch_schedule();
         votes
             .into_iter()
             .zip(packet_batches)
@@ -541,7 +540,7 @@ impl ClusterInfoVoteListener {
             .filter_map(|(tx, packet_batch)| {
                 let (vote_account_key, vote, ..) = vote_parser::parse_vote_transaction(&tx)?;
                 let slot = vote.last_voted_slot()?;
-                let epoch = epoch_schedule.get_epoch(slot);
+                let epoch = root_bank.get_epoch(slot);
                 let authorized_voter = root_bank
                     .epoch_stakes(epoch)?
                     .epoch_authorized_voters()
@@ -688,7 +687,7 @@ impl ClusterInfoVoteListener {
             return false;
         }
 
-        let epoch = root_bank.epoch_schedule().get_epoch(last_vote_slot);
+        let epoch = root_bank.get_epoch(last_vote_slot);
         let Some(epoch_stakes) = root_bank.epoch_stakes(epoch) else {
             return false;
         };
@@ -809,7 +808,7 @@ impl ClusterInfoVoteListener {
             let slot = *slot;
 
             // If we don't have stake information, ignore it
-            let epoch = root_bank.epoch_schedule().get_epoch(slot);
+            let epoch = root_bank.get_epoch(slot);
             if root_bank.epoch_stakes(epoch).is_none() {
                 continue;
             }
@@ -893,7 +892,7 @@ impl ClusterInfoVoteListener {
                 w_slot_tracker.voted_slot_updates = Some(vec![]);
             }
             let mut gossip_only_stake = 0;
-            let epoch = root_bank.epoch_schedule().get_epoch(slot);
+            let epoch = root_bank.get_epoch(slot);
             let epoch_stakes = root_bank.epoch_stakes(epoch);
 
             for (pubkey, seen_in_gossip_above) in slot_diff {
@@ -1846,7 +1845,7 @@ mod tests {
         let new_epoch = old_epoch + 1;
 
         // Test with votes across two epochs
-        let first_slot_in_new_epoch = bank.epoch_schedule().get_first_slot_in_epoch(new_epoch);
+        let first_slot_in_new_epoch = bank.get_first_slot_in_epoch(new_epoch);
 
         // Make 2 new votes in two different epochs for the same pubkey,
         // the ref count should go up by 3 * ref_count_per_vote

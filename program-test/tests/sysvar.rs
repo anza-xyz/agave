@@ -1,5 +1,6 @@
 use {
     core::{mem::size_of, slice::from_raw_parts_mut},
+    serde::{Deserialize, Serialize},
     solana_account_info::AccountInfo,
     solana_clock::Clock,
     solana_epoch_rewards::EpochRewards,
@@ -16,19 +17,25 @@ use {
     solana_transaction::Transaction,
 };
 
+#[derive(Serialize, Deserialize)]
+struct SysvarGetterInput {
+    expected_epoch_schedule: EpochSchedule,
+}
+
 // Process instruction to invoke into another program
 fn sysvar_getter_process_instruction(
     _program_id: &Pubkey,
     _accounts: &[AccountInfo],
-    _input: &[u8],
+    input: &[u8],
 ) -> ProgramResult {
     msg!("sysvar_getter");
+    let expected: SysvarGetterInput = bincode::deserialize(input).unwrap();
 
     let clock = Clock::get()?;
-    assert_eq!(42, clock.slot);
+    assert_eq!(clock.slot, 42);
 
     let epoch_schedule = EpochSchedule::get()?;
-    assert_eq!(epoch_schedule, EpochSchedule::default());
+    assert_eq!(epoch_schedule, expected.expected_epoch_schedule);
 
     let rent = Rent::get()?;
     assert_eq!(
@@ -50,7 +57,14 @@ async fn get_sysvar() {
 
     let mut context = program_test.start_with_context().await;
     context.warp_to_slot(42).unwrap();
-    let instructions = vec![Instruction::new_with_bincode(program_id, &(), vec![])];
+    let epoch_schedule = context.get_epoch_schedule();
+    let instructions = vec![Instruction::new_with_bincode(
+        program_id,
+        &SysvarGetterInput {
+            expected_epoch_schedule: epoch_schedule,
+        },
+        vec![],
+    )];
 
     let transaction = Transaction::new_signed_with_payer(
         &instructions,
@@ -72,17 +86,10 @@ fn epoch_reward_sysvar_getter_process_instruction(
     input: &[u8],
 ) -> ProgramResult {
     msg!("epoch_reward_sysvar_getter");
+    let expected_active: bool = bincode::deserialize(input).unwrap();
 
-    // input[0] == 0 indicates the bank is not in reward period.
-    // input[0] == 1 indicates the bank is in reward period.
-    if input[0] == 0 {
-        // epoch rewards sysvar should not exist for banks that are not in reward period
-        let epoch_rewards = EpochRewards::get()?;
-        assert!(!epoch_rewards.active);
-    } else {
-        let epoch_rewards = EpochRewards::get()?;
-        assert!(epoch_rewards.active);
-    }
+    let epoch_rewards = EpochRewards::get()?;
+    assert_eq!(epoch_rewards.active, expected_active);
 
     Ok(())
 }
@@ -97,17 +104,26 @@ async fn get_epoch_rewards_sysvar() {
     );
 
     let mut context = program_test.start_with_context().await;
+    let epoch_schedule = context.get_epoch_schedule();
 
     // wrap to 1st slot before next epoch (outside reward interval)
-    let first_normal_slot = context.genesis_config().epoch_schedule.first_normal_slot;
-    let slots_per_epoch = context.genesis_config().epoch_schedule.slots_per_epoch;
+    let first_normal_slot = epoch_schedule.first_normal_slot;
+    let slots_per_epoch = epoch_schedule.slots_per_epoch;
     let last_slot_before_new_epoch = first_normal_slot
         .saturating_add(slots_per_epoch)
         .saturating_sub(1);
     context.warp_to_slot(last_slot_before_new_epoch).unwrap();
 
-    // outside of reward interval, set input[0] == 0, so that the program assert that epoch_rewards sysvar doesn't exist.
-    let instructions = vec![Instruction::new_with_bincode(program_id, &[0u8], vec![])];
+    let epoch_rewards = context
+        .banks_client
+        .get_sysvar::<EpochRewards>()
+        .await
+        .unwrap();
+    let instructions = vec![Instruction::new_with_bincode(
+        program_id,
+        &epoch_rewards.active,
+        vec![],
+    )];
     let transaction = Transaction::new_signed_with_payer(
         &instructions,
         Some(&context.payer.pubkey()),
@@ -125,8 +141,16 @@ async fn get_epoch_rewards_sysvar() {
     let first_slot_in_new_epoch = first_normal_slot.saturating_add(slots_per_epoch);
     context.warp_to_slot(first_slot_in_new_epoch).unwrap();
 
-    // inside of reward interval, set input[0] == 1, so that the program assert that epoch_rewards sysvar exist.
-    let instructions = vec![Instruction::new_with_bincode(program_id, &[1u8], vec![])];
+    let epoch_rewards = context
+        .banks_client
+        .get_sysvar::<EpochRewards>()
+        .await
+        .unwrap();
+    let instructions = vec![Instruction::new_with_bincode(
+        program_id,
+        &epoch_rewards.active,
+        vec![],
+    )];
     let transaction = Transaction::new_signed_with_payer(
         &instructions,
         Some(&context.payer.pubkey()),

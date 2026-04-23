@@ -99,6 +99,7 @@ fn get_epoch_duration(bank: &Bank) -> Duration {
 mod tests {
     use {
         super::*,
+        solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
         solana_runtime::{
             bank::SlotLeader,
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
@@ -110,15 +111,15 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let (mut bank, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        let epoch = 0;
-        let num_slots = 32;
-        assert_eq!(bank.epoch(), epoch);
-        assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
         assert_eq!(
             get_epoch_duration(&bank),
-            Duration::from_nanos(num_slots * bank.ns_per_slot as u64)
+            Duration::from_nanos_u128(
+                bank.get_slots_in_epoch(bank.epoch()) as u128 * bank.ns_per_slot
+            )
         );
-        for slot in 1..32 {
+        let slots_per_epoch = bank.get_slots_in_epoch(bank.epoch());
+        let epoch = bank.epoch();
+        for slot in 1..10 {
             bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 bank,
@@ -126,42 +127,37 @@ mod tests {
                 slot,
             );
             assert_eq!(bank.epoch(), epoch);
-            assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
+            assert_eq!(bank.get_slots_in_epoch(0), slots_per_epoch);
             assert_eq!(
                 get_epoch_duration(&bank),
-                Duration::from_nanos(num_slots * bank.ns_per_slot as u64)
+                Duration::from_nanos_u128(
+                    bank.get_slots_in_epoch(bank.epoch()) as u128 * bank.ns_per_slot
+                )
             );
         }
-        let epoch = 1;
-        let num_slots = 64;
-        for slot in 32..32 + num_slots {
+
+        // Advance to the next epoch.
+        bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::new_unique(),
+            slots_per_epoch,
+        );
+        let epoch = bank.epoch();
+        for slot in 1..10 {
             bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 bank,
                 SlotLeader::new_unique(),
-                slot,
+                slots_per_epoch + slot,
             );
             assert_eq!(bank.epoch(), epoch);
-            assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
+            assert_eq!(bank.get_slots_in_epoch(0), slots_per_epoch);
             assert_eq!(
                 get_epoch_duration(&bank),
-                Duration::from_nanos(num_slots * bank.ns_per_slot as u64)
-            );
-        }
-        let epoch = 2;
-        let num_slots = 128;
-        for slot in 96..96 + num_slots {
-            bank = Bank::new_from_parent_with_bank_forks(
-                bank_forks.as_ref(),
-                bank,
-                SlotLeader::new_unique(),
-                slot,
-            );
-            assert_eq!(bank.epoch(), epoch);
-            assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
-            assert_eq!(
-                get_epoch_duration(&bank),
-                Duration::from_nanos(num_slots * bank.ns_per_slot as u64)
+                Duration::from_nanos_u128(
+                    bank.get_slots_in_epoch(bank.epoch()) as u128 * bank.ns_per_slot
+                )
             );
         }
     }
@@ -185,11 +181,17 @@ mod tests {
 
     #[test]
     fn test_epoch_specs_refresh() {
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(10_000);
+        genesis_config.epoch_schedule =
+            EpochSchedule::custom(MINIMUM_SLOTS_PER_EPOCH, MINIMUM_SLOTS_PER_EPOCH, false);
         let bank = Bank::new_for_tests(&genesis_config);
+        let first_slot_in_epoch_1 = bank.get_first_slot_in_epoch(1);
+        let first_slot_in_epoch_2 = bank.get_first_slot_in_epoch(2);
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut epoch_specs = EpochSpecs::from(bank_forks.clone());
-        for slot in 1..100 {
+        for slot in 1..=first_slot_in_epoch_2 {
             let bank = bank_forks.read().unwrap().get(slot - 1).unwrap();
             let bank = Bank::new_from_parent(bank, SlotLeader::new_unique(), slot);
             bank_forks.write().unwrap().insert(bank);
@@ -202,38 +204,43 @@ mod tests {
         verify_epoch_specs(&mut epoch_specs, &root_bank);
 
         // root is updated but epoch still the same.
-        bank_forks.write().unwrap().set_root(17, None, None);
-        let root_bank = bank_forks.read().unwrap().get(17).unwrap();
+        let root_slot = first_slot_in_epoch_1 / 2;
+        bank_forks.write().unwrap().set_root(root_slot, None, None);
+        let root_bank = bank_forks.read().unwrap().get(root_slot).unwrap();
         assert_eq!(root_bank.epoch(), 0);
-        assert_eq!(root_bank.slot(), 17);
+        assert_eq!(root_bank.slot(), root_slot);
         verify_epoch_specs(&mut epoch_specs, &root_bank);
 
         // root is updated but epoch still the same.
-        bank_forks.write().unwrap().set_root(19, None, None);
-        let root_bank = bank_forks.read().unwrap().get(19).unwrap();
+        let root_slot = first_slot_in_epoch_1 - 1;
+        bank_forks.write().unwrap().set_root(root_slot, None, None);
+        let root_bank = bank_forks.read().unwrap().get(root_slot).unwrap();
         assert_eq!(root_bank.epoch(), 0);
-        assert_eq!(root_bank.slot(), 19);
+        assert_eq!(root_bank.slot(), root_slot);
         verify_epoch_specs(&mut epoch_specs, &root_bank);
 
         // root is updated to a new epoch.
-        bank_forks.write().unwrap().set_root(37, None, None);
-        let root_bank = bank_forks.read().unwrap().get(37).unwrap();
+        let root_slot = first_slot_in_epoch_1;
+        bank_forks.write().unwrap().set_root(root_slot, None, None);
+        let root_bank = bank_forks.read().unwrap().get(root_slot).unwrap();
         assert_eq!(root_bank.epoch(), 1);
-        assert_eq!(root_bank.slot(), 37);
+        assert_eq!(root_bank.slot(), root_slot);
         verify_epoch_specs(&mut epoch_specs, &root_bank);
 
         // root is updated but epoch still the same.
-        bank_forks.write().unwrap().set_root(59, None, None);
-        let root_bank = bank_forks.read().unwrap().get(59).unwrap();
+        let root_slot = first_slot_in_epoch_1 + 1;
+        bank_forks.write().unwrap().set_root(root_slot, None, None);
+        let root_bank = bank_forks.read().unwrap().get(root_slot).unwrap();
         assert_eq!(root_bank.epoch(), 1);
-        assert_eq!(root_bank.slot(), 59);
+        assert_eq!(root_bank.slot(), root_slot);
         verify_epoch_specs(&mut epoch_specs, &root_bank);
 
         // root is updated to a new epoch.
-        bank_forks.write().unwrap().set_root(97, None, None);
-        let root_bank = bank_forks.read().unwrap().get(97).unwrap();
+        let root_slot = first_slot_in_epoch_2;
+        bank_forks.write().unwrap().set_root(root_slot, None, None);
+        let root_bank = bank_forks.read().unwrap().get(root_slot).unwrap();
         assert_eq!(root_bank.epoch(), 2);
-        assert_eq!(root_bank.slot(), 97);
+        assert_eq!(root_bank.slot(), root_slot);
         verify_epoch_specs(&mut epoch_specs, &root_bank);
     }
 }

@@ -422,6 +422,7 @@ mod tests {
         solana_entry::block_component::{
             BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedUpdateParent,
         },
+        solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         std::sync::{Arc, RwLock},
     };
@@ -887,7 +888,8 @@ mod tests {
         };
 
         // Create genesis bank
-        let genesis_config_info = create_genesis_config(10_000);
+        let mut genesis_config_info = create_genesis_config(10_000);
+        genesis_config_info.genesis_config.epoch_schedule = EpochSchedule::custom(32, 32, false);
         let (genesis_bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config);
 

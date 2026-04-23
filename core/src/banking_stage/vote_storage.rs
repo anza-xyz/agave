@@ -384,7 +384,6 @@ pub(crate) mod tests {
     use {
         super::*,
         solana_clock::UnixTimestamp,
-        solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
         solana_genesis_config::GenesisConfig,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -896,11 +895,9 @@ pub(crate) mod tests {
                 .genesis_config;
         let (bank_0, _bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        let mut bank = Bank::new_from_parent(
-            bank_0,
-            SlotLeader::new_unique(),
-            MINIMUM_SLOTS_PER_EPOCH, // This puts us in epoch 1
-        );
+        let first_slot_in_epoch_1 = bank_0.get_first_slot_in_epoch(1);
+        let mut bank =
+            Bank::new_from_parent(bank_0, SlotLeader::new_unique(), first_slot_in_epoch_1);
         assert_eq!(bank.epoch(), 1);
 
         // Set custom epoch stakes: epoch 1 has epoch1_authorized_voter, epoch 2 has epoch2_authorized_voter
@@ -911,7 +908,7 @@ pub(crate) mod tests {
 
         // Vote signed by epoch 1's authorized voter (vote_keypair) should be accepted
         let epoch1_vote = packet_from_slots_with_authorized_voter(
-            vec![(MINIMUM_SLOTS_PER_EPOCH, 1)],
+            vec![(first_slot_in_epoch_1, 1)],
             &keypair,
             &epoch1_authorized_voter_keypair,
             None,
@@ -929,7 +926,7 @@ pub(crate) mod tests {
         // Vote signed by epoch 2's authorized voter should be REJECTED
         // If we were incorrectly using current_epoch_stakes() (epoch 2), this would be accepted
         let wrong_epoch_vote = packet_from_slots_with_authorized_voter(
-            vec![(MINIMUM_SLOTS_PER_EPOCH + 1, 1)],
+            vec![(first_slot_in_epoch_1 + 1, 1)],
             &keypair,
             &epoch2_authorized_voter_keypair, // This won't match epoch 1's authorized voter
             None,
@@ -980,11 +977,9 @@ pub(crate) mod tests {
             genesis_utils::create_genesis_config_with_vote_accounts(100, &[&keypair_a], vec![200])
                 .genesis_config;
         let (bank_0, _bank_forks) = Bank::new_for_tests(&config).wrap_with_bank_forks_for_tests();
-        let bank = Bank::new_from_parent(
-            bank_0,
-            SlotLeader::new_unique(),
-            MINIMUM_SLOTS_PER_EPOCH - 1,
-        );
+        let first_slot_in_epoch_1 = bank_0.get_first_slot_in_epoch(1);
+        let bank =
+            Bank::new_from_parent(bank_0, SlotLeader::new_unique(), first_slot_in_epoch_1 - 1);
         assert_eq!(bank.epoch(), 0);
         vote_storage.cache_epoch_boundary_info(&bank);
         vote_storage.insert_batch(VoteSource::Tpu, votes().into_iter());
@@ -995,7 +990,11 @@ pub(crate) mod tests {
             genesis_utils::create_genesis_config_with_vote_accounts(100, &[&keypair_b], vec![200])
                 .genesis_config;
         let (bank_0, _bank_forks) = Bank::new_for_tests(&config).wrap_with_bank_forks_for_tests();
-        let bank = Bank::new_from_parent(bank_0, SlotLeader::new_unique(), MINIMUM_SLOTS_PER_EPOCH);
+        let bank = Bank::new_from_parent(
+            bank_0.clone(),
+            SlotLeader::new_unique(),
+            bank_0.get_first_slot_in_epoch(1),
+        );
         assert_eq!(bank.epoch(), 1);
         vote_storage.cache_epoch_boundary_info(&bank);
         vote_storage.insert_batch(VoteSource::Gossip, votes().into_iter());
@@ -1014,9 +1013,9 @@ pub(crate) mod tests {
                 .genesis_config;
         let (bank_0, _bank_forks) = Bank::new_for_tests(&config).wrap_with_bank_forks_for_tests();
         let bank = Bank::warp_from_parent(
-            bank_0,
+            bank_0.clone(),
             SlotLeader::new_unique(),
-            3 * MINIMUM_SLOTS_PER_EPOCH,
+            bank_0.get_first_slot_in_epoch(2),
         );
         assert_eq!(bank.epoch(), 2);
         vote_storage.cache_epoch_boundary_info(&bank);
@@ -1047,8 +1046,11 @@ pub(crate) mod tests {
         // Epoch 1: A and B are both staked, and their current votes are valid
         let (bank_0, _bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        let mut bank =
-            Bank::new_from_parent(bank_0, SlotLeader::new_unique(), MINIMUM_SLOTS_PER_EPOCH);
+        let mut bank = Bank::new_from_parent(
+            bank_0.clone(),
+            SlotLeader::new_unique(),
+            bank_0.get_first_slot_in_epoch(1),
+        );
         assert_eq!(bank.epoch(), 1);
 
         bank.set_epoch_stakes_for_test(
@@ -1103,9 +1105,9 @@ pub(crate) mod tests {
         let (bank_0, _bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let mut bank = Bank::warp_from_parent(
-            bank_0,
+            bank_0.clone(),
             SlotLeader::new_unique(),
-            3 * MINIMUM_SLOTS_PER_EPOCH,
+            bank_0.get_first_slot_in_epoch(2),
         );
         assert_eq!(bank.epoch(), 2);
 

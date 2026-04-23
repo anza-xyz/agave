@@ -383,7 +383,7 @@ mod tests {
         let partition_indices = hash_rewards_into_partitions(
             &stake_rewards,
             &Hash::new_from_array([1; 32]),
-            bank.epoch_schedule().slots_per_epoch as usize + 1,
+            bank.get_slots_in_epoch(bank.epoch()) as usize + 1,
         );
 
         bank.set_epoch_reward_status_distribution(

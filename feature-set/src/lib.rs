@@ -1355,8 +1355,44 @@ pub mod raise_account_cu_limit {
     solana_pubkey::declare_id!("htsptAwi2yRoZH83SKaUXykeZGtZHgxkS2QwW1pssR8");
 }
 
-pub mod halve_slot_times {
+pub mod slot_time_320ms_5_slot_span {
+    solana_pubkey::declare_id!("6rTi4An4cqfPPMwv3iF2dmjfqnefibuwFt8fco81CZr7");
+}
+
+pub mod slot_time_266ms_6_slot_span {
+    solana_pubkey::declare_id!("DW8khHBHhe59ZgEcg7XZsfCk8ZG1YAVXtuqecypRcvd7");
+}
+
+pub mod slot_time_229ms_7_slot_span {
+    solana_pubkey::declare_id!("GnYu6MJRijruFKs72emKa68m18sMc9DYoifepUDB5jTH");
+}
+
+pub mod slot_time_200ms_8_slot_span {
     solana_pubkey::declare_id!("shortoK7FR1q2FtTS83NAFEERpibyAGSEFHvNj1mJW7");
+}
+
+pub mod slot_time_200ms_7_slot_span_adjusted_epoch {
+    solana_pubkey::declare_id!("HJ5R1DvRWTytVaLztXqZz8za5v6x48rbTWtsWpjT6dCd");
+}
+
+pub mod slot_time_200ms_6_slot_span {
+    solana_pubkey::declare_id!("5tXh2SJDs9Agbgg9BMzD4UrsCbTYJeBt3VZJWyMKUqT4");
+}
+
+pub mod slot_time_200ms_5_slot_span {
+    solana_pubkey::declare_id!("7MVUPvf6yBsx6qtVqUecqWAnAZRcFwVh19e8R4Pt4vcM");
+}
+
+pub mod slot_time_200ms_4_slot_span {
+    solana_pubkey::declare_id!("DPV2ef3zDy5F73hzTdY88suqdzaQcEhtkfnRM7F5cLka");
+}
+
+pub mod slot_time_200ms_3_slot_span {
+    solana_pubkey::declare_id!("JDVEHZV8F5TQ8S7QBoxkGRWc6ZwRD2heMUZsHZmWWcNN");
+}
+
+pub mod slot_time_200ms_2_slot_span {
+    solana_pubkey::declare_id!("5CrozuGcDFn2zFHxiVWN2fQ7oKiahwoNXLvYMNzdhnZh");
 }
 
 pub mod delay_commission_updates {
@@ -2440,7 +2476,46 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             raise_account_cu_limit::id(),
             "SIMD-0306: Raise account CU limit to 40% max",
         ),
-        (halve_slot_times::id(), "Halve slot time to 200ms"),
+        (
+            slot_time_320ms_5_slot_span::id(),
+            "SIMD-0469 stage 1: 320ms slots, 5-slot leader windows, 540k-slot epochs",
+        ),
+        (
+            slot_time_266ms_6_slot_span::id(),
+            "SIMD-0469 stage 2: 266.666667ms slots, 6-slot leader windows, 648k-slot epochs",
+        ),
+        (
+            slot_time_229ms_7_slot_span::id(),
+            "SIMD-0469 stage 3: 228.571429ms slots, 7-slot leader windows, 756k-slot epochs",
+        ),
+        (
+            slot_time_200ms_8_slot_span::id(),
+            "SIMD-0469 stage 4: 200ms slots, 8-slot leader windows, 864k-slot epochs",
+        ),
+        (
+            slot_time_200ms_7_slot_span_adjusted_epoch::id(),
+            "SIMD-0469 stage 5: 200ms slots, 7-slot leader windows, 863996-slot epochs",
+        ),
+        (
+            slot_time_200ms_6_slot_span::id(),
+            "SIMD-0469 stage 6: 200ms slots, 6-slot leader windows, 864k-slot epochs",
+        ),
+        (
+            slot_time_200ms_5_slot_span::id(),
+            "SIMD-0469 stage 7: 200ms slots, 5-slot leader windows, 864k-slot epochs",
+        ),
+        (
+            slot_time_200ms_4_slot_span::id(),
+            "SIMD-0469 stage 8: 200ms slots, 4-slot leader windows, 864k-slot epochs",
+        ),
+        (
+            slot_time_200ms_3_slot_span::id(),
+            "SIMD-0469 stage 9: 200ms slots, 3-slot leader windows, 864k-slot epochs",
+        ),
+        (
+            slot_time_200ms_2_slot_span::id(),
+            "SIMD-0469 stage 10: 200ms slots, 2-slot leader windows, 864k-slot epochs",
+        ),
         (
             raise_cpi_nesting_limit_to_8::id(),
             "SIMD-0268: Raise CPI nesting limit from 4 to 8",

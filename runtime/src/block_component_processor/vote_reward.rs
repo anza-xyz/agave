@@ -76,9 +76,7 @@ pub(super) fn calculate_and_pay_voting_reward_and_update_vote_state(
         )
     };
 
-    // This assumes that if the epoch_schedule ever changes, the new schedule will maintain correct
-    // info about older slots as well.
-    let reward_epoch = bank.epoch_schedule.get_epoch(reward_slot);
+    let reward_epoch = bank.get_epoch(reward_slot);
     let epoch_state = {
         let epoch_inflation_account_state = EpochInflationAccountState::new_from_bank(bank);
         // This function should only be called after alpenglow is active and the slot in the the epoch
@@ -348,7 +346,7 @@ mod tests {
             bank.calculate_epoch_inflation_rewards(circulating_supply, 1);
 
         let epoch_state = EpochInflationState {
-            slots_per_epoch: bank.epoch_schedule.slots_per_epoch,
+            slots_per_epoch: bank.get_slots_in_epoch(bank.epoch()),
             max_possible_validator_reward: validator_rewards_lamports,
             epoch: 1234,
         };
@@ -394,7 +392,7 @@ mod tests {
         let epoch_inflation =
             bank.calculate_epoch_inflation_rewards(prev_bank.capitalization(), prev_bank.epoch());
         let numerator = epoch_inflation as u128 * stake_voted as u128;
-        let denominator = bank.epoch_schedule.slots_per_epoch as u128 * total_stake as u128;
+        let denominator = bank.get_slots_in_epoch(bank.epoch()) as u128 * total_stake as u128;
         let reward: u64 = (numerator / denominator).try_into().unwrap();
         reward / 2
     }

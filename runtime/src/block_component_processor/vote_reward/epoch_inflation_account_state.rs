@@ -47,7 +47,7 @@ impl EpochInflationState {
         );
         EpochInflationState {
             max_possible_validator_reward,
-            slots_per_epoch: bank.epoch_schedule.slots_per_epoch,
+            slots_per_epoch: bank.get_slots_in_epoch(bank.epoch()),
             epoch: bank.epoch(),
         }
     }
@@ -202,14 +202,14 @@ mod tests {
             );
             let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis.genesis_config));
             let bank_epoch_0 = bank_forks.read().unwrap().root_bank();
-            let first_slot_in_epoch_1 = bank_epoch_0.epoch_schedule().get_first_slot_in_epoch(1);
+            let first_slot_in_epoch_1 = bank_epoch_0.get_first_slot_in_epoch(1);
             let bank_epoch_1 = Arc::new(Bank::new_from_parent(
                 bank_epoch_0.clone(),
                 SlotLeader::new_unique(),
                 first_slot_in_epoch_1,
             ));
             assert_eq!(bank_epoch_1.epoch(), 1);
-            let first_slot_in_epoch_2 = bank_epoch_1.epoch_schedule().get_first_slot_in_epoch(2);
+            let first_slot_in_epoch_2 = bank_epoch_1.get_first_slot_in_epoch(2);
             let bank_epoch_2 = Arc::new(Bank::new_from_parent(
                 bank_epoch_1.clone(),
                 SlotLeader::new_unique(),

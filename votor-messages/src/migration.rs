@@ -324,6 +324,12 @@ macro_rules! dispatch {
 }
 
 impl MigrationStatus {
+    fn notify_alpenglow_enabled(&self) {
+        let (is_alpenglow_enabled, condvar) = &self.migration_wait;
+        *is_alpenglow_enabled.lock().unwrap() = true;
+        condvar.notify_all();
+    }
+
     /// Create a new MigrationStatus with a default pubkey at the appropriate phase
     fn new(phase: MigrationPhase) -> Self {
         let is_alpenglow_enabled = phase.is_alpenglow_enabled();
@@ -622,23 +628,41 @@ impl MigrationStatus {
 
     /// PohService is shutting down after being asked to by replay_stage via `enable_alpenglow`.
     ///
-    /// Transition the phase from `ReadyToEnable` to `AlpenglowEnabled`
+    /// Startup replay can also enable Alpenglow directly while PohService is already running.
+    /// In that case the later Poh shutdown callback is just an acknowledgement that the legacy
+    /// block producer has stopped, and the migration phase is already past `ReadyToEnable`.
+    ///
+    /// Transition the phase from `ReadyToEnable` to `AlpenglowEnabled`, or treat a later phase
+    /// as an idempotent no-op.
     pub fn poh_service_is_shutting_down(&self) {
-        let MigrationPhase::ReadyToEnable { genesis_cert } = self.phase.read().unwrap().clone()
-        else {
-            unreachable!(
-                "{}: Programmer error, PohService is shutting down before we are ReadyToEnable",
-                self.my_pubkey()
-            );
-        };
-
-        *self.phase.write().unwrap() = MigrationPhase::AlpenglowEnabled { genesis_cert };
-        let (is_alpenglow_enabled, condvar) = &self.migration_wait;
-        *is_alpenglow_enabled.lock().unwrap() = true;
-        condvar.notify_all();
+        let mut phase = self.phase.write().unwrap();
+        match &*phase {
+            MigrationPhase::ReadyToEnable { genesis_cert } => {
+                *phase = MigrationPhase::AlpenglowEnabled {
+                    genesis_cert: genesis_cert.clone(),
+                };
+                drop(phase);
+                self.notify_alpenglow_enabled();
+            }
+            MigrationPhase::AlpenglowEnabled { .. } | MigrationPhase::FullAlpenglowEpoch { .. } => {
+                drop(phase);
+                self.notify_alpenglow_enabled();
+            }
+            MigrationPhase::PreFeatureActivation | MigrationPhase::Migration { .. } => {
+                unreachable!(
+                    "{}: Programmer error, PohService is shutting down before we are ReadyToEnable",
+                    self.my_pubkey()
+                );
+            }
+        }
     }
 
-    /// Enables alpenglow in the startup pathway. This is pre `PohService` so we can do this from a single thread.
+    /// Enables alpenglow while loading the ledger during startup.
+    ///
+    /// Depending on validator startup configuration, `PohService` may already be alive by the
+    /// time replay discovers the first Alpenglow block. We therefore flip the phase directly,
+    /// request Poh shutdown, and rely on [`Self::poh_service_is_shutting_down`] being idempotent
+    /// when the legacy producer eventually exits.
     /// Returns the genesis slot
     ///
     /// Transition the phase from `ReadyToEnable` to `AlpenglowEnabled`
@@ -656,9 +680,7 @@ impl MigrationStatus {
         let genesis_slot = genesis_cert.cert_type.slot();
         self.shutdown_poh.store(true, Ordering::Release);
         *self.phase.write().unwrap() = MigrationPhase::AlpenglowEnabled { genesis_cert };
-        let (is_alpenglow_enabled, _condvar) = &self.migration_wait;
-        *is_alpenglow_enabled.lock().unwrap() = true;
-        // No need to condvar as we're in startup and no one is waiting for us.
+        self.notify_alpenglow_enabled();
         warn!(
             "{}: Alpenglow enabled during startup! Genesis slot {genesis_slot}",
             self.my_pubkey()
@@ -737,5 +759,45 @@ impl MigrationStatus {
                 return Some(self.genesis_block().expect("Alpenglow is enabled"));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, solana_bls_signatures::Signature as BLSSignature, solana_hash::Hash};
+
+    fn ready_to_enable_status() -> MigrationStatus {
+        let status =
+            MigrationStatus::initialize(0, Some(0), None, &EpochSchedule::without_warmup());
+        let genesis_cert = Arc::new(Certificate {
+            cert_type: CertificateType::Genesis(0, Hash::default()),
+            signature: BLSSignature::default(),
+            bitmap: vec![],
+        });
+        status.set_genesis_block((0, Hash::default()));
+        status.set_genesis_certificate(genesis_cert);
+        assert!(status.is_ready_to_enable());
+        status
+    }
+
+    #[test]
+    fn test_poh_shutdown_transitions_ready_to_enable() {
+        let status = ready_to_enable_status();
+
+        status.poh_service_is_shutting_down();
+
+        assert!(status.is_alpenglow_enabled());
+        assert_eq!(status.genesis_block(), Some((0, Hash::default())));
+    }
+
+    #[test]
+    fn test_poh_shutdown_is_idempotent_after_startup_enable() {
+        let status = ready_to_enable_status();
+
+        assert_eq!(status.enable_alpenglow_during_startup(), 0);
+        status.poh_service_is_shutting_down();
+
+        assert!(status.is_alpenglow_enabled());
+        assert_eq!(status.genesis_block(), Some((0, Hash::default())));
     }
 }

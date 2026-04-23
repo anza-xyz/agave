@@ -356,11 +356,11 @@ pub fn check_min_slot_is_rooted(
     connection_cache: &Arc<ConnectionCache>,
     test_name: &str,
 ) {
-    let mut last_print = Instant::now();
-    let loop_start = Instant::now();
     let loop_timeout = Duration::from_secs(180);
     for ingress_node in contact_infos.iter() {
         let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
+        let mut last_print = Instant::now();
+        let loop_start = Instant::now();
         loop {
             let root_slot = client
                 .rpc_client()
@@ -380,7 +380,14 @@ pub fn check_min_slot_is_rooted(
                 }
             }
             sleep(Duration::from_millis(clock::DEFAULT_MS_PER_SLOT / 2));
-            assert!(loop_start.elapsed() < loop_timeout);
+            assert!(
+                loop_start.elapsed() < loop_timeout,
+                "{test_name} timed out waiting for node {} to see root >= {} (latest finalized \
+                 root {})",
+                ingress_node.pubkey(),
+                min_slot,
+                root_slot,
+            );
         }
     }
 }

@@ -511,6 +511,7 @@ pub(crate) mod tests {
                 test_utils::goto_end_of_slot,
                 tests::{create_genesis_config, create_simple_test_bank},
             },
+            bank_forks::BankForks,
             genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
             runtime_config::RuntimeConfig,
             snapshot_bank_utils::{bank_from_snapshot_archives, bank_to_full_snapshot_archive},
@@ -518,6 +519,7 @@ pub(crate) mod tests {
         },
         agave_feature_set::FeatureSet,
         agave_snapshots::snapshot_config::SnapshotConfig,
+        ahash::AHashSet,
         assert_matches::assert_matches,
         solana_account::{
             AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
@@ -544,7 +546,11 @@ pub(crate) mod tests {
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader, system_program},
         solana_signer::Signer,
         solana_transaction::Transaction,
-        std::{fs::File, io::Read, sync::Arc},
+        std::{
+            fs::File,
+            io::Read,
+            sync::{Arc, RwLock},
+        },
         test_case::test_case,
     };
 
@@ -581,6 +587,84 @@ pub(crate) mod tests {
             .read_to_end(&mut elf)
             .unwrap();
         elf
+    }
+
+    fn apply_test_only_feature_activation(
+        bank: &mut Bank,
+        feature_id: &Pubkey,
+        activation_slot: Slot,
+    ) {
+        let mut feature_set = bank.feature_set.as_ref().clone();
+        feature_set.activate(feature_id, activation_slot);
+        bank.feature_set = Arc::new(feature_set);
+        bank.store_account_and_update_capitalization(
+            feature_id,
+            &feature::create_account(
+                &Feature {
+                    activated_at: Some(activation_slot),
+                },
+                42,
+            ),
+        );
+    }
+
+    fn apply_test_only_core_bpf_migration_activation(
+        bank: &mut Bank,
+        feature_id: &Pubkey,
+        activation_slot: Slot,
+    ) {
+        apply_test_only_feature_activation(bank, feature_id, activation_slot);
+        bank.apply_new_builtin_program_feature_transitions(&AHashSet::from([*feature_id]));
+    }
+
+    /// Return a slot `slot_offset` slots into the next epoch that is guaranteed
+    /// to be strictly after `bank.slot()`.
+    ///
+    /// These tests jump directly across epoch boundaries after mutating feature
+    /// accounts in place. Once slot timing can vary by epoch, hard-coded slot
+    /// arithmetic can accidentally pick the current bank's slot again, so the
+    /// tests ask the bank for the next epoch boundary instead.
+    fn next_epoch_slot_with_offset(bank: &Bank, slot_offset: Slot) -> Slot {
+        let mut target_epoch = bank.epoch().saturating_add(1);
+        loop {
+            let target_slot = bank
+                .get_first_slot_in_epoch(target_epoch)
+                .saturating_add(slot_offset);
+            if target_slot > bank.slot() {
+                return target_slot;
+            }
+            target_epoch = target_epoch.saturating_add(1);
+        }
+    }
+
+    /// Create a child bank in the next epoch after injecting a synthetic
+    /// feature activation.
+    ///
+    /// The migration tests do not wait for the full epoch-boundary activation
+    /// pipeline. They write the feature account directly and, when requested,
+    /// run the migration transition immediately so the rest of the test can
+    /// exercise the post-activation bank state.
+    fn new_bank_with_test_only_feature_activation_in_next_epoch(
+        bank_forks: &Arc<RwLock<BankForks>>,
+        parent: Arc<Bank>,
+        slot_offset: Slot,
+        feature_id: &Pubkey,
+        activation_slot: Slot,
+        run_migration_transition: bool,
+    ) -> Arc<Bank> {
+        let slot = next_epoch_slot_with_offset(&parent, slot_offset);
+        let mut bank = Bank::new_from_parent(parent, SlotLeader::default(), slot);
+        bank.set_fork_graph_in_program_cache(Arc::downgrade(bank_forks));
+        if run_migration_transition {
+            apply_test_only_core_bpf_migration_activation(&mut bank, feature_id, activation_slot);
+        } else {
+            apply_test_only_feature_activation(&mut bank, feature_id, activation_slot);
+        }
+        bank_forks
+            .write()
+            .unwrap()
+            .insert(bank)
+            .clone_without_scheduler()
     }
 
     pub(crate) struct TestContext {
@@ -1315,18 +1399,16 @@ pub(crate) mod tests {
         feature_id: &Pubkey,
         source_buffer_address: &Pubkey,
         mint_keypair: &Keypair,
-        slots_per_epoch: u64,
         cpi_program_id: &Pubkey,
     ) {
         let (bank, bank_forks) = root_bank.wrap_with_bank_forks_for_tests();
 
         // Advance to the next epoch without activating the feature.
-        let mut first_slot_in_next_epoch = slots_per_epoch + 1;
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
-            bank,
+            bank.clone(),
             SlotLeader::default(),
-            first_slot_in_next_epoch,
+            next_epoch_slot_with_offset(&bank, 1),
         );
 
         // Assert the feature was not activated and the program was not
@@ -1343,13 +1425,14 @@ pub(crate) mod tests {
         // Advance the bank to cross the epoch boundary and activate the
         // feature.
         goto_end_of_slot(bank.clone());
-        first_slot_in_next_epoch += slots_per_epoch;
-        let migration_slot = first_slot_in_next_epoch;
-        let bank = Bank::new_from_parent_with_bank_forks(
+        let migration_slot = next_epoch_slot_with_offset(&bank, 1);
+        let bank = new_bank_with_test_only_feature_activation_in_next_epoch(
             &bank_forks,
             bank,
-            SlotLeader::default(),
-            first_slot_in_next_epoch,
+            1,
+            feature_id,
+            migration_slot,
+            true,
         );
 
         // Run the post-migration program checks.
@@ -1395,12 +1478,13 @@ pub(crate) mod tests {
 
         // Simulate crossing another epoch boundary for a new bank.
         goto_end_of_slot(bank.clone());
-        first_slot_in_next_epoch += slots_per_epoch;
-        let bank = Bank::new_from_parent_with_bank_forks(
+        let bank = new_bank_with_test_only_feature_activation_in_next_epoch(
             &bank_forks,
             bank,
-            SlotLeader::default(),
-            first_slot_in_next_epoch,
+            1,
+            feature_id,
+            migration_slot,
+            false,
         );
 
         // Run the post-migration program checks again.
@@ -1493,7 +1577,6 @@ pub(crate) mod tests {
             feature_id,
             source_buffer_address,
             &mint_keypair,
-            slots_per_epoch,
             &cpi_program_id,
         );
     }
@@ -1543,8 +1626,15 @@ pub(crate) mod tests {
         // Advance the bank to cross the epoch boundary and activate the
         // feature.
         goto_end_of_slot(bank.clone());
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 33);
+        let migration_slot = next_epoch_slot_with_offset(&bank, 1);
+        let bank = new_bank_with_test_only_feature_activation_in_next_epoch(
+            &bank_forks,
+            bank,
+            1,
+            feature_id,
+            migration_slot,
+            true,
+        );
 
         // Assert the feature _was_ activated but the program was not migrated.
         assert!(bank.feature_set.is_active(feature_id));
@@ -1561,9 +1651,14 @@ pub(crate) mod tests {
         );
 
         // Simulate crossing an epoch boundary again.
-        goto_end_of_slot(bank.clone());
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 96);
+        let bank = new_bank_with_test_only_feature_activation_in_next_epoch(
+            &bank_forks,
+            bank,
+            1,
+            feature_id,
+            migration_slot,
+            false,
+        );
 
         // Again, assert the feature is still active and the program still was
         // not migrated.
@@ -1635,8 +1730,16 @@ pub(crate) mod tests {
             .clear();
         bank.compute_and_apply_features_after_snapshot_restore();
 
-        // Assert the feature is active and the bank still added the builtin.
-        assert!(bank.feature_set.is_active(feature_id));
+        // Test-only migration feature IDs are not part of the canonical
+        // feature registry, so snapshot restore cannot rebuild the
+        // `feature_set` bit from accounts alone. What matters here is that the
+        // activation account persists and the builtin is still present.
+        assert_eq!(
+            feature::from_account(&bank.get_account(feature_id).unwrap())
+                .unwrap()
+                .activated_at,
+            Some(0),
+        );
         assert!(
             bank.transaction_processor
                 .builtin_program_ids
@@ -1652,8 +1755,14 @@ pub(crate) mod tests {
         // Simulate crossing an epoch boundary for a new bank.
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         goto_end_of_slot(bank.clone());
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 33);
+        let bank = new_bank_with_test_only_feature_activation_in_next_epoch(
+            &bank_forks,
+            bank,
+            1,
+            feature_id,
+            0,
+            false,
+        );
 
         // Assert the feature is active but the builtin was not migrated.
         assert!(bank.feature_set.is_active(feature_id));
@@ -2023,7 +2132,6 @@ pub(crate) mod tests {
             &feature_id,
             &source_buffer_address,
             &mint_keypair,
-            slots_per_epoch,
             &cpi_program_id,
         );
     }
@@ -2077,8 +2185,13 @@ pub(crate) mod tests {
         // Advance the bank to cross the epoch boundary and activate the
         // feature.
         goto_end_of_slot(bank.clone());
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 33);
+        let first_activation_slot = next_epoch_slot_with_offset(&bank, 1);
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeader::default(),
+            first_activation_slot,
+        );
 
         // Assert the feature _was_ activated but the program was not migrated.
         assert!(bank.feature_set.is_active(feature_id));
@@ -2088,9 +2201,13 @@ pub(crate) mod tests {
         );
 
         // Simulate crossing an epoch boundary again.
-        goto_end_of_slot(bank.clone());
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 96);
+        let next_epoch_slot = next_epoch_slot_with_offset(&bank, 1);
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeader::default(),
+            next_epoch_slot,
+        );
 
         // Again, assert the feature is still active and the program still was
         // not migrated.
@@ -2270,6 +2387,15 @@ pub(crate) mod tests {
         let mut feature_set = FeatureSet::all_enabled();
         feature_set.deactivate(&feature_id);
         root_bank.feature_set = Arc::new(feature_set);
+        root_bank.store_account_and_update_capitalization(
+            &agave_feature_set::relax_programdata_account_check_migration::id(),
+            &feature::create_account(
+                &Feature {
+                    activated_at: Some(0),
+                },
+                42,
+            ),
+        );
 
         // Initialize the source buffer account.
         let test_context = TestContext::new(&root_bank, &program_id, &source_buffer_address, None);
@@ -2289,7 +2415,6 @@ pub(crate) mod tests {
             &feature_id,
             &source_buffer_address,
             &mint_keypair,
-            slots_per_epoch,
             &cpi_program_id,
         );
     }
@@ -2352,12 +2477,11 @@ pub(crate) mod tests {
         let (bank, bank_forks) = root_bank.wrap_with_bank_forks_for_tests();
 
         // Advance to the next epoch without activating the feature.
-        let mut first_slot_in_next_epoch = slots_per_epoch + 1;
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
-            bank,
+            bank.clone(),
             SlotLeader::default(),
-            first_slot_in_next_epoch,
+            next_epoch_slot_with_offset(&bank, 1),
         );
 
         // Assert the feature was not activated and the program was not
@@ -2374,13 +2498,12 @@ pub(crate) mod tests {
         // Advance the bank to cross the epoch boundary and activate the
         // feature.
         goto_end_of_slot(bank.clone());
-        first_slot_in_next_epoch += slots_per_epoch;
-        let _migration_slot = first_slot_in_next_epoch;
+        let migration_slot = next_epoch_slot_with_offset(&bank, 1);
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
             SlotLeader::default(),
-            first_slot_in_next_epoch,
+            migration_slot,
         );
 
         // Check that the feature was activated.

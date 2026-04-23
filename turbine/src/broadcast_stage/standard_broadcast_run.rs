@@ -12,8 +12,8 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
-        MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT, ProcessShredsStats, ReedSolomonCache,
-        Shred, ShredType, Shredder, max_shred_index, merkle_tree::MerkleTree,
+        MAX_DATA_SHREDS_PER_SLOT, ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder,
+        max_shred_index, merkle_tree::MerkleTree,
     },
     solana_runtime::bank::Bank,
     solana_sha256_hasher::hashv,
@@ -45,8 +45,7 @@ pub struct StandardBroadcastRun {
     reed_solomon_cache: Arc<ReedSolomonCache>,
     migration_status: Arc<MigrationStatus>,
     votor_event_sender: VotorEventSender,
-    max_data_shreds_per_slot: u32,
-    max_code_shreds_per_slot: u32,
+    max_shreds_per_slot: u32,
 }
 
 #[derive(Debug)]
@@ -85,8 +84,7 @@ impl StandardBroadcastRun {
             reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
             migration_status,
             votor_event_sender,
-            max_data_shreds_per_slot: MAX_DATA_SHREDS_PER_SLOT as u32,
-            max_code_shreds_per_slot: MAX_CODE_SHREDS_PER_SLOT as u32,
+            max_shreds_per_slot: MAX_DATA_SHREDS_PER_SLOT as u32,
         }
     }
 
@@ -217,10 +215,10 @@ impl StandardBroadcastRun {
         if let Some(fec_set_root) = self.double_merkle_leaves.last() {
             self.chained_merkle_root = *fec_set_root;
         }
-        if self.next_shred_index > self.max_data_shreds_per_slot {
+        if self.next_shred_index > self.max_shreds_per_slot {
             return Err(BroadcastError::TooManyShreds);
         }
-        if self.next_code_index > self.max_code_shreds_per_slot {
+        if self.next_code_index > self.max_shreds_per_slot {
             return Err(BroadcastError::TooManyShreds);
         }
         Ok(shreds)
@@ -268,9 +266,7 @@ impl StandardBroadcastRun {
         } = receive_results;
 
         let mut to_shreds_time = Measure::start("broadcast_to_shreds");
-        let halve_slot_times_active = bank.halve_slot_times_active();
-        self.max_data_shreds_per_slot = max_shred_index(halve_slot_times_active);
-        self.max_code_shreds_per_slot = max_shred_index(halve_slot_times_active);
+        self.update_shred_limits_from_bank(&bank);
 
         let maybe_send_header = if self.slot != bank.slot() {
             // Finish previous slot if it was interrupted.
@@ -433,6 +429,14 @@ impl StandardBroadcastRun {
         }
 
         Ok(())
+    }
+
+    fn update_shred_limits_from_bank(&mut self, bank: &Bank) {
+        let slot_timing_config = bank.current_slot_timing_config();
+        self.max_shreds_per_slot = max_shred_index(
+            slot_timing_config.slot_time_numerator,
+            slot_timing_config.slot_time_denominator,
+        );
     }
 
     fn insert(
@@ -931,8 +935,7 @@ mod test {
             StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
         bs.slot = 1;
         bs.parent = 0;
-        bs.max_data_shreds_per_slot = 1000;
-        bs.max_code_shreds_per_slot = 1000;
+        bs.max_shreds_per_slot = 1000;
         let entries = create_ticks(10_000, 1, solana_hash::Hash::default());
 
         let mut stats = ProcessShredsStats::default();
@@ -948,8 +951,7 @@ mod test {
         assert!(!data.is_empty());
         assert!(!coding.is_empty());
 
-        bs.max_data_shreds_per_slot = 10;
-        bs.max_code_shreds_per_slot = 10;
+        bs.max_shreds_per_slot = 10;
         let component = BlockComponent::new_entry_batch(entries).unwrap();
         let r = bs.component_to_shreds(&keypair, &component, 0, false, &mut stats);
         assert_matches!(r, Err(BroadcastError::TooManyShreds));

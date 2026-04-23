@@ -1,18 +1,18 @@
 use {
     crate::bank::Bank,
     solana_clock::{Epoch, Slot},
-    solana_epoch_schedule::EpochSchedule,
-    solana_leader_schedule::{LeaderSchedule, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_leader_schedule::LeaderSchedule,
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccountsHashMap,
-    std::collections::HashMap,
+    std::{collections::HashMap, num::NonZeroUsize},
 };
 
 /// Return the leader schedule for the given epoch.
 pub fn leader_schedule(epoch: Epoch, bank: &Bank) -> Option<LeaderSchedule> {
     leader_schedule_from_vote_accounts(
         epoch,
-        bank.epoch_schedule(),
+        bank.get_slots_in_epoch(epoch),
+        bank.num_consecutive_leader_slots_for_epoch(epoch),
         bank.epoch_vote_accounts(epoch)?,
     )
 }
@@ -22,17 +22,22 @@ pub fn leader_schedule(epoch: Epoch, bank: &Bank) -> Option<LeaderSchedule> {
 /// before a Bank is fully constructed.
 pub fn leader_schedule_from_vote_accounts(
     epoch: Epoch,
-    epoch_schedule: &EpochSchedule,
+    slots_in_epoch: u64,
+    num_consecutive_leader_slots: u64,
     epoch_vote_accounts: &VoteAccountsHashMap,
 ) -> Option<LeaderSchedule> {
     Some(LeaderSchedule::new(
         epoch_vote_accounts,
         epoch,
-        epoch_schedule
-            .get_slots_in_epoch(epoch)
+        slots_in_epoch
             .try_into()
             .expect("number of slots in epoch must fit in usize"),
-        NUM_CONSECUTIVE_LEADER_SLOTS,
+        NonZeroUsize::new(
+            num_consecutive_leader_slots
+                .try_into()
+                .expect("leader window size must fit in usize"),
+        )
+        .expect("leader window size must be non-zero"),
     ))
 }
 
@@ -70,30 +75,36 @@ pub fn num_ticks_left_in_slot(bank: &Bank, tick_height: u64) -> u64 {
     bank.ticks_per_slot() - tick_height % bank.ticks_per_slot()
 }
 
-pub fn first_of_consecutive_leader_slots(slot: Slot) -> Slot {
-    let num_consecutive_leader_slots = NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64;
-    (slot / num_consecutive_leader_slots) * num_consecutive_leader_slots
+pub fn first_of_consecutive_leader_slots(slot: Slot, bank: &Bank) -> Slot {
+    let (epoch, slot_index) = bank.get_epoch_and_slot_index(slot);
+    let first_slot_in_epoch = bank.get_first_slot_in_epoch(epoch);
+    let num_consecutive_leader_slots = bank.num_consecutive_leader_slots_for_epoch(epoch);
+    first_slot_in_epoch
+        + slot_index
+            .saturating_div(num_consecutive_leader_slots)
+            .saturating_mul(num_consecutive_leader_slots)
 }
 
 /// Returns the last slot in the leader window that contains `slot`
 #[inline]
-pub fn last_of_consecutive_leader_slots(slot: Slot) -> Slot {
-    first_of_consecutive_leader_slots(slot) + NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64 - 1
+pub fn last_of_consecutive_leader_slots(slot: Slot, bank: &Bank) -> Slot {
+    first_of_consecutive_leader_slots(slot, bank) + bank.num_consecutive_leader_slots_at_slot(slot)
+        - 1
 }
 
 /// Returns the index within the leader slot range that contains `slot`
 #[inline]
-pub fn leader_slot_index(slot: Slot) -> usize {
-    slot as usize % NUM_CONSECUTIVE_LEADER_SLOTS
+pub fn leader_slot_index(slot: Slot, bank: &Bank) -> usize {
+    let (_epoch, slot_index) = bank.get_epoch_and_slot_index(slot);
+    slot_index as usize % bank.num_consecutive_leader_slots_at_slot(slot) as usize
 }
 
 /// Returns the number of slots left after `slot` in the leader window
 /// that contains `slot`
 #[inline]
-pub fn remaining_slots_in_window(slot: Slot) -> usize {
-    NUM_CONSECUTIVE_LEADER_SLOTS
-        .get()
-        .checked_sub(leader_slot_index(slot))
+pub fn remaining_slots_in_window(slot: Slot, bank: &Bank) -> usize {
+    (bank.num_consecutive_leader_slots_at_slot(slot) as usize)
+        .checked_sub(leader_slot_index(slot, bank))
         .unwrap()
 }
 
@@ -133,35 +144,41 @@ mod tests {
 
     #[test]
     fn test_leader_span_math() {
-        // All of the test cases assume a 4 slot leader span and need to be
-        // adjusted if it changes.
-        assert_eq!(NUM_CONSECUTIVE_LEADER_SLOTS.get(), 4);
+        let genesis_config = create_genesis_config_with_leader(
+            0,
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports(),
+        )
+        .genesis_config;
+        let bank = Bank::new_for_tests(&genesis_config);
+        let leader_span = bank.num_consecutive_leader_slots();
+        assert!(leader_span >= 2);
 
-        assert_eq!(first_of_consecutive_leader_slots(0), 0);
-        assert_eq!(first_of_consecutive_leader_slots(1), 0);
-        assert_eq!(first_of_consecutive_leader_slots(2), 0);
-        assert_eq!(first_of_consecutive_leader_slots(3), 0);
-        assert_eq!(first_of_consecutive_leader_slots(4), 4);
+        for slot in 0..leader_span {
+            assert_eq!(first_of_consecutive_leader_slots(slot, &bank), 0);
+            assert_eq!(
+                last_of_consecutive_leader_slots(slot, &bank),
+                leader_span - 1
+            );
+            assert_eq!(leader_slot_index(slot, &bank), slot as usize);
+            assert_eq!(
+                remaining_slots_in_window(slot, &bank),
+                (leader_span - slot) as usize
+            );
+        }
 
-        assert_eq!(last_of_consecutive_leader_slots(0), 3);
-        assert_eq!(last_of_consecutive_leader_slots(1), 3);
-        assert_eq!(last_of_consecutive_leader_slots(2), 3);
-        assert_eq!(last_of_consecutive_leader_slots(3), 3);
-        assert_eq!(last_of_consecutive_leader_slots(4), 7);
-
-        assert_eq!(leader_slot_index(0), 0);
-        assert_eq!(leader_slot_index(1), 1);
-        assert_eq!(leader_slot_index(2), 2);
-        assert_eq!(leader_slot_index(3), 3);
-        assert_eq!(leader_slot_index(4), 0);
-        assert_eq!(leader_slot_index(5), 1);
-        assert_eq!(leader_slot_index(6), 2);
-        assert_eq!(leader_slot_index(7), 3);
-
-        assert_eq!(remaining_slots_in_window(0), 4);
-        assert_eq!(remaining_slots_in_window(1), 3);
-        assert_eq!(remaining_slots_in_window(2), 2);
-        assert_eq!(remaining_slots_in_window(3), 1);
-        assert_eq!(remaining_slots_in_window(4), 4);
+        assert_eq!(
+            first_of_consecutive_leader_slots(leader_span, &bank),
+            leader_span
+        );
+        assert_eq!(
+            last_of_consecutive_leader_slots(leader_span, &bank),
+            leader_span * 2 - 1
+        );
+        assert_eq!(leader_slot_index(leader_span, &bank), 0);
+        assert_eq!(
+            remaining_slots_in_window(leader_span, &bank),
+            leader_span as usize
+        );
     }
 }

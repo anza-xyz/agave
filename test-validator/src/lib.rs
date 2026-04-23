@@ -112,7 +112,10 @@ impl Default for TestValidatorNodeConfig {
         #[cfg(debug_assertions)]
         let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
         Self {
-            gossip_addr: SocketAddr::new(bind_ip_addr, port_range.0),
+            // Let the validator pick any free gossip port inside the allocated
+            // test range. This avoids transient collisions when integration
+            // test processes start and stop validators concurrently.
+            gossip_addr: SocketAddr::new(bind_ip_addr, 0),
             port_range,
             bind_ip_addr,
         }

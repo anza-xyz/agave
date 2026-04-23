@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_feature_set::FeatureSet,
     agave_snapshots::{
         SnapshotArchiveKind, SnapshotInterval, paths as snapshot_paths,
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
@@ -53,10 +54,10 @@ use {
         integration_tests::{
             AG_DEBUG_LOG_FILTER, DEFAULT_NODE_STAKE, RUST_LOG_FILTER, SnapshotValidatorConfig,
             ValidatorKeys, ValidatorTestConfig, copy_blocks, create_custom_leader_schedule,
-            create_custom_leader_schedule_with_random_keys, farf_dir, generate_account_paths,
-            last_root_in_tower, last_vote_in_tower, ms_for_n_slots, open_blockstore,
-            purge_slots_with_count, remove_tower, remove_tower_if_exists, restore_tower,
-            run_cluster_partition, run_kill_partition_switch_threshold, save_tower,
+            create_custom_leader_schedule_with_random_keys, effective_max_processing_age, farf_dir,
+            generate_account_paths, last_root_in_tower, last_vote_in_tower, ms_for_n_slots,
+            open_blockstore, purge_slots_with_count, remove_tower, remove_tower_if_exists,
+            restore_tower, run_cluster_partition, run_kill_partition_switch_threshold, save_tower,
             setup_snapshot_validator_config, test_faulty_node, wait_for_duplicate_proof,
             wait_for_last_vote_in_tower_to_land_in_ledger,
         },
@@ -75,7 +76,9 @@ use {
         },
         response::RpcSignatureResult,
     },
-    solana_runtime::{commitment::VOTE_THRESHOLD_SIZE, snapshot_bank_utils, snapshot_utils},
+    solana_runtime::{
+        commitment::VOTE_THRESHOLD_SIZE, slot_timing, snapshot_bank_utils, snapshot_utils,
+    },
     solana_signer::Signer,
     solana_stake_interface as stake,
     solana_system_interface::program as system_program,
@@ -2815,7 +2818,10 @@ fn test_votes_land_in_fork_during_long_partition() {
     let on_partition_resolved = |cluster: &mut LocalCluster, context: &mut PartitionContext| {
         let lighter_validator_ledger_path = cluster.ledger_path(&context.lighter_validator_key);
         let start = Instant::now();
-        let max_wait = ms_for_n_slots(MAX_PROCESSING_AGE as u64, DEFAULT_TICKS_PER_SLOT);
+        let max_wait = ms_for_n_slots(
+            effective_max_processing_age() as u64,
+            DEFAULT_TICKS_PER_SLOT,
+        );
         // Wait for the lighter node to switch over and root the `context.heavier_fork_slot`
         loop {
             assert!(
@@ -3092,7 +3098,16 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
         33 * DEFAULT_NODE_STAKE,
     ];
 
-    let validator_b_last_leader_slot: Slot = 8;
+    let num_consecutive_leader_slots = slot_timing::slot_timing_config(&FeatureSet::all_enabled())
+        .num_consecutive_leader_slots as Slot;
+    // Validator C needs to begin at the start of a leader window so it can build as many forked
+    // slots as the current propagation grace period allows before replay starts enforcing
+    // propagation checks again. Keep the fork point at or after the historical slot-8 boundary so
+    // the cluster still has a little time to settle before the test starts killing validators.
+    let first_c_leader_slot =
+        8_u64.div_ceil(num_consecutive_leader_slots) * num_consecutive_leader_slots;
+    let validator_b_last_leader_slot = first_c_leader_slot.saturating_sub(1);
+    let required_votes_on_c_fork = num_consecutive_leader_slots as usize;
     let truncated_slots: Slot = 100;
 
     // Each pubkeys are prefixed with A, B, C
@@ -3187,7 +3202,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     // kill A and B
     info!("Exiting validators A and B");
     let _validator_b_info = cluster.exit_node(&validator_b_pubkey);
-    let validator_a_info = cluster.exit_node(&validator_a_pubkey);
+    let mut validator_a_info = cluster.exit_node(&validator_a_pubkey);
 
     let next_slot_on_a = last_vote_in_tower(&val_a_ledger_path, &validator_a_pubkey)
         .unwrap()
@@ -3244,6 +3259,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     // Run validator C only to make it produce and vote on its own fork.
     info!("Restart validator C again!!!");
     validator_c_info.config.voting_disabled = false;
+    validator_c_info.config.wait_for_supermajority = None;
     // C should now produce blocks
     validator_c_info.config.fixed_leader_schedule = Some(FixedSchedule { leader_schedule });
     cluster.restart_node(
@@ -3270,8 +3286,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
             last_vote = newest_vote;
             if last_vote != base_slot {
                 votes_on_c_fork.insert(last_vote);
-                // Collect 4 votes
-                if votes_on_c_fork.len() >= 4 {
+                if votes_on_c_fork.len() >= required_votes_on_c_fork {
                     break;
                 }
             }
@@ -3283,6 +3298,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     // Step 4:
     // verify whether there was violation or not
     info!("Restart validator A again!!!");
+    validator_a_info.config.wait_for_supermajority = None;
     cluster.restart_node(
         &validator_a_pubkey,
         validator_a_info,
@@ -3591,7 +3607,6 @@ fn test_fork_choice_refresh_old_votes() {
         cluster.check_min_slot_is_rooted(
             context.first_slot_in_lighter_partition,
             "test_fork_choice_refresh_old_votes",
-            SocketAddrSpace::Unspecified,
         );
 
         // Check that the correct fork was rooted
@@ -4253,7 +4268,7 @@ fn test_cluster_partition() {
         empty,
         on_partition_resolved,
         None,
-        false,
+        true,
         vec![],
     )
 }
@@ -6061,6 +6076,7 @@ fn test_alpenglow_migration(
     num_nodes: usize,
     test_name: &str,
     leader_schedule: &[usize],
+    no_wait_for_vote_to_start_leader: bool,
 ) -> (
     LocalCluster,
     Vec<ValidatorKeys>,
@@ -6070,26 +6086,46 @@ fn test_alpenglow_migration(
 
     let vote_listener_socket = bind_to_localhost_unique().unwrap();
     let vote_listener_addr = vote_listener_socket.try_clone().unwrap();
-    let mut validator_config = ValidatorConfig::default_for_test();
-    validator_config.voting_service_test_override = Some(VotingServiceOverride {
-        additional_listeners: vec![vote_listener_addr.local_addr().unwrap()],
-        alpenglow_port_override: AlpenglowPortOverride::default(),
-    });
-    validator_config.wait_for_supermajority = Some(0);
-
+    let wait_for_supermajority = if no_wait_for_vote_to_start_leader {
+        // This helps nodes get a little more in sync by waiting for
+        // supermajority to observe slot 0. It still doesn't provide perfect
+        // synchronization because there is quite a bit of work todo after the
+        // sync point before nodes are fully operational.
+        Some(0)
+    } else {
+        // If we sync nodes on a slot, this overrides the flag to wait on
+        // building blocks until the node votes. But waiting for the bootstrap
+        // to build a block provides greater synchronization (less
+        // partitioning), so let that take precedence for these tests.
+        None
+    };
     let (leader_schedule, keys) = create_custom_leader_schedule_with_random_keys(leader_schedule);
+    let validator_config = ValidatorConfig {
+        wait_for_supermajority,
+        no_wait_for_vote_to_start_leader,
+        fixed_leader_schedule: Some(FixedSchedule {
+            leader_schedule: Arc::new(leader_schedule),
+        }),
+        voting_service_test_override: Some(VotingServiceOverride {
+            additional_listeners: vec![vote_listener_addr.local_addr().unwrap()],
+            alpenglow_port_override: AlpenglowPortOverride::default(),
+        }),
+        ..ValidatorConfig::default_for_test()
+    };
 
-    validator_config.fixed_leader_schedule = Some(FixedSchedule {
-        leader_schedule: Arc::new(leader_schedule),
-    });
     let node_stakes = vec![DEFAULT_NODE_STAKE; num_nodes];
-
     // We want the epochs to be as short as possible to reduce test time without being flaky.
     // We start the migration at an offset of 32, so use 64 as the epoch length.
-    let slots_per_epoch = 2 * MINIMUM_SLOTS_PER_EPOCH;
+    let slots_per_epoch = 4 * MINIMUM_SLOTS_PER_EPOCH;
     assert!(slots_per_epoch > MIGRATION_SLOT_OFFSET);
+    // Always ensure at least one node is allowed to build blocks.
+    let mut validator_configs = make_identical_validator_configs(&validator_config, num_nodes);
+    validator_configs
+        .first_mut()
+        .unwrap()
+        .no_wait_for_vote_to_start_leader = true;
     let mut cluster_config = ClusterConfig {
-        validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
+        validator_configs,
         validator_keys: Some(keys.clone().into_iter().zip(iter::repeat(true)).collect()),
         node_stakes: node_stakes.clone(),
         slots_per_epoch,
@@ -6107,6 +6143,9 @@ fn test_alpenglow_migration(
         .values()
         .map(|v| v.info.keypair.clone())
         .collect();
+
+    // Make sure cluster is making roots before activating the feature.
+    cluster.check_for_new_roots(1, test_name, SocketAddrSpace::Unspecified);
 
     // Send feature activation transaction
     info!("Sending feature activation transaction");
@@ -6187,7 +6226,7 @@ fn test_alpenglow_migration(
 #[test]
 #[serial]
 fn test_alpenglow_migration_1() {
-    test_alpenglow_migration(1, "test_alpenglow_migration_1", &[4]);
+    test_alpenglow_migration(1, "test_alpenglow_migration_1", &[4], true);
 }
 
 /// Multi-node migration into Alpenglow, including notarized-vote and root production
@@ -6195,7 +6234,7 @@ fn test_alpenglow_migration_1() {
 #[test]
 #[serial]
 fn test_alpenglow_migration_4() {
-    test_alpenglow_migration(4, "test_alpenglow_migration_4", &[4, 4, 4, 4]);
+    test_alpenglow_migration(4, "test_alpenglow_migration_4", &[4, 4, 4, 4], true);
 }
 
 #[test]
@@ -6204,7 +6243,7 @@ fn test_alpenglow_restart_post_migration() {
     let test_name = "test_alpenglow_restart_post_migration";
 
     // Start a 2 node cluster and have it go through the migration
-    let (mut cluster, _, _) = test_alpenglow_migration(2, test_name, &[4, 4]);
+    let (mut cluster, _, _) = test_alpenglow_migration(2, test_name, &[4, 4], false);
 
     // Now restart one of the nodes. This causes the cluster to temporarily halt
     let node_pubkey = cluster.get_node_pubkeys()[0];
@@ -6231,7 +6270,7 @@ fn test_alpenglow_missed_migration_entirely() {
     // Critical that the third node is not in the leader schedule, as since
     // we clear blockstore later, we could end up producing duplicate blocks
     let (mut cluster, validator_keys, migration_slot) =
-        test_alpenglow_migration(3, test_name, &[4, 4, 0]);
+        test_alpenglow_migration(3, test_name, &[4, 4, 0], true);
 
     // Now kill the second node
     let node_pubkey = validator_keys[2].node_keypair.pubkey();

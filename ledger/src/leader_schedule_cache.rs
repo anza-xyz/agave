@@ -42,7 +42,7 @@ impl LeaderScheduleCache {
     }
 
     pub fn new(epoch_schedule: EpochSchedule, root_bank: &Bank) -> Self {
-        let max_epoch = epoch_schedule.get_leader_schedule_epoch(root_bank.slot());
+        let max_epoch = root_bank.get_leader_schedule_epoch(root_bank.slot());
         let cache = Self {
             cached_schedules: RwLock::new((HashMap::new(), VecDeque::new())),
             epoch_schedule,
@@ -69,9 +69,7 @@ impl LeaderScheduleCache {
     }
 
     pub fn set_root(&self, root_bank: &Bank) {
-        let new_max_epoch = self
-            .epoch_schedule
-            .get_leader_schedule_epoch(root_bank.slot());
+        let new_max_epoch = root_bank.get_leader_schedule_epoch(root_bank.slot());
         let old_max_epoch = self.max_epoch.swap(new_max_epoch, Ordering::AcqRel);
         assert!(new_max_epoch >= old_max_epoch);
 
@@ -124,7 +122,7 @@ impl LeaderScheduleCache {
             .flat_map(|(leader_schedule, k)| {
                 let offset = if *k == epoch { start_index as usize } else { 0 };
                 let num_slots = bank.get_slots_in_epoch(*k) as usize;
-                let first_slot = bank.epoch_schedule().get_first_slot_in_epoch(*k);
+                let first_slot = bank.get_first_slot_in_epoch(*k);
                 leader_schedule
                     .get_leader_upcoming_slots(pubkey, offset)
                     .take_while(move |i| *i < num_slots)
@@ -166,17 +164,17 @@ impl LeaderScheduleCache {
     }
 
     fn slot_leader_at_else_compute(&self, slot: Slot, bank: &Bank) -> Option<SlotLeader> {
-        let cache_result = self.slot_leader_at_no_compute(slot);
+        let (epoch, slot_index) = bank.get_epoch_and_slot_index(slot);
         // Forbid asking for slots in an unconfirmed epoch
-        let bank_epoch = self.epoch_schedule.get_epoch_and_slot_index(slot).0;
-        if bank_epoch > self.max_epoch.load(Ordering::Acquire) {
-            debug!("Requested leader in slot: {slot} of unconfirmed epoch: {bank_epoch}");
+        if epoch > self.max_epoch.load(Ordering::Acquire) {
+            debug!("Requested leader in slot: {slot} of unconfirmed epoch: {epoch}");
             return None;
         }
-        if cache_result.is_some() {
-            cache_result
+        if let Some(ref fixed_schedule) = self.fixed_schedule {
+            Some(fixed_schedule.leader_schedule[slot_index])
+        } else if let Some(leader_schedule) = self.get_epoch_leader_schedule(epoch) {
+            Some(leader_schedule[slot_index])
         } else {
-            let (epoch, slot_index) = bank.get_epoch_and_slot_index(slot);
             self.compute_leader_schedule(epoch, bank)
                 .map(|leader_schedule| leader_schedule[slot_index])
         }
@@ -244,13 +242,15 @@ mod tests {
             staking_utils::tests::setup_vote_and_stake_accounts,
         },
         crossbeam_channel::unbounded,
-        solana_clock::{DEFAULT_SLOTS_PER_EPOCH, NUM_CONSECUTIVE_LEADER_SLOTS},
         solana_epoch_schedule::{
             DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET, EpochSchedule, MINIMUM_SLOTS_PER_EPOCH,
         },
         solana_keypair::Keypair,
         solana_leader_schedule::{LeaderSchedule, SlotLeader},
-        solana_runtime::stake_utils,
+        solana_runtime::{
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
+            leader_schedule_utils, stake_utils,
+        },
         solana_signer::Signer,
         std::{sync::Arc, thread::Builder},
     };
@@ -328,7 +328,10 @@ mod tests {
     fn run_thread_race() {
         let slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH;
         let epoch_schedule = EpochSchedule::custom(slots_per_epoch, slots_per_epoch / 2, true);
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(2);
+        genesis_config.epoch_schedule = epoch_schedule.clone();
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let cache = Arc::new(LeaderScheduleCache::new(epoch_schedule, &bank));
 
@@ -376,14 +379,13 @@ mod tests {
             id: pubkey,
             vote_address: voting_keypair.pubkey(),
         };
-        genesis_config.epoch_schedule = EpochSchedule::custom(
-            DEFAULT_SLOTS_PER_EPOCH,
-            DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET,
-            false,
-        );
+        genesis_config.epoch_schedule =
+            EpochSchedule::custom(MINIMUM_SLOTS_PER_EPOCH, MINIMUM_SLOTS_PER_EPOCH, false);
 
         let bank = Bank::new_for_tests(&genesis_config);
         let cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let max_generated_epoch = bank.get_leader_schedule_epoch(bank.slot());
+        let last_confirmed_schedule_slot = bank.get_last_slot_in_epoch(max_generated_epoch);
 
         assert_eq!(
             cache.slot_leader_at(bank.slot(), Some(&bank)).unwrap(),
@@ -391,16 +393,16 @@ mod tests {
         );
         assert_eq!(
             cache.next_leader_slot(&pubkey, 0, &bank, None, u64::MAX),
-            Some((1, 863_999))
+            Some((1, last_confirmed_schedule_slot))
         );
         assert_eq!(
             cache.next_leader_slot(&pubkey, 1, &bank, None, u64::MAX),
-            Some((2, 863_999))
+            Some((2, last_confirmed_schedule_slot))
         );
         assert_eq!(
             cache.next_leader_slot(
                 &pubkey,
-                2 * genesis_config.epoch_schedule.slots_per_epoch - 1, // no schedule generated for epoch 2
+                last_confirmed_schedule_slot, // no schedule generated for the next epoch
                 &bank,
                 None,
                 u64::MAX
@@ -432,10 +434,13 @@ mod tests {
             id: pubkey,
             vote_address: voting_keypair.pubkey(),
         };
-        genesis_config.epoch_schedule.warmup = false;
+        genesis_config.epoch_schedule =
+            EpochSchedule::custom(MINIMUM_SLOTS_PER_EPOCH, MINIMUM_SLOTS_PER_EPOCH, false);
 
         let bank = Bank::new_for_tests(&genesis_config);
         let cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let max_generated_epoch = bank.get_leader_schedule_epoch(bank.slot());
+        let last_confirmed_schedule_slot = bank.get_last_slot_in_epoch(max_generated_epoch);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
 
         let blockstore = Blockstore::open(ledger_path.path())
@@ -483,7 +488,7 @@ mod tests {
         assert_eq!(
             cache.next_leader_slot(
                 &pubkey,
-                2 * genesis_config.epoch_schedule.slots_per_epoch - 1, // no schedule generated for epoch 2
+                last_confirmed_schedule_slot, // no schedule generated for the next epoch
                 &bank,
                 Some(&blockstore),
                 u64::MAX
@@ -510,7 +515,8 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10_000 * bootstrap_validator_stake_lamports());
-        genesis_config.epoch_schedule.warmup = false;
+        genesis_config.epoch_schedule =
+            EpochSchedule::custom(MINIMUM_SLOTS_PER_EPOCH, MINIMUM_SLOTS_PER_EPOCH, false);
 
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
@@ -569,57 +575,123 @@ mod tests {
         let res = cache
             .next_leader_slot(&node_pubkey, 0, &bank, None, u64::MAX)
             .unwrap();
+        let leader_span = bank.num_consecutive_leader_slots_for_epoch(epoch);
 
         assert_eq!(res.0, expected_slot);
-        assert!(res.1 >= expected_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1);
+        assert!(res.1 >= expected_slot + leader_span - 1);
 
         let res = cache
-            .next_leader_slot(
-                &node_pubkey,
-                0,
-                &bank,
-                None,
-                NUM_CONSECUTIVE_LEADER_SLOTS - 1,
-            )
+            .next_leader_slot(&node_pubkey, 0, &bank, None, leader_span - 1)
             .unwrap();
 
         assert_eq!(res.0, expected_slot);
-        assert_eq!(res.1, expected_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 2);
+        assert_eq!(res.1, expected_slot + leader_span - 2);
     }
 
     #[test]
     fn test_schedule_for_unconfirmed_epoch() {
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(2);
+        genesis_config.epoch_schedule = EpochSchedule::custom(
+            MINIMUM_SLOTS_PER_EPOCH,
+            DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET.min(MINIMUM_SLOTS_PER_EPOCH),
+            true,
+        );
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let cache = LeaderScheduleCache::new_from_bank(&bank);
+        let last_slot_in_epoch_1 = bank.get_last_slot_in_epoch(1);
+        let first_slot_in_epoch_2 = bank.get_first_slot_in_epoch(2);
 
         assert_eq!(cache.max_epoch.load(Ordering::Acquire), 1);
 
         // Asking for the leader for the last slot in epoch 1 is ok b/c
         // epoch 1 is confirmed
-        assert_eq!(bank.get_epoch_and_slot_index(95).0, 1);
-        assert!(cache.slot_leader_at(95, Some(&bank)).is_some());
+        assert_eq!(bank.get_epoch_and_slot_index(last_slot_in_epoch_1).0, 1);
+        assert!(
+            cache
+                .slot_leader_at(last_slot_in_epoch_1, Some(&bank))
+                .is_some()
+        );
 
         // Asking for the lader for the first slot in epoch 2 is not ok
         // b/c epoch 2 is unconfirmed
-        assert_eq!(bank.get_epoch_and_slot_index(96).0, 2);
-        assert!(cache.slot_leader_at(96, Some(&bank)).is_none());
+        assert_eq!(bank.get_epoch_and_slot_index(first_slot_in_epoch_2).0, 2);
+        assert!(
+            cache
+                .slot_leader_at(first_slot_in_epoch_2, Some(&bank))
+                .is_none()
+        );
 
         let bank2 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank,
             SlotLeader::new_unique(),
-            95,
+            last_slot_in_epoch_1,
         );
         assert!(bank2.epoch_vote_accounts(2).is_some());
 
         // Set root for a slot in epoch 1, so that epoch 2 is now confirmed
         cache.set_root(bank2.as_ref());
         assert_eq!(cache.max_epoch.load(Ordering::Acquire), 2);
-        assert!(cache.slot_leader_at(96, Some(bank2.as_ref())).is_some());
-        assert_eq!(bank2.get_epoch_and_slot_index(223).0, 2);
-        assert!(cache.slot_leader_at(223, Some(bank2.as_ref())).is_some());
-        assert_eq!(bank2.get_epoch_and_slot_index(224).0, 3);
-        assert!(cache.slot_leader_at(224, Some(bank2.as_ref())).is_none());
+        assert!(
+            cache
+                .slot_leader_at(first_slot_in_epoch_2, Some(bank2.as_ref()))
+                .is_some()
+        );
+        let last_slot_in_epoch_2 = bank2.get_last_slot_in_epoch(2);
+        let first_slot_in_epoch_3 = bank2.get_first_slot_in_epoch(3);
+        assert_eq!(bank2.get_epoch_and_slot_index(last_slot_in_epoch_2).0, 2);
+        assert!(
+            cache
+                .slot_leader_at(last_slot_in_epoch_2, Some(bank2.as_ref()))
+                .is_some()
+        );
+        assert_eq!(bank2.get_epoch_and_slot_index(first_slot_in_epoch_3).0, 3);
+        assert!(
+            cache
+                .slot_leader_at(first_slot_in_epoch_3, Some(bank2.as_ref()))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_slot_leader_at_uses_bank_epoch_math_for_slot_timing_transitions() {
+        let validator_keypairs = vec![
+            ValidatorVoteKeypairs::new_rand(),
+            ValidatorVoteKeypairs::new_rand(),
+            ValidatorVoteKeypairs::new_rand(),
+        ];
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_vote_accounts(
+            1_000_000_000,
+            &validator_keypairs,
+            vec![
+                bootstrap_validator_stake_lamports(),
+                bootstrap_validator_stake_lamports() * 2,
+                bootstrap_validator_stake_lamports() * 3,
+            ],
+        );
+        genesis_config.epoch_schedule =
+            EpochSchedule::custom(MINIMUM_SLOTS_PER_EPOCH, MINIMUM_SLOTS_PER_EPOCH, false);
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let cache = LeaderScheduleCache::new_from_bank(&bank);
+        let base_slots_per_epoch = genesis_config.epoch_schedule.slots_per_epoch;
+        let transitioned_slots_per_epoch = bank.get_slots_in_epoch(0);
+
+        assert!(transitioned_slots_per_epoch > base_slots_per_epoch);
+
+        let slot_in_extended_epoch_zero = base_slots_per_epoch;
+        assert_eq!(bank.get_epoch(slot_in_extended_epoch_zero), 0);
+
+        let expected_leader =
+            leader_schedule_utils::slot_leader_at(slot_in_extended_epoch_zero, &bank).unwrap();
+        let cached_leader = cache
+            .slot_leader_at(slot_in_extended_epoch_zero, Some(&bank))
+            .unwrap();
+
+        assert_eq!(cached_leader.id, expected_leader);
     }
 }

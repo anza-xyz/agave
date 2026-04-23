@@ -322,7 +322,7 @@ fn produce_window(
         // yet frozen, we wait up until the timeout.
         let working_bank =
             start_leader_wait_for_parent_replay(slot, parent_slot, block_timer, ctx)?;
-        let timeout = block_timeout(&working_bank, leader_slot_index(slot));
+        let timeout = block_timeout(&working_bank, leader_slot_index(slot, &working_bank));
         trace!(
             "{my_pubkey}: waiting for leader bank {slot} to finish, remaining time: {}",
             timeout.saturating_sub(block_timer.elapsed()).as_millis(),
@@ -437,11 +437,9 @@ fn start_leader_wait_for_parent_replay(
         ctx.my_pubkey
     );
     let my_pubkey = ctx.my_pubkey;
-    let timeout = block_timeout(
-        &ctx.bank_forks.read().unwrap().root_bank(),
-        leader_slot_index(slot),
-    );
-    let end_slot = last_of_consecutive_leader_slots(slot);
+    let root_bank = ctx.bank_forks.read().unwrap().root_bank();
+    let timeout = block_timeout(&root_bank, leader_slot_index(slot, &root_bank));
+    let end_slot = last_of_consecutive_leader_slots(slot, &root_bank);
 
     let mut slot_delay_start = Measure::start("slot_delay");
     while !timeout.saturating_sub(block_timer.elapsed()).is_zero() {

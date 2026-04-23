@@ -215,10 +215,16 @@ impl EventHandler {
         let should_set_timeouts = vctx.vote_history.add_parent_ready(slot, parent_block);
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
         if should_set_timeouts {
-            let delta_block = Duration::from_nanos_u128(vctx.sharable_banks.root().ns_per_slot);
-            timer_manager
-                .write()
-                .set_timeouts(slot, local_context.standstill_slot, delta_block);
+            let root_bank = vctx.sharable_banks.root();
+            let delta_block = Duration::from_nanos_u128(root_bank.ns_per_slot);
+            let last_slot_in_window = last_of_consecutive_leader_slots(slot, &root_bank);
+            timer_manager.write().set_timeouts(
+                slot,
+                last_slot_in_window,
+                local_context.standstill_slot,
+                root_bank.num_consecutive_leader_slots_at_slot(slot),
+                delta_block,
+            );
             local_context.stats.timeout_set = local_context.stats.timeout_set.saturating_add(1);
         }
 
@@ -255,7 +261,7 @@ impl EventHandler {
                 let now = Instant::now();
                 let mut consensus_metrics_events =
                     vec![ConsensusMetricsEvent::StartOfSlot { slot }];
-                if slot == first_of_consecutive_leader_slots(slot) {
+                if slot == first_of_consecutive_leader_slots(slot, &bank) {
                     // all slots except the first in the window would typically start when the block is seen so the recording would essentially record 0.
                     // hence we skip it.
                     consensus_metrics_events.push(ConsensusMetricsEvent::BlockHashSeen {
@@ -354,7 +360,8 @@ impl EventHandler {
             // Skip timer for the slot has fired
             VotorEvent::Timeout(slot) => {
                 info!("{my_pubkey}: Timeout {slot}");
-                if slot != last_of_consecutive_leader_slots(slot) {
+                let root_bank = vctx.sharable_banks.root();
+                if slot != last_of_consecutive_leader_slots(slot, &root_bank) {
                     vctx.consensus_metrics_sender
                         .send((
                             Instant::now(),
@@ -517,7 +524,8 @@ impl EventHandler {
         local_context: &mut LocalContext,
     ) -> Option<Block> {
         let (slot, block_id) = finalized_block;
-        let first_slot_of_window = first_of_consecutive_leader_slots(slot);
+        let bank = ctx.bank_forks.read().unwrap().get(slot)?;
+        let first_slot_of_window = first_of_consecutive_leader_slots(slot, &bank);
         if first_slot_of_window == slot || first_slot_of_window == 0 {
             // No need to trigger parent ready for the first slot of the window
             return None;
@@ -527,8 +535,6 @@ impl EventHandler {
         {
             return None;
         }
-        // If the block is missing, we can't trigger parent ready
-        let bank = ctx.bank_forks.read().unwrap().get(slot)?;
         if !bank.is_frozen() {
             // We haven't finished replay for the block, so we can't trigger parent ready
             return None;
@@ -614,7 +620,8 @@ impl EventHandler {
             return Ok(false);
         }
 
-        if leader_slot_index(slot) == 0 || slot == 1 {
+        let root_bank = voting_context.sharable_banks.root();
+        if leader_slot_index(slot, &root_bank) == 0 || slot == 1 {
             if !voting_context
                 .vote_history
                 .is_parent_ready(slot, &parent_block)
@@ -729,10 +736,10 @@ impl EventHandler {
         // be able to check vote history if we've already voted on it
         let root_bank = voting_context.sharable_banks.root();
         // No matter what happens, we should not vote skip for slot 0
-        let start = first_of_consecutive_leader_slots(slot)
+        let start = first_of_consecutive_leader_slots(slot, &root_bank)
             .max(root_bank.slot())
             .max(1);
-        for s in start..=last_of_consecutive_leader_slots(slot) {
+        for s in start..=last_of_consecutive_leader_slots(slot, &root_bank) {
             if voting_context.vote_history.voted(s) {
                 continue;
             }
@@ -1185,6 +1192,40 @@ mod tests {
             bank
         }
 
+        fn root_bank(&self) -> Arc<Bank> {
+            self.bank_forks.read().unwrap().sharable_banks().root()
+        }
+
+        fn first_regular_window_start(&self) -> Slot {
+            let root_bank = self.root_bank();
+            (2..)
+                .find(|slot| {
+                    solana_runtime::leader_schedule_utils::first_of_consecutive_leader_slots(
+                        *slot, &root_bank,
+                    ) == *slot
+                })
+                .expect("a non-genesis leader window should exist")
+        }
+
+        fn next_window_start(&self, slot: Slot) -> Slot {
+            self.last_slot_in_window(slot).saturating_add(1)
+        }
+
+        fn last_slot_in_window(&self, slot: Slot) -> Slot {
+            let root_bank = self.root_bank();
+            solana_runtime::leader_schedule_utils::last_of_consecutive_leader_slots(
+                slot, &root_bank,
+            )
+        }
+
+        fn trailing_slots_in_window(&self, slot: Slot) -> Vec<Slot> {
+            (slot.saturating_add(1)..=self.last_slot_in_window(slot)).collect()
+        }
+
+        fn slots_in_window(&self, slot: Slot) -> Vec<Slot> {
+            (slot..=self.last_slot_in_window(slot)).collect()
+        }
+
         fn check_for_votes(&mut self, expected_votes: &[Vote]) {
             for v in expected_votes {
                 let expected_vote_serialized = bincode::serialize(v).unwrap();
@@ -1287,54 +1328,66 @@ mod tests {
     #[test]
     fn test_received_block_event_and_parent_ready_event() {
         // Test different orders of received block event and parent ready event
-        // some will send Notarize immediately, some will wait for parent ready
+        // some will wait for parent ready, some will notarize immediately once their parent is.
         let mut test_context = setup();
-        // Received block event which says block has completed replay
 
-        // If there is a parent ready for block 1 Notarization is sent out.
         let slot = 1;
         let parent_slot = 0;
         test_context.send_parent_ready_event(slot, (parent_slot, Hash::default()));
         test_context.check_parent_ready_slot((slot, (parent_slot, Hash::default())));
-        let root_bank = test_context
-            .bank_forks
-            .read()
-            .unwrap()
-            .sharable_banks()
-            .root();
+        let root_bank = test_context.root_bank();
         let bank1 = test_context.create_block_and_send_block_event(slot, root_bank);
         let block_id_1 = bank1.block_id().unwrap();
 
         test_context.check_for_metrics_event(ConsensusMetricsEvent::StartOfSlot { slot });
-
-        // We should receive Notarize Vote for block 1
         test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_1));
         test_context.check_for_commitment(CommitmentType::Notarize, slot);
-        // Add block event for 1 again will not trigger another Notarize or commitment
         test_context.send_block_event(1, bank1.clone());
         test_context.check_no_vote_or_commitment();
 
-        let slot = 2;
-        let bank2 = test_context.create_block_and_send_block_event(slot, bank1.clone());
-        let block_id_2 = bank2.block_id().unwrap();
-
-        // Because 2 is middle of window, we should see Notarize vote for block 2 even without parentready
-        test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_2));
-        test_context.check_for_commitment(CommitmentType::Notarize, slot);
-        // Slot 3 somehow links to block 1, should not trigger Notarize vote because it has a wrong parent (not 2)
-        let _ = test_context.create_block_and_send_block_event(3, bank1);
+        let first_regular_window_start = test_context.first_regular_window_start();
+        let first_regular_bank = test_context
+            .create_block_and_send_block_event(first_regular_window_start, bank1.clone());
+        let first_regular_block_id = first_regular_bank.block_id().unwrap();
         test_context.check_no_vote_or_commitment();
 
-        // Slot 4 completed replay without parent ready or parent notarized should not trigger Notarize vote
-        let slot = 4;
-        let bank4 = test_context.create_block_and_send_block_event(slot, bank2);
-        let block_id_4 = bank4.block_id().unwrap();
+        test_context.send_parent_ready_event(first_regular_window_start, (1, block_id_1));
+        test_context.check_parent_ready_slot((first_regular_window_start, (1, block_id_1)));
+        test_context.check_for_vote(&Vote::new_notarization_vote(
+            first_regular_window_start,
+            first_regular_block_id,
+        ));
+        test_context.check_for_commitment(CommitmentType::Notarize, first_regular_window_start);
 
-        // Send parent ready for slot 4 should trigger Notarize vote for slot 4
-        test_context.send_parent_ready_event(slot, (2, block_id_2));
-        test_context.check_parent_ready_slot((slot, (2, block_id_2)));
-        test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_4));
-        test_context.check_for_commitment(CommitmentType::Notarize, slot);
+        let intra_window_slot = first_regular_window_start.saturating_add(1);
+        let intra_window_bank = test_context
+            .create_block_and_send_block_event(intra_window_slot, first_regular_bank.clone());
+        let intra_window_block_id = intra_window_bank.block_id().unwrap();
+        test_context.check_for_vote(&Vote::new_notarization_vote(
+            intra_window_slot,
+            intra_window_block_id,
+        ));
+        test_context.check_for_commitment(CommitmentType::Notarize, intra_window_slot);
+
+        let next_window_start = test_context.next_window_start(first_regular_window_start);
+        let next_window_bank =
+            test_context.create_block_and_send_block_event(next_window_start, intra_window_bank);
+        let next_window_block_id = next_window_bank.block_id().unwrap();
+        test_context.check_no_vote_or_commitment();
+
+        test_context.send_parent_ready_event(
+            next_window_start,
+            (intra_window_slot, intra_window_block_id),
+        );
+        test_context.check_parent_ready_slot((
+            next_window_start,
+            (intra_window_slot, intra_window_block_id),
+        ));
+        test_context.check_for_vote(&Vote::new_notarization_vote(
+            next_window_start,
+            next_window_block_id,
+        ));
+        test_context.check_for_commitment(CommitmentType::Notarize, next_window_start);
     }
 
     #[test]
@@ -1343,92 +1396,81 @@ mod tests {
         // But it will not trigger Finalize if any of the conditions are not met
         let mut test_context = setup();
 
-        let root_bank = test_context
-            .bank_forks
-            .read()
-            .unwrap()
-            .sharable_banks()
-            .root();
+        let root_bank = test_context.root_bank();
         let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
         let block_id_1 = bank1.block_id().unwrap();
 
-        // Add parent ready for 0 to trigger notar vote for 1
         test_context.send_parent_ready_event(1, (0, Hash::default()));
         test_context.check_parent_ready_slot((1, (0, Hash::default())));
         test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1));
         test_context.check_for_commitment(CommitmentType::Notarize, 1);
-        // Send block notarized event should trigger Finalize vote
         test_context.send_block_notarized_event((1, block_id_1));
         test_context.check_for_vote(&Vote::new_finalization_vote(1));
 
-        let bank2 = test_context.create_block_and_send_block_event(2, bank1);
-        let block_id_2 = bank2.block_id().unwrap();
-        // Both Notarize and Finalize votes should trigger for 2
-        test_context.check_for_vote(&Vote::new_notarization_vote(2, block_id_2));
-        test_context.check_for_commitment(CommitmentType::Notarize, 2);
-        test_context.send_block_notarized_event((2, block_id_2));
-        test_context.check_for_vote(&Vote::new_finalization_vote(2));
-
-        // Create bank3 but do not Notarize, so Finalize vote should not trigger
-        let slot = 3;
-        let bank3 = test_context.create_block_only(slot, bank2);
-        let block_id_3 = bank3.block_id().unwrap();
-        // Check no notarization vote for 3
+        let regular_window_start = test_context.first_regular_window_start();
+        let regular_window_bank =
+            test_context.create_block_and_send_block_event(regular_window_start, bank1.clone());
+        let regular_window_block_id = regular_window_bank.block_id().unwrap();
         test_context.check_no_vote_or_commitment();
 
-        test_context.send_block_notarized_event((slot, block_id_3));
-        // Check no Finalize vote for 3
+        test_context.send_parent_ready_event(regular_window_start, (1, block_id_1));
+        test_context.check_parent_ready_slot((regular_window_start, (1, block_id_1)));
+        test_context.check_for_vote(&Vote::new_notarization_vote(
+            regular_window_start,
+            regular_window_block_id,
+        ));
+        test_context.check_for_commitment(CommitmentType::Notarize, regular_window_start);
+        test_context.send_block_notarized_event((regular_window_start, regular_window_block_id));
+        test_context.check_for_vote(&Vote::new_finalization_vote(regular_window_start));
+
+        let intra_window_slot = regular_window_start.saturating_add(1);
+        let intra_window_bank = test_context
+            .create_block_and_send_block_event(intra_window_slot, regular_window_bank.clone());
+        let intra_window_block_id = intra_window_bank.block_id().unwrap();
+        test_context.check_for_vote(&Vote::new_notarization_vote(
+            intra_window_slot,
+            intra_window_block_id,
+        ));
+        test_context.check_for_commitment(CommitmentType::Notarize, intra_window_slot);
+        test_context.send_block_notarized_event((intra_window_slot, intra_window_block_id));
+        test_context.check_for_vote(&Vote::new_finalization_vote(intra_window_slot));
+
+        let skipped_window_start = test_context.next_window_start(regular_window_start);
+        let skipped_window_bank =
+            test_context.create_block_only(skipped_window_start, intra_window_bank);
+        let skipped_window_block_id = skipped_window_bank.block_id().unwrap();
+        test_context.send_block_notarized_event((skipped_window_start, skipped_window_block_id));
         test_context.check_no_vote_or_commitment();
 
-        // Now send Block event simulating replay completed for 3
-        test_context.send_block_event(slot, bank3.clone());
-        // There should be a notarization vote for 3
-        test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_3));
-        test_context.check_for_commitment(CommitmentType::Notarize, slot);
-        // Check there is a Finalize vote for 3
-        test_context.check_for_vote(&Vote::new_finalization_vote(slot));
-
-        // After casting finalization vote for 3, we will not send skip fallback
-        test_context.send_safe_to_skip_event(slot);
+        test_context.send_block_event(skipped_window_start, skipped_window_bank.clone());
         test_context.check_no_vote_or_commitment();
 
-        // Simulate that block 4 never arrives, we create block 4 but send timeout event
-        let slot = 4;
-        let bank4 = test_context.create_block_only(slot, bank3);
-        test_context.send_timeout_event(slot);
-        // We did eventually complete replay for 4
-        test_context.send_block_event(slot, bank4.clone());
-        // There should be a skip vote for 4 to 7 each
-        test_context.check_for_vote(&Vote::new_skip_vote(slot));
-        test_context.check_for_vote(&Vote::new_skip_vote(slot + 1));
-        test_context.check_for_vote(&Vote::new_skip_vote(slot + 2));
-        test_context.check_for_vote(&Vote::new_skip_vote(slot + 3));
+        test_context.send_timeout_event(skipped_window_start);
+        for slot in test_context.slots_in_window(skipped_window_start) {
+            test_context.check_for_vote(&Vote::new_skip_vote(slot));
+        }
 
-        // Now we get block 5, it's replayed and we get block_notarized, but since 4~7 is a bad
-        // window already, we shouldn't have notarize or finalize vote for 5
-        let slot = 5;
-        let bank5 = test_context.create_block_only(slot, bank4);
-        test_context.send_block_event(slot, bank5);
+        let skipped_followup_slot = skipped_window_start.saturating_add(1);
+        let skipped_followup_bank =
+            test_context.create_block_only(skipped_followup_slot, skipped_window_bank);
+        test_context.send_block_event(skipped_followup_slot, skipped_followup_bank);
         test_context.check_no_vote_or_commitment();
     }
 
     #[test]
     fn test_received_timeout_crashed_leader_and_first_shred() {
         let mut test_context = setup();
+        let crashed_window_start = test_context.first_regular_window_start();
 
-        // Simulate a crashed leader for slot 4
-        test_context.send_timeout_crashed_leader_event(4);
+        test_context.send_timeout_crashed_leader_event(crashed_window_start);
 
-        // Since we don't have any shred for block 4, we should vote skip for 4-7
-        test_context.check_for_vote(&Vote::new_skip_vote(4));
-        test_context.check_for_vote(&Vote::new_skip_vote(5));
-        test_context.check_for_vote(&Vote::new_skip_vote(6));
-        test_context.check_for_vote(&Vote::new_skip_vote(7));
+        for slot in test_context.slots_in_window(crashed_window_start) {
+            test_context.check_for_vote(&Vote::new_skip_vote(slot));
+        }
 
-        // Now if we received one shred for slot 8, then we should not do anything when
-        // receiving timeout_crashed_leader_event for slot 8
-        test_context.send_first_shred_event(8);
-        test_context.send_timeout_crashed_leader_event(8);
+        let next_window_start = test_context.next_window_start(crashed_window_start);
+        test_context.send_first_shred_event(next_window_start);
+        test_context.send_timeout_crashed_leader_event(next_window_start);
         test_context.check_no_vote_or_commitment();
     }
 
@@ -1436,43 +1478,34 @@ mod tests {
     fn test_received_safe_to_notar() {
         let mut test_context = setup();
 
-        // We can theoretically not vote skip here and test will pass, but in real world
-        // safe_to_notar event only fires after we voted skip for the whole window
-        let root_bank = test_context
-            .bank_forks
-            .read()
-            .unwrap()
-            .sharable_banks()
-            .root();
-        let bank_1 = test_context.create_block_and_send_block_event(1, root_bank);
-        let block_id_1_old = bank_1.block_id().unwrap();
-        test_context.send_parent_ready_event(1, (0, Hash::default()));
+        let root_bank = test_context.root_bank();
+        let slot = test_context.first_regular_window_start();
+        let bank = test_context.create_block_and_send_block_event(slot, root_bank);
+        let original_block_id = bank.block_id().unwrap();
+        test_context.send_parent_ready_event(slot, (0, Hash::default()));
 
-        test_context.check_parent_ready_slot((1, (0, Hash::default())));
-        test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1_old));
-        test_context.check_for_commitment(CommitmentType::Notarize, 1);
+        test_context.check_parent_ready_slot((slot, (0, Hash::default())));
+        test_context.check_for_vote(&Vote::new_notarization_vote(slot, original_block_id));
+        test_context.check_for_commitment(CommitmentType::Notarize, slot);
 
-        // Now we got safe_to_notar event for slot 1 and a different block id
-        let block_id_1_1 = Hash::new_unique();
-        test_context.send_safe_to_notar_event((1, block_id_1_1));
-        // We should see rest of the window skipped
-        test_context.check_for_vote(&Vote::new_skip_vote(2));
-        test_context.check_for_vote(&Vote::new_skip_vote(3));
-        // We should also see notarize fallback for the new block id
-        test_context.check_for_vote(&Vote::new_notarization_fallback_vote(1, block_id_1_1));
+        let first_fallback_block_id = Hash::new_unique();
+        test_context.send_safe_to_notar_event((slot, first_fallback_block_id));
+        for trailing_slot in test_context.trailing_slots_in_window(slot) {
+            test_context.check_for_vote(&Vote::new_skip_vote(trailing_slot));
+        }
+        test_context.check_for_vote(&Vote::new_notarization_fallback_vote(
+            slot,
+            first_fallback_block_id,
+        ));
 
-        // We can trigger safe_to_notar event again for a different block id
-        // In this test you can trigger this any number of times, but the white paper
-        // proved we can only get up to 3 different block ids on a slot, and our
-        // certificate pool implementation checks that.
-        let block_id_1_2 = Hash::new_unique();
-        test_context.send_safe_to_notar_event((1, block_id_1_2));
-        // No skips this time because we already skipped the rest of the window
-        // We should also see notarize fallback for the new block id
-        test_context.check_for_vote(&Vote::new_notarization_fallback_vote(1, block_id_1_2));
+        let second_fallback_block_id = Hash::new_unique();
+        test_context.send_safe_to_notar_event((slot, second_fallback_block_id));
+        test_context.check_for_vote(&Vote::new_notarization_fallback_vote(
+            slot,
+            second_fallback_block_id,
+        ));
 
-        // But getting safe_to_notar for a block id we voted before should be no-op
-        test_context.send_safe_to_notar_event((1, block_id_1_1));
+        test_context.send_safe_to_notar_event((slot, first_fallback_block_id));
         test_context.check_no_vote_or_commitment();
     }
 
@@ -1480,30 +1513,22 @@ mod tests {
     fn test_received_safe_to_skip() {
         let mut test_context = setup();
 
-        // The safe_to_skip event only fires after we voted notarize for the slot
-        let root_bank = test_context
-            .bank_forks
-            .read()
-            .unwrap()
-            .sharable_banks()
-            .root();
-        let bank_1 = test_context.create_block_and_send_block_event(1, root_bank);
-        let block_id_1 = bank_1.block_id().unwrap();
-        test_context.send_parent_ready_event(1, (0, Hash::default()));
+        let root_bank = test_context.root_bank();
+        let slot = test_context.first_regular_window_start();
+        let bank = test_context.create_block_and_send_block_event(slot, root_bank);
+        let block_id = bank.block_id().unwrap();
+        test_context.send_parent_ready_event(slot, (0, Hash::default()));
 
-        test_context.check_parent_ready_slot((1, (0, Hash::default())));
-        test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1));
-        test_context.check_for_commitment(CommitmentType::Notarize, 1);
-        // Now we got safe_to_skip event for slot 1
-        test_context.send_safe_to_skip_event(1);
-        // We should see rest of the window skipped
-        test_context.check_for_vote(&Vote::new_skip_vote(2));
-        test_context.check_for_vote(&Vote::new_skip_vote(3));
-        // We should see skip fallback for slot 1
-        test_context.check_for_vote(&Vote::new_skip_fallback_vote(1));
+        test_context.check_parent_ready_slot((slot, (0, Hash::default())));
+        test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id));
+        test_context.check_for_commitment(CommitmentType::Notarize, slot);
+        test_context.send_safe_to_skip_event(slot);
+        for trailing_slot in test_context.trailing_slots_in_window(slot) {
+            test_context.check_for_vote(&Vote::new_skip_vote(trailing_slot));
+        }
+        test_context.check_for_vote(&Vote::new_skip_fallback_vote(slot));
 
-        // We can trigger safe_to_skip event again, this should be a no-op
-        test_context.send_safe_to_skip_event(1);
+        test_context.send_safe_to_skip_event(slot);
         test_context.check_no_vote_or_commitment();
     }
 
@@ -1567,70 +1592,82 @@ mod tests {
     fn test_parent_ready_in_middle_of_window() {
         let mut test_context = setup();
 
-        // We just woke up and received finalize for slot 5
-        let root_bank = test_context
-            .bank_forks
-            .read()
-            .unwrap()
-            .sharable_banks()
-            .root();
-        let bank4 = test_context.create_block_and_send_block_event(4, root_bank);
-        let block_id_4 = bank4.block_id().unwrap();
+        let root_bank = test_context.root_bank();
+        let regular_window_start = test_context.first_regular_window_start();
+        let intra_window_slot = regular_window_start.saturating_add(1);
+        let later_intra_window_slot = (intra_window_slot.saturating_add(1)..)
+            .find(|slot| {
+                let first_slot_in_window =
+                    solana_runtime::leader_schedule_utils::first_of_consecutive_leader_slots(
+                        *slot, &root_bank,
+                    );
+                first_slot_in_window > intra_window_slot && first_slot_in_window < *slot
+            })
+            .expect("expected a later non-first slot in a subsequent leader window");
 
-        let bank5 = test_context.create_block_and_send_block_event(5, bank4);
-        let block_id_5 = bank5.block_id().unwrap();
+        let regular_window_bank =
+            test_context.create_block_and_send_block_event(regular_window_start, root_bank);
+        let regular_window_block_id = regular_window_bank.block_id().unwrap();
 
-        test_context.send_finalized_event((5, block_id_5), true);
+        let intra_window_bank =
+            test_context.create_block_and_send_block_event(intra_window_slot, regular_window_bank);
+        let intra_window_block_id = intra_window_bank.block_id().unwrap();
 
-        // We should now have parent ready for slot 5
-        test_context.check_parent_ready_slot((5, (4, block_id_4)));
+        test_context.send_finalized_event((intra_window_slot, intra_window_block_id), true);
+        test_context.check_parent_ready_slot((
+            intra_window_slot,
+            (regular_window_start, regular_window_block_id),
+        ));
 
-        // We are partitioned off from rest of the network, and suddenly received finalize for
-        // slot 9 a little before we finished replay slot 9
-        let bank9 = test_context.create_block_only(9, bank5);
-        let block_id_9 = bank9.block_id().unwrap();
-        test_context.send_finalized_event((9, block_id_9), true);
-
-        test_context.send_block_event(9, bank9);
-
-        // We should now have parent ready for slot 9
-        test_context.check_parent_ready_slot((9, (5, block_id_5)));
+        let later_intra_window_bank =
+            test_context.create_block_only(later_intra_window_slot, intra_window_bank);
+        let later_intra_window_block_id = later_intra_window_bank.block_id().unwrap();
+        test_context
+            .send_finalized_event((later_intra_window_slot, later_intra_window_block_id), true);
+        test_context.send_block_event(later_intra_window_slot, later_intra_window_bank);
+        let highest_parent_ready = *test_context.highest_parent_ready.read().unwrap();
+        assert!(highest_parent_ready.0 > intra_window_slot);
+        assert_eq!(
+            highest_parent_ready.1,
+            (intra_window_slot, intra_window_block_id)
+        );
+        test_context.check_timeout_set(highest_parent_ready.0);
     }
 
     #[test]
     fn test_received_standstill() {
         let mut test_context = setup();
 
-        // Send notarize vote for slot 1 then skip rest of the window
-        let root_bank = test_context
-            .bank_forks
-            .read()
-            .unwrap()
-            .sharable_banks()
-            .root();
-        let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
-        let block_id_1 = bank1.block_id().unwrap();
-        test_context.send_parent_ready_event(1, (0, Hash::default()));
+        let root_bank = test_context.root_bank();
+        let slot = test_context.first_regular_window_start();
+        let bank = test_context.create_block_and_send_block_event(slot, root_bank);
+        let block_id = bank.block_id().unwrap();
+        test_context.send_parent_ready_event(slot, (0, Hash::default()));
 
-        test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1));
+        test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id));
 
-        test_context.send_timeout_event(2);
-        test_context.check_for_vote(&Vote::new_skip_vote(2));
-        test_context.check_for_vote(&Vote::new_skip_vote(3));
+        let trailing_slots = test_context.trailing_slots_in_window(slot);
+        let timeout_slot = *trailing_slots
+            .first()
+            .expect("leader window must have trailing slots");
+        test_context.send_timeout_event(timeout_slot);
+        for trailing_slot in &trailing_slots {
+            test_context.check_for_vote(&Vote::new_skip_vote(*trailing_slot));
+        }
 
-        // Send a standstill event with highest parent ready at 0, we should refresh all the votes
         test_context.send_standstill_event(0);
 
-        test_context.check_for_votes(&[
-            Vote::new_notarization_vote(1, block_id_1),
-            Vote::new_skip_vote(2),
-            Vote::new_skip_vote(3),
-        ]);
+        let mut refreshed_votes = vec![Vote::new_notarization_vote(slot, block_id)];
+        refreshed_votes.extend(trailing_slots.iter().copied().map(Vote::new_skip_vote));
+        test_context.check_for_votes(&refreshed_votes);
 
-        // Send another standstill event with highest parent ready at 1, we should refresh votes for 2 and 3 only
-        test_context.send_standstill_event(1);
-
-        test_context.check_for_votes(&[Vote::new_skip_vote(2), Vote::new_skip_vote(3)]);
+        test_context.send_standstill_event(slot);
+        let trailing_votes = trailing_slots
+            .iter()
+            .copied()
+            .map(Vote::new_skip_vote)
+            .collect::<Vec<_>>();
+        test_context.check_for_votes(&trailing_votes);
     }
 
     #[test]
@@ -1645,12 +1682,7 @@ mod tests {
             .push(test_context.crate_vote_history_storage_and_switch_identity(&new_identity));
 
         // Should not send any votes because we set to a different identity
-        let root_bank = test_context
-            .bank_forks
-            .read()
-            .unwrap()
-            .sharable_banks()
-            .root();
+        let root_bank = test_context.root_bank();
         let _ = test_context.create_block_and_send_block_event(1, root_bank.clone());
         test_context.send_parent_ready_event(1, (0, Hash::default()));
 
@@ -1666,7 +1698,7 @@ mod tests {
             .push(test_context.crate_vote_history_storage_and_switch_identity(&old_identity));
 
         // We should now be able to vote again
-        let slot = 4;
+        let slot = test_context.first_regular_window_start();
         let bank4 = test_context.create_block_and_send_block_event(slot, root_bank);
         let block_id_4 = bank4.block_id().unwrap();
         test_context.send_parent_ready_event(slot, (0, Hash::default()));

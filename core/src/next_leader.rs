@@ -1,7 +1,7 @@
 use {
     crate::banking_stage::LikeClusterInfo,
     itertools::Itertools,
-    solana_clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
     solana_gossip::{
         cluster_info::ClusterInfo,
         contact_info::{ContactInfoQuery, Protocol},
@@ -43,13 +43,8 @@ pub(crate) fn next_leaders(
     port_selector: impl ContactInfoQuery<Option<SocketAddr>>,
 ) -> Vec<SocketAddr> {
     let recorder = poh_recorder.read().unwrap();
-    let leader_pubkeys: Vec<_> = (0..max_count)
-        .filter_map(|i| {
-            recorder.leader_after_n_slots(
-                FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET + i * NUM_CONSECUTIVE_LEADER_SLOTS,
-            )
-        })
-        .collect();
+    let leader_pubkeys =
+        recorder.leaders_after_n_windows(FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, max_count);
     drop(recorder);
 
     leader_pubkeys

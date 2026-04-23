@@ -60,12 +60,19 @@ impl TimerManager {
     pub(crate) fn set_timeouts(
         &self,
         slot: Slot,
+        last_slot_in_window: Slot,
         standstill_slot: Option<Slot>,
+        leader_window_size: u64,
         delta_block: Duration,
     ) {
-        self.timers
-            .write()
-            .set_timeouts(slot, Instant::now(), standstill_slot, delta_block);
+        self.timers.write().set_timeouts(
+            slot,
+            last_slot_in_window,
+            Instant::now(),
+            standstill_slot,
+            leader_window_size,
+            delta_block,
+        );
     }
 
     pub(crate) fn join(self) {
@@ -97,7 +104,7 @@ mod tests {
         let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
         let slot = 52;
         let start = Instant::now();
-        timer_manager.set_timeouts(slot, None, delta_block);
+        timer_manager.set_timeouts(slot, slot, None, 1, delta_block);
         // Should see two timeouts at delta_block and DELTA_TIMEOUT
         let mut timeouts_received = 0;
         while timeouts_received < 2 && Instant::now().duration_since(start) < Duration::from_secs(2)

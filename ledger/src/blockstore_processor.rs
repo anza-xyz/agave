@@ -2389,13 +2389,14 @@ fn load_frozen_forks(
                     return Err(error);
                 }
 
-                // If this block was the first alpenglow block and advanced the migration phase, we can enable alpenglow.
+                // If this block was the first alpenglow block and advanced the migration phase, we
+                // can enable alpenglow. This bank must have failed to freeze because it is an
+                // Alpenglow block being verified as a TowerBFT one.
                 //
-                // Note: since this code is all startup code we don't have to worry about shutting down `PohService` or any
-                // in flight activity of `ReplayStage`. This bank must have failed to freeze as it is an Alpenglow block
-                // being verified as a TowerBFT one.
-                //
-                // We are safe to cleanly transition to alpenglow here
+                // Startup replay is still the authority for the migration state here, even in
+                // configurations where services such as `PohService` are already live. We request
+                // Poh shutdown as part of the transition, and the later Poh callback is
+                // intentionally idempotent.
                 if migration_status.is_ready_to_enable() {
                     debug_assert!(matches!(
                         error,
@@ -2866,7 +2867,7 @@ pub mod tests {
             block_component::{BlockComponent, BlockFooterV1, BlockHeaderV1, VersionedBlockMarker},
             entry::{create_ticks, next_entry, next_entry_mut},
         },
-        solana_epoch_schedule::EpochSchedule,
+        solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
         solana_hash::Hash,
         solana_instruction::{Instruction, error::InstructionError},
         solana_keypair::Keypair,
@@ -3544,7 +3545,13 @@ pub mod tests {
     fn test_process_blockstore_epoch_boundary_root() {
         agave_logger::setup();
 
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(10_000);
+        // Keep this boundary test small and stable even when development genesis enables
+        // staged slot-timing features at slot 0.
+        genesis_config.epoch_schedule =
+            EpochSchedule::custom(MINIMUM_SLOTS_PER_EPOCH, MINIMUM_SLOTS_PER_EPOCH, false);
         let ticks_per_slot = genesis_config.ticks_per_slot;
 
         // Create a new ledger with slot 0 full of ticks

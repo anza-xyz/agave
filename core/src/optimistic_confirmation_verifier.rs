@@ -96,7 +96,7 @@ impl OptimisticConfirmationVerifier {
     ) {
         let root = root_bank.slot();
         for (optimistic_slot, hash) in unrooted_optimistic_slots.iter() {
-            let epoch = root_bank.epoch_schedule().get_epoch(*optimistic_slot);
+            let epoch = root_bank.get_epoch(*optimistic_slot);
             let epoch_stakes = root_bank.epoch_stakes(epoch);
             let total_epoch_stake = epoch_stakes.map(|e| e.total_stake()).unwrap_or(0);
             let voted_stake = {

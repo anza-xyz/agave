@@ -101,7 +101,7 @@ impl ConsensusPoolService {
             *highest_finalized.write().unwrap() = consensus_pool.get_highest_finalization_certs();
         }
         let bank = sharable_banks.root();
-        consensus_pool.maybe_prune(bank.slot());
+        consensus_pool.maybe_prune(bank);
         stats.prune_old_state_called += 1;
         // Send new certificates to peers
         Self::send_certificates(bls_sender, new_certificates_to_send, stats)
@@ -197,13 +197,13 @@ impl ConsensusPoolService {
         let mut consensus_pool = if ctx.migration_status.is_alpenglow_enabled() {
             ConsensusPool::new_from_root_bank(
                 ctx.cluster_info.clone(),
-                &root_bank,
+                root_bank.clone(),
                 ctx.generated_cert_types.clone(),
             )
         } else {
             ConsensusPool::new_from_root_bank_pre_migration(
                 ctx.cluster_info.clone(),
-                &root_bank,
+                root_bank.clone(),
                 ctx.generated_cert_types.clone(),
                 ctx.migration_status.clone(),
             )
@@ -396,7 +396,7 @@ impl ConsensusPoolService {
         }
 
         let start_slot = *highest_parent_ready;
-        let end_slot = last_of_consecutive_leader_slots(start_slot);
+        let end_slot = last_of_consecutive_leader_slots(start_slot, &root_bank);
 
         if (start_slot..=end_slot).any(|s| ctx.blockstore.has_existing_shreds_for_slot(s)) {
             warn!(
@@ -518,7 +518,7 @@ mod tests {
             let cluster_info = get_cluster_info(my_keypair.insecure_clone());
             let consensus_pool = ConsensusPool::new_from_root_bank(
                 cluster_info.clone(),
-                &root_bank,
+                root_bank.clone(),
                 Arc::new(GeneratedCertTypes::default()),
             );
             let my_vote_pubkey = Pubkey::new_unique();

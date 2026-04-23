@@ -415,7 +415,7 @@ impl Bank {
         // Use the vote-account snapshot from epoch_stakes, which is VAT-filtered
         // when admission filtering is enabled. Recalculation should match the
         // vote-account admission policy used for distribution.
-        let leader_schedule_epoch = self.epoch_schedule().get_leader_schedule_epoch(self.slot());
+        let leader_schedule_epoch = self.get_leader_schedule_epoch(self.slot());
         let distribution_epoch_vote_accounts = self
             .epoch_stakes(leader_schedule_epoch)
             .expect("calculation should always run after Bank::update_epoch_stakes()")
@@ -842,9 +842,10 @@ mod tests {
                     EpochRewardPhase, EpochRewardStatus, PartitionedStakeRewards,
                     StartBlockHeightAndPartitionedRewards,
                     tests::{
-                        RewardBank, SLOTS_PER_EPOCH, build_partitioned_stake_rewards,
-                        create_default_reward_bank, create_reward_bank,
-                        create_reward_bank_with_specific_stakes, populate_vote_accounts_with_votes,
+                        RewardBank, RewardBankAdvance, SLOTS_PER_EPOCH,
+                        build_partitioned_stake_rewards, create_default_reward_bank,
+                        create_reward_bank, create_reward_bank_with_specific_stakes,
+                        populate_vote_accounts_with_votes,
                     },
                 },
                 tests::create_genesis_config,
@@ -995,7 +996,7 @@ mod tests {
         let bank = create_reward_bank_with_specific_stakes(
             stakes,
             PartitionedEpochRewardsConfig::default().stake_account_stores_per_block,
-            SLOTS_PER_EPOCH,
+            RewardBankAdvance::NextEpoch { slot_offset: 0 },
         )
         .0
         .bank;
@@ -1056,8 +1057,11 @@ mod tests {
         agave_logger::setup();
 
         let expected_num_delegations = 100;
-        let RewardBank { bank, .. } =
-            create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH).0;
+        let RewardBank { bank, .. } = create_default_reward_bank(
+            expected_num_delegations,
+            RewardBankAdvance::NextEpoch { slot_offset: 0 },
+        )
+        .0;
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let rewards_metrics = RewardsMetrics::default();
@@ -1273,7 +1277,7 @@ mod tests {
         }
 
         // Advance bank to next epoch
-        let slot = bank.slot() + SLOTS_PER_EPOCH;
+        let slot = bank.get_first_slot_in_epoch(bank.epoch() + 1);
         let prev_bank = bank.clone();
         let bank =
             Bank::new_from_parent_with_bank_forks(bank_forks, bank, SlotLeader::new_unique(), slot);
@@ -1625,7 +1629,11 @@ mod tests {
             bank,
             voters,
             stakers,
-        } = create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH).0;
+        } = create_default_reward_bank(
+            expected_num_delegations,
+            RewardBankAdvance::NextEpoch { slot_offset: 0 },
+        )
+        .0;
 
         let vote_pubkey = voters.first().unwrap();
         let stake_pubkey = *stakers.first().unwrap();
@@ -1730,7 +1738,7 @@ mod tests {
         let (RewardBank { bank, .. }, bank_forks) = create_reward_bank(
             expected_num_delegations,
             num_rewards_per_block,
-            SLOTS_PER_EPOCH,
+            RewardBankAdvance::NextEpoch { slot_offset: 0 },
         );
         let rewarded_epoch = bank.epoch();
 
@@ -1844,7 +1852,9 @@ mod tests {
         let (RewardBank { bank, .. }, _bank_forks) = create_reward_bank_with_specific_stakes(
             stakes,
             num_rewards_per_block,
-            SLOTS_PER_EPOCH - 1,
+            RewardBankAdvance::CurrentEpoch {
+                slots_before_epoch_boundary: 1,
+            },
         );
         let rewarded_epoch = bank.epoch();
 
@@ -1916,8 +1926,12 @@ mod tests {
         assert_eq!(point_value.rewards, sysvar.total_rewards);
 
         // Advance to first distribution slot (bank_forks kept in scope so parent has fork_graph)
-        let mut bank =
-            Bank::new_from_parent(Arc::new(bank), SlotLeader::default(), SLOTS_PER_EPOCH + 1);
+        let first_distribution_slot = bank.slot() + 1;
+        let mut bank = Bank::new_from_parent(
+            Arc::new(bank),
+            SlotLeader::default(),
+            first_distribution_slot,
+        );
 
         bank.recalculate_partitioned_rewards_if_active(|| &thread_pool);
         let EpochRewardStatus::Active(EpochRewardPhase::Distribution(
@@ -1984,7 +1998,9 @@ mod tests {
         let (RewardBank { bank, .. }, bank_forks) = create_reward_bank_with_specific_stakes(
             stakes,
             num_rewards_per_block,
-            SLOTS_PER_EPOCH - 1,
+            RewardBankAdvance::CurrentEpoch {
+                slots_before_epoch_boundary: 1,
+            },
         );
 
         // Advance to next epoch boundary (bank_forks kept in scope so parent has fork_graph)
@@ -2045,7 +2061,9 @@ mod tests {
         ) = create_reward_bank_with_specific_stakes(
             stakes,
             num_rewards_per_block,
-            SLOTS_PER_EPOCH - 1,
+            RewardBankAdvance::CurrentEpoch {
+                slots_before_epoch_boundary: 1,
+            },
         );
 
         let filtered_vote_pubkey = *voters.last().unwrap();
@@ -2056,7 +2074,7 @@ mod tests {
         let new_slot = bank.slot() + 1;
         let mut bank = Bank::new_from_parent(bank, SlotLeader::default(), new_slot);
 
-        let leader_schedule_epoch = bank.epoch_schedule().get_leader_schedule_epoch(bank.slot());
+        let leader_schedule_epoch = bank.get_leader_schedule_epoch(bank.slot());
         let filtered_epoch_vote_accounts = bank
             .epoch_stakes(leader_schedule_epoch)
             .unwrap()
@@ -2411,7 +2429,7 @@ mod tests {
         ) = create_reward_bank_with_specific_stakes(
             stakes,
             PartitionedEpochRewardsConfig::default().stake_account_stores_per_block,
-            SLOTS_PER_EPOCH,
+            RewardBankAdvance::NextEpoch { slot_offset: 0 },
         );
         let mut voters: HashSet<_> = voters.into_iter().collect();
         let mut stakers: HashSet<_> = stakers.into_iter().collect();
@@ -2428,8 +2446,8 @@ mod tests {
             &voters,               // expected_voters
             &stakers,              // expected_stakers
             0,                     // expected_reward_commissions
-            249700,                // expected_stake_rewards
-            249771,                // expected_rewards
+            499500,                // expected_stake_rewards
+            499542,                // expected_rewards
             8_400_000_000_000u128, // expected_points
             None,                  // parent_capitalization
         );
@@ -2440,7 +2458,7 @@ mod tests {
         let bank2 = Arc::new(Bank::new_from_parent(
             Arc::clone(&bank1),
             SlotLeader::default(),
-            SLOTS_PER_EPOCH * 2,
+            bank1.get_first_slot_in_epoch(bank1.epoch() + 1),
         ));
 
         assert_cached_rewards(
@@ -2448,9 +2466,9 @@ mod tests {
             2,                           // expected_cache_len
             &voters,                     // expected_voters
             &stakers,                    // expected_stakers
-            2775,                        // expected_reward_commissions
-            247315,                      // expected_stake_rewards
-            250156,                      // expected_rewards
+            5555,                        // expected_reward_commissions
+            494730,                      // expected_stake_rewards
+            500313,                      // expected_rewards
             9_450_000_000_000u128,       // expected_points
             Some(parent_capitalization), // parent_capitalization
         );
@@ -2461,7 +2479,7 @@ mod tests {
         let bank3 = Arc::new(Bank::new_from_parent(
             Arc::clone(&bank2),
             SlotLeader::default(),
-            SLOTS_PER_EPOCH * 3,
+            bank2.get_first_slot_in_epoch(bank2.epoch() + 1),
         ));
 
         assert_cached_rewards(
@@ -2469,9 +2487,9 @@ mod tests {
             3,                           // expected_cache_len
             &voters,                     // expected_voters
             &stakers,                    // expected_stakers
-            8650,                        // expected_reward_commissions
-            242670,                      // expected_stake_rewards
-            251389,                      // expected_rewards
+            17300,                       // expected_reward_commissions
+            485365,                      // expected_stake_rewards
+            502779,                      // expected_rewards
             12_810_000_000_000u128,      // expected_points
             Some(parent_capitalization), // parent_capitalization
         );

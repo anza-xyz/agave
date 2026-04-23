@@ -4,9 +4,7 @@
 /// Target to store 64 rewards per entry/tick in a block. A block has a minimum of 64
 /// entries/tick. This gives 4096 total rewards to store in one block.
 /// This constant affects consensus.
-pub const MAX_PARTITIONED_REWARDS_PER_BLOCK: u64 = 4096;
-pub const MAX_PARTITIONED_REWARDS_PER_BLOCK_HALVE_SLOTS: u64 =
-    MAX_PARTITIONED_REWARDS_PER_BLOCK / 2;
+const MAX_PARTITIONED_REWARDS_PER_BLOCK: u64 = 4096;
 
 #[derive(Debug, Clone, Copy)]
 /// Configuration options for partitioned epoch rewards.

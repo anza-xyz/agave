@@ -1,8 +1,7 @@
 use {
     crate::{event::VotorEvent, timer_manager::stats::TimerManagerStats},
     crossbeam_channel::Sender,
-    solana_clock::{NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
-    solana_runtime::leader_schedule_utils::last_of_consecutive_leader_slots,
+    solana_clock::Slot,
     std::{
         cmp::Reverse,
         collections::{BinaryHeap, HashMap, VecDeque},
@@ -16,13 +15,20 @@ const MAX_TIMEOUT_SECS: f64 = 3600.0;
 /// Calculate the timeout multiplier based on standstill state.
 /// Returns 1.0 if not in standstill, or 1.05^n where n is the number of
 /// leader windows since standstill started.
-fn calculate_timeout_multiplier(slot: Slot, standstill_slot: Option<Slot>) -> f64 {
+fn calculate_timeout_multiplier(
+    slot: Slot,
+    standstill_slot: Option<Slot>,
+    leader_window_size: u64,
+) -> f64 {
+    debug_assert!(leader_window_size > 0);
     match standstill_slot {
         None => 1.0,
         Some(standstill_slot) => {
             // Calculate number of leader windows since standstill
             let slots_since_standstill = slot.saturating_sub(standstill_slot);
-            let leader_windows = slots_since_standstill / NUM_CONSECUTIVE_LEADER_SLOTS;
+            let leader_windows = slots_since_standstill
+                .checked_div(leader_window_size)
+                .unwrap_or(0);
             // Extend timeout by 5% for each leader window
             1.05_f64.powi(leader_windows as i32)
         }
@@ -61,12 +67,14 @@ impl TimerState {
     /// Also returns the next time the timer should fire.
     fn new(
         slot: Slot,
+        last_slot_in_window: Slot,
         delta_timeout: Duration,
         delta_block: Duration,
         now: Instant,
         timeout_multiplier: f64,
     ) -> (Self, Instant) {
-        let window = (slot..=last_of_consecutive_leader_slots(slot)).collect::<VecDeque<_>>();
+        assert!(slot <= last_slot_in_window);
+        let window = (slot..=last_slot_in_window).collect::<VecDeque<_>>();
         assert!(!window.is_empty());
         // Scale the timeouts by the multiplier, capping at 1 hour.
         let scaled_delta_timeout = Duration::from_secs_f64(
@@ -173,14 +181,18 @@ impl Timers {
     pub(super) fn set_timeouts(
         &mut self,
         slot: Slot,
+        last_slot_in_window: Slot,
         now: Instant,
         standstill_slot: Option<Slot>,
+        leader_window_size: u64,
         delta_block: Duration,
     ) {
         assert_eq!(self.heap.len(), self.timers.len());
-        let timeout_multiplier = calculate_timeout_multiplier(slot, standstill_slot);
+        let timeout_multiplier =
+            calculate_timeout_multiplier(slot, standstill_slot, leader_window_size);
         let (timer, next_fire) = TimerState::new(
             slot,
+            last_slot_in_window,
             self.delta_timeout,
             delta_block,
             now,
@@ -254,7 +266,8 @@ mod tests {
         let one_micro = Duration::from_micros(1);
         let now = Instant::now();
         let slot = 0;
-        let (mut timer_state, next_fire) = TimerState::new(slot, one_micro, one_micro, now, 1.0);
+        let (mut timer_state, next_fire) =
+            TimerState::new(slot, slot + 3, one_micro, one_micro, now, 1.0);
 
         assert!(matches!(
             timer_state.progress(next_fire).unwrap(),
@@ -300,7 +313,14 @@ mod tests {
         assert!(timers.progress(now).is_none());
         assert!(receiver.try_recv().unwrap_err().is_empty());
 
-        timers.set_timeouts(0, now, None, Duration::from_millis(DEFAULT_MS_PER_SLOT));
+        timers.set_timeouts(
+            0,
+            0,
+            now,
+            None,
+            1,
+            Duration::from_millis(DEFAULT_MS_PER_SLOT),
+        );
         while timers.progress(now).is_some() {
             now = now.checked_add(one_micro).unwrap();
         }
@@ -311,9 +331,6 @@ mod tests {
             VotorEvent::TimeoutCrashedLeader(0)
         ));
         assert!(matches!(events.remove(0), VotorEvent::Timeout(0)));
-        assert!(matches!(events.remove(0), VotorEvent::Timeout(1)));
-        assert!(matches!(events.remove(0), VotorEvent::Timeout(2)));
-        assert!(matches!(events.remove(0), VotorEvent::Timeout(3)));
         assert!(events.is_empty());
         let stats = timers.stats();
         assert_eq!(stats.set_timeout_count(), 1);
@@ -331,7 +348,7 @@ mod tests {
         let multiplier = 1.5; // 50% longer timeouts
 
         let (mut timer_state, next_fire) =
-            TimerState::new(slot, delta_timeout, delta_block, now, multiplier);
+            TimerState::new(slot, slot, delta_timeout, delta_block, now, multiplier);
 
         // The first timeout should fire at now + (delta_timeout * 1.5) = now + 150ms
         let expected_first_fire = now + Duration::from_millis(150);
@@ -361,27 +378,27 @@ mod tests {
     #[test]
     fn test_calculate_timeout_multiplier() {
         // No standstill - multiplier should be 1.0
-        assert_eq!(calculate_timeout_multiplier(100, None), 1.0);
+        assert_eq!(calculate_timeout_multiplier(100, None, 4), 1.0);
 
         // Standstill at slot 0
         // At slot 0 (same slot) - 0 leader windows passed
-        assert_eq!(calculate_timeout_multiplier(0, Some(0)), 1.0);
+        assert_eq!(calculate_timeout_multiplier(0, Some(0), 4), 1.0);
 
         // At slot 4 (1 leader window = 4 slots) - 1.05^1
-        let multiplier = calculate_timeout_multiplier(4, Some(0));
+        let multiplier = calculate_timeout_multiplier(4, Some(0), 4);
         assert!((multiplier - 1.05).abs() < 0.001);
 
         // At slot 8 (2 leader windows) - 1.05^2
-        let multiplier = calculate_timeout_multiplier(8, Some(0));
+        let multiplier = calculate_timeout_multiplier(8, Some(0), 4);
         assert!((multiplier - 1.1025).abs() < 0.001);
 
         // At slot 40 (10 leader windows) - 1.05^10
-        let multiplier = calculate_timeout_multiplier(40, Some(0));
+        let multiplier = calculate_timeout_multiplier(40, Some(0), 4);
         let expected = 1.05_f64.powi(10);
         assert!((multiplier - expected).abs() < 0.001);
 
         // Standstill at slot 20, current slot 28 (2 leader windows)
-        let multiplier = calculate_timeout_multiplier(28, Some(20));
+        let multiplier = calculate_timeout_multiplier(28, Some(20), 4);
         assert!((multiplier - 1.1025).abs() < 0.001);
     }
 
@@ -392,6 +409,7 @@ mod tests {
         let multiplier = 1000000.0;
 
         let (mut timer_state, next_fire) = TimerState::new(
+            100,
             100,
             DELTA_TIMEOUT,
             Duration::from_millis(DEFAULT_MS_PER_SLOT),

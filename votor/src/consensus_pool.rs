@@ -131,7 +131,7 @@ pub(crate) struct ConsensusPool {
 impl ConsensusPool {
     pub(crate) fn new_from_root_bank_pre_migration(
         cluster_info: Arc<ClusterInfo>,
-        bank: &Bank,
+        bank: Arc<Bank>,
         generated_cert_types: Arc<GeneratedCertTypes>,
         migration_status: Arc<MigrationStatus>,
     ) -> Self {
@@ -142,13 +142,10 @@ impl ConsensusPool {
 
     pub fn new_from_root_bank(
         cluster_info: Arc<ClusterInfo>,
-        bank: &Bank,
+        bank: Arc<Bank>,
         generated_cert_types: Arc<GeneratedCertTypes>,
     ) -> Self {
-        // To account for genesis and snapshots we allow default block id until
-        // block id can be serialized  as part of the snapshot
-        let root_block = (bank.slot(), bank.block_id().unwrap_or_default());
-        let parent_ready_tracker = ParentReadyTracker::new(cluster_info.clone(), root_block);
+        let parent_ready_tracker = ParentReadyTracker::new(cluster_info.clone(), bank);
 
         Self {
             cluster_info,
@@ -614,7 +611,8 @@ impl ConsensusPool {
     }
 
     /// Prunes state relevant for slots older than `root_slot`.
-    pub(crate) fn maybe_prune(&mut self, root_slot: Slot) {
+    pub(crate) fn maybe_prune(&mut self, root_bank: Arc<Bank>) {
+        let root_slot = root_bank.slot();
         if self.last_pruned_slot >= root_slot {
             return;
         }
@@ -623,7 +621,7 @@ impl ConsensusPool {
         self.generated_cert_types.prune(root_slot);
         self.vote_pools = self.vote_pools.split_off(&(root_slot, VoteType::Finalize));
         self.slot_stake_counters_map = self.slot_stake_counters_map.split_off(&root_slot);
-        self.parent_ready_tracker.set_root(root_slot);
+        self.parent_ready_tracker.set_root(root_bank);
         self.last_pruned_slot = root_slot;
     }
 
@@ -731,7 +729,7 @@ mod tests {
                 validators: validator_keypairs,
                 pool: ConsensusPool::new_from_root_bank(
                     cluster_info,
-                    &root_bank,
+                    root_bank.clone(),
                     generated_cert_types.clone(),
                 ),
                 bank_forks,
@@ -1768,12 +1766,12 @@ mod tests {
         assert!(ctx.pool.is_finalized(2));
 
         let new_bank = Arc::new(create_bank(2, root_bank, SlotLeader::new_unique()));
-        ctx.pool.maybe_prune(new_bank.slot());
+        ctx.pool.maybe_prune(new_bank.clone());
         // Check that cert for 1 is gone, but cert for 2 is still there
         assert!(!ctx.pool.skip_certified(1));
         assert!(ctx.pool.is_finalized(2));
         let new_bank = Arc::new(create_bank(3, new_bank, SlotLeader::new_unique()));
-        ctx.pool.maybe_prune(new_bank.slot());
+        ctx.pool.maybe_prune(new_bank.clone());
         // Now both certs should be gone
         assert!(!ctx.pool.skip_certified(1));
         assert!(!ctx.pool.is_finalized(2));
@@ -1948,66 +1946,66 @@ mod tests {
         let mut ctx = TestContext::new();
         let bank = ctx.bank_forks.read().unwrap().root_bank();
         let mut events = vec![];
+        let parent_ready = |events: &[VotorEvent]| {
+            events.iter().find_map(|event| match event {
+                VotorEvent::ParentReady { slot, parent_block } => Some((*slot, *parent_block)),
+                _ => None,
+            })
+        };
 
-        // Add a notarization cert on slot 1 to 3
         let hash = Hash::new_unique();
-        for slot in 1..=3 {
-            let cert = Certificate {
-                cert_type: CertificateType::Notarize(slot, hash),
-                signature: BLSSignature::default(),
-                bitmap: dummy_bitmap(),
-            };
-            ctx.pool
-                .add_message(
-                    &bank,
-                    &Pubkey::new_unique(),
-                    ConsensusMessage::Certificate(cert),
-                    &mut events,
-                )
-                .unwrap();
-        }
-        // events should now contain ParentReady for slot 4
-        error!("Events: {events:?}");
-        assert!(
-            events
-                .iter()
-                .any(|event| matches!(event, VotorEvent::ParentReady {
-                slot: 4,
-                parent_block: (3, h)
-            } if h == &hash))
+        let (first_regular_window_start, first_parent_block) = (1..)
+            .find_map(|slot| {
+                let cert = Certificate {
+                    cert_type: CertificateType::Notarize(slot, hash),
+                    signature: BLSSignature::default(),
+                    bitmap: dummy_bitmap(),
+                };
+                ctx.pool
+                    .add_message(
+                        &bank,
+                        &Pubkey::new_unique(),
+                        ConsensusMessage::Certificate(cert),
+                        &mut events,
+                    )
+                    .unwrap();
+                parent_ready(&events)
+            })
+            .expect("notarize certificates should eventually make the next window parent ready");
+        assert_eq!(
+            first_parent_block,
+            (first_regular_window_start.saturating_sub(1), hash)
         );
         events.clear();
 
-        // Also works if we add FinalizeFast for slot 4 to 7
-        for slot in 4..=7 {
-            let cert = Certificate {
-                cert_type: CertificateType::FinalizeFast(slot, hash),
-                signature: BLSSignature::default(),
-                bitmap: dummy_bitmap(),
-            };
-            ctx.pool
-                .add_message(
-                    &bank,
-                    &Pubkey::new_unique(),
-                    ConsensusMessage::Certificate(cert),
-                    &mut events,
-                )
-                .unwrap();
-        }
-        // events should now contain ParentReady for slot 8
-        error!("Events: {events:?}");
-        assert!(
-            events
-                .iter()
-                .any(|event| matches!(event, VotorEvent::ParentReady {
-                slot: 8,
-                parent_block: (7, h)
-            } if h == &hash))
+        let (second_regular_window_start, second_parent_block) = (first_regular_window_start..)
+            .find_map(|slot| {
+                let cert = Certificate {
+                    cert_type: CertificateType::FinalizeFast(slot, hash),
+                    signature: BLSSignature::default(),
+                    bitmap: dummy_bitmap(),
+                };
+                ctx.pool
+                    .add_message(
+                        &bank,
+                        &Pubkey::new_unique(),
+                        ConsensusMessage::Certificate(cert),
+                        &mut events,
+                    )
+                    .unwrap();
+                parent_ready(&events)
+            })
+            .expect("FinalizeFast certificates should advance parent-ready to the next window");
+        assert_eq!(
+            second_parent_block,
+            (second_regular_window_start.saturating_sub(1), hash)
         );
+        let leader_window_size = second_regular_window_start - first_regular_window_start;
+        assert!(leader_window_size > 0);
         events.clear();
 
-        // NotarizeFallback on slot 8 to 10 and FinalizeFast on slot 11
-        for slot in 8..=10 {
+        let third_regular_window_start = second_regular_window_start + leader_window_size;
+        for slot in second_regular_window_start..third_regular_window_start.saturating_sub(1) {
             let cert = Certificate {
                 cert_type: CertificateType::NotarizeFallback(slot, hash),
                 signature: BLSSignature::default(),
@@ -2016,7 +2014,10 @@ mod tests {
             ctx.add_message(ConsensusMessage::Certificate(cert));
         }
         let cert = Certificate {
-            cert_type: CertificateType::FinalizeFast(11, hash),
+            cert_type: CertificateType::FinalizeFast(
+                third_regular_window_start.saturating_sub(1),
+                hash,
+            ),
             signature: BLSSignature::default(),
             bitmap: dummy_bitmap(),
         };
@@ -2028,16 +2029,13 @@ mod tests {
                 &mut events,
             )
             .unwrap();
-        // events should now contain ParentReady for slot 12
-
-        error!("Events: {events:?}");
         assert!(
-            events
-                .iter()
-                .any(|event| matches!(event, VotorEvent::ParentReady {
-            slot: 12,
-            parent_block: (11, h)
-        } if h == &hash))
+            parent_ready(&events)
+                == Some((
+                    third_regular_window_start,
+                    (third_regular_window_start.saturating_sub(1), hash),
+                )),
+            "unexpected events: {events:?}"
         );
     }
 

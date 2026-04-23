@@ -334,8 +334,7 @@ impl Bank {
         let epoch_rewards_sysvar = self.get_epoch_rewards_sysvar();
         // If partitioned epoch rewards are active and this Bank is the
         // epoch-boundary block, populate num_partitions
-        let epoch_schedule = self.epoch_schedule();
-        let parent_epoch = epoch_schedule.get_epoch(self.parent_slot());
+        let parent_epoch = self.get_epoch(self.parent_slot());
         let is_first_block_in_epoch = self.epoch() > parent_epoch;
 
         let num_partitions = (epoch_rewards_sysvar.active && is_first_block_in_epoch)
@@ -395,7 +394,8 @@ impl Bank {
             // Limit the reward credit interval to 10% of the total number of slots in a epoch
             num_chunks.clamp(
                 1,
-                (self.epoch_schedule.slots_per_epoch / MAX_FACTOR_OF_REWARD_BLOCKS_IN_EPOCH).max(1),
+                (self.get_slots_in_epoch(self.epoch()) / MAX_FACTOR_OF_REWARD_BLOCKS_IN_EPOCH)
+                    .max(1),
             )
         }
     }
@@ -537,6 +537,44 @@ mod tests {
 
     pub(super) const SLOTS_PER_EPOCH: u64 = 32;
 
+    /// Express where a reward-bank test wants to land without assuming epochs
+    /// always contain the legacy fixed 32 slots.
+    ///
+    /// Slot-timing transitions can change the actual epoch length, so callers
+    /// describe the intended epoch and offset directly and let the bank map that
+    /// intent to a concrete slot.
+    #[derive(Debug, PartialEq, Eq, Copy, Clone)]
+    pub(super) enum RewardBankAdvance {
+        CurrentEpoch { slots_before_epoch_boundary: u64 },
+        NextEpoch { slot_offset: u64 },
+    }
+
+    impl RewardBankAdvance {
+        fn target_slot(self, bank: &Bank) -> u64 {
+            match self {
+                Self::CurrentEpoch {
+                    slots_before_epoch_boundary,
+                } => {
+                    assert!(
+                        slots_before_epoch_boundary > 0,
+                        "slots_before_epoch_boundary must be non-zero",
+                    );
+                    bank.get_first_slot_in_epoch(bank.epoch().saturating_add(1))
+                        .saturating_sub(slots_before_epoch_boundary)
+                }
+                Self::NextEpoch { slot_offset } => {
+                    let target_epoch = bank.epoch().saturating_add(1);
+                    assert!(
+                        slot_offset < bank.get_slots_in_epoch(target_epoch),
+                        "slot_offset {slot_offset} must fit within epoch {target_epoch}",
+                    );
+                    bank.get_first_slot_in_epoch(target_epoch)
+                        .saturating_add(slot_offset)
+                }
+            }
+        }
+    }
+
     pub(super) struct RewardBank {
         pub(super) bank: Arc<Bank>,
         pub(super) voters: Vec<Pubkey>,
@@ -546,31 +584,31 @@ mod tests {
     /// Helper functions to create a bank that pays some rewards
     pub(super) fn create_default_reward_bank(
         expected_num_delegations: usize,
-        advance_num_slots: u64,
+        advance: RewardBankAdvance,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
         create_reward_bank(
             expected_num_delegations,
             PartitionedEpochRewardsConfig::default().stake_account_stores_per_block,
-            advance_num_slots,
+            advance,
         )
     }
 
     pub(super) fn create_reward_bank(
         expected_num_delegations: usize,
         stake_account_stores_per_block: u64,
-        advance_num_slots: u64,
+        advance: RewardBankAdvance,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
         create_reward_bank_with_specific_stakes(
             vec![2_000_000_000; expected_num_delegations],
             stake_account_stores_per_block,
-            advance_num_slots,
+            advance,
         )
     }
 
     pub(super) fn create_reward_bank_with_specific_stakes(
         stakes: Vec<u64>,
         stake_account_stores_per_block: u64,
-        advance_num_slots: u64,
+        advance: RewardBankAdvance,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
         let validator_keypairs = (0..stakes.len())
             .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -608,12 +646,13 @@ mod tests {
 
         // Advance some num slots; usually to the next epoch boundary to update
         // EpochStakes
+        let advance_slot = advance.target_slot(&bank);
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
             SlotLeader::default(),
-            advance_num_slots,
+            advance_slot,
         );
 
         (
@@ -813,17 +852,23 @@ mod tests {
     fn test_rewards_computation_and_partitioned_distribution_one_block() {
         agave_logger::setup();
 
-        let starting_slot = SLOTS_PER_EPOCH - 1;
         let (
             RewardBank {
                 bank: mut previous_bank,
                 ..
             },
             bank_forks,
-        ) = create_default_reward_bank(100, starting_slot - 1);
+        ) = create_default_reward_bank(
+            100,
+            RewardBankAdvance::CurrentEpoch {
+                slots_before_epoch_boundary: 2,
+            },
+        );
+        let slots_per_epoch = previous_bank.get_slots_in_epoch(previous_bank.epoch());
+        let starting_slot = previous_bank.slot() + 1;
 
         // simulate block progress
-        for slot in starting_slot..=(2 * SLOTS_PER_EPOCH) + 2 {
+        for slot in starting_slot..=(2 * slots_per_epoch) + 2 {
             let pre_cap = previous_bank.capitalization();
             let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
@@ -833,7 +878,7 @@ mod tests {
             );
             let post_cap = curr_bank.capitalization();
 
-            if slot % SLOTS_PER_EPOCH == 0 {
+            if slot % slots_per_epoch == 0 {
                 // This is the first block of the epoch. Reward computation should happen in this block.
                 // assert reward compute status activated at epoch boundary
                 assert_matches!(
@@ -855,7 +900,7 @@ mod tests {
                 // This will clear the cache.
                 let _ = bank_forks.write().unwrap().set_root(slot, None, None);
                 assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 0);
-            } else if slot == SLOTS_PER_EPOCH + 1 {
+            } else if slot == slots_per_epoch + 1 {
                 // 1. when curr_slot == SLOTS_PER_EPOCH + 1, the 2nd block of
                 // epoch 1, reward distribution should happen in this block.
                 // however, all stake rewards are paid at this block therefore
@@ -886,7 +931,7 @@ mod tests {
             }
             // EpochRewards sysvar is created in the first block of epoch 1.
             // Ensure the sysvar persists thereafter.
-            if slot >= SLOTS_PER_EPOCH {
+            if slot >= slots_per_epoch {
                 let epoch_rewards_lamports =
                     curr_bank.get_balance(&solana_sysvar::epoch_rewards::id());
                 assert!(epoch_rewards_lamports > 0);
@@ -901,19 +946,26 @@ mod tests {
     fn test_rewards_computation_and_partitioned_distribution_multi_blocks() {
         agave_logger::setup();
 
-        let starting_slot = SLOTS_PER_EPOCH - 1;
         let (
             RewardBank {
                 bank: mut previous_bank,
                 ..
             },
             bank_forks,
-        ) = create_reward_bank(100, 50, starting_slot - 1);
+        ) = create_reward_bank(
+            100,
+            50,
+            RewardBankAdvance::CurrentEpoch {
+                slots_before_epoch_boundary: 2,
+            },
+        );
+        let slots_per_epoch = previous_bank.get_slots_in_epoch(previous_bank.epoch());
+        let starting_slot = previous_bank.slot() + 1;
         let mut starting_hash = None;
         let mut reward_distribution_completion_slot = None;
 
         // simulate block progress
-        for slot in starting_slot..=SLOTS_PER_EPOCH.saturating_mul(2) {
+        for slot in starting_slot..=slots_per_epoch.saturating_mul(2) {
             let pre_cap = previous_bank.capitalization();
 
             let pre_sysvar_account = previous_bank
@@ -930,14 +982,14 @@ mod tests {
             );
             let post_cap = curr_bank.capitalization();
 
-            if slot < SLOTS_PER_EPOCH {
+            if slot < slots_per_epoch {
                 // Verify we haven't hit the rewards interval yet.
                 assert_matches!(
                     curr_bank.get_reward_interval(),
                     RewardInterval::OutsideInterval
                 );
                 assert_eq!(post_cap, pre_cap);
-            } else if slot == SLOTS_PER_EPOCH {
+            } else if slot == slots_per_epoch {
                 // This is the first block of epoch 1. Reward computation should happen in this block.
                 // assert reward compute status activated at epoch boundary
                 assert_matches!(
@@ -965,7 +1017,7 @@ mod tests {
                 let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
                     solana_account::from_account(&account).unwrap();
                 reward_distribution_completion_slot =
-                    Some(SLOTS_PER_EPOCH + epoch_rewards.num_partitions);
+                    Some(slots_per_epoch + epoch_rewards.num_partitions);
             } else if slot
                 < reward_distribution_completion_slot
                     .expect("epoch boundary must set completion slot")
@@ -987,7 +1039,7 @@ mod tests {
                     pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
                 );
 
-                if slot == SLOTS_PER_EPOCH + 1 {
+                if slot == slots_per_epoch + 1 {
                     // The first block of the epoch has not rooted yet, so the
                     // cache should still have the results.
                     assert!(
@@ -1074,10 +1126,10 @@ mod tests {
         genesis_config
             .accounts
             .extend(vec![(new_stake_address, new_stake_account)]);
+        genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
 
         let (mut previous_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let num_slots_in_epoch = previous_bank.get_slots_in_epoch(previous_bank.epoch());
-        assert_eq!(num_slots_in_epoch, 32);
 
         let transfer_amount = 5_000;
 
@@ -1090,7 +1142,7 @@ mod tests {
             );
 
             // Fill bank_forks with banks with votes landing in the next slot
-            // So that rewards will be paid out at the epoch boundary, i.e. slot = 32
+            // So that rewards will be paid out at the epoch boundary.
             let tower_sync = TowerSync::new_from_slot(slot - 1, previous_bank.hash());
             let vote = vote_transaction::new_tower_sync_transaction(
                 tower_sync,
@@ -1124,11 +1176,16 @@ mod tests {
 
     #[test]
     fn test_get_rewards_and_partitions() {
-        let starting_slot = SLOTS_PER_EPOCH - 1;
         let num_rewards = 100;
         let stake_account_stores_per_block = 50;
-        let (RewardBank { bank, .. }, bank_forks) =
-            create_reward_bank(num_rewards, stake_account_stores_per_block, starting_slot);
+        let (RewardBank { bank, .. }, bank_forks) = create_reward_bank(
+            num_rewards,
+            stake_account_stores_per_block,
+            RewardBankAdvance::CurrentEpoch {
+                slots_before_epoch_boundary: 1,
+            },
+        );
+        let epoch_boundary_slot = bank.get_first_slot_in_epoch(bank.epoch() + 1);
 
         // Slot before the epoch boundary contains empty rewards (since fees are
         // off), and no partitions because not at the epoch boundary
@@ -1144,7 +1201,7 @@ mod tests {
             bank_forks.as_ref(),
             bank,
             SlotLeader::default(),
-            SLOTS_PER_EPOCH,
+            epoch_boundary_slot,
         );
         // Slot at the epoch boundary contains voting rewards only, as well as partition data
         let KeyedRewardsAndNumPartitions {
@@ -1155,9 +1212,10 @@ mod tests {
             assert_eq!(reward.reward_type, RewardType::Voting);
         }
         assert_eq!(keyed_rewards.len(), num_rewards);
+        let slots_per_epoch = epoch_boundary_bank.get_slots_in_epoch(epoch_boundary_bank.epoch());
         let expected_num_partitions = (num_rewards as u64)
             .div_ceil(epoch_boundary_bank.partitioned_rewards_stake_account_stores_per_block())
-            .clamp(1, (SLOTS_PER_EPOCH / 10).max(1));
+            .clamp(1, (slots_per_epoch / 10).max(1));
         assert_eq!(num_partitions, Some(expected_num_partitions));
 
         let mut total_staking_rewards = 0;
@@ -1166,7 +1224,7 @@ mod tests {
             let partition_bank = Arc::new(Bank::new_from_parent(
                 previous_bank,
                 SlotLeader::default(),
-                SLOTS_PER_EPOCH + partition_index + 1,
+                epoch_boundary_slot + partition_index + 1,
             ));
             // Slot after the epoch boundary contains partitioned staking
             // rewards, and no partition metadata because it's not an epoch
@@ -1188,7 +1246,7 @@ mod tests {
         let bank = Bank::new_from_parent(
             previous_bank,
             SlotLeader::default(),
-            SLOTS_PER_EPOCH + expected_num_partitions + 1,
+            epoch_boundary_slot + expected_num_partitions + 1,
         );
         // Next slot contains empty rewards (since fees are off), and no
         // partitions because not at the epoch boundary

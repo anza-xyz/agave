@@ -150,7 +150,7 @@ impl BankForks {
     /// determine which phase of the migration we are in and initialize accordingly.
     fn initialize_migration_status(root_bank: &Bank) -> MigrationStatus {
         let epoch_schedule = root_bank.epoch_schedule();
-        let root_epoch = epoch_schedule.get_epoch(root_bank.slot());
+        let root_epoch = root_bank.epoch();
         let ff_activation_slot = root_bank
             .feature_set
             .activated_slot(&agave_feature_set::alpenglow::id());

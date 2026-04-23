@@ -338,7 +338,7 @@ mod tests {
         );
 
         let mut bank0 = Bank::new_for_tests(&genesis.genesis_config);
-        let base_slot_epoch = bank0.epoch_schedule().get_epoch(base_slot);
+        let base_slot_epoch = bank0.get_epoch(base_slot);
         bank0.set_epoch_stakes_for_test(base_slot_epoch, bank0.epoch_stakes(0).unwrap().clone());
         let bank_forks = BankForks::new_rw_arc(bank0);
 

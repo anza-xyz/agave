@@ -1389,8 +1389,7 @@ impl ProgramTestContext {
 
     pub fn warp_to_epoch(&mut self, warp_epoch: Epoch) -> Result<(), ProgramTestError> {
         let warp_slot = self
-            .genesis_config
-            .epoch_schedule
+            .get_epoch_schedule()
             .get_first_slot_in_epoch(warp_epoch);
         self.warp_to_slot(warp_slot)
     }
@@ -1449,5 +1448,14 @@ impl ProgramTestContext {
             .unwrap()
             .working_bank()
             .register_hard_fork(hard_fork_slot)
+    }
+
+    pub fn get_epoch_schedule(&self) -> EpochSchedule {
+        self.bank_forks
+            .read()
+            .unwrap()
+            .working_bank()
+            .epoch_schedule()
+            .clone()
     }
 }

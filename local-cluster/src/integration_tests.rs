@@ -16,11 +16,12 @@ use {
         local_cluster::{ClusterConfig, LocalCluster},
         validator_configs::*,
     },
+    agave_feature_set::FeatureSet,
     agave_snapshots::{SnapshotInterval, snapshot_config::SnapshotConfig},
     log::*,
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
-    solana_clock::{self as clock, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT, Slot},
+    solana_clock::{DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE, Slot},
     solana_core::{
         consensus::{SWITCH_FORK_THRESHOLD, Tower, tower_storage::FileTowerStorage},
         snapshot_packager_service::SnapshotPackagerService,
@@ -40,6 +41,7 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
+    solana_runtime::slot_timing,
     solana_signer::Signer,
     solana_turbine::broadcast_stage::BroadcastStageType,
     static_assertions,
@@ -163,23 +165,68 @@ pub fn purge_slots_with_count(blockstore: &Blockstore, start_slot: Slot, slot_co
         .expect("Purge must succeed");
 }
 
-// Fetches the last vote in the tower, blocking until it has also appeared in blockstore.
-// Fails if tower is empty
+fn wait_for_last_vote_in_tower_to_land(
+    tower_path: &Path,
+    node_pubkey: &Pubkey,
+    mut vote_has_landed: impl FnMut(Slot) -> bool,
+    blockstore_name: impl Fn() -> String,
+) -> Option<Slot> {
+    let loop_start = std::time::Instant::now();
+    let loop_timeout = Duration::from_secs(60);
+    loop {
+        let (last_vote, _) = last_vote_in_tower(tower_path, node_pubkey)?;
+        if vote_has_landed(last_vote) {
+            return Some(last_vote);
+        }
+
+        assert!(
+            loop_start.elapsed() < loop_timeout,
+            "Timed out waiting for vote {last_vote} from {node_pubkey} to land in {}",
+            blockstore_name(),
+        );
+        sleep(Duration::from_millis(100));
+    }
+}
+
+// Fetches the last vote in the tower, blocking until it has appeared in blockstore and the slot
+// has frozen far enough to have a bank hash.
+// Fails if tower is empty.
+//
+// This variant reopens blockstore snapshots so it can observe new writes from a live validator
+// when the caller only has a ledger path.
 pub fn wait_for_last_vote_in_tower_to_land_in_ledger(
     ledger_path: &Path,
     node_pubkey: &Pubkey,
 ) -> Option<Slot> {
-    last_vote_in_tower(ledger_path, node_pubkey).map(|(last_vote, _)| {
-        loop {
-            // We reopen in a loop to make sure we get updates
+    wait_for_last_vote_in_tower_to_land(
+        ledger_path,
+        node_pubkey,
+        |last_vote| {
+            // Reopen in a loop so we can observe new writes from the live validator.
             let blockstore = open_blockstore(ledger_path);
-            if blockstore.is_full(last_vote) {
-                break;
-            }
-            sleep(Duration::from_millis(100));
-        }
-        last_vote
-    })
+            blockstore.is_full(last_vote) && blockstore.get_bank_hash(last_vote).is_some()
+        },
+        || format!("{ledger_path:?}"),
+    )
+}
+
+// Fetches the last vote in the tower, blocking until it has appeared in the provided blockstore
+// and the slot has frozen far enough to have a bank hash.
+// Fails if tower is empty.
+//
+// Use this when the caller already has access to the validator's live primary blockstore handle so
+// test code does not need to repeatedly reopen read-only snapshots.
+pub fn wait_for_last_vote_in_tower_to_land_in_blockstore(
+    tower_path: &Path,
+    node_pubkey: &Pubkey,
+    blockstore: &Blockstore,
+) -> Option<Slot> {
+    wait_for_last_vote_in_tower_to_land(
+        tower_path,
+        node_pubkey,
+        |last_vote| blockstore.is_full(last_vote) && blockstore.get_bank_hash(last_vote).is_some(),
+        || format!("{:?}", blockstore.ledger_path()),
+    )
 }
 
 /// Waits roughly 10 seconds for duplicate proof to appear in blockstore at `dup_slot`. Returns proof if found.
@@ -219,6 +266,14 @@ pub fn copy_blocks(end_slot: Slot, source: &Blockstore, dest: &Blockstore, is_tr
 /// each slot contains `ticks_per_slot`
 pub fn ms_for_n_slots(num_blocks: u64, ticks_per_slot: u64) -> u64 {
     (ticks_per_slot * DEFAULT_MS_PER_SLOT * num_blocks).div_ceil(DEFAULT_TICKS_PER_SLOT)
+}
+
+/// Return the blockhash processing age after the active slot-timing changes are applied.
+pub fn effective_max_processing_age() -> usize {
+    let slot_timing_config = slot_timing::slot_timing_config(&FeatureSet::all_enabled());
+    MAX_PROCESSING_AGE
+        .saturating_mul(slot_timing_config.slot_time_denominator as usize)
+        .div_ceil(slot_timing_config.slot_time_numerator as usize)
 }
 
 // Test runner that performs the following steps:
@@ -353,6 +408,7 @@ pub fn run_cluster_partition<C>(
     let mint_lamports = crate::local_cluster::DEFAULT_MINT_LAMPORTS
         + node_stakes.iter().sum::<u64>().saturating_mul(2);
     let turbine_disabled = Arc::new(AtomicBool::new(false));
+    let ticks_per_slot = ticks_per_slot.unwrap_or(DEFAULT_TICKS_PER_SLOT);
     let wait_for_supermajority = if no_wait_for_vote_to_start_leader {
         // This helps nodes get a little more in sync by waiting for
         // supermajority to observe slot 0. It still doesn't provide perfect
@@ -384,7 +440,7 @@ pub fn run_cluster_partition<C>(
             (
                 validator_keys,
                 // partition for the duration of one full iteration of the  leader schedule
-                Duration::from_millis(num_slots_per_rotation * clock::DEFAULT_MS_PER_SLOT),
+                Duration::from_millis(ms_for_n_slots(num_slots_per_rotation, ticks_per_slot)),
             )
         } else {
             (
@@ -418,7 +474,7 @@ pub fn run_cluster_partition<C>(
         stakers_slot_offset: slots_per_epoch,
         skip_warmup_slots: true,
         additional_accounts,
-        ticks_per_slot: ticks_per_slot.unwrap_or(DEFAULT_TICKS_PER_SLOT),
+        ticks_per_slot,
         tpu_connection_pool_size: 2,
         ..ClusterConfig::default()
     };
@@ -446,13 +502,17 @@ pub fn run_cluster_partition<C>(
         SocketAddrSpace::Unspecified,
     )
     .unwrap();
+    let slot_timing_config = slot_timing::slot_timing_config(&FeatureSet::all_enabled());
+    let expected_slots_in_epoch = slots_per_epoch
+        .saturating_mul(slot_timing_config.slots_per_epoch_numerator)
+        / slot_timing_config.slots_per_epoch_denominator;
 
     // Check each node reports epochs that have correct number of slots
     info!("PARTITION_TEST sleeping until partition starting condition",);
     for node in &cluster_nodes {
         let node_client = RpcClient::new_socket(node.rpc().unwrap());
         let epoch_info = node_client.get_epoch_info().unwrap();
-        assert_eq!(epoch_info.slots_in_epoch, slots_per_epoch);
+        assert_eq!(epoch_info.slots_in_epoch, expected_slots_in_epoch);
     }
 
     info!("PARTITION_TEST start partition");

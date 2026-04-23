@@ -129,12 +129,8 @@ pub const MAX_CODE_SHREDS_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT;
 // be split out into separate data/coding functions.
 const_assert_eq!(MAX_DATA_SHREDS_PER_SLOT, MAX_CODE_SHREDS_PER_SLOT);
 
-pub const fn max_shred_index(halve_slot_times_active: bool) -> u32 {
-    if halve_slot_times_active {
-        (MAX_DATA_SHREDS_PER_SLOT as u32) / 2
-    } else {
-        MAX_DATA_SHREDS_PER_SLOT as u32
-    }
+pub const fn max_shred_index(slot_time_numerator: u64, slot_time_denominator: u64) -> u32 {
+    ((MAX_DATA_SHREDS_PER_SLOT as u64) * slot_time_numerator / slot_time_denominator) as u32
 }
 
 pub const MAX_FEC_SETS_PER_SLOT: u32 =

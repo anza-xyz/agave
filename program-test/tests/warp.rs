@@ -10,6 +10,7 @@ use {
     solana_account_info::{AccountInfo, next_account_info},
     solana_banks_client::BanksClient,
     solana_clock::Clock,
+    solana_epoch_schedule::EpochSchedule,
     solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_keypair::Keypair,
     solana_program_error::{ProgramError, ProgramResult},
@@ -33,6 +34,14 @@ use {
 
 // Use a big number to be sure that we get the right error
 const WRONG_SLOT_ERROR: u32 = 123456;
+
+async fn get_clock_and_epoch_schedule(
+    context: &mut solana_program_test::ProgramTestContext,
+) -> (Clock, EpochSchedule) {
+    let clock = context.banks_client.get_sysvar::<Clock>().await.unwrap();
+    let epoch_schedule = context.get_epoch_schedule();
+    (clock, epoch_schedule)
+}
 
 fn process_instruction(
     _program_id: &Pubkey,
@@ -154,8 +163,10 @@ async fn stake_rewards_from_warp() {
     assert_eq!(account.lamports, stake_lamports);
 
     // warp one epoch forward for normal inflation, no rewards collected
-    let first_normal_slot = context.genesis_config().epoch_schedule.first_normal_slot;
-    context.warp_to_slot(first_normal_slot).unwrap();
+    let (clock, epoch_schedule) = get_clock_and_epoch_schedule(&mut context).await;
+    context
+        .warp_to_slot(epoch_schedule.get_first_slot_in_epoch(clock.epoch + 1))
+        .unwrap();
     let account = context
         .banks_client
         .get_account(stake_address)
@@ -167,9 +178,11 @@ async fn stake_rewards_from_warp() {
     context.increment_vote_account_credits(&vote_address, 100);
 
     // go forward and see that rewards have been distributed
-    let slots_per_epoch = context.genesis_config().epoch_schedule.slots_per_epoch;
+    let (clock, epoch_schedule) = get_clock_and_epoch_schedule(&mut context).await;
     context
-        .warp_to_slot(first_normal_slot + slots_per_epoch + 1) // when partitioned rewards are enabled, the rewards are paid at 1 slot after the first slot of the epoch
+        // When partitioned rewards are enabled, the rewards are paid one slot after
+        // the start of the next epoch.
+        .warp_to_slot(epoch_schedule.get_first_slot_in_epoch(clock.epoch + 1) + 1)
         .unwrap();
 
     let account = context
@@ -269,8 +282,10 @@ async fn stake_rewards_filter_bench_core(num_stake_accounts: u64) {
     assert_eq!(account.lamports, stake_lamports);
 
     // warp one epoch forward for normal inflation, no rewards collected
-    let first_normal_slot = context.genesis_config().epoch_schedule.first_normal_slot;
-    context.warp_to_slot(first_normal_slot).unwrap();
+    let (clock, epoch_schedule) = get_clock_and_epoch_schedule(&mut context).await;
+    context
+        .warp_to_slot(epoch_schedule.get_first_slot_in_epoch(clock.epoch + 1))
+        .unwrap();
     let account = context
         .banks_client
         .get_account(stake_address)
@@ -282,9 +297,11 @@ async fn stake_rewards_filter_bench_core(num_stake_accounts: u64) {
     context.increment_vote_account_credits(&vote_address, 100);
 
     // go forward and see that rewards have been distributed
-    let slots_per_epoch = context.genesis_config().epoch_schedule.slots_per_epoch;
+    let (clock, epoch_schedule) = get_clock_and_epoch_schedule(&mut context).await;
     context
-        .warp_to_slot(first_normal_slot + slots_per_epoch + 1) // when partitioned rewards are enabled, the rewards are paid at 1 slot after the first slot of the epoch
+        // When partitioned rewards are enabled, the rewards are paid one slot after
+        // the start of the next epoch.
+        .warp_to_slot(epoch_schedule.get_first_slot_in_epoch(clock.epoch + 1) + 1)
         .unwrap();
 
     let account = context
@@ -358,10 +375,10 @@ async fn stake_merge_immediately_after_activation() {
     let vote_address = setup_vote(&mut context).await;
     context.increment_vote_account_credits(&vote_address, 100);
 
-    let first_normal_slot = context.genesis_config().epoch_schedule.first_normal_slot;
-    let slots_per_epoch = context.genesis_config().epoch_schedule.slots_per_epoch;
-    let mut current_slot = first_normal_slot + slots_per_epoch;
-    context.warp_to_slot(current_slot).unwrap();
+    let (clock, epoch_schedule) = get_clock_and_epoch_schedule(&mut context).await;
+    context
+        .warp_to_slot(epoch_schedule.get_first_slot_in_epoch(clock.epoch + 1))
+        .unwrap();
     context.warp_forward_force_reward_interval_end().unwrap();
 
     // this is annoying, but if no stake has earned rewards, the bank won't
@@ -384,7 +401,6 @@ async fn stake_merge_immediately_after_activation() {
         .unwrap();
     let clock: Clock = deserialize(&clock_account.data).unwrap();
     context.warp_to_epoch(clock.epoch + 1).unwrap();
-    current_slot += slots_per_epoch;
     context.warp_forward_force_reward_interval_end().unwrap();
 
     // make another stake which will just have its credits observed advanced
@@ -396,8 +412,8 @@ async fn stake_merge_immediately_after_activation() {
     check_credits_observed(&mut context.banks_client, base_stake_address, 100).await;
 
     context.increment_vote_account_credits(&vote_address, 100);
-    current_slot += slots_per_epoch;
-    context.warp_to_slot(current_slot).unwrap();
+    let (clock, _) = get_clock_and_epoch_schedule(&mut context).await;
+    context.warp_to_epoch(clock.epoch + 1).unwrap();
     context.warp_forward_force_reward_interval_end().unwrap();
 
     // check that base stake has earned rewards and credits moved forward

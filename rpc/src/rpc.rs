@@ -978,8 +978,7 @@ impl JsonRpcRequestProcessor {
     ) -> Result<Vec<Pubkey>> {
         let bank = self.bank(commitment);
 
-        let (mut epoch, mut slot_index) =
-            bank.epoch_schedule().get_epoch_and_slot_index(start_slot);
+        let (mut epoch, mut slot_index) = bank.get_epoch_and_slot_index(start_slot);
 
         let mut slot_leaders = Vec::with_capacity(limit);
         while slot_leaders.len() < limit {
@@ -2956,7 +2955,7 @@ pub mod rpc_minimal {
 
             let bank = meta.bank(config.commitment);
             let slot = slot.unwrap_or_else(|| bank.slot());
-            let epoch = bank.epoch_schedule().get_epoch(slot);
+            let epoch = bank.get_epoch(slot);
 
             debug!("get_leader_schedule rpc request received: {slot:?}");
 
@@ -3115,10 +3114,7 @@ pub mod rpc_bank {
 
             let bank = meta.bank(config.commitment);
             let (first_slot, last_slot) = match config.range {
-                None => (
-                    bank.epoch_schedule().get_first_slot_in_epoch(bank.epoch()),
-                    bank.slot(),
-                ),
+                None => (bank.get_first_slot_in_epoch(bank.epoch()), bank.slot()),
                 Some(range) => {
                     let first_slot = range.first_slot;
                     let last_slot = range.last_slot.unwrap_or_else(|| bank.slot());
@@ -5480,6 +5476,8 @@ pub mod tests {
     #[test]
     fn test_rpc_get_leader_schedule() {
         let rpc = RpcHandler::start();
+        let bank = rpc.working_bank();
+        let slots_in_epoch = bank.get_slots_in_epoch(bank.epoch()) as usize;
 
         for params in [
             None,
@@ -5492,7 +5490,7 @@ pub mod tests {
                 parse_success_result(rpc.handle_request_sync(request));
             let expected = Some(HashMap::from_iter(std::iter::once((
                 rpc.leader_pubkey().to_string(),
-                Vec::from_iter(0..TEST_SLOTS_PER_EPOCH as usize),
+                Vec::from_iter(0..slots_in_epoch),
             ))));
             assert_eq!(result, expected);
         }
@@ -5520,7 +5518,7 @@ pub mod tests {
 
         // Test that slot leaders will be returned across epochs
         let query_start = 0;
-        let query_limit = 2 * bank.epoch_schedule().slots_per_epoch;
+        let query_limit = 2 * bank.get_slots_in_epoch(bank.epoch());
 
         let request =
             create_test_request("getSlotLeaders", Some(json!([query_start, query_limit])));
@@ -5541,7 +5539,7 @@ pub mod tests {
         assert_eq!(response, expected);
 
         // Test that invalid epoch returns an error
-        let query_start = 2 * bank.epoch_schedule().slots_per_epoch;
+        let query_start = 2 * bank.get_slots_in_epoch(bank.epoch());
         let query_limit = 10;
 
         let request =
@@ -7729,7 +7727,7 @@ pub mod tests {
             }
         }
 
-        let mut advance_bank = || {
+        let advance_bank = |bank: &mut Arc<Bank>| {
             bank.freeze();
 
             // Votes
@@ -7746,7 +7744,7 @@ pub mod tests {
                 ),
             ];
 
-            bank = rpc.advance_bank_to_confirmed_slot(bank.slot() + 1);
+            *bank = rpc.advance_bank_to_confirmed_slot(bank.slot() + 1);
 
             let transaction = Transaction::new_signed_with_payer(
                 &instructions,
@@ -7760,8 +7758,9 @@ pub mod tests {
         };
 
         // Advance bank to the next epoch
-        for _ in 0..TEST_SLOTS_PER_EPOCH {
-            advance_bank();
+        let next_epoch = bank.epoch() + 1;
+        while bank.epoch() < next_epoch {
+            advance_bank(&mut bank);
         }
 
         let req = format!(
@@ -7792,7 +7791,8 @@ pub mod tests {
         let credits_per_slot =
             solana_vote_program::vote_state::VOTE_CREDITS_MAXIMUM_PER_SLOT as u64;
         let expected_credits =
-            (TEST_SLOTS_PER_EPOCH - MAX_LOCKOUT_HISTORY as u64 - 1) * credits_per_slot;
+            (bank.get_slots_in_epoch(bank.epoch()) - MAX_LOCKOUT_HISTORY as u64 - 1)
+                * credits_per_slot;
         assert_eq!(
             leader_info.epoch_credits,
             vec![
@@ -7831,10 +7831,9 @@ pub mod tests {
 
         // Overflow the epoch credits history and ensure only `MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY`
         // results are returned
-        for _ in
-            0..(TEST_SLOTS_PER_EPOCH * (MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY) as u64)
-        {
-            advance_bank();
+        let target_epoch = bank.epoch() + MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY as u64;
+        while bank.epoch() < target_epoch {
+            advance_bank(&mut bank);
         }
 
         let req = format!(
@@ -7858,7 +7857,7 @@ pub mod tests {
         );
 
         // Advance bank with no voting
-        rpc.advance_bank_to_confirmed_slot(bank.slot() + TEST_SLOTS_PER_EPOCH);
+        rpc.advance_bank_to_confirmed_slot(bank.slot() + bank.get_slots_in_epoch(bank.epoch()));
 
         // The leader vote account should now be delinquent, and the other vote account disappears
         // because it's inactive with no stake

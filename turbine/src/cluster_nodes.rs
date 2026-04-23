@@ -575,8 +575,7 @@ impl<T: 'static> ClusterNodesCache<T> {
             };
             (asof.elapsed() < ttl).then(|| entry.clone())
         };
-        let epoch_schedule = root_bank.epoch_schedule();
-        let epoch = epoch_schedule.get_epoch(shred_slot);
+        let epoch = root_bank.get_epoch(shred_slot);
         // Read from the cache with a shared lock.
         let entry = {
             let cache = self.cache.read().unwrap();

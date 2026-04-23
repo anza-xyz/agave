@@ -47,7 +47,7 @@ use {
     solana_measure::measure::Measure,
     solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_runtime::{bank::Bank, slot_timing},
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -366,13 +366,19 @@ pub(crate) fn hashes_per_tick_for_ledger(genesis_config: &GenesisConfig) -> u64 
         return 0;
     };
 
-    if is_feature_active_at_genesis(genesis_config, &feature_set::halve_slot_times::id())
-        && !is_feature_active_at_genesis(genesis_config, &feature_set::alpenglow::id())
-    {
-        hashes_per_tick.saturating_div(2).max(1)
-    } else {
-        hashes_per_tick
+    if is_feature_active_at_genesis(genesis_config, &feature_set::alpenglow::id()) {
+        return hashes_per_tick;
     }
+
+    let mut active_feature_set = feature_set::FeatureSet::default();
+    for feature_id in genesis_config.accounts.keys() {
+        active_feature_set.activate(feature_id, 0);
+    }
+    let slot_timing_config = slot_timing::slot_timing_config(&active_feature_set);
+    hashes_per_tick
+        .saturating_mul(slot_timing_config.slot_time_numerator)
+        .saturating_div(slot_timing_config.slot_time_denominator)
+        .max(1)
 }
 
 pub fn banking_trace_path(path: &Path) -> PathBuf {
@@ -5903,21 +5909,25 @@ pub mod tests {
 
     #[test]
     fn test_hashes_per_tick_for_ledger() {
+        const HASHES_PER_TICK: u64 = 1_400;
         let mut genesis_config = GenesisConfig::default();
         assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 0);
 
-        genesis_config.poh_config.hashes_per_tick = Some(2);
-        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 2);
+        genesis_config.poh_config.hashes_per_tick = Some(HASHES_PER_TICK);
+        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), HASHES_PER_TICK);
 
-        activate_feature(&mut genesis_config, feature_set::halve_slot_times::id());
-        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 1);
+        for (feature_id, slot_timing_config) in slot_timing::SLOT_TIMING_TRANSITIONS {
+            activate_feature(&mut genesis_config, feature_id);
+            assert_eq!(
+                hashes_per_tick_for_ledger(&genesis_config),
+                HASHES_PER_TICK
+                    .saturating_mul(slot_timing_config.slot_time_numerator)
+                    .saturating_div(slot_timing_config.slot_time_denominator),
+            );
+        }
 
-        genesis_config.poh_config.hashes_per_tick = Some(1);
-        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 1);
-
-        genesis_config.poh_config.hashes_per_tick = Some(2);
         activate_feature(&mut genesis_config, feature_set::alpenglow::id());
-        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 2);
+        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), HASHES_PER_TICK);
     }
 
     #[test]

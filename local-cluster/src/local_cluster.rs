@@ -869,13 +869,15 @@ impl LocalCluster {
         alive_node_contact_infos
     }
 
-    pub fn check_min_slot_is_rooted(
-        &self,
-        min_root: Slot,
-        test_name: &str,
-        socket_addr_space: SocketAddrSpace,
-    ) {
-        let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
+    pub fn check_min_slot_is_rooted(&self, min_root: Slot, test_name: &str) {
+        // Use the cluster's current `ContactInfo` records directly. Restarted validators get fresh
+        // RPC ports immediately in `self.validators`, while gossip rediscovery can lag and keep
+        // pointing root checks at stale endpoints from before the restart.
+        let alive_node_contact_infos: Vec<_> = self
+            .validators
+            .values()
+            .map(|validator| validator.info.contact_info.clone())
+            .collect();
         info!("{test_name} looking minimum root {min_root} on all nodes");
         cluster_tests::check_min_slot_is_rooted(
             min_root,
