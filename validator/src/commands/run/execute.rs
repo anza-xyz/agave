@@ -703,6 +703,7 @@ pub fn execute(
         shrink_ratio,
         read_cache_limit_bytes,
         read_cache_evict_sample_size: None,
+        read_cache_num_shards: None,
         write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
             .ok()
             .map(|mb| mb * MB as u64),

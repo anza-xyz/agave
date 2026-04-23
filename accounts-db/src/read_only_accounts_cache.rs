@@ -30,13 +30,6 @@ use {
 const CACHE_ENTRY_SIZE: usize =
     size_of::<ReadOnlyAccountCacheEntry>() + size_of::<ReadOnlyCacheKey>();
 
-/// Number of cache shards. Using 2^16 (65 536) shards keeps the count a power
-/// of two and roughly matches the number of cached accounts we observe on
-/// mainnet-beta. The average load is still ~1 account per shard (collisions are
-/// common), but compared with the default `num_cpus * 4` shards - where we saw
-/// hot shards carrying ~200 accounts - this dramatically lowers contention.
-const NUM_SHARDS: usize = 65536;
-
 type ReadOnlyCacheKey = Pubkey;
 
 #[derive(Debug)]
@@ -120,12 +113,17 @@ impl ReadOnlyAccountsCache {
         max_data_size_lo: usize,
         max_data_size_hi: usize,
         evict_sample_size: usize,
+        num_shards: usize,
     ) -> Self {
         assert!(max_data_size_lo <= max_data_size_hi);
         assert!(evict_sample_size > 0);
+        assert!(
+            num_shards.is_power_of_two(),
+            "num_shards must be a power of two, got {num_shards}"
+        );
         let cache = Arc::new(DashMap::with_hasher_and_shard_amount(
             AHashRandomState::default(),
-            NUM_SHARDS,
+            num_shards,
         ));
         let data_size = Arc::new(AtomicUsize::default());
         let cache_len = Arc::new(AtomicUsize::default());
@@ -538,6 +536,7 @@ mod tests {
             MAX_CACHE_SIZE,
             usize::MAX, // <-- do not evict in the background
             evict_sample_size,
+            8,
         );
         let slots: Vec<Slot> = repeat_with(|| rng.random_range(0..1000)).take(5).collect();
         let pubkeys: Vec<Pubkey> = repeat_with(|| {
@@ -599,7 +598,8 @@ mod tests {
         const ACCOUNT_DATA_SIZE: usize = 200;
         const MAX_ENTRIES: usize = 7;
         const MAX_CACHE_SIZE: usize = MAX_ENTRIES * (CACHE_ENTRY_SIZE + ACCOUNT_DATA_SIZE);
-        let cache = ReadOnlyAccountsCache::new(MAX_CACHE_SIZE, MAX_CACHE_SIZE, evict_sample_size);
+        let cache =
+            ReadOnlyAccountsCache::new(MAX_CACHE_SIZE, MAX_CACHE_SIZE, evict_sample_size, 8);
 
         for i in 0..MAX_ENTRIES {
             let pubkey = Pubkey::new_unique();
@@ -640,6 +640,7 @@ mod tests {
             usize::MAX,
             usize::MAX,
             1, /* evictions never trigger */
+            8,
         );
 
         let pubkeys: Vec<_> = (0..NUM_ACCOUNTS).map(|_| Pubkey::new_unique()).collect();
