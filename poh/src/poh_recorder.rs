@@ -494,6 +494,20 @@ impl PohRecorder {
         let _ = self.flush_cache(false, None);
     }
 
+    fn notify_replay_wakeup(&self) {
+        if let Some(signal) = &self.clear_bank_signal {
+            match signal.try_send(true) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    trace!("replay wake up signal channel is full.")
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    trace!("replay wake up signal channel is disconnected.")
+                }
+            }
+        }
+    }
+
     /// Clears the working bank.
     /// Updates [`Self::shared_leader_state`] if `set_shared_state` is true.
     /// Otherwise the caller is responsible for setting the state before
@@ -531,17 +545,7 @@ impl PohRecorder {
             );
         }
 
-        if let Some(ref signal) = self.clear_bank_signal {
-            match signal.try_send(true) {
-                Ok(_) => {}
-                Err(TrySendError::Full(_)) => {
-                    trace!("replay wake up signal channel is full.")
-                }
-                Err(TrySendError::Disconnected(_)) => {
-                    trace!("replay wake up signal channel is disconnected.")
-                }
-            }
-        }
+        self.notify_replay_wakeup();
     }
 
     /// Returns tick_height - does not update the internal state for tick_height.
@@ -589,10 +593,14 @@ impl PohRecorder {
         footer: &BlockFooterV1,
         working_bank: &WorkingBank,
     ) -> std::result::Result<(), Option<Box<SendError<WorkingBankEntryOrMarker>>>> {
+        // Wake replay as soon as the slot reaches max tick height so it can freeze the bank
+        // before we block on the footer/bank-hash handoff.
+        self.notify_replay_wakeup();
+
         // Wait for the bank to be frozen with timeout
         // TODO: change this to use DELTA_BLOCK from votor instead.
         let start = Instant::now();
-        while !working_bank.bank.is_frozen() {
+        while !working_bank.bank.is_frozen() && !self.is_exited.load(Ordering::Relaxed) {
             if start.elapsed() > Duration::from_millis(400) {
                 break;
             }
@@ -605,6 +613,9 @@ impl PohRecorder {
 
         // If the bank still isn't frozen, we've timed out
         if !working_bank.bank.is_frozen() {
+            if self.is_exited.load(Ordering::Relaxed) {
+                return Err(None);
+            }
             error!(
                 "slot = {} block production failure. bank freezing timed out.",
                 working_bank.bank.slot()
