@@ -514,10 +514,8 @@ impl Bank {
                     stake_reward,
                     commission_bps,
                 };
-                let vote_account = vote_account.into();
                 let reward_commission = RewardCommission {
                     commission_bps,
-                    commission_account: vote_account,
                     commission_lamports,
                 };
                 Some(DelegationRewards {
@@ -902,52 +900,39 @@ mod tests {
         test_case::test_case,
     };
 
-    impl RewardCommission {
-        pub fn new_random() -> Self {
-            let mut rng = rand::rng();
-
-            let commission_balance = rng.random_range(1..200);
-            let commission_bps: u16 = rng.random_range(100..2_000);
-
-            let mut commission_account = AccountSharedData::default();
-            commission_account.set_lamports(commission_balance);
-
-            Self {
-                commission_account,
-                commission_bps,
-                commission_lamports: rng.random_range(1..200),
-            }
-        }
-    }
-
     #[test]
     fn test_store_commission_accounts_partitioned() {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);
 
         let num_reward_commissions = 100;
-        let reward_commissions = (0..num_reward_commissions)
-            .map(|_| (Pubkey::new_unique(), RewardCommission::new_random()))
-            .collect::<Vec<_>>();
-
-        let mut reward_commission_accounts = RewardCommissionAccounts::default();
-        reward_commissions
-            .iter()
-            .for_each(|(commission_pubkey, reward_commission)| {
+        let mut rng = rand::rng();
+        let entries: Vec<(Pubkey, RewardInfo, AccountSharedData)> = (0..num_reward_commissions)
+            .map(|_| {
+                let commission_balance = rng.random_range(1..200);
+                let commission_bps: u16 = rng.random_range(100..2_000);
+                let commission_lamports: u64 = rng.random_range(1..200);
+                let mut commission_account = AccountSharedData::default();
+                commission_account.set_lamports(commission_balance);
                 let info = RewardInfo {
                     reward_type: RewardType::Voting,
-                    lamports: reward_commission.commission_lamports as i64,
-                    post_balance: reward_commission.commission_lamports,
-                    commission_bps: Some(reward_commission.commission_bps),
+                    lamports: commission_lamports as i64,
+                    post_balance: commission_lamports,
+                    commission_bps: Some(commission_bps),
                 };
-                reward_commission_accounts.accounts_with_rewards.push((
-                    *commission_pubkey,
-                    info,
-                    reward_commission.commission_account.clone(),
-                ));
-                reward_commission_accounts.total_reward_commission_lamports +=
-                    reward_commission.commission_lamports;
-            });
+                (Pubkey::new_unique(), info, commission_account)
+            })
+            .collect();
+
+        let mut reward_commission_accounts = RewardCommissionAccounts::default();
+        for (commission_pubkey, info, commission_account) in &entries {
+            reward_commission_accounts.accounts_with_rewards.push((
+                *commission_pubkey,
+                *info,
+                commission_account.clone(),
+            ));
+            reward_commission_accounts.total_reward_commission_lamports += info.lamports as u64;
+        }
 
         let metrics = RewardsMetrics::default();
 
@@ -958,25 +943,20 @@ mod tests {
             reward_commission_accounts.accounts_with_rewards.len()
         );
         assert_eq!(
-            reward_commissions
+            entries
                 .iter()
-                .map(|(_, reward_commission)| reward_commission.commission_lamports)
+                .map(|(_, info, _)| info.lamports as u64)
                 .sum::<u64>(),
             total_reward_commissions
         );
 
         // load accounts to make sure they were stored correctly
-        reward_commissions
-            .iter()
-            .for_each(|(commission_pubkey, reward_commission)| {
-                let loaded_account = bank
-                    .load_slow_with_fixed_root(&bank.ancestors, commission_pubkey)
-                    .unwrap();
-                assert!(accounts_equal(
-                    &loaded_account.0,
-                    &reward_commission.commission_account
-                ));
-            });
+        for (commission_pubkey, _, commission_account) in &entries {
+            let loaded_account = bank
+                .load_slow_with_fixed_root(&bank.ancestors, commission_pubkey)
+                .unwrap();
+            assert!(accounts_equal(&loaded_account.0, commission_account));
+        }
     }
 
     #[test]
@@ -2144,18 +2124,12 @@ mod tests {
         let mut accumulator2 = RewardsAccumulator::default();
 
         let commission_pubkey_a = Pubkey::new_unique();
-        let commission_account_a = AccountSharedData::default();
-
         let commission_pubkey_b = Pubkey::new_unique();
-        let commission_account_b = AccountSharedData::default();
-
         let commission_pubkey_c = Pubkey::new_unique();
-        let commission_account_c = AccountSharedData::default();
 
         accumulator1.add_reward(
             commission_pubkey_a,
             RewardCommission {
-                commission_account: commission_account_a.clone(),
                 commission_bps: 1_000,
                 commission_lamports: 50,
             },
@@ -2164,7 +2138,6 @@ mod tests {
         accumulator1.add_reward(
             commission_pubkey_b,
             RewardCommission {
-                commission_account: commission_account_b.clone(),
                 commission_bps: 1_000,
                 commission_lamports: 50,
             },
@@ -2173,7 +2146,6 @@ mod tests {
         accumulator2.add_reward(
             commission_pubkey_b,
             RewardCommission {
-                commission_account: commission_account_b,
                 commission_bps: 1_000,
                 commission_lamports: 30,
             },
@@ -2182,7 +2154,6 @@ mod tests {
         accumulator2.add_reward(
             commission_pubkey_c,
             RewardCommission {
-                commission_account: commission_account_c,
                 commission_bps: 1_000,
                 commission_lamports: 50,
             },
@@ -2510,7 +2481,6 @@ mod tests {
         reward_commissions.insert(
             pubkey,
             RewardCommission {
-                commission_account: AccountSharedData::default(),
                 commission_bps: 0,
                 commission_lamports: 1, // enough to overflow
             },
@@ -2534,7 +2504,6 @@ mod tests {
                 reward_commissions.insert(
                     pubkey,
                     RewardCommission {
-                        commission_account: AccountSharedData::default(),
                         commission_bps,
                         commission_lamports,
                     },

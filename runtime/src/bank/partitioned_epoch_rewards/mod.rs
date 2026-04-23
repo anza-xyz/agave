@@ -151,8 +151,6 @@ pub(crate) enum EpochRewardPhase {
 
 #[derive(Debug)]
 pub(super) struct RewardCommission {
-    #[allow(dead_code)] // We'll remove this later.
-    pub(super) commission_account: AccountSharedData,
     pub(super) commission_bps: u16,
     pub(super) commission_lamports: u64,
 }
