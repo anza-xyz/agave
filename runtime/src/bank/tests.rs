@@ -22,7 +22,9 @@ use {
         stake_utils,
         stakes::InvalidCacheEntryReason,
     },
-    agave_feature_set::{self as feature_set, FeatureSet},
+    agave_feature_set::{
+        self as feature_set, FeatureSet, loader_v3_relax_program_buffer_constraints,
+    },
     agave_reserved_account_keys::ReservedAccount,
     agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET,
     ahash::AHashMap,
@@ -5827,7 +5829,13 @@ fn test_bank_load_program() {
 fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
     let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.feature_set = Arc::new(FeatureSet::all_enabled());
+    bank.feature_set = {
+        // SIMD-0430 is tested in the BPF Loader program's unit tests, so we
+        // can just disable it for these tests.
+        let mut feature_set = FeatureSet::all_enabled();
+        feature_set.deactivate(&loader_v3_relax_program_buffer_constraints::id());
+        Arc::new(feature_set)
+    };
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let mut bank_client = BankClient::new_shared(bank.clone());
 

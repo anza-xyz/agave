@@ -180,6 +180,7 @@ async fn setup_extend_program_test<'a>(
         auto_extend: false,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     process_command(&config).await.unwrap();
 
@@ -261,6 +262,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config).await;
@@ -311,6 +313,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     process_command(&config).await.unwrap();
     let account1 = rpc_client
@@ -372,6 +375,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     expect_command_failure(
         &config,
@@ -400,6 +404,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     expect_command_failure(
         &config,
@@ -480,6 +485,7 @@ async fn test_cli_program_deploy_no_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config).await;
@@ -511,6 +517,7 @@ async fn test_cli_program_deploy_no_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     expect_command_failure(
         &config,
@@ -598,6 +605,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: false,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
 
@@ -630,6 +638,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
             auto_extend: true,
             use_rpc: false,
             skip_feature_verification: true,
+            close_buffer: true,
         });
 
         // When we skip verification, we fail at a later stage
@@ -747,6 +756,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: false,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).await.unwrap();
@@ -772,6 +782,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
         skip_feature_verification: false,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let sig_response = process_command(&config).await.unwrap();
@@ -789,6 +800,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
         skip_feature_verification: false,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     if enable_feature {
@@ -817,6 +829,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
             dump_transaction_message: false,
             blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
             skip_feature_verification: true,
+            close_buffer: true,
         });
         config.output_format = OutputFormat::JsonCompact;
 
@@ -899,6 +912,7 @@ async fn test_cli_program_deploy_with_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config).await;
@@ -955,6 +969,7 @@ async fn test_cli_program_deploy_with_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
@@ -1002,6 +1017,7 @@ async fn test_cli_program_deploy_with_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     process_command(&config).await.unwrap();
     let program_account = rpc_client.get_account(&program_pubkey).await.unwrap();
@@ -1081,6 +1097,7 @@ async fn test_cli_program_deploy_with_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     process_command(&config).await.unwrap();
     let program_account = rpc_client.get_account(&program_pubkey).await.unwrap();
@@ -1164,6 +1181,7 @@ async fn test_cli_program_deploy_with_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     expect_command_failure(
         &config,
@@ -1190,6 +1208,7 @@ async fn test_cli_program_deploy_with_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
@@ -1321,6 +1340,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     config.send_transaction_config.skip_preflight = skip_preflight;
@@ -1345,6 +1365,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         auto_extend: false, // --no-auto-extend flag is present
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     if skip_preflight {
         expect_command_failure(
@@ -1393,6 +1414,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         auto_extend: true, // --no-auto-extend flag is absent
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
@@ -1493,6 +1515,7 @@ async fn test_cli_program_close_program() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).await.unwrap();
@@ -1627,6 +1650,7 @@ async fn test_cli_program_extend_program() {
         auto_extend: false,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
 
     #[rustfmt::skip]
@@ -1681,6 +1705,7 @@ async fn test_cli_program_extend_program() {
         auto_extend: false,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     process_command(&config).await.unwrap();
 
@@ -2236,6 +2261,7 @@ async fn test_cli_program_write_buffer() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let buffer_account_len = {
@@ -2481,13 +2507,16 @@ async fn test_cli_program_set_buffer_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     expect_command_failure(
         &config,
         "Deployment with an old authority should fail",
         &format!(
-            "Buffer's authority Some({}) does not match authority provided {}",
+            "Buffer's authority Some({}) does not match authority provided {}. Re-run with \
+             `--close-buffer=false` to upgrade without closing (and draining lamports from) the \
+             buffer account; SIMD-0430 relaxes this check when the buffer will not be closed.",
             new_buffer_authority.pubkey(),
             keypair.pubkey(),
         ),
@@ -2542,6 +2571,7 @@ async fn test_cli_program_set_buffer_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).await.unwrap();
@@ -2619,7 +2649,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         panic!("not a buffer account");
     }
 
-    // Attempt to deploy with mismatched authority
+    // Attempt to deploy with mismatched authority (close_buffer=true)
     let upgrade_authority = Keypair::new();
     config.signers = vec![&keypair, &upgrade_authority];
     config.command = CliCommand::Program(ProgramCliCommand::Deploy {
@@ -2638,19 +2668,66 @@ async fn test_cli_program_mismatch_buffer_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     expect_command_failure(
         &config,
         "Deployment with an invalid authority should fail",
         &format!(
-            "Buffer's authority Some({}) does not match authority provided {}",
+            "Buffer's authority Some({}) does not match authority provided {}. Re-run with \
+             `--close-buffer=false` to upgrade without closing (and draining lamports from) the \
+             buffer account; SIMD-0430 relaxes this check when the buffer will not be closed.",
             buffer_authority.pubkey(),
             upgrade_authority.pubkey(),
         ),
     )
     .await;
 
-    // Attempt to deploy matched authority
+    // Attempt to deploy with mismatched authority AND `close_buffer=false`.
+    // SIMD-0430 relaxes the buffer-authority match requirement when the buffer
+    // will not be closed, so this should succeed. The buffer account's lamports
+    // and data must remain intact afterwards.
+    let buffer_account_before = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
+    let upgrade_authority_close_buffer_false = Keypair::new();
+    let program_keypair = Keypair::new();
+    config.signers = vec![
+        &keypair,
+        &upgrade_authority_close_buffer_false,
+        &program_keypair,
+    ];
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(noop_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: Some(2),
+        program_pubkey: Some(program_keypair.pubkey()),
+        buffer_signer_index: None,
+        buffer_pubkey: Some(buffer_keypair.pubkey()),
+        upgrade_authority_signer_index: 1,
+        is_final: false,
+        max_len: None,
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        auto_extend: true,
+        use_rpc: false,
+        skip_feature_verification: true,
+        close_buffer: false,
+    });
+    process_command(&config).await.unwrap();
+    let buffer_account_after = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
+    assert_eq!(
+        buffer_account_before.lamports,
+        buffer_account_after.lamports
+    );
+    assert_eq!(buffer_account_before.data, buffer_account_after.data);
+
+    // Attempt to deploy matched authority (close_buffer=true)
     config.signers = vec![&keypair, &buffer_authority];
     config.command = CliCommand::Program(ProgramCliCommand::Deploy {
         program_location: Some(noop_path.to_str().unwrap().to_string()),
@@ -2668,8 +2745,92 @@ async fn test_cli_program_mismatch_buffer_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     process_command(&config).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_close_buffer_feature_inactive() {
+    agave_logger::setup();
+
+    let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    noop_path.push("tests");
+    noop_path.push("fixtures");
+    noop_path.push("noop");
+    noop_path.set_extension("so");
+
+    let mint_keypair = Keypair::new();
+    let mut test_validator_builder = test_validator_genesis(
+        &mint_keypair,
+        LoaderV3Features {
+            minimum_extend_program_size: false,
+        },
+    );
+    // Disable SIMD-0430.
+    test_validator_builder.deactivate_features(&[
+        agave_feature_set::loader_v3_relax_program_buffer_constraints::id(),
+    ]);
+    let test_validator = test_validator_builder
+        .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
+        .await
+        .expect("validator start failed");
+
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = setup_rpc_client(&mut config);
+
+    let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
+    let mut program_data = Vec::new();
+    file.read_to_end(&mut program_data).unwrap();
+    let max_len = program_data.len();
+    let minimum_balance_for_programdata = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+            max_len,
+        ))
+        .await
+        .unwrap();
+
+    let keypair = Keypair::new();
+    config.signers = vec![&keypair];
+    config.command = CliCommand::Airdrop {
+        pubkey: None,
+        lamports: 100 * minimum_balance_for_programdata,
+    };
+    process_command(&config).await.unwrap();
+
+    // Attempt an initial deploy with `--close-buffer=false` while the SIMD-0430
+    // feature is inactive. The CLI must refuse before touching the network.
+    let upgrade_authority = Keypair::new();
+    let program_keypair = Keypair::new();
+    config.signers = vec![&keypair, &upgrade_authority, &program_keypair];
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(noop_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: Some(2),
+        program_pubkey: Some(program_keypair.pubkey()),
+        buffer_signer_index: None,
+        buffer_pubkey: None,
+        upgrade_authority_signer_index: 1,
+        is_final: false,
+        max_len: None,
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        auto_extend: true,
+        use_rpc: false,
+        skip_feature_verification: false,
+        close_buffer: false,
+    });
+    let err = process_command(&config).await.unwrap_err().to_string();
+    assert!(
+        err.contains("SIMD-0430"),
+        "expected the SIMD-0430 feature-gate error, got: {err}"
+    );
+    assert!(
+        err.contains("loader_v3_relax_program_buffer_constraints"),
+        "expected the SIMD-0430 feature-gate error, got: {err}"
+    );
 }
 
 // Assume fee payer will be either online signer or offline signer (could be completely
@@ -2760,6 +2921,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).await.unwrap();
@@ -2792,6 +2954,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let sig_response = process_command(&config).await.unwrap();
@@ -2814,6 +2977,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     expect_command_failure(
@@ -2840,6 +3004,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let sig_response = process_command(&config).await.unwrap();
@@ -2862,6 +3027,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).await.unwrap();
@@ -3010,6 +3176,7 @@ async fn test_cli_program_show() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let min_slot = rpc_client.get_slot().await.unwrap();
@@ -3302,6 +3469,7 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
         auto_extend: true,
         use_rpc,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config).await;

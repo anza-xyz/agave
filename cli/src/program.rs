@@ -106,6 +106,7 @@ pub enum ProgramCliCommand {
         auto_extend: bool,
         use_rpc: bool,
         skip_feature_verification: bool,
+        close_buffer: bool,
     },
     Upgrade {
         fee_payer_signer_index: SignerIndex,
@@ -116,6 +117,7 @@ pub enum ProgramCliCommand {
         dump_transaction_message: bool,
         blockhash_query: BlockhashQuery,
         skip_feature_verification: bool,
+        close_buffer: bool,
     },
     WriteBuffer {
         program_location: String,
@@ -301,6 +303,25 @@ impl ProgramSubCommands for App<'_, '_> {
                                      on mainnet will succeed local verification, but fail during \
                                      the last step of deployment.",
                                 ),
+                        )
+                        .arg(
+                            Arg::with_name("close_buffer")
+                                .long("close-buffer")
+                                .value_name("BOOLEAN")
+                                .takes_value(true)
+                                .default_value("true")
+                                .validator(is_parsable::<bool>)
+                                .help(
+                                    "Whether the buffer account should be closed (lamports \
+                                     refunded to the fee payer and the buffer data truncated) as \
+                                     part of the final deploy/upgrade instruction. Defaults to \
+                                     `true` when the flag is omitted. Setting this to `false` \
+                                     keeps the buffer account intact and relaxes the requirement \
+                                     that the buffer authority match the program's upgrade \
+                                     authority. Requires the SIMD-0430 feature \
+                                     (`loader_v3_relax_program_buffer_constraints`) to be active \
+                                     on the target cluster.",
+                                ),
                         ),
                 )
                 .subcommand(
@@ -340,6 +361,25 @@ impl ProgramSubCommands for App<'_, '_> {
                                      setting means a program containing a syscall not yet active \
                                      on mainnet will succeed local verification, but fail during \
                                      the last step of deployment.",
+                                ),
+                        )
+                        .arg(
+                            Arg::with_name("close_buffer")
+                                .long("close-buffer")
+                                .value_name("BOOLEAN")
+                                .takes_value(true)
+                                .default_value("true")
+                                .validator(is_parsable::<bool>)
+                                .help(
+                                    "Whether the buffer account should be closed (lamports \
+                                     refunded to the fee payer and the buffer data truncated) as \
+                                     part of the upgrade instruction. Defaults to `true` when the \
+                                     flag is omitted. Setting this to `false` keeps the buffer \
+                                     account intact and relaxes the requirement that the buffer \
+                                     authority match the program's upgrade authority. Requires \
+                                     the SIMD-0430 feature \
+                                     (`loader_v3_relax_program_buffer_constraints`) to be active \
+                                     on the target cluster.",
                                 ),
                         )
                         .offline_args(),
@@ -729,6 +769,8 @@ pub fn parse_program_subcommand(
 
             let skip_feature_verify = matches.is_present("skip_feature_verify");
 
+            let close_buffer = value_of(matches, "close_buffer").unwrap_or(true);
+
             CliCommandInfo {
                 command: CliCommand::Program(ProgramCliCommand::Deploy {
                     program_location,
@@ -748,6 +790,7 @@ pub fn parse_program_subcommand(
                     use_rpc: matches.is_present("use_rpc"),
                     auto_extend,
                     skip_feature_verification: skip_feature_verify,
+                    close_buffer,
                 }),
                 signers: signer_info.signers,
             }
@@ -779,6 +822,8 @@ pub fn parse_program_subcommand(
 
             let skip_feature_verify = matches.is_present("skip_feature_verify");
 
+            let close_buffer = value_of(matches, "close_buffer").unwrap_or(true);
+
             CliCommandInfo {
                 command: CliCommand::Program(ProgramCliCommand::Upgrade {
                     fee_payer_signer_index: signer_info.index_of(fee_payer_pubkey).unwrap(),
@@ -791,6 +836,7 @@ pub fn parse_program_subcommand(
                     dump_transaction_message,
                     blockhash_query,
                     skip_feature_verification: skip_feature_verify,
+                    close_buffer,
                 }),
                 signers: signer_info.signers,
             }
@@ -1045,6 +1091,7 @@ pub async fn process_program_subcommand(
             auto_extend,
             use_rpc,
             skip_feature_verification,
+            close_buffer,
         } => {
             process_program_deploy(
                 rpc_client,
@@ -1064,6 +1111,7 @@ pub async fn process_program_subcommand(
                 *auto_extend,
                 *use_rpc,
                 *skip_feature_verification,
+                *close_buffer,
             )
             .await
         }
@@ -1076,6 +1124,7 @@ pub async fn process_program_subcommand(
             dump_transaction_message,
             blockhash_query,
             skip_feature_verification,
+            close_buffer,
         } => {
             process_program_upgrade(
                 rpc_client,
@@ -1088,6 +1137,7 @@ pub async fn process_program_subcommand(
                 *dump_transaction_message,
                 blockhash_query,
                 *skip_feature_verification,
+                *close_buffer,
             )
             .await
         }
@@ -1277,6 +1327,7 @@ async fn process_program_deploy(
     auto_extend: bool,
     use_rpc: bool,
     skip_feature_verification: bool,
+    close_buffer: bool,
 ) -> ProcessResult {
     let fee_payer_signer = config.signers[fee_payer_signer_index];
     let upgrade_authority_signer = config.signers[upgrade_authority_signer_index];
@@ -1376,6 +1427,18 @@ async fn process_program_deploy(
         fetch_feature_set(&rpc_client).await?
     };
 
+    if !close_buffer
+        && !feature_set
+            .is_active(&agave_feature_set::loader_v3_relax_program_buffer_constraints::ID)
+    {
+        return Err("`--close-buffer=false` requires the SIMD-0430 feature \
+                    (`loader_v3_relax_program_buffer_constraints`) to be active on the target \
+                    cluster. Re-run with `--close-buffer=true` (the default), target a cluster \
+                    where the feature is active, or pass `--skip-feature-verify` to bypass this \
+                    check."
+            .into());
+    }
+
     let (program_data, program_len, buffer_program_data) =
         if let Some(program_location) = program_location {
             let program_data = read_and_verify_elf(program_location, feature_set)?;
@@ -1389,6 +1452,7 @@ async fn process_program_deploy(
                     Some(program_len),
                     buffer_pubkey,
                     upgrade_authority_signer.pubkey(),
+                    close_buffer,
                 )
                 .await?
             } else {
@@ -1403,6 +1467,7 @@ async fn process_program_deploy(
                 buffer_pubkey,
                 upgrade_authority_signer.pubkey(),
                 feature_set,
+                close_buffer,
             )
             .await?;
 
@@ -1451,6 +1516,7 @@ async fn process_program_deploy(
             compute_unit_price,
             max_sign_attempts,
             use_rpc,
+            close_buffer,
         )
         .await
     } else {
@@ -1471,6 +1537,7 @@ async fn process_program_deploy(
             max_sign_attempts,
             auto_extend,
             use_rpc,
+            close_buffer,
         )
         .await
     };
@@ -1502,10 +1569,17 @@ async fn fetch_verified_buffer_program_data(
     buffer_pubkey: Pubkey,
     buffer_authority: Pubkey,
     feature_set: FeatureSet,
+    enforce_authority_match: bool,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let Some(buffer_program_data) =
-        fetch_buffer_program_data(rpc_client, config, None, buffer_pubkey, buffer_authority)
-            .await?
+    let Some(buffer_program_data) = fetch_buffer_program_data(
+        rpc_client,
+        config,
+        None,
+        buffer_pubkey,
+        buffer_authority,
+        enforce_authority_match,
+    )
+    .await?
     else {
         return Err(format!("Buffer account {buffer_pubkey} not found").into());
     };
@@ -1523,6 +1597,7 @@ async fn fetch_buffer_program_data(
     min_program_len: Option<usize>,
     buffer_pubkey: Pubkey,
     buffer_authority: Pubkey,
+    enforce_authority_match: bool,
 ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
     let Some(mut account) = rpc_client
         .get_account_with_commitment(&buffer_pubkey, config.commitment)
@@ -1543,10 +1618,12 @@ async fn fetch_buffer_program_data(
         if authority_address.is_none() {
             return Err(format!("Buffer {buffer_pubkey} is immutable").into());
         }
-        if authority_address != Some(buffer_authority) {
+        if enforce_authority_match && authority_address != Some(buffer_authority) {
             return Err(format!(
                 "Buffer's authority {authority_address:?} does not match authority provided \
-                 {buffer_authority}"
+                 {buffer_authority}. Re-run with `--close-buffer=false` to upgrade without \
+                 closing (and draining lamports from) the buffer account; SIMD-0430 relaxes this \
+                 check when the buffer will not be closed."
             )
             .into());
         }
@@ -1586,6 +1663,7 @@ async fn process_program_upgrade(
     dump_transaction_message: bool,
     blockhash_query: &BlockhashQuery,
     skip_feature_verification: bool,
+    close_buffer: bool,
 ) -> ProcessResult {
     let fee_payer_signer = config.signers[fee_payer_signer_index];
     let upgrade_authority_signer = config.signers[upgrade_authority_signer_index];
@@ -1599,7 +1677,7 @@ async fn process_program_upgrade(
             &buffer_pubkey,
             &upgrade_authority_signer.pubkey(),
             &fee_payer_signer.pubkey(),
-            true, // close_buffer: pre-SIMD-0430 default
+            close_buffer,
         )],
         Some(&fee_payer_signer.pubkey()),
         &blockhash,
@@ -1625,12 +1703,25 @@ async fn process_program_upgrade(
             fetch_feature_set(&rpc_client).await?
         };
 
+        if !close_buffer
+            && !feature_set
+                .is_active(&agave_feature_set::loader_v3_relax_program_buffer_constraints::ID)
+        {
+            return Err("`--close-buffer=false` requires the SIMD-0430 feature \
+                        (`loader_v3_relax_program_buffer_constraints`) to be active on the \
+                        target cluster. Re-run with `--close-buffer=true` (the default), target \
+                        a cluster where the feature is active, or pass `--skip-feature-verify` \
+                        to bypass this check."
+                .into());
+        }
+
         fetch_verified_buffer_program_data(
             &rpc_client,
             config,
             buffer_pubkey,
             upgrade_authority_signer.pubkey(),
             feature_set,
+            close_buffer,
         )
         .await?;
 
@@ -1709,6 +1800,7 @@ async fn process_write_buffer(
         Some(program_len),
         buffer_pubkey,
         buffer_authority.pubkey(),
+        true,
     )
     .await?;
 
@@ -2551,11 +2643,12 @@ async fn do_process_program_deploy(
     compute_unit_price: Option<u64>,
     max_sign_attempts: usize,
     use_rpc: bool,
+    close_buffer: bool,
 ) -> ProcessResult {
     let blockhash = rpc_client.get_latest_blockhash().await?;
     let compute_unit_limit = ComputeUnitLimit::Simulated;
 
-    let (initial_instructions, balance_needed, buffer_program_data) =
+    let (initial_instructions, mut balance_needed, buffer_program_data) =
         if let Some(buffer_program_data) = buffer_program_data {
             (vec![], 0, buffer_program_data)
         } else {
@@ -2571,6 +2664,13 @@ async fn do_process_program_deploy(
                 vec![0; program_len],
             )
         };
+
+    // When `close_buffer=false`, the buffer's lamports no longer drain into the fee
+    // payer to fund the programdata account, so the fee payer must cover programdata
+    // rent directly.
+    if !close_buffer {
+        balance_needed = balance_needed.saturating_add(min_rent_exempt_program_data_balance);
+    }
 
     let initial_message = if !initial_instructions.is_empty() {
         Some(Message::new_with_blockhash(
@@ -2622,7 +2722,7 @@ async fn do_process_program_deploy(
                 .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
                 .await?,
             program_data_max_len,
-            true, // close_buffer: pre-SIMD-0430 default
+            close_buffer,
         )?
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
@@ -2800,6 +2900,7 @@ async fn do_process_program_upgrade(
     max_sign_attempts: usize,
     auto_extend: bool,
     use_rpc: bool,
+    close_buffer: bool,
 ) -> ProcessResult {
     let blockhash = rpc_client.get_latest_blockhash().await?;
     let compute_unit_limit = ComputeUnitLimit::Simulated;
@@ -2886,7 +2987,7 @@ async fn do_process_program_upgrade(
         buffer_pubkey,
         &upgrade_authority.pubkey(),
         &fee_payer_signer.pubkey(),
-        true, // close_buffer: pre-SIMD-0430 default
+        close_buffer,
     )]
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
@@ -3372,6 +3473,7 @@ mod tests {
                     auto_extend: true,
                     use_rpc: false,
                     skip_feature_verification: false,
+                    close_buffer: true,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3404,6 +3506,7 @@ mod tests {
                     auto_extend: true,
                     use_rpc: false,
                     skip_feature_verification: false,
+                    close_buffer: true,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3438,6 +3541,7 @@ mod tests {
                     auto_extend: true,
                     use_rpc: false,
                     skip_feature_verification: false,
+                    close_buffer: true,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -3474,6 +3578,7 @@ mod tests {
                     auto_extend: true,
                     use_rpc: false,
                     skip_feature_verification: false,
+                    close_buffer: true,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3509,6 +3614,7 @@ mod tests {
                     auto_extend: true,
                     use_rpc: false,
                     skip_feature_verification: false,
+                    close_buffer: true,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -3547,6 +3653,7 @@ mod tests {
                     auto_extend: true,
                     use_rpc: false,
                     skip_feature_verification: false,
+                    close_buffer: true,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -3581,6 +3688,7 @@ mod tests {
                     auto_extend: true,
                     use_rpc: false,
                     skip_feature_verification: false,
+                    close_buffer: true,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3613,6 +3721,7 @@ mod tests {
                     auto_extend: true,
                     use_rpc: false,
                     skip_feature_verification: false,
+                    close_buffer: true,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3644,6 +3753,7 @@ mod tests {
                     auto_extend: true,
                     use_rpc: true,
                     skip_feature_verification: false,
+                    close_buffer: true,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3675,6 +3785,75 @@ mod tests {
                     auto_extend: true,
                     use_rpc: false,
                     skip_feature_verification: true,
+                    close_buffer: true,
+                }),
+                signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
+            }
+        );
+
+        // SIMD-0430: `--close-buffer=false`
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "deploy",
+            "/Users/test/program.so",
+            "--close-buffer",
+            "false",
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::Deploy {
+                    program_location: Some("/Users/test/program.so".to_string()),
+                    fee_payer_signer_index: 0,
+                    buffer_signer_index: None,
+                    buffer_pubkey: None,
+                    program_signer_index: None,
+                    program_pubkey: None,
+                    upgrade_authority_signer_index: 0,
+                    is_final: false,
+                    max_len: None,
+                    skip_fee_check: false,
+                    compute_unit_price: None,
+                    max_sign_attempts: 5,
+                    auto_extend: true,
+                    use_rpc: false,
+                    skip_feature_verification: false,
+                    close_buffer: false,
+                }),
+                signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
+            }
+        );
+
+        // SIMD-0430: `--close-buffer=true`
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "deploy",
+            "/Users/test/program.so",
+            "--close-buffer",
+            "true",
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::Deploy {
+                    program_location: Some("/Users/test/program.so".to_string()),
+                    fee_payer_signer_index: 0,
+                    buffer_signer_index: None,
+                    buffer_pubkey: None,
+                    program_signer_index: None,
+                    program_pubkey: None,
+                    upgrade_authority_signer_index: 0,
+                    is_final: false,
+                    max_len: None,
+                    skip_fee_check: false,
+                    compute_unit_price: None,
+                    max_sign_attempts: 5,
+                    auto_extend: true,
+                    use_rpc: false,
+                    skip_feature_verification: false,
+                    close_buffer: true,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3712,6 +3891,63 @@ mod tests {
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::default(),
                     skip_feature_verification: true,
+                    close_buffer: true,
+                }),
+                signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
+            }
+        );
+
+        // SIMD-0430: `--close-buffer=false`
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "upgrade",
+            format!("{buffer_key}").as_str(),
+            format!("{program_key}").as_str(),
+            "--close-buffer",
+            "false",
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::Upgrade {
+                    fee_payer_signer_index: 0,
+                    program_pubkey: program_key,
+                    buffer_pubkey: buffer_key,
+                    upgrade_authority_signer_index: 0,
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::default(),
+                    skip_feature_verification: false,
+                    close_buffer: false,
+                }),
+                signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
+            }
+        );
+
+        // SIMD-0430: `--close-buffer=true`
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "upgrade",
+            format!("{buffer_key}").as_str(),
+            format!("{program_key}").as_str(),
+            "--close-buffer",
+            "false",
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::Upgrade {
+                    fee_payer_signer_index: 0,
+                    program_pubkey: program_key,
+                    buffer_pubkey: buffer_key,
+                    upgrade_authority_signer_index: 0,
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::default(),
+                    skip_feature_verification: false,
+                    close_buffer: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -4519,6 +4755,7 @@ mod tests {
                 auto_extend: true,
                 use_rpc: false,
                 skip_feature_verification: true,
+                close_buffer: true,
             }),
             signers: vec![&default_keypair],
             output_format: OutputFormat::JsonCompact,

@@ -86,6 +86,7 @@ pub struct FeatureSnapshot {
     pub loader_v3_minimum_extend_program_size: bool,
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
+    pub loader_v3_relax_program_buffer_constraints: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -200,6 +201,9 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             ),
             enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
+            loader_v3_relax_program_buffer_constraints: is_active(
+                &loader_v3_relax_program_buffer_constraints::ID,
+            ),
         }
     }
 }
@@ -365,6 +369,8 @@ impl FeatureSet {
             loader_v3_minimum_extend_program_size: snapshot.loader_v3_minimum_extend_program_size,
             enable_sha512_syscall: snapshot.enable_sha512_syscall,
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
+            loader_v3_relax_program_buffer_constraints: snapshot
+                .loader_v3_relax_program_buffer_constraints,
         }
     }
 }
@@ -1530,6 +1536,10 @@ pub mod relax_post_exec_min_balance_check {
     solana_pubkey::declare_id!("DEJmsCntuYqbXtL5z5TxbaxJXFUJAFjf7TqWSF7YWjQg");
 }
 
+pub mod loader_v3_relax_program_buffer_constraints {
+    solana_pubkey::declare_id!("H5AgGhTzvHp2GH9SVGZYBpjeQPy1V9bqYQ4MmTtiCWr9");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2578,6 +2588,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             relax_post_exec_min_balance_check::id(),
             "SIMD-0392: Relaxation of post-execution min_balance check",
+        ),
+        (
+            loader_v3_relax_program_buffer_constraints::id(),
+            "SIMD-0430: Loader V3: Relax Program Buffer Constraints",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

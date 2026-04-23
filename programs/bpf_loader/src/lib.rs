@@ -200,6 +200,18 @@ fn process_loader_upgradeable_instruction(
             )?;
         }
         UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len } => {
+            let close_buffer = if invoke_context
+                .get_feature_set()
+                .loader_v3_relax_program_buffer_constraints
+            {
+                // SIMD-0430: Use provided close_buffer flag.
+                read_trailing_bool(instruction_data, DEPLOY_WITH_MAX_DATA_LEN_OFFSET)?
+                    .unwrap_or(true)
+            } else {
+                // Legacy: Default behavior is close_buffer=true.
+                true
+            };
+
             instruction_context.check_number_of_instruction_accounts(4)?;
             let payer_key = *instruction_context.get_key_of_instruction_account(0)?;
             let programdata_key = *instruction_context.get_key_of_instruction_account(1)?;
@@ -232,7 +244,9 @@ fn process_loader_upgradeable_instruction(
 
             let buffer = instruction_context.try_borrow_instruction_account(3)?;
             if let UpgradeableLoaderState::Buffer { authority_address } = buffer.get_state()? {
-                if authority_address != authority_key {
+                // Only check to make sure the authority on the buffer matches
+                // if `close_buffer=true`.
+                if close_buffer && authority_address != authority_key {
                     ic_logger_msg!(log_collector, "Buffer and upgrade authority don't match");
                     return Err(InstructionError::IncorrectAuthority);
                 }
@@ -276,8 +290,9 @@ fn process_loader_upgradeable_instruction(
                 return Err(InstructionError::InvalidArgument);
             }
 
-            // Drain the Buffer account to payer before paying for programdata account
-            {
+            if close_buffer {
+                // Drain the Buffer account to payer before paying for
+                // programdata account.
                 let mut buffer = instruction_context.try_borrow_instruction_account(3)?;
                 let mut payer = instruction_context.try_borrow_instruction_account(0)?;
                 payer.checked_add_lamports(buffer.get_lamports())?;
@@ -341,7 +356,9 @@ fn process_loader_upgradeable_instruction(
                     .get(buffer_data_offset..)
                     .ok_or(InstructionError::AccountDataTooSmall)?;
                 dst_slice.copy_from_slice(src_slice);
-                buffer.set_data_length(UpgradeableLoaderState::size_of_buffer(0))?;
+                if close_buffer {
+                    buffer.set_data_length(UpgradeableLoaderState::size_of_buffer(0))?;
+                }
             }
 
             // Update the Program account
@@ -355,6 +372,17 @@ fn process_loader_upgradeable_instruction(
             ic_logger_msg!(log_collector, "Deployed program {:?}", new_program_id);
         }
         UpgradeableLoaderInstruction::Upgrade => {
+            let close_buffer = if invoke_context
+                .get_feature_set()
+                .loader_v3_relax_program_buffer_constraints
+            {
+                // SIMD-0430: Use provided close_buffer flag.
+                read_trailing_bool(instruction_data, UPGRADE_OFFSET)?.unwrap_or(true)
+            } else {
+                // Legacy: Default behavior is close_buffer=true.
+                true
+            };
+
             instruction_context.check_number_of_instruction_accounts(3)?;
             let programdata_key = *instruction_context.get_key_of_instruction_account(0)?;
             let rent =
@@ -394,7 +422,9 @@ fn process_loader_upgradeable_instruction(
 
             let buffer = instruction_context.try_borrow_instruction_account(2)?;
             if let UpgradeableLoaderState::Buffer { authority_address } = buffer.get_state()? {
-                if authority_address != authority_key {
+                // Only check to make sure the authority on the buffer matches
+                // if `close_buffer=true`.
+                if close_buffer && authority_address != authority_key {
                     ic_logger_msg!(log_collector, "Buffer and upgrade authority don't match");
                     return Err(InstructionError::IncorrectAuthority);
                 }
@@ -429,9 +459,12 @@ fn process_loader_upgradeable_instruction(
                 ic_logger_msg!(log_collector, "ProgramData account not large enough");
                 return Err(InstructionError::AccountDataTooSmall);
             }
-            if programdata.get_lamports().saturating_add(buffer_lamports)
-                < programdata_balance_required
-            {
+            let available_balance = if close_buffer {
+                programdata.get_lamports().saturating_add(buffer_lamports)
+            } else {
+                programdata.get_lamports()
+            };
+            if available_balance < programdata_balance_required {
                 ic_logger_msg!(
                     log_collector,
                     "Buffer account balance too low to fund upgrade"
@@ -513,17 +546,29 @@ fn process_loader_upgradeable_instruction(
                 .fill(0);
 
             // Fund ProgramData to rent-exemption, spill the rest
-            let mut buffer = instruction_context.try_borrow_instruction_account(2)?;
-            let mut spill = instruction_context.try_borrow_instruction_account(3)?;
-            spill.checked_add_lamports(
-                programdata
-                    .get_lamports()
-                    .saturating_add(buffer_lamports)
-                    .saturating_sub(programdata_balance_required),
-            )?;
-            buffer.set_lamports(0)?;
-            programdata.set_lamports(programdata_balance_required)?;
-            buffer.set_data_length(UpgradeableLoaderState::size_of_buffer(0))?;
+            if close_buffer {
+                let mut buffer = instruction_context.try_borrow_instruction_account(2)?;
+                let mut spill = instruction_context.try_borrow_instruction_account(3)?;
+                spill.checked_add_lamports(
+                    programdata
+                        .get_lamports()
+                        .saturating_add(buffer_lamports)
+                        .saturating_sub(programdata_balance_required),
+                )?;
+                buffer.set_lamports(0)?;
+                programdata.set_lamports(programdata_balance_required)?;
+                buffer.set_data_length(UpgradeableLoaderState::size_of_buffer(0))?;
+            } else {
+                // When not closing the buffer, only programdata lamports are
+                // spill-refunded.
+                let mut spill = instruction_context.try_borrow_instruction_account(3)?;
+                spill.checked_add_lamports(
+                    programdata
+                        .get_lamports()
+                        .saturating_sub(programdata_balance_required),
+                )?;
+                programdata.set_lamports(programdata_balance_required)?;
+            }
 
             ic_logger_msg!(log_collector, "Upgraded program {:?}", new_program_id);
         }
@@ -762,6 +807,25 @@ fn process_loader_upgradeable_instruction(
     }
 
     Ok(())
+}
+
+// u32 discriminator + max_data_len (u64)
+const DEPLOY_WITH_MAX_DATA_LEN_OFFSET: usize = 12;
+// u32 discriminator
+const UPGRADE_OFFSET: usize = 4;
+
+fn read_trailing_bool(
+    instruction_data: &[u8],
+    offset: usize,
+) -> Result<Option<bool>, InstructionError> {
+    instruction_data
+        .get(offset)
+        .map(|byte| match byte {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(InstructionError::InvalidInstructionData),
+        })
+        .transpose()
 }
 
 fn common_extend_program(
@@ -1087,16 +1151,37 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_instruction::{AccountMeta, error::InstructionError},
         solana_program_runtime::{
-            invoke_context::mock_process_instruction, loaded_programs::ProgramRuntimeEnvironment,
-            program_metrics::ProgramStatistics, vm::calculate_heap_cost, with_mock_invoke_context,
+            invoke_context::{mock_process_instruction, mock_process_instruction_with_feature_set},
+            loaded_programs::ProgramRuntimeEnvironment,
+            program_metrics::ProgramStatistics,
+            vm::calculate_heap_cost,
+            with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sbpf::program::{BuiltinFunctionDefinition, BuiltinProgram},
         solana_sdk_ids::{system_program, sysvar},
+        solana_svm_feature_set::SVMFeatureSet,
         solana_svm_type_overrides::sync::atomic::Ordering,
         std::{fs::File, io::Read, ops::Range, sync::atomic::AtomicU64},
+        test_case::test_matrix,
     };
+
+    // Struct for toggling current Loader V3 SIMDs.
+    struct LoaderV3Features {
+        // SIMD-0430: Relax Program Buffer Constraints
+        loader_v3_relax_program_buffer_constraints: bool,
+    }
+
+    impl LoaderV3Features {
+        fn svm_feature_set(&self) -> SVMFeatureSet {
+            SVMFeatureSet {
+                loader_v3_relax_program_buffer_constraints: self
+                    .loader_v3_relax_program_buffer_constraints,
+                ..SVMFeatureSet::all_enabled()
+            }
+        }
+    }
 
     fn process_instruction(
         program_id: &Pubkey,
@@ -1598,8 +1683,14 @@ mod tests {
         account.set_data(data);
     }
 
-    #[test]
-    fn test_bpf_loader_upgradeable_upgrade() {
+    #[test_matrix(
+        [true, false],
+        [None, Some(true), Some(false)]
+    )]
+    fn test_bpf_loader_upgradeable_upgrade(simd_0430_enabled: bool, close_buffer: Option<bool>) {
+        let features = LoaderV3Features {
+            loader_v3_relax_program_buffer_constraints: simd_0430_enabled,
+        };
         let mut file = File::open("test_elfs/out/sbpfv3_return_ok.so").expect("file open failed");
         let mut elf_orig = Vec::new();
         file.read_to_end(&mut elf_orig).unwrap();
@@ -1723,13 +1814,18 @@ mod tests {
         }
 
         fn process_instruction(
+            features: &LoaderV3Features,
+            close_buffer: Option<bool>,
             transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
             instruction_accounts: Vec<AccountMeta>,
             expected_result: Result<(), InstructionError>,
         ) -> Vec<AccountSharedData> {
-            let instruction_data =
+            let mut instruction_data =
                 bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
-            mock_process_instruction(
+            if let Some(close_buffer) = close_buffer {
+                instruction_data.push(close_buffer.into());
+            }
+            mock_process_instruction_with_feature_set(
                 &bpf_loader_upgradeable::id(),
                 &instruction_data,
                 transaction_accounts,
@@ -1738,6 +1834,7 @@ mod tests {
                 Entrypoint::register,
                 |_invoke_context| {},
                 |_invoke_context| {},
+                &features.svm_feature_set(),
             )
         }
 
@@ -1749,7 +1846,13 @@ mod tests {
             &elf_orig,
             &elf_new,
         );
-        let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
+        let accounts = process_instruction(
+            &features,
+            close_buffer,
+            transaction_accounts,
+            instruction_accounts,
+            Ok(()),
+        );
         let min_programdata_balance = Rent::default().minimum_balance(
             UpgradeableLoaderState::size_of_programdata(elf_orig.len().max(elf_new.len())),
         );
@@ -1757,12 +1860,30 @@ mod tests {
             min_programdata_balance,
             accounts.first().unwrap().lamports()
         );
-        assert_eq!(0, accounts.get(2).unwrap().lamports());
-        assert_eq!(1, accounts.get(3).unwrap().lamports());
-        assert_eq!(
-            UpgradeableLoaderState::size_of_buffer(0),
-            accounts.get(2).unwrap().data().len()
-        );
+        if simd_0430_enabled && matches!(close_buffer, Some(false)) {
+            // The buffer should NOT have been closed.
+            // It's lamports should be untouched.
+            assert_eq!(1, accounts.get(2).unwrap().lamports());
+            assert_eq!(0, accounts.get(3).unwrap().lamports());
+            // Its state should still be `Buffer`.
+            let state: UpgradeableLoaderState = accounts.get(2).unwrap().state().unwrap();
+            assert_eq!(
+                state,
+                UpgradeableLoaderState::Buffer {
+                    authority_address: Some(upgrade_authority_address),
+                }
+            );
+        } else {
+            // The buffer should have been closed.
+            // It's lamports should be in the spill account.
+            assert_eq!(0, accounts.get(2).unwrap().lamports());
+            assert_eq!(1, accounts.get(3).unwrap().lamports());
+            // Its data should have been truncated.
+            assert_eq!(
+                UpgradeableLoaderState::size_of_buffer(0),
+                accounts.get(2).unwrap().data().len()
+            );
+        }
         let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
         assert_eq!(
             state,
@@ -1804,12 +1925,22 @@ mod tests {
             })
             .unwrap();
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::Immutable),
         );
 
         // Case: wrong authority
+        //
+        // Per SIMD-0430, `close_buffer=false` relaxes the buffer-authority
+        // check, but `Upgrade` separately enforces that the signer matches the
+        // programdata's stored `upgrade_authority_address`. That check fires
+        // regardless of `close_buffer`, so a mismatched signer still produces
+        // `IncorrectAuthority` in every variant.
+        //
+        // See "Case: Mismatched buffer and program authority"
         let (mut transaction_accounts, mut instruction_accounts) = get_accounts(
             &buffer_address,
             &upgrade_authority_address,
@@ -1821,12 +1952,20 @@ mod tests {
         transaction_accounts.get_mut(6).unwrap().0 = invalid_upgrade_authority_address;
         instruction_accounts.get_mut(6).unwrap().pubkey = invalid_upgrade_authority_address;
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::IncorrectAuthority),
         );
 
         // Case: authority did not sign
+        //
+        // Per SIMD-0430, only the buffer-authority check is relaxed for
+        // `close_buffer=false`. The program's upgrade authority must still
+        // sign, so `MissingRequiredSignature` is expected in every variant.
+        //
+        // See "Case: Mismatched buffer and program authority"
         let (transaction_accounts, mut instruction_accounts) = get_accounts(
             &buffer_address,
             &upgrade_authority_address,
@@ -1836,12 +1975,21 @@ mod tests {
         );
         instruction_accounts.get_mut(6).unwrap().is_signer = false;
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::MissingRequiredSignature),
         );
 
         // Case: Buffer account and spill account alias
+        // This case only matters for when `close_buffer=true`. Spilling to a
+        // buffer account that will not be closed is a supported use case.
+        let expected_result = if simd_0430_enabled && matches!(close_buffer, Some(false)) {
+            Ok(())
+        } else {
+            Err(InstructionError::AccountBorrowFailed)
+        };
         let (transaction_accounts, mut instruction_accounts) = get_accounts(
             &buffer_address,
             &upgrade_authority_address,
@@ -1851,9 +1999,11 @@ mod tests {
         );
         *instruction_accounts.get_mut(3).unwrap() = instruction_accounts.get(2).unwrap().clone();
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::AccountBorrowFailed),
+            expected_result,
         );
 
         // Case: Programdata account and spill account alias
@@ -1866,6 +2016,8 @@ mod tests {
         );
         *instruction_accounts.get_mut(3).unwrap() = instruction_accounts.first().unwrap().clone();
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::AccountBorrowFailed),
@@ -1880,7 +2032,11 @@ mod tests {
             &elf_new,
         );
         *instruction_accounts.get_mut(1).unwrap() = instruction_accounts.get(2).unwrap().clone();
-        let instruction_data = bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+        let mut instruction_data =
+            bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+        if let Some(close_buffer) = close_buffer {
+            instruction_data.push(close_buffer.into());
+        }
 
         mock_process_instruction(
             &bpf_loader_upgradeable::id(),
@@ -1895,6 +2051,8 @@ mod tests {
             |_invoke_context| {},
         );
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(InstructionError::InvalidAccountData),
@@ -1914,6 +2072,8 @@ mod tests {
             .1
             .set_owner(Pubkey::new_unique());
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::IncorrectProgramId),
@@ -1929,6 +2089,8 @@ mod tests {
         );
         instruction_accounts.get_mut(1).unwrap().is_writable = false;
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidArgument),
@@ -1949,6 +2111,8 @@ mod tests {
             .set_state(&UpgradeableLoaderState::Uninitialized)
             .unwrap();
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidAccountData),
@@ -1966,6 +2130,8 @@ mod tests {
         transaction_accounts.get_mut(0).unwrap().0 = invalid_programdata_address;
         instruction_accounts.get_mut(0).unwrap().pubkey = invalid_programdata_address;
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidArgument),
@@ -1986,6 +2152,8 @@ mod tests {
             .set_state(&UpgradeableLoaderState::Uninitialized)
             .unwrap();
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidArgument),
@@ -1999,6 +2167,16 @@ mod tests {
         // For `Upgrade`, this occurs when attempting to close the buffer.
         // The first thing it attempts to do is debit the lamports, which
         // immediately throws `ExternalAccountLamportSpend`.
+        //
+        // Therefore, the result depends on the `close_buffer` argument.
+        let expected_result = if simd_0430_enabled && matches!(close_buffer, Some(false)) {
+            // The buffer will not be closed, therefore its lamports will not be
+            // involved in spill-refund. It can be owned by any program.
+            Ok(())
+        } else {
+            // The buffer will be closed, thus it will trip the error.
+            Err(InstructionError::ExternalAccountLamportSpend)
+        };
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
             &upgrade_authority_address,
@@ -2012,9 +2190,11 @@ mod tests {
             .1
             .set_owner(Pubkey::new_unique());
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::ExternalAccountLamportSpend),
+            expected_result,
         );
 
         // Case: Buffer account too big
@@ -2041,6 +2221,8 @@ mod tests {
             })
             .unwrap();
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::AccountDataTooSmall),
@@ -2064,12 +2246,21 @@ mod tests {
             .unwrap();
         truncate_data(&mut transaction_accounts.get_mut(2).unwrap().1, 5);
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidAccountData),
         );
 
         // Case: Mismatched buffer and program authority
+        // This case only matters for when `close_buffer=true`. SIMD-0430 was
+        // designed to relax this check when a buffer account will not be closed.
+        let expected_result = if simd_0430_enabled && matches!(close_buffer, Some(false)) {
+            Ok(())
+        } else {
+            Err(InstructionError::IncorrectAuthority)
+        };
         let (transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
             &buffer_address,
@@ -2078,12 +2269,21 @@ mod tests {
             &elf_new,
         );
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::IncorrectAuthority),
+            expected_result,
         );
 
         // Case: No buffer authority
+        // This case only matters for when `close_buffer=true`. SIMD-0430 was
+        // designed to relax this check when a buffer account will not be closed.
+        let expected_result = if simd_0430_enabled && matches!(close_buffer, Some(false)) {
+            Ok(())
+        } else {
+            Err(InstructionError::IncorrectAuthority)
+        };
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
             &buffer_address,
@@ -2100,12 +2300,24 @@ mod tests {
             })
             .unwrap();
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::IncorrectAuthority),
+            expected_result,
         );
 
         // Case: No buffer and program authority
+        // This case has a different error depending on `close_buffer`.
+        let expected_result = if simd_0430_enabled && matches!(close_buffer, Some(false)) {
+            // When `close_buffer=false`, only the program authority is checked.
+            // Therefore, we expect to see `Immutable`.
+            Err(InstructionError::Immutable)
+        } else {
+            // When `close_buffer=true`, both authorities are checked.
+            // Therefore, we expect to see `IncorrectAuthority`.
+            Err(InstructionError::IncorrectAuthority)
+        };
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
             &buffer_address,
@@ -2131,14 +2343,25 @@ mod tests {
             })
             .unwrap();
         process_instruction(
+            &features,
+            close_buffer,
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::IncorrectAuthority),
+            expected_result,
         );
     }
 
-    #[test]
-    fn test_bpf_loader_upgradeable_deploy_with_max_data_len() {
+    #[test_matrix(
+        [true, false],
+        [None, Some(true), Some(false)]
+    )]
+    fn test_bpf_loader_upgradeable_deploy_with_max_data_len(
+        simd_0430_enabled: bool,
+        close_buffer: Option<bool>,
+    ) {
+        let features = LoaderV3Features {
+            loader_v3_relax_program_buffer_constraints: simd_0430_enabled,
+        };
         let mut file = File::open("test_elfs/out/sbpfv3_return_ok.so").expect("file open failed");
         let mut elf = Vec::new();
         file.read_to_end(&mut elf).unwrap();
@@ -2255,17 +2478,22 @@ mod tests {
         }
 
         fn process_instruction(
+            features: &LoaderV3Features,
+            close_buffer: Option<bool>,
             max_data_len: usize,
             transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
             instruction_accounts: Vec<AccountMeta>,
             expected_result: Result<(), InstructionError>,
         ) -> Vec<AccountSharedData> {
-            let instruction_data =
+            let mut instruction_data =
                 bincode::serialize(&UpgradeableLoaderInstruction::DeployWithMaxDataLen {
                     max_data_len,
                 })
                 .unwrap();
-            mock_process_instruction(
+            if let Some(close_buffer) = close_buffer {
+                instruction_data.push(close_buffer.into());
+            }
+            mock_process_instruction_with_feature_set(
                 &bpf_loader_upgradeable::id(),
                 &instruction_data,
                 transaction_accounts,
@@ -2284,6 +2512,7 @@ mod tests {
                     );
                 },
                 |_invoke_context| {},
+                &features.svm_feature_set(),
             )
         }
 
@@ -2297,6 +2526,8 @@ mod tests {
         );
         let programdata_address = instruction_accounts.get(1).unwrap().pubkey;
         let accounts = process_instruction(
+            &features,
+            close_buffer,
             elf.len(),
             transaction_accounts,
             instruction_accounts,
@@ -2305,12 +2536,38 @@ mod tests {
         let min_programdata_balance =
             Rent::default().minimum_balance(UpgradeableLoaderState::size_of_programdata(elf.len()));
         assert_eq!(min_programdata_balance, accounts.get(1).unwrap().lamports());
-        assert_eq!(2, accounts.first().unwrap().lamports());
-        assert_eq!(0, accounts.get(3).unwrap().lamports());
-        assert_eq!(
-            UpgradeableLoaderState::size_of_buffer(0),
-            accounts.get(3).unwrap().data().len()
-        );
+        let expected_payer_balance = if simd_0430_enabled && matches!(close_buffer, Some(false)) {
+            // Buffer was NOT closed.
+            // Buffer lamports were retained, NOT sent to the payer.
+            1
+        } else {
+            // Buffer was closed.
+            // Buffer lamports were sent to the payer.
+            2
+        };
+        assert_eq!(expected_payer_balance, accounts.first().unwrap().lamports());
+        if simd_0430_enabled && matches!(close_buffer, Some(false)) {
+            // The buffer should NOT have been closed.
+            // Its lamports should be untouched.
+            assert_eq!(1, accounts.get(3).unwrap().lamports());
+            // Its state should still be `Buffer`.
+            let state: UpgradeableLoaderState = accounts.get(3).unwrap().state().unwrap();
+            assert_eq!(
+                state,
+                UpgradeableLoaderState::Buffer {
+                    authority_address: Some(upgrade_authority_address),
+                }
+            );
+        } else {
+            // The buffer should have been closed.
+            // Its lamports should have been drained to the payer.
+            assert_eq!(0, accounts.get(3).unwrap().lamports());
+            // Its data should have been truncated.
+            assert_eq!(
+                UpgradeableLoaderState::size_of_buffer(0),
+                accounts.get(3).unwrap().data().len()
+            );
+        }
         let state: UpgradeableLoaderState = accounts.get(1).unwrap().state().unwrap();
         assert_eq!(
             state,
@@ -2343,6 +2600,20 @@ mod tests {
         assert!(accounts.get(2).unwrap().executable());
 
         // Case: wrong authority
+        //
+        // Per SIMD-0430, `close_buffer=false` relaxes the buffer-authority
+        // check. Unlike `Upgrade`, `DeployWithMaxDataLen` has no pre-existing
+        // programdata to re-check the signer against, so any signer is
+        // accepted when `close_buffer=false`.
+        //
+        // However, this signer will become the  new program's upgrade
+        // authority. Therefore signer they still must actually sign,
+        // which is exercised in the next case.
+        let expected_result = if simd_0430_enabled && matches!(close_buffer, Some(false)) {
+            Ok(())
+        } else {
+            Err(InstructionError::IncorrectAuthority)
+        };
         let (mut transaction_accounts, mut instruction_accounts) = get_accounts(
             &payer_address,
             &buffer_address,
@@ -2354,13 +2625,20 @@ mod tests {
         transaction_accounts.get_mut(7).unwrap().0 = invalid_upgrade_authority_address;
         instruction_accounts.get_mut(7).unwrap().pubkey = invalid_upgrade_authority_address;
         process_instruction(
+            &features,
+            close_buffer,
             elf.len(),
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::IncorrectAuthority),
+            expected_result,
         );
 
         // Case: authority did not sign
+        //
+        // Per SIMD-0430, only the buffer-authority check is relaxed for
+        // `close_buffer=false`. The program's (new) upgrade authority must
+        // still sign, so `MissingRequiredSignature` is expected in every
+        // variant.
         let (transaction_accounts, mut instruction_accounts) = get_accounts(
             &payer_address,
             &buffer_address,
@@ -2370,6 +2648,8 @@ mod tests {
         );
         instruction_accounts.get_mut(7).unwrap().is_signer = false;
         process_instruction(
+            &features,
+            close_buffer,
             elf.len(),
             transaction_accounts,
             instruction_accounts,
@@ -2377,6 +2657,23 @@ mod tests {
         );
 
         // Case: Buffer account and payer account alias
+        //
+        // When `close_buffer=true`, the handler simultaneously borrows the
+        // buffer and the payer to credit the buffer's lamports to the payer
+        // before creating the programdata account. Aliasing them collapses
+        // those into two borrows of the same account and trips
+        // `AccountBorrowFailed`.
+        //
+        // When `close_buffer=false`, there is no drain step, so no borrow
+        // conflict. Instead, the system-program CPI marks the aliased payer
+        // as a signer, but the outer instruction only has it marked as the
+        // non-signing buffer. The runtime rejects that as
+        // `PrivilegeEscalation`.
+        let expected_result = if simd_0430_enabled && matches!(close_buffer, Some(false)) {
+            Err(InstructionError::PrivilegeEscalation)
+        } else {
+            Err(InstructionError::AccountBorrowFailed)
+        };
         let (transaction_accounts, mut instruction_accounts) = get_accounts(
             &payer_address,
             &buffer_address,
@@ -2386,11 +2683,45 @@ mod tests {
         );
         *instruction_accounts.get_mut(0).unwrap() = instruction_accounts.get(3).unwrap().clone();
         process_instruction(
+            &features,
+            close_buffer,
             elf.len(),
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::AccountBorrowFailed),
+            expected_result,
         );
+
+        // Case: Buffer account and payer account alias (close_buffer=false)
+        //
+        // In theory, there's no reason the two can't alias if the buffer
+        // account is not going to be closed and the buffer signs for its own
+        // lamport debit. That's up to the caller.
+        //
+        // In practice, the system-program CPI requires the `from` account to
+        // be owned by the system program itself, and the buffer is owned by
+        // the loader. So even with the signer flag, the system program
+        // rejects the transfer with `InvalidArgument` before anything else
+        // can happen.
+        if simd_0430_enabled && matches!(close_buffer, Some(false)) {
+            let (transaction_accounts, mut instruction_accounts) = get_accounts(
+                &payer_address,
+                &buffer_address,
+                &upgrade_authority_address,
+                &upgrade_authority_address,
+                &elf,
+            );
+            *instruction_accounts.get_mut(0).unwrap() =
+                instruction_accounts.get(3).unwrap().clone();
+            instruction_accounts.get_mut(0).unwrap().is_signer = true;
+            process_instruction(
+                &features,
+                close_buffer,
+                elf.len(),
+                transaction_accounts,
+                instruction_accounts,
+                Err(InstructionError::InvalidArgument),
+            );
+        }
 
         // Case: Program account not owned by loader
         //
@@ -2413,6 +2744,8 @@ mod tests {
             .1
             .set_owner(Pubkey::new_unique());
         process_instruction(
+            &features,
+            close_buffer,
             elf.len(),
             transaction_accounts,
             instruction_accounts,
@@ -2434,6 +2767,8 @@ mod tests {
         );
         instruction_accounts.get_mut(2).unwrap().is_writable = false;
         process_instruction(
+            &features,
+            close_buffer,
             elf.len(),
             transaction_accounts,
             instruction_accounts,
@@ -2457,6 +2792,8 @@ mod tests {
             })
             .unwrap();
         process_instruction(
+            &features,
+            close_buffer,
             elf.len(),
             transaction_accounts,
             instruction_accounts,
@@ -2473,6 +2810,8 @@ mod tests {
         );
         truncate_data(&mut transaction_accounts.get_mut(2).unwrap().1, 5);
         process_instruction(
+            &features,
+            close_buffer,
             elf.len(),
             transaction_accounts,
             instruction_accounts,
@@ -2489,6 +2828,8 @@ mod tests {
         );
         transaction_accounts.get_mut(2).unwrap().1.set_lamports(1);
         process_instruction(
+            &features,
+            close_buffer,
             elf.len(),
             transaction_accounts,
             instruction_accounts,
@@ -2507,6 +2848,8 @@ mod tests {
         transaction_accounts.get_mut(1).unwrap().0 = invalid_programdata_address;
         instruction_accounts.get_mut(1).unwrap().pubkey = invalid_programdata_address;
         process_instruction(
+            &features,
+            close_buffer,
             elf.len(),
             transaction_accounts,
             instruction_accounts,
@@ -2528,6 +2871,8 @@ mod tests {
             .set_state(&UpgradeableLoaderState::Uninitialized)
             .unwrap();
         process_instruction(
+            &features,
+            close_buffer,
             elf.len(),
             transaction_accounts,
             instruction_accounts,
@@ -2542,6 +2887,16 @@ mod tests {
         // For `DeployWithMaxDataLen`, this occurs when attempting to close the
         // buffer. The first thing it attempts to do is debit the lamports,
         // which immediately throws `ExternalAccountLamportSpend`.
+        //
+        // Therefore, the result depends on the `close_buffer` argument.
+        let expected_result = if simd_0430_enabled && matches!(close_buffer, Some(false)) {
+            // The buffer will not be closed, therefore its lamports will not be
+            // touched. It can be owned by any program.
+            Ok(())
+        } else {
+            // The buffer will be closed, thus it will trip the error.
+            Err(InstructionError::ExternalAccountLamportSpend)
+        };
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &payer_address,
             &buffer_address,
@@ -2555,10 +2910,12 @@ mod tests {
             .1
             .set_owner(Pubkey::new_unique());
         process_instruction(
+            &features,
+            close_buffer,
             elf.len(),
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::ExternalAccountLamportSpend),
+            expected_result,
         );
 
         // Case: Max data length too small for Buffer data
@@ -2570,6 +2927,8 @@ mod tests {
             &elf,
         );
         process_instruction(
+            &features,
+            close_buffer,
             elf.len().saturating_sub(1),
             transaction_accounts,
             instruction_accounts,
@@ -2585,6 +2944,8 @@ mod tests {
             &elf,
         );
         process_instruction(
+            &features,
+            close_buffer,
             MAX_PERMITTED_DATA_LENGTH as usize,
             transaction_accounts,
             instruction_accounts,
@@ -2592,6 +2953,17 @@ mod tests {
         );
 
         // Case: Mismatched buffer authority
+        // This case only matters for when `close_buffer=true`. SIMD-0430 was
+        // designed to relax this check when a buffer account will not be
+        // closed. Unlike the "wrong authority" case above which mutates the
+        // signer, this case mutates the buffer's stored authority — both
+        // exercise the same `close_buffer && authority_address != authority_key`
+        // branch from opposite sides.
+        let expected_result = if simd_0430_enabled && matches!(close_buffer, Some(false)) {
+            Ok(())
+        } else {
+            Err(InstructionError::IncorrectAuthority)
+        };
         let (transaction_accounts, instruction_accounts) = get_accounts(
             &payer_address,
             &buffer_address,
@@ -2600,13 +2972,23 @@ mod tests {
             &elf,
         );
         process_instruction(
+            &features,
+            close_buffer,
             elf.len(),
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::IncorrectAuthority),
+            expected_result,
         );
 
         // Case: No buffer authority
+        // This case only matters for when `close_buffer=true`. SIMD-0430 was
+        // designed to relax this check when a buffer account will not be
+        // closed.
+        let expected_result = if simd_0430_enabled && matches!(close_buffer, Some(false)) {
+            Ok(())
+        } else {
+            Err(InstructionError::IncorrectAuthority)
+        };
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &payer_address,
             &buffer_address,
@@ -2623,10 +3005,12 @@ mod tests {
             })
             .unwrap();
         process_instruction(
+            &features,
+            close_buffer,
             elf.len(),
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::IncorrectAuthority),
+            expected_result,
         );
     }
 
