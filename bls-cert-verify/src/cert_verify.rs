@@ -15,6 +15,10 @@ use {
     thiserror::Error,
 };
 
+/// Minimum size of the rayon thread pool required for this crate to use the thread pool.
+///  Otherwise, the operations will be done sequentially on the current thread.
+const THREAD_POOL_THRESHOLD: usize = 4;
+
 #[derive(Debug, PartialEq, Eq, Error)]
 pub enum Error {
     #[error("missing rank in rank map")]
@@ -182,16 +186,28 @@ fn verify_base3(
                 let agg_pubkey = aggregate_pubkeys(&fallback_pubkeys)?;
                 Ok(agg_pubkey.verify_signature(signature, fallback_payload)?)
             } else {
-                let (primary_agg_res, fallback_agg_res) = join(
-                    || PubkeyProjective::par_aggregate(primary_pubkeys.par_iter()),
-                    || PubkeyProjective::par_aggregate(fallback_pubkeys.par_iter()),
-                );
-                let pubkeys = [primary_agg_res?, fallback_agg_res?];
-                Ok(SignatureProjective::par_verify_distinct_aggregated(
-                    &pubkeys,
-                    signature,
-                    &[payload, fallback_payload],
-                )?)
+                if rayon::current_num_threads() < THREAD_POOL_THRESHOLD {
+                    let primary_agg = PubkeyProjective::aggregate(primary_pubkeys.iter())?;
+                    let fallback_agg = PubkeyProjective::aggregate(fallback_pubkeys.iter())?;
+                    let pubkeys = [primary_agg, fallback_agg];
+                    let messages = [payload, fallback_payload].into_iter();
+                    Ok(SignatureProjective::verify_distinct_aggregated(
+                        pubkeys.iter(),
+                        signature,
+                        messages,
+                    )?)
+                } else {
+                    let (primary_agg_res, fallback_agg_res) = join(
+                        || PubkeyProjective::par_aggregate(primary_pubkeys.par_iter()),
+                        || PubkeyProjective::par_aggregate(fallback_pubkeys.par_iter()),
+                    );
+                    let pubkeys = [primary_agg_res?, fallback_agg_res?];
+                    Ok(SignatureProjective::par_verify_distinct_aggregated(
+                        &pubkeys,
+                        signature,
+                        &[payload, fallback_payload],
+                    )?)
+                }
             }
         }
     }
@@ -199,7 +215,11 @@ fn verify_base3(
 
 /// Aggregates a slice of public keys into a single projective public key.
 pub fn aggregate_pubkeys(pubkeys: &[BlsPubkeyAffine]) -> Result<PubkeyProjective, Error> {
-    PubkeyProjective::par_aggregate(pubkeys.par_iter()).map_err(Error::VerifySig)
+    if rayon::current_num_threads() < THREAD_POOL_THRESHOLD {
+        PubkeyProjective::aggregate(pubkeys.iter()).map_err(Error::VerifySig)
+    } else {
+        PubkeyProjective::par_aggregate(pubkeys.par_iter()).map_err(Error::VerifySig)
+    }
 }
 
 /// Collects public keys sequentially based on the provided ranks bitmap.

@@ -5,15 +5,13 @@
 //! transaction. All processing is done on the CPU by default.
 
 use {
-    crate::sigverify,
+    crate::sigverify::TransactionSigVerifier,
     core::time::Duration,
     crossbeam_channel::{Receiver, RecvTimeoutError},
-    rayon::ThreadPool,
     solana_measure::measure::Measure,
     solana_perf::{
         deduper::{self, Deduper},
         packet::PacketBatch,
-        sigverify::count_valid_packets,
     },
     solana_streamer::streamer::{self, StreamerError},
     solana_time_utils as timing,
@@ -38,25 +36,6 @@ type Result<T> = std::result::Result<T, SigVerifyServiceError>;
 
 pub struct SigVerifyStage {
     thread_hdl: JoinHandle<()>,
-}
-
-pub trait SigVerifier {
-    fn verify_and_send_packets(
-        &mut self,
-        batches: Vec<PacketBatch>,
-        valid_packets: usize,
-        in_flight_count: Arc<AtomicUsize>,
-        total_valid_packets: Arc<AtomicUsize>,
-        total_verify_time_us: Arc<AtomicUsize>,
-    ) -> Result<()>;
-
-    /// Return maximum number of packets that are allowed to be in the verification pool.
-    fn capacity(&self) -> usize;
-}
-
-#[derive(Clone)]
-pub struct DisabledSigVerifier {
-    pub thread_pool: Arc<ThreadPool>,
 }
 
 #[derive(Default)]
@@ -185,32 +164,10 @@ impl SigVerifierStats {
     }
 }
 
-impl SigVerifier for DisabledSigVerifier {
-    fn verify_and_send_packets(
-        &mut self,
-        mut batches: Vec<PacketBatch>,
-        _valid_packets: usize,
-        _in_flight_count: Arc<AtomicUsize>,
-        total_valid_packets: Arc<AtomicUsize>,
-        total_verify_time_us: Arc<AtomicUsize>,
-    ) -> Result<()> {
-        let mut verify_time = Measure::start("sigverify_batch_time");
-        sigverify::ed25519_verify_disabled(&self.thread_pool, &mut batches);
-        verify_time.stop();
-        total_valid_packets.fetch_add(count_valid_packets(&batches), Ordering::Relaxed);
-        total_verify_time_us.fetch_add(verify_time.as_us() as usize, Ordering::Relaxed);
-        Ok(())
-    }
-
-    fn capacity(&self) -> usize {
-        usize::MAX
-    }
-}
-
 impl SigVerifyStage {
-    pub fn new<T: SigVerifier + 'static + Send>(
+    pub fn new(
         packet_receiver: Receiver<PacketBatch>,
-        verifier: T,
+        verifier: TransactionSigVerifier,
         thread_name: &'static str,
         metrics_name: &'static str,
     ) -> Self {
@@ -219,10 +176,10 @@ impl SigVerifyStage {
         Self { thread_hdl }
     }
 
-    fn verifier<const K: usize, T: SigVerifier>(
+    fn verifier<const K: usize>(
         deduper: &Deduper<K, [u8]>,
         recvr: &Receiver<PacketBatch>,
-        verifier: &mut T,
+        verifier: &mut TransactionSigVerifier,
         stats: &mut SigVerifierStats,
         in_flight_count: &Arc<AtomicUsize>,
     ) -> Result<()> {
@@ -285,9 +242,9 @@ impl SigVerifyStage {
         Ok(())
     }
 
-    fn verifier_service<T: SigVerifier + 'static + Send>(
+    fn verifier_service(
         packet_receiver: Receiver<PacketBatch>,
-        mut verifier: T,
+        mut verifier: TransactionSigVerifier,
         thread_name: &'static str,
         metrics_name: &'static str,
     ) -> JoinHandle<()> {
