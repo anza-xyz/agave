@@ -1775,6 +1775,7 @@ impl Bank {
             parent_height,
             &rewards_calculation,
             &rewards_metrics,
+            &thread_pool,
         );
 
         // the vote reward account state should be created at the epoch boundary in which we

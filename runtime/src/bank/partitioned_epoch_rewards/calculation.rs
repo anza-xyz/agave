@@ -20,7 +20,7 @@ use {
     log::{debug, info},
     rayon::{
         ThreadPool,
-        iter::{IndexedParallelIterator, ParallelIterator},
+        iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     },
     solana_account::{ReadableAccount, WritableAccount},
     solana_clock::{Epoch, Slot},
@@ -111,9 +111,14 @@ impl Bank {
         parent_block_height: u64,
         rewards_calculation: &PartitionedRewardsCalculation,
         rewards_metrics: &RewardsMetrics,
+        thread_pool: &ThreadPool,
     ) -> u64 {
-        let distributed_rewards =
-            self.distribute_reward_commissions(parent_epoch, rewards_calculation, rewards_metrics);
+        let distributed_rewards = self.distribute_reward_commissions(
+            parent_epoch,
+            rewards_calculation,
+            rewards_metrics,
+            thread_pool,
+        );
 
         let slot = self.slot();
         let distribution_starting_block_height =
@@ -207,6 +212,7 @@ impl Bank {
         prev_epoch: Epoch,
         rewards_calculation: &PartitionedRewardsCalculation,
         rewards_metrics: &RewardsMetrics,
+        thread_pool: &ThreadPool,
     ) -> u64 {
         let PartitionedRewardsCalculation {
             reward_commissions,
@@ -220,7 +226,8 @@ impl Bank {
         // from the store. This is intentionally deferred from calculation
         // time so that any intervening account mutations (e.g. VAT burns in
         // `update_epoch_stakes`) are reflected.
-        let reward_commission_accounts = self.materialize_commission_accounts(reward_commissions);
+        let reward_commission_accounts =
+            self.materialize_commission_accounts(reward_commissions, thread_pool);
         let total_reward_commissions = reward_commission_accounts.total_reward_commission_lamports;
         self.store_commission_accounts_partitioned(&reward_commission_accounts, rewards_metrics);
         self.update_reward_commissions(&reward_commission_accounts);
@@ -778,41 +785,56 @@ impl Bank {
     fn materialize_commission_accounts(
         &self,
         reward_commissions: &RewardCommissions,
+        thread_pool: &ThreadPool,
     ) -> RewardCommissionAccounts {
-        let mut result = RewardCommissionAccounts {
-            accounts_with_rewards: Vec::with_capacity(reward_commissions.len()),
-            total_reward_commission_lamports: 0,
-        };
-        for (
-            commission_pubkey,
-            RewardCommission {
-                commission_bps,
-                commission_lamports,
-                ..
-            },
-        ) in reward_commissions
-        {
-            let Some(mut commission_account) = self.get_account(commission_pubkey) else {
-                debug!("commission account {commission_pubkey} missing at distribution time");
-                continue;
-            };
-            if let Err(err) = commission_account.checked_add_lamports(*commission_lamports) {
-                debug!("reward redemption failed for {commission_pubkey}: {err:?}");
-                continue;
-            }
-            result.accounts_with_rewards.push((
-                *commission_pubkey,
-                RewardInfo {
-                    reward_type: RewardType::Voting,
-                    lamports: *commission_lamports as i64,
-                    post_balance: commission_account.lamports(),
-                    commission_bps: Some(*commission_bps),
-                },
-                commission_account,
-            ));
-            result.total_reward_commission_lamports += commission_lamports;
+        let accounts_with_rewards: Vec<_> = thread_pool.install(|| {
+            reward_commissions
+                .par_iter()
+                .filter_map(
+                    |(
+                        commission_pubkey,
+                        RewardCommission {
+                            commission_bps,
+                            commission_lamports,
+                            ..
+                        },
+                    )| {
+                        let Some(mut commission_account) = self.get_account(commission_pubkey)
+                        else {
+                            debug!(
+                                "commission account {commission_pubkey} missing at distribution \
+                                 time"
+                            );
+                            return None;
+                        };
+                        if let Err(err) =
+                            commission_account.checked_add_lamports(*commission_lamports)
+                        {
+                            debug!("reward redemption failed for {commission_pubkey}: {err:?}");
+                            return None;
+                        }
+                        Some((
+                            *commission_pubkey,
+                            RewardInfo {
+                                reward_type: RewardType::Voting,
+                                lamports: *commission_lamports as i64,
+                                post_balance: commission_account.lamports(),
+                                commission_bps: Some(*commission_bps),
+                            },
+                            commission_account,
+                        ))
+                    },
+                )
+                .collect()
+        });
+        let total_reward_commission_lamports = accounts_with_rewards
+            .iter()
+            .map(|(_, info, _)| info.lamports as u64)
+            .sum();
+        RewardCommissionAccounts {
+            accounts_with_rewards,
+            total_reward_commission_lamports,
         }
-        result
     }
 
     fn update_reward_commissions(&self, reward_commission_accounts: &RewardCommissionAccounts) {
@@ -2469,8 +2491,9 @@ mod tests {
     fn test_materialize_commission_accounts_empty() {
         let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let reward_commissions = RewardCommissions::default();
-        let result = bank.materialize_commission_accounts(&reward_commissions);
+        let result = bank.materialize_commission_accounts(&reward_commissions, &thread_pool);
         assert!(result.accounts_with_rewards.is_empty());
     }
 
@@ -2478,6 +2501,7 @@ mod tests {
     fn test_materialize_commission_accounts_overflow() {
         let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let pubkey = solana_pubkey::new_rand();
         let mut commission_account = AccountSharedData::default();
         commission_account.set_lamports(u64::MAX);
@@ -2491,7 +2515,7 @@ mod tests {
                 commission_lamports: 1, // enough to overflow
             },
         );
-        let result = bank.materialize_commission_accounts(&reward_commissions);
+        let result = bank.materialize_commission_accounts(&reward_commissions, &thread_pool);
         assert!(result.accounts_with_rewards.is_empty());
     }
 
@@ -2499,6 +2523,7 @@ mod tests {
     fn test_materialize_commission_accounts_normal() {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000 * LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let pubkey = solana_pubkey::new_rand();
         for commission_bps in [0, 100] {
             for commission_lamports in 0..2 {
@@ -2514,7 +2539,8 @@ mod tests {
                         commission_lamports,
                     },
                 );
-                let result = bank.materialize_commission_accounts(&reward_commissions);
+                let result =
+                    bank.materialize_commission_accounts(&reward_commissions, &thread_pool);
                 assert_eq!(result.accounts_with_rewards.len(), 1);
                 let (pubkey_result, rewards, account) = &result.accounts_with_rewards[0];
                 _ = commission_account.checked_add_lamports(commission_lamports);
