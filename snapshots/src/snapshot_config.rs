@@ -78,7 +78,7 @@ impl Default for SnapshotConfig {
             maximum_full_snapshot_archives_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
             maximum_incremental_snapshot_archives_to_retain:
                 DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-            use_direct_io: false,
+            use_direct_io: true,
             use_registered_io_uring_buffers: true,
         }
     }

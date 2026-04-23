@@ -1134,6 +1134,7 @@ impl TestValidator {
                 full_snapshot_archives_dir: ledger_path.to_path_buf(),
                 incremental_snapshot_archives_dir: ledger_path.to_path_buf(),
                 use_registered_io_uring_buffers: false,
+                use_direct_io: false,
                 ..SnapshotConfig::default()
             },
             warp_slot: config.warp_slot,
