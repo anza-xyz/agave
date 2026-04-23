@@ -761,10 +761,11 @@ mod tests {
         finished_work_sender
             .send(FinishedConsumeWork {
                 work: thread_0_work.into_iter().next().unwrap(),
+                attempted_slot: None,
                 retryable_indexes: vec![],
             })
             .unwrap();
-        scheduler.receive_completed(&mut container).unwrap();
+        scheduler.receive_completed(&mut container, None).unwrap();
         let scheduling_summary = scheduler
             .schedule(
                 &mut container,

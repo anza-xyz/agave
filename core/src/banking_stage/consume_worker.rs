@@ -112,6 +112,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         let bank = leader_state
             .working_bank()
             .expect("active_leader_state should only return an active bank");
+        let attempted_slot = bank.slot();
         self.metrics
             .count_metrics
             .num_messages_processed
@@ -131,6 +132,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
 
         self.consumed_sender.send(FinishedConsumeWork {
             work,
+            attempted_slot: Some(attempted_slot),
             retryable_indexes: output
                 .execute_and_commit_transactions_output
                 .retryable_transaction_indexes,
@@ -169,6 +171,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         self.metrics.has_data.store(true, Ordering::Relaxed);
         self.consumed_sender.send(FinishedConsumeWork {
             work,
+            attempted_slot: None,
             retryable_indexes,
         })?;
         Ok(())
@@ -2922,6 +2925,7 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid);
         assert_eq!(consumed.work.ids, vec![id]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
+        assert_eq!(consumed.attempted_slot, None);
         assert_eq!(
             consumed.retryable_indexes,
             vec![RetryableIndex::new(0, true)]
@@ -2972,6 +2976,7 @@ mod tests {
         for i in 0..num_batches {
             let consumed = consumed_receiver.recv().unwrap();
             assert_eq!(consumed.work.batch_id, TransactionBatchId::new(i as u64));
+            assert_eq!(consumed.attempted_slot, None);
             assert_eq!(
                 consumed.retryable_indexes,
                 vec![RetryableIndex::new(0, true)]
@@ -3030,6 +3035,7 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid);
         assert_eq!(consumed.work.ids, vec![id]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
+        assert_eq!(consumed.attempted_slot, Some(bank.slot()));
         assert_eq!(consumed.retryable_indexes, Vec::new());
 
         drop(test_frame);
@@ -3086,6 +3092,7 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid);
         assert_eq!(consumed.work.ids, vec![id1, id2]);
         assert_eq!(consumed.work.max_ages, vec![max_age, max_age]);
+        assert_eq!(consumed.attempted_slot, Some(bank.slot()));
 
         assert_eq!(consumed.retryable_indexes, vec![]);
 
@@ -3160,12 +3167,14 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid1);
         assert_eq!(consumed.work.ids, vec![id1]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
+        assert_eq!(consumed.attempted_slot, Some(bank.slot()));
         assert_eq!(consumed.retryable_indexes, Vec::new());
 
         let consumed = consumed_receiver.recv().unwrap();
         assert_eq!(consumed.work.batch_id, bid2);
         assert_eq!(consumed.work.ids, vec![id2]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
+        assert_eq!(consumed.attempted_slot, Some(bank.slot()));
         assert_eq!(consumed.retryable_indexes, Vec::new());
 
         drop(test_frame);
