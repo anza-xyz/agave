@@ -215,12 +215,8 @@ impl SigVerifyStage {
             let discard_or_dedup_fail =
                 deduper::dedup_packets_and_count_discards(deduper, &mut batches) as usize;
             dedup_time.stop();
-            let num_unique = num_packets.saturating_sub(discard_or_dedup_fail);
-            let num_packets_to_verify = num_unique;
-
             verifier.verify_and_send_packets(
                 batches,
-                num_packets_to_verify,
                 in_flight_count.clone(),
                 stats.total_valid_packets.clone(),
                 stats.total_verify_time_us.clone(),
