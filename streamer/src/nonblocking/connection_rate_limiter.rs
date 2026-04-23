@@ -1,6 +1,6 @@
 use {
     solana_net_utils::token_bucket::{KeyedRateLimiter, TokenBucket},
-    std::net::IpAddr,
+    std::{net::IpAddr, time::Duration},
 };
 
 /// Limits the rate of connections per IP address.
@@ -22,7 +22,12 @@ impl ConnectionRateLimiter {
         Self {
             limiter: KeyedRateLimiter::new(
                 CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD,
-                TokenBucket::new(limit_per_minute, max_burst, limit_per_minute as f64 / 60.0),
+                TokenBucket::new(
+                    limit_per_minute,
+                    max_burst,
+                    limit_per_minute,
+                    Duration::from_secs(60),
+                ),
                 num_shards,
             ),
         }

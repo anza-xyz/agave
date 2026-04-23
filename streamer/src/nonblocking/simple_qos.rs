@@ -217,7 +217,8 @@ impl SimpleQos {
                     Arc::new(TokenBucket::new(
                         self.config.max_streams_per_second,
                         self.config.max_streams_per_second,
-                        self.config.max_streams_per_second as f64,
+                        self.config.max_streams_per_second,
+                        Duration::from_secs(1),
                     ))
                 },
             )
@@ -608,7 +609,7 @@ mod tests {
             ConnectionPeerType::Staked(1000),
             Arc::new(AtomicU64::new(0)),
             1, // max_connections_per_peer
-            || Arc::new(TokenBucket::new(1, 1, 1.0)),
+            || Arc::new(TokenBucket::new(1, 1, 1, Duration::from_secs(1))),
         );
 
         let connection_table_guard = tokio::sync::Mutex::new(connection_table);

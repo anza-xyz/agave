@@ -11,10 +11,10 @@ use {
 fn bench_token_bucket() {
     println!("Running bench_token_bucket...");
     let run_duration = Duration::from_secs(5);
-    let fill_rate = 10000.0;
+    let fill_rate: u64 = 10000;
     let request_size = 3;
-    let target_rate = fill_rate / request_size as f64;
-    let tb = TokenBucket::new(1, 600, fill_rate);
+    let target_rate = fill_rate as f64 / request_size as f64;
+    let tb = TokenBucket::new(1, 600, fill_rate, Duration::from_secs(1));
 
     let accepted = AtomicUsize::new(0);
     let rejected = AtomicUsize::new(0);
@@ -75,7 +75,7 @@ fn bench_token_bucket_eviction() {
     println!("Running bench_token_bucket_eviction...");
     let run_duration = Duration::from_secs(5);
     let target_size = 256;
-    let tb = TokenBucket::new(1, 60, 100.0);
+    let tb = TokenBucket::new(1, 60, 100, Duration::from_secs(1));
     let mut limiter = KeyedRateLimiter::new(target_size, tb, 8);
     // make shrinking more aggressive than default
     // since only one worker is shrinking the
@@ -130,7 +130,7 @@ fn bench_token_bucket_eviction() {
 fn bench_keyed_rate_limiter() {
     println!("Running bench_keyed_rate_limiter...");
     let run_duration = Duration::from_secs(5);
-    let tb = TokenBucket::new(1, 60, 100.0);
+    let tb = TokenBucket::new(1, 60, 100, Duration::from_secs(1));
     let limiter = KeyedRateLimiter::new(2048, tb, 8);
 
     let accepted = AtomicUsize::new(0);
