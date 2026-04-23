@@ -946,7 +946,9 @@ impl ServeRepair {
                             return;
                         }
                     };
-                    if last_print.elapsed().as_secs() > 2 {
+
+                    const REPORT_INTERVAL: Duration = Duration::from_secs(2);
+                    if last_print.elapsed() > REPORT_INTERVAL {
                         self.report_reset_stats(&mut stats);
                         last_print = Instant::now();
                     }

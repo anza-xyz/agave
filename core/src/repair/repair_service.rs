@@ -146,8 +146,10 @@ impl Default for RepairMetrics {
 }
 
 impl RepairMetrics {
+    const REPORT_INTERVAL: Duration = Duration::from_secs(2);
+
     pub fn maybe_report(&mut self) {
-        if self.last_report.elapsed().as_secs() > 2 {
+        if self.last_report.elapsed() > Self::REPORT_INTERVAL {
             self.stats.report();
             self.timing.report();
             self.best_repairs_stats.report();
