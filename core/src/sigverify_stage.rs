@@ -76,6 +76,8 @@ struct SigVerifierStats {
 }
 
 impl SigVerifierStats {
+    const REPORT_INTERVAL: Duration = Duration::from_secs(2);
+
     fn maybe_report_and_reset(&mut self, name: &'static str) {
         // No need to report a datapoint if no batches/packets received
         if self.total_batches == 0 {
@@ -323,7 +325,7 @@ impl SigVerifyStage {
                             _ => error!("{e:?}"),
                         }
                     }
-                    if last_print.elapsed().as_secs() > 2 {
+                    if last_print.elapsed() > SigVerifierStats::REPORT_INTERVAL {
                         stats.maybe_report_and_reset(metrics_name);
                         last_print = Instant::now();
                     }
