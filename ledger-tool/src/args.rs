@@ -19,7 +19,6 @@ use {
     },
     solana_cli_output::CliAccountNewConfig,
     solana_clock::Slot,
-    solana_core::resource_limits,
     solana_ledger::{
         blockstore_processor::ProcessOptions,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
@@ -384,10 +383,6 @@ pub fn get_accounts_db_config(
         scan_filter_for_shrinking,
         num_background_threads: None,
         num_foreground_threads: None,
-        use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
-            solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
-        ),
-        snapshots_use_direct_io: !arg_matches.is_present("no_accounts_db_snapshots_direct_io"),
     }
 }
 

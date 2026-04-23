@@ -9,6 +9,7 @@ use {
         },
     },
     agave_snapshots::SnapshotVersion,
+    solana_accounts_db::accounts_file::StorageAccess,
     tempfile::TempDir,
 };
 use {
@@ -55,7 +56,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         ops::RangeInclusive,
-        path::{Path, PathBuf},
+        path::PathBuf,
         sync::{Arc, atomic::AtomicBool},
     },
 };
@@ -65,7 +66,7 @@ use {
 #[cfg(feature = "dev-context-only-utils")]
 pub fn bank_fields_from_snapshot_archives(
     snapshot_config: &SnapshotConfig,
-    accounts_db_config: &AccountsDbConfig,
+    storage_access: StorageAccess,
 ) -> agave_snapshots::Result<BankFieldsToDeserialize> {
     let full_snapshot_archive_info =
         get_highest_full_snapshot_archive_info(&snapshot_config.full_snapshot_archives_dir)
@@ -87,8 +88,8 @@ pub fn bank_fields_from_snapshot_archives(
 
     let io_setup = IoSetupState::default()
         .with_shared_sqpoll()?
-        .with_direct_io(accounts_db_config.snapshots_use_direct_io)
-        .with_buffers_registered(accounts_db_config.use_registered_io_uring_buffers);
+        .with_direct_io(snapshot_config.use_direct_io)
+        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers);
     let (
         UnarchivedSnapshots {
             full_unpacked_snapshots_dir_and_version,
@@ -101,7 +102,7 @@ pub fn bank_fields_from_snapshot_archives(
         &full_snapshot_archive_info,
         incremental_snapshot_archive_info.as_ref(),
         &account_paths,
-        accounts_db_config.storage_access,
+        storage_access,
         &io_setup,
     )?;
 
@@ -171,8 +172,8 @@ pub fn bank_from_snapshot_archives(
 
     let io_setup = IoSetupState::default()
         .with_shared_sqpoll()?
-        .with_direct_io(accounts_db_config.snapshots_use_direct_io)
-        .with_buffers_registered(accounts_db_config.use_registered_io_uring_buffers);
+        .with_direct_io(snapshot_config.use_direct_io)
+        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers);
     let (
         UnarchivedSnapshots {
             full_storage: mut storage,
@@ -855,7 +856,9 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction::sanitized::SanitizedTransaction,
         std::{
-            fs, slice,
+            fs,
+            path::Path,
+            slice,
             sync::{Arc, atomic::Ordering},
         },
         test_case::test_case,
@@ -1665,14 +1668,8 @@ mod tests {
 
         bank_to_incremental_snapshot_archive(&snapshot_config, &bank2, full_snapshot_slot).unwrap();
 
-        let bank_fields = bank_fields_from_snapshot_archives(
-            &snapshot_config,
-            &AccountsDbConfig {
-                storage_access,
-                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            },
-        )
-        .unwrap();
+        let bank_fields =
+            bank_fields_from_snapshot_archives(&snapshot_config, storage_access).unwrap();
         assert_eq!(bank_fields.slot, bank2.slot());
         assert_eq!(bank_fields.parent_slot, bank2.parent_slot());
     }
