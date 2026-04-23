@@ -287,7 +287,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
                 // Give up on this leader window
                 error!(
                     "{my_pubkey}: produce_window({start_slot}, {end_slot}, {parent_slot}: \
-                     {parent_hash}, {start_of_window:?}) failed with {e}.  skipping window."
+                     {parent_hash}, {start_of_window:?}) failed with \"{e}\".  skipping window."
                 );
             }
         }
@@ -349,7 +349,12 @@ fn produce_window(
                 &ctx.bank_forks.read().unwrap().root_bank(),
                 leader_slot_index(slot),
             );
+        let start = Instant::now();
         let ret = wait_for_replay(slot, parent_slot, block_timeout, ctx);
+        trace!(
+            "produce_window: wait_for_replay(slot={slot}) took {}ms",
+            start.elapsed().as_millis()
+        );
         ret?;
         match record_and_complete_block(ctx, slot, block_timeout) {
             Ok(()) => {
@@ -358,7 +363,7 @@ fn produce_window(
             Err(e) => {
                 panic!(
                     "record_and_complete_block(slot={slot}, start_of_window={start_of_window:?}, \
-                     block_timeout={block_timeout:?}) failed with {e}"
+                     block_timeout={block_timeout:?}) failed with \"{e}\""
                 );
             }
         }
@@ -550,11 +555,8 @@ fn wait_for_replay(
     till: Instant,
     ctx: &mut LeaderContext,
 ) -> Result<(), StartLeaderError> {
-    trace!(
-        "{}: Attempting to start leader slot {slot} parent {parent_slot}",
-        ctx.my_pubkey
-    );
     let my_pubkey = ctx.my_pubkey;
+    trace!("{my_pubkey}: Attempting to start leader slot {slot} parent {parent_slot}");
     let end_slot = last_of_consecutive_leader_slots(slot);
 
     let mut slot_delay_start = Measure::start("slot_delay");
@@ -575,7 +577,14 @@ fn wait_for_replay(
             ));
         }
 
-        match maybe_start_leader(slot, parent_slot, ctx) {
+        let start = Instant::now();
+        let ret = maybe_start_leader(slot, parent_slot, ctx);
+        trace!(
+            "wait_for_replay: maybe_start_leader took {}ms",
+            start.elapsed().as_millis()
+        );
+
+        match ret {
             Ok(()) => {
                 slot_delay_start.stop();
                 let _ = ctx
@@ -597,23 +606,35 @@ fn wait_for_replay(
                     "{my_pubkey}: Attempting to produce slot {slot}, however replay of the parent \
                      {parent_slot} is not yet finished, waiting.",
                 );
+                let start = Instant::now();
                 let highest_frozen_slot = ctx
                     .replay_highest_frozen
                     .highest_frozen_slot
                     .lock()
                     .unwrap();
+                trace!(
+                    "wait_for_replay: addition waiting 1 {}ms",
+                    start.elapsed().as_millis()
+                );
 
                 // We wait until either we finish replay of the parent or the block timer finishes
+                let start = Instant::now();
                 let mut wait_start = Measure::start("replay_is_behind");
-                let _unused = {
+                let waiting_for = till - Instant::now();
+                trace!("wait_for_replay: waiting for {}ms", waiting_for.as_millis());
+                let (_mutex, res) = {
                     ctx.replay_highest_frozen
                         .freeze_notification
-                        .wait_timeout_while(highest_frozen_slot, till - Instant::now(), |hfs| {
+                        .wait_timeout_while(highest_frozen_slot, waiting_for, |hfs| {
                             *hfs < parent_slot
                         })
                         .unwrap()
                 };
                 wait_start.stop();
+                trace!(
+                    "wait_for_replay: addition waiting 2 {}ms res={res:?}",
+                    start.elapsed().as_millis()
+                );
                 ctx.slot_metrics.replay_is_behind_cumulative_wait_elapsed += wait_start.as_us();
                 let _ = ctx
                     .slot_metrics
@@ -659,11 +680,13 @@ fn maybe_start_leader(
     }
 
     let Some(parent_bank) = ctx.bank_forks.read().unwrap().get(parent_slot) else {
+        trace!("maybe_start_leader: did not find parent_bank for parent_slot={parent_slot}");
         ctx.slot_metrics.replay_is_behind_count += 1;
         return Err(StartLeaderError::ReplayIsBehind(parent_slot, slot));
     };
 
     if !parent_bank.is_frozen() {
+        trace!("maybe_start_leader: parent bank for parent_slot={parent_slot} is not frozen");
         ctx.slot_metrics.replay_is_behind_count += 1;
         return Err(StartLeaderError::ReplayIsBehind(parent_slot, slot));
     }
@@ -676,6 +699,7 @@ fn maybe_start_leader(
 /// Creates and inserts the leader bank `slot` of this window with
 /// parent `parent_bank`
 fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut LeaderContext) {
+    let start = Instant::now();
     let parent_slot = parent_bank.slot();
     let root_slot = ctx.bank_forks.read().unwrap().root();
     trace!(
@@ -702,6 +726,12 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
         );
     }
 
+    trace!(
+        "create_and_insert_leader_bank: 1 took {}ms",
+        start.elapsed().as_millis()
+    );
+    let start = Instant::now();
+
     if ctx.poh_recorder.read().unwrap().start_slot() != parent_slot {
         // Important to keep Poh somewhat accurate for
         // parts of the system relying on PohRecorder::would_be_leader()
@@ -718,6 +748,11 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
             bank.slot(),
         );
     }
+    trace!(
+        "create_and_insert_leader_bank: 2 took {}ms",
+        start.elapsed().as_millis()
+    );
+    let start = Instant::now();
 
     let tpu_bank = ReplayStage::new_bank_from_parent_with_notify(
         parent_bank.clone(),
@@ -740,6 +775,11 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
     let tpu_bank = ctx.bank_forks.write().unwrap().insert(tpu_bank);
     let bank_id = tpu_bank.bank_id();
     ctx.poh_recorder.write().unwrap().set_bank(tpu_bank);
+    trace!(
+        "create_and_insert_leader_bank: 3 took {}ms",
+        start.elapsed().as_millis()
+    );
+    let start = Instant::now();
 
     // If this is the first alpenglow block, emit the genesis certificate marker
     maybe_include_genesis_certificate(parent_slot, ctx);
@@ -751,6 +791,10 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
     info!(
         "{}: new fork:{} parent:{} (leader) root:{}",
         ctx.my_pubkey, slot, parent_slot, root_slot
+    );
+    trace!(
+        "create_and_insert_leader_bank: 4 took {}ms",
+        start.elapsed().as_millis()
     );
 }
 
