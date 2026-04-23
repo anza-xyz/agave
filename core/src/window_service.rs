@@ -400,13 +400,8 @@ impl WindowService {
                         }
                     }
 
-<<<<<<< HEAD
-                    if last_print.elapsed().as_secs() > 2 {
-                        metrics.report_metrics("blockstore-insert-shreds");
-=======
                     if last_print.elapsed() > METRICS_REPORTING_INTERVAL {
-                        metrics.report_metrics();
->>>>>>> 90337bbf8 (core: Fix reporting interval on several metrics (#12139))
+                        metrics.report_metrics("blockstore-insert-shreds");
                         metrics = BlockstoreInsertionMetrics::default();
                         ws_metrics.report_metrics("recv-window-insert-shreds");
                         ws_metrics = WindowServiceMetrics::default();
