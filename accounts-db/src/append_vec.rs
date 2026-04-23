@@ -39,7 +39,7 @@ use {
         self,
         convert::TryFrom,
         fs::{File, OpenOptions, remove_file},
-        io::{self, BufRead, Seek, SeekFrom, Write},
+        io::{self, Seek, SeekFrom, Write},
         mem::{self, MaybeUninit},
         path::{Path, PathBuf},
         ptr, slice,
@@ -1055,7 +1055,7 @@ impl AppendVec {
                             stored_size,
                         };
                         callback(account);
-                        reader.consume(stored_size);
+                        reader.consume_or_skip(stored_size);
                         // restore default required buffer size
                         min_buf_len = STORE_META_OVERHEAD;
                     } else {
@@ -1238,7 +1238,7 @@ impl AppendVec {
                         offset,
                         stored_size,
                     });
-                    reader.consume(stored_size);
+                    reader.consume_or_skip(stored_size);
                 }
             }
         }

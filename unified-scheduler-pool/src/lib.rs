@@ -1671,10 +1671,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     fn do_end_session(&mut self, nonblocking: bool) {
         if self.are_threads_joined() {
             assert!(self.session_result_with_timings.is_some());
-            debug!("end_session(): skipping; already joined the aborted threads..");
+            debug!("end_session(): skipping; already joined the aborted threads...");
             return;
         } else if self.session_result_with_timings.is_some() {
-            debug!("end_session(): skipping; already result resides within thread manager..");
+            debug!("end_session(): skipping; already result resides within thread manager...");
             return;
         }
         debug!(
