@@ -522,12 +522,14 @@ impl ClusterInfoVoteListener {
         let mut packet_batches = packet::to_packet_batches(&votes, 1);
 
         // Votes should already be filtered by this point.
-        sigverify::ed25519_verify(
-            threadpool,
-            &mut packet_batches,
-            /*reject_non_vote=*/ false,
-            votes.len(),
-        );
+        threadpool.install(|| {
+            sigverify::ed25519_verify(
+                threadpool,
+                &mut packet_batches,
+                /*reject_non_vote=*/ false,
+                votes.len(),
+            );
+        });
         let root_bank = sharable_banks.root();
         let epoch_schedule = root_bank.epoch_schedule();
         votes

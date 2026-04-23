@@ -106,18 +106,16 @@ fn is_simple_vote_transaction_view<D: TransactionData>(view: &SanitizedTransacti
 }
 
 pub fn ed25519_verify(
-    thread_pool: &rayon::ThreadPool,
+    _thread_pool: &rayon::ThreadPool,
     batches: &mut [PacketBatch],
     reject_non_vote: bool,
     packet_count: usize,
 ) {
     debug!("CPU ECDSA for {packet_count}");
-    thread_pool.install(|| {
-        batches.par_iter_mut().flatten().for_each(|mut packet| {
-            if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
-                packet.meta_mut().set_discard(true);
-            }
-        });
+    batches.par_iter_mut().flatten().for_each(|mut packet| {
+        if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
+            packet.meta_mut().set_discard(true);
+        }
     });
 }
 
