@@ -6,6 +6,7 @@ use {
         vote::Vote,
     },
     bitvec::vec::BitVec,
+    rayon::{iter::IntoParallelRefIterator, join},
     solana_bls_signatures::{
         BlsError, PubkeyProjective, Signature as BlsSignature, SignatureProjective,
         VerifiablePubkey, pubkey::PubkeyAffine as BlsPubkeyAffine, signature::AsSignatureAffine,
@@ -181,18 +182,15 @@ fn verify_base3(
                 let agg_pubkey = aggregate_pubkeys(&fallback_pubkeys)?;
                 Ok(agg_pubkey.verify_signature(signature, fallback_payload)?)
             } else {
-                // Footer certificate verification runs on replay's critical path.
-                // Avoid the rayon-backed BLS helpers here; under load they can
-                // contend with replay and stall bank freezing.
-                let pubkeys = [
-                    aggregate_pubkeys(&primary_pubkeys)?,
-                    aggregate_pubkeys(&fallback_pubkeys)?,
-                ];
-                let payloads = [payload, fallback_payload];
-                Ok(SignatureProjective::verify_distinct_aggregated(
-                    pubkeys.iter(),
+                let (primary_agg_res, fallback_agg_res) = join(
+                    || PubkeyProjective::par_aggregate(primary_pubkeys.par_iter()),
+                    || PubkeyProjective::par_aggregate(fallback_pubkeys.par_iter()),
+                );
+                let pubkeys = [primary_agg_res?, fallback_agg_res?];
+                Ok(SignatureProjective::par_verify_distinct_aggregated(
+                    &pubkeys,
                     signature,
-                    payloads.iter().copied(),
+                    &[payload, fallback_payload],
                 )?)
             }
         }
@@ -201,7 +199,7 @@ fn verify_base3(
 
 /// Aggregates a slice of public keys into a single projective public key.
 pub fn aggregate_pubkeys(pubkeys: &[BlsPubkeyAffine]) -> Result<PubkeyProjective, Error> {
-    PubkeyProjective::aggregate(pubkeys.iter()).map_err(Error::VerifySig)
+    PubkeyProjective::par_aggregate(pubkeys.par_iter()).map_err(Error::VerifySig)
 }
 
 /// Collects public keys sequentially based on the provided ranks bitmap.
