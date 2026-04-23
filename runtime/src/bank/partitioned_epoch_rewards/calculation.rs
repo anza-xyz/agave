@@ -2,9 +2,9 @@ use {
     super::{
         Bank, CachedVoteAccounts, CalculateValidatorRewardsResult, EpochRewardCalculateParamInfo,
         FilteredStakeDelegations, PartitionedRewardsCalculation, PartitionedStakeReward,
-        PartitionedStakeRewards, REWARD_CALCULATION_NUM_BLOCKS, RewardCommissionAccounts,
-        RewardCommissionAccountsStorable, StakeRewardCalculation,
-        epoch_rewards_hasher::hash_rewards_into_partitions,
+        PartitionedStakeRewards, REWARD_CALCULATION_NUM_BLOCKS, RewardCommission,
+        RewardCommissionAccounts, RewardCommissionAccountsStorable, RewardCommissions,
+        StakeRewardCalculation, epoch_rewards_hasher::hash_rewards_into_partitions,
     },
     crate::{
         bank::{RewardCalcTracer, RewardCalculationEvent, RewardsMetrics, null_tracer},
@@ -22,18 +22,15 @@ use {
         ThreadPool,
         iter::{IndexedParallelIterator, ParallelIterator},
     },
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{ReadableAccount, WritableAccount},
     solana_clock::{Epoch, Slot},
     solana_measure::{measure::Measure, measure_us},
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
     solana_reward_info::RewardType,
     solana_stake_interface::{stake_history::StakeHistory, state::Delegation},
     solana_sysvar::epoch_rewards::EpochRewards,
-    std::{
-        collections::HashMap,
-        sync::{Arc, atomic::Ordering::Relaxed},
-    },
+    std::sync::{Arc, atomic::Ordering::Relaxed},
 };
 
 #[derive(Debug)]
@@ -42,15 +39,6 @@ struct DelegationRewards {
     commission_pubkey: Pubkey,
     reward_commission: RewardCommission,
 }
-
-#[derive(Debug)]
-struct RewardCommission {
-    commission_account: AccountSharedData,
-    commission_bps: u16,
-    commission_lamports: u64,
-}
-
-type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;
 
 #[derive(Default)]
 struct RewardsAccumulator {
@@ -878,7 +866,7 @@ mod tests {
         },
         solana_vote_program::vote_state::{self, create_bls_proof_of_possession},
         std::{
-            collections::HashSet,
+            collections::{HashMap, HashSet},
             sync::{Arc, RwLock, RwLockReadGuard},
         },
         test_case::test_case,

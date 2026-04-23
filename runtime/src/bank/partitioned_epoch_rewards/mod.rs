@@ -16,10 +16,10 @@ use {
         storable_accounts::{AccountForStorage, StorableAccounts},
     },
     solana_clock::Slot,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
-    std::{mem::MaybeUninit, sync::Arc},
+    std::{collections::HashMap, mem::MaybeUninit, sync::Arc},
 };
 
 /// Number of blocks for reward calculation and storing vote accounts.
@@ -148,6 +148,15 @@ pub(crate) enum EpochRewardPhase {
     Calculation(StartBlockHeightAndRewards),
     Distribution(StartBlockHeightAndPartitionedRewards),
 }
+
+#[derive(Debug)]
+pub(super) struct RewardCommission {
+    pub(super) commission_account: AccountSharedData,
+    pub(super) commission_bps: u16,
+    pub(super) commission_lamports: u64,
+}
+
+pub(super) type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;
 
 #[derive(Debug, Default)]
 pub(super) struct RewardCommissionAccounts {
