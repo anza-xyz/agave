@@ -9,11 +9,13 @@ use {
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
     solana_measure::measure::Measure,
     solana_perf::{packet::PacketBatch, sigverify},
-    std::sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+    std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+        thread::{Builder, JoinHandle},
     },
-    std::thread::{Builder, JoinHandle},
 };
 
 pub struct TransactionSigVerifier {
@@ -141,13 +143,9 @@ impl TransactionSigVerifier {
         } = task;
 
         let mut verify_time = Measure::start("sigverify_batch_time");
-        sigverify::ed25519_verify_serial(
-            core::slice::from_mut(&mut batch),
-            reject_non_vote,
-            valid_packets,
-        );
+        sigverify::ed25519_verify_serial(&mut batch, reject_non_vote, valid_packets);
         verify_time.stop();
-        let num_valid_packets = sigverify::count_valid_packets(core::slice::from_ref(&batch));
+        let num_valid_packets = sigverify::count_valid_packets(&batch);
 
         let banking_packet_batch = BankingPacketBatch::new(vec![batch]);
         if let Some(forward_stage_sender) = forward_stage_sender {

@@ -66,11 +66,8 @@ pub fn count_packets_in_batches(batches: &[PacketBatch]) -> usize {
     batches.iter().map(|batch| batch.len()).sum()
 }
 
-pub fn count_valid_packets<'a>(batches: impl IntoIterator<Item = &'a PacketBatch>) -> usize {
-    batches
-        .into_iter()
-        .map(|batch| batch.into_iter().filter(|p| !p.meta().discard()).count())
-        .sum()
+pub fn count_valid_packets(batch: &PacketBatch) -> usize {
+    batch.into_iter().filter(|p| !p.meta().discard()).count()
 }
 
 fn is_simple_vote_transaction_view<D: TransactionData>(view: &SanitizedTransactionView<D>) -> bool {
@@ -114,17 +111,11 @@ pub fn ed25519_verify(batches: &mut [PacketBatch], reject_non_vote: bool, packet
     });
 }
 
-pub fn ed25519_verify_serial(
-    batches: &mut [PacketBatch],
-    reject_non_vote: bool,
-    packet_count: usize,
-) {
+pub fn ed25519_verify_serial(batch: &mut PacketBatch, reject_non_vote: bool, packet_count: usize) {
     debug!("CPU ECDSA for {packet_count}");
-    for batch in batches {
-        for mut packet in batch.iter_mut() {
-            if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
-                packet.meta_mut().set_discard(true);
-            }
+    for mut packet in batch.iter_mut() {
+        if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
+            packet.meta_mut().set_discard(true);
         }
     }
 }
