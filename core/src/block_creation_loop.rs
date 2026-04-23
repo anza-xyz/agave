@@ -326,7 +326,7 @@ fn compute_block_timeout(bank: &Bank, leader_block_index: usize) -> Duration {
         .saturating_mul((leader_block_index as u32).saturating_add(1))
 }
 
-/// Produces blocks for the leader window from `start_slot` to `end_slot` inclusive.  
+/// Produces blocks for the leader window from `start_slot` to `end_slot` inclusive.
 /// The leader window started at `start_of_window`.
 fn produce_window(
     start_slot: Slot,
@@ -336,7 +336,6 @@ fn produce_window(
     ctx: &mut LeaderContext,
 ) -> Result<(), StartLeaderError> {
     for slot in start_slot..=end_slot {
-        println!("produce_window: working on slot={slot}");
         if ctx.exit.load(Ordering::Relaxed) {
             break;
         }
@@ -351,9 +350,7 @@ fn produce_window(
                 leader_slot_index(slot),
             );
         let ret = wait_for_replay(slot, parent_slot, block_timeout, ctx);
-        println!("produce_window: wait_for_replay returned={ret:?}");
         ret?;
-        let start = Instant::now();
         match record_and_complete_block(ctx, slot, block_timeout) {
             Ok(()) => {
                 assert!(!ctx.poh_recorder.read().unwrap().has_bank());
@@ -365,10 +362,6 @@ fn produce_window(
                 );
             }
         }
-        println!(
-            "produce_window: recording took: {}ms",
-            start.elapsed().as_millis()
-        );
     }
     Ok(())
 }
@@ -455,12 +448,9 @@ fn record_and_complete_block(
     bank_slot: Slot,
     till: Instant,
 ) -> Result<(), PohRecorderError> {
-    println!("\n\nrecord_and_complete_block: called, bank_slot={bank_slot}");
     ctx.build_reward_certs_sender
         .send(BuildRewardCertsRequest { bank_slot })
         .map_err(|_| PohRecorderError::ChannelDisconnected)?;
-
-    let start = Instant::now();
 
     loop {
         let now = Instant::now();
@@ -495,24 +485,13 @@ fn record_and_complete_block(
         }
     }
 
-    println!(
-        "\n\nrecord_and_complete_block: 1, time={}ms",
-        start.elapsed().as_millis()
-    );
-
     // Shutdown and clear any inflight records
-    let start = Instant::now();
     ctx.record_receiver.shutdown();
     let mut w_poh_recorder = ctx.poh_recorder.write().unwrap();
     for record in ctx.record_receiver.drain() {
         w_poh_recorder.record(record.bank_id, record.mixins, record.transaction_batches)?;
     }
 
-    println!(
-        "\n\nrecord_and_complete_block: 2, time={}ms",
-        start.elapsed().as_millis()
-    );
-    let start = Instant::now();
     // Alpentick and clear bank
     let bank = w_poh_recorder
         .bank()
@@ -523,19 +502,13 @@ fn record_and_complete_block(
         bank.leader_id(),
         bank.slot()
     );
-    println!(
-        "\n\nrecord_and_complete_block: 3 time={}ms",
-        start.elapsed().as_millis()
-    );
 
-    let start = Instant::now();
     let max_tick_height = bank.max_tick_height();
     // Set the tick height for the bank to max_tick_height - 1, so that PohRecorder::flush_cache()
     // will properly increment the tick_height to max_tick_height.
     bank.set_tick_height(max_tick_height - 1);
     // Write the single tick for this slot
 
-    println!("\n\nrecord_and_complete_block: 4");
     let BuildRewardCertsRespSucc {
         skip,
         notar,
@@ -553,18 +526,8 @@ fn record_and_complete_block(
             Some((skip.slot, validators))
         }
     };
-    println!(
-        "\n\nrecord_and_complete_block: 5. time={}ms",
-        start.elapsed().as_millis()
-    );
-    let start = Instant::now();
     let footer = produce_block_footer(bank.clone(), skip, notar, &ctx.highest_finalized);
-    println!(
-        "\n\nrecord_and_complete_block: 6. time={}ms",
-        start.elapsed().as_millis()
-    );
 
-    let start = Instant::now();
     BlockComponentProcessor::update_bank_with_footer_fields(
         &bank,
         footer.block_producer_time_nanos as i64,
@@ -572,23 +535,9 @@ fn record_and_complete_block(
         reward_slot_and_validators,
         ctx.highest_finalized.read().unwrap().as_ref(),
     );
-    println!(
-        "\n\nrecord_and_complete_block: 7. time={}ms",
-        start.elapsed().as_millis()
-    );
-    let start = Instant::now();
 
     drop(bank);
-    println!(
-        "\n\nrecord_and_complete_block: 8. time={}ms",
-        start.elapsed().as_millis()
-    );
-    let start = Instant::now();
     w_poh_recorder.tick_alpenglow(max_tick_height, footer);
-    println!(
-        "\n\nrecord_and_complete_block: 9. time={}ms",
-        start.elapsed().as_millis()
-    );
 
     Ok(())
 }
@@ -608,14 +557,8 @@ fn wait_for_replay(
     let my_pubkey = ctx.my_pubkey;
     let end_slot = last_of_consecutive_leader_slots(slot);
 
-    println!(
-        "\n\nwait_for_replay: time_left={}ms\n\n",
-        till.saturating_duration_since(Instant::now()).as_millis()
-    );
-
     let mut slot_delay_start = Measure::start("slot_delay");
     while Instant::now() < till {
-        println!("wait_for_parent:replay: in while loop");
         ctx.slot_metrics.attempt_start_leader_count += 1;
 
         // Check if the entire window is skipped.
@@ -631,11 +574,9 @@ fn wait_for_replay(
                 slot,
             ));
         }
-        println!("wait_for_parent:replay: in while loop 1");
 
         match maybe_start_leader(slot, parent_slot, ctx) {
             Ok(()) => {
-                println!("wait_for_parent:replay: in while loop 2");
                 slot_delay_start.stop();
                 let _ = ctx
                     .slot_metrics
@@ -652,7 +593,6 @@ fn wait_for_replay(
                 return Ok(());
             }
             Err(StartLeaderError::ReplayIsBehind(_, _)) => {
-                println!("wait_for_parent:replay: in while loop 3");
                 trace!(
                     "{my_pubkey}: Attempting to produce slot {slot}, however replay of the parent \
                      {parent_slot} is not yet finished, waiting.",
@@ -687,7 +627,6 @@ fn wait_for_replay(
                     });
             }
             Err(e) => {
-                println!("wait_for_parent:replay: in while loop 4");
                 return Err(e);
             }
         }
@@ -697,7 +636,6 @@ fn wait_for_replay(
         "{my_pubkey}: Skipping production of {slot}: Unable to replay parent {parent_slot} in time"
     );
 
-    println!("\n\n****wait_for_parent_replay: parent_slot={parent_slot} slot={slot} failed\n\n");
     Err(StartLeaderError::ReplayIsBehind(parent_slot, slot))
 }
 

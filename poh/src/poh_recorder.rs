@@ -606,10 +606,6 @@ impl PohRecorder {
             }
             std::hint::spin_loop();
         }
-        println!(
-            "wait_for_freeze_and_send_footer: waiting for bank freezing took {}ms",
-            start.elapsed().as_millis()
-        );
 
         // If the bank still isn't frozen, we've timed out
         if !working_bank.bank.is_frozen() {
@@ -687,7 +683,6 @@ impl PohRecorder {
             for (entry, tick_height) in &self.tick_cache[..entry_count] {
                 working_bank.bank.register_tick(&entry.hash);
 
-                let start = Instant::now();
                 if let Some(footer) = footer.as_ref() {
                     match self.wait_for_freeze_and_send_footer(footer, working_bank) {
                         Ok(()) => {}        // Continue processing
@@ -699,10 +694,6 @@ impl PohRecorder {
                         }
                     }
                 }
-                println!(
-                    "flush_cache: wait_for_freeze took: {}ms",
-                    start.elapsed().as_millis()
-                );
 
                 let tick = (EntryOrMarker::from(entry.clone()), *tick_height);
 
@@ -1046,14 +1037,9 @@ impl PohRecorder {
             let mut poh_l = self.poh.lock().unwrap();
             poh_l.tick()
         });
-        println!("tick_alpenglow: contention_us={tick_lock_contention_us}us");
         self.metrics.tick_lock_contention_us += tick_lock_contention_us;
 
         if let Some(poh_entry) = poh_entry {
-            println!(
-                "tick_alpenglow: slot={} storing at slot_max_tick_height={slot_max_tick_height}",
-                self.working_bank.as_ref().unwrap().bank.slot()
-            );
             self.shared_leader_state
                 .0
                 .load()
@@ -1075,9 +1061,8 @@ impl PohRecorder {
                     .load(Ordering::Acquire),
             ));
 
-            let (flush_res, flush_cache_and_tick_us) =
+            let (_flush_res, flush_cache_and_tick_us) =
                 measure_us!(self.flush_cache(true, Some(footer)));
-            println!("tick_alpenglow: flush_cache={flush_cache_and_tick_us}us res={flush_res:?}");
             self.metrics.flush_cache_tick_us += flush_cache_and_tick_us;
         }
     }
@@ -1464,7 +1449,6 @@ mod tests {
 
         // Tick until poh_recorder.tick_height == working bank's min_tick_height
         let num_new_ticks = bank1.tick_height() - poh_recorder.tick_height();
-        println!("{} {}", bank1.tick_height(), poh_recorder.tick_height());
         assert!(num_new_ticks > 0);
         for _ in 0..num_new_ticks {
             poh_recorder.tick();

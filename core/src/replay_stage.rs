@@ -3443,7 +3443,6 @@ impl ReplayStage {
         replay_result_vec: &[ReplaySlotFromBlockstore],
         my_pubkey: &Pubkey,
     ) -> Vec<Slot> {
-        println!("process_replay_results: 1");
         let bank_forks = &process_active_banks_context.bank_forks;
 
         // TODO: See if processing of blockstore replay results and bank completion can be made thread safe.
@@ -3487,14 +3486,7 @@ impl ReplayStage {
 
             assert_eq!(bank_slot, bank.slot());
 
-            println!(
-                "process_replay_results: 2 slot={} tick_height={} max_height={}",
-                bank.slot(),
-                bank.tick_height(),
-                bank.max_tick_height()
-            );
             if bank.is_complete() {
-                println!("process_replay_results: 3");
                 let mut bank_complete_time = Measure::start("bank_complete_time");
                 let bank_progress = progress
                     .get_mut(&bank.slot())
@@ -3590,7 +3582,6 @@ impl ReplayStage {
                     bank.set_block_id(block_id);
                 }
 
-                let start = Instant::now();
                 // Freeze the bank before sending to any auxiliary threads that may expect to be
                 // operating on a frozen bank.
                 // Also if we are not the leader, ensure that our computed hash matches the hash in
@@ -3605,11 +3596,6 @@ impl ReplayStage {
                     bank.freeze();
                     Ok(())
                 };
-
-                println!(
-                    "process_replay_results: freezing bank took {}ms",
-                    start.elapsed().as_millis()
-                );
 
                 datapoint_info!(
                     "bank_frozen",

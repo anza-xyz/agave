@@ -384,7 +384,8 @@ impl ConsensusPoolService {
             .slot_leader_at(*highest_parent_ready, Some(&root_bank))
         else {
             error!(
-                "my_pubkey={}: unable to compute leader: highest_parent_ready={highest_parent_ready} root_bank_slot={}.  Exiting",
+                "my_pubkey={}: unable to compute leader: \
+                 highest_parent_ready={highest_parent_ready} root_bank_slot={}.  Exiting",
                 ctx.cluster_info.id(),
                 root_bank.slot()
             );
