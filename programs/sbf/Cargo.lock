@@ -8528,6 +8528,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-sbf-rust-close-via-cpi"
+version = "4.1.0-alpha.0"
+dependencies = [
+ "solana-account-info",
+ "solana-loader-v3-interface 8.0.1",
+ "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey 4.2.0",
+]
+
+[[package]]
 name = "solana-sbf-rust-curve25519"
 version = "4.1.0-alpha.0"
 dependencies = [
