@@ -649,7 +649,7 @@ mod tests {
             .rc
             .accounts
             .accounts_db
-            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors, bank.slot());
+            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors);
         assert_eq!(actual_accounts_lt_hash, calculated_accounts_lt_hash);
     }
 
@@ -803,7 +803,7 @@ mod tests {
             .rc
             .accounts
             .accounts_db
-            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors, bank.slot());
+            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors);
         assert_eq!(expected_accounts_lt_hash, calculated_accounts_lt_hash);
     }
 

@@ -953,6 +953,10 @@ pub(crate) mod external {
                         check_response.included_slot =
                             included_slot.expect("included_slot must be set for already processed");
                     }
+                    Err(TransactionError::UnsupportedVersion) => {
+                        check_response.status_check_flags |=
+                            status_check_flags::UNSUPPORTED_VERSION;
+                    }
                     _ => {}
                 }
             }

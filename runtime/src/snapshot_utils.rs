@@ -25,7 +25,7 @@ use {
             HardLinkStoragesToSnapshotError, SnapshotError, SnapshotFastbootError,
             SnapshotNewFromDirError,
         },
-        paths::{self as snapshot_paths, get_incremental_snapshot_archives},
+        paths::{self as snapshot_paths, incremental_snapshot_archives_iter},
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
             SnapshotArchiveInfoGetter,
@@ -41,7 +41,7 @@ use {
     solana_accounts_db::{
         account_storage::AccountStorageMap,
         account_storage_entry::AccountStorageEntry,
-        accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
+        accounts_db::AtomicAccountsFileId,
         accounts_file::{AccountsFile, StorageAccess},
         utils::{ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR, move_and_async_delete_path},
     },
@@ -515,7 +515,7 @@ pub fn archive_snapshot_package(
         snapshot_storages.as_slice(),
         &bank_snapshot_dir,
         snapshot_archive_path,
-        snapshot_config,
+        snapshot_config.archive_format,
     )?;
 
     Ok(snapshot_archive_info)
@@ -1047,7 +1047,8 @@ pub fn verify_and_unarchive_snapshots(
     full_snapshot_archive_info: &FullSnapshotArchiveInfo,
     incremental_snapshot_archive_info: Option<&IncrementalSnapshotArchiveInfo>,
     account_paths: &[PathBuf],
-    accounts_db_config: &AccountsDbConfig,
+    storage_access: StorageAccess,
+    io_setup: &IoSetupState,
 ) -> Result<(UnarchivedSnapshots, UnarchivedSnapshotsGuard)> {
     check_are_snapshots_compatible(
         full_snapshot_archive_info,
@@ -1071,7 +1072,8 @@ pub fn verify_and_unarchive_snapshots(
         full_snapshot_archive_info.archive_format(),
         next_append_vec_id.clone(),
         None,
-        accounts_db_config,
+        storage_access,
+        io_setup,
     )?;
 
     let (
@@ -1098,7 +1100,8 @@ pub fn verify_and_unarchive_snapshots(
             incremental_snapshot_archive_info.archive_format(),
             next_append_vec_id.clone(),
             Some(incremental_snapshot_archive_info.base_slot()),
-            accounts_db_config,
+            storage_access,
+            io_setup,
         )?;
         (
             Some(unpack_dir),
@@ -1280,6 +1283,7 @@ fn create_snapshot_meta_files_for_unarchived_snapshot(unpack_dir: impl AsRef<Pat
 /// Perform the common tasks when unarchiving a snapshot.  Handles creating the temporary
 /// directories, untaring, reading the version file, and then returning those fields plus the
 /// rebuilt storage
+#[allow(clippy::too_many_arguments)]
 fn unarchive_snapshot(
     bank_snapshots_dir: impl AsRef<Path>,
     unpacked_snapshots_dir_prefix: &'static str,
@@ -1289,70 +1293,69 @@ fn unarchive_snapshot(
     archive_format: ArchiveFormat,
     next_append_vec_id: Arc<AtomicAccountsFileId>,
     base_slot: Option<Slot>,
-    accounts_db_config: &AccountsDbConfig,
+    storage_access: StorageAccess,
+    io_setup: &IoSetupState,
 ) -> Result<UnarchivedSnapshot> {
     let unpack_dir = tempfile::Builder::new()
         .prefix(unpacked_snapshots_dir_prefix)
         .tempdir_in(bank_snapshots_dir)?;
     let unpacked_snapshots_dir = unpack_dir.path().join(snapshot_paths::BANK_SNAPSHOTS_DIR);
 
-    let io_setup = IoSetupState::default()
-        .with_shared_sqpoll()?
-        .with_direct_io(accounts_db_config.snapshots_use_direct_io)
-        .with_buffers_registered(accounts_db_config.use_registered_io_uring_buffers);
-
     let (file_sender, file_receiver) = crossbeam_channel::unbounded();
-    let unarchive_handle = streaming_unarchive_snapshot(
-        file_sender,
-        account_paths.to_vec(),
-        unpack_dir.path().to_path_buf(),
-        snapshot_archive_path.as_ref().to_path_buf(),
-        archive_format,
-        io_setup,
-    );
+    thread::scope(|scope| {
+        let unarchive_handle = streaming_unarchive_snapshot(
+            scope,
+            file_sender,
+            account_paths.to_vec(),
+            unpack_dir.path().to_path_buf(),
+            snapshot_archive_path.as_ref().to_path_buf(),
+            archive_format,
+            io_setup,
+        );
 
-    let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
-    let snapshot_result = snapshot_fields_from_files(&file_receiver).and_then(
-        |SnapshotFieldsBundle {
-             snapshot_version,
-             bank_fields,
-             accounts_db_fields,
-             append_vec_files,
-             ..
-         }| {
-            let snapshot_storage_lengths =
-                accounts_db_fields.get_storage_lengths_for_snapshot_slots(base_slot)?;
-            let (storage, measure_untar) = measure_time!(
-                SnapshotStorageRebuilder::spawn_rebuilder_threads(
-                    snapshot_storage_lengths,
-                    append_vec_files,
-                    file_receiver,
-                    num_rebuilder_threads,
-                    next_append_vec_id,
-                    SnapshotFrom::Archive,
-                    accounts_db_config.storage_access,
-                    None,
-                )?,
-                measure_name
-            );
-            info!("{measure_untar}");
-            create_snapshot_meta_files_for_unarchived_snapshot(&unpack_dir)?;
+        let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
+        let snapshot_result = snapshot_fields_from_files(&file_receiver).and_then(
+            |SnapshotFieldsBundle {
+                 snapshot_version,
+                 bank_fields,
+                 accounts_db_fields,
+                 append_vec_files,
+                 ..
+             }| {
+                let snapshot_storage_lengths =
+                    accounts_db_fields.get_storage_lengths_for_snapshot_slots(base_slot)?;
+                let (storage, measure_untar) = measure_time!(
+                    SnapshotStorageRebuilder::spawn_rebuilder_threads(
+                        snapshot_storage_lengths,
+                        append_vec_files,
+                        file_receiver,
+                        num_rebuilder_threads,
+                        next_append_vec_id,
+                        SnapshotFrom::Archive,
+                        storage_access,
+                        None,
+                    )?,
+                    measure_name
+                );
+                info!("{measure_untar}");
+                create_snapshot_meta_files_for_unarchived_snapshot(&unpack_dir)?;
 
-            Ok(UnarchivedSnapshot {
-                unpack_dir,
-                storage,
-                bank_fields,
-                accounts_db_fields,
-                unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion {
-                    unpacked_snapshots_dir,
-                    snapshot_version,
-                },
-                measure_untar,
-            })
-        },
-    );
-    unarchive_handle.join().unwrap()?;
-    snapshot_result
+                Ok(UnarchivedSnapshot {
+                    unpack_dir,
+                    storage,
+                    bank_fields,
+                    accounts_db_fields,
+                    unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion {
+                        unpacked_snapshots_dir,
+                        snapshot_version,
+                    },
+                    measure_untar,
+                })
+            },
+        );
+        unarchive_handle.join().unwrap()?;
+        snapshot_result
+    })
 }
 
 /// Spawn thread that streams snapshot dir files across channel
@@ -1577,7 +1580,8 @@ pub fn purge_old_snapshot_archives(
     );
 
     let mut full_snapshot_archives =
-        snapshot_paths::get_full_snapshot_archives(&full_snapshot_archives_dir);
+        snapshot_paths::full_snapshot_archives_iter(&full_snapshot_archives_dir)
+            .collect::<Vec<_>>();
     full_snapshot_archives.sort_unstable();
     full_snapshot_archives.reverse();
 
@@ -1624,7 +1628,7 @@ pub fn purge_old_snapshot_archives(
     );
     let mut incremental_snapshot_archives_by_base_slot = HashMap::<Slot, Vec<_>>::new();
     for incremental_snapshot_archive in
-        get_incremental_snapshot_archives(&incremental_snapshot_archives_dir)
+        incremental_snapshot_archives_iter(&incremental_snapshot_archives_dir)
     {
         incremental_snapshot_archives_by_base_slot
             .entry(incremental_snapshot_archive.base_slot())
@@ -1819,7 +1823,7 @@ mod tests {
         super::*,
         agave_snapshots::{
             paths::{
-                get_full_snapshot_archives, get_highest_full_snapshot_archive_slot,
+                full_snapshot_archives_iter, get_highest_full_snapshot_archive_slot,
                 get_highest_incremental_snapshot_archive_slot,
             },
             snapshot_config::{
@@ -2154,7 +2158,8 @@ mod tests {
             0,
         );
 
-        let snapshot_archives = get_full_snapshot_archives(full_snapshot_archives_dir);
+        let snapshot_archives =
+            full_snapshot_archives_iter(full_snapshot_archives_dir.path()).collect::<Vec<_>>();
         assert_eq!(snapshot_archives.len() as Slot, max_slot - min_slot);
     }
 
@@ -2177,7 +2182,8 @@ mod tests {
             0,
         );
 
-        let snapshot_archives = get_full_snapshot_archives(full_snapshot_archives_dir);
+        let snapshot_archives =
+            full_snapshot_archives_iter(full_snapshot_archives_dir.path()).collect::<Vec<_>>();
         assert_eq!(snapshot_archives.len() as Slot, max_slot - min_slot);
         assert!(snapshot_archives.iter().all(|info| info.is_remote()));
     }
@@ -2200,7 +2206,8 @@ mod tests {
         );
 
         let incremental_snapshot_archives =
-            get_incremental_snapshot_archives(incremental_snapshot_archives_dir);
+            incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.path())
+                .collect::<Vec<_>>();
         assert_eq!(
             incremental_snapshot_archives.len() as Slot,
             (max_full_snapshot_slot - min_full_snapshot_slot)
@@ -2230,7 +2237,8 @@ mod tests {
         );
 
         let incremental_snapshot_archives =
-            get_incremental_snapshot_archives(incremental_snapshot_archives_dir);
+            incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.path())
+                .collect::<Vec<_>>();
         assert_eq!(
             incremental_snapshot_archives.len() as Slot,
             (max_full_snapshot_slot - min_full_snapshot_slot)
@@ -2411,7 +2419,7 @@ mod tests {
                 NonZeroUsize::new(usize::MAX).unwrap(),
             );
             let mut full_snapshot_archives =
-                get_full_snapshot_archives(&full_snapshot_archives_dir);
+                full_snapshot_archives_iter(&full_snapshot_archives_dir).collect::<Vec<_>>();
             full_snapshot_archives.sort_unstable();
             assert_eq!(
                 full_snapshot_archives.len(),
@@ -2487,7 +2495,7 @@ mod tests {
 
         // Ensure correct number of full snapshot archives are purged/retained
         let mut remaining_full_snapshot_archives =
-            get_full_snapshot_archives(full_snapshot_archives_dir.path());
+            full_snapshot_archives_iter(full_snapshot_archives_dir.path()).collect::<Vec<_>>();
         assert_eq!(
             remaining_full_snapshot_archives.len(),
             maximum_full_snapshot_archives_to_retain.get(),
@@ -2501,7 +2509,8 @@ mod tests {
         // incremental snapshot archive is retained. This is accounted for by the
         // `+ maximum_full_snapshot_archives_to_retain.saturating_sub(1)`
         let mut remaining_incremental_snapshot_archives =
-            get_incremental_snapshot_archives(incremental_snapshot_archives_dir.path());
+            incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.path())
+                .collect::<Vec<_>>();
         assert_eq!(
             remaining_incremental_snapshot_archives.len(),
             maximum_incremental_snapshot_archives_to_retain
@@ -2587,7 +2596,8 @@ mod tests {
         );
 
         let remaining_incremental_snapshot_archives =
-            get_incremental_snapshot_archives(incremental_snapshot_archives_dir.path());
+            incremental_snapshot_archives_iter(incremental_snapshot_archives_dir.path())
+                .collect::<Vec<_>>();
         assert!(remaining_incremental_snapshot_archives.is_empty());
     }
 

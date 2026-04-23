@@ -17,7 +17,7 @@ use {
     smallvec::SmallVec,
     solana_keypair::Keypair,
     solana_net_utils::token_bucket::TokenBucket,
-    solana_packet::{Meta, PACKET_DATA_SIZE},
+    solana_packet::Meta,
     solana_perf::packet::{BytesPacket, PacketBatch},
     solana_pubkey::Pubkey,
     solana_tls_utils::get_pubkey_from_tls_certificate,
@@ -151,7 +151,7 @@ where
 {
     let sockets: Vec<_> = sockets.into_iter().collect();
     info!("Start {name} quic server on {sockets:?}");
-    let (config, _) = configure_server(keypair)?;
+    let (config, _) = configure_server(keypair, &quic_server_params)?;
 
     let endpoints = sockets
         .into_iter()
@@ -507,6 +507,7 @@ async fn setup_connection<Q, C>(
                         new_connection,
                         stats,
                         server_params.wait_for_chunk_timeout,
+                        server_params.max_stream_data_bytes,
                         conn_context.clone(),
                         qos,
                         cancel_connection,
@@ -568,6 +569,7 @@ async fn handle_connection<Q, C>(
     connection: Connection,
     stats: Arc<StreamerStats>,
     wait_for_chunk_timeout: Duration,
+    max_stream_data_bytes: u32,
     context: C,
     qos: Arc<Q>,
     cancel: CancellationToken,
@@ -665,6 +667,7 @@ async fn handle_connection<Q, C>(
                 &packet_sender,
                 &stats,
                 peer_type,
+                max_stream_data_bytes,
             ) {
                 // The stream is finished, break out of the loop and close the stream.
                 Ok(StreamState::Finished) => {
@@ -721,14 +724,14 @@ fn handle_chunks(
     packet_sender: &Sender<PacketBatch>,
     stats: &StreamerStats,
     peer_type: ConnectionPeerType,
+    max_stream_data_bytes: u32,
 ) -> Result<StreamState, ()> {
     let n_chunks = chunks.len();
     for chunk in chunks {
         accum.meta.size += chunk.len();
-        if accum.meta.size > PACKET_DATA_SIZE {
-            // The stream window size is set to PACKET_DATA_SIZE, so one individual chunk can
-            // never exceed this size. A peer can send two chunks that together exceed the size
-            // tho, in which case we report the error.
+        if accum.meta.size > max_stream_data_bytes as usize {
+            // A peer can send multiple chunks that together exceed the
+            // configured maximum data bytes receivable over one stream; reject the stream in that case.
             stats.invalid_stream_size.fetch_add(1, Ordering::Relaxed);
             debug!("invalid stream size {}", accum.meta.size);
             return Err(());
@@ -1124,6 +1127,7 @@ pub mod test {
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
         solana_net_utils::sockets::bind_to_localhost_unique,
+        solana_packet::PACKET_DATA_SIZE,
         solana_signer::Signer,
         std::collections::HashMap,
         tokio::time::sleep,
@@ -2068,6 +2072,42 @@ pub mod test {
             _ => panic!("unexpected close"),
         }
         assert_eq!(stats.invalid_stream_size.load(Ordering::Relaxed), 1);
+        cancel.cancel();
+        join_handle.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_client_connection_accepts_packet_up_to_configured_max_stream_data_bytes() {
+        let max_stream_data_bytes = PACKET_DATA_SIZE as u32 * 2;
+        let SpawnTestServerResult {
+            join_handle,
+            receiver,
+            server_address,
+            stats,
+            cancel,
+        } = setup_quic_server(
+            None,
+            QuicStreamerConfig {
+                stream_receive_window_size: max_stream_data_bytes,
+                max_stream_data_bytes,
+                ..QuicStreamerConfig::default_for_tests()
+            },
+            SwQosConfig::default(),
+        );
+
+        let client_connection = make_client_endpoint(&server_address, None).await;
+        let mut send_stream = client_connection.open_uni().await.unwrap();
+
+        let num_bytes = max_stream_data_bytes - 1;
+        send_stream
+            .write_all(&vec![42; num_bytes as usize])
+            .await
+            .unwrap();
+        send_stream.finish().unwrap();
+
+        check_received_packets(receiver, 1, num_bytes as usize).await;
+        assert_eq!(stats.invalid_stream_size.load(Ordering::Relaxed), 0);
+
         cancel.cancel();
         join_handle.await.unwrap();
     }
