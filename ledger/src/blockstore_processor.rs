@@ -14,7 +14,7 @@ use {
     crossbeam_channel::{Receiver, Sender},
     itertools::Itertools,
     log::*,
-    rayon::{ThreadPool, prelude::*},
+    rayon::ThreadPool,
     scopeguard::defer,
     solana_accounts_db::{
         accounts_db::AccountsDbConfig, accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -28,7 +28,7 @@ use {
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_measure::{measure::Measure, measure_us},
+    solana_measure::measure::Measure,
     solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -42,7 +42,7 @@ use {
         prioritization_fee_cache::PrioritizationFeeCache,
         runtime_config::RuntimeConfig,
         snapshot_controller::SnapshotController,
-        transaction_batch::{OwnedOrBorrowed, TransactionBatch},
+        transaction_batch::TransactionBatch,
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::{
@@ -71,7 +71,7 @@ use {
         ops::Index,
         path::PathBuf,
         result,
-        sync::{Arc, Mutex, OnceLock, RwLock, atomic::AtomicBool},
+        sync::{Arc, OnceLock, RwLock, atomic::AtomicBool},
         time::{Duration, Instant},
         vec::Drain,
     },
@@ -400,6 +400,7 @@ impl ExecuteBatchesInternalMetrics {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 fn execute_batches_internal(
     bank: &Arc<Bank>,
     replay_tx_thread_pool: &ThreadPool,
@@ -409,9 +410,11 @@ fn execute_batches_internal(
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: Option<&PrioritizationFeeCache>,
 ) -> Result<ExecuteBatchesInternalMetrics> {
+    use rayon::prelude::*;
+
     assert!(!batches.is_empty());
-    let execution_timings_per_thread: Mutex<HashMap<usize, ThreadExecuteTimings>> =
-        Mutex::new(HashMap::new());
+    let execution_timings_per_thread: std::sync::Mutex<HashMap<usize, ThreadExecuteTimings>> =
+        std::sync::Mutex::new(HashMap::new());
 
     let mut execute_batches_elapsed = Measure::start("execute_batches_elapsed");
     let results: Vec<Result<()>> = replay_tx_thread_pool.install(|| {
@@ -421,7 +424,7 @@ fn execute_batches_internal(
                 let transaction_count =
                     transaction_batch.batch.sanitized_transactions().len() as u64;
                 let mut timings = ExecuteTimings::default();
-                let (result, execute_batches_us) = measure_us!(execute_batch(
+                let (result, execute_batches_us) = solana_measure::measure_us!(execute_batch(
                     transaction_batch,
                     bank,
                     transaction_status_sender,
@@ -522,20 +525,48 @@ fn process_batches(
         // `BankWithScheduler::schedule_transaction_executions()`.
         schedule_batches_for_execution(bank, locked_entries)
     } else {
-        debug!(
-            "process_batches()/execute_batches({} batches)",
-            locked_entries.len()
-        );
-        execute_batches(
-            bank,
-            replay_tx_thread_pool,
-            locked_entries,
-            transaction_status_sender,
-            replay_vote_sender,
-            batch_execution_timing,
-            log_messages_bytes_limit,
-            prioritization_fee_cache,
-        )
+        // Slot 0 is unique and should not have a scheduler - but also has no transactions.
+        if bank.slot() == 0 {
+            assert_eq!(
+                locked_entries.len(),
+                0,
+                "slot 0 should not have any transactions"
+            );
+            return Ok(());
+        }
+
+        #[cfg(not(feature = "dev-context-only-utils"))]
+        {
+            // Avoid un-used parameter warnings.
+            let _ = (
+                bank,
+                replay_tx_thread_pool,
+                locked_entries,
+                transaction_status_sender,
+                replay_vote_sender,
+                batch_execution_timing,
+                log_messages_bytes_limit,
+                prioritization_fee_cache,
+            );
+            unreachable!("Bank without scheduler should only be reachable in test code");
+        }
+        #[cfg(feature = "dev-context-only-utils")]
+        {
+            debug!(
+                "process_batches()/execute_batches({} batches)",
+                locked_entries.len()
+            );
+            execute_batches(
+                bank,
+                replay_tx_thread_pool,
+                locked_entries,
+                transaction_status_sender,
+                replay_vote_sender,
+                batch_execution_timing,
+                log_messages_bytes_limit,
+                prioritization_fee_cache,
+            )
+        }
     }
 }
 
@@ -568,6 +599,7 @@ fn schedule_batches_for_execution(
     first_err
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 fn execute_batches(
     bank: &Arc<Bank>,
     replay_tx_thread_pool: &ThreadPool,
@@ -595,7 +627,7 @@ fn execute_batches(
                     batch: TransactionBatch::new(
                         lock_results,
                         bank,
-                        OwnedOrBorrowed::Owned(transactions),
+                        solana_runtime::transaction_batch::OwnedOrBorrowed::Owned(transactions),
                     ),
                     transaction_indexes: (starting_index..ending_index).collect(),
                 }
@@ -2885,6 +2917,7 @@ pub mod tests {
                 MockInstalledScheduler, MockUninstalledScheduler, SchedulerAborted,
                 SchedulingContext,
             },
+            transaction_batch::OwnedOrBorrowed,
         },
         solana_signer::Signer,
         solana_svm::transaction_processor::ExecutionRecordingConfig,
@@ -2900,7 +2933,7 @@ pub mod tests {
         std::{
             collections::BTreeSet,
             slice,
-            sync::{Arc, Barrier, RwLock},
+            sync::{Arc, Barrier, Mutex, RwLock},
         },
         test_case::test_matrix,
         trees::tr,
