@@ -189,13 +189,21 @@ impl AccountStorage {
     pub(crate) fn shrinking_in_progress(
         &self,
         slot: Slot,
+        old_store: Arc<AccountStorageEntry>,
         new_store: Arc<AccountStorageEntry>,
     ) -> ShrinkInProgress<'_> {
-        let shrinking_store = Arc::clone(
+        assert_eq!(new_store.slot(), slot);
+        assert_eq!(old_store.slot(), slot);
+        assert_eq!(
             self.map
                 .get(&slot)
-                .expect("no pre-existing storage for shrinking slot")
-                .value(),
+                .expect("pre-existing storage for shrinking slot")
+                .value()
+                .id(),
+            old_store.id(),
+            "store being shrunk not found in account storage map! slot: {slot}, old store: \
+             {old_store:?}, new store: {new_store:?}, entry in account storage map at slot: {:?}",
+            self.map.get(&slot).unwrap().value(),
         );
 
         // insert 'new_store' into 'shrink_in_progress_map'
@@ -212,7 +220,7 @@ impl AccountStorage {
             storage: self,
             slot,
             new_store,
-            old_store: shrinking_store,
+            old_store,
         }
     }
 
@@ -691,8 +699,9 @@ mod tests {
         let (_temp_dir1, sample_to_shrink) =
             new_test_storage_with(slot, id_to_shrink, storage_access);
         let (_temp_dir2, sample) = new_test_storage_with(slot, id_shrunk, storage_access);
-        storage.map.insert(slot, sample_to_shrink);
-        let shrinking_in_progress = storage.shrinking_in_progress(slot, sample.clone());
+        storage.map.insert(slot, sample_to_shrink.clone());
+        let shrinking_in_progress =
+            storage.shrinking_in_progress(slot, sample_to_shrink.clone(), sample.clone());
         assert!(storage.map.contains_key(&slot));
         assert_eq!(id_to_shrink, storage.map.get(&slot).unwrap().id());
         assert_eq!(
@@ -710,17 +719,17 @@ mod tests {
         assert!(storage.map.contains_key(&slot));
         assert_eq!(id_shrunk, storage.map.get(&slot).unwrap().id());
         assert!(storage.shrink_in_progress_map.read().unwrap().is_empty());
-        storage.shrinking_in_progress(slot, sample);
+        storage.shrinking_in_progress(slot, sample.clone(), sample);
     }
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "no pre-existing storage for shrinking slot")]
+    #[should_panic(expected = "pre-existing storage for shrinking slot")]
     fn test_shrinking_in_progress_fail1(storage_access: StorageAccess) {
         // nothing in slot currently
         let (_temp_dir, sample) = new_test_storage(storage_access);
         let storage = AccountStorage::default();
-        storage.shrinking_in_progress(0, sample);
+        storage.shrinking_in_progress(0, sample.clone(), sample);
     }
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
@@ -736,7 +745,7 @@ mod tests {
             .write()
             .unwrap()
             .insert(0, sample.clone());
-        storage.shrinking_in_progress(0, sample);
+        storage.shrinking_in_progress(0, sample.clone(), sample);
     }
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
@@ -747,9 +756,10 @@ mod tests {
         let (_temp_dir1, sample_to_shrink) = new_test_storage(storage_access);
         let (_temp_dir2, sample) = new_test_storage(storage_access);
         let storage = AccountStorage::default();
-        storage.map.insert(0, sample_to_shrink);
-        let _shrinking_in_progress = storage.shrinking_in_progress(0, sample.clone());
-        storage.shrinking_in_progress(0, sample);
+        storage.map.insert(0, sample_to_shrink.clone());
+        let _shrinking_in_progress =
+            storage.shrinking_in_progress(0, sample_to_shrink.clone(), sample.clone());
+        storage.shrinking_in_progress(0, sample_to_shrink, sample);
     }
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
