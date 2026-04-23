@@ -98,12 +98,20 @@ fn bench_sigverify_medium_packets_small_batch_new(b: &mut Bencher) {
 }
 
 fn bench_sigverify_medium_packets_large_batch_old(b: &mut Bencher) {
-    let batches = gen_batches(false, LARGE_BATCH_PACKET_COUNT, sigverify::VERIFY_PACKET_CHUNK_SIZE * 8);
+    let batches = gen_batches(
+        false,
+        LARGE_BATCH_PACKET_COUNT,
+        sigverify::VERIFY_PACKET_CHUNK_SIZE * 8,
+    );
     bench_sigverify(b, batches, sigverify::ed25519_verify_old_for_bench);
 }
 
 fn bench_sigverify_medium_packets_large_batch_new(b: &mut Bencher) {
-    let batches = gen_batches(false, LARGE_BATCH_PACKET_COUNT, sigverify::VERIFY_PACKET_CHUNK_SIZE * 8);
+    let batches = gen_batches(
+        false,
+        LARGE_BATCH_PACKET_COUNT,
+        sigverify::VERIFY_PACKET_CHUNK_SIZE * 8,
+    );
     bench_sigverify(b, batches, sigverify::ed25519_verify_new_for_bench);
 }
 
@@ -175,11 +183,19 @@ fn make_uneven_batches() -> Vec<PacketBatch> {
 }
 
 fn bench_sigverify_uneven_old(b: &mut Bencher) {
-    bench_sigverify(b, make_uneven_batches(), sigverify::ed25519_verify_old_for_bench);
+    bench_sigverify(
+        b,
+        make_uneven_batches(),
+        sigverify::ed25519_verify_old_for_bench,
+    );
 }
 
 fn bench_sigverify_uneven_new(b: &mut Bencher) {
-    bench_sigverify(b, make_uneven_batches(), sigverify::ed25519_verify_new_for_bench);
+    bench_sigverify(
+        b,
+        make_uneven_batches(),
+        sigverify::ed25519_verify_new_for_bench,
+    );
 }
 
 benchmark_group!(
