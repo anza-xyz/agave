@@ -132,9 +132,9 @@ fn restore_from_snapshot(
 
     let deserialized_bank = snapshot_bank_utils::bank_from_snapshot_archives(
         account_paths,
-        &snapshot_config.bank_snapshots_dir,
         &full_snapshot_archive_info,
         None,
+        snapshot_config,
         old_genesis_config,
         &RuntimeConfig::default(),
         None,
@@ -533,10 +533,8 @@ fn restore_from_snapshots_and_check_banks_are_equal(
     genesis_config: &GenesisConfig,
 ) -> agave_snapshots::Result<()> {
     let (deserialized_bank, ..) = snapshot_bank_utils::bank_from_latest_snapshot_archives(
-        &snapshot_config.bank_snapshots_dir,
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
         &[accounts_dir],
+        snapshot_config,
         genesis_config,
         &RuntimeConfig::default(),
         None,
@@ -724,10 +722,8 @@ fn test_snapshots_with_background_services() {
     let (_tmp_dir, temporary_accounts_dir) = create_tmp_accounts_dir_for_tests();
     let snapshot_config = snapshot_controller.snapshot_config();
     let (deserialized_bank, ..) = snapshot_bank_utils::bank_from_latest_snapshot_archives(
-        &snapshot_config.bank_snapshots_dir,
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
         &[temporary_accounts_dir],
+        snapshot_config,
         &snapshot_test_config.genesis_config_info.genesis_config,
         &RuntimeConfig::default(),
         None,
