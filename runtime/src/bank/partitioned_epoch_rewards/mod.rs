@@ -151,6 +151,7 @@ pub(crate) enum EpochRewardPhase {
 
 #[derive(Debug)]
 pub(super) struct RewardCommission {
+    #[allow(dead_code)] // We'll remove this later.
     pub(super) commission_account: AccountSharedData,
     pub(super) commission_bps: u16,
     pub(super) commission_lamports: u64,
@@ -233,7 +234,7 @@ pub(super) struct StakeRewardCalculation {
 
 #[derive(Debug)]
 struct CalculateValidatorRewardsResult {
-    reward_commission_accounts: RewardCommissionAccounts,
+    reward_commissions: RewardCommissions,
     stake_reward_calculation: StakeRewardCalculation,
     point_value: PointValue,
 }
@@ -241,7 +242,7 @@ struct CalculateValidatorRewardsResult {
 impl Default for CalculateValidatorRewardsResult {
     fn default() -> Self {
         Self {
-            reward_commission_accounts: RewardCommissionAccounts::default(),
+            reward_commissions: RewardCommissions::default(),
             stake_reward_calculation: StakeRewardCalculation::default(),
             point_value: PointValue {
                 points: 0,
@@ -317,7 +318,7 @@ pub(super) struct EpochRewardCalculateParamInfo<'a> {
 /// side effects.
 #[derive(Debug)]
 pub(super) struct PartitionedRewardsCalculation {
-    reward_commission_accounts: RewardCommissionAccounts,
+    reward_commissions: RewardCommissions,
     stake_rewards: StakeRewardCalculation,
     capitalization: u64,
     point_value: PointValue,
