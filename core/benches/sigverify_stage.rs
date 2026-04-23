@@ -169,7 +169,7 @@ fn bench_shrink_sigverify_stage_core(bencher: &mut Bencher, discard_factor: i32)
         let mut batches = batches0.clone();
 
         let mut verify_time = Measure::start("sigverify_batch_time");
-        sigverify::ed25519_verify(&threadpool, &mut batches, false, num_valid_packets);
+        threadpool.install(|| sigverify::ed25519_verify(&mut batches, false, num_valid_packets));
         verify_time.stop();
         black_box(sigverify::count_valid_packets(&batches));
 

@@ -57,7 +57,6 @@ impl TransactionSigVerifier {
         total_valid_packets: Arc<AtomicUsize>,
         total_verify_time_us: Arc<AtomicUsize>,
     ) -> Result<(), SigVerifyServiceError> {
-        let thread_pool = self.thread_pool.clone();
         let banking_stage_sender = self.banking_stage_sender.clone();
         let forward_stage_sender = self.forward_stage_sender.clone();
         let reject_non_vote = self.reject_non_vote;
@@ -67,7 +66,7 @@ impl TransactionSigVerifier {
         self.thread_pool.spawn(move || {
             let mut verify_time = Measure::start("sigverify_batch_time");
             let mut batches = batches;
-            sigverify::ed25519_verify(&thread_pool, &mut batches, reject_non_vote, valid_packets);
+            sigverify::ed25519_verify(&mut batches, reject_non_vote, valid_packets);
             verify_time.stop();
             let num_valid_packets = sigverify::count_valid_packets(&batches);
 

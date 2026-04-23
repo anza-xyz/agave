@@ -524,7 +524,6 @@ impl ClusterInfoVoteListener {
         // Votes should already be filtered by this point.
         threadpool.install(|| {
             sigverify::ed25519_verify(
-                threadpool,
                 &mut packet_batches,
                 /*reject_non_vote=*/ false,
                 votes.len(),

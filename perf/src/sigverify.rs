@@ -105,12 +105,7 @@ fn is_simple_vote_transaction_view<D: TransactionData>(view: &SanitizedTransacti
     *program_id == solana_sdk_ids::vote::id()
 }
 
-pub fn ed25519_verify(
-    _thread_pool: &rayon::ThreadPool,
-    batches: &mut [PacketBatch],
-    reject_non_vote: bool,
-    packet_count: usize,
-) {
+pub fn ed25519_verify(batches: &mut [PacketBatch], reject_non_vote: bool, packet_count: usize) {
     debug!("CPU ECDSA for {packet_count}");
     batches.par_iter_mut().flatten().for_each(|mut packet| {
         if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
@@ -434,7 +429,7 @@ mod tests {
     fn ed25519_verify(batches: &mut [PacketBatch]) {
         let threadpool = threadpool_for_tests();
         let packet_count = sigverify::count_packets_in_batches(batches);
-        sigverify::ed25519_verify(&threadpool, batches, false, packet_count);
+        threadpool.install(|| sigverify::ed25519_verify(batches, false, packet_count));
     }
 
     #[test]
