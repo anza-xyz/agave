@@ -1276,20 +1276,21 @@ mod tests {
             ..Rent::default()
         };
 
-        // nonce payer account has balance of u64::MAX, so does fee; due to nonce account
-        // requires additional min_balance, expect InsufficientFundsForFee error if feature gate is
-        // enabled
-        validate_fee_payer_account(
-            ValidateFeePayerTestParameter {
-                is_nonce: true,
-                payer_init_balance: u64::MAX,
-                fee: u64::MAX,
-                relax_post_exec_min_balance_check: true,
-                expected_result: Err(TransactionError::InsufficientFundsForFee),
-                payer_post_balance: u64::MAX,
-            },
-            &rent,
-        );
+        // nonce payer account has balance of u64::MAX, so does fee; the additional nonce
+        // min_balance requirement makes the checked arithmetic fail regardless of feature gate.
+        for relax_post_exec_min_balance_check in [false, true] {
+            validate_fee_payer_account(
+                ValidateFeePayerTestParameter {
+                    is_nonce: true,
+                    payer_init_balance: u64::MAX,
+                    fee: u64::MAX,
+                    relax_post_exec_min_balance_check,
+                    expected_result: Err(TransactionError::InsufficientFundsForFee),
+                    payer_post_balance: u64::MAX,
+                },
+                &rent,
+            );
+        }
     }
 
     #[test]

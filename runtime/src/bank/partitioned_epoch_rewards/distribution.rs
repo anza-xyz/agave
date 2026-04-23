@@ -35,6 +35,9 @@ enum DistributionError {
     #[error("rewards arithmetic overflowed")]
     ArithmeticOverflow,
 
+    #[error("stake reward delegation is inconsistent with the updated account balance")]
+    InconsistentDelegation,
+
     #[error("stake account set_state failed")]
     UnableToSetState,
 }
@@ -221,18 +224,29 @@ impl Bank {
             .map_err(|_| DistributionError::ArithmeticOverflow)?;
         if adjust_delegations_for_rent {
             let minimum_balance = rent.minimum_balance(account.data().len());
-            assert!(
-                partitioned_stake_reward.stake.delegation.stake
-                    <= account.lamports().saturating_sub(minimum_balance),
+            let delegation_is_valid = partitioned_stake_reward.stake.delegation.stake
+                <= account.lamports().saturating_sub(minimum_balance);
+            debug_assert!(
+                delegation_is_valid,
+                "stake reward delegation must be consistent with the updated stake account \
+                 lamport balance"
             );
+            if !delegation_is_valid {
+                return Err(DistributionError::InconsistentDelegation);
+            }
         } else {
-            assert_eq!(
-                stake
-                    .delegation
-                    .stake
-                    .saturating_add(partitioned_stake_reward.stake_reward),
-                partitioned_stake_reward.stake.delegation.stake
+            let expected_delegation = stake
+                .delegation
+                .stake
+                .saturating_add(partitioned_stake_reward.stake_reward);
+            debug_assert_eq!(
+                expected_delegation, partitioned_stake_reward.stake.delegation.stake,
+                "stake reward delegation must be consistent with the updated stake account \
+                 lamport balance"
             );
+            if expected_delegation != partitioned_stake_reward.stake.delegation.stake {
+                return Err(DistributionError::InconsistentDelegation);
+            }
         }
         account
             .set_state(&StakeStateV2::Stake(

@@ -145,15 +145,16 @@ impl StakeReward {
         rent: &Rent,
     ) -> (AccountSharedData, Self) {
         let vote_pubkey = Pubkey::new_unique();
+        let node_pubkey = Pubkey::new_unique();
         let vote_account = vote_state::create_v4_account_with_authorized(
-            &Pubkey::new_unique(),
+            &node_pubkey,
             &vote_pubkey,
             [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &vote_pubkey,
             1000,
             &vote_pubkey,
             0,
-            &vote_pubkey,
+            &node_pubkey,
             stake_lamports,
         );
 
