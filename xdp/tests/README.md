@@ -15,6 +15,13 @@ cargo xtask xdp-test fetch-kernels --kernel-set pr
 cargo xtask xdp-test vm --kernel-set pr
 ```
 
+You can override the default kernel lists without editing the code. For example, to replace the default PR kernel set for a single run:
+
+```bash
+cargo xtask xdp-test fetch-kernels --kernel-set pr --pr-kernel-version 6.6 --pr-kernel-version 6.12
+cargo xtask xdp-test vm --kernel-set pr --pr-kernel-version 6.6 --pr-kernel-version 6.12
+```
+
 Requirements for VM mode:
 
 - `qemu-system-x86_64` must be installed and available on `PATH`
