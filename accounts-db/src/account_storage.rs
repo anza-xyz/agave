@@ -681,35 +681,6 @@ mod tests {
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "duplicate call")]
-    fn test_shrinking_in_progress_fail3(storage_access: StorageAccess) {
-        // already entry in shrink_in_progress_map
-        let (_temp_dir, sample) = new_test_storage(storage_access);
-        let storage = AccountStorage::default();
-        storage.map.insert(0, sample.clone());
-        storage
-            .shrink_in_progress_map
-            .write()
-            .unwrap()
-            .insert(0, sample.clone());
-        storage.shrinking_in_progress(0, sample);
-    }
-
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "duplicate call")]
-    fn test_shrinking_in_progress_fail4(storage_access: StorageAccess) {
-        // already called 'shrink_in_progress' on this slot and it is still active
-        let (_temp_dir1, sample_to_shrink) = new_test_storage(storage_access);
-        let (_temp_dir2, sample) = new_test_storage(storage_access);
-        let storage = AccountStorage::default();
-        storage.map.insert(0, sample_to_shrink);
-        let _shrinking_in_progress = storage.shrinking_in_progress(0, sample.clone());
-        storage.shrinking_in_progress(0, sample);
-    }
-
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
     fn test_shrinking_in_progress_second_call(storage_access: StorageAccess) {
         // already called 'shrink_in_progress' on this slot, but it finished, so we succeed
         // verify data structures during and after shrink and then with subsequent shrink call
@@ -754,11 +725,30 @@ mod tests {
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "no pre-existing storage for shrinking slot")]
+    #[should_panic(expected = "duplicate call")]
     fn test_shrinking_in_progress_fail2(storage_access: StorageAccess) {
-        // nothing in slot currently, but there is an empty map entry
+        // already entry in shrink_in_progress_map
         let (_temp_dir, sample) = new_test_storage(storage_access);
         let storage = AccountStorage::default();
+        storage.map.insert(0, sample.clone());
+        storage
+            .shrink_in_progress_map
+            .write()
+            .unwrap()
+            .insert(0, sample.clone());
+        storage.shrinking_in_progress(0, sample);
+    }
+
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    #[should_panic(expected = "duplicate call")]
+    fn test_shrinking_in_progress_fail3(storage_access: StorageAccess) {
+        // already called 'shrink_in_progress' on this slot and it is still active
+        let (_temp_dir1, sample_to_shrink) = new_test_storage(storage_access);
+        let (_temp_dir2, sample) = new_test_storage(storage_access);
+        let storage = AccountStorage::default();
+        storage.map.insert(0, sample_to_shrink);
+        let _shrinking_in_progress = storage.shrinking_in_progress(0, sample.clone());
         storage.shrinking_in_progress(0, sample);
     }
 
