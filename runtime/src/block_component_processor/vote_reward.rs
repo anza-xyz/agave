@@ -13,7 +13,7 @@ use {
     solana_vote::vote_account::VoteAccount,
     solana_vote_interface::state::{LandedVote, Lockout},
     solana_vote_program::vote_state::handler::VoteStateHandler,
-    std::collections::{HashMap, HashSet, VecDeque},
+    std::collections::{HashMap, VecDeque},
     thiserror::Error,
 };
 
@@ -181,7 +181,7 @@ fn update_account(
 
 fn handle_both(
     bank: &Bank,
-    validators: HashSet<Pubkey>,
+    validators: impl Iterator<Item = Pubkey>,
     reward_state: Option<&RewardState>,
     final_slot: Option<Slot>,
 ) {
@@ -283,12 +283,22 @@ pub(super) fn calc_vote_reward_and_update_vote_state(
     match (reward_cert, final_cert) {
         (None, None) => return Ok(()),
         (None, Some(final_cert)) => {
-            handle_both(bank, final_cert.signers(), None, Some(final_cert.slot()));
+            handle_both(
+                bank,
+                final_cert.signers().into_iter(),
+                None,
+                Some(final_cert.slot()),
+            );
         }
         (Some(reward_cert), None) => {
             let (reward_slot, validators_to_update) = reward_cert.into_parts();
             let reward_state = RewardState::new(bank, reward_slot)?;
-            handle_both(bank, validators_to_update, Some(&reward_state), None);
+            handle_both(
+                bank,
+                validators_to_update.into_iter(),
+                Some(&reward_state),
+                None,
+            );
         }
         (Some(reward_cert), Some(final_cert)) => {
             let final_cert_validators = final_cert.signers();
@@ -298,8 +308,7 @@ pub(super) fn calc_vote_reward_and_update_vote_state(
                 bank,
                 reward_validators
                     .intersection(&final_cert_validators)
-                    .cloned()
-                    .collect(),
+                    .cloned(),
                 Some(&reward_state),
                 Some(final_cert.slot()),
             );
@@ -307,8 +316,7 @@ pub(super) fn calc_vote_reward_and_update_vote_state(
                 bank,
                 reward_validators
                     .difference(&final_cert_validators)
-                    .cloned()
-                    .collect(),
+                    .cloned(),
                 Some(&reward_state),
                 None,
             );
@@ -316,8 +324,7 @@ pub(super) fn calc_vote_reward_and_update_vote_state(
                 bank,
                 final_cert_validators
                     .difference(&reward_validators)
-                    .cloned()
-                    .collect(),
+                    .cloned(),
                 None,
                 Some(final_cert.slot()),
             );
