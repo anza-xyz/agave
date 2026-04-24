@@ -42,6 +42,36 @@ pub enum PayVoteRewardError {
     },
 }
 
+fn print_info(
+    bank: &Bank,
+    reward_slot_and_validators: &Option<(Slot, Vec<Pubkey>)>,
+    final_cert: Option<&ValidatedBlockFinalizationCert>,
+) {
+    let slot = bank.slot();
+    match (reward_slot_and_validators, final_cert) {
+        (None, None) => info!("calculate slot={slot}: called with None, None"),
+        (None, Some(f)) => {
+            info!(
+                "calculate slot={slot}: called with None; len_signers={}",
+                f.signers.len()
+            )
+        }
+        (Some((rslot, validators)), None) => {
+            info!(
+                "calculate slot={slot}: called with reward_slot={rslot}, len_validators={}; None",
+                validators.len()
+            )
+        }
+        (Some((rslot, validators)), Some(f)) => {
+            info!(
+                "calculate slot={slot}: called with reward_slot={rslot}, len_validators={}; len_signers={}",
+                validators.len(),
+                f.signers.len()
+            )
+        }
+    }
+}
+
 /// Calculates voting rewards and updates vote state fields for rewarded validators.
 ///
 /// This is a NOP if [`reward_slot_and_validators`] is [`None`].
@@ -58,6 +88,8 @@ pub(super) fn calculate_and_pay_voting_reward_and_update_vote_state(
     reward_slot_and_validators: Option<(Slot, Vec<Pubkey>)>,
     final_cert: Option<&ValidatedBlockFinalizationCert>,
 ) -> Result<(), PayVoteRewardError> {
+    print_info(bank, &reward_slot_and_validators, final_cert);
+
     let Some((reward_slot, validators_to_reward)) = reward_slot_and_validators else {
         return Ok(());
     };

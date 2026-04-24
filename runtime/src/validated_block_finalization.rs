@@ -77,7 +77,7 @@ enum ValidatedBlockFinalizationCertKind {
 #[derive(Clone, Debug)]
 pub struct ValidatedBlockFinalizationCert {
     kind: ValidatedBlockFinalizationCertKind,
-    signers: HashSet<Pubkey>,
+    pub(crate) signers: HashSet<Pubkey>,
 }
 
 impl ValidatedBlockFinalizationCert {

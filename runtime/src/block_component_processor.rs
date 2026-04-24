@@ -286,6 +286,21 @@ impl BlockComponentProcessor {
             })
             .transpose()?;
 
+        match reward_slot_and_validators {
+            Some(_) => {
+                info!(
+                    "on_footer:slot={} updating footer with some rewards",
+                    bank.slot()
+                )
+            }
+            None => {
+                info!(
+                    "on_footer:slot={} updating footer with None rewards",
+                    bank.slot()
+                )
+            }
+        }
+
         Self::update_bank_with_footer_fields(
             &bank,
             block_producer_time_nanos as i64,

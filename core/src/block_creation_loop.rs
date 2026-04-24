@@ -533,6 +533,21 @@ fn record_and_complete_block(
     };
     let footer = produce_block_footer(bank.clone(), skip, notar, &ctx.highest_finalized);
 
+    match reward_slot_and_validators {
+        Some(_) => {
+            info!(
+                "record_and_complete_block:slot={} updating footer with some rewards",
+                bank.slot()
+            )
+        }
+        None => {
+            info!(
+                "record_and_complete_block:slot={} updating footer with None rewards",
+                bank.slot()
+            )
+        }
+    }
+
     BlockComponentProcessor::update_bank_with_footer_fields(
         &bank,
         footer.block_producer_time_nanos as i64,
