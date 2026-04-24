@@ -222,12 +222,12 @@ impl Bank {
             ..
         } = rewards_calculation;
 
-        // Materialize commission accounts by reading current account state
-        // from the store. This is intentionally deferred from calculation
-        // time so that any intervening account mutations (e.g. VAT burns in
+        // Load the commission accounts and apply their rewards.
+        // This is intentionally deferred from calculation time so that any
+        // intervening account mutations (e.g. VAT burns in
         // `update_epoch_stakes`) are reflected.
         let reward_commission_accounts =
-            self.materialize_commission_accounts(reward_commissions, thread_pool);
+            self.load_and_reward_commission_accounts(reward_commissions, thread_pool);
         let total_reward_commissions = reward_commission_accounts.total_reward_commission_lamports;
         self.store_commission_accounts_partitioned(&reward_commission_accounts, rewards_metrics);
         self.update_reward_commissions(&reward_commission_accounts);
@@ -780,7 +780,7 @@ impl Bank {
     /// fetched, ensuring we always see the latest balances — including any
     /// intervening account mutations (e.g. VAT burns in `update_epoch_stakes`)
     /// that happen between calculation and distribution.
-    fn materialize_commission_accounts(
+    fn load_and_reward_commission_accounts(
         &self,
         reward_commissions: &RewardCommissions,
         thread_pool: &ThreadPool,
@@ -2459,17 +2459,17 @@ mod tests {
     }
 
     #[test]
-    fn test_materialize_commission_accounts_empty() {
+    fn test_load_and_reward_commission_accounts_empty() {
         let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let reward_commissions = RewardCommissions::default();
-        let result = bank.materialize_commission_accounts(&reward_commissions, &thread_pool);
+        let result = bank.load_and_reward_commission_accounts(&reward_commissions, &thread_pool);
         assert!(result.accounts_with_rewards.is_empty());
     }
 
     #[test]
-    fn test_materialize_commission_accounts_overflow() {
+    fn test_load_and_reward_commission_accounts_overflow() {
         let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
@@ -2485,12 +2485,12 @@ mod tests {
                 commission_lamports: 1, // enough to overflow
             },
         );
-        let result = bank.materialize_commission_accounts(&reward_commissions, &thread_pool);
+        let result = bank.load_and_reward_commission_accounts(&reward_commissions, &thread_pool);
         assert!(result.accounts_with_rewards.is_empty());
     }
 
     #[test]
-    fn test_materialize_commission_accounts_normal() {
+    fn test_load_and_reward_commission_accounts_normal() {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000 * LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
@@ -2509,7 +2509,7 @@ mod tests {
                     },
                 );
                 let result =
-                    bank.materialize_commission_accounts(&reward_commissions, &thread_pool);
+                    bank.load_and_reward_commission_accounts(&reward_commissions, &thread_pool);
                 assert_eq!(result.accounts_with_rewards.len(), 1);
                 let (pubkey_result, rewards, account) = &result.accounts_with_rewards[0];
                 _ = commission_account.checked_add_lamports(commission_lamports);
