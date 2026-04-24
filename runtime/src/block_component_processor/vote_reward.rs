@@ -53,7 +53,7 @@ pub enum PayVoteRewardError {
 ///
 /// Additionally we also update vote-state `votes` and `root_slot` fields from the footer
 /// reward and finalization certificate
-pub(super) fn calculate_and_pay_voting_reward_and_update_vote_state(
+pub(super) fn calc_vote_reward_and_update_vote_state(
     bank: &Bank,
     reward_slot_and_validators: Option<(Slot, Vec<Pubkey>)>,
     final_cert: Option<&ValidatedBlockFinalizationCert>,
@@ -440,7 +440,7 @@ mod tests {
         let bank = Bank::new_from_parent(prev_bank.clone(), slot_leader, current_slot);
         let reward_slot = current_slot - NUM_SLOTS_FOR_REWARD;
 
-        calculate_and_pay_voting_reward_and_update_vote_state(
+        calc_vote_reward_and_update_vote_state(
             &bank,
             Some((reward_slot, validator_pubkeys_to_reward.clone())),
             None,
@@ -520,7 +520,7 @@ mod tests {
         };
         let final_cert = build_fast_finalization_cert(&bank, &[cert_rank]);
 
-        calculate_and_pay_voting_reward_and_update_vote_state(
+        calc_vote_reward_and_update_vote_state(
             &bank,
             Some((reward_slot, vec![target_vote_pubkey])),
             Some(&final_cert),
@@ -584,7 +584,7 @@ mod tests {
         };
         let final_cert = build_fast_finalization_cert(&bank, &[cert_rank]);
 
-        calculate_and_pay_voting_reward_and_update_vote_state(
+        calc_vote_reward_and_update_vote_state(
             &bank,
             Some((reward_slot, vec![target_vote_pubkey])),
             Some(&final_cert),
@@ -639,12 +639,8 @@ mod tests {
         let bank = Bank::new_from_parent(prev_bank.clone(), slot_leader, current_slot);
         let reward_slot = current_slot - NUM_SLOTS_FOR_REWARD;
 
-        calculate_and_pay_voting_reward_and_update_vote_state(
-            &bank,
-            Some((reward_slot, vec![vote_pubkey])),
-            None,
-        )
-        .unwrap();
+        calc_vote_reward_and_update_vote_state(&bank, Some((reward_slot, vec![vote_pubkey])), None)
+            .unwrap();
         let vote_accounts = bank.vote_accounts();
         for (add, (_, vote_account)) in vote_accounts.iter() {
             let vote_state = vote_state_from_account(vote_account.account());
