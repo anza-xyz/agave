@@ -69,6 +69,7 @@ fn extract_slot(
 }
 
 /// Struct built by validating incoming reward certs.
+#[derive(Debug, Clone)]
 pub(crate) struct ValidatedRewardCert {
     /// List of validators that were present in the reward certs.
     validators: HashSet<Pubkey>,

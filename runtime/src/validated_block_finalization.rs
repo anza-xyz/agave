@@ -354,6 +354,11 @@ impl ValidatedBlockFinalizationCert {
         }
     }
 
+    // XXX
+    pub(crate) fn signers(&self) -> HashSet<Pubkey> {
+        self.signers.clone()
+    }
+
     /// Verifies the certificate, returning (stake present in certificate, total stake in validator set) on success.
     fn verify_certificate(
         bank: &Bank,
