@@ -6331,7 +6331,7 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 [[package]]
 name = "rustls-webpki"
 version = "0.101.7"
-source = "git+https://github.com/anza-xyz/rustls-webpki?tag=anza-0.101.7-1#37e66ef34b2a3aabb82ec65ed7582ce689b9b43c"
+source = "git+https://github.com/anza-xyz/rustls-webpki?tag=anza-0.101.7-2#33eddb8e3258c606eca2ecb9e8e9abce18895f78"
 dependencies = [
  "ring",
  "untrusted",
@@ -6340,7 +6340,7 @@ dependencies = [
 [[package]]
 name = "rustls-webpki"
 version = "0.103.10"
-source = "git+https://github.com/anza-xyz/rustls-webpki?tag=anza-0.103.10-1#f4296cc9258f44b8aced868860f8fadc0fd70881"
+source = "git+https://github.com/anza-xyz/rustls-webpki?tag=anza-0.103.10-2#9f20a9c6e8d9c74191a8a4e2d1819843f5485966"
 dependencies = [
  "ring",
  "rustls-pki-types",

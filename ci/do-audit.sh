@@ -88,6 +88,17 @@ cargo_audit_ignores=(
   #
   # AVAVE OK: we picked upstream fix atop our vendored branches
   --ignore RUSTSEC-2026-0099
+
+  # Crate:     rustls-webpki
+  # Version:   0.101.7
+  # Title:     Reachable panic in certificate revocation list parsing
+  # Date:      2026-04-22
+  # ID:        RUSTSEC-2026-0104
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0104
+  # Solution:  Upgrade to >=0.103.13, <0.104.0-alpha.1 OR >=0.104.0-alpha.7
+  #
+  # AGAVE OK: vendored the upstream fix again
+  --ignore RUSTSEC-2026-0104
 )
 scripts/cargo-for-all-lock-files.sh audit "${cargo_audit_ignores[@]}" | $dep_tree_filter
 # we want the `cargo audit` exit code, not `$dep_tree_filter`'s
