@@ -20,7 +20,6 @@ use {
         VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
     },
     solana_hash::Hash,
-    solana_pubkey::Pubkey,
     std::{num::NonZeroU64, sync::Arc},
     thiserror::Error,
 };
@@ -260,9 +259,9 @@ impl BlockComponentProcessor {
             notar_reward_cert,
         } = footer;
 
-        let reward_slot_and_validators =
+        let reward_cert =
             match ValidatedRewardCert::try_new(&bank, &skip_reward_cert, &notar_reward_cert) {
-                Ok(c) => Some(c.into_parts()),
+                Ok(c) => Some(c),
                 Err(ValidatedRewardCertError::Empty) => None,
                 Err(e) => return Err(e.into()),
             };
@@ -277,7 +276,7 @@ impl BlockComponentProcessor {
             &bank,
             block_producer_time_nanos as i64,
             bank_hash,
-            reward_slot_and_validators,
+            reward_cert,
             validated_final_cert.as_ref(),
         );
 
@@ -388,18 +387,17 @@ impl BlockComponentProcessor {
         (min_working_bank_time, max_working_bank_time)
     }
 
-    pub fn update_bank_with_footer_fields(
+    fn update_bank_with_footer_fields(
         bank: &Bank,
         block_producer_time_nanos: i64,
         bank_hash: Hash,
-        reward_slot_and_validators: Option<(Slot, Vec<Pubkey>)>,
+        reward_cert: Option<ValidatedRewardCert>,
         final_cert: Option<&ValidatedBlockFinalizationCert>,
     ) {
         // Update clock sysvar
         bank.update_clock_from_footer(block_producer_time_nanos);
 
-        calc_vote_reward_and_update_vote_state(bank, reward_slot_and_validators, final_cert)
-            .unwrap();
+        calc_vote_reward_and_update_vote_state(bank, reward_cert, final_cert).unwrap();
         // Record expected bank hash from footer for later verification when the bank is frozen.
         bank.set_expected_bank_hash(bank_hash);
     }

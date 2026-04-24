@@ -1,5 +1,8 @@
 use {
-    crate::{bank::Bank, validated_block_finalization::ValidatedBlockFinalizationCert},
+    crate::{
+        bank::Bank, validated_block_finalization::ValidatedBlockFinalizationCert,
+        validated_reward_certificate::ValidatedRewardCert,
+    },
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
     log::info,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -55,11 +58,12 @@ pub enum PayVoteRewardError {
 /// reward and finalization certificate
 pub(super) fn calc_vote_reward_and_update_vote_state(
     bank: &Bank,
-    reward_slot_and_validators: Option<(Slot, Vec<Pubkey>)>,
+    reward_cert: Option<ValidatedRewardCert>,
     final_cert: Option<&ValidatedBlockFinalizationCert>,
 ) -> Result<(), PayVoteRewardError> {
-    let Some((reward_slot, validators_to_reward)) = reward_slot_and_validators else {
-        return Ok(());
+    let (reward_slot, validators_to_reward) = match reward_cert {
+        None => return Ok(()),
+        Some(c) => c.into_parts(),
     };
 
     let current_slot = bank.slot();
@@ -442,7 +446,10 @@ mod tests {
 
         calc_vote_reward_and_update_vote_state(
             &bank,
-            Some((reward_slot, validator_pubkeys_to_reward.clone())),
+            Some(ValidatedRewardCert::new_for_tests(
+                reward_slot,
+                validator_pubkeys_to_reward.clone(),
+            )),
             None,
         )
         .unwrap();
@@ -522,7 +529,10 @@ mod tests {
 
         calc_vote_reward_and_update_vote_state(
             &bank,
-            Some((reward_slot, vec![target_vote_pubkey])),
+            Some(ValidatedRewardCert::new_for_tests(
+                reward_slot,
+                vec![target_vote_pubkey],
+            )),
             Some(&final_cert),
         )
         .unwrap();
@@ -586,7 +596,10 @@ mod tests {
 
         calc_vote_reward_and_update_vote_state(
             &bank,
-            Some((reward_slot, vec![target_vote_pubkey])),
+            Some(ValidatedRewardCert::new_for_tests(
+                reward_slot,
+                vec![target_vote_pubkey],
+            )),
             Some(&final_cert),
         )
         .unwrap();
@@ -639,8 +652,15 @@ mod tests {
         let bank = Bank::new_from_parent(prev_bank.clone(), slot_leader, current_slot);
         let reward_slot = current_slot - NUM_SLOTS_FOR_REWARD;
 
-        calc_vote_reward_and_update_vote_state(&bank, Some((reward_slot, vec![vote_pubkey])), None)
-            .unwrap();
+        calc_vote_reward_and_update_vote_state(
+            &bank,
+            Some(ValidatedRewardCert::new_for_tests(
+                reward_slot,
+                vec![vote_pubkey],
+            )),
+            None,
+        )
+        .unwrap();
         let vote_accounts = bank.vote_accounts();
         for (add, (_, vote_account)) in vote_accounts.iter() {
             let vote_state = vote_state_from_account(vote_account.account());

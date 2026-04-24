@@ -136,6 +136,14 @@ impl ValidatedRewardCert {
     pub(crate) fn into_parts(self) -> (Slot, Vec<Pubkey>) {
         (self.reward_slot, self.validators)
     }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(reward_slot: Slot, validators: Vec<Pubkey>) -> Self {
+        Self {
+            reward_slot,
+            validators,
+        }
+    }
 }
 
 #[cfg(test)]
