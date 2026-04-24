@@ -4959,6 +4959,26 @@ mod tests {
             DEPOSIT_DELEGATOR_REWARDS_COMPUTE_UNITS,
         );
 
+        // Fail - source account has fewer lamports than the deposit.
+        let underfunded_source_account =
+            AccountSharedData::new(deposit_amount - 1, 0, &solana_sdk_ids::system_program::id());
+        process_instruction_with_cu_check(
+            VoteProgramFeatures::all_enabled(),
+            &instruction_data,
+            vec![
+                (vote_pubkey, vote_account_v4.clone()),
+                (source_pubkey, underfunded_source_account),
+                (
+                    solana_sdk_ids::system_program::id(),
+                    AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+                ),
+            ],
+            instruction_accounts.clone(),
+            // SystemError::ResultWithNegativeLamports.
+            Err(InstructionError::Custom(1)),
+            DEPOSIT_DELEGATOR_REWARDS_COMPUTE_UNITS,
+        );
+
         // Fail - deposit overflow.
         let deposit_amount = 100_000;
         let mut vote_account_near_max = vote_account_v4.clone();
