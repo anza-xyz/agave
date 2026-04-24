@@ -209,7 +209,7 @@ impl SigVerifier {
         batches: Vec<PacketBatch>,
         root_bank: &Bank,
     ) -> (Vec<CertPayload>, Vec<VotePayload>) {
-        let root_slot = root_bank.slot();
+        // let root_slot = root_bank.slot();
         let mut certs = Vec::new();
         let mut votes = Vec::new();
         let mut num_pkts = 0u64;
@@ -241,10 +241,10 @@ impl SigVerifier {
                     }
                 }
                 ConsensusMessage::Certificate(cert) => {
-                    if cert.cert_type.slot() <= root_slot {
-                        self.stats.num_old_certs_received += 1;
-                        continue;
-                    }
+                    // if cert.cert_type.slot() <= root_slot {
+                    //     self.stats.num_old_certs_received += 1;
+                    //     continue;
+                    // }
                     if self.verified_certs.contains(&cert.cert_type) {
                         self.stats.num_verified_certs_received += 1;
                         continue;

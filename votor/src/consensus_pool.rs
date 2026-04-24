@@ -329,6 +329,7 @@ impl ConsensusPool {
                     // we will report correctly as long as we have FastFinalization cert.
                     events.push(VotorEvent::Finalized((slot, block_id), false));
                     if self.highest_finalized_slot().is_none_or(|s| s < slot) {
+                        info!("consensus_pool: updating final slow notar seen slot={slot}");
                         self.highest_finalized_slot_cert =
                             Some(ValidatedBlockFinalizationCert::from_validated_slow(
                                 Arc::unwrap_or_clone(finalize_cert.clone()),
@@ -343,6 +344,7 @@ impl ConsensusPool {
                     let (_s, block_id) = notarize_cert.cert_type.to_block().unwrap();
                     events.push(VotorEvent::Finalized((slot, block_id), false));
                     if self.highest_finalized_slot().is_none_or(|s| s < slot) {
+                        info!("consensus_pool: updating final slow final seen slot={slot}");
                         self.highest_finalized_slot_cert =
                             Some(ValidatedBlockFinalizationCert::from_validated_slow(
                                 Arc::unwrap_or_clone(cert),
@@ -358,6 +360,7 @@ impl ConsensusPool {
                     .add_new_notar_fallback_or_stronger((slot, block_id), events);
                 // Use <= for FastFinalize since it supersedes standard finalization at the same slot
                 if self.highest_finalized_slot().is_none_or(|s| s <= slot) {
+                    info!("consensus_pool: updating final fast final slot={slot}");
                     self.highest_finalized_slot_cert =
                         Some(ValidatedBlockFinalizationCert::from_validated_fast(
                             Arc::unwrap_or_clone(cert),
