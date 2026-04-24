@@ -47,6 +47,7 @@ pub enum PayVoteRewardError {
     },
 }
 
+#[derive(Debug)]
 struct RewardState<'a> {
     reward_epoch: Epoch,
     reward_slot: Slot,
@@ -94,7 +95,7 @@ impl<'a> RewardState<'a> {
             reward_epoch,
             reward_slot,
             current_slot,
-            leader_pubkey: *bank.leader_id(),
+            leader_pubkey: bank.leader().vote_address,
             accounts,
             total_stake,
             epoch_inflation_state,
@@ -256,12 +257,12 @@ fn update_accounts(
         if let Some(reward_update) = reward_state.get_leader_reward() {
             match update_account(
                 &vote_accounts,
-                *bank.leader_id(),
+                bank.leader().vote_address,
                 final_slot,
                 Some(reward_update),
             ) {
                 Ok(account) => {
-                    updated_accounts.push((*bank.leader_id(), account));
+                    updated_accounts.push((bank.leader().vote_address, account));
                 }
                 Err(e) => {
                     error!(
