@@ -47,16 +47,19 @@ pub(super) enum Error {
     },
 }
 
+/// Common state required to pay rewards to different accounts.
 #[derive(Debug)]
 struct RewardState<'a> {
     reward_epoch: Epoch,
     reward_slot: Slot,
     current_slot: Slot,
-    leader_pubkey: Pubkey,
+    leader_vote_pubkey: Pubkey,
     accounts: &'a HashMap<Pubkey, (u64, VoteAccount)>,
     total_stake: u64,
     epoch_inflation_state: EpochInflationState,
 
+    /// This is the only mutable state.  It tracks the total leader rewards when individual
+    /// validator rewards are calculated.
     total_leader_reward: u64,
 }
 
@@ -95,7 +98,7 @@ impl<'a> RewardState<'a> {
             reward_epoch,
             reward_slot,
             current_slot,
-            leader_pubkey: bank.leader().vote_address,
+            leader_vote_pubkey: bank.leader().vote_address,
             accounts,
             total_stake,
             epoch_inflation_state,
@@ -103,6 +106,10 @@ impl<'a> RewardState<'a> {
         })
     }
 
+    /// Calculates rewards for the `validator`.
+    ///
+    /// Returns Ok(Some(RewardUpdate)) if validator is not the leader and its reward can be paid now.
+    /// Returns Ok(None) if validator is the leader and we haven't finished calculating its rewards.
     fn calculate_reward(&mut self, validator: Pubkey) -> Result<Option<RewardUpdate>, Error> {
         let (reward_slot_validator_stake, _) =
             self.accounts
@@ -118,7 +125,7 @@ impl<'a> RewardState<'a> {
             *reward_slot_validator_stake,
         );
         self.total_leader_reward += leader_reward;
-        if validator == self.leader_pubkey {
+        if validator == self.leader_vote_pubkey {
             self.total_leader_reward += validator_reward;
             Ok(None)
         } else {
@@ -130,6 +137,8 @@ impl<'a> RewardState<'a> {
         }
     }
 
+    /// Returns the `RewardUpdate` for the leader.
+    /// Should only be called when rewards for all validators have been calculated.
     fn get_leader_reward(&self) -> Option<RewardUpdate> {
         if self.total_leader_reward == 0 {
             None
@@ -152,7 +161,7 @@ struct RewardUpdate {
 fn update_handler(
     handler: &mut VoteStateHandler,
     final_slot: Option<Slot>,
-    reward_update: Option<RewardUpdate>,
+    update: Option<RewardUpdate>,
 ) {
     if let Some(final_slot) = final_slot {
         handler.set_root_slot(Some(final_slot));
@@ -161,7 +170,7 @@ fn update_handler(
         reward_epoch,
         reward_slot,
         reward,
-    }) = reward_update
+    }) = update
     {
         handler.increment_credits(reward_epoch, reward);
         let latest_root_or_reward = handler.root_slot().unwrap_or(reward_slot).max(reward_slot);
@@ -188,7 +197,7 @@ fn update_account(
     vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
     vote_pubkey: Pubkey,
     final_slot: Option<Slot>,
-    reward_update: Option<RewardUpdate>,
+    update: Option<RewardUpdate>,
 ) -> Result<AccountSharedData, UpdateAccountError> {
     let account = vote_accounts
         .get(&vote_pubkey)
@@ -199,7 +208,7 @@ fn update_account(
         bincode::deserialize(account.data()).map_err(UpdateAccountError::DeserializeFailed)?;
     let mut handler = VoteStateHandler::try_new_from_vote_state_versions(versions)
         .map_err(UpdateAccountError::HandlerConversionFailed)?;
-    update_handler(&mut handler, final_slot, reward_update);
+    update_handler(&mut handler, final_slot, update);
     let mut updated_account =
         AccountSharedData::new(account.lamports(), account.data().len(), account.owner());
     handler
@@ -208,20 +217,47 @@ fn update_account(
     Ok(updated_account)
 }
 
+/// Iterates over all the validators and updates their vote state.
+///
+/// If `final_slot` is provided, then the `root_slot` in the vote account is updated.
+///
+/// If `reward_state` is provided, then rewards are calculated and `epoch_credits` and `votes` is updated.
+///
+/// Downstream tooling expects these fields to be be set:
+/// - `root_slot`, a validator's latest finalized & replayed slot
+/// - `votes`, a validator's latest vote
+///
+/// `votes` is consumed for health monitoring, we require it to be within `DELINQUENT_VALIDATOR_SLOT_DISTANCE`
+/// of the tip of the chain to be considered healthy.
+///
+/// `root_slot` is similarly used by various tooling (e.g. stake delegation) to determine whether the validator
+/// is healthy to interact with  and also is required to be within `DELINQUENT_VALIDATOR_SLOT_DISTANCE` of the tip.
+///
+/// Until we overhaul vote state we continue populating these two fields similar to TowerBFT:
+/// - `root_slot` is populated from the footer finalization certificate
+/// - `votes` is populated from the footer rewards aggregate
 fn update_accounts(
     bank: &Bank,
     validators: impl Iterator<Item = Pubkey>,
     mut reward_state: Option<&mut RewardState>,
     final_slot: Option<Slot>,
 ) {
+    assert!(reward_state.is_some() || final_slot.is_some());
+
     let mut updated_accounts = vec![];
     let vote_accounts = bank.vote_accounts();
     for vote_pubkey in validators {
-        let reward_update = match &mut reward_state {
+        let update = match &mut reward_state {
             None => None,
             Some(reward_state) => {
-                let reward_update = match reward_state.calculate_reward(vote_pubkey) {
-                    Ok(res) => res,
+                match reward_state.calculate_reward(vote_pubkey) {
+                    Ok(r) => match r {
+                        None => {
+                            // calculated rewards for the leader.  We will update it at the end.
+                            continue;
+                        }
+                        Some(r) => Some(r),
+                    },
                     Err(e) => {
                         error!(
                             "slot={}, calculating rewards for pubkey={vote_pubkey} failed with {e}",
@@ -229,21 +265,16 @@ fn update_accounts(
                         );
                         continue;
                     }
-                };
-                match reward_update {
-                    None => continue,
-                    Some(r) => Some(r),
                 }
             }
         };
 
-        match update_account(&vote_accounts, vote_pubkey, final_slot, reward_update) {
+        match update_account(&vote_accounts, vote_pubkey, final_slot, update) {
             Err(e) => {
                 error!(
                     "slot={}, updating non_leader account for pubkey={vote_pubkey} failed with {e}",
                     bank.slot()
                 );
-                continue;
             }
             Ok(account) => {
                 updated_accounts.push((vote_pubkey, account));
@@ -252,12 +283,12 @@ fn update_accounts(
     }
 
     if let Some(reward_state) = reward_state {
-        if let Some(reward_update) = reward_state.get_leader_reward() {
+        if let Some(update) = reward_state.get_leader_reward() {
             match update_account(
                 &vote_accounts,
                 bank.leader().vote_address,
                 final_slot,
-                Some(reward_update),
+                Some(update),
             ) {
                 Ok(account) => {
                     updated_accounts.push((bank.leader().vote_address, account));
@@ -276,17 +307,8 @@ fn update_accounts(
     bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
 }
 
-/// Calculates voting rewards and updates vote state fields for rewarded validators.
-///
-/// This is a NOP if [`reward_slot_and_validators`] is [`None`].
-///
-/// The reward slot is in the past relative to the current slot and hence might be in a different
-/// epoch than the current epoch and may have different validator sets and stakes, etc.
-/// This function must compute rewards using the stakes in the reward slot and pay them using the
-/// stakes in the current slot.
-///
-/// Additionally we also update vote-state `votes` and `root_slot` fields from the footer
-/// reward and finalization certificate
+/// Calculates voting rewards based on the `reward_cert` and updates fields in the vote account
+/// based on the calculated rewards and the `final_cert`.
 pub(super) fn calc_vote_reward_and_update_vote_state(
     bank: &Bank,
     reward_cert: Option<ValidatedRewardCert>,
