@@ -1,6 +1,6 @@
 use {
     super::{
-        scheduler::{PreLockFilterAction, Scheduler, SchedulingSummary},
+        scheduler::{Scheduler, SchedulingSummary},
         scheduler_common::{
             SchedulingCommon, TransactionSchedulingError, TransactionSchedulingInfo, select_thread,
         },
@@ -70,8 +70,6 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         &mut self,
         container: &mut S,
         budget: u64,
-        _pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
-        pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError> {
         // Subtract any in-flight compute units from the budget.
         let mut budget = budget.saturating_sub(
@@ -137,7 +135,6 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
             // Now check if the transaction can actually be scheduled.
             match try_schedule_transaction(
                 transaction_state,
-                &pre_lock_filter,
                 &mut self.common.account_locks,
                 schedulable_threads,
                 |thread_set| {
@@ -212,8 +209,6 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
             num_scheduled,
             num_unschedulable_conflicts,
             num_unschedulable_threads,
-            num_filtered_out: 0,
-            filter_time_us: 0,
         })
     }
 
@@ -224,15 +219,10 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
 
 fn try_schedule_transaction<Tx: TransactionWithMeta>(
     transaction_state: &mut TransactionState<Tx>,
-    pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     account_locks: &mut ThreadAwareAccountLocks,
     schedulable_threads: ThreadSet,
     thread_selector: impl Fn(ThreadSet) -> ThreadId,
 ) -> Result<TransactionSchedulingInfo<Tx>, TransactionSchedulingError> {
-    match pre_lock_filter(transaction_state) {
-        PreLockFilterAction::AttemptToSchedule => {}
-    }
-
     // Schedule the transaction if it can be.
     let transaction = transaction_state.transaction();
     let account_keys = transaction.account_keys();
@@ -379,19 +369,6 @@ mod test {
             .unzip()
     }
 
-    fn test_pre_graph_filter(
-        _txs: &[&RuntimeTransaction<SanitizedTransaction>],
-        results: &mut [bool],
-    ) {
-        results.fill(true);
-    }
-
-    fn test_pre_lock_filter(
-        _tx: &TransactionState<RuntimeTransaction<SanitizedTransaction>>,
-    ) -> PreLockFilterAction {
-        PreLockFilterAction::AttemptToSchedule
-    }
-
     #[test]
     fn test_schedule_disconnected_channel() {
         let (mut scheduler, work_receivers, _finished_work_sender) =
@@ -403,8 +380,6 @@ mod test {
             scheduler.schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
-                test_pre_lock_filter
             ),
             Err(SchedulerError::DisconnectedSendChannel(_))
         );
@@ -423,8 +398,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
-                test_pre_lock_filter,
             )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
@@ -445,8 +418,6 @@ mod test {
             .schedule(
                 &mut container,
                 0, // zero budget
-                test_pre_graph_filter,
-                test_pre_lock_filter,
             )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 0);
@@ -471,8 +442,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
-                test_pre_lock_filter,
             )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 1);
@@ -498,8 +467,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
-                test_pre_lock_filter,
             )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 1);
@@ -525,8 +492,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
-                test_pre_lock_filter,
             )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
@@ -548,8 +513,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
-                test_pre_lock_filter,
             )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
@@ -568,8 +531,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
-                test_pre_lock_filter,
             )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 4);
@@ -609,8 +570,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
-                test_pre_lock_filter,
             )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 3);
@@ -646,8 +605,6 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                test_pre_graph_filter,
-                test_pre_lock_filter,
             )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 3);

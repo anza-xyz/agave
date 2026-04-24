@@ -8,12 +8,18 @@ use {
     clap::{ArgMatches, value_t, value_t_or_exit, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
-    solana_accounts_db::utils::{
-        create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents,
-        validate_account_paths_for_direct_io,
+    solana_accounts_db::{
+        accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
+        utils::{
+            create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents,
+            validate_account_paths_for_direct_io,
+        },
     },
     solana_clock::Slot,
-    solana_core::validator::{BlockProductionMethod, BlockVerificationMethod},
+    solana_core::{
+        resource_limits,
+        validator::{BlockProductionMethod, BlockVerificationMethod},
+    },
     solana_genesis_config::GenesisConfig,
     solana_genesis_utils::open_genesis_config,
     solana_geyser_plugin_manager::geyser_plugin_service::{
@@ -181,6 +187,10 @@ pub fn load_and_process_ledger(
             full_snapshot_archives_dir,
             incremental_snapshot_archives_dir,
             bank_snapshots_dir,
+            use_direct_io: !arg_matches.is_present("no_accounts_db_snapshots_direct_io"),
+            use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
+                TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
+            ),
             ..SnapshotConfig::new_load_only()
         }
     };
@@ -256,7 +266,7 @@ pub fn load_and_process_ledger(
     let account_paths = account_run_paths;
 
     validate_account_paths_for_direct_io(
-        &process_options.accounts_db_config,
+        snapshot_config.use_direct_io,
         &account_paths,
         &account_snapshot_paths,
     )

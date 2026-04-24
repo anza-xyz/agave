@@ -217,9 +217,9 @@ pub fn try_load_bank_forks_from_snapshot(
 
         snapshot_bank_utils::bank_from_snapshot_archives(
             account_paths,
-            &snapshot_config.bank_snapshots_dir,
             &full_snapshot_archive_info,
             incremental_snapshot_archive_info.as_ref(),
+            snapshot_config,
             genesis_config,
             &process_options.runtime_config,
             process_options.debug_keys.clone(),

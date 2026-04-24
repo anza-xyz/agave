@@ -304,14 +304,17 @@ mod tests {
         solana_rent::Rent,
         solana_signer::Signer,
         solana_signer_store::encode_base2,
-        solana_vote_interface::state::VoteStateVersions,
     };
 
-    fn get_vote_state_handler(bank: &Bank, vote_pubkey: &Pubkey) -> VoteStateHandler {
+    fn vote_state_from_account(account: &AccountSharedData) -> VoteStateHandler {
+        let versions = bincode::deserialize(account.data()).unwrap();
+        VoteStateHandler::try_new_from_vote_state_versions(versions).unwrap()
+    }
+
+    fn vote_state_from_bank(bank: &Bank, vote_pubkey: &Pubkey) -> VoteStateHandler {
         let vote_accounts = bank.vote_accounts();
         let (_, vote_account) = vote_accounts.get(vote_pubkey).unwrap();
-        let versions = bincode::deserialize(vote_account.account().data()).unwrap();
-        VoteStateHandler::try_new_from_vote_state_versions(versions).unwrap()
+        vote_state_from_account(vote_account.account())
     }
 
     fn build_fast_finalization_cert(
@@ -377,12 +380,8 @@ mod tests {
         let reward = 3453423;
         let account_shared_data =
             update_vote_account(epoch, 0, &account, Pubkey::default(), reward, None).unwrap();
-        let vote_state_versions: VoteStateVersions =
-            bincode::deserialize(&account_shared_data.data_clone()).unwrap();
-        let VoteStateVersions::V4(vote_state) = vote_state_versions else {
-            panic!("unexpected state version: {vote_state_versions:?}");
-        };
-        assert_eq!(reward, vote_state.epoch_credits.last().unwrap().1);
+        let vote_state = vote_state_from_account(&account_shared_data);
+        assert_eq!(reward, vote_state.epoch_credits().last().unwrap().1);
     }
 
     fn calc_reward_for_test(
@@ -453,13 +452,9 @@ mod tests {
             .iter()
             .map(|validator| {
                 let (_, vote_account) = vote_accounts.get(validator).unwrap();
-                let data = vote_account.account().data();
-                let vote_state_versions = bincode::deserialize(data).unwrap();
-                let VoteStateVersions::V4(vote_state) = vote_state_versions else {
-                    panic!();
-                };
-                assert_eq!(vote_state.epoch_credits.len(), 1);
-                let got_reward = vote_state.epoch_credits[0].1;
+                let vote_state = vote_state_from_account(vote_account.account());
+                assert_eq!(vote_state.epoch_credits().len(), 1);
+                let got_reward = vote_state.epoch_credits()[0].1;
                 let total_stake = bank
                     .epoch_stakes_from_slot(reward_slot)
                     .unwrap()
@@ -532,7 +527,7 @@ mod tests {
         )
         .unwrap();
 
-        let handle = get_vote_state_handler(&bank, &target_vote_pubkey);
+        let handle = vote_state_from_bank(&bank, &target_vote_pubkey);
         assert_eq!(handle.root_slot(), Some(final_cert.slot()));
         assert_eq!(handle.votes().len(), 1);
         assert_eq!(
@@ -596,7 +591,7 @@ mod tests {
         )
         .unwrap();
 
-        let vote_state = get_vote_state_handler(&bank, &target_vote_pubkey);
+        let vote_state = vote_state_from_bank(&bank, &target_vote_pubkey);
         assert_eq!(vote_state.root_slot(), None);
         assert_eq!(vote_state.votes().len(), 1);
         assert_eq!(
@@ -652,15 +647,11 @@ mod tests {
         .unwrap();
         let vote_accounts = bank.vote_accounts();
         for (add, (_, vote_account)) in vote_accounts.iter() {
-            let data = vote_account.account().data();
-            let vote_state_versions = bincode::deserialize(data).unwrap();
-            let VoteStateVersions::V4(vote_state) = vote_state_versions else {
-                panic!();
-            };
+            let vote_state = vote_state_from_account(vote_account.account());
             if add == &vote_pubkey {
-                assert!(!vote_state.epoch_credits.is_empty());
+                assert!(!vote_state.epoch_credits().is_empty());
             } else {
-                assert!(vote_state.epoch_credits.is_empty());
+                assert!(vote_state.epoch_credits().is_empty());
             }
         }
     }

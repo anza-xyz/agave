@@ -261,9 +261,7 @@ pub(crate) mod tests {
         super::*,
         crate::{
             contact_info::ContactInfo,
-            crds_data::{
-                self, AccountsHashes, CrdsData, LowestSlot, SnapshotHashes, Vote as CrdsVote,
-            },
+            crds_data::{self, CrdsData, LowestSlot, SnapshotHashes, Vote as CrdsVote},
             duplicate_shred::{self, MAX_DUPLICATE_SHREDS, tests::new_rand_shred},
         },
         rand::Rng,
@@ -334,32 +332,6 @@ pub(crate) mod tests {
         };
         prune_data.sign(self_keypair);
         prune_data
-    }
-
-    #[test]
-    fn test_max_accounts_hashes_with_push_messages() {
-        let mut rng = rand::rng();
-        for _ in 0..256 {
-            let accounts_hash = AccountsHashes::new_rand(&mut rng, None);
-            let crds_value =
-                CrdsValue::new(CrdsData::AccountsHashes(accounts_hash), &Keypair::new());
-            let message = Protocol::PushMessage(Pubkey::new_unique(), vec![crds_value]);
-            let socket = new_rand_socket_addr(&mut rng);
-            assert!(Packet::from_data(Some(&socket), message).is_ok());
-        }
-    }
-
-    #[test]
-    fn test_max_accounts_hashes_with_pull_responses() {
-        let mut rng = rand::rng();
-        for _ in 0..256 {
-            let accounts_hash = AccountsHashes::new_rand(&mut rng, None);
-            let crds_value =
-                CrdsValue::new(CrdsData::AccountsHashes(accounts_hash), &Keypair::new());
-            let response = Protocol::PullResponse(Pubkey::new_unique(), vec![crds_value]);
-            let socket = new_rand_socket_addr(&mut rng);
-            assert!(Packet::from_data(Some(&socket), response).is_ok());
-        }
     }
 
     #[test]
@@ -580,20 +552,21 @@ pub(crate) mod tests {
     fn test_split_messages_packet_size() {
         // Test that if a value is smaller than payload size but too large to be wrapped in a vec
         // that it is still dropped
-        let mut value = CrdsValue::new_unsigned(CrdsData::AccountsHashes(AccountsHashes {
+        let mut incremental: Vec<(Slot, Hash)> = vec![];
+        let mut value = CrdsValue::new_unsigned(CrdsData::SnapshotHashes(SnapshotHashes {
             from: Pubkey::default(),
-            hashes: vec![],
+            full: (0, Hash::default()),
+            incremental: incremental.clone(),
             wallclock: 0,
         }));
-
-        let mut i = 0;
         while value.bincode_serialized_size() < PUSH_MESSAGE_MAX_PAYLOAD_SIZE {
-            value = CrdsValue::new_unsigned(CrdsData::AccountsHashes(AccountsHashes {
+            incremental.push((0, Hash::default()));
+            value = CrdsValue::new_unsigned(CrdsData::SnapshotHashes(SnapshotHashes {
                 from: Pubkey::default(),
-                hashes: vec![(0, Hash::default()); i],
+                full: (0, Hash::default()),
+                incremental: incremental.clone(),
                 wallclock: 0,
             }));
-            i += 1;
         }
         let split: Vec<_> =
             split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, vec![value]).collect();

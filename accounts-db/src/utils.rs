@@ -1,5 +1,4 @@
 use {
-    crate::accounts_db::AccountsDbConfig,
     agave_fs::{dirs, metadata::DirectIoSupport},
     itertools::Itertools as _,
     log::*,
@@ -173,11 +172,11 @@ pub fn create_account_shared_data(account: &impl ReadableAccount) -> AccountShar
 /// like direct-io. This allows providing meaningful error messages to user during startup
 /// instead of generating hard to diagnose errors during runtime.
 pub fn validate_account_paths_for_direct_io(
-    config: &AccountsDbConfig,
+    use_direct_io: bool,
     accounts_paths: &[PathBuf],
     account_snapshot_paths: &[PathBuf],
 ) -> io::Result<()> {
-    if config.snapshots_use_direct_io {
+    if use_direct_io {
         let mut unsupported_paths = vec![];
         for path in accounts_paths.iter().chain(account_snapshot_paths.iter()) {
             if agave_fs::metadata::check_direct_io_capability(path)? == DirectIoSupport::Unsupported

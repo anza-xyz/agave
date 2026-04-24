@@ -1,6 +1,6 @@
 use {
     crate::{
-        cluster_nodes::{ClusterNodesCache, DATA_PLANE_FANOUT, check_feature_activation},
+        cluster_nodes::{ClusterNodesCache, DATA_PLANE_FANOUT},
         retransmit_stage::RetransmitStage,
     },
     agave_feature_set as feature_set,
@@ -338,7 +338,7 @@ fn maybe_verify_and_resign_packet(
                 .fetch_add(1, Ordering::Relaxed);
             if shred::layout::get_slot(shred)
                 .map(|slot| {
-                    check_feature_activation(
+                    shred::filter::check_feature_activation_from_bank(
                         &feature_set::verify_retransmitter_signature::id(),
                         slot,
                         root_bank,

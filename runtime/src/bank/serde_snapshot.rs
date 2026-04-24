@@ -322,9 +322,9 @@ mod tests {
         // Deserialize
         let dbank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
-            bank_snapshots_dir.path(),
             &snapshot_archive_info,
             None,
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
