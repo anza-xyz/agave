@@ -611,7 +611,12 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .set_memory_context_abi_v1(MemoryContext::new(
                 BpfAllocator::new(0),
                 Vec::new(),
-                MemoryMapping::new(Vec::new(), &Config::default(), SBPFVersion::Reserved).unwrap(),
+                // SAFETY:
+                // This path invokes a builtin program, so this mapping is never used.
+                unsafe {
+                    MemoryMapping::new(Vec::new(), &Config::default(), SBPFVersion::Reserved)
+                        .unwrap()
+                },
             ))?;
         let mut vm = EbpfVm::new(
             Arc::clone(
