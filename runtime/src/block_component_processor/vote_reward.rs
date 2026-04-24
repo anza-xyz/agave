@@ -51,9 +51,12 @@ struct RewardState<'a> {
     reward_epoch: Epoch,
     reward_slot: Slot,
     current_slot: Slot,
+    leader_pubkey: Pubkey,
     accounts: &'a HashMap<Pubkey, (u64, VoteAccount)>,
     total_stake: u64,
     epoch_inflation_state: EpochInflationState,
+
+    total_leader_reward: u64,
 }
 
 impl<'a> RewardState<'a> {
@@ -91,13 +94,18 @@ impl<'a> RewardState<'a> {
             reward_epoch,
             reward_slot,
             current_slot,
+            leader_pubkey: *bank.leader_id(),
             accounts,
             total_stake,
             epoch_inflation_state,
+            total_leader_reward: 0,
         })
     }
 
-    fn calculate_reward(&self, validator: Pubkey) -> Result<(u64, u64), PayVoteRewardError> {
+    fn calculate_reward(
+        &mut self,
+        validator: Pubkey,
+    ) -> Result<Option<RewardUpdate>, PayVoteRewardError> {
         let (reward_slot_validator_stake, _) = self.accounts.get(&validator).ok_or(
             PayVoteRewardError::MissingRewardSlotValidator {
                 pubkey: validator,
@@ -110,7 +118,29 @@ impl<'a> RewardState<'a> {
             self.total_stake,
             *reward_slot_validator_stake,
         );
-        Ok((validator_reward, leader_reward))
+        self.total_leader_reward += leader_reward;
+        if validator == self.leader_pubkey {
+            self.total_leader_reward += validator_reward;
+            Ok(None)
+        } else {
+            Ok(Some(RewardUpdate {
+                reward_epoch: self.reward_epoch,
+                reward_slot: self.reward_slot,
+                reward: validator_reward,
+            }))
+        }
+    }
+
+    fn get_leader_reward(&self) -> Option<RewardUpdate> {
+        if self.total_leader_reward == 0 {
+            None
+        } else {
+            Some(RewardUpdate {
+                reward_epoch: self.reward_epoch,
+                reward_slot: self.reward_slot,
+                reward: self.total_leader_reward,
+            })
+        }
     }
 }
 
@@ -123,7 +153,7 @@ struct RewardUpdate {
 fn update_handler(
     handler: &mut VoteStateHandler,
     final_slot: Option<Slot>,
-    reward: Option<RewardUpdate>,
+    reward_update: Option<RewardUpdate>,
 ) {
     if let Some(final_slot) = final_slot {
         handler.set_root_slot(Some(final_slot));
@@ -132,7 +162,7 @@ fn update_handler(
         reward_epoch,
         reward_slot,
         reward,
-    }) = reward
+    }) = reward_update
     {
         handler.increment_credits(reward_epoch, reward);
         let latest_root_or_reward = handler.root_slot().unwrap_or(reward_slot).max(reward_slot);
@@ -159,7 +189,7 @@ fn update_account(
     vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
     vote_pubkey: Pubkey,
     final_slot: Option<Slot>,
-    reward: Option<RewardUpdate>,
+    reward_update: Option<RewardUpdate>,
 ) -> Result<AccountSharedData, UpdateAccountError> {
     let account = vote_accounts
         .get(&vote_pubkey)
@@ -170,7 +200,7 @@ fn update_account(
         bincode::deserialize(account.data()).map_err(UpdateAccountError::DeserializeFailed)?;
     let mut handler = VoteStateHandler::try_new_from_vote_state_versions(versions)
         .map_err(UpdateAccountError::HandlerConversionFailed)?;
-    update_handler(&mut handler, final_slot, reward);
+    update_handler(&mut handler, final_slot, reward_update);
     let mut updated_account =
         AccountSharedData::new(account.lamports(), account.data().len(), account.owner());
     handler
@@ -182,19 +212,16 @@ fn update_account(
 fn update_accounts(
     bank: &Bank,
     validators: impl Iterator<Item = Pubkey>,
-    reward_state: Option<&RewardState>,
+    mut reward_state: Option<&mut RewardState>,
     final_slot: Option<Slot>,
 ) {
     let mut updated_accounts = vec![];
     let vote_accounts = bank.vote_accounts();
-    let mut total_leader_reward = 0u64;
     for vote_pubkey in validators {
-        let reward_update = match &reward_state {
+        let reward_update = match &mut reward_state {
             None => None,
             Some(reward_state) => {
-                let (validator_reward, add_leader_reward) = match reward_state
-                    .calculate_reward(vote_pubkey)
-                {
+                let reward_update = match reward_state.calculate_reward(vote_pubkey) {
                     Ok(res) => res,
                     Err(e) => {
                         error!(
@@ -204,20 +231,10 @@ fn update_accounts(
                         continue;
                     }
                 };
-                total_leader_reward = total_leader_reward.saturating_add(add_leader_reward);
-                if *bank.leader_id() == vote_pubkey {
-                    // Current slot's leader's node pubkey is associated with exactly one vote
-                    // pubkey and this reward is for this vote pubkey.  The reward will be paid.
-                    // However, we haven't finished calculating the total rewards for the leader yet.
-                    // `total_leader_reward` be paid at the end of the function.
-                    total_leader_reward = total_leader_reward.saturating_add(validator_reward);
-                    continue;
+                match reward_update {
+                    None => continue,
+                    Some(r) => Some(r),
                 }
-                Some(RewardUpdate {
-                    reward_epoch: reward_state.reward_epoch,
-                    reward_slot: reward_state.reward_slot,
-                    reward: validator_reward,
-                })
             }
         };
 
@@ -236,16 +253,12 @@ fn update_accounts(
     }
 
     if let Some(reward_state) = reward_state {
-        if total_leader_reward != 0 {
+        if let Some(reward_update) = reward_state.get_leader_reward() {
             match update_account(
                 &vote_accounts,
                 *bank.leader_id(),
                 final_slot,
-                Some(RewardUpdate {
-                    reward_epoch: reward_state.reward_epoch,
-                    reward_slot: reward_state.reward_slot,
-                    reward: total_leader_reward,
-                }),
+                Some(reward_update),
             ) {
                 Ok(account) => {
                     updated_accounts.push((*bank.leader_id(), account));
@@ -292,24 +305,24 @@ pub(super) fn calc_vote_reward_and_update_vote_state(
         }
         (Some(reward_cert), None) => {
             let (reward_slot, validators_to_update) = reward_cert.into_parts();
-            let reward_state = RewardState::new(bank, reward_slot)?;
+            let mut reward_state = RewardState::new(bank, reward_slot)?;
             update_accounts(
                 bank,
                 validators_to_update.into_iter(),
-                Some(&reward_state),
+                Some(&mut reward_state),
                 None,
             );
         }
         (Some(reward_cert), Some(final_cert)) => {
             let final_cert_validators = final_cert.signers();
             let (reward_slot, reward_validators) = reward_cert.into_parts();
-            let reward_state = RewardState::new(bank, reward_slot)?;
+            let mut reward_state = RewardState::new(bank, reward_slot)?;
             update_accounts(
                 bank,
                 reward_validators
                     .intersection(&final_cert_validators)
                     .cloned(),
-                Some(&reward_state),
+                Some(&mut reward_state),
                 Some(final_cert.slot()),
             );
             update_accounts(
@@ -317,7 +330,7 @@ pub(super) fn calc_vote_reward_and_update_vote_state(
                 reward_validators
                     .difference(&final_cert_validators)
                     .cloned(),
-                Some(&reward_state),
+                Some(&mut reward_state),
                 None,
             );
             update_accounts(
