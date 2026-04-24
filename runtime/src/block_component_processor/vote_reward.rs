@@ -9,7 +9,7 @@ use {
     solana_vote_interface::state::{LandedVote, Lockout},
     solana_vote_program::vote_state::handler::VoteStateHandler,
     std::{
-        collections::{HashMap, HashSet, VecDeque},
+        collections::{BTreeMap, HashSet, VecDeque},
         sync::{LazyLock, Mutex},
     },
     thiserror::Error,
@@ -47,7 +47,7 @@ pub enum PayVoteRewardError {
 
 #[derive(Default)]
 struct FinalInfoState {
-    highest_slot: HashMap<Pubkey, Slot>,
+    highest_slot: BTreeMap<Pubkey, Slot>,
     last_printed: Slot,
 }
 
@@ -61,9 +61,26 @@ impl FinalInfoState {
         if self.last_printed + 20 > current_slot {
             return;
         }
+        let mut smallest = None;
         for (pubkey, slot) in &self.highest_slot {
             info!("final_info_state: pubkey={pubkey} highest_slot={slot}");
+            match smallest {
+                None => {
+                    smallest = Some((*pubkey, *slot));
+                }
+                Some((_cur_pubkey, cur_slot)) => {
+                    if *slot < cur_slot {
+                        smallest = Some((*pubkey, *slot));
+                    }
+                }
+            }
         }
+        info!(
+            "final_info_state: smallest pubkey={} highest_slot={}",
+            smallest.unwrap().0,
+            smallest.unwrap().1
+        );
+        self.last_printed = current_slot;
     }
 }
 
