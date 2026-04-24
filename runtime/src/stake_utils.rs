@@ -48,6 +48,7 @@ pub fn create_stake_account(
 
     let meta = Meta {
         authorized: Authorized::auto(authorized),
+        #[expect(deprecated)]
         rent_exempt_reserve,
         ..Meta::default()
     };

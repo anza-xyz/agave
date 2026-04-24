@@ -73,9 +73,10 @@ impl MemoryContext {
         Self {
             allocator: BpfAllocator::new(0),
             accounts_metadata: Vec::new(),
-            memory_mapping: Box::new(
-                MemoryMapping::new(Vec::new(), &Config::default(), SBPFVersion::Reserved).unwrap(),
-            ),
+            memory_mapping: Box::new(unsafe {
+                // SAFETY: no memory regions specified.
+                MemoryMapping::new(Vec::new(), &Config::default(), SBPFVersion::Reserved).unwrap()
+            }),
         }
     }
 }

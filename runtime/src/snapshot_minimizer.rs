@@ -78,10 +78,7 @@ impl<'a> SnapshotMinimizer<'a> {
             // Since the account state has changed, the accounts lt hash must be recalculated
             let new_accounts_lt_hash = minimizer
                 .accounts_db()
-                .calculate_accounts_lt_hash_at_startup_from_index(
-                    &minimizer.bank.ancestors,
-                    minimizer.bank.slot(),
-                );
+                .calculate_accounts_lt_hash_at_startup_from_index(&minimizer.bank.ancestors);
             bank.set_accounts_lt_hash_for_snapshot_minimizer(new_accounts_lt_hash);
         }
     }
@@ -653,9 +650,9 @@ mod tests {
         };
         let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
-            &bank_snapshots_dir,
             &snapshot,
             None,
+            &snapshot_config,
             &genesis_config_info.genesis_config,
             &RuntimeConfig::default(),
             None,

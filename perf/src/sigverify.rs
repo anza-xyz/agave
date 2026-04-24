@@ -2,10 +2,7 @@
 //! By default, signatures are verified in parallel using all available CPU
 //! cores.
 use {
-    crate::{
-        packet::{PacketBatch, PacketFlags, PacketRefMut},
-        recycled_vec::RecycledVec,
-    },
+    crate::packet::{PacketBatch, PacketFlags, PacketRefMut},
     agave_transaction_view::{
         transaction_data::TransactionData, transaction_version::TransactionVersion,
         transaction_view::SanitizedTransactionView,
@@ -15,33 +12,6 @@ use {
 
 // Empirically derived to constrain max verify latency to ~8ms at lower packet counts
 pub const VERIFY_PACKET_CHUNK_SIZE: usize = 128;
-
-pub type TxOffset = RecycledVec<u32>;
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum PacketError {
-    InvalidLen,
-    InvalidPubkeyLen,
-    InvalidShortVec,
-    InvalidSignatureLen,
-    MismatchSignatureLen,
-    PayerNotWritable,
-    InvalidProgramIdIndex,
-    InvalidNumberOfInstructions,
-    UnsupportedVersion,
-}
-
-impl std::convert::From<std::boxed::Box<bincode::ErrorKind>> for PacketError {
-    fn from(_e: std::boxed::Box<bincode::ErrorKind>) -> PacketError {
-        PacketError::InvalidShortVec
-    }
-}
-
-impl std::convert::From<std::num::TryFromIntError> for PacketError {
-    fn from(_e: std::num::TryFromIntError) -> Self {
-        Self::InvalidLen
-    }
-}
 
 /// Returns true if the signature on the packet verifies.
 /// Caller must do packet.set_discard(true) if this returns false.
@@ -103,13 +73,6 @@ pub fn count_valid_packets<'a>(batches: impl IntoIterator<Item = &'a PacketBatch
         .sum()
 }
 
-pub fn count_discarded_packets(batches: &[PacketBatch]) -> usize {
-    batches
-        .iter()
-        .map(|batch| batch.iter().filter(|p| p.meta().discard()).count())
-        .sum()
-}
-
 fn is_simple_vote_transaction_view<D: TransactionData>(view: &SanitizedTransactionView<D>) -> bool {
     // vote could have 1 or 2 sigs; zero sig has already been excluded by sanitization.
     if view.num_signatures() > 2 {
@@ -155,17 +118,6 @@ pub fn ed25519_verify(
                 packet.meta_mut().set_discard(true);
             }
         });
-    });
-}
-
-pub fn ed25519_verify_disabled(thread_pool: &rayon::ThreadPool, batches: &mut [PacketBatch]) {
-    let packet_count = count_packets_in_batches(batches);
-    debug!("disabled ECDSA for {packet_count}");
-
-    thread_pool.install(|| {
-        batches.par_iter_mut().flatten().for_each(|mut packet| {
-            packet.meta_mut().set_discard(false);
-        })
     });
 }
 

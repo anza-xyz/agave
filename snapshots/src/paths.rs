@@ -160,50 +160,51 @@ pub fn get_bank_snapshot_dir(bank_snapshots_dir: impl AsRef<Path>, slot: Slot) -
         .join(get_snapshot_file_name(slot))
 }
 
-/// Walk down the snapshot archive to collect snapshot archive file info
-fn get_snapshot_archives<T, F>(snapshot_archives_dir: &Path, cb: F) -> Vec<T>
-where
-    F: Fn(PathBuf) -> Result<T>,
-{
-    let walk_dir = |dir: &Path| -> Vec<T> {
-        let entry_iter = fs::read_dir(dir);
-        match entry_iter {
-            Err(err) => {
+/// Walk down the snapshot archive to yield snapshot archive file info
+fn snapshot_archives_iter<T>(
+    snapshot_archives_dir: &Path,
+    cb: fn(PathBuf) -> Result<T>,
+) -> impl Iterator<Item = T> {
+    let remote_dir = build_snapshot_archives_remote_dir(snapshot_archives_dir);
+
+    [
+        Some(snapshot_archives_dir.to_path_buf()),
+        remote_dir.exists().then_some(remote_dir),
+    ]
+    .into_iter()
+    .flatten()
+    .flat_map(move |dir| {
+        fs::read_dir(&dir)
+            .map_err(|err| {
                 info!(
                     "Unable to read snapshot archives directory '{}': {err}",
                     dir.display(),
                 );
-                vec![]
-            }
-            Ok(entries) => entries
-                .filter_map(|entry| entry.map_or(None, |entry| cb(entry.path()).ok()))
-                .collect(),
-        }
-    };
-
-    let mut ret = walk_dir(snapshot_archives_dir);
-    let remote_dir = build_snapshot_archives_remote_dir(snapshot_archives_dir);
-    if remote_dir.exists() {
-        ret.append(&mut walk_dir(remote_dir.as_ref()));
-    }
-    ret
+                err
+            })
+            .ok()
+            .into_iter()
+            .flat_map(move |entries| {
+                entries.filter_map(move |entry| entry.ok().and_then(|entry| cb(entry.path()).ok()))
+            })
+    })
 }
 
-/// Get a list of the full snapshot archives from a directory
-pub fn get_full_snapshot_archives(
+/// Get an iterator of the full snapshot archives from a directory
+pub fn full_snapshot_archives_iter(
     full_snapshot_archives_dir: impl AsRef<Path>,
-) -> Vec<FullSnapshotArchiveInfo> {
-    get_snapshot_archives(
+) -> impl Iterator<Item = FullSnapshotArchiveInfo> {
+    snapshot_archives_iter(
         full_snapshot_archives_dir.as_ref(),
         FullSnapshotArchiveInfo::new_from_path,
     )
 }
 
-/// Get a list of the incremental snapshot archives from a directory
-pub fn get_incremental_snapshot_archives(
+/// Get the incremental snapshot archives from a directory
+pub fn incremental_snapshot_archives_iter(
     incremental_snapshot_archives_dir: impl AsRef<Path>,
-) -> Vec<IncrementalSnapshotArchiveInfo> {
-    get_snapshot_archives(
+) -> impl Iterator<Item = IncrementalSnapshotArchiveInfo> {
+    snapshot_archives_iter(
         incremental_snapshot_archives_dir.as_ref(),
         IncrementalSnapshotArchiveInfo::new_from_path,
     )
@@ -234,9 +235,7 @@ pub fn get_highest_incremental_snapshot_archive_slot(
 pub fn get_highest_full_snapshot_archive_info(
     full_snapshot_archives_dir: impl AsRef<Path>,
 ) -> Option<FullSnapshotArchiveInfo> {
-    let mut full_snapshot_archives = get_full_snapshot_archives(full_snapshot_archives_dir);
-    full_snapshot_archives.sort_unstable();
-    full_snapshot_archives.into_iter().next_back()
+    full_snapshot_archives_iter(full_snapshot_archives_dir).max()
 }
 
 /// Get the path for the incremental snapshot archive with the highest slot, for a given full
@@ -249,8 +248,7 @@ pub fn get_highest_incremental_snapshot_archive_info(
     // full snapshot slot as the value passed in, perform the filtering before sorting to avoid
     // doing unnecessary work.
     let mut incremental_snapshot_archives =
-        get_incremental_snapshot_archives(incremental_snapshot_archives_dir)
-            .into_iter()
+        incremental_snapshot_archives_iter(incremental_snapshot_archives_dir)
             .filter(|incremental_snapshot_archive_info| {
                 incremental_snapshot_archive_info.base_slot() == full_snapshot_slot
             })

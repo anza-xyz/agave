@@ -2441,12 +2441,14 @@ pub fn build_stake_state(
     stake_history: &StakeHistory,
     clock: &Clock,
     new_rate_activation_epoch: Option<Epoch>,
+    rent_exempt_reserve: u64,
     use_csv: bool,
 ) -> CliStakeState {
     match stake_state {
         StakeStateV2::Stake(
             Meta {
-                rent_exempt_reserve,
+                #[expect(deprecated)]
+                    rent_exempt_reserve: _,
                 authorized,
                 lockup,
             },
@@ -2494,7 +2496,7 @@ pub fn build_stake_state(
                 lockup,
                 use_lamports_unit,
                 current_epoch,
-                rent_exempt_reserve: Some(*rent_exempt_reserve),
+                rent_exempt_reserve: Some(rent_exempt_reserve),
                 active_stake: u64_some_if_not_zero(effective),
                 activating_stake: u64_some_if_not_zero(activating),
                 deactivating_stake: u64_some_if_not_zero(deactivating),
@@ -2512,7 +2514,8 @@ pub fn build_stake_state(
             ..CliStakeState::default()
         },
         StakeStateV2::Initialized(Meta {
-            rent_exempt_reserve,
+            #[expect(deprecated)]
+                rent_exempt_reserve: _,
             authorized,
             lockup,
         }) => {
@@ -2528,7 +2531,7 @@ pub fn build_stake_state(
                 authorized: Some(authorized.into()),
                 lockup,
                 use_lamports_unit,
-                rent_exempt_reserve: Some(*rent_exempt_reserve),
+                rent_exempt_reserve: Some(rent_exempt_reserve),
                 ..CliStakeState::default()
             }
         }
@@ -2728,7 +2731,9 @@ pub async fn get_account_stake_state(
                 &agave_feature_set::reduce_stake_warmup_cooldown::id(),
             )
             .await?;
-
+            let rent_exempt_balance = rpc_client
+                .get_minimum_balance_for_rent_exemption(stake_account.data.len())
+                .await?;
             let mut state = build_stake_state(
                 stake_account.lamports,
                 &stake_state,
@@ -2736,6 +2741,7 @@ pub async fn get_account_stake_state(
                 &stake_history,
                 &clock,
                 new_rate_activation_epoch,
+                rent_exempt_balance,
                 use_csv,
             );
 

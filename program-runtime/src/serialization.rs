@@ -41,9 +41,9 @@ pub fn create_memory_region_of_account(
 ) -> Result<MemoryRegion, InstructionError> {
     let can_data_be_changed = account.can_data_be_changed().is_ok();
     let mut memory_region = if can_data_be_changed && !account.is_shared() {
-        MemoryRegion::new_writable(account.get_data_mut()?, vaddr)
+        MemoryRegion::new(&raw mut account.get_data_mut()?[..], vaddr)
     } else {
-        MemoryRegion::new_readonly(account.get_data(), vaddr)
+        MemoryRegion::new(&raw const account.get_data()[..], vaddr)
     };
     if can_data_be_changed {
         memory_region.access_violation_handler_payload = Some(account.get_index_in_transaction());
@@ -191,10 +191,9 @@ impl Serializer {
 
     fn push_region(&mut self) {
         let range = self.region_start..self.buffer.len();
-        self.regions.push(MemoryRegion::new_writable(
-            self.buffer.as_slice_mut().get_mut(range.clone()).unwrap(),
-            self.vaddr,
-        ));
+        let region_slice = self.buffer.as_slice_mut().get_mut(range.clone()).unwrap();
+        self.regions
+            .push(MemoryRegion::new(&raw mut region_slice[..], self.vaddr));
         self.region_start = range.end;
         self.vaddr += range.len() as u64;
     }
@@ -1522,13 +1521,15 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let mut memory_mapping = MemoryMapping::new_with_access_violation_handler(
-            regions,
-            &config,
-            SBPFVersion::V3,
-            transaction_context.access_violation_handler(true, true),
-        )
-        .unwrap();
+        let mut memory_mapping = unsafe {
+            MemoryMapping::new_with_access_violation_handler(
+                regions,
+                &config,
+                SBPFVersion::V3,
+                transaction_context.access_violation_handler(true, true),
+            )
+            .unwrap()
+        };
 
         // Reading readonly account is allowed
         memory_mapping

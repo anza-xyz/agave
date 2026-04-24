@@ -108,8 +108,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         self.disk.is_some()
     }
 
-    /// Check if flushing to disk should occur based on entry count threshold per bin
-    pub fn should_flush(&self, entries_in_bin: usize) -> bool {
+    /// Returns true when `entries_in_bin` exceeds the per-bin high-water mark, indicating
+    /// the bin is over the threshold and flush/eviction should occur.
+    pub fn is_bin_at_threshold(&self, entries_in_bin: usize) -> bool {
         match &self.threshold_entries_per_bin {
             None => self.is_disk_index_enabled(),
             Some(threshold_entries_per_bin) => {
@@ -624,9 +625,9 @@ mod tests {
         assert!(test.is_disk_index_enabled());
     }
 
-    /// Ensure that should_flush() is correct when using IndexLimit::Threshold
+    /// Ensure that is_bin_at_threshold() is correct when using IndexLimit::Threshold
     #[test]
-    fn test_should_flush_threshold() {
+    fn test_is_bin_at_threshold_with_threshold_limit() {
         let bins = 1;
         let num_entries_overhead = DEFAULT_NUM_ENTRIES_OVERHEAD;
         let num_entries_to_evict = DEFAULT_NUM_ENTRIES_TO_EVICT;
@@ -650,15 +651,15 @@ mod tests {
         // the low water mark must be non-zero and less than the high water mark
         assert!((1..thresholds.high_water_mark).contains(&thresholds.low_water_mark));
 
-        // Test: Below, at, and above the should_flush() boundary
-        assert!(!test.should_flush(thresholds.high_water_mark - 1));
-        assert!(!test.should_flush(thresholds.high_water_mark));
-        assert!(test.should_flush(thresholds.high_water_mark + 1));
+        // Test: Below, at, and above the is_bin_at_threshold() boundary
+        assert!(!test.is_bin_at_threshold(thresholds.high_water_mark - 1));
+        assert!(!test.is_bin_at_threshold(thresholds.high_water_mark));
+        assert!(test.is_bin_at_threshold(thresholds.high_water_mark + 1));
     }
 
-    /// Ensure that should_flush() is always true when using IndexLimit::Minimal
+    /// Ensure that is_bin_at_threshold() is always true when using IndexLimit::Minimal
     #[test]
-    fn test_should_flush_minimal() {
+    fn test_is_bin_at_threshold_minimal() {
         let bins = 1;
         let config = AccountsIndexConfig {
             index_limit: IndexLimit::Minimal,
@@ -666,14 +667,14 @@ mod tests {
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
 
-        assert!(test.should_flush(0));
-        assert!(test.should_flush(1000));
-        assert!(test.should_flush(usize::MAX));
+        assert!(test.is_bin_at_threshold(0));
+        assert!(test.is_bin_at_threshold(1000));
+        assert!(test.is_bin_at_threshold(usize::MAX));
     }
 
-    /// Ensure that should_flush() is always false when using IndexLimit::InMemOnly
+    /// Ensure that is_bin_at_threshold() is always false when using IndexLimit::InMemOnly
     #[test]
-    fn test_should_flush_in_mem_only() {
+    fn test_is_bin_at_threshold_in_mem_only() {
         let bins = 1;
         let config = AccountsIndexConfig {
             index_limit: IndexLimit::InMemOnly,
@@ -681,9 +682,9 @@ mod tests {
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
 
-        assert!(!test.should_flush(0));
-        assert!(!test.should_flush(1000));
-        assert!(!test.should_flush(usize::MAX));
+        assert!(!test.is_bin_at_threshold(0));
+        assert!(!test.is_bin_at_threshold(1000));
+        assert!(!test.is_bin_at_threshold(usize::MAX));
     }
 
     #[test]

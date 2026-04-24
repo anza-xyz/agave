@@ -57,8 +57,6 @@ pub struct SchedulerCountMetricsInner {
     pub num_unschedulable_conflicts: Saturating<usize>,
     /// Number of transactions that were unschedulable due to thread capacity.
     pub num_unschedulable_threads: Saturating<usize>,
-    /// Number of transactions that were filtered out during scheduling.
-    pub num_schedule_filtered_out: Saturating<usize>,
     /// Number of completed transactions received from workers.
     pub num_finished: Saturating<usize>,
     /// Number of transactions that were retryable.
@@ -125,7 +123,6 @@ impl SchedulerCountMetricsInner {
             num_scheduled: Saturating(num_scheduled),
             num_unschedulable_conflicts: Saturating(num_unschedulable_conflicts),
             num_unschedulable_threads: Saturating(num_unschedulable_threads),
-            num_schedule_filtered_out: Saturating(num_schedule_filtered_out),
             num_finished: Saturating(num_finished),
             num_retryable: Saturating(num_retryable),
             num_dropped_on_receive: Saturating(num_dropped_on_receive),
@@ -150,11 +147,6 @@ impl SchedulerCountMetricsInner {
             ("num_scheduled", num_scheduled, i64),
             ("num_unschedulable_conflicts", num_unschedulable_conflicts, i64),
             ("num_unschedulable_threads", num_unschedulable_threads, i64),
-            (
-                "num_schedule_filtered_out",
-                num_schedule_filtered_out,
-                i64
-            ),
             ("num_finished", num_finished, i64),
             ("num_retryable", num_retryable, i64),
             ("num_dropped_on_receive", num_dropped_on_receive, i64),
@@ -206,7 +198,6 @@ impl SchedulerCountMetricsInner {
             || self.num_scheduled != Saturating(0)
             || self.num_unschedulable_conflicts != Saturating(0)
             || self.num_unschedulable_threads != Saturating(0)
-            || self.num_schedule_filtered_out != Saturating(0)
             || self.num_finished != Saturating(0)
             || self.num_retryable != Saturating(0)
     }
@@ -217,7 +208,6 @@ impl SchedulerCountMetricsInner {
         self.num_scheduled = Saturating(0);
         self.num_unschedulable_conflicts = Saturating(0);
         self.num_unschedulable_threads = Saturating(0);
-        self.num_schedule_filtered_out = Saturating(0);
         self.num_finished = Saturating(0);
         self.num_retryable = Saturating(0);
         self.num_dropped_on_receive = Saturating(0);
@@ -297,8 +287,6 @@ pub struct SchedulerTimingMetricsInner {
     pub receive_time_us: Saturating<u64>,
     /// Time spent buffering packets.
     pub buffer_time_us: Saturating<u64>,
-    /// Time spent filtering transactions during scheduling.
-    pub schedule_filter_time_us: Saturating<u64>,
     /// Time spent scheduling transactions.
     pub schedule_time_us: Saturating<u64>,
     /// Time spent clearing transactions from the container.
@@ -341,7 +329,6 @@ impl SchedulerTimingMetricsInner {
             decision_time_us: Saturating(decision_time_us),
             receive_time_us: Saturating(receive_time_us),
             buffer_time_us: Saturating(buffer_time_us),
-            schedule_filter_time_us: Saturating(schedule_filter_time_us),
             schedule_time_us: Saturating(schedule_time_us),
             clear_time_us: Saturating(clear_time_us),
             clean_time_us: Saturating(clean_time_us),
@@ -352,7 +339,6 @@ impl SchedulerTimingMetricsInner {
             ("decision_time_us", decision_time_us, i64),
             ("receive_time_us", receive_time_us, i64),
             ("buffer_time_us", buffer_time_us, i64),
-            ("schedule_filter_time_us", schedule_filter_time_us, i64),
             ("schedule_time_us", schedule_time_us, i64),
             ("clear_time_us", clear_time_us, i64),
             ("clean_time_us", clean_time_us, i64),
@@ -372,7 +358,6 @@ impl SchedulerTimingMetricsInner {
         self.decision_time_us = Saturating(0);
         self.receive_time_us = Saturating(0);
         self.buffer_time_us = Saturating(0);
-        self.schedule_filter_time_us = Saturating(0);
         self.schedule_time_us = Saturating(0);
         self.clear_time_us = Saturating(0);
         self.clean_time_us = Saturating(0);
