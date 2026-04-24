@@ -137,7 +137,7 @@ impl FetchStage {
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Option<Duration>,
     ) -> Self {
-        let recycler: PacketBatchRecycler = Recycler::warmed(1000, 1024);
+        let recycler: PacketBatchRecycler = Recycler::new();
 
         let tpu_vote_stats = Arc::new(StreamerReceiveStats::new("tpu_vote_receiver"));
         let tpu_vote_threads: Vec<_> = tpu_vote_sockets

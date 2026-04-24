@@ -188,6 +188,17 @@ struct TxVerificationData {
     serialized_message: Vec<u8>,
 }
 
+/// TODO: we will move this API into solana-sdk.
+#[inline]
+pub fn batch_verify<'a, I>(items: I) -> bool
+where
+    I: IntoParallelIterator<Item = (&'a Signature, &'a Address, &'a [u8])>,
+{
+    items
+        .into_par_iter()
+        .all(|(signature, pubkey, message)| signature.verify(pubkey.as_ref(), message))
+}
+
 pub struct UnverifiedSignatures {
     signatures: Vec<TxVerificationData>,
 }
@@ -200,6 +211,23 @@ impl UnverifiedSignatures {
     }
 
     pub fn verify(&self) -> Result<()> {
+        let verification_items = self.signatures.par_iter().flat_map_iter(|tx| {
+            let message = tx.serialized_message.as_slice();
+            let len = tx.signatures.len();
+
+            (0..len).map(move |i| (&tx.signatures[i], &tx.signer_pubkeys[i], message))
+        });
+
+        if batch_verify(verification_items) {
+            Ok(())
+        } else {
+            Err(TransactionError::SignatureFailure)
+        }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    /// todo: this function is for benches only and will be removed after we move the batch verify logic to sdk
+    pub fn verify_single_loop_for_benches(&self) -> Result<()> {
         self.signatures.par_iter().try_for_each(|tx_signatures| {
             if tx_signatures
                 .signatures

@@ -46,15 +46,22 @@ pub fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
 }
 
 /// Only used in macro, do not use directly!
+///
+/// # Safety
+///
+/// Refer to [`configure_program_regions`].
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-pub fn create_vm<'a, 'b>(
+pub unsafe fn create_vm<'a, 'b>(
     program: &'a Executable<InvokeContext<'b, 'b>>,
     invoke_context: &'a mut InvokeContext<'b, 'b>,
-    stack: &mut [u8],
-    heap: &mut [u8],
+    stack: *mut [u8],
+    heap: *mut [u8],
 ) -> Result<EbpfVm<'a, InvokeContext<'b, 'b>>, Box<dyn std::error::Error>> {
     let stack_size = stack.len();
-    configure_program_regions(invoke_context, program, stack, heap)?;
+    unsafe {
+        // SAFETY: invariants delegated to the caller.
+        configure_program_regions(invoke_context, program, stack, heap)?;
+    }
     Ok(EbpfVm::new(
         program.get_loader().clone(),
         program.get_sbpf_version(),
@@ -63,23 +70,26 @@ pub fn create_vm<'a, 'b>(
     ))
 }
 
-fn configure_program_regions<'a, C: ContextObject>(
+/// # Safety
+///
+/// The `executable`, `stack` and `heap` arguments must remain allocated for at least the lifetime
+/// of [`MemoryMapping`] (or until after the `MemoryMapping` is reconfigured with different
+/// `executable`, `stack` and `heap`).
+unsafe fn configure_program_regions<C: ContextObject>(
     invoke_context: &mut InvokeContext,
     executable: &Executable<C>,
-    stack: &'a mut [u8],
-    heap: &'a mut [u8],
+    stack: *mut [u8],
+    heap: *mut [u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
-    let regions = mapping
-        .get_regions_mut()
-        .expect("The memory mapping should not have been initialized");
+    let regions = mapping.get_regions_mut();
     let [ro_area, stack_area, heap_area, ..] = regions else {
         panic!("the regions vector must have at least three entries")
     };
     *ro_area = executable.get_ro_region();
     let sbpf_version = executable.get_sbpf_version();
     let config = executable.get_config();
-    *stack_area = MemoryRegion::new_writable_gapped(
+    *stack_area = MemoryRegion::new_gapped(
         stack,
         MM_STACK_START,
         if sbpf_version.stack_frame_gaps() && config.enable_stack_frame_gaps {
@@ -88,7 +98,7 @@ fn configure_program_regions<'a, C: ContextObject>(
             0
         },
     );
-    *heap_area = MemoryRegion::new_writable(heap, MM_HEAP_START);
+    *heap_area = MemoryRegion::new(heap, MM_HEAP_START);
     mapping
         .initialize()
         .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
@@ -127,7 +137,11 @@ macro_rules! create_vm {
     };
 }
 
-fn set_memory_context<'b>(
+/// # Safety
+///
+/// The [`MemoryRegion`]s must satisfy the safety preconditions for
+/// [`MemoryMapping::new_uninitialized`].
+unsafe fn set_memory_context<'b>(
     additional_initialized_regions: Vec<MemoryRegion>,
     accounts_metadata: Vec<SerializedAccountMetadata>,
     invoke_context: &mut InvokeContext<'b, 'b>,
@@ -140,15 +154,19 @@ fn set_memory_context<'b>(
         .into_iter()
         .chain(additional_initialized_regions)
         .collect();
-    let memory_mapping = MemoryMapping::new_uninitialized(
-        regions,
-        executable.get_config(),
-        executable.get_sbpf_version(),
-        invoke_context.transaction_context.access_violation_handler(
-            virtual_address_space_adjustments,
-            account_data_direct_mapping,
-        ),
-    );
+    let memory_mapping = unsafe {
+        // SAFETY: all memory regions are `default` (and thus implicitly valid) or valid by
+        // delegating the safety invariant upon the caller.
+        MemoryMapping::new_uninitialized(
+            regions,
+            executable.get_config(),
+            executable.get_sbpf_version(),
+            invoke_context.transaction_context.access_violation_handler(
+                virtual_address_space_adjustments,
+                account_data_direct_mapping,
+            ),
+        )
+    };
 
     invoke_context
         .memory_contexts
@@ -241,14 +259,19 @@ pub fn execute<'a, 'b: 'a>(
     };
 
     let mut create_vm_time = Measure::start("create_vm");
-    set_memory_context(
-        regions,
-        accounts_metadata,
-        invoke_context,
-        executable,
-        virtual_address_space_adjustments,
-        account_data_direct_mapping,
-    )?;
+    unsafe {
+        // SAFETY: The memory pointed to by regions is valid for the useful lifetime of
+        // `invoke_context`, which in turn contains the `MemoryMapping` that allows access to this
+        // memory.
+        set_memory_context(
+            regions,
+            accounts_metadata,
+            invoke_context,
+            executable,
+            virtual_address_space_adjustments,
+            account_data_direct_mapping,
+        )?
+    };
 
     let execution_result = {
         let mut execution_mode = ExecutionMode::PreferJit;
@@ -259,14 +282,19 @@ pub fn execute<'a, 'b: 'a>(
         }
 
         let compute_meter_prev = invoke_context.get_remaining();
-        create_vm!(vm, executable, invoke_context);
-        let (mut vm, stack, heap) = match vm {
-            Ok(info) => info,
-            Err(e) => {
-                ic_logger_msg!(log_collector, "Failed to create SBF VM: {}", e);
-                return Err(Box::new(InstructionError::ProgramEnvironmentSetupFailure));
+        let (mut vm, stack, heap) = unsafe {
+            // SAFETY: The `stack`, `heap` and `executable` live past the lifetime of
+            // `invoke_context`.
+            create_vm!(vm, executable, invoke_context);
+            match vm {
+                Ok(info) => info,
+                Err(e) => {
+                    ic_logger_msg!(log_collector, "Failed to create SBF VM: {}", e);
+                    return Err(Box::new(InstructionError::ProgramEnvironmentSetupFailure));
+                }
             }
         };
+
         create_vm_time.stop();
         #[cfg(feature = "sbpf-debugger")]
         {

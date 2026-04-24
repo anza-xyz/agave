@@ -527,15 +527,17 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         .get_feature_set()
         .virtual_address_space_adjustments;
     let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
-    let memory_mapping = MemoryMapping::new_uninitialized(
-        regions,
-        verified_executable.get_config(),
-        verified_executable.get_sbpf_version(),
-        invoke_context.transaction_context.access_violation_handler(
-            virtual_address_space_adjustments,
-            account_data_direct_mapping,
-        ),
-    );
+    let memory_mapping = unsafe {
+        MemoryMapping::new_uninitialized(
+            regions,
+            verified_executable.get_config(),
+            verified_executable.get_sbpf_version(),
+            invoke_context.transaction_context.access_violation_handler(
+                virtual_address_space_adjustments,
+                account_data_direct_mapping,
+            ),
+        )
+    };
 
     invoke_context
         .memory_contexts
@@ -546,8 +548,10 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         ))
         .unwrap();
 
-    create_vm!(vm, &verified_executable, &mut invoke_context,);
-    let (mut vm, _, _) = vm.unwrap();
+    let (mut vm, _stack, _heap) = unsafe {
+        create_vm!(vm, &verified_executable, &mut invoke_context,);
+        vm.unwrap()
+    };
     let start_time = Instant::now();
 
     let mode = matches.value_of("mode").unwrap();
