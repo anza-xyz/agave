@@ -368,7 +368,7 @@ solana-big-mod-exp = "3.0.0"
 solana-bincode = "3.1.0"
 solana-blake3-hasher = "3.1.0"
 solana-bloom = { path = "bloom", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-solana-bls-signatures = { version = "3.2.0", features = ["serde"] }
+solana-bls-signatures = { version = "3.3.0", features = ["serde"] }
 solana-bls12-381-syscall = { path = "bls12-381-syscall", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-bn254 = "3.2.1"
 solana-borsh = "3.0.2"

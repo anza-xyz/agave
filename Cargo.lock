@@ -7177,9 +7177,9 @@ dependencies = [
 
 [[package]]
 name = "solana-bls-signatures"
-version = "3.2.0"
+version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a3d8a6e1a009bddbdbfe13ee6ff206c16afa9f8fae7d04612d779ac2254ad5f"
+checksum = "654ea8d31bbb4b0b9c28f9c545edb32691de27d4e2fc0e252c1ff47da50c5f2a"
 dependencies = [
  "base64 0.22.1",
  "blst",
@@ -7200,6 +7200,8 @@ dependencies = [
  "solana-signer",
  "subtle",
  "thiserror 2.0.18",
+ "wincode",
+ "zeroize",
 ]
 
 [[package]]
