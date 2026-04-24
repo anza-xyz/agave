@@ -89,7 +89,8 @@ fn print_info(
         }
         (Some((rslot, validators)), Some(f)) => {
             info!(
-                "calculate slot={slot}: called with reward_slot={rslot}, len_validators={}; len_signers={}",
+                "calculate slot={slot}: called with reward_slot={rslot}, len_validators={}; \
+                 len_signers={}",
                 validators.len(),
                 f.signers.len()
             )
