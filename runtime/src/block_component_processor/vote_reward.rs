@@ -1,14 +1,17 @@
 use {
     crate::{bank::Bank, validated_block_finalization::ValidatedBlockFinalizationCert},
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
-    log::info,
+    log::{error, info},
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccount,
     solana_vote_interface::state::{LandedVote, Lockout},
     solana_vote_program::vote_state::handler::VoteStateHandler,
-    std::collections::{HashSet, VecDeque},
+    std::{
+        collections::{HashMap, HashSet, VecDeque},
+        sync::{LazyLock, Mutex},
+    },
     thiserror::Error,
 };
 
@@ -40,6 +43,28 @@ pub enum PayVoteRewardError {
         reward_epoch: Epoch,
         current_slot: Slot,
     },
+}
+
+#[derive(Default)]
+struct FinalInfoState {
+    highest_slot: HashMap<Pubkey, Slot>,
+    last_printed: Slot,
+}
+
+impl FinalInfoState {
+    fn add(&mut self, pubkey: Pubkey, slot: Slot) {
+        let entry = self.highest_slot.entry(pubkey).or_default();
+        *entry = slot;
+    }
+
+    fn maybe_report(&mut self, current_slot: Slot) {
+        if self.last_printed + 20 > current_slot {
+            return;
+        }
+        for (pubkey, slot) in &self.highest_slot {
+            info!("final_info_state: pubkey={pubkey} highest_slot={slot}");
+        }
+    }
 }
 
 fn print_info(
@@ -88,16 +113,27 @@ fn process_final_cert(bank: &Bank, final_cert: Option<&ValidatedBlockFinalizatio
     let Some(final_cert) = final_cert else {
         return;
     };
+
+    static GLOBAL: LazyLock<Mutex<FinalInfoState>> =
+        LazyLock::new(|| Mutex::new(FinalInfoState::default()));
+    let mut final_info_state = GLOBAL.lock().unwrap();
+
     let mut paid_vote_accounts = vec![];
 
     for vote_pubkey in &final_cert.signers {
         if let Some(account) = bank.get_account(vote_pubkey) {
             if let Some(account) = update_cert_account(&account, final_cert.slot()) {
+                final_info_state.add(*vote_pubkey, final_cert.slot());
                 paid_vote_accounts.push((*vote_pubkey, account));
+            } else {
+                error!("final_info_state: updating for pubkey={vote_pubkey} failed");
             }
+        } else {
+            error!("final_info_state: did not find account for pubkey={vote_pubkey}");
         }
     }
     bank.store_accounts((bank.slot(), paid_vote_accounts.as_slice()));
+    final_info_state.maybe_report(bank.slot());
 }
 
 /// Calculates voting rewards and updates vote state fields for rewarded validators.
@@ -114,12 +150,14 @@ fn process_final_cert(bank: &Bank, final_cert: Option<&ValidatedBlockFinalizatio
 pub(super) fn calculate_and_pay_voting_reward_and_update_vote_state(
     bank: &Bank,
     reward_slot_and_validators: Option<(Slot, Vec<Pubkey>)>,
-    final_cert: Option<&ValidatedBlockFinalizationCert>,
+    mut final_cert: Option<&ValidatedBlockFinalizationCert>,
 ) -> Result<(), PayVoteRewardError> {
     print_info(bank, &reward_slot_and_validators, final_cert);
 
+    let final_cert = final_cert.take();
+    process_final_cert(bank, final_cert);
+
     let Some((reward_slot, validators_to_reward)) = reward_slot_and_validators else {
-        process_final_cert(bank, final_cert);
         return Ok(());
     };
 
