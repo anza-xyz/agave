@@ -301,9 +301,19 @@ pub struct GeneratorConfig {
     pub starting_keypairs: Arc<Vec<Keypair>>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ValidatorLogConfig {
+    /// The destination file for validator logs
+    pub logfile: PathBuf,
+    /// A flag to indicate that a logrotate rotation has occurred and that the
+    /// logfile should be reopened. The flag itself is toggled when the process
+    /// receives the SIGUSR1 signal
+    pub logrotate_flag: Arc<AtomicBool>,
+}
+
 pub struct ValidatorConfig {
-    /// The destination file for validator logs; `stderr` is used if `None`
-    pub logfile: Option<PathBuf>,
+    /// Log messages go to `stderr` if `None`
+    pub log_config: Option<ValidatorLogConfig>,
     pub expected_genesis_hash: Option<Hash>,
     pub expected_bank_hash: Option<Hash>,
     pub expected_shred_version: Option<u16>,
@@ -386,7 +396,7 @@ pub struct ValidatorConfig {
 impl ValidatorConfig {
     pub fn default_for_test() -> Self {
         Self {
-            logfile: None,
+            log_config: None,
             expected_genesis_hash: None,
             expected_bank_hash: None,
             expected_shred_version: None,
@@ -616,12 +626,11 @@ impl ValidatorTpuConfig {
 }
 
 pub struct Validator {
-    /// The destination file for validator logs; `stderr` is used if `None`
-    #[cfg_attr(not(unix), allow(dead_code))]
-    logfile: Option<PathBuf>,
     /// A global flag to indicate communicate shutdown between threads
     exit: Arc<AtomicBool>,
     validator_exit: Arc<RwLock<Exit>>,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    log_config: Option<ValidatorLogConfig>,
     json_rpc_service: Option<JsonRpcService>,
     pubsub_service: Option<PubSubService>,
     rpc_completed_slots_service: Option<JoinHandle<()>>,
@@ -1732,7 +1741,7 @@ impl Validator {
         });
 
         Ok(Self {
-            logfile: config.logfile.clone(),
+            log_config: config.log_config.clone(),
             exit,
             stats_reporter_service,
             gossip_service,
@@ -1765,41 +1774,39 @@ impl Validator {
         })
     }
 
-    /// Register and listen for signals that the validator will act on. Also,
-    /// monitor the validator's exit flag incase a shutdown has been initated
-    /// by one of the validator threads
-    pub fn listen_for_signals(&self) -> Result<()> {
-        // Reopen the logfile when the SIGUSR1 signal is received; this provides
-        // a hook for working with logrotate
-        let sigusr1_flag = Arc::new(AtomicBool::new(false));
+    /// Register a signal handler to toggle the returned `AtomicBool` when the
+    /// `SIGUSR1` signal is received. The `SIGUSR1` signal provides a hook for
+    /// the validator to support logrotate
+    pub fn register_logrotate_signal_handler() -> Result<Arc<AtomicBool>> {
+        let flag = Arc::new(AtomicBool::new(false));
         #[cfg(unix)]
         {
-            if self.logfile.is_some() {
-                signal_hook::flag::register(libc::SIGUSR1, sigusr1_flag.clone())?;
-            }
+            signal_hook::flag::register(libc::SIGUSR1, flag.clone())?;
         }
+        Ok(flag)
+    }
 
+    /// Monitor registered signal handlers and the validator's exit flag
+    pub fn listen_for_signals(&self) -> Result<()> {
         info!("Validator::listen_for_signals() has started");
         loop {
             if self.exit.load(Ordering::Relaxed) {
                 break;
             }
 
-            if sigusr1_flag.load(Ordering::Relaxed) {
-                #[cfg(unix)]
-                {
-                    if let Some(logfile) = self.logfile.as_ref() {
-                        info!("Received SIGUSR1, reopening {}", logfile.display());
-                        agave_logger::redirect_stderr(logfile);
-                        // Reset the flag to `false` to allow detection of the
-                        // signal again and to avoid hitting this case every
-                        // iteration
-                        sigusr1_flag.store(false, Ordering::Relaxed);
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    unreachable!("The SIGUSR1 signal is only handled on unix systems");
+            #[cfg(unix)]
+            if let Some(ValidatorLogConfig {
+                logfile,
+                logrotate_flag,
+            }) = self.log_config.as_ref()
+            {
+                if logrotate_flag.load(Ordering::Relaxed) {
+                    info!("Received SIGUSR1, reopening {}", logfile.display());
+                    agave_logger::redirect_stderr(logfile);
+                    // Reset the flag to `false` to allow detection of the
+                    // signal again and to avoid hitting this case every
+                    // iteration
+                    logrotate_flag.store(false, Ordering::Relaxed);
                 }
             }
 
