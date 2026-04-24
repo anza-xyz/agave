@@ -179,7 +179,7 @@ fn update_account(
     Ok(updated_account)
 }
 
-fn handle_both(
+fn update_accounts(
     bank: &Bank,
     validators: impl Iterator<Item = Pubkey>,
     reward_state: Option<&RewardState>,
@@ -283,7 +283,7 @@ pub(super) fn calc_vote_reward_and_update_vote_state(
     match (reward_cert, final_cert) {
         (None, None) => return Ok(()),
         (None, Some(final_cert)) => {
-            handle_both(
+            update_accounts(
                 bank,
                 final_cert.signers().into_iter(),
                 None,
@@ -293,7 +293,7 @@ pub(super) fn calc_vote_reward_and_update_vote_state(
         (Some(reward_cert), None) => {
             let (reward_slot, validators_to_update) = reward_cert.into_parts();
             let reward_state = RewardState::new(bank, reward_slot)?;
-            handle_both(
+            update_accounts(
                 bank,
                 validators_to_update.into_iter(),
                 Some(&reward_state),
@@ -304,7 +304,7 @@ pub(super) fn calc_vote_reward_and_update_vote_state(
             let final_cert_validators = final_cert.signers();
             let (reward_slot, reward_validators) = reward_cert.into_parts();
             let reward_state = RewardState::new(bank, reward_slot)?;
-            handle_both(
+            update_accounts(
                 bank,
                 reward_validators
                     .intersection(&final_cert_validators)
@@ -312,7 +312,7 @@ pub(super) fn calc_vote_reward_and_update_vote_state(
                 Some(&reward_state),
                 Some(final_cert.slot()),
             );
-            handle_both(
+            update_accounts(
                 bank,
                 reward_validators
                     .difference(&final_cert_validators)
@@ -320,7 +320,7 @@ pub(super) fn calc_vote_reward_and_update_vote_state(
                 Some(&reward_state),
                 None,
             );
-            handle_both(
+            update_accounts(
                 bank,
                 final_cert_validators
                     .difference(&reward_validators)
