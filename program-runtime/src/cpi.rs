@@ -1906,8 +1906,16 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        *invoke_context.memory_contexts.memory_mapping_mut().unwrap() =
+        let mapping =
             unsafe { MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap() };
+        invoke_context
+            .memory_contexts
+            .set_memory_context_abi_v1(MemoryContext::new(
+                BpfAllocator::new(0),
+                Vec::new(),
+                mapping,
+            ))
+            .unwrap();
 
         let signers = translate_signers_rust(&program_id, vm_addr, 1, &invoke_context).unwrap();
         assert_eq!(signers[0], derived_key);
