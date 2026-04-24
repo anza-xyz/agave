@@ -436,7 +436,7 @@ solana-loader-v4-program = { path = "programs/loader-v4", version = "=4.1.0-alph
 solana-local-cluster = { path = "local-cluster", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-measure = { path = "measure", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-merkle-tree = { path = "merkle-tree", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-solana-message = "4.1.0"
+solana-message = "4.1.1"
 solana-metrics = { path = "metrics", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-msg = "3.1.0"
 solana-native-token = "3.0.0"
@@ -520,7 +520,7 @@ solana-time-utils = "3.0.0"
 solana-tls-utils = { path = "tls-utils", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-tpu-client = { path = "tpu-client", version = "=4.1.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-solana-transaction = "4.1.0"
+solana-transaction = "4.1.1"
 solana-transaction-context = { path = "transaction-context", version = "=4.1.0-alpha.0", features = ["agave-unstable-api", "bincode"] }
 solana-transaction-error = "3.2.0"
 solana-transaction-status = { path = "transaction-status", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
@@ -577,7 +577,7 @@ unwrap_none = "0.1.2"
 uriparse = "0.6.4"
 url = "2.5.8"
 winapi = "0.3.8"
-wincode = { version = "0.5.3", features = ["derive", "solana-short-vec"] }
+wincode = { version = "0.5.3", features = ["derive"] }
 winreg = "0.55"
 x509-parser = "0.18.1"
 zstd = "0.13.3"
