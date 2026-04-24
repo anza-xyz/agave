@@ -421,7 +421,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
 
             instruction_context.check_number_of_instruction_accounts(2)?;
             drop(me);
-            vote_state::deposit_delegator_rewards(invoke_context, deposit)
+            vote_state::deposit_delegator_rewards(invoke_context, 0, 1, deposit, &signers)
         }
     }
 });
