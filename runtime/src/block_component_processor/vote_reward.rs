@@ -72,6 +72,34 @@ fn print_info(
     }
 }
 
+fn update_cert_account(account: &AccountSharedData, final_slot: Slot) -> Option<AccountSharedData> {
+    let versions = bincode::deserialize(account.data()).ok()?;
+    let mut handle = VoteStateHandler::try_new_from_vote_state_versions(versions).ok()?;
+    handle.set_root_slot(Some(final_slot));
+    let mut paid_account =
+        AccountSharedData::new(account.lamports(), account.data().len(), account.owner());
+    handle
+        .serialize_into(paid_account.data_as_mut_slice())
+        .ok()?;
+    Some(paid_account)
+}
+
+fn process_final_cert(bank: &Bank, final_cert: Option<&ValidatedBlockFinalizationCert>) {
+    let Some(final_cert) = final_cert else {
+        return;
+    };
+    let mut paid_vote_accounts = vec![];
+
+    for vote_pubkey in &final_cert.signers {
+        if let Some(account) = bank.get_account(vote_pubkey) {
+            if let Some(account) = update_cert_account(&account, final_cert.slot()) {
+                paid_vote_accounts.push((*vote_pubkey, account));
+            }
+        }
+    }
+    bank.store_accounts((bank.slot(), paid_vote_accounts.as_slice()));
+}
+
 /// Calculates voting rewards and updates vote state fields for rewarded validators.
 ///
 /// This is a NOP if [`reward_slot_and_validators`] is [`None`].
@@ -91,6 +119,7 @@ pub(super) fn calculate_and_pay_voting_reward_and_update_vote_state(
     print_info(bank, &reward_slot_and_validators, final_cert);
 
     let Some((reward_slot, validators_to_reward)) = reward_slot_and_validators else {
+        process_final_cert(bank, final_cert);
         return Ok(());
     };
 
