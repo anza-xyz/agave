@@ -20,7 +20,8 @@ use {
         VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
     },
     solana_hash::Hash,
-    std::{num::NonZeroU64, sync::Arc},
+    solana_pubkey::Pubkey,
+    std::{collections::HashSet, num::NonZeroU64, sync::Arc},
     thiserror::Error,
 };
 
@@ -272,18 +273,29 @@ impl BlockComponentProcessor {
             })
             .transpose()?;
 
+        let (footer_input, pool_input) = match validated_final_cert {
+            None => (None, None),
+            Some(f) => {
+                let (signers, finalize_cert, notarize_cert) = f.into_parts();
+                let final_slot = finalize_cert.cert_type.slot();
+                (
+                    Some((signers, final_slot)),
+                    Some((finalize_cert, notarize_cert)),
+                )
+            }
+        };
+
         Self::update_bank_with_footer_fields(
             &bank,
             block_producer_time_nanos as i64,
             bank_hash,
             reward_cert,
-            validated_final_cert.as_ref(),
+            footer_input,
         );
 
         // Send finalization cert(s) to consensus pool
-        if let Some(validated) = validated_final_cert {
+        if let Some((finalize_cert, notarize_cert)) = pool_input {
             if let Some(sender) = finalization_cert_sender {
-                let (finalize_cert, notarize_cert) = validated.into_certificates();
                 if let Some(notarize_cert) = notarize_cert {
                     let _ = sender
                         .send(vec![ConsensusMessage::from(notarize_cert)])
@@ -392,12 +404,12 @@ impl BlockComponentProcessor {
         block_producer_time_nanos: i64,
         bank_hash: Hash,
         reward_cert: Option<ValidatedRewardCert>,
-        final_cert: Option<&ValidatedBlockFinalizationCert>,
+        final_cert_input: Option<(HashSet<Pubkey>, Slot)>,
     ) {
         // Update clock sysvar
         bank.update_clock_from_footer(block_producer_time_nanos);
 
-        calc_vote_reward_and_update_vote_state(bank, reward_cert, final_cert).unwrap();
+        calc_vote_reward_and_update_vote_state(bank, reward_cert, final_cert_input).unwrap();
         // Record expected bank hash from footer for later verification when the bank is frozen.
         bank.set_expected_bank_hash(bank_hash);
     }

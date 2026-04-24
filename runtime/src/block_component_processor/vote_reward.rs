@@ -1,8 +1,5 @@
 use {
-    crate::{
-        bank::Bank, validated_block_finalization::ValidatedBlockFinalizationCert,
-        validated_reward_certificate::ValidatedRewardCert,
-    },
+    crate::{bank::Bank, validated_reward_certificate::ValidatedRewardCert},
     bincode::Error as BincodeError,
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
     log::error,
@@ -13,7 +10,7 @@ use {
     solana_vote::vote_account::VoteAccount,
     solana_vote_interface::state::{LandedVote, Lockout},
     solana_vote_program::vote_state::handler::VoteStateHandler,
-    std::collections::{HashMap, VecDeque},
+    std::collections::{HashMap, HashSet, VecDeque},
     thiserror::Error,
 };
 
@@ -312,17 +309,12 @@ fn update_accounts(
 pub(super) fn calc_vote_reward_and_update_vote_state(
     bank: &Bank,
     reward_cert: Option<ValidatedRewardCert>,
-    final_cert: Option<&ValidatedBlockFinalizationCert>,
+    final_cert_input: Option<(HashSet<Pubkey>, Slot)>,
 ) -> Result<(), Error> {
-    match (reward_cert, final_cert) {
+    match (reward_cert, final_cert_input) {
         (None, None) => return Ok(()),
-        (None, Some(final_cert)) => {
-            update_accounts(
-                bank,
-                final_cert.signers().into_iter(),
-                None,
-                Some(final_cert.slot()),
-            );
+        (None, Some((validators, final_slot))) => {
+            update_accounts(bank, validators.into_iter(), None, Some(final_slot));
         }
         (Some(reward_cert), None) => {
             let (reward_slot, validators_to_update) = reward_cert.into_parts();
@@ -334,8 +326,7 @@ pub(super) fn calc_vote_reward_and_update_vote_state(
                 None,
             );
         }
-        (Some(reward_cert), Some(final_cert)) => {
-            let final_cert_validators = final_cert.signers();
+        (Some(reward_cert), Some((final_cert_validators, final_slot))) => {
             let (reward_slot, reward_validators) = reward_cert.into_parts();
             let mut reward_state = RewardState::new(bank, reward_slot)?;
             update_accounts(
@@ -344,7 +335,7 @@ pub(super) fn calc_vote_reward_and_update_vote_state(
                     .intersection(&final_cert_validators)
                     .cloned(),
                 Some(&mut reward_state),
-                Some(final_cert.slot()),
+                Some(final_slot),
             );
             update_accounts(
                 bank,
@@ -360,7 +351,7 @@ pub(super) fn calc_vote_reward_and_update_vote_state(
                     .difference(&reward_validators)
                     .cloned(),
                 None,
-                Some(final_cert.slot()),
+                Some(final_slot),
             );
         }
     }
@@ -630,6 +621,8 @@ mod tests {
                 .unwrap()
         };
         let final_cert = build_fast_finalization_cert(&bank, &[cert_rank]);
+        let (signers, finalize_cert, _) = final_cert.clone().into_parts();
+        let final_cert_input = Some((signers, finalize_cert.cert_type.slot()));
 
         calc_vote_reward_and_update_vote_state(
             &bank,
@@ -637,7 +630,7 @@ mod tests {
                 reward_slot,
                 vec![target_vote_pubkey],
             )),
-            Some(&final_cert),
+            final_cert_input,
         )
         .unwrap();
 
@@ -697,6 +690,8 @@ mod tests {
                 .unwrap()
         };
         let final_cert = build_fast_finalization_cert(&bank, &[cert_rank]);
+        let (signers, finalize_cert, _) = final_cert.into_parts();
+        let final_cert_input = Some((signers, finalize_cert.cert_type.slot()));
 
         calc_vote_reward_and_update_vote_state(
             &bank,
@@ -704,7 +699,7 @@ mod tests {
                 reward_slot,
                 vec![target_vote_pubkey],
             )),
-            Some(&final_cert),
+            final_cert_input,
         )
         .unwrap();
 
