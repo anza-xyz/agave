@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+#![allow(dead_code)]
 
 use {
     agave_xdp::netlink::MacAddress,
@@ -16,16 +17,19 @@ use {
 
 const LEFT_IFACE: &str = "axdp0";
 const RIGHT_IFACE: &str = "axdp1";
+const BACKUP_LEFT_IFACE: &str = "bxdp0";
+const BACKUP_RIGHT_IFACE: &str = "bxdp1";
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct TestLinks {
-    pub left_name: &'static str,
-    pub right_name: &'static str,
+    pub left_name: String,
+    pub right_name: String,
     pub left_if_index: u32,
     pub right_if_index: u32,
     pub left_ip: std::net::Ipv4Addr,
     pub right_ip: std::net::Ipv4Addr,
+    pub left_mac: MacAddress,
     pub right_mac: MacAddress,
 }
 
@@ -73,34 +77,53 @@ impl Drop for NetNsGuard {
 }
 
 pub fn setup_veth_pair() -> TestLinks {
-    let left_ip = std::net::Ipv4Addr::new(10, 0, 0, 1);
-    let right_ip = std::net::Ipv4Addr::new(10, 0, 0, 2);
-    let right_mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x02]);
-
-    run_ip(&[
-        "link",
-        "add",
+    setup_veth_pair_named(
         LEFT_IFACE,
-        "type",
-        "veth",
-        "peer",
-        "name",
         RIGHT_IFACE,
+        std::net::Ipv4Addr::new(10, 0, 0, 1),
+        std::net::Ipv4Addr::new(10, 0, 0, 2),
+        MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]),
+        MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x02]),
+    )
+}
+
+pub fn setup_backup_veth_pair() -> TestLinks {
+    setup_veth_pair_named(
+        BACKUP_LEFT_IFACE,
+        BACKUP_RIGHT_IFACE,
+        std::net::Ipv4Addr::new(10, 0, 1, 1),
+        std::net::Ipv4Addr::new(10, 0, 1, 2),
+        MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xee, 0x01]),
+        MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xee, 0x02]),
+    )
+}
+
+pub fn setup_veth_pair_named(
+    left_name: &str,
+    right_name: &str,
+    left_ip: std::net::Ipv4Addr,
+    right_ip: std::net::Ipv4Addr,
+    left_mac: MacAddress,
+    right_mac: MacAddress,
+) -> TestLinks {
+    run_ip(&[
+        "link", "add", left_name, "type", "veth", "peer", "name", right_name,
     ]);
-    set_link_mac(LEFT_IFACE, "02:aa:bb:cc:dd:01");
-    set_link_mac(RIGHT_IFACE, &right_mac.to_string());
-    add_ipv4_addr(&format!("{left_ip}/24"), LEFT_IFACE);
-    add_ipv4_addr(&format!("{right_ip}/24"), RIGHT_IFACE);
-    set_link_up(LEFT_IFACE);
-    set_link_up(RIGHT_IFACE);
+    set_link_mac(left_name, &left_mac.to_string());
+    set_link_mac(right_name, &right_mac.to_string());
+    add_ipv4_addr(&format!("{left_ip}/24"), left_name);
+    add_ipv4_addr(&format!("{right_ip}/24"), right_name);
+    set_link_up(left_name);
+    set_link_up(right_name);
 
     TestLinks {
-        left_name: LEFT_IFACE,
-        right_name: RIGHT_IFACE,
-        left_if_index: if_index(LEFT_IFACE),
-        right_if_index: if_index(RIGHT_IFACE),
+        left_name: left_name.to_string(),
+        right_name: right_name.to_string(),
+        left_if_index: if_index(left_name),
+        right_if_index: if_index(right_name),
         left_ip,
         right_ip,
+        left_mac,
         right_mac,
     }
 }
@@ -129,6 +152,11 @@ pub fn replace_neighbor(ip: std::net::Ipv4Addr, mac: MacAddress, dev: &str) {
         "nud",
         "permanent",
     ]);
+}
+
+pub fn delete_neighbor(ip: std::net::Ipv4Addr, dev: &str) {
+    let ip = ip.to_string();
+    run_ip(&["neigh", "del", &ip, "dev", dev]);
 }
 
 #[allow(dead_code)]
@@ -170,7 +198,7 @@ fn add_ipv4_addr(addr: &str, dev: &str) {
     run_ip(&["addr", "add", addr, "dev", dev]);
 }
 
-fn if_index(dev: &str) -> u32 {
+pub fn if_index(dev: &str) -> u32 {
     let dev = CString::new(dev).expect("interface name must not contain NUL");
     let index = unsafe { libc::if_nametoindex(dev.as_ptr()) };
     assert_ne!(index, 0, "failed to resolve ifindex for interface");

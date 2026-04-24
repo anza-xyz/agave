@@ -2,6 +2,13 @@
 
 These tests are run through `cargo xtask xdp-test`.
 
+The default suite currently runs:
+
+- `netlink_snapshot`
+- `route_monitor`
+- `router_snapshot`
+- `transmitter_smoke`
+
 Local mode runs the tests directly on the host and requires root or equivalent network admin privileges because the harness creates a temporary network namespace, `veth` interfaces, routes, and neighbors:
 
 ```bash

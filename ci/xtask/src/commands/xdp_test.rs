@@ -22,7 +22,12 @@ use {
     xz2::read::XzDecoder,
 };
 
-const DEFAULT_TESTS: &[&str] = &["netlink_snapshot", "route_monitor"];
+const DEFAULT_TESTS: &[&str] = &[
+    "netlink_snapshot",
+    "route_monitor",
+    "router_snapshot",
+    "transmitter_smoke",
+];
 const DEFAULT_PR_KERNEL_VERSIONS: &[&str] = &["6.1", "6.12"];
 const DEFAULT_NIGHTLY_KERNEL_VERSIONS: &[&str] = &["5.10", "6.1", "6.12", "6.17"];
 
