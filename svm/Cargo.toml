@@ -28,12 +28,10 @@ frozen-abi = [
 ]
 metrics = [
     "solana-bpf-loader-program/metrics",
-    "solana-loader-v4-program/metrics",
     "solana-program-runtime/metrics",
 ]
 shuttle-test = [
     "solana-bpf-loader-program/shuttle-test",
-    "solana-loader-v4-program/shuttle-test",
     "solana-program-runtime/shuttle-test",
     "solana-svm-type-overrides/shuttle-test",
 ]
@@ -59,7 +57,6 @@ solana-instruction = { workspace = true, features = ["std"] }
 solana-instructions-sysvar = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
 solana-loader-v4-interface = { workspace = true }
-solana-loader-v4-program = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true, features = ["wincode"] }

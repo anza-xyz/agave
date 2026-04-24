@@ -1003,10 +1003,9 @@ mod test_utils {
     #[cfg(feature = "svm-internal")]
     use {
         super::*, solana_account::ReadableAccount,
-        solana_loader_v4_interface::state::LoaderV4State,
         solana_program_runtime::loaded_programs::ProgramRuntimeEnvironment,
         solana_program_runtime::program_cache_entry::DELAY_VISIBILITY_SLOT_OFFSET,
-        solana_sdk_ids::loader_v4, solana_syscalls::create_program_runtime_environment,
+        solana_syscalls::create_program_runtime_environment,
     };
 
     #[cfg(feature = "svm-internal")]
@@ -1014,7 +1013,6 @@ mod test_utils {
         bpf_loader::check_id(id)
             || bpf_loader_deprecated::check_id(id)
             || bpf_loader_upgradeable::check_id(id)
-            || loader_v4::check_id(id)
     }
 
     #[cfg(feature = "svm-internal")]
@@ -1037,11 +1035,7 @@ mod test_utils {
 
             let owner = account.owner();
             if check_loader_id(owner) {
-                let programdata_data_offset = if loader_v4::check_id(owner) {
-                    LoaderV4State::program_data_offset()
-                } else {
-                    0
-                };
+                let programdata_data_offset = 0;
                 let pubkey = invoke_context
                     .transaction_context
                     .get_key_of_account_at_index(index)
