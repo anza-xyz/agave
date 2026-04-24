@@ -470,18 +470,6 @@ mod tests {
         assert_eq!(got_initial_credits, 0);
     }
 
-    // #[test]
-    // fn pay_reward_works() {
-    //     let account =
-    //         VoteAccount::try_from(new_rand_vote_account(&mut rand::rng(), None, true)).unwrap();
-    //     let epoch = 1234;
-    //     let reward = 3453423;
-    //     let account_shared_data =
-    //         update_vote_account(epoch, 0, &account, Pubkey::default(), reward, None).unwrap();
-    //     let vote_state = vote_state_from_account(&account_shared_data);
-    //     assert_eq!(reward, vote_state.epoch_credits().last().unwrap().1);
-    // }
-
     fn calc_reward_for_test(
         prev_bank: &Bank,
         bank: &Bank,
