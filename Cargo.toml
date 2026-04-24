@@ -489,7 +489,7 @@ solana-serde-varint = "3.0.1"
 solana-serialize-utils = "3.1.1"
 solana-sha256-hasher = "3.1.0"
 solana-sha512-hasher = "1.0.1"
-solana-short-vec = "3.2.0"
+solana-short-vec = "3.2.1"
 solana-shred-version = "3.0.1"
 solana-signature = { version = "3.4.0", default-features = false }
 solana-signer = "3.0.0"
