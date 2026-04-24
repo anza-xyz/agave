@@ -2490,6 +2490,57 @@ mod tests {
     }
 
     #[test]
+    fn test_load_and_reward_commission_accounts_reflects_vat_burn() {
+        let (genesis_config, _mint_keypair) = create_genesis_config(1_000 * LAMPORTS_PER_SOL);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let pubkey = solana_pubkey::new_rand();
+
+        let pre_burn_balance = 10 * crate::bank::VAT_TO_BURN_PER_EPOCH;
+        let commission_lamports = 12_345;
+
+        // Commission is planned against the pre-burn account state.
+        let mut commission_account = AccountSharedData::default();
+        commission_account.set_lamports(pre_burn_balance);
+        bank.store_account_and_update_capitalization(&pubkey, &commission_account);
+        let mut reward_commissions = RewardCommissions::default();
+        reward_commissions.insert(
+            pubkey,
+            RewardCommission {
+                commission_bps: 500,
+                commission_lamports,
+            },
+        );
+
+        // Simulate the VAT burn that would run in `update_epoch_stakes`
+        // between reward calculation and distribution.
+        let post_burn_balance = pre_burn_balance - crate::bank::VAT_TO_BURN_PER_EPOCH;
+        let mut burned_account = commission_account.clone();
+        burned_account.set_lamports(post_burn_balance);
+        bank.store_account_and_update_capitalization(&pubkey, &burned_account);
+
+        let result = bank.load_and_reward_commission_accounts(&reward_commissions, &thread_pool);
+
+        assert_eq!(result.accounts_with_rewards.len(), 1);
+        let (pubkey_result, reward_info, account) = &result.accounts_with_rewards[0];
+        assert_eq!(*pubkey_result, pubkey);
+        // Commission is credited on top of the post-burn balance, not the
+        // pre-burn snapshot captured at calculation time.
+        let expected_post_balance = post_burn_balance + commission_lamports;
+        assert_eq!(account.lamports(), expected_post_balance);
+        assert_eq!(
+            *reward_info,
+            RewardInfo {
+                reward_type: RewardType::Voting,
+                lamports: commission_lamports as i64,
+                post_balance: expected_post_balance,
+                commission_bps: Some(500),
+            }
+        );
+        assert_eq!(result.total_reward_commission_lamports, commission_lamports);
+    }
+
+    #[test]
     fn test_load_and_reward_commission_accounts_normal() {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000 * LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);
