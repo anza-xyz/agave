@@ -192,8 +192,18 @@ fn handle_both(
         let reward_update = match &reward_state {
             None => None,
             Some(reward_state) => {
-                let (validator_reward, add_leader_reward) =
-                    reward_state.calculate_reward(vote_pubkey).unwrap();
+                let (validator_reward, add_leader_reward) = match reward_state
+                    .calculate_reward(vote_pubkey)
+                {
+                    Ok(res) => res,
+                    Err(e) => {
+                        error!(
+                            "slot={}, calculating rewards for pubkey={vote_pubkey} failed with {e}",
+                            bank.slot()
+                        );
+                        continue;
+                    }
+                };
                 total_leader_reward = total_leader_reward.saturating_add(add_leader_reward);
                 if *bank.leader_id() == vote_pubkey {
                     // Current slot's leader's node pubkey is associated with exactly one vote
@@ -211,23 +221,23 @@ fn handle_both(
             }
         };
 
-        let updated_account =
-            match update_account(&vote_accounts, vote_pubkey, final_slot, reward_update) {
-                Err(e) => {
-                    error!(
-                        "slot={}, updating account for pubkey={vote_pubkey} failed with {e}",
-                        bank.slot()
-                    );
-                    continue;
-                }
-                Ok(a) => a,
-            };
-        updated_accounts.push((vote_pubkey, updated_account));
+        match update_account(&vote_accounts, vote_pubkey, final_slot, reward_update) {
+            Err(e) => {
+                error!(
+                    "slot={}, updating non_leader account for pubkey={vote_pubkey} failed with {e}",
+                    bank.slot()
+                );
+                continue;
+            }
+            Ok(account) => {
+                updated_accounts.push((vote_pubkey, account));
+            }
+        }
     }
 
     if let Some(reward_state) = reward_state {
         if total_leader_reward != 0 {
-            let updated_account = update_account(
+            match update_account(
                 &vote_accounts,
                 *bank.leader_id(),
                 final_slot,
@@ -236,9 +246,18 @@ fn handle_both(
                     reward_slot: reward_state.reward_slot,
                     reward: total_leader_reward,
                 }),
-            )
-            .unwrap();
-            updated_accounts.push((*bank.leader_id(), updated_account));
+            ) {
+                Ok(account) => {
+                    updated_accounts.push((*bank.leader_id(), account));
+                }
+                Err(e) => {
+                    error!(
+                        "slot={}, updating leader account for leader={:?} failed with {e}",
+                        bank.slot(),
+                        bank.leader()
+                    );
+                }
+            }
         }
     }
 
