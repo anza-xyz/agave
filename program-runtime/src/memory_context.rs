@@ -1,26 +1,21 @@
 use {
-    crate::invoke_context::BpfAllocator,
-    solana_instruction::error::InstructionError,
-    solana_sbpf::{memory_region::MemoryMapping, program::SBPFVersion, vm::Config},
+    crate::invoke_context::BpfAllocator, solana_instruction::error::InstructionError,
+    solana_sbpf::memory_region::MemoryMapping,
 };
 
 enum MemoryContextType {
     ABIv1(MemoryContext),
-    ABIv2,
+    Placeholder,
 }
 
 pub struct MemoryContexts {
     contexts: Vec<MemoryContextType>,
-    abi_v2_mapping: Box<MemoryMapping>,
 }
 
 impl MemoryContexts {
     pub(crate) fn new() -> Self {
         Self {
             contexts: Vec::new(),
-            abi_v2_mapping: Box::new(
-                MemoryMapping::new(Vec::new(), &Config::default(), SBPFVersion::Reserved).unwrap(),
-            ),
         }
     }
 
@@ -40,26 +35,29 @@ impl MemoryContexts {
     pub fn memory_context_abi_v1(&self) -> Result<&MemoryContext, InstructionError> {
         match self.contexts.last().ok_or(InstructionError::CallDepth)? {
             MemoryContextType::ABIv1(ctx) => Ok(ctx),
-            MemoryContextType::ABIv2 => Err(InstructionError::InvalidAccountData),
+            MemoryContextType::Placeholder => Err(InstructionError::ProgramEnvironmentSetupFailure),
         }
     }
 
     /// Get current instruction's [`MemoryContext`] for mutable use.
     pub fn memory_context_mut_abi_v1(&mut self) -> Result<&mut MemoryContext, InstructionError> {
-        match self
+        let context = self
             .contexts
             .last_mut()
-            .ok_or(InstructionError::CallDepth)?
-        {
+            .ok_or(InstructionError::CallDepth)?;
+
+        match context {
             MemoryContextType::ABIv1(ctx) => Ok(ctx),
-            MemoryContextType::ABIv2 => Err(InstructionError::ProgramEnvironmentSetupFailure),
+            MemoryContextType::Placeholder => Err(InstructionError::ProgramEnvironmentSetupFailure),
         }
     }
 
     pub fn memory_mapping(&self) -> Result<&MemoryMapping, InstructionError> {
         let mapping = match self.contexts.last().ok_or(InstructionError::CallDepth)? {
             MemoryContextType::ABIv1(ctx) => &ctx.memory_mapping,
-            MemoryContextType::ABIv2 => &self.abi_v2_mapping,
+            MemoryContextType::Placeholder => {
+                return Err(InstructionError::ProgramEnvironmentSetupFailure);
+            }
         };
 
         Ok(mapping)
@@ -72,7 +70,9 @@ impl MemoryContexts {
             .ok_or(InstructionError::CallDepth)?
         {
             MemoryContextType::ABIv1(ctx) => &mut ctx.memory_mapping,
-            MemoryContextType::ABIv2 => &mut self.abi_v2_mapping,
+            MemoryContextType::Placeholder => {
+                return Err(InstructionError::ProgramEnvironmentSetupFailure);
+            }
         };
 
         Ok(mapping)
@@ -87,9 +87,9 @@ impl MemoryContexts {
         })];
     }
 
-    pub fn push(&mut self) {
+    pub fn push_placeholder(&mut self) {
         // We are only pushing a placeholder to be configured later
-        self.contexts.push(MemoryContextType::ABIv2);
+        self.contexts.push(MemoryContextType::Placeholder);
     }
 
     pub fn pop(&mut self) {
