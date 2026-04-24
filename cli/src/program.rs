@@ -83,11 +83,6 @@ use {
     },
 };
 
-pub const CLOSE_PROGRAM_WARNING: &str = "WARNING! Closed programs cannot be recreated at the same \
-                                         program id. Once a program is closed, it can never be \
-                                         invoked again. To proceed with closing, rerun the \
-                                         `close` command with the `--bypass-warning` flag";
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum ProgramCliCommand {
     Deploy {
@@ -171,6 +166,8 @@ pub enum ProgramCliCommand {
         authority_index: SignerIndex,
         use_lamports_unit: bool,
         bypass_warning: bool,
+        tombstone: Option<bool>,
+        skip_feature_verification: bool,
     },
     ExtendProgram {
         program_pubkey: Pubkey,
@@ -657,6 +654,43 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .long("bypass-warning")
                                 .takes_value(false)
                                 .help("Bypass the permanent program closure warning"),
+                        )
+                        .arg(
+                            Arg::with_name("tombstone")
+                                .long("tombstone")
+                                .value_name("BOOLEAN")
+                                .takes_value(true)
+                                .required_unless("buffers")
+                                .validator(is_parsable::<bool>)
+                                .help(
+                                    "Required when closing a single account. Only meaningful when \
+                                     closing a program account; ignored for buffer \
+                                     accounts.\n\n`--tombstone=true` is always accepted:\n- \
+                                     Before SIMD-0432 (`loader_v3_reclaim_closed_program`) \
+                                     activates (legacy close), programdata is drained and \
+                                     refunded to the recipient; the program account is left \
+                                     untouched as a tombstone with its full rent, which is not \
+                                     recoverable until SIMD-0432 activates.\n- Once SIMD-0432 is \
+                                     active, programdata is drained and the program account keeps \
+                                     its rent-exempt minimum, reassigned to its own id; excess \
+                                     lamports are refunded to the recipient.\nIn both modes the \
+                                     program id is permanently unusable.\n\n`--tombstone=false` \
+                                     requires SIMD-0432 to be active. It fully drains the program \
+                                     account (lamports refunded to the recipient, data truncated) \
+                                     so the runtime can garbage-collect it, and also enables \
+                                     reclaiming a legacy tombstone when the program keypair signs \
+                                     as the authority.\n\nPass `--skip-feature-verify` to skip \
+                                     the pre-activation check on `--tombstone=false`.",
+                                ),
+                        )
+                        .arg(
+                            Arg::with_name("skip_feature_verify")
+                                .long("skip-feature-verify")
+                                .takes_value(false)
+                                .help(
+                                    "Don't verify `--tombstone=false` against the activated \
+                                     feature set on the target cluster.",
+                                ),
                         ),
                 )
                 .subcommand(
@@ -1030,6 +1064,12 @@ pub fn parse_program_subcommand(
                 wallet_manager,
             )?;
 
+            // Required on the single-account path (enforced by clap). Missing
+            // only on the `--buffers` bulk path; `process_close` then defaults
+            // to the loader's on-chain default (`!simd_0432_active`).
+            let tombstone = value_of::<bool>(matches, "tombstone");
+            let skip_feature_verify = matches.is_present("skip_feature_verify");
+
             CliCommandInfo {
                 command: CliCommand::Program(ProgramCliCommand::Close {
                     account_pubkey,
@@ -1037,6 +1077,8 @@ pub fn parse_program_subcommand(
                     authority_index: signer_info.index_of(authority_pubkey).unwrap(),
                     use_lamports_unit: matches.is_present("lamports"),
                     bypass_warning: matches.is_present("bypass_warning"),
+                    tombstone,
+                    skip_feature_verification: skip_feature_verify,
                 }),
                 signers: signer_info.signers,
             }
@@ -1260,6 +1302,8 @@ pub async fn process_program_subcommand(
             authority_index,
             use_lamports_unit,
             bypass_warning,
+            tombstone,
+            skip_feature_verification,
         } => {
             process_close(
                 &rpc_client,
@@ -1269,6 +1313,8 @@ pub async fn process_program_subcommand(
                 *authority_index,
                 *use_lamports_unit,
                 *bypass_warning,
+                *tombstone,
+                *skip_feature_verification,
             )
             .await
         }
@@ -2297,6 +2343,77 @@ async fn process_dump(
     }
 }
 
+fn warn_program_close(
+    program_pubkey: &Pubkey,
+    simd_0432_active: bool,
+    tombstone: bool,
+    bypass_warning: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!();
+    eprintln!(
+        "WARNING! Closing program {program_pubkey} is permanent. Once closed, the program id can \
+         never be reused and the program can never be invoked again."
+    );
+    if !simd_0432_active {
+        eprintln!(
+            "Mode: legacy close (SIMD-0432 inactive). programdata is drained and refunded to the \
+             recipient; the program account is left as a tombstone (unusable, rent not \
+             recoverable until SIMD-0432 `loader_v3_reclaim_closed_program` activates)."
+        );
+    } else if tombstone {
+        eprintln!(
+            "Mode: SIMD-0432 tombstone. programdata is drained and the program account keeps its \
+             rent-exempt minimum, reassigned to its own id. Excess lamports are refunded to the \
+             recipient."
+        );
+    } else {
+        eprintln!(
+            "Mode: SIMD-0432 garbage collection. programdata and the program account are both \
+             fully drained to the recipient. Once all lamports are withdrawn the runtime will \
+             garbage-collect the program account."
+        );
+    }
+    eprintln!();
+    if !bypass_warning {
+        return Err(
+            "To proceed with closing, rerun the `close` command with the `--bypass-warning` flag."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+fn warn_program_reclaim(
+    program_pubkey: &Pubkey,
+    tombstone: bool,
+    bypass_warning: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!();
+    eprintln!(
+        "WARNING! Reclaiming legacy tombstone {program_pubkey}. The program id is already \
+         permanently unusable."
+    );
+    if tombstone {
+        eprintln!(
+            "Mode: SIMD-0432 tombstone. The program account keeps its rent-exempt minimum, \
+             reassigned to its own id; excess lamports are refunded to the recipient."
+        );
+    } else {
+        eprintln!(
+            "Mode: SIMD-0432 garbage collection. The program account is fully drained to the \
+             recipient so the runtime can garbage-collect it."
+        );
+    }
+    eprintln!();
+    if !bypass_warning {
+        return Err(
+            "To proceed with closing, rerun the `close` command with the `--bypass-warning` flag."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 async fn close(
     rpc_client: &RpcClient,
     config: &CliConfig<'_>,
@@ -2304,6 +2421,7 @@ async fn close(
     recipient_pubkey: &Pubkey,
     authority_signer: &dyn Signer,
     program_pubkey: Option<&Pubkey>,
+    tombstone: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let blockhash = rpc_client.get_latest_blockhash().await?;
 
@@ -2313,7 +2431,7 @@ async fn close(
             recipient_pubkey,
             Some(&authority_signer.pubkey()),
             program_pubkey,
-            true, // tombstone: pre-SIMD-0432 default
+            tombstone,
         )],
         Some(&config.signers[0].pubkey()),
     ));
@@ -2354,8 +2472,31 @@ async fn process_close(
     authority_index: SignerIndex,
     use_lamports_unit: bool,
     bypass_warning: bool,
+    tombstone: Option<bool>,
+    skip_feature_verification: bool,
 ) -> ProcessResult {
     let authority_signer = config.signers[authority_index];
+
+    let simd_0432_active = if skip_feature_verification {
+        true
+    } else {
+        fetch_feature_set(rpc_client)
+            .await?
+            .is_active(&agave_feature_set::loader_v3_reclaim_closed_program::ID)
+    };
+
+    if tombstone == Some(false) && !simd_0432_active {
+        return Err("`--tombstone=false` requires the SIMD-0432 feature \
+                    (`loader_v3_reclaim_closed_program`) to be active on the target cluster. \
+                    Re-run with `--tombstone=true` until the feature activates, target a \
+                    cluster where the feature is active, or pass `--skip-feature-verify` to \
+                    bypass this check."
+            .into());
+    }
+
+    // When the flag is omitted (only possible on `--buffers`), mirror the
+    // loader's default: `false` when SIMD-0432 is active, `true` otherwise.
+    let tombstone = tombstone.unwrap_or(!simd_0432_active);
 
     if let Some(account_pubkey) = account_pubkey {
         if let Some(account) = rpc_client
@@ -2373,6 +2514,10 @@ async fn process_close(
                         )
                         .into());
                     } else {
+                        println!(
+                            "Closing buffer {account_pubkey} (tombstone flag does not apply to \
+                             buffer accounts; all lamports will be refunded)."
+                        );
                         close(
                             rpc_client,
                             config,
@@ -2380,6 +2525,7 @@ async fn process_close(
                             &recipient_pubkey,
                             authority_signer,
                             None,
+                            true,
                         )
                         .await?;
                     }
@@ -2401,49 +2547,96 @@ async fn process_close(
                 Ok(UpgradeableLoaderState::Program {
                     programdata_address: programdata_pubkey,
                 }) => {
-                    if let Some(account) = rpc_client
+                    let Some(programdata_account) = rpc_client
                         .get_account_with_commitment(&programdata_pubkey, config.commitment)
                         .await?
                         .value
-                    {
-                        if let Ok(UpgradeableLoaderState::ProgramData {
+                    else {
+                        return Err(format!("Program {account_pubkey} has been closed").into());
+                    };
+
+                    match programdata_account.state() {
+                        Ok(UpgradeableLoaderState::ProgramData {
                             slot: _,
                             upgrade_authority_address: authority_pubkey,
-                        }) = account.state()
-                        {
+                        }) => {
                             if authority_pubkey != Some(authority_signer.pubkey()) {
-                                Err(format!(
+                                return Err(format!(
                                     "Program authority {:?} does not match {:?}",
                                     authority_pubkey,
                                     Some(authority_signer.pubkey())
                                 )
-                                .into())
-                            } else {
-                                if !bypass_warning {
-                                    return Err(String::from(CLOSE_PROGRAM_WARNING).into());
-                                }
-                                close(
-                                    rpc_client,
-                                    config,
-                                    &programdata_pubkey,
-                                    &recipient_pubkey,
-                                    authority_signer,
-                                    Some(&account_pubkey),
-                                )
-                                .await?;
-                                Ok(config.output_format.formatted_string(
-                                    &CliUpgradeableProgramClosed {
-                                        program_id: account_pubkey.to_string(),
-                                        lamports: account.lamports,
-                                        use_lamports_unit,
-                                    },
-                                ))
+                                .into());
                             }
-                        } else {
-                            Err(format!("Program {account_pubkey} has been closed").into())
+                            warn_program_close(
+                                &account_pubkey,
+                                simd_0432_active,
+                                tombstone,
+                                bypass_warning,
+                            )?;
+                            close(
+                                rpc_client,
+                                config,
+                                &programdata_pubkey,
+                                &recipient_pubkey,
+                                authority_signer,
+                                Some(&account_pubkey),
+                                tombstone,
+                            )
+                            .await?;
+                            Ok(config.output_format.formatted_string(
+                                &CliUpgradeableProgramClosed {
+                                    program_id: account_pubkey.to_string(),
+                                    lamports: programdata_account.lamports,
+                                    use_lamports_unit,
+                                },
+                            ))
                         }
-                    } else {
-                        Err(format!("Program {account_pubkey} has been closed").into())
+                        Ok(UpgradeableLoaderState::Uninitialized) => {
+                            // Legacy tombstone: the programdata was drained by a pre-SIMD-0432
+                            // close, but the program account still points at it. SIMD-0432
+                            // lets the program keypair reclaim the program account's lamports
+                            // (either by upgrading to a SIMD-0432 tombstone with
+                            // `--tombstone=true`, or by fully draining it with
+                            // `--tombstone=false`).
+                            if !simd_0432_active {
+                                return Err(format!(
+                                    "Program {account_pubkey} has been closed and the program \
+                                     account cannot be reclaimed because the SIMD-0432 feature \
+                                     (`loader_v3_reclaim_closed_program`) is not active on the \
+                                     target cluster."
+                                )
+                                .into());
+                            }
+                            if authority_signer.pubkey() != account_pubkey {
+                                return Err(format!(
+                                    "Reclaiming a legacy tombstone requires the program keypair \
+                                     to sign as the authority. Pass `--authority \
+                                     <PROGRAM_KEYPAIR>` where the keypair's pubkey matches \
+                                     {account_pubkey}."
+                                )
+                                .into());
+                            }
+                            warn_program_reclaim(&account_pubkey, tombstone, bypass_warning)?;
+                            close(
+                                rpc_client,
+                                config,
+                                &programdata_pubkey,
+                                &recipient_pubkey,
+                                authority_signer,
+                                Some(&account_pubkey),
+                                tombstone,
+                            )
+                            .await?;
+                            Ok(config.output_format.formatted_string(
+                                &CliUpgradeableProgramClosed {
+                                    program_id: account_pubkey.to_string(),
+                                    lamports: programdata_account.lamports,
+                                    use_lamports_unit,
+                                },
+                            ))
+                        }
+                        _ => Err(format!("Program {account_pubkey} has been closed").into()),
                     }
                 }
                 _ => Err(format!("{account_pubkey} is not a Program or Buffer account").into()),
@@ -2468,6 +2661,7 @@ async fn process_close(
                 &recipient_pubkey,
                 authority_signer,
                 None,
+                true,
             )
             .await
             {
@@ -4540,11 +4734,23 @@ mod tests {
         let authority_keypair = Keypair::new();
         let authority_keypair_file = make_tmp_path("authority_keypair_file");
 
+        // `--tombstone` is required when closing a specific account.
+        let test_command = test_commands.clone().get_matches_from_safe(vec![
+            "test",
+            "program",
+            "close",
+            &buffer_pubkey.to_string(),
+        ]);
+        assert!(test_command.is_err());
+
+        // Defaults with explicit `--tombstone=true`.
         let test_command = test_commands.clone().get_matches_from(vec![
             "test",
             "program",
             "close",
             &buffer_pubkey.to_string(),
+            "--tombstone",
+            "true",
         ]);
         assert_eq!(
             parse_command(&test_command, &default_signer, &mut None).unwrap(),
@@ -4555,6 +4761,8 @@ mod tests {
                     authority_index: 0,
                     use_lamports_unit: false,
                     bypass_warning: false,
+                    tombstone: Some(true),
+                    skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -4567,6 +4775,8 @@ mod tests {
             "program",
             "close",
             &buffer_pubkey.to_string(),
+            "--tombstone",
+            "true",
             "--bypass-warning",
         ]);
         assert_eq!(
@@ -4578,6 +4788,8 @@ mod tests {
                     authority_index: 0,
                     use_lamports_unit: false,
                     bypass_warning: true,
+                    tombstone: Some(true),
+                    skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -4590,6 +4802,8 @@ mod tests {
             "program",
             "close",
             &buffer_pubkey.to_string(),
+            "--tombstone",
+            "true",
             "--buffer-authority",
             &authority_keypair_file,
         ]);
@@ -4602,6 +4816,8 @@ mod tests {
                     authority_index: 1,
                     use_lamports_unit: false,
                     bypass_warning: false,
+                    tombstone: Some(true),
+                    skip_feature_verification: false,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -4616,6 +4832,8 @@ mod tests {
             "program",
             "close",
             &buffer_pubkey.to_string(),
+            "--tombstone",
+            "true",
             "--recipient",
             &recipient_pubkey.to_string(),
         ]);
@@ -4628,12 +4846,14 @@ mod tests {
                     authority_index: 0,
                     use_lamports_unit: false,
                     bypass_warning: false,
+                    tombstone: Some(true),
+                    skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap()),],
             }
         );
 
-        // --buffers and lamports
+        // `--buffers` bulk path does not require `--tombstone`.
         let test_command = test_commands.clone().get_matches_from(vec![
             "test",
             "program",
@@ -4650,8 +4870,61 @@ mod tests {
                     authority_index: 0,
                     use_lamports_unit: true,
                     bypass_warning: false,
+                    tombstone: None,
+                    skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap()),],
+            }
+        );
+
+        // SIMD-0432: `--tombstone=false`
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "close",
+            &buffer_pubkey.to_string(),
+            "--tombstone",
+            "false",
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::Close {
+                    account_pubkey: Some(buffer_pubkey),
+                    recipient_pubkey: default_keypair.pubkey(),
+                    authority_index: 0,
+                    use_lamports_unit: false,
+                    bypass_warning: false,
+                    tombstone: Some(false),
+                    skip_feature_verification: false,
+                }),
+                signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
+            }
+        );
+
+        // SIMD-0432: `--tombstone=false --skip-feature-verify`
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "close",
+            &buffer_pubkey.to_string(),
+            "--tombstone",
+            "false",
+            "--skip-feature-verify",
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::Close {
+                    account_pubkey: Some(buffer_pubkey),
+                    recipient_pubkey: default_keypair.pubkey(),
+                    authority_index: 0,
+                    use_lamports_unit: false,
+                    bypass_warning: false,
+                    tombstone: Some(false),
+                    skip_feature_verification: true,
+                }),
+                signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
         );
     }
