@@ -567,8 +567,8 @@ impl Bank {
         ));
         let cert_slot = genesis_cert.cert_type.slot();
         match (
-            cert_slot <= self.epoch_schedule.get_first_slot_in_epoch(epoch),
-            cert_slot <= self.epoch_schedule.get_last_slot_in_epoch(epoch),
+            cert_slot < self.epoch_schedule.get_first_slot_in_epoch(epoch),
+            cert_slot < self.epoch_schedule.get_last_slot_in_epoch(epoch),
         ) {
             (true, _) => AlpenglowEpochStatus::FullAlpenglow,
             (false, true) => AlpenglowEpochStatus::MigrationEpoch,
