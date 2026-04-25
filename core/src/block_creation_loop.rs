@@ -12,7 +12,9 @@ use {
     agave_votor::event::LeaderWindowInfo,
     crossbeam_channel::Receiver,
     solana_clock::Slot,
-    solana_entry::block_component::{BlockMarkerV1, GenesisCertificate, VersionedBlockMarker},
+    solana_entry::block_component::{
+        BlockFooterV1, BlockMarkerV1, GenesisCertificate, VersionedBlockMarker,
+    },
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
@@ -29,6 +31,7 @@ use {
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
         validated_block_finalization::ValidatedBlockFinalizationCert,
     },
+    solana_version::version,
     stats::{LoopMetrics, SlotMetrics},
     std::{
         sync::{
@@ -419,7 +422,16 @@ fn record_and_complete_block(
     bank.set_tick_height(max_tick_height - 1);
     // Write the single tick for this slot
     drop(bank);
-    w_poh_recorder.tick_alpenglow(max_tick_height);
+
+    let dummy_footer = BlockFooterV1 {
+        bank_hash: Hash::default(),
+        block_producer_time_nanos: 0,
+        block_user_agent: format!("agave/{}", version!()).into_bytes(),
+        final_cert: None,
+        skip_reward_cert: None,
+        notar_reward_cert: None,
+    };
+    w_poh_recorder.tick_alpenglow(max_tick_height, dummy_footer);
 
     Ok(())
 }
