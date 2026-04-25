@@ -6,9 +6,10 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
+    solana_short_vec::ShortU16,
     solana_signer_store::EncodeError,
     thiserror::Error,
-    wincode::{SchemaRead, SchemaWrite, containers::Vec as WincodeVec, len::ShortU16, pod_wrapper},
+    wincode::{SchemaRead, SchemaWrite, containers::Vec as WincodeVec, pod_wrapper},
 };
 
 // Use `BLSSignatureCompressed` directly once `BLSSignature` wincode support

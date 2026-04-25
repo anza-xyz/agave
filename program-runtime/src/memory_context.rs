@@ -1,48 +1,99 @@
 use {
-    crate::invoke_context::BpfAllocator,
-    solana_instruction::error::InstructionError,
-    solana_sbpf::{memory_region::MemoryMapping, program::SBPFVersion, vm::Config},
+    crate::invoke_context::BpfAllocator, solana_instruction::error::InstructionError,
+    solana_sbpf::memory_region::MemoryMapping,
 };
 
-pub struct MemoryContexts(pub Vec<MemoryContext>);
+enum MemoryContextType {
+    ABIv1(MemoryContext),
+    Placeholder,
+}
+
+pub struct MemoryContexts {
+    contexts: Vec<MemoryContextType>,
+}
 
 impl MemoryContexts {
+    pub(crate) fn new() -> Self {
+        Self {
+            contexts: Vec::new(),
+        }
+    }
+
     /// Set this instruction's [`MemoryContext`].
-    pub fn set_memory_context(
+    pub fn set_memory_context_abi_v1(
         &mut self,
         memory_context: MemoryContext,
     ) -> Result<(), InstructionError> {
-        *self.0.last_mut().ok_or(InstructionError::CallDepth)? = memory_context;
+        *self
+            .contexts
+            .last_mut()
+            .ok_or(InstructionError::CallDepth)? = MemoryContextType::ABIv1(memory_context);
         Ok(())
     }
 
     /// Get current instruction's [`MemoryContext`]
-    pub fn memory_context(&self) -> Result<&MemoryContext, InstructionError> {
-        self.0.last().ok_or(InstructionError::CallDepth)
+    pub fn memory_context_abi_v1(&self) -> Result<&MemoryContext, InstructionError> {
+        match self.contexts.last().ok_or(InstructionError::CallDepth)? {
+            MemoryContextType::ABIv1(ctx) => Ok(ctx),
+            MemoryContextType::Placeholder => Err(InstructionError::ProgramEnvironmentSetupFailure),
+        }
     }
 
     /// Get current instruction's [`MemoryContext`] for mutable use.
-    pub fn memory_context_mut(&mut self) -> Result<&mut MemoryContext, InstructionError> {
-        self.0.last_mut().ok_or(InstructionError::CallDepth)
+    pub fn memory_context_mut_abi_v1(&mut self) -> Result<&mut MemoryContext, InstructionError> {
+        let context = self
+            .contexts
+            .last_mut()
+            .ok_or(InstructionError::CallDepth)?;
+
+        match context {
+            MemoryContextType::ABIv1(ctx) => Ok(ctx),
+            MemoryContextType::Placeholder => Err(InstructionError::ProgramEnvironmentSetupFailure),
+        }
     }
 
     pub fn memory_mapping(&self) -> Result<&MemoryMapping, InstructionError> {
-        let last_context = self.memory_context()?;
-        Ok(&last_context.memory_mapping)
+        let mapping = match self.contexts.last().ok_or(InstructionError::CallDepth)? {
+            MemoryContextType::ABIv1(ctx) => &ctx.memory_mapping,
+            MemoryContextType::Placeholder => {
+                return Err(InstructionError::ProgramEnvironmentSetupFailure);
+            }
+        };
+
+        Ok(mapping)
     }
 
     pub fn memory_mapping_mut(&mut self) -> Result<&mut MemoryMapping, InstructionError> {
-        let last_context = self.memory_context_mut()?;
-        Ok(&mut last_context.memory_mapping)
+        let mapping = match self
+            .contexts
+            .last_mut()
+            .ok_or(InstructionError::CallDepth)?
+        {
+            MemoryContextType::ABIv1(ctx) => &mut ctx.memory_mapping,
+            MemoryContextType::Placeholder => {
+                return Err(InstructionError::ProgramEnvironmentSetupFailure);
+            }
+        };
+
+        Ok(mapping)
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn mock_set_mapping(&mut self, memory_mapping: MemoryMapping) {
-        self.0 = vec![MemoryContext {
+    pub fn mock_set_mapping_abi_v1(&mut self, memory_mapping: MemoryMapping) {
+        self.contexts = vec![MemoryContextType::ABIv1(MemoryContext {
             allocator: BpfAllocator::new(0),
             accounts_metadata: vec![],
             memory_mapping: Box::new(memory_mapping),
-        }];
+        })];
+    }
+
+    pub fn push_placeholder(&mut self) {
+        // We are only pushing a placeholder to be configured later
+        self.contexts.push(MemoryContextType::Placeholder);
+    }
+
+    pub fn pop(&mut self) {
+        self.contexts.pop();
     }
 }
 
@@ -65,18 +116,6 @@ impl MemoryContext {
             allocator,
             accounts_metadata,
             memory_mapping: Box::new(memory_mapping),
-        }
-    }
-
-    /// Returns an empty dummy context used for builtin functions
-    pub(crate) fn empty() -> Self {
-        Self {
-            allocator: BpfAllocator::new(0),
-            accounts_metadata: Vec::new(),
-            memory_mapping: Box::new(unsafe {
-                // SAFETY: no memory regions specified.
-                MemoryMapping::new(Vec::new(), &Config::default(), SBPFVersion::Reserved).unwrap()
-            }),
         }
     }
 }

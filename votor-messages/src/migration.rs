@@ -61,7 +61,10 @@ use {
     },
 };
 #[cfg(feature = "dev-context-only-utils")]
-use {solana_bls_signatures::Signature as BLSSignature, solana_hash::Hash};
+use {
+    solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+    solana_hash::Hash,
+};
 
 /// The slot offset post feature flag activation to begin the migration.
 /// Epoch boundaries induce heavy computation often resulting in forks. It's best to decouple the migration period
@@ -340,7 +343,7 @@ impl MigrationStatus {
     pub fn post_migration_status() -> Self {
         let genesis_certificate = Certificate {
             cert_type: CertificateType::Genesis(0, Hash::default()),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         };
         Self::new(MigrationPhase::AlpenglowEnabled {

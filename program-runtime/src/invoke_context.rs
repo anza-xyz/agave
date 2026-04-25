@@ -29,7 +29,7 @@ use {
         error::{EbpfError, ProgramResult},
         memory_region::MemoryMapping,
         program::{BuiltinProgram, SBPFVersion},
-        vm::{ContextObject, EbpfVm},
+        vm::{Config, ContextObject, EbpfVm},
     },
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
@@ -262,7 +262,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             compute_meter: ComputeMeter(Cell::new(compute_budget.compute_unit_limit)),
             total_nested_exec_time: Duration::ZERO,
             timings: ExecuteDetailsTimings::default(),
-            memory_contexts: MemoryContexts(Vec::new()),
+            memory_contexts: MemoryContexts::new(),
             register_traces: Vec::new(),
             #[cfg(feature = "sbpf-debugger")]
             debug_port: None,
@@ -296,13 +296,13 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             }
         }
 
-        self.memory_contexts.0.push(MemoryContext::empty());
+        self.memory_contexts.push_placeholder();
         self.transaction_context.push()
     }
 
     /// Pop a stack frame from the invocation stack
     pub(crate) fn pop(&mut self) -> Result<(), InstructionError> {
-        self.memory_contexts.0.pop();
+        self.memory_contexts.pop();
         self.transaction_context.pop()
     }
 
@@ -607,6 +607,17 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         stable_log::program_invoke(&logger, &program_id, self.get_stack_height());
         let pre_remaining_units = self.get_remaining();
         // For now, only built-ins are invoked from here, so the VM and its Config are irrelevant.
+        self.memory_contexts
+            .set_memory_context_abi_v1(MemoryContext::new(
+                BpfAllocator::new(0),
+                Vec::new(),
+                // SAFETY:
+                // This path invokes a builtin program, so this mapping is never used.
+                unsafe {
+                    MemoryMapping::new(Vec::new(), &Config::default(), SBPFVersion::Reserved)
+                        .unwrap()
+                },
+            ))?;
         let mut vm = EbpfVm::new(
             Arc::clone(
                 &**self

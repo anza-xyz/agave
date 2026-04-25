@@ -275,8 +275,9 @@ mod tests {
             vote::Vote,
         },
         solana_bls_signatures::{
-            Keypair as BLSKeypair, PreparedHashedMessage, PubkeyProjective as BLSPubkeyProjective,
-            Signature as BLSSignature, SignatureProjective, VerifiablePubkey,
+            BLS_SIGNATURE_AFFINE_SIZE, Keypair as BLSKeypair, PreparedHashedMessage,
+            PubkeyProjective as BLSPubkeyProjective, Signature as BLSSignature,
+            SignatureProjective, VerifySignature,
         },
         solana_hash::Hash,
         solana_signer_store::{Decoded, decode},
@@ -413,7 +414,7 @@ mod tests {
         // Test bls error
         let message_with_invalid_signature = VoteMessage {
             vote,
-            signature: BLSSignature::default(), // Invalid signature
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]), // Invalid signature
             rank: 1,
         };
         assert_eq!(
