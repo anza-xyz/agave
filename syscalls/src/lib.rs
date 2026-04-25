@@ -13,7 +13,6 @@ pub use self::{
 };
 use {
     crate::mem_ops::is_nonoverlapping,
-    solana_big_mod_exp::{BigModExpParams, big_mod_exp},
     solana_blake3_hasher as blake3,
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
@@ -322,7 +321,6 @@ pub fn create_program_runtime_environment(
 ) -> Result<ProgramRuntimeEnvironment, Error> {
     let enable_alt_bn128_syscall = feature_set.enable_alt_bn128_syscall;
     let enable_alt_bn128_compression_syscall = feature_set.enable_alt_bn128_compression_syscall;
-    let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall;
     let blake3_syscall_enabled = feature_set.blake3_syscall_enabled;
     let curve25519_syscall_enabled = feature_set.curve25519_syscall_enabled;
     let enable_bls12_381_syscall = feature_set.enable_bls12_381_syscall;
@@ -505,14 +503,6 @@ pub fn create_program_runtime_environment(
         enable_alt_bn128_syscall,
         "sol_alt_bn128_group_op",
         SyscallAltBn128
-    )?;
-
-    // Big_mod_exp
-    register_feature_gated_function!(
-        result,
-        enable_big_mod_exp_syscall,
-        "sol_big_mod_exp",
-        SyscallBigModExp
     )?;
 
     // Poseidon
@@ -2281,82 +2271,6 @@ declare_builtin_function!(
                 Ok(1)
             }
         }
-    }
-);
-
-declare_builtin_function!(
-    /// Big integer modular exponentiation
-    SyscallBigModExp,
-    fn rust(
-        invoke_context: &mut InvokeContext<'_, '_>,
-        params: u64,
-        return_value: u64,
-        _arg3: u64,
-        _arg4: u64,
-        _arg5: u64,
-    ) -> Result<u64, Error> {
-        let check_aligned = invoke_context.get_check_aligned();
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-        let params = &translate_slice::<BigModExpParams>(
-            memory_mapping,
-            params,
-            1,
-            check_aligned,
-        )?
-        .first()
-        .ok_or(SyscallError::InvalidLength)?;
-
-        if params.base_len > 512 || params.exponent_len > 512 || params.modulus_len > 512 {
-            return Err(Box::new(SyscallError::InvalidLength));
-        }
-
-        let input_len: u64 = std::cmp::max(params.base_len, params.exponent_len);
-        let input_len: u64 = std::cmp::max(input_len, params.modulus_len);
-
-        let execution_cost = invoke_context.get_execution_cost();
-        // the compute units are calculated by the quadratic equation `0.5 input_len^2 + 190`
-        let cost = execution_cost.syscall_base_cost.saturating_add(
-            input_len
-                .saturating_mul(input_len)
-                .checked_div(execution_cost.big_modular_exponentiation_cost_divisor)
-                .unwrap_or(u64::MAX)
-                .saturating_add(execution_cost.big_modular_exponentiation_base_cost),
-        );
-        invoke_context.compute_meter.consume_checked(cost)?;
-
-        let base = translate_slice::<u8>(
-            memory_mapping,
-            params.base as *const _ as u64,
-            params.base_len,
-            check_aligned,
-        )?;
-
-        let exponent = translate_slice::<u8>(
-            memory_mapping,
-            params.exponent as *const _ as u64,
-            params.exponent_len,
-            check_aligned,
-        )?;
-
-        let modulus = translate_slice::<u8>(
-            memory_mapping,
-            params.modulus as *const _ as u64,
-            params.modulus_len,
-            check_aligned,
-        )?;
-
-        let value = big_mod_exp(base, exponent, modulus);
-
-        let modulus_len = params.modulus_len;
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
-        translate_mut!(
-            memory_mapping,
-            check_aligned,
-            let return_value_ref_mut: &mut [u8] = map(return_value, modulus_len)?;
-        );
-        return_value_ref_mut.copy_from_slice(value.as_slice());
-
-        Ok(0)
     }
 );
 
@@ -5998,103 +5912,6 @@ mod tests {
             ),
             Result::Err(error) if error.downcast_ref::<SyscallError>().unwrap() == &SyscallError::CopyOverlapping
         );
-    }
-
-    #[test]
-    fn test_syscall_big_mod_exp() {
-        let config = Config::default();
-        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-
-        const VADDR_PARAMS: u64 = 0x100000000;
-        const MAX_LEN: u64 = 512;
-        const INV_LEN: u64 = MAX_LEN + 1;
-        let data: [u8; INV_LEN as usize] = [0; INV_LEN as usize];
-        const VADDR_DATA: u64 = 0x200000000;
-
-        let mut data_out: [u8; INV_LEN as usize] = [0; INV_LEN as usize];
-        const VADDR_OUT: u64 = 0x300000000;
-
-        // Test that SyscallBigModExp succeeds with the maximum param size
-        {
-            let params_max_len = BigModExpParams {
-                base: VADDR_DATA as *const u8,
-                base_len: MAX_LEN,
-                exponent: VADDR_DATA as *const u8,
-                exponent_len: MAX_LEN,
-                modulus: VADDR_DATA as *const u8,
-                modulus_len: MAX_LEN,
-            };
-
-            let memory_mapping = unsafe {
-                MemoryMapping::new(
-                    vec![
-                        MemoryRegion::new(bytes_of(&params_max_len), VADDR_PARAMS),
-                        MemoryRegion::new(&raw const data, VADDR_DATA),
-                        MemoryRegion::new(&raw mut data_out, VADDR_OUT),
-                    ],
-                    &config,
-                    SBPFVersion::V3,
-                )
-                .unwrap()
-            };
-
-            invoke_context
-                .memory_contexts
-                .mock_set_mapping_abi_v1(memory_mapping);
-            let budget = invoke_context.get_execution_cost();
-            invoke_context.compute_meter.mock_set_remaining(
-                budget.syscall_base_cost
-                    + (MAX_LEN * MAX_LEN) / budget.big_modular_exponentiation_cost_divisor
-                    + budget.big_modular_exponentiation_base_cost,
-            );
-
-            let result =
-                SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_OUT, 0, 0, 0);
-
-            assert_eq!(result.unwrap(), 0);
-        }
-
-        // Test that SyscallBigModExp fails when the maximum param size is exceeded
-        {
-            let params_inv_len = BigModExpParams {
-                base: VADDR_DATA as *const u8,
-                base_len: INV_LEN,
-                exponent: VADDR_DATA as *const u8,
-                exponent_len: INV_LEN,
-                modulus: VADDR_DATA as *const u8,
-                modulus_len: INV_LEN,
-            };
-
-            let memory_mapping = unsafe {
-                MemoryMapping::new(
-                    vec![
-                        MemoryRegion::new(bytes_of(&params_inv_len), VADDR_PARAMS),
-                        MemoryRegion::new(&raw const data, VADDR_DATA),
-                        MemoryRegion::new(&raw mut data_out, VADDR_OUT),
-                    ],
-                    &config,
-                    SBPFVersion::V3,
-                )
-                .unwrap()
-            };
-            invoke_context
-                .memory_contexts
-                .mock_set_mapping_abi_v1(memory_mapping);
-            let budget = invoke_context.get_execution_cost();
-            invoke_context.compute_meter.mock_set_remaining(
-                budget.syscall_base_cost
-                    + (INV_LEN * INV_LEN) / budget.big_modular_exponentiation_cost_divisor
-                    + budget.big_modular_exponentiation_base_cost,
-            );
-
-            let result =
-                SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_OUT, 0, 0, 0);
-
-            assert_matches!(
-                result,
-                Result::Err(error) if error.downcast_ref::<SyscallError>().unwrap() == &SyscallError::InvalidLength
-            );
-        }
     }
 
     #[test]
