@@ -756,7 +756,7 @@ mod tests {
         },
         assert_matches::assert_matches,
         solana_account::Account,
-        solana_bls_signatures::Signature as BLSSignature,
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_clock::UnixTimestamp,
         solana_epoch_schedule::EpochSchedule,
         solana_keypair::Keypair,
@@ -852,7 +852,7 @@ mod tests {
         let ff_activation_slot = 5;
         let genesis_cert = Certificate {
             cert_type: CertificateType::Finalize(1),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         };
 
@@ -932,7 +932,7 @@ mod tests {
         let mut bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 10);
         let genesis_cert = Certificate {
             cert_type: CertificateType::Finalize(1),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         };
         bank.activate_feature(&agave_feature_set::alpenglow::id());

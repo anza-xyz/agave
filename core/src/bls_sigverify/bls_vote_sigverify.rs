@@ -20,7 +20,7 @@ use {
     },
     solana_bls_signatures::{
         BlsError, PreparedHashedMessage,
-        pubkey::{PubkeyAffine as BlsPubkeyAffine, PubkeyProjective, VerifiablePubkey},
+        pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine, PubkeyProjective, VerifySignature},
         signature::SignatureProjective,
     },
     solana_clock::Slot,
@@ -42,7 +42,7 @@ const PREPARED_PAYLOAD_CACHE_DISTINCT_VOTE_THRESHOLD_PERCENT: usize = 90;
 #[derive(Clone, Debug)]
 pub(super) struct VotePayload {
     pub vote_message: VoteMessage,
-    pub bls_pubkey: BlsPubkeyAffine,
+    pub bls_pubkey: PopVerified<BlsPubkeyAffine>,
     pub pubkey: Pubkey,
     pub remote_pubkey: Pubkey,
     pub prepared_payload: Option<Arc<PreparedHashedMessage>>,
@@ -338,10 +338,10 @@ fn aggregate_pubkeys_by_payload(
 ) -> (
     Vec<Vote>,
     Vec<PreparedHashedMessage>,
-    Result<Vec<PubkeyProjective>, BlsError>,
+    Result<Vec<PopVerified<PubkeyProjective>>, BlsError>,
 ) {
     debug_assert!(current_thread_index().is_some());
-    let mut grouped_votes: HashMap<&Vote, Vec<&BlsPubkeyAffine>> = HashMap::new();
+    let mut grouped_votes: HashMap<&Vote, Vec<&PopVerified<BlsPubkeyAffine>>> = HashMap::new();
 
     for v in votes {
         grouped_votes
@@ -358,9 +358,10 @@ fn aggregate_pubkeys_by_payload(
         .into_par_iter()
         .filter_map(|(vote, pubkeys)| {
             wincode::serialize(vote).ok().map(|serialized_vote| {
-                // TODO(sam): https://github.com/anza-xyz/alpenglow/issues/708
-                // should improve public key aggregation drastically (more than 80%)
-                let pubkey = PubkeyProjective::par_aggregate(pubkeys.into_par_iter());
+                // converting aggregate pubkey to `PopVerified` is safe here
+                // since the pubkeys are all PoP verified in the vote account
+                let pubkey = PubkeyProjective::par_aggregate(pubkeys.into_par_iter())
+                    .map(|agg| unsafe { PopVerified::new_unchecked(*agg) });
                 (*vote, PreparedHashedMessage::new(&serialized_vote), pubkey)
             })
         })

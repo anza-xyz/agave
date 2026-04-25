@@ -99,6 +99,7 @@ mod tests {
             get_rank_map_keypairs, new_vote, validate_bitmap,
         },
         agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
+        solana_bls_signatures::signature::BLS_SIGNATURE_AFFINE_SIZE,
         solana_hash::Hash,
     };
 
@@ -114,7 +115,7 @@ mod tests {
         let notar = Vote::new_notarization_vote(slot, blockid0);
         let invalid_vote = VoteMessage {
             vote: notar,
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             rank,
         };
         entry

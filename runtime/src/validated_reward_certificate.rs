@@ -199,7 +199,7 @@ mod tests {
             .iter()
             .map(|k| {
                 (
-                    BLSPubkeyCompressed::from(k.bls_keypair.public),
+                    BLSPubkeyCompressed::from(*k.bls_keypair.public),
                     k.bls_keypair.clone(),
                 )
             })
@@ -221,7 +221,7 @@ mod tests {
             .map(|index| {
                 let pubkey_affine = rank_map.get_pubkey_stake_entry(index).unwrap().bls_pubkey;
                 keypair_map
-                    .get(&BLSPubkeyCompressed::from(pubkey_affine))
+                    .get(&BLSPubkeyCompressed::from(*pubkey_affine))
                     .unwrap()
             })
             .collect::<Vec<_>>();
