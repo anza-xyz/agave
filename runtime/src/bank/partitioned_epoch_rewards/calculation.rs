@@ -20,6 +20,7 @@ use {
         stake_utils,
         stakes::Stakes,
     },
+    agave_votor_messages::consensus_message::CertificateType,
     log::{debug, info},
     rayon::{
         ThreadPool,
@@ -560,6 +561,10 @@ impl Bank {
         let Some(genesis_cert) = self.get_alpenglow_genesis_certificate() else {
             return AlpenglowEpochStatus::Tower;
         };
+        debug_assert!(matches!(
+            genesis_cert.cert_type,
+            CertificateType::Genesis(_, _)
+        ));
         let cert_slot = genesis_cert.cert_type.slot();
         match (
             cert_slot <= self.epoch_schedule.get_first_slot_in_epoch(epoch),
