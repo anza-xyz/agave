@@ -75,7 +75,11 @@ static CORE_BPF_PROGRAMS: &[(Pubkey, Option<Pubkey>, &[u8])] = &[
 /// Returns a tuple `(Pubkey, Account)` for a BPF program, where the key is the
 /// provided program ID and the account is a valid BPF Loader program account
 /// containing the ELF.
-fn bpf_loader_program_account(program_id: &Pubkey, elf: &[u8], rent: &Rent) -> (Pubkey, Account) {
+pub fn bpf_loader_program_account(
+    program_id: &Pubkey,
+    elf: &[u8],
+    rent: &Rent,
+) -> (Pubkey, Account) {
     (
         *program_id,
         Account {
