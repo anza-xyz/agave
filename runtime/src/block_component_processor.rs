@@ -396,7 +396,7 @@ impl BlockComponentProcessor {
         (min_working_bank_time, max_working_bank_time)
     }
 
-    fn update_bank_with_footer_fields(
+    pub fn update_bank_with_footer_fields(
         bank: &Bank,
         block_producer_time_nanos: i64,
         bank_hash: Hash,

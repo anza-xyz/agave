@@ -70,7 +70,7 @@ fn extract_slot(
 
 /// Struct built by validating incoming reward certs.
 #[derive(Debug, Clone)]
-pub(crate) struct ValidatedRewardCert {
+pub struct ValidatedRewardCert {
     /// List of validators that were present in the reward certs.
     validators: HashSet<Pubkey>,
     /// The slot the reward certs refer to
@@ -139,8 +139,7 @@ impl ValidatedRewardCert {
         (self.reward_slot, self.validators)
     }
 
-    #[cfg(test)]
-    pub(crate) fn new_for_tests(reward_slot: Slot, validators: Vec<Pubkey>) -> Self {
+    pub fn new_for_tests(reward_slot: Slot, validators: Vec<Pubkey>) -> Self {
         let validators = validators.into_iter().collect();
         Self {
             reward_slot,

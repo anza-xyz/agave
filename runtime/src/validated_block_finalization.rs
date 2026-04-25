@@ -344,7 +344,7 @@ impl ValidatedBlockFinalizationCert {
     ///
     /// For slow finalization, returns (signers, finalize_cert, Some(notarize_cert)).
     /// For fast finalization, returns (signers, fast_finalize_cert, None).
-    pub(crate) fn into_parts(self) -> (HashSet<Pubkey>, Certificate, Option<Certificate>) {
+    pub fn into_parts(self) -> (HashSet<Pubkey>, Certificate, Option<Certificate>) {
         let signers = self.signers;
         let (final_cert, notar_cert) = match self.kind {
             ValidatedBlockFinalizationCertKind::Finalize {

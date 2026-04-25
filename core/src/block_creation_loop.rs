@@ -33,6 +33,7 @@ use {
         block_component_processor::BlockComponentProcessor,
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
         validated_block_finalization::ValidatedBlockFinalizationCert,
+        validated_reward_certificate::ValidatedRewardCert,
     },
     solana_version::version,
     stats::{LoopMetrics, SlotMetrics},
@@ -531,14 +532,21 @@ fn record_and_complete_block(
             Some((skip.slot, validators))
         }
     };
+    let reward_cert = reward_slot_and_validators
+        .map(|(slot, validators)| ValidatedRewardCert::new_for_tests(slot, validators));
     let footer = produce_block_footer(bank.clone(), skip, notar, &ctx.highest_finalized);
+
+    let final_cert_input = ctx.highest_finalized.read().unwrap().clone().map(|c| {
+        let (signers, cert, _) = c.into_parts();
+        (signers, cert.cert_type.slot())
+    });
 
     BlockComponentProcessor::update_bank_with_footer_fields(
         &bank,
         footer.block_producer_time_nanos as i64,
         Hash::default(), // Banks we produce do not need the bank hash mismatch check
-        reward_slot_and_validators,
-        ctx.highest_finalized.read().unwrap().as_ref(),
+        reward_cert,
+        final_cert_input,
     );
 
     drop(bank);
