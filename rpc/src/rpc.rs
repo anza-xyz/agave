@@ -2971,7 +2971,7 @@ pub mod rpc_minimal {
 
             debug!("get_leader_schedule rpc request received: {slot:?}");
 
-            Ok(meta
+            if let Some(leader_schedule) = meta
                 .leader_schedule_cache
                 .get_epoch_leader_schedule(epoch)
                 .map(|leader_schedule| {
@@ -2986,7 +2986,14 @@ pub mod rpc_minimal {
                         schedule_by_identity.retain(|k, _| *k == identity);
                     }
                     schedule_by_identity
-                }))
+                })
+            {
+                Ok(Some(leader_schedule))
+            } else {
+                Err(Error::invalid_params(format!(
+                    "Unable to fetch leader schedule for slot: {slot}"
+                )))
+            }
         }
     }
 }
