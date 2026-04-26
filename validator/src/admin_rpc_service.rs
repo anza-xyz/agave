@@ -1292,7 +1292,6 @@ mod tests {
                 authorized_voter_keypairs,
                 vec![leader_node.info],
                 &validator_config,
-                true, // should_check_duplicate_instance
                 None, // rpc_to_plugin_manager_receiver
                 start_progress.clone(),
                 SocketAddrSpace::Unspecified,

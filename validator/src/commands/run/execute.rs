@@ -810,6 +810,7 @@ pub fn execute(
         wait_for_supermajority: value_t!(matches, "wait_for_supermajority", Slot).ok(),
         known_validators: run_args.known_validators,
         repair_validators,
+        should_check_duplicate_instance: true,
         repair_whitelist,
         repair_handler_type: RepairHandlerType::default(),
         gossip_validators,
@@ -1034,7 +1035,6 @@ pub fn execute(
             .incremental_snapshot_archives_dir,
     );
 
-    let should_check_duplicate_instance = true;
     if !cluster_entrypoints.is_empty() {
         bootstrap::rpc_bootstrap(
             &node,
@@ -1048,7 +1048,6 @@ pub fn execute(
             do_port_check,
             use_progress_bar,
             maximum_local_snapshot_age,
-            should_check_duplicate_instance,
             &start_progress,
             minimal_snapshot_download_speed,
             maximum_snapshot_download_abort,
@@ -1127,7 +1126,6 @@ pub fn execute(
         authorized_voter_keypairs,
         cluster_entrypoints,
         &validator_config,
-        should_check_duplicate_instance,
         rpc_to_plugin_manager_receiver,
         start_progress,
         run_args.socket_addr_space,

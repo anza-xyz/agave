@@ -27,6 +27,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         wait_for_supermajority: config.wait_for_supermajority,
         new_hard_forks: config.new_hard_forks.clone(),
         known_validators: config.known_validators.clone(),
+        should_check_duplicate_instance: config.should_check_duplicate_instance,
         repair_validators: config.repair_validators.clone(),
         repair_whitelist: config.repair_whitelist.clone(),
         gossip_validators: config.gossip_validators.clone(),
