@@ -797,7 +797,8 @@ impl Bank {
                             ..
                         },
                     )| {
-                        let Some(mut commission_account) = self.get_account(commission_pubkey)
+                        let Some(mut commission_account) =
+                            self.get_account_with_fixed_root_no_cache(commission_pubkey)
                         else {
                             debug!(
                                 "commission account {commission_pubkey} missing at distribution \
