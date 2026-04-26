@@ -186,6 +186,7 @@ impl From<GenesisVote> for Vote {
 }
 
 /// A notarization vote
+#[repr(C)]
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
@@ -212,6 +213,7 @@ pub struct NotarizationVote {
 }
 
 /// A finalization vote
+#[repr(C)]
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
@@ -238,6 +240,7 @@ pub struct FinalizationVote {
 /// A skip vote
 /// Represents a range of slots to skip
 /// inclusive on both ends
+#[repr(C)]
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
@@ -262,6 +265,7 @@ pub struct SkipVote {
 }
 
 /// A notarization fallback vote
+#[repr(C)]
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
@@ -288,6 +292,7 @@ pub struct NotarizationFallbackVote {
 }
 
 /// A skip fallback vote
+#[repr(C)]
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
@@ -312,6 +317,7 @@ pub struct SkipFallbackVote {
 }
 
 /// A genesis vote. Only used during the migration from TowerBFT
+#[repr(C)]
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
