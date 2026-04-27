@@ -14,12 +14,13 @@ use {
     solana_instructions_sysvar as instructions,
     solana_rent::Rent,
     solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
-    std::{borrow::Cow, cell::Cell, ptr, rc::Rc},
+    std::{borrow::Cow, cell::Cell, rc::Rc},
 };
 use {
     crate::{vm_addresses::GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, instruction_accounts::InstructionAccoun,
             vm_slice::VmSlice},
     solana_pubkey::Pubkey,
+    solana_sbpf::memory_region::VmExposable,
 };
 
 /// Used only in fn `take_instruction_trace` for deconstructing TransactionContext
@@ -53,6 +54,8 @@ pub struct TransactionFrame {
     /// Number of transaction accounts
     pub number_of_transaction_accounts: u16,
 }
+
+impl VmExposable for TransactionFrame {}
 
 /// Loaded transaction shared between runtime and programs.
 ///
@@ -645,23 +648,16 @@ impl<'ix_data> TransactionContext<'ix_data> {
     }
 
     /// Return the pointer address of the transaction frame
-    pub fn transaction_frame_address(&self) -> u64 {
-        let addr = ptr::addr_of!(self.transaction_frame);
-        addr as u64
+    pub fn transaction_frame_address(&self) -> *const TransactionFrame {
+        &raw const self.transaction_frame
     }
 
-    pub fn instruction_trace_as_vm_slice(&self) -> VmSlice<InstructionFrame> {
-        VmSlice::new(
-            self.instruction_trace.as_ptr() as u64,
-            self.instruction_trace.len() as u64,
-        )
+    pub fn instruction_trace_as_raw_slice(&self) -> *const [InstructionFrame] {
+        &raw const self.instruction_trace[..]
     }
 
-    pub fn return_data_as_vm_slice(&self) -> VmSlice<u8> {
-        VmSlice::new(
-            self.return_data_bytes.as_ptr() as u64,
-            self.return_data_bytes.len() as u64,
-        )
+    pub fn return_data_as_raw_slice(&self) -> *const [u8] {
+        &raw const self.return_data_bytes[..]
     }
 
     pub fn instruction_payload_regions(&self, regions: &mut [MemoryRegion]) {
@@ -671,7 +667,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             .zip(self.instruction_data.iter())
             .zip(regions.iter_mut())
         {
-            *region = MemoryRegion::new_readonly(ix_data, ix_frame.instruction_data.ptr());
+            *region = MemoryRegion::new(&raw const ix_data[..], ix_frame.instruction_data.ptr());
         }
 
         self.fill_missing_instruction_regions(regions, GUEST_INSTRUCTION_DATA_BASE_ADDRESS);
@@ -684,14 +680,14 @@ impl<'ix_data> TransactionContext<'ix_data> {
             .zip(self.instruction_accounts.iter())
             .zip(regions.iter_mut())
         {
-            *region = MemoryRegion::new_readonly_gapless_from_pointer(
-                accounts.as_ptr() as u64,
-                ix_frame.instruction_accounts.ptr(),
-                ix_frame
-                    .instruction_accounts
-                    .len()
-                    .saturating_mul(size_of::<InstructionAccount>() as u64),
-            );
+            // FIXME: maybe implement HostObject?
+            let bytesize = ix_frame
+                .instruction_accounts
+                .len()
+                .saturating_mul(size_of::<InstructionAccount>() as u64);
+            let host_slice =
+                std::ptr::slice_from_raw_parts(accounts.as_ptr().cast::<u8>(), bytesize as usize);
+            *region = MemoryRegion::new(host_slice, ix_frame.instruction_accounts.ptr());
         }
         self.fill_missing_instruction_regions(regions, GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS);
     }

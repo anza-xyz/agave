@@ -1,5 +1,6 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+use solana_sbpf::memory_region::VmExposable;
 use {crate::vm_slice::VmSlice, solana_pubkey::Pubkey};
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 use {
@@ -28,6 +29,8 @@ pub struct AccountSharedFields {
     // vector.
     pub payload: VmSlice<u8>,
 }
+
+impl VmExposable for AccountSharedFields {}
 
 #[derive(Debug, PartialEq)]
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
@@ -487,11 +490,9 @@ impl TransactionAccounts {
         }
     }
 
-    pub fn shared_fields_as_vm_slice(&self) -> VmSlice<AccountSharedFields> {
-        VmSlice::new(
-            self.shared_account_fields.as_ptr() as u64,
-            self.shared_account_fields.len() as u64,
-        )
+    pub fn shared_fields_as_raw_slice(&self) -> *const [AccountSharedFields] {
+        let ptr: *const UnsafeCell<AccountSharedFields> = self.shared_account_fields.as_ptr();
+        std::ptr::slice_from_raw_parts(ptr.cast(), self.shared_account_fields.len())
     }
 
     pub fn account_payload_regions(&self, accounts_regions: &mut [MemoryRegion]) {
@@ -502,13 +503,14 @@ impl TransactionAccounts {
             .zip(accounts_regions.iter_mut())
         {
             let payload_vm_slice = unsafe { &(*shared_fields.get()).payload };
-
-            let host_addr = unsafe { (*private_fields.get()).payload.as_ptr() as u64 };
-            *region = MemoryRegion::new_readonly_gapless_from_pointer(
-                host_addr,
-                payload_vm_slice.ptr(),
-                payload_vm_slice.len(), // We are sharing the payload of all accounts as readonly
-            );
+            unsafe {
+                // We are sharing the payload of all accounts as readonly
+                let host_slice = std::ptr::slice_from_raw_parts(
+                    (*private_fields.get()).payload.as_ptr(),
+                    payload_vm_slice.len() as usize,
+                );
+                *region = MemoryRegion::new(host_slice, payload_vm_slice.ptr());
+            };
         }
 
         // Fill the remaining regions as empty
