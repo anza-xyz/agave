@@ -307,11 +307,11 @@ pub fn execute<'a, 'b: 'a>(
     };
 
     let mut create_vm_time = Measure::start("create_vm");
-    unsafe {
-        // SAFETY: The memory pointed to by regions is valid for the useful lifetime of
-        // `invoke_context`, which in turn contains the `MemoryMapping` that allows access to this
-        // memory.
-        if let Some(v1_params) = &mut abiv1_parameters {
+    if let Some(v1_params) = &mut abiv1_parameters {
+        unsafe {
+            // SAFETY: The memory pointed to by regions is valid for the useful lifetime of
+            // `invoke_context`, which in turn contains the `MemoryMapping` that allows access to this
+            // memory.
             set_memory_context(
                 std::mem::take(&mut v1_params.regions),
                 std::mem::take(&mut v1_params.accounts_metadata),
@@ -321,6 +321,8 @@ pub fn execute<'a, 'b: 'a>(
                 account_data_direct_mapping,
             )?;
         }
+    } else {
+        invoke_context.memory_contexts.set_abi_v2()?;
     }
 
     let execution_result = {
@@ -557,7 +559,6 @@ fn initialize_abi_v2_areas<C: ContextObject>(
         return;
     }
 
-    std::println!("Configuring ABIv2");
     let abi_v2_regions = create_abiv2_regions(invoke_context.transaction_context);
     invoke_context
         .memory_contexts

@@ -1,6 +1,3 @@
-use solana_sbpf::memory_region::VmExposable;
-
-use crate::{instruction_accounts::InstructionAccount, vm_slice::VmSlice};
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 use {
     crate::{
@@ -16,6 +13,10 @@ use {
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
     std::collections::HashSet,
+};
+use {
+    crate::{instruction_accounts::InstructionAccount, vm_slice::VmSlice},
+    solana_sbpf::memory_region::VmExposable,
 };
 
 /// Instruction shared between runtime and programs.

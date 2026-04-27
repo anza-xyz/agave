@@ -124,7 +124,7 @@ impl MemoryContexts {
     }
 
     pub fn abi_v2_regions_exist(&self) -> bool {
-        self.abiv2_mappings.get_regions().is_empty()
+        !self.abiv2_mappings.get_regions().is_empty()
     }
 
     pub fn create_abi_v2_mappings<C: ContextObject>(
@@ -140,6 +140,14 @@ impl MemoryContexts {
                 Box::new(default_access_violation_handler),
             )
         };
+    }
+
+    pub fn set_abi_v2(&mut self) -> Result<(), InstructionError> {
+        *self
+            .contexts
+            .last_mut()
+            .ok_or(InstructionError::CallDepth)? = MemoryContextType::ABIv2;
+        Ok(())
     }
 }
 
