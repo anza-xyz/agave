@@ -8322,9 +8322,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi"
-version = "3.2.2"
+version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20f53dbf77043d26b7a2f5f516f704b35daf9d0be036fe8e64c3f92924292c61"
+checksum = "f104c19593391e9b8a6d8eedf4df92ddc7908949ee3740927c05ebef5fed6e2c"
 dependencies = [
  "bincode",
  "boxcar",
@@ -8344,6 +8344,7 @@ dependencies = [
  "sha2 0.10.9",
  "solana-frozen-abi-macro",
  "thiserror 2.0.18",
+ "wincode",
 ]
 
 [[package]]
