@@ -22,6 +22,7 @@ dev-context-only-utils = [
     "agave-feature-set/dev-context-only-utils",
     "agave-votor-messages/dev-context-only-utils",
     "solana-accounts-db/dev-context-only-utils",
+    "solana-program-binaries",
     "solana-svm/dev-context-only-utils",
     "solana-runtime-transaction/dev-context-only-utils",
     "solana-vote/dev-context-only-utils",
@@ -137,6 +138,7 @@ solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-precompile-error = { workspace = true }
+solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"], optional = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }
@@ -193,7 +195,6 @@ proptest = { workspace = true }
 solana-accounts-db = { path = "../accounts-db", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-builtins = { path = "../builtins", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-instruction-error = { workspace = true }
-solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"] }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }

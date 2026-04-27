@@ -170,7 +170,7 @@ unsafe fn set_memory_context<'b>(
 
     invoke_context
         .memory_contexts
-        .set_memory_context(MemoryContext::new(
+        .set_memory_context_abi_v1(MemoryContext::new(
             BpfAllocator::new(heap_size as u64),
             accounts_metadata,
             memory_mapping,
@@ -465,7 +465,7 @@ pub fn execute<'a, 'b: 'a>(
             parameter_bytes,
             &invoke_context
                 .memory_contexts
-                .memory_context()?
+                .memory_context_abi_v1()?
                 .accounts_metadata,
         )
     }

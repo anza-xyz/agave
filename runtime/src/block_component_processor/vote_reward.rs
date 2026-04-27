@@ -405,7 +405,7 @@ mod tests {
         bitvec::prelude::*,
         rand::seq::IndexedRandom,
         solana_account::ReadableAccount,
-        solana_bls_signatures::Signature as BLSSignature,
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_epoch_schedule::EpochSchedule,
         solana_genesis_config::GenesisConfig,
         solana_hash::Hash,
@@ -444,7 +444,7 @@ mod tests {
 
         let cert = Certificate {
             cert_type,
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap,
         };
         ValidatedBlockFinalizationCert::from_validated_fast(cert, bank)
