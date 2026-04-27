@@ -1034,7 +1034,7 @@ where
     // only outside syscalls
     let accounts_metadata = &invoke_context
         .memory_contexts
-        .memory_context()
+        .memory_context_abi_v1()
         .unwrap()
         .accounts_metadata;
 
@@ -1875,7 +1875,7 @@ mod tests {
             unsafe { MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap() };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let ins = translate_instruction_rust(vm_addr, &invoke_context).unwrap();
         assert_eq!(ins.program_id, program_id);
@@ -1906,8 +1906,16 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        *invoke_context.memory_contexts.memory_mapping_mut().unwrap() =
+        let mapping =
             unsafe { MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap() };
+        invoke_context
+            .memory_contexts
+            .set_memory_context_abi_v1(MemoryContext::new(
+                BpfAllocator::new(0),
+                Vec::new(),
+                mapping,
+            ))
+            .unwrap();
 
         let signers = translate_signers_rust(&program_id, vm_addr, 1, &invoke_context).unwrap();
         assert_eq!(signers[0], derived_key);
@@ -1943,7 +1951,7 @@ mod tests {
 
         invoke_context
             .memory_contexts
-            .set_memory_context(MemoryContext::new(
+            .set_memory_context_abi_v1(MemoryContext::new(
                 BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
                 vec![account_metadata],
                 memory_mapping,
@@ -2035,7 +2043,7 @@ mod tests {
 
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
         let caller_account = CallerAccount::from_account_info(
@@ -2094,7 +2102,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let mut caller_account = mock_caller_account.caller_account();
         let instruction_context = invoke_context
@@ -2157,7 +2165,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let data_slice = mock_caller_account.data_slice();
         let len_ptr = unsafe {

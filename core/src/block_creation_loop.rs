@@ -326,8 +326,8 @@ fn compute_block_timeout(bank: &Bank, leader_block_index: usize) -> Duration {
         .saturating_mul((leader_block_index as u32).saturating_add(1))
 }
 
-/// Produces blocks for the leader window from `start_slot` to `end_slot` inclusive.
-/// The leader window started at `start_of_window`.
+/// Produces the leader window from `start_slot` -> `end_slot` using parent
+/// `parent_slot` while abiding to the `skip_timer`
 fn produce_window(
     start_slot: Slot,
     end_slot: Slot,

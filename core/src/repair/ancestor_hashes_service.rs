@@ -86,6 +86,8 @@ struct AncestorHashesResponsesStats {
 }
 
 impl AncestorHashesResponsesStats {
+    const REPORT_INTERVAL: Duration = Duration::from_secs(2);
+
     fn report(&mut self) {
         datapoint_info!(
             "ancestor_hashes_responses",
@@ -115,6 +117,8 @@ impl Default for AncestorRepairRequestsStats {
 }
 
 impl AncestorRepairRequestsStats {
+    const REPORT_INTERVAL: Duration = Duration::from_secs(2);
+
     fn report(&mut self) {
         let slot_to_count: Vec<_> = self
             .ancestor_requests
@@ -124,7 +128,7 @@ impl AncestorRepairRequestsStats {
             .collect();
 
         let repair_total = self.ancestor_requests.count;
-        if self.last_report.elapsed().as_secs() > 2 && repair_total > 0 {
+        if self.last_report.elapsed() > Self::REPORT_INTERVAL && repair_total > 0 {
             info!("ancestor_repair_requests_stats: {slot_to_count:?}");
             datapoint_info!(
                 "ancestor-repair",
@@ -248,7 +252,7 @@ impl AncestorHashesService {
                             return;
                         }
                     };
-                    if last_stats_report.elapsed().as_secs() > 2 {
+                    if last_stats_report.elapsed() > AncestorHashesResponsesStats::REPORT_INTERVAL {
                         stats.report();
                         last_stats_report = Instant::now();
                     }

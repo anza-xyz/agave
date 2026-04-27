@@ -14,6 +14,16 @@ fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
         .saturating_add(size_of::<T>() as u64);
     invoke_context.compute_meter.consume_checked(amount)?;
 
+    // If a test case contains a program that is owned by the deprecated
+    // bpf loader but also contains get_sysvar syscalls, the store into the
+    // host memory will segfault due to unaligned accesses. However, this has
+    // no consensus impact because this loader was deprecated before the get_sysvar
+    // syscall was activated.
+    let check_aligned = invoke_context.get_check_aligned();
+    if !check_aligned {
+        return Err(SyscallError::UnalignedPointer.into());
+    }
+
     if var_addr >= ebpf::MM_INPUT_START
         && invoke_context
             .get_feature_set()
@@ -22,7 +32,6 @@ fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
         return Err(SyscallError::InvalidPointer.into());
     }
 
-    let check_aligned = invoke_context.get_check_aligned();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
     translate_mut!(
         memory_mapping,
@@ -188,6 +197,16 @@ declare_builtin_function!(
             .saturating_add(std::cmp::max(sysvar_buf_cost, mem_op_base_cost));
         invoke_context.compute_meter.consume_checked(cost)?;
 
+        // If a test case contains a program that is owned by the deprecated
+        // bpf loader but also contains get_sysvar syscalls, the store into the
+        // host memory will segfault due to unaligned accesses. However, this has
+        // no consensus impact because this loader was deprecated before the get_sysvar
+        // syscall was activated.
+        let check_aligned = invoke_context.get_check_aligned();
+        if !check_aligned {
+            return Err(SyscallError::UnalignedPointer.into());
+        }
+
         if var_addr >= ebpf::MM_INPUT_START
             && invoke_context
                 .get_feature_set()
@@ -196,7 +215,6 @@ declare_builtin_function!(
             return Err(SyscallError::InvalidPointer.into());
         }
 
-        let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         // Abort: "Not all bytes in VM memory range `[var_addr, var_addr + length)` are writable."
         translate_mut!(

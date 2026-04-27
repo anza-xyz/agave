@@ -781,7 +781,7 @@ declare_builtin_function!(
         let Ok(layout) = Layout::from_size_align(size as usize, align) else {
             return Ok(0);
         };
-        let allocator = &mut invoke_context.memory_contexts.memory_context_mut()?.allocator;
+        let allocator = &mut invoke_context.memory_contexts.memory_context_mut_abi_v1()?.allocator;
         if free_addr == 0 {
             match allocator.alloc(layout) {
                 Ok(addr) => Ok(addr),
@@ -3043,7 +3043,7 @@ mod tests {
             unsafe { MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap() };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         let result = SyscallAbort::rust(&mut invoke_context, 0, 0, 0, 0, 0);
         result.unwrap();
     }
@@ -3068,7 +3068,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         invoke_context
             .compute_meter
             .mock_set_remaining(string.len() as u64 - 1);
@@ -3118,7 +3118,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(400 - 1);
         let result = SyscallLog::rust(
             &mut invoke_context,
@@ -3182,7 +3182,7 @@ mod tests {
             unsafe { MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap() };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         let result = SyscallLogU64::rust(&mut invoke_context, 1, 2, 3, 4, 5);
         result.unwrap();
 
@@ -3213,7 +3213,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let result = SyscallLogPubkey::rust(
             &mut invoke_context,
@@ -3259,7 +3259,7 @@ mod tests {
             let mapping = unsafe { MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap() };
             $invoke_context
                 .memory_contexts
-                .set_memory_context(MemoryContext::new(
+                .set_memory_context_abi_v1(MemoryContext::new(
                     BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
                     Vec::new(),
                     mapping,
@@ -3384,7 +3384,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(
             (invoke_context.get_execution_cost().sha256_base_cost
                 + invoke_context.get_execution_cost().mem_op_base_cost.max(
@@ -3470,7 +3470,7 @@ mod tests {
 
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(
             (invoke_context
                 .get_execution_cost()
@@ -3545,7 +3545,7 @@ mod tests {
 
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(
             (invoke_context
                 .get_execution_cost()
@@ -3634,7 +3634,7 @@ mod tests {
 
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(
             (invoke_context
                 .get_execution_cost()
@@ -3787,7 +3787,7 @@ mod tests {
 
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(
             (invoke_context
                 .get_execution_cost()
@@ -3955,7 +3955,7 @@ mod tests {
 
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(
             invoke_context
                 .get_execution_cost()
@@ -4052,7 +4052,7 @@ mod tests {
         // test Edwards
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(500_000);
         let result = SyscallCurveMultiscalarMultiplication::rust(
             &mut invoke_context,
@@ -4238,7 +4238,7 @@ mod tests {
             };
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
 
             let result =
                 SyscallGetClockSysvar::rust(&mut invoke_context, got_clock_obj_va, 0, 0, 0, 0);
@@ -4299,7 +4299,7 @@ mod tests {
             };
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
 
             let result = SyscallGetEpochScheduleSysvar::rust(
                 &mut invoke_context,
@@ -4361,7 +4361,7 @@ mod tests {
             };
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
 
             let result = SyscallGetFeesSysvar::rust(&mut invoke_context, got_fees_va, 0, 0, 0, 0);
             assert_eq!(result.unwrap(), 0);
@@ -4398,7 +4398,7 @@ mod tests {
             };
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
 
             let result =
                 SyscallGetRentSysvar::rust(&mut invoke_context, got_rent_obj_va, 0, 0, 0, 0);
@@ -4453,7 +4453,7 @@ mod tests {
             };
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
 
             let result = SyscallGetEpochRewardsSysvar::rust(
                 &mut invoke_context,
@@ -4519,7 +4519,7 @@ mod tests {
             };
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
 
             let result = SyscallGetLastRestartSlotSysvar::rust(
                 &mut invoke_context,
@@ -4608,7 +4608,7 @@ mod tests {
             };
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
 
             let result = SyscallGetSysvar::rust(
                 &mut invoke_context,
@@ -4672,7 +4672,7 @@ mod tests {
             };
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
 
             let result = SyscallGetSysvar::rust(
                 &mut invoke_context,
@@ -4731,7 +4731,7 @@ mod tests {
             };
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
 
             // Abort: "Not all bytes in VM memory range `[sysvar_id, sysvar_id + 32)` are readable."
             let e = SyscallGetSysvar::rust(
@@ -4838,7 +4838,7 @@ mod tests {
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
 
             // "`1` if `offset + length` is greater than the length of the sysvar data."
             let result = SyscallGetSysvar::rust(
@@ -4917,7 +4917,7 @@ mod tests {
             unsafe { MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap() };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let result = syscall(
             invoke_context,
@@ -4989,7 +4989,7 @@ mod tests {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let result =
             SyscallSetReturnData::rust(&mut invoke_context, SRC_VA, data.len() as u64, 0, 0, 0);
@@ -5104,7 +5104,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         let processed_sibling_instruction =
             unsafe { &mut *memory.as_mut_ptr().cast::<ProcessedSiblingInstruction>() };
         processed_sibling_instruction.data_len = 1;
@@ -5280,7 +5280,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         let processed_sibling_instruction =
             unsafe { &mut *memory.as_mut_ptr().cast::<ProcessedSiblingInstruction>() };
         processed_sibling_instruction.data_len = 2;
@@ -6040,7 +6040,7 @@ mod tests {
 
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
             let budget = invoke_context.get_execution_cost();
             invoke_context.compute_meter.mock_set_remaining(
                 budget.syscall_base_cost
@@ -6079,7 +6079,7 @@ mod tests {
             };
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
             let budget = invoke_context.get_execution_cost();
             invoke_context.compute_meter.mock_set_remaining(
                 budget.syscall_base_cost
@@ -6144,7 +6144,7 @@ mod tests {
             unsafe { MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap() };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let result =
             SyscallGetEpochStake::rust(&mut invoke_context, null_pointer_var, 0, 0, 0, 0).unwrap();
@@ -6218,7 +6218,7 @@ mod tests {
             };
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
 
             let result =
                 SyscallGetEpochStake::rust(&mut invoke_context, vote_address_var, 0, 0, 0, 0);
@@ -6248,7 +6248,7 @@ mod tests {
             };
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
 
             let result =
                 SyscallGetEpochStake::rust(&mut invoke_context, vote_address_var, 0, 0, 0, 0)
@@ -6280,7 +6280,7 @@ mod tests {
             };
             invoke_context
                 .memory_contexts
-                .mock_set_mapping(memory_mapping);
+                .mock_set_mapping_abi_v1(memory_mapping);
 
             let result =
                 SyscallGetEpochStake::rust(&mut invoke_context, vote_address_var, 0, 0, 0, 0)
@@ -6347,7 +6347,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let result = SyscallMemcmp::rust(&mut invoke_context, src_a, src_b, 4, 0x300000000, 0);
         result.unwrap();
@@ -6379,7 +6379,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let result = SyscallMemmove::rust(&mut invoke_context, dst, src, 4, 0, 0);
         result.unwrap();
@@ -6404,7 +6404,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let result = SyscallMemset::rust(&mut invoke_context, dst, value, 4, 0, 0);
         result.unwrap();
@@ -6429,7 +6429,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let result = SyscallMemcpy::rust(&mut invoke_context, dst, src, 4, 0, 0);
         assert_matches!(
@@ -6456,7 +6456,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let result = SyscallMemcpy::rust(&mut invoke_context, dst, src, 4, 0, 0);
         assert_access_violation!(result, fault_address, 4);
@@ -6482,7 +6482,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let result = SyscallMemset::rust(&mut invoke_context, dst, 0, 4, 0, 0);
         assert_access_violation!(result, dst, 4);
@@ -6503,7 +6503,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let result = SyscallMemcmp::rust(
             &mut invoke_context,
@@ -6604,7 +6604,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_g1_add_cost = invoke_context.get_execution_cost().bls12_381_g1_add_cost;
         invoke_context
@@ -6725,7 +6725,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_g1_subtract_cost = invoke_context
             .get_execution_cost()
@@ -6841,7 +6841,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_g1_multiply_cost = invoke_context
             .get_execution_cost()
@@ -6995,7 +6995,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_g2_add_cost = invoke_context.get_execution_cost().bls12_381_g2_add_cost;
         invoke_context
@@ -7148,7 +7148,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_g2_subtract_cost = invoke_context
             .get_execution_cost()
@@ -7285,7 +7285,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_g2_multiply_cost = invoke_context
             .get_execution_cost()
@@ -7406,7 +7406,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_one_pair_cost = invoke_context.get_execution_cost().bls12_381_one_pair_cost;
         invoke_context
@@ -7513,7 +7513,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_one_pair_cost = invoke_context.get_execution_cost().bls12_381_one_pair_cost;
         invoke_context
@@ -7595,7 +7595,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_g2_decompress_cost = invoke_context
             .get_execution_cost()
@@ -7707,7 +7707,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_g2_decompress_cost = invoke_context
             .get_execution_cost()
@@ -7786,7 +7786,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_g1_validate_cost = invoke_context
             .get_execution_cost()
@@ -7875,7 +7875,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
 
         let bls12_381_g2_validate_cost = invoke_context
             .get_execution_cost()
@@ -7981,7 +7981,7 @@ mod tests {
         };
         invoke_context
             .memory_contexts
-            .mock_set_mapping(memory_mapping);
+            .mock_set_mapping_abi_v1(memory_mapping);
         invoke_context.compute_meter.mock_set_remaining(
             (invoke_context.get_execution_cost().sha256_base_cost
                 + invoke_context.get_execution_cost().mem_op_base_cost.max(

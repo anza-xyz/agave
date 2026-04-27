@@ -739,7 +739,7 @@ fn serialize_obsolete_accounts(
         .as_ref()
         .join(snapshot_paths::SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
     let mut file_stream = SizeLimitedWriter::new(
-        large_file_buf_writer(&obsolete_accounts_path)?,
+        large_file_buf_writer(&obsolete_accounts_path, &IoSetupState::default())?,
         maximum_obsolete_accounts_file_size,
     );
 
@@ -828,8 +828,10 @@ fn serialize_snapshot_data_file_capped<F>(
 where
     F: FnOnce(&mut dyn Write) -> Result<()>,
 {
-    let mut data_file_stream =
-        SizeLimitedWriter::new(large_file_buf_writer(data_file_path)?, maximum_file_size);
+    let mut data_file_stream = SizeLimitedWriter::new(
+        large_file_buf_writer(data_file_path, &IoSetupState::default())?,
+        maximum_file_size,
+    );
     serializer(&mut data_file_stream).map_err(|err| {
         IoError::other(format!(
             "unable to serialize snapshot data to file '{}': {err}",

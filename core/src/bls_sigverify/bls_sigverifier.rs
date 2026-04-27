@@ -20,7 +20,7 @@ use {
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
     rayon::{ThreadPool, ThreadPoolBuilder},
-    solana_bls_signatures::pubkey::PubkeyAffine as BlsPubkeyAffine,
+    solana_bls_signatures::pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
@@ -269,7 +269,7 @@ impl SigVerifier {
         &mut self,
         vote: &VoteMessage,
         root_bank: &Bank,
-    ) -> Option<(Pubkey, BlsPubkeyAffine)> {
+    ) -> Option<(Pubkey, PopVerified<BlsPubkeyAffine>)> {
         let root_slot = root_bank.slot();
         let Some(rank_map) = root_bank.get_rank_map(vote.vote.slot()) else {
             self.stats.discard_vote_no_epoch_stakes += 1;
@@ -343,7 +343,7 @@ mod tests {
         },
         bitvec::prelude::{BitVec, Lsb0},
         crossbeam_channel::{Receiver, TryRecvError},
-        solana_bls_signatures::{Signature, Signature as BLSSignature},
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature},
         solana_epoch_schedule::EpochSchedule,
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
@@ -462,7 +462,7 @@ mod tests {
     ) -> VoteMessage {
         let bls_keypair = &validator_keypairs[rank].bls_keypair;
         let payload = wincode::serialize(&vote).expect("Failed to serialize vote");
-        let signature: BLSSignature = bls_keypair.sign(&payload).into();
+        let signature: Signature = bls_keypair.sign(&payload).into();
         VoteMessage {
             vote,
             signature,
@@ -623,7 +623,7 @@ mod tests {
         // Send a packet with invalid rank
         let messages_invalid_rank = vec![ConsensusMessage::Vote(VoteMessage {
             vote: Vote::new_finalization_vote(5),
-            signature: Signature::default(),
+            signature: Signature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             rank: 1000, // Invalid rank
         })];
         ctx.verifier
@@ -720,7 +720,7 @@ mod tests {
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
             let bls_keypair = &validator_keypair.bls_keypair;
-            let signature: BLSSignature = bls_keypair.sign(&vote_payload).into();
+            let signature: Signature = bls_keypair.sign(&vote_payload).into();
             let consensus_message = ConsensusMessage::Vote(VoteMessage {
                 vote,
                 signature,
@@ -1147,7 +1147,7 @@ mod tests {
 
         let cert = Certificate {
             cert_type,
-            signature: BLSSignature::default(), // Use a default/wrong signature
+            signature: Signature([0; BLS_SIGNATURE_AFFINE_SIZE]), // Use a default/wrong signature
             bitmap: encoded_bitmap,
         };
         let consensus_message = ConsensusMessage::Certificate(cert);
@@ -1175,7 +1175,7 @@ mod tests {
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
             let bls_keypair = &validator_keypair.bls_keypair;
-            let signature: BLSSignature = bls_keypair.sign(&vote_payload).into();
+            let signature: Signature = bls_keypair.sign(&vote_payload).into();
             let consensus_message = ConsensusMessage::Vote(VoteMessage {
                 vote,
                 signature,
@@ -1232,7 +1232,7 @@ mod tests {
         let vote = Vote::new_skip_vote(42);
         let vote_payload = wincode::serialize(&vote).unwrap();
         let bls_keypair = &ctx.validator_keypairs[0].bls_keypair;
-        let signature: BLSSignature = bls_keypair.sign(&vote_payload).into();
+        let signature: Signature = bls_keypair.sign(&vote_payload).into();
 
         let consensus_message = ConsensusMessage::Vote(VoteMessage {
             vote,
@@ -1304,7 +1304,7 @@ mod tests {
         let vote = Vote::new_skip_vote(2);
         let vote_payload = wincode::serialize(&vote).unwrap();
         let bls_keypair = &validator_keypairs[0].bls_keypair;
-        let signature: BLSSignature = bls_keypair.sign(&vote_payload).into();
+        let signature: Signature = bls_keypair.sign(&vote_payload).into();
         let consensus_message_vote = ConsensusMessage::Vote(VoteMessage {
             vote,
             signature,
@@ -1482,7 +1482,7 @@ mod tests {
                     &(0..7).collect::<Vec<_>>(),
                 );
                 if invalid_indexes.contains(&i) {
-                    cert.signature = BLSSignature::default();
+                    cert.signature = Signature([0; BLS_SIGNATURE_AFFINE_SIZE]);
                 }
                 (ConsensusMessage::Certificate(cert), Pubkey::new_unique())
             })

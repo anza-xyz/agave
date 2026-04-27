@@ -10,7 +10,6 @@ use {
         banking_stage::{
             consume_worker::ConsumeWorker,
             transaction_scheduler::{
-                prio_graph_scheduler::PrioGraphScheduler,
                 scheduler_controller::{
                     DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS, SchedulerConfig, SchedulerController,
                 },
@@ -51,7 +50,6 @@ use {
     tokio_util::sync::CancellationToken,
     transaction_scheduler::{
         greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
-        prio_graph_scheduler::PrioGraphSchedulerConfig,
         receive_and_buffer::TransactionViewReceiveAndBuffer,
     },
     vote_worker::VoteWorker,
@@ -67,7 +65,6 @@ mod latest_validator_vote_packet;
 mod leader_slot_metrics;
 mod leader_slot_timing_metrics;
 mod qos_service;
-mod read_write_account_set;
 mod scheduler_messages;
 mod vote_packet_receiver;
 mod vote_storage;
@@ -470,11 +467,9 @@ impl BankingStage {
                 num_workers,
                 config,
             } => match block_production_method {
-                BlockProductionMethod::CentralScheduler => {
-                    self.spawn_internal_central(false, num_workers, config)
-                }
-                BlockProductionMethod::CentralSchedulerGreedy => {
-                    self.spawn_internal_central(true, num_workers, config)
+                BlockProductionMethod::CentralScheduler
+                | BlockProductionMethod::CentralSchedulerGreedy => {
+                    self.spawn_internal_central(num_workers, config)
                 }
             },
             #[cfg(unix)]
@@ -493,7 +488,6 @@ impl BankingStage {
 
     fn spawn_internal_central(
         &self,
-        use_greedy_scheduler: bool,
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
     ) -> Result<Vec<JoinHandle<()>>, ()> {
@@ -551,65 +545,47 @@ impl BankingStage {
             )
         }
 
-        // Macro to spawn the scheduler. Different type on `scheduler` and thus
-        // scheduler_controller mean we cannot have an easy if for `scheduler`
-        // assignment without introducing `dyn`.
-        macro_rules! spawn_scheduler {
-            ($scheduler:ident) => {
-                let exit = exit.clone();
-                let shutdown_signal = self.banking_shutdown_signal.clone();
-                threads.push(
-                    Builder::new()
-                        .name("solBnkTxSched".to_string())
-                        .spawn(move || {
-                            let mut scheduler_controller = SchedulerController::new(
-                                exit,
-                                scheduler_config,
-                                decision_maker,
-                                receive_and_buffer,
-                                sharable_banks,
-                                $scheduler,
-                                worker_metrics,
-                            );
+        // Both block production methods currently route to the greedy scheduler.
+        let scheduler = GreedyScheduler::new(
+            work_senders,
+            finished_work_receiver,
+            GreedySchedulerConfig::default(),
+        );
+        let exit = exit.clone();
+        let shutdown_signal = self.banking_shutdown_signal.clone();
+        threads.push(
+            Builder::new()
+                .name("solBnkTxSched".to_string())
+                .spawn(move || {
+                    let mut scheduler_controller = SchedulerController::new(
+                        exit,
+                        scheduler_config,
+                        decision_maker,
+                        receive_and_buffer,
+                        sharable_banks,
+                        scheduler,
+                        worker_metrics,
+                    );
 
-                            match scheduler_controller.run() {
-                                Ok(_) => info!("Scheduler exiting without error"),
-                                Err(SchedulerError::DisconnectedRecvChannel(_)) => {
-                                    info!("Upstream disconnected, shutting down banking");
+                    match scheduler_controller.run() {
+                        Ok(_) => info!("Scheduler exiting without error"),
+                        Err(SchedulerError::DisconnectedRecvChannel(_)) => {
+                            info!("Upstream disconnected, shutting down banking");
 
-                                    // NB: We must signal shutdown before dropping the scheduler
-                                    //     controller, else, the workers may exit with an error and
-                                    //     trigger a new spawn before we have a chance to issue the
-                                    //     cancel.
-                                    shutdown_signal.cancel();
-                                    drop(scheduler_controller);
-                                }
-                                Err(SchedulerError::DisconnectedSendChannel(_)) => {
-                                    warn!("Unexpected worker disconnect from scheduler")
-                                }
-                            }
-                        })
-                        .unwrap(),
-                );
-            };
-        }
-
-        // Spawn the central scheduler thread
-        if use_greedy_scheduler {
-            let scheduler = GreedyScheduler::new(
-                work_senders,
-                finished_work_receiver,
-                GreedySchedulerConfig::default(),
-            );
-            spawn_scheduler!(scheduler);
-        } else {
-            let scheduler = PrioGraphScheduler::new(
-                work_senders,
-                finished_work_receiver,
-                PrioGraphSchedulerConfig::default(),
-            );
-            spawn_scheduler!(scheduler);
-        }
+                            // NB: We must signal shutdown before dropping the scheduler
+                            //     controller, else, the workers may exit with an error and
+                            //     trigger a new spawn before we have a chance to issue the
+                            //     cancel.
+                            shutdown_signal.cancel();
+                            drop(scheduler_controller);
+                        }
+                        Err(SchedulerError::DisconnectedSendChannel(_)) => {
+                            warn!("Unexpected worker disconnect from scheduler")
+                        }
+                    }
+                })
+                .unwrap(),
+        );
 
         Ok(threads)
     }
@@ -911,7 +887,7 @@ mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new_num_threads(
-            BlockProductionMethod::CentralScheduler,
+            BlockProductionMethod::CentralSchedulerGreedy,
             poh_recorder,
             transaction_recorder,
             non_vote_receiver,
@@ -971,7 +947,7 @@ mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new_num_threads(
-            BlockProductionMethod::CentralScheduler,
+            BlockProductionMethod::CentralSchedulerGreedy,
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
@@ -1125,7 +1101,7 @@ mod tests {
                 entry_receiver,
             ) = create_test_recorder(bank.clone(), blockstore, None, None);
             let banking_stage = BankingStage::new_num_threads(
-                BlockProductionMethod::CentralScheduler,
+                BlockProductionMethod::CentralSchedulerGreedy,
                 poh_recorder,
                 transaction_recorder,
                 non_vote_receiver,
@@ -1278,7 +1254,7 @@ mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new_num_threads(
-            BlockProductionMethod::CentralScheduler,
+            BlockProductionMethod::CentralSchedulerGreedy,
             poh_recorder,
             transaction_recorder,
             non_vote_receiver,

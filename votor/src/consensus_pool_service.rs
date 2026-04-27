@@ -454,7 +454,8 @@ mod tests {
             vote::Vote,
         },
         solana_bls_signatures::{
-            keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
+            BLS_SIGNATURE_AFFINE_SIZE, keypair::Keypair as BLSKeypair,
+            signature::Signature as BLSSignature,
         },
         solana_gossip::cluster_info::ClusterInfo,
         solana_hash::Hash,
@@ -653,7 +654,7 @@ mod tests {
         let target_slot = 3;
         let skip_certificate = Certificate {
             cert_type: CertificateType::Skip(target_slot),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         };
         events.clear();
@@ -715,7 +716,7 @@ mod tests {
         for slot in 1..next_leader_slot.0 {
             let skip_certificate = Certificate {
                 cert_type: CertificateType::Skip(slot),
-                signature: BLSSignature::default(),
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: vec![],
             };
 
@@ -785,12 +786,12 @@ mod tests {
         let certificates = vec![
             Arc::new(Certificate {
                 cert_type: CertificateType::Skip(1),
-                signature: BLSSignature::default(),
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: vec![],
             }),
             Arc::new(Certificate {
                 cert_type: CertificateType::Skip(2),
-                signature: BLSSignature::default(),
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: vec![],
             }),
         ];
@@ -825,7 +826,7 @@ mod tests {
 
         let certificates = vec![Arc::new(Certificate {
             cert_type: CertificateType::Skip(1),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         })];
 
@@ -842,7 +843,7 @@ mod tests {
 
         let certificates = vec![Arc::new(Certificate {
             cert_type: CertificateType::Skip(1),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         })];
 
