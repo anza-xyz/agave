@@ -376,9 +376,10 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             .iter()
             .filter_map(|shred| {
                 let node = cluster_nodes.get_broadcast_peer(&shred.id())?;
-                let tvu = node
-                    .tvu(Protocol::UDP)
-                    .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))?;
+                let tvu = node.tvu(Protocol::UDP).filter(|addr| !addr.is_ipv6())?;
+                if !socket_addr_space.check(&tvu) {
+                    return None;
+                }
                 if self
                     .original_last_data_shreds
                     .lock()
@@ -417,9 +418,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                                     pubkey,
                                 );
                                 let tvu = cluster_info.lookup_contact_info(pubkey, |node| {
-                                    node.tvu(Protocol::UDP).filter(|addr| {
-                                        !addr.is_ipv6() && socket_addr_space.check(addr)
-                                    })
+                                    node.tvu(Protocol::UDP).filter(|addr| !addr.is_ipv6())
                                 })??;
                                 Some((shred.payload(), tvu))
                             })
