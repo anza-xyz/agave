@@ -2971,29 +2971,28 @@ pub mod rpc_minimal {
 
             debug!("get_leader_schedule rpc request received: {slot:?}");
 
-            if let Some(leader_schedule) = meta
-                .leader_schedule_cache
-                .get_epoch_leader_schedule(epoch)
-                .map(|leader_schedule| {
-                    let mut schedule_by_identity =
-                        solana_runtime::leader_schedule_utils::leader_schedule_by_identity(
-                            leader_schedule
-                                .get_slot_leaders()
-                                .map(|slot_leader| &slot_leader.id)
-                                .enumerate(),
-                        );
-                    if let Some(identity) = config.identity {
-                        schedule_by_identity.retain(|k, _| *k == identity);
-                    }
-                    schedule_by_identity
-                })
-            {
-                Ok(Some(leader_schedule))
+            let get_leader_schedule_result = if let Some(leader_schedule) = meta
+            .leader_schedule_cache
+            .get_epoch_leader_schedule(epoch)
+            .map(|leader_schedule| {
+                let mut schedule_by_identity =
+                    solana_runtime::leader_schedule_utils::leader_schedule_by_identity(
+                        leader_schedule
+                            .get_slot_leaders()
+                            .map(|slot_leader| &slot_leader.id)
+                            .enumerate(),
+                    );
+                if let Some(identity) = config.identity {
+                    schedule_by_identity.retain(|k, _| *k == identity);
+                }
+                schedule_by_identity
+            }) && !leader_schedule.is_empty() {
+                Some(leader_schedule)
             } else {
-                Err(Error::invalid_params(format!(
-                    "Unable to fetch leader schedule for slot: {slot}"
-                )))
-            }
+                None
+            };
+
+            Ok(get_leader_schedule_result)
         }
     }
 }
