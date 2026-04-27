@@ -497,17 +497,7 @@ fn record_and_complete_block(
     );
 
     drop(bank);
-
-    let dummy_footer = BlockFooterV1 {
-        bank_hash: Hash::default(),
-        block_producer_time_nanos: 0,
-        block_user_agent: format!("agave/{}", version!()).into_bytes(),
-        final_cert: None,
-        skip_reward_cert: None,
-        notar_reward_cert: None,
-    };
-    w_poh_recorder.tick_alpenglow(max_tick_height, dummy_footer);
-
+    w_poh_recorder.tick_alpenglow(max_tick_height, footer);
     Ok(())
 }
 
