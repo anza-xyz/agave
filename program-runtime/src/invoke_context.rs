@@ -15,7 +15,7 @@ use {
         loaded_programs::{
             ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
         },
-        memory_context::MemoryContexts,
+        memory_context::{MemoryContext, MemoryContexts},
         program_cache_entry::ProgramCacheEntryType,
         stable_log,
         sysvar_cache::SysvarCache,

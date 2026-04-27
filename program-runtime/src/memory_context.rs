@@ -1,6 +1,22 @@
 use {
-    crate::invoke_context::BpfAllocator, solana_instruction::error::InstructionError,
-    solana_sbpf::memory_region::MemoryMapping,
+    crate::invoke_context::BpfAllocator,
+    solana_instruction::error::InstructionError,
+    solana_sbpf::{
+        ebpf::MM_BYTECODE_START,
+        elf::Executable,
+        memory_region::{MemoryMapping, MemoryRegion, default_access_violation_handler},
+        program::SBPFVersion,
+        vm::{Config, ContextObject},
+    },
+    solana_transaction_context::{
+        MAX_ACCOUNTS_PER_TRANSACTION, MAX_INSTRUCTION_TRACE_LENGTH,
+        transaction::TransactionContext,
+        vm_addresses::{
+            ACCOUNT_METADATA_AREA, GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS,
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, GUEST_INSTRUCTION_DATA_BASE_ADDRESS,
+            INSTRUCTION_TRACE_AREA, RETURN_DATA_SCRATCHPAD, TRANSACTION_FRAME_ADDRESS,
+        },
+    },
 };
 
 const NUMBER_OF_REGIONS: usize = 392;
@@ -20,9 +36,9 @@ impl MemoryContexts {
     pub(crate) fn new() -> Self {
         Self {
             contexts: Vec::new(),
-            abiv2_mappings: Box::new(
-                MemoryMapping::new(Vec::new(), &Config::default(), SBPFVersion::Reserved).unwrap(),
-            ),
+            abiv2_mappings: Box::new(unsafe {
+                MemoryMapping::new(Vec::new(), &Config::default(), SBPFVersion::Reserved).unwrap()
+            }),
         }
     }
 
@@ -116,12 +132,14 @@ impl MemoryContexts {
         regions: Vec<MemoryRegion>,
         executable: &Executable<C>,
     ) {
-        *self.abiv2_mappings = MemoryMapping::new_uninitialized(
-            regions,
-            executable.get_config(),
-            executable.get_sbpf_version(),
-            Box::new(default_access_violation_handler),
-        );
+        *self.abiv2_mappings = unsafe {
+            MemoryMapping::new_uninitialized(
+                regions,
+                executable.get_config(),
+                executable.get_sbpf_version(),
+                Box::new(default_access_violation_handler),
+            )
+        };
     }
 }
 
@@ -166,9 +184,10 @@ pub(crate) fn create_abiv2_regions(transaction_context: &TransactionContext) -> 
     // Filled on a later stage
     // Index 0: ELF rodata
     // Index 1: ELF text area (not mapped)
+    static EMPTY: [u8; 0] = [];
     *v2_regions
         .get_mut((MM_BYTECODE_START >> 32) as usize)
-        .unwrap() = MemoryRegion::new_readonly(&[], MM_BYTECODE_START);
+        .unwrap() = MemoryRegion::new(&raw const EMPTY, MM_BYTECODE_START);
 
     // Index 2: heap
     // Index 3: stack
@@ -176,45 +195,28 @@ pub(crate) fn create_abiv2_regions(transaction_context: &TransactionContext) -> 
     // Index 4: Transaction frame area
     *v2_regions
         .get_mut((TRANSACTION_FRAME_ADDRESS >> 32) as usize)
-        .unwrap() = MemoryRegion::new_readonly_gapless_from_pointer(
+        .unwrap() = MemoryRegion::new(
         transaction_context.transaction_frame_address(),
         TRANSACTION_FRAME_ADDRESS,
-        size_of::<TransactionFrame>() as u64,
     );
 
     // Index 5: Accounts metadata area
-    let accounts_as_vm_slice = transaction_context.accounts().shared_fields_as_vm_slice();
+    let accounts_slice = transaction_context.accounts().shared_fields_as_raw_slice();
     *v2_regions
         .get_mut((ACCOUNT_METADATA_AREA >> 32) as usize)
-        .unwrap() = MemoryRegion::new_readonly_gapless_from_pointer(
-        accounts_as_vm_slice.ptr(),
-        ACCOUNT_METADATA_AREA,
-        accounts_as_vm_slice
-            .len()
-            .saturating_mul(size_of::<AccountSharedFields>() as u64),
-    );
+        .unwrap() = MemoryRegion::new(accounts_slice, ACCOUNT_METADATA_AREA);
 
     // Index 6: Instruction metadata area
-    let instruction_trace_as_vm_slice = transaction_context.instruction_trace_as_vm_slice();
+    let instruction_trace_slice = transaction_context.instruction_trace_as_raw_slice();
     *v2_regions
         .get_mut((INSTRUCTION_TRACE_AREA >> 32) as usize)
-        .unwrap() = MemoryRegion::new_readonly_gapless_from_pointer(
-        instruction_trace_as_vm_slice.ptr(),
-        INSTRUCTION_TRACE_AREA,
-        instruction_trace_as_vm_slice
-            .len()
-            .saturating_mul(size_of::<InstructionFrame>() as u64),
-    );
+        .unwrap() = MemoryRegion::new(instruction_trace_slice, INSTRUCTION_TRACE_AREA);
 
     // Index 7: Return data scratchpad area
-    let return_data_as_vm_slice = transaction_context.return_data_as_vm_slice();
+    let return_data_slice = transaction_context.return_data_as_raw_slice();
     *v2_regions
         .get_mut((RETURN_DATA_SCRATCHPAD >> 32) as usize)
-        .unwrap() = MemoryRegion::new_readonly_gapless_from_pointer(
-        return_data_as_vm_slice.ptr(),
-        RETURN_DATA_SCRATCHPAD,
-        return_data_as_vm_slice.len(),
-    );
+        .unwrap() = MemoryRegion::new(return_data_slice, RETURN_DATA_SCRATCHPAD);
 
     // Indexes 8..264: Transaction accounts payload
     {
