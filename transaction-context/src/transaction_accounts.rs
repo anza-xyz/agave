@@ -1,7 +1,6 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
-use solana_sbpf::memory_region::VmExposable;
-use {crate::vm_slice::VmSlice, solana_pubkey::Pubkey};
+use {crate::vm_slice::VmSlice, solana_pubkey::Pubkey, solana_sbpf::memory_region::VmExposable};
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 use {
     crate::{
