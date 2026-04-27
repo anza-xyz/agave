@@ -1321,6 +1321,8 @@ pub(crate) mod external {
                 pack_to_worker_capacity: 16,
                 worker_to_pack_capacity: 16,
                 flags: 0,
+                tpu_override_addr: [0; 4],
+                tpu_override_port: 0,
             };
             let (mut agave_session, files) = Server::setup_session(logon).unwrap();
             let mut client_session = client::setup_session(&logon, files).unwrap();

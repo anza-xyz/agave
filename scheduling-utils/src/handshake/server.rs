@@ -13,6 +13,7 @@ use {
         ffi::CStr,
         fs::File,
         io::{IoSlice, Read, Write},
+        net::SocketAddr,
         os::{
             fd::{AsRawFd, FromRawFd},
             unix::net::{UnixListener, UnixStream},
@@ -145,6 +146,17 @@ impl Server {
     pub fn setup_session(
         logon: ClientLogon,
     ) -> Result<(AgaveSession, Vec<File>), AgaveHandshakeError> {
+        // Validate the TPU override before allocating anything so failures are cheap. The
+        // accepted set must remain a subset of what `solana_gossip::contact_info::sanitize_socket`
+        // accepts, otherwise the validator will panic when applying the override.
+        let tpu_override = (logon.tpu_override_port != 0)
+            .then(|| SocketAddr::from((logon.tpu_override_addr, logon.tpu_override_port)));
+        if let Some(addr) = tpu_override {
+            if addr.ip().is_unspecified() || addr.ip().is_multicast() {
+                return Err(AgaveHandshakeError::InvalidTpuOverride(addr));
+            }
+        }
+
         // Setup the allocator in shared memory (`worker_count` & `allocator_handles` have been
         // validated so this won't panic).
         let (allocator_file, tpu_to_pack_allocator) = Self::create_allocator(&logon)?;
@@ -186,6 +198,7 @@ impl Server {
                 },
                 progress_tracker,
                 workers,
+                tpu_override,
             },
             [allocator_file, tpu_to_pack_file, progress_tracker_file]
                 .into_iter()

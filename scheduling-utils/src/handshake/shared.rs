@@ -3,6 +3,7 @@ use {
         PackToWorkerMessage, ProgressMessage, TpuToPackMessage, WorkerToPackMessage,
     },
     rts_alloc::Allocator,
+    std::net::SocketAddr,
     thiserror::Error,
 };
 
@@ -38,6 +39,10 @@ pub struct ClientLogon {
     pub worker_to_pack_capacity: usize,
     /// Flags that control the behavior of the new scheduling session.
     pub flags: u16,
+    /// IPv4 octets for the optional TPU address override; ignored when `tpu_override_port` is 0.
+    pub tpu_override_addr: [u8; 4],
+    /// Port for the TPU address override; 0 means no override is requested.
+    pub tpu_override_port: u16,
     // NB: If adding more fields please ensure:
     // - The fields are zeroable.
     // - If possible the fields are backwards compatible:
@@ -98,6 +103,8 @@ pub struct AgaveSession {
     pub tpu_to_pack: AgaveTpuToPackSession,
     pub progress_tracker: shaq::spsc::Producer<ProgressMessage>,
     pub workers: Vec<AgaveWorkerSession>,
+    /// TPU address override requested by the client, if any.
+    pub tpu_override: Option<SocketAddr>,
 }
 
 /// Shared memory objects for the tpu to pack worker.
@@ -136,4 +143,6 @@ pub enum AgaveHandshakeError {
     RtsAlloc(#[from] RtsAllocError),
     #[error("Shaq; err={0:?}")]
     Shaq(#[from] ShaqError),
+    #[error("Invalid TPU override; addr={0}")]
+    InvalidTpuOverride(SocketAddr),
 }

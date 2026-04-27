@@ -8,7 +8,7 @@ use {
         SharableTransactionRegion, TpuToPackMessage, TransactionResponseRegion,
         WorkerToPackMessage,
     },
-    std::time::Duration,
+    std::{net::SocketAddr, time::Duration},
     tempfile::NamedTempFile,
 };
 
@@ -60,6 +60,11 @@ fn message_passing_on_all_queues() {
 
     let server_handle = std::thread::spawn(move || {
         let mut session = server.accept().unwrap();
+
+        assert_eq!(
+            session.tpu_override,
+            Some(SocketAddr::from(([127, 0, 0, 1], 12345))),
+        );
 
         // Send a tpu_to_pack message.
         session.tpu_to_pack.producer.try_write(tpu_to_pack).unwrap();
@@ -116,6 +121,8 @@ fn message_passing_on_all_queues() {
                 pack_to_worker_capacity: 1024,
                 worker_to_pack_capacity: 1024,
                 flags: 0,
+                tpu_override_addr: [127, 0, 0, 1],
+                tpu_override_port: 12345,
             },
             Duration::from_secs(1),
         )
@@ -198,6 +205,8 @@ fn accept_worker_count_max() {
                 pack_to_worker_capacity: 1024,
                 worker_to_pack_capacity: 1024,
                 flags: 0,
+                tpu_override_addr: [0; 4],
+                tpu_override_port: 0,
             },
             Duration::from_secs(1),
         );
@@ -233,6 +242,8 @@ fn reject_worker_count_low() {
                 pack_to_worker_capacity: 1024,
                 worker_to_pack_capacity: 1024,
                 flags: 0,
+                tpu_override_addr: [0; 4],
+                tpu_override_port: 0,
             },
             Duration::from_secs(1),
         );
@@ -271,6 +282,8 @@ fn reject_worker_count_high() {
                 pack_to_worker_capacity: 1024,
                 worker_to_pack_capacity: 1024,
                 flags: 0,
+                tpu_override_addr: [0; 4],
+                tpu_override_port: 0,
             },
             Duration::from_secs(1),
         );
@@ -278,6 +291,46 @@ fn reject_worker_count_high() {
             panic!();
         };
         assert_eq!(reason, "Worker count; count=100");
+    });
+
+    client_handle.join().unwrap();
+    server_handle.join().unwrap();
+}
+
+#[test]
+fn reject_unspecified_tpu_override() {
+    let ipc = NamedTempFile::new().unwrap();
+    std::fs::remove_file(ipc.path()).unwrap();
+    let mut server = Server::new(ipc.path()).unwrap();
+
+    let server_handle = std::thread::spawn(move || {
+        let res = server.accept();
+        let Err(AgaveHandshakeError::InvalidTpuOverride(addr)) = res else {
+            panic!();
+        };
+        assert_eq!(addr, SocketAddr::from(([0, 0, 0, 0], 12345)));
+    });
+    let client_handle = std::thread::spawn(move || {
+        let res = connect(
+            ipc,
+            ClientLogon {
+                worker_count: 1,
+                allocator_size: 1024 * 1024 * 1024,
+                allocator_handles: 1,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
+                flags: 0,
+                tpu_override_addr: [0; 4],
+                tpu_override_port: 12345,
+            },
+            Duration::from_secs(1),
+        );
+        let Err(ClientHandshakeError::Rejected(reason)) = res else {
+            panic!();
+        };
+        assert_eq!(reason, "Invalid TPU override; addr=0.0.0.0:12345");
     });
 
     client_handle.join().unwrap();

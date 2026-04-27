@@ -67,6 +67,8 @@ where
             pack_to_worker_capacity: worker_req_cap,
             worker_to_pack_capacity: 1024,
             flags: 0,
+            tpu_override_addr: [0; 4],
+            tpu_override_port: 0,
         };
 
         let (agave, files) = Server::setup_session(logon).unwrap();

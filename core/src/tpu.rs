@@ -306,7 +306,11 @@ impl Tpu {
 
         #[cfg(unix)]
         if let Some((path, banking_control_sender)) = scheduler_bindings {
-            super::scheduler_bindings_server::spawn(&path, banking_control_sender);
+            super::scheduler_bindings_server::spawn(
+                &path,
+                banking_control_sender,
+                cluster_info.clone(),
+            );
         }
         #[cfg(not(unix))]
         assert!(scheduler_bindings.is_none());
