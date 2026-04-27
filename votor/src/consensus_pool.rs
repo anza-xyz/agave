@@ -686,7 +686,7 @@ mod tests {
         agave_votor_messages::consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
         bitvec::vec::BitVec,
         solana_bls_signatures::{
-            Pubkey as BLSPubkey, Signature as BLSSignature, VerifiableSignature,
+            BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature, VerifiableSignature,
             keypair::Keypair as BLSKeypair,
         },
         solana_clock::Slot,
@@ -1068,7 +1068,7 @@ mod tests {
         if vote.is_finalize() {
             let notarize_cert = Certificate {
                 cert_type: CertificateType::Notarize(vote.slot(), Hash::default()),
-                signature: BLSSignature::default(),
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: dummy_bitmap(),
             };
             ctx.add_message(ConsensusMessage::Certificate(notarize_cert));
@@ -1137,7 +1137,7 @@ mod tests {
 
         let cert = Certificate {
             cert_type,
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
 
@@ -1146,7 +1146,7 @@ mod tests {
         if matches!(cert_type, CertificateType::Finalize(slot) if slot == 5) {
             let notarize_cert = Certificate {
                 cert_type: CertificateType::Notarize(5, Hash::default()),
-                signature: BLSSignature::default(),
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: dummy_bitmap(),
             };
             ctx.add_message(ConsensusMessage::Certificate(notarize_cert));
@@ -1213,7 +1213,7 @@ mod tests {
                 ConsensusMessage::Vote(VoteMessage {
                     vote: Vote::new_skip_vote(5),
                     rank: 100,
-                    signature: BLSSignature::default(),
+                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 }),
                 &mut vec![]
             ),
@@ -1740,7 +1740,7 @@ mod tests {
         // Add a skip cert on slot 1 and finalize cert on slot 2
         let cert_1 = Certificate {
             cert_type: CertificateType::Skip(1),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.pool
@@ -1753,7 +1753,7 @@ mod tests {
             .unwrap();
         let cert_2 = Certificate {
             cert_type: CertificateType::FinalizeFast(2, Hash::new_unique()),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.pool
@@ -1794,7 +1794,7 @@ mod tests {
         let cert_type = CertificateType::Notarize(2, Hash::new_unique());
         let cert = ConsensusMessage::Certificate(Certificate {
             cert_type,
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         });
         assert!(
@@ -1814,13 +1814,13 @@ mod tests {
         // Add notar-fallback cert on 3 and finalize cert on 4
         let cert_3 = Certificate {
             cert_type: CertificateType::NotarizeFallback(3, Hash::new_unique()),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_3));
         let cert_4 = Certificate {
             cert_type: CertificateType::Finalize(4),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_4));
@@ -1835,7 +1835,7 @@ mod tests {
         // Add Notarize cert on 5
         let cert_5 = Certificate {
             cert_type: CertificateType::Notarize(5, Hash::new_unique()),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_5));
@@ -1843,7 +1843,7 @@ mod tests {
         // Add Finalize cert on 5
         let cert_5_finalize = Certificate {
             cert_type: CertificateType::Finalize(5),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_5_finalize));
@@ -1851,7 +1851,7 @@ mod tests {
         // Add FinalizeFast cert on 5
         let cert_5 = Certificate {
             cert_type: CertificateType::FinalizeFast(5, Hash::new_unique()),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_5));
@@ -1866,7 +1866,7 @@ mod tests {
         // Now add Notarize cert on 6
         let cert_6 = Certificate {
             cert_type: CertificateType::Notarize(6, Hash::new_unique()),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_6));
@@ -1881,14 +1881,14 @@ mod tests {
         // Add another Finalize cert on 6
         let cert_6_finalize = Certificate {
             cert_type: CertificateType::Finalize(6),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_6_finalize));
         // Add a NotarizeFallback cert on 6
         let cert_6_notarize_fallback = Certificate {
             cert_type: CertificateType::NotarizeFallback(6, Hash::new_unique()),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_6_notarize_fallback));
@@ -1904,7 +1904,7 @@ mod tests {
         // Add another skip on 7
         let cert_7 = Certificate {
             cert_type: CertificateType::Skip(7),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_7));
@@ -1923,13 +1923,13 @@ mod tests {
         // Add Finalize then Notarize cert on 8
         let cert_8_finalize = Certificate {
             cert_type: CertificateType::Finalize(8),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_8_finalize));
         let cert_8_notarize = Certificate {
             cert_type: CertificateType::Notarize(8, Hash::new_unique()),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_8_notarize));
@@ -1954,7 +1954,7 @@ mod tests {
         for slot in 1..=3 {
             let cert = Certificate {
                 cert_type: CertificateType::Notarize(slot, hash),
-                signature: BLSSignature::default(),
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: dummy_bitmap(),
             };
             ctx.pool
@@ -1982,7 +1982,7 @@ mod tests {
         for slot in 4..=7 {
             let cert = Certificate {
                 cert_type: CertificateType::FinalizeFast(slot, hash),
-                signature: BLSSignature::default(),
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: dummy_bitmap(),
             };
             ctx.pool
@@ -2010,14 +2010,14 @@ mod tests {
         for slot in 8..=10 {
             let cert = Certificate {
                 cert_type: CertificateType::NotarizeFallback(slot, hash),
-                signature: BLSSignature::default(),
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: dummy_bitmap(),
             };
             ctx.add_message(ConsensusMessage::Certificate(cert));
         }
         let cert = Certificate {
             cert_type: CertificateType::FinalizeFast(11, hash),
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.pool
@@ -2056,12 +2056,11 @@ mod tests {
         let bls_keypair =
             BLSKeypair::derive_from_signer(validator_vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
                 .unwrap();
-        let bls_pubkey: BLSPubkey = bls_keypair.public.into();
 
         let signed_message = bincode::serialize(&vote).unwrap();
         vote_message
             .signature
-            .verify(&bls_pubkey, &signed_message)
+            .verify(&bls_keypair.public, &signed_message)
             .expect("vote message signature should verify");
     }
 
@@ -2073,7 +2072,7 @@ mod tests {
         let cert_type = CertificateType::NotarizeFallback(slot, hash);
         let cert = Certificate {
             cert_type,
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert));

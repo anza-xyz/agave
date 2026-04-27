@@ -538,7 +538,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
         ("bls_pubkey", matches) => {
             let keypair = get_keypair_from_matches(matches, config, &mut wallet_manager)?;
             let bls_keypair = BLSKeypair::derive_from_signer(&keypair, BLS_KEYPAIR_DERIVE_SEED)?;
-            let bls_pubkey: BLSPubkey = bls_keypair.public.into();
+            let bls_pubkey: BLSPubkey = bls_keypair.public.into_inner().into();
 
             if matches.try_contains_id("outfile")? {
                 let outfile = matches.get_one::<String>("outfile").unwrap();
@@ -1292,7 +1292,7 @@ mod tests {
     fn test_read_write_bls_pubkey() -> Result<(), std::boxed::Box<dyn std::error::Error>> {
         let filename = "test_bls_pubkey.json";
         let bls_keypair = BLSKeypair::new();
-        let bls_pubkey: BLSPubkey = bls_keypair.public.into();
+        let bls_pubkey: BLSPubkey = bls_keypair.public.into_inner().into();
         write_bls_pubkey_file(filename, bls_pubkey)?;
         let read = read_bls_pubkey_file(filename)?;
         assert_eq!(read, bls_pubkey);
@@ -1323,7 +1323,7 @@ mod tests {
         let bls_keypair =
             BLSKeypair::derive_from_signer(&my_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
         let read_bls_pubkey = read_bls_pubkey_file(&outfile_path).unwrap();
-        assert_eq!(read_bls_pubkey, bls_keypair.public.into());
+        assert_eq!(read_bls_pubkey, bls_keypair.public.into_inner().into());
     }
 
     #[test]

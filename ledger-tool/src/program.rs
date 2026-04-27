@@ -541,7 +541,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
 
     invoke_context
         .memory_contexts
-        .set_memory_context(MemoryContext::new(
+        .set_memory_context_abi_v1(MemoryContext::new(
             BpfAllocator::new(heap_size as u64),
             account_lengths,
             memory_mapping,

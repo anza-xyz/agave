@@ -132,7 +132,7 @@ mod test {
     use {
         super::*,
         agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
-        solana_bls_signatures::Signature as BLSSignature,
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
     };
 
     #[test]
@@ -141,7 +141,7 @@ mod test {
         let vote = Vote::new_skip_vote(5);
         let vote_message = VoteMessage {
             vote,
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             rank: 1,
         };
         let my_pubkey = Pubkey::new_unique();
@@ -167,7 +167,7 @@ mod test {
         let vote = Vote::new_notarization_vote(3, block_id);
         let vote = VoteMessage {
             vote,
-            signature: BLSSignature::default(),
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             rank: 1,
         };
         assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote), Some(10));
@@ -196,7 +196,7 @@ mod test {
                 let vote = Vote::new_notarization_fallback_vote(7, Hash::new_unique());
                 VoteMessage {
                     vote,
-                    signature: BLSSignature::default(),
+                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                     rank: 1,
                 }
             })

@@ -1369,7 +1369,7 @@ mod tests {
 
         let generate_bls_pubkey = || {
             if add_bls_pubkey {
-                let bls_pubkey: BLSPubkey = BLSKeypair::new().public.into();
+                let bls_pubkey: BLSPubkey = BLSKeypair::new().public.into_inner().into();
                 if use_compressed_pubkey {
                     let bls_pubkey_compressed: BLSPubkeyCompressed = bls_pubkey.try_into().unwrap();
                     Some(bls_pubkey_compressed.to_string())

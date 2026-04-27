@@ -7,7 +7,7 @@ use {
         de::{SeqAccess, Visitor},
     },
     solana_bls_signatures::pubkey::{
-        PubkeyAffine as BLSPubkeyAffine, PubkeyCompressed as BLSPubkeyCompressed,
+        PopVerified, PubkeyAffine as BLSPubkeyAffine, PubkeyCompressed as BLSPubkeyCompressed,
     },
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
@@ -34,7 +34,7 @@ pub struct BLSPubkeyStakeEntry {
     /// The identity of the validator specified in the vote account
     pub node_pubkey: Pubkey,
     /// The bls pubkey of the validator specified in the vote account
-    pub bls_pubkey: BLSPubkeyAffine,
+    pub bls_pubkey: PopVerified<BLSPubkeyAffine>,
     /// The stake of the validator
     pub stake: u64,
 }
@@ -66,11 +66,14 @@ impl solana_frozen_abi::abi_example::AbiExample for BLSPubkeyToRankMap {
 
 pub(crate) fn bls_pubkey_compressed_bytes_to_bls_pubkey(
     bls_pubkey_compressed_bytes: [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-) -> Option<(BLSPubkeyCompressed, BLSPubkeyAffine)> {
+) -> Option<(BLSPubkeyCompressed, PopVerified<BLSPubkeyAffine>)> {
     let bls_pubkey_compressed: BLSPubkeyCompressed =
         bincode::deserialize(&bls_pubkey_compressed_bytes).ok()?;
     let bls_pubkey_affine = BLSPubkeyAffine::try_from(bls_pubkey_compressed).ok()?;
-    Some((bls_pubkey_compressed, bls_pubkey_affine))
+    // It is safe to use `new_unchecked` here because data coming from the vote
+    // state has already had its PoP verified.
+    let bls_pubkey_pop_verified = unsafe { PopVerified::new_unchecked(bls_pubkey_affine) };
+    Some((bls_pubkey_compressed, bls_pubkey_pop_verified))
 }
 
 impl BLSPubkeyToRankMap {
@@ -136,7 +139,7 @@ impl BLSPubkeyToRankMap {
         self.rank_map.len()
     }
 
-    pub fn get_rank(&self, bls_pubkey: &BLSPubkeyAffine) -> Option<&u16> {
+    pub fn get_rank(&self, bls_pubkey: &PopVerified<BLSPubkeyAffine>) -> Option<&u16> {
         let bls_pubkey_compressed = BLSPubkeyCompressed(bls_pubkey.to_bytes_compressed());
         self.rank_map.get(&bls_pubkey_compressed)
     }
@@ -498,7 +501,7 @@ pub(crate) mod tests {
                     iter::repeat_with(|| {
                         let authorized_voter = solana_pubkey::new_rand();
                         let bls_pubkey_compressed: BLSPubkeyCompressed =
-                            BLSKeypair::new().public.into();
+                            (*BLSKeypair::new().public).into();
                         let bls_pubkey_compressed_serialized =
                             bincode::serialize(&bls_pubkey_compressed)
                                 .unwrap()

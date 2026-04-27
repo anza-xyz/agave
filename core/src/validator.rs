@@ -2840,7 +2840,7 @@ fn cleanup_accounts_paths(config: &ValidatorConfig) {
 
 fn validate_account_paths(config: &ValidatorConfig) -> std::io::Result<()> {
     validate_account_paths_for_direct_io(
-        &config.accounts_db_config,
+        config.snapshot_config.use_direct_io,
         &config.account_paths,
         &config.account_snapshot_paths,
     )

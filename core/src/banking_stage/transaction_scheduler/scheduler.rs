@@ -1,7 +1,7 @@
 use {
     super::{
         scheduler_common::SchedulingCommon, scheduler_error::SchedulerError,
-        transaction_state::TransactionState, transaction_state_container::StateContainer,
+        transaction_state_container::StateContainer,
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     std::num::Saturating,
@@ -15,8 +15,6 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
         &mut self,
         container: &mut S,
         budget: u64,
-        pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
-        pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError>;
 
     /// Receive completed batches of transactions without blocking.
@@ -46,13 +44,6 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
     /// implementation.
     fn scheduling_common_mut(&mut self) -> &mut SchedulingCommon<Tx>;
 }
-
-/// Action to be taken by pre-lock filter.
-pub(crate) enum PreLockFilterAction {
-    /// Attempt to schedule the transaction.
-    AttemptToSchedule,
-}
-
 /// Metrics from scheduling transactions.
 #[derive(Default, Debug, PartialEq, Eq)]
 pub(crate) struct SchedulingSummary {
@@ -67,8 +58,4 @@ pub(crate) struct SchedulingSummary {
     pub num_unschedulable_conflicts: usize,
     /// Number of transactions that were skipped due to thread capacity.
     pub num_unschedulable_threads: usize,
-    /// Number of transactions that were dropped due to filter.
-    pub num_filtered_out: usize,
-    /// Time spent filtering transactions
-    pub filter_time_us: u64,
 }

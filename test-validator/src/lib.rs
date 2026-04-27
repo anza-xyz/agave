@@ -1087,8 +1087,6 @@ impl TestValidator {
             index: Some(AccountsIndexConfig::default()),
             account_indexes: Some(config.rpc_config.account_indexes.clone()),
             scan_filter_for_shrinking: ScanFilter::All,
-            use_registered_io_uring_buffers: false,
-            snapshots_use_direct_io: false,
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
 
@@ -1135,6 +1133,8 @@ impl TestValidator {
                 bank_snapshots_dir: ledger_path.join(BANK_SNAPSHOTS_DIR),
                 full_snapshot_archives_dir: ledger_path.to_path_buf(),
                 incremental_snapshot_archives_dir: ledger_path.to_path_buf(),
+                use_registered_io_uring_buffers: false,
+                use_direct_io: false,
                 ..SnapshotConfig::default()
             },
             warp_slot: config.warp_slot,
