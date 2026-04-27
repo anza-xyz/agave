@@ -173,9 +173,9 @@ fn start_loop(config: BlockCreationLoopConfig) {
         leader_window_info_receiver,
         replay_highest_frozen,
         highest_parent_ready,
+        highest_finalized,
         build_reward_certs_sender,
         reward_certs_receiver,
-        highest_finalized,
     } = config;
 
     // Similar to Votor, if this loop dies kill the validator
@@ -543,7 +543,6 @@ fn record_and_complete_block(
 
     drop(bank);
     w_poh_recorder.tick_alpenglow(max_tick_height, footer);
-
     Ok(())
 }
 

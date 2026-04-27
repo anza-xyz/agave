@@ -8651,6 +8651,7 @@ dependencies = [
  "solana-perf",
  "solana-poh-config",
  "solana-precompile-error",
+ "solana-program-binaries",
  "solana-program-runtime",
  "solana-pubkey 4.2.0",
  "solana-rayon-threadlimit",

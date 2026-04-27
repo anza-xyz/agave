@@ -590,7 +590,7 @@ impl PohRecorder {
     /// - Err(Some(e)): Send failed (caller should update send_result and break)
     fn wait_for_freeze_and_send_footer(
         &self,
-        footer: &BlockFooterV1,
+        mut footer: BlockFooterV1,
         working_bank: &WorkingBank,
     ) -> std::result::Result<(), Option<Box<SendError<WorkingBankEntryOrMarker>>>> {
         // Wake replay as soon as the slot reaches max tick height so it can freeze the bank
@@ -620,29 +620,26 @@ impl PohRecorder {
         }
 
         // Send out the block footer - we now have the bank hash
-        let mut footer = footer.clone();
         footer.bank_hash = working_bank.bank.hash();
-
         let footer = VersionedBlockMarker::new_block_footer(footer);
-
         let footer_entry_marker = (
             EntryOrMarker::Marker(footer),
             working_bank.max_tick_height - 1,
         );
 
-        let send_result = self
+        match self
             .working_bank_sender
-            .send((working_bank.bank.clone(), footer_entry_marker));
-
-        if let Some(err) = send_result.err() {
-            error!(
-                "slot = {} block production failure. failed to broadcast footer",
-                working_bank.bank.slot()
-            );
-            return Err(Some(Box::new(err)));
+            .send((working_bank.bank.clone(), footer_entry_marker))
+        {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                error!(
+                    "slot = {} block production failure. failed to broadcast footer",
+                    working_bank.bank.slot()
+                );
+                Err(Some(Box::new(err)))
+            }
         }
-
-        Ok(())
     }
 
     // Flush cache will delay flushing the cache for a bank until it past the WorkingBank::min_tick_height
@@ -668,8 +665,7 @@ impl PohRecorder {
             .iter()
             .take_while(|x| x.1 <= working_bank.max_tick_height)
             .count();
-        let mut send_result: std::result::Result<(), Box<SendError<WorkingBankEntryOrMarker>>> =
-            Ok(());
+        let mut send_result = Ok(());
 
         if entry_count > 0 {
             trace!(
@@ -683,7 +679,7 @@ impl PohRecorder {
             for (entry, tick_height) in &self.tick_cache[..entry_count] {
                 working_bank.bank.register_tick(&entry.hash);
 
-                if let Some(footer) = footer.as_ref() {
+                if let Some(footer) = footer.clone() {
                     match self.wait_for_freeze_and_send_footer(footer, working_bank) {
                         Ok(()) => {}        // Continue processing
                         Err(None) => break, // Timeout - break without updating send_result

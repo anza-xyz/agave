@@ -127,7 +127,6 @@ use {
         snapshot_bank_utils,
         snapshot_controller::SnapshotController,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
-        validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
@@ -1449,14 +1448,12 @@ impl Validator {
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let highest_parent_ready = Arc::new(RwLock::default());
         let (optimistic_parent_sender, _optimistic_parent_receiver) = unbounded();
+        // Shared state for highest finalized certificates (updated by Votor, read by block creation loop)
+        let highest_finalized = Arc::new(RwLock::new(None));
         // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsRequest`] to 1 message.
         let (build_reward_certs_sender, build_reward_certs_receiver) = bounded(1);
         // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsResponse`] to 1 message.
         let (reward_certs_sender, reward_certs_receiver) = bounded(1);
-
-        // Shared state for highest finalized certificates (updated by Votor, read by block creation loop)
-        let highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>> =
-            Arc::new(RwLock::new(None));
 
         let block_creation_loop_config = BlockCreationLoopConfig {
             exit: exit.clone(),
@@ -1472,9 +1469,9 @@ impl Validator {
             leader_window_info_receiver: leader_window_info_receiver.clone(),
             replay_highest_frozen: replay_highest_frozen.clone(),
             highest_parent_ready: highest_parent_ready.clone(),
+            highest_finalized: highest_finalized.clone(),
             build_reward_certs_sender,
             reward_certs_receiver,
-            highest_finalized: highest_finalized.clone(),
         };
         let block_creation_loop = BlockCreationLoop::new(block_creation_loop_config);
 
