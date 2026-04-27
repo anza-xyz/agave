@@ -192,7 +192,8 @@ use {
         path::PathBuf,
         slice,
         sync::{
-            Arc, LazyLock, LockResult, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak,
+            Arc, LazyLock, LockResult, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard,
+            Weak,
             atomic::{
                 AtomicBool, AtomicI64, AtomicU64,
                 Ordering::{AcqRel, Acquire, Relaxed},
@@ -1184,6 +1185,9 @@ impl Bank {
             FeatureSet,
         >,
     ) -> Self {
+        // Initialize the rewards thread pool while creating the first bank so
+        // the first epoch boundary crossing does not pay the cost.
+        let _rewards_calculation_thread_pool = rewards_calculation_thread_pool();
         let accounts_db =
             AccountsDb::new_with_config(paths, accounts_db_config, accounts_update_notifier, exit);
         let accounts = Accounts::new(Arc::new(accounts_db));
@@ -1734,12 +1738,7 @@ impl Bank {
     ) {
         let epoch = self.epoch();
         let slot = self.slot();
-        let (thread_pool, thread_pool_time_us) = measure_us!(
-            ThreadPoolBuilder::new()
-                .thread_name(|i| format!("solBnkNewEpch{i:02}"))
-                .build()
-                .expect("new rayon threadpool")
-        );
+        let thread_pool = rewards_calculation_thread_pool();
 
         let (_, apply_feature_activations_time_us) = measure_us!(
             thread_pool.install(|| { self.compute_and_apply_new_feature_activations() })
@@ -1753,7 +1752,7 @@ impl Bank {
             calculate_activated_stake_time_us,
             update_rewards_with_thread_pool_time_us,
         } = self.compute_new_epoch_caches_and_rewards(
-            &thread_pool,
+            thread_pool,
             parent_epoch,
             reward_calc_tracer,
             &mut rewards_metrics,
@@ -1776,7 +1775,7 @@ impl Bank {
                 parent_height,
                 &rewards_calculation,
                 &mut rewards_metrics,
-                &thread_pool,
+                thread_pool,
             ));
 
         // the vote reward account state should be created at the epoch boundary in which we
@@ -1795,7 +1794,6 @@ impl Bank {
             slot,
             parent_slot,
             NewEpochTimings {
-                thread_pool_time_us,
                 apply_feature_activations_time_us,
                 calculate_activated_stake_time_us,
                 update_epoch_stakes_time_us,
@@ -1873,6 +1871,9 @@ impl Bank {
         let slot = fields.slot;
         let epoch = fields.epoch_schedule.get_epoch(slot);
         let ancestors = Ancestors::from(vec![slot]);
+        // Initialize the rewards thread pool while creating the first bank so
+        // the first epoch boundary crossing does not pay the cost.
+        let _rewards_calculation_thread_pool = rewards_calculation_thread_pool();
         // For backward compatibility, we can only serialize and deserialize
         // Stakes<Delegation> in BankFieldsTo{Serialize,Deserialize}. But Bank
         // caches Stakes<StakeAccount>. Below Stakes<StakeAccount> is obtained
@@ -6423,6 +6424,25 @@ impl Bank {
                 minimized_account_set.insert(*pubkey);
             });
     }
+}
+
+/// Returns a thread pool intended to be used for reward calculation. This
+/// includes both crossing an epoch boundary and loading banks from snapshots.
+///
+/// # Performance
+///
+/// Initializing the thread pool takes 10ms. The first call to this function
+/// initializes the thread pool, and subsequent calls re-use it. Make sure this
+/// function is not called for the first time on a hot path, especially at an
+/// epoch boundary.
+pub(crate) fn rewards_calculation_thread_pool() -> &'static ThreadPool {
+    static NEW_EPOCH_THREAD_POOL: OnceLock<ThreadPool> = OnceLock::new();
+    NEW_EPOCH_THREAD_POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .thread_name(|i| format!("solBnkClcRwds{i:02}"))
+            .build()
+            .expect("new epoch boundary rayon threadpool")
+    })
 }
 
 /// Compute how much an account has changed size.  This function is useful when the data size delta
