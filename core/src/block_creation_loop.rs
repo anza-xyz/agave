@@ -10,7 +10,8 @@ use {
         replay_stage::{Finalizer, ReplayStage},
     },
     agave_votor::event::LeaderWindowInfo,
-    crossbeam_channel::Receiver,
+    agave_votor_messages::reward_certificate::{BuildRewardCertsRequest, BuildRewardCertsResponse},
+    crossbeam_channel::{Receiver, Sender},
     solana_clock::Slot,
     solana_entry::block_component::{
         BlockFooterV1, BlockMarkerV1, GenesisCertificate, VersionedBlockMarker,
@@ -93,6 +94,11 @@ pub struct BlockCreationLoopConfig {
 
     // Channel to receive RecordReceiver from PohService
     pub record_receiver_receiver: Receiver<RecordReceiver>,
+
+    /// Channel to send the request to build reward certs.
+    pub build_reward_certs_sender: Sender<BuildRewardCertsRequest>,
+    /// Channel to receive the built reward certs.
+    pub reward_certs_receiver: Receiver<BuildRewardCertsResponse>,
 }
 
 struct LeaderContext {
@@ -111,6 +117,10 @@ struct LeaderContext {
     slot_status_notifier: Option<SlotStatusNotifier>,
     banking_tracer: Arc<BankingTracer>,
     replay_highest_frozen: Arc<ReplayHighestFrozen>,
+    #[allow(dead_code)]
+    build_reward_certs_sender: Sender<BuildRewardCertsRequest>,
+    #[allow(dead_code)]
+    reward_certs_receiver: Receiver<BuildRewardCertsResponse>,
 
     // Metrics
     metrics: LoopMetrics,
@@ -165,6 +175,8 @@ fn start_loop(config: BlockCreationLoopConfig) {
         replay_highest_frozen,
         record_receiver_receiver,
         highest_finalized,
+        build_reward_certs_sender,
+        reward_certs_receiver,
     } = config;
 
     // Similar to Votor, if this loop dies kill the validator
@@ -208,6 +220,8 @@ fn start_loop(config: BlockCreationLoopConfig) {
         slot_status_notifier,
         banking_tracer,
         replay_highest_frozen,
+        build_reward_certs_sender,
+        reward_certs_receiver,
         metrics: LoopMetrics::default(),
         slot_metrics: SlotMetrics::default(),
         highest_finalized,

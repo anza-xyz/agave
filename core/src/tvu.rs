@@ -111,12 +111,6 @@ pub struct Tvu {
     bls_sigverify_threads: Option<(JoinHandle<()>, JoinHandle<()>)>,
     votor: Votor,
     commitment_service: AggregateCommitmentService,
-
-    // TODO: these will be used when the block component processor is upstreamed
-    #[allow(dead_code)]
-    reward_certs_receiver: Receiver<BuildRewardCertsResponse>,
-    #[allow(dead_code)]
-    build_reward_certs_sender: Sender<BuildRewardCertsRequest>,
 }
 
 pub struct TvuSockets {
@@ -179,6 +173,10 @@ pub struct AlpenglowInitializationState {
     // For BLS voting service
     pub bls_connection_cache: Arc<ConnectionCache>,
     pub voting_service_test_override: Option<VotingServiceOverride>,
+
+    // For rewards
+    pub reward_certs_sender: Sender<BuildRewardCertsResponse>,
+    pub build_reward_certs_receiver: Receiver<BuildRewardCertsRequest>,
 }
 
 impl Tvu {
@@ -255,6 +253,8 @@ impl Tvu {
             bls_connection_cache,
             voting_service_test_override,
             highest_finalized,
+            build_reward_certs_receiver,
+            reward_certs_sender,
         } = votor_init;
 
         // streamer and sigverify for A2A BLS messages
@@ -456,11 +456,6 @@ impl Tvu {
                 rpc_subscriptions.clone(),
             );
 
-        // TODO: when the block component processor is upstreamed,
-        // it will use the unused channels below.
-        let (reward_certs_sender, reward_certs_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
-        let (build_reward_certs_sender, build_reward_certs_receiver) =
-            bounded(MAX_ALPENGLOW_PACKET_NUM);
         let votor_config = VotorConfig {
             exit: exit.clone(),
             vote_account: *vote_account,
@@ -620,13 +615,6 @@ impl Tvu {
             bls_sigverify_threads,
             votor,
             commitment_service,
-            // TODO: these two channels are here temporarily and will be removed when the block
-            // component processor is upstreamed from the Alpenglow repo which will consume them.
-            // We need some place to store them temporarily so that they are not dropped.
-            // Dropping them causes interacting with the other ends in the BlsSigverifier to fail
-            // which causes the sigverifier to exit which resulting in various tests to fail.
-            reward_certs_receiver,
-            build_reward_certs_sender,
         })
     }
 
@@ -795,6 +783,8 @@ pub mod tests {
                 thread::sleep(Duration::from_secs(1));
             }
         });
+        let (reward_certs_sender, _reward_certs_receiver) = bounded(1);
+        let (_build_reward_certs_sender, build_reward_certs_receiver) = bounded(1);
 
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
@@ -862,6 +852,8 @@ pub mod tests {
                 bls_connection_cache: Arc::new(bls_connection_cache),
                 voting_service_test_override: None,
                 highest_finalized: Arc::new(RwLock::new(None)),
+                build_reward_certs_receiver,
+                reward_certs_sender,
             },
         )
         .expect("assume success");
