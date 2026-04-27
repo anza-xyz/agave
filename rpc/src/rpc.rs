@@ -2971,28 +2971,23 @@ pub mod rpc_minimal {
 
             debug!("get_leader_schedule rpc request received: {slot:?}");
 
-            let get_leader_schedule_result = if let Some(leader_schedule) = meta
-            .leader_schedule_cache
-            .get_epoch_leader_schedule(epoch)
-            .map(|leader_schedule| {
-                let mut schedule_by_identity =
-                    solana_runtime::leader_schedule_utils::leader_schedule_by_identity(
-                        leader_schedule
-                            .get_slot_leaders()
-                            .map(|slot_leader| &slot_leader.id)
-                            .enumerate(),
-                    );
-                if let Some(identity) = config.identity {
-                    schedule_by_identity.retain(|k, _| *k == identity);
-                }
-                schedule_by_identity
-            }) && !leader_schedule.is_empty() {
-                Some(leader_schedule)
-            } else {
-                None
-            };
-
-            Ok(get_leader_schedule_result)
+            Ok(meta
+                .leader_schedule_cache
+                .get_epoch_leader_schedule(epoch)
+                .map(|leader_schedule| {
+                    let mut schedule_by_identity =
+                        solana_runtime::leader_schedule_utils::leader_schedule_by_identity(
+                            leader_schedule
+                                .get_slot_leaders()
+                                .map(|slot_leader| &slot_leader.id)
+                                .enumerate(),
+                        );
+                    if let Some(identity) = config.identity {
+                        schedule_by_identity.retain(|k, _| *k == identity);
+                    }
+                    schedule_by_identity
+                })
+                .filter(|schedule_by_identity| !schedule_by_identity.is_empty()))
         }
     }
 }
@@ -5557,7 +5552,7 @@ pub mod tests {
         );
         let result: Option<RpcLeaderSchedule> =
             parse_success_result(rpc.handle_request_sync(request));
-        let expected = Some(HashMap::default());
+        let expected = None;
         assert_eq!(result, expected);
     }
 
