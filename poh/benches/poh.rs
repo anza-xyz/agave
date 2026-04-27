@@ -1,9 +1,7 @@
-// This bench attempts to justify the value of `solana_core::poh_service::NUM_HASHES_PER_BATCH`
-
-#![feature(test)]
-extern crate test;
+// This bench attempts to justify the value of `solana_poh::poh_service::DEFAULT_HASHES_PER_BATCH`.
 
 use {
+    bencher::{Bencher, benchmark_group, benchmark_main},
     solana_entry::poh::Poh,
     solana_hash::Hash,
     solana_ledger::{
@@ -18,11 +16,13 @@ use {
     solana_runtime::bank::Bank,
     solana_sha256_hasher::hash,
     solana_transaction::sanitized::SanitizedTransaction,
-    std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+    std::{
+        hint::black_box,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        },
     },
-    test::Bencher,
 };
 
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
@@ -31,35 +31,32 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 const NUM_HASHES: u64 = 30_000; // Should require ~10ms on a 2017 MacBook Pro
 
-#[bench]
 // No locking.  Fastest.
-fn bench_poh_hash(bencher: &mut Bencher) {
+fn bench_poh_hash(b: &mut Bencher) {
     let mut poh = Poh::new(Hash::default(), None);
-    bencher.iter(|| {
+    b.iter(|| {
         poh.hash(NUM_HASHES);
     })
 }
 
-#[bench]
 // Lock on each iteration.  Slowest.
-fn bench_arc_mutex_poh_hash(bencher: &mut Bencher) {
+fn bench_arc_mutex_poh_hash(b: &mut Bencher) {
     let poh = Arc::new(Mutex::new(Poh::new(Hash::default(), None)));
-    bencher.iter(|| {
+    b.iter(|| {
         for _ in 0..NUM_HASHES {
             poh.lock().unwrap().hash(1);
         }
     })
 }
 
-#[bench]
 // Acquire lock every NUM_HASHES_PER_BATCH iterations.
 // Speed should be close to bench_poh_hash() if NUM_HASHES_PER_BATCH is set well.
-fn bench_arc_mutex_poh_batched_hash(bencher: &mut Bencher) {
+fn bench_arc_mutex_poh_batched_hash(b: &mut Bencher) {
     let poh = Arc::new(Mutex::new(Poh::new(Hash::default(), Some(NUM_HASHES))));
     //let exit = Arc::new(AtomicBool::new(false));
     let exit = Arc::new(AtomicBool::new(true));
 
-    bencher.iter(|| {
+    b.iter(|| {
         // NOTE: This block attempts to look as close as possible to `PohService::tick_producer()`
         loop {
             if poh.lock().unwrap().hash(DEFAULT_HASHES_PER_BATCH) {
@@ -72,17 +69,15 @@ fn bench_arc_mutex_poh_batched_hash(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
 // Worst case transaction record delay due to batch hashing at NUM_HASHES_PER_BATCH
-fn bench_poh_lock_time_per_batch(bencher: &mut Bencher) {
+fn bench_poh_lock_time_per_batch(b: &mut Bencher) {
     let mut poh = Poh::new(Hash::default(), None);
-    bencher.iter(|| {
+    b.iter(|| {
         poh.hash(DEFAULT_HASHES_PER_BATCH);
     })
 }
 
-#[bench]
-fn bench_poh_recorder_record(bencher: &mut Bencher) {
+fn bench_poh_recorder_record(b: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore =
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger");
@@ -116,20 +111,19 @@ fn bench_poh_recorder_record(bencher: &mut Bencher) {
     ];
 
     let txs: Vec<_> = txs.iter().map(|tx| tx.to_versioned_transaction()).collect();
-    bencher.iter(|| {
+    b.iter(|| {
         let _record_result = poh_recorder
             .record(
                 bank.slot(),
-                vec![test::black_box(h1)],
-                vec![test::black_box(txs.clone())],
+                vec![black_box(h1)],
+                vec![black_box(txs.clone())],
             )
             .unwrap();
     });
     poh_recorder.tick();
 }
 
-#[bench]
-fn bench_poh_recorder_set_bank(bencher: &mut Bencher) {
+fn bench_poh_recorder_set_bank(b: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore =
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger");
@@ -148,9 +142,20 @@ fn bench_poh_recorder_set_bank(bencher: &mut Bencher) {
         &PohConfig::default(),
         Arc::new(AtomicBool::default()),
     );
-    bencher.iter(|| {
+    b.iter(|| {
         poh_recorder.set_bank_for_test(bank.clone());
         poh_recorder.tick();
         poh_recorder.clear_bank_for_test();
     });
 }
+
+benchmark_group!(
+    benches,
+    bench_arc_mutex_poh_batched_hash,
+    bench_arc_mutex_poh_hash,
+    bench_poh_hash,
+    bench_poh_lock_time_per_batch,
+    bench_poh_recorder_record,
+    bench_poh_recorder_set_bank
+);
+benchmark_main!(benches);
