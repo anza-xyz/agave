@@ -9255,6 +9255,7 @@ dependencies = [
  "agave-votor-messages",
  "arc-swap",
  "assert_matches",
+ "bencher",
  "bincode",
  "criterion",
  "crossbeam-channel",
