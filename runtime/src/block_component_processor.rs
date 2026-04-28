@@ -1,7 +1,7 @@
 use {
     crate::{
         bank::Bank,
-        block_component_processor::vote_reward::calc_vote_reward_and_update_vote_state,
+        block_component_processor::vote_reward::calc_vote_rewards_update_vote_states,
         validated_block_finalization::{
             BlockFinalizationCertError, ValidatedBlockFinalizationCert,
         },
@@ -411,7 +411,7 @@ impl BlockComponentProcessor {
         // Update clock sysvar
         bank.update_clock_from_footer(block_producer_time_nanos);
 
-        calc_vote_reward_and_update_vote_state(bank, reward_cert, final_cert_input).unwrap();
+        calc_vote_rewards_update_vote_states(bank, reward_cert, final_cert_input).unwrap();
         // Record expected bank hash from footer for later verification when the bank is frozen.
         bank.set_expected_bank_hash(bank_hash);
     }

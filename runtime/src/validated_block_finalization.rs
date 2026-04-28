@@ -305,6 +305,22 @@ impl ValidatedBlockFinalizationCert {
         (&self.signers, self.slot())
     }
 
+    /// Consumes self and returns the contained certificates and the signers.
+    ///
+    /// For slow finalization, returns (signers, finalize_cert, Some(notarize_cert)).
+    /// For fast finalization, returns (signers, fast_finalize_cert, None).
+    pub(crate) fn into_parts(self) -> (HashSet<Pubkey>, Certificate, Option<Certificate>) {
+        let signers = self.signers;
+        let (final_cert, notar_cert) = match self.kind {
+            ValidatedBlockFinalizationCertKind::Finalize {
+                finalize_cert,
+                notarize_cert,
+            } => (finalize_cert, Some(notarize_cert)),
+            ValidatedBlockFinalizationCertKind::FastFinalize(cert) => (cert, None),
+        };
+        (signers, final_cert, notar_cert)
+    }
+
     /// Converts this validated certificate into a [`FinalCertificate`] for inclusion in a block footer.
     pub fn to_final_certificate(&self) -> FinalCertificate {
         match &self.kind {
@@ -338,22 +354,6 @@ impl ValidatedBlockFinalizationCert {
                 }
             }
         }
-    }
-
-    /// Consumes self and returns the contained certificates and the signers.
-    ///
-    /// For slow finalization, returns (signers, finalize_cert, Some(notarize_cert)).
-    /// For fast finalization, returns (signers, fast_finalize_cert, None).
-    pub(crate) fn into_parts(self) -> (HashSet<Pubkey>, Certificate, Option<Certificate>) {
-        let signers = self.signers;
-        let (final_cert, notar_cert) = match self.kind {
-            ValidatedBlockFinalizationCertKind::Finalize {
-                finalize_cert,
-                notarize_cert,
-            } => (finalize_cert, Some(notarize_cert)),
-            ValidatedBlockFinalizationCertKind::FastFinalize(cert) => (cert, None),
-        };
-        (signers, final_cert, notar_cert)
     }
 
     /// Verifies the certificate, returning (stake present in certificate, total stake in validator set) on success.

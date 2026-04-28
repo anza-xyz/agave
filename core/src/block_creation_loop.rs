@@ -500,6 +500,7 @@ fn record_and_complete_block(
         let guard = ctx.highest_finalized.read().unwrap();
         let footer = produce_block_footer(&bank, guard.as_ref());
         let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());
+
         BlockComponentProcessor::update_bank_with_footer_fields(
             &bank,
             footer.block_producer_time_nanos as i64,
@@ -509,6 +510,7 @@ fn record_and_complete_block(
         );
         footer
     };
+
     drop(bank);
     w_poh_recorder.tick_alpenglow(max_tick_height, footer);
     Ok(())

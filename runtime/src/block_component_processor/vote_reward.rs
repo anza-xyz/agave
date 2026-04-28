@@ -308,29 +308,44 @@ fn allocate_updated_accounts(
     bank: &Bank,
     reward_cert: &Option<ValidatedRewardCert>,
     final_cert_input: &Option<(&HashSet<Pubkey>, Slot)>,
-) -> Option<Vec<(Pubkey, AccountSharedData)>> {
+) -> Result<Option<Vec<(Pubkey, AccountSharedData)>>, Error> {
     let max_validators = match (&reward_cert, &final_cert_input) {
-        (None, None) => return None,
-        (Some(cert), None) => bank.get_rank_map(cert.slot())?.len(),
-        (None, Some((_, slot))) => bank.get_rank_map(*slot)?.len(),
+        (None, None) => return Ok(None),
+        (Some(cert), None) => bank
+            .get_rank_map(cert.slot())
+            .ok_or(Error::RankMapNotFound)?
+            .len(),
+        (None, Some((_, slot))) => bank
+            .get_rank_map(*slot)
+            .ok_or(Error::RankMapNotFound)?
+            .len(),
         (Some(reward_cert), Some((_, slot))) => {
-            let final_cert_slot_max_validators = bank.get_rank_map(*slot)?.len();
-            let reward_cert_slot_max_validators = bank.get_rank_map(reward_cert.slot())?.len();
+            let final_cert_slot_max_validators = bank
+                .get_rank_map(*slot)
+                .ok_or(Error::RankMapNotFound)?
+                .len();
+            let reward_cert_slot_max_validators = bank
+                .get_rank_map(reward_cert.slot())
+                .ok_or(Error::RankMapNotFound)?
+                .len();
             final_cert_slot_max_validators.max(reward_cert_slot_max_validators)
         }
     };
-    Some(Vec::with_capacity(max_validators))
+    Ok(Some(Vec::with_capacity(max_validators)))
 }
 
 /// Calculates voting rewards based on the `reward_cert` and updates fields in the vote account
 /// based on the calculated rewards and the `final_cert`.
-pub(super) fn calc_vote_reward_and_update_vote_state(
+pub(super) fn calc_vote_rewards_update_vote_states(
     bank: &Bank,
     reward_cert: Option<ValidatedRewardCert>,
     final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
 ) -> Result<(), Error> {
-    let mut updated_accounts = allocate_updated_accounts(bank, &reward_cert, &final_cert_input)
-        .ok_or(Error::RankMapNotFound)?;
+    let Some(mut updated_accounts) =
+        allocate_updated_accounts(bank, &reward_cert, &final_cert_input)?
+    else {
+        return Ok(());
+    };
     match (reward_cert, final_cert_input) {
         (None, None) => return Ok(()),
         (None, Some((validators, final_slot))) => update_accounts(
@@ -561,7 +576,7 @@ mod tests {
         let bank = Bank::new_from_parent(prev_bank.clone(), slot_leader, current_slot);
         let reward_slot = current_slot - NUM_SLOTS_FOR_REWARD;
 
-        calc_vote_reward_and_update_vote_state(
+        calc_vote_rewards_update_vote_states(
             &bank,
             Some(ValidatedRewardCert::new_for_tests(
                 reward_slot,
@@ -646,7 +661,7 @@ mod tests {
         let (signers, finalize_cert, _) = final_cert.clone().into_parts();
         let final_cert_input = Some((&signers, finalize_cert.cert_type.slot()));
 
-        calc_vote_reward_and_update_vote_state(
+        calc_vote_rewards_update_vote_states(
             &bank,
             Some(ValidatedRewardCert::new_for_tests(
                 reward_slot,
@@ -715,7 +730,7 @@ mod tests {
         let (signers, finalize_cert, _) = final_cert.into_parts();
         let final_cert_input = Some((&signers, finalize_cert.cert_type.slot()));
 
-        calc_vote_reward_and_update_vote_state(
+        calc_vote_rewards_update_vote_states(
             &bank,
             Some(ValidatedRewardCert::new_for_tests(
                 reward_slot,
@@ -773,7 +788,7 @@ mod tests {
         let bank = Bank::new_from_parent(prev_bank.clone(), slot_leader, current_slot);
         let reward_slot = current_slot - NUM_SLOTS_FOR_REWARD;
 
-        calc_vote_reward_and_update_vote_state(
+        calc_vote_rewards_update_vote_states(
             &bank,
             Some(ValidatedRewardCert::new_for_tests(
                 reward_slot,
