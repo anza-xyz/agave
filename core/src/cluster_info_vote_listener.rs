@@ -527,6 +527,7 @@ impl ClusterInfoVoteListener {
             &mut packet_batches,
             /*reject_non_vote=*/ false,
             votes.len(),
+            /*enabled_tx_v1=*/ false,
         );
         let root_bank = sharable_banks.root();
         let epoch_schedule = root_bank.epoch_schedule();

@@ -12,6 +12,7 @@ use {
         packet::PacketBatch,
         sigverify::{self},
     },
+    solana_runtime::bank_forks::SharableBanks,
     std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -23,6 +24,7 @@ pub struct TransactionSigVerifier {
     banking_stage_sender: BankingPacketSender,
     forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
     reject_non_vote: bool,
+    sharable_banks: SharableBanks,
 }
 
 impl TransactionSigVerifier {
@@ -30,8 +32,14 @@ impl TransactionSigVerifier {
         thread_pool: Arc<rayon::ThreadPool>,
         packet_sender: BankingPacketSender,
         forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
+        sharable_banks: SharableBanks,
     ) -> Self {
-        let mut new_self = Self::new(thread_pool, packet_sender, forward_stage_sender);
+        let mut new_self = Self::new(
+            thread_pool,
+            packet_sender,
+            forward_stage_sender,
+            sharable_banks,
+        );
         new_self.reject_non_vote = true;
         new_self
     }
@@ -40,12 +48,14 @@ impl TransactionSigVerifier {
         thread_pool: Arc<rayon::ThreadPool>,
         banking_stage_sender: BankingPacketSender,
         forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
+        sharable_banks: SharableBanks,
     ) -> Self {
         Self {
             thread_pool,
             banking_stage_sender,
             forward_stage_sender,
             reject_non_vote: false,
+            sharable_banks,
         }
     }
 
@@ -61,13 +71,24 @@ impl TransactionSigVerifier {
         let banking_stage_sender = self.banking_stage_sender.clone();
         let forward_stage_sender = self.forward_stage_sender.clone();
         let reject_non_vote = self.reject_non_vote;
+        let enable_tx_v1 = self
+            .sharable_banks
+            .working()
+            .feature_set
+            .is_active(&agave_feature_set::enable_tx_v1::ID);
 
         in_flight_count.fetch_add(valid_packets, Ordering::Release);
 
         self.thread_pool.spawn(move || {
             let mut verify_time = Measure::start("sigverify_batch_time");
             let mut batches = batches;
-            sigverify::ed25519_verify(&thread_pool, &mut batches, reject_non_vote, valid_packets);
+            sigverify::ed25519_verify(
+                &thread_pool,
+                &mut batches,
+                reject_non_vote,
+                valid_packets,
+                enable_tx_v1,
+            );
             verify_time.stop();
             let num_valid_packets = sigverify::count_valid_packets(&batches);
 

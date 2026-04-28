@@ -303,6 +303,7 @@ mod tests {
         crate::{banking_trace::BankingTracer, sigverify::TransactionSigVerifier},
         crossbeam_channel::unbounded,
         solana_perf::{packet::to_packet_batches, sigverify, test_tx::test_tx},
+        solana_runtime::{bank::Bank, genesis_utils::create_genesis_config},
         std::sync::Arc,
     };
 
@@ -333,10 +334,13 @@ mod tests {
     fn test_sigverify_stage(use_same_tx: bool) {
         agave_logger::setup();
         trace!("start");
+        let (_bank, bank_forks) =
+            Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let (packet_s, packet_r) = unbounded();
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
         let threadpool = Arc::new(sigverify::threadpool_for_tests());
-        let verifier = TransactionSigVerifier::new(threadpool, verified_s, None);
+        let verifier = TransactionSigVerifier::new(threadpool, verified_s, None, sharable_banks);
         let stage = SigVerifyStage::new(packet_r, verifier, "solSigVerTest", "test");
 
         let now = Instant::now();

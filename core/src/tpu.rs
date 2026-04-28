@@ -273,6 +273,7 @@ impl Tpu {
                 sigverify_threadpool.clone(),
                 non_vote_sender,
                 enable_block_production_forwarding.then(|| forward_stage_sender.clone()),
+                bank_forks.read().unwrap().sharable_banks(),
             );
             SigVerifyStage::new(packet_receiver, verifier, "solSigVerTpu", "tpu-verifier")
         };
@@ -282,6 +283,7 @@ impl Tpu {
                 sigverify_threadpool.clone(),
                 tpu_vote_sender,
                 Some(forward_stage_sender),
+                bank_forks.read().unwrap().sharable_banks(),
             );
             SigVerifyStage::new(
                 vote_packet_receiver,
