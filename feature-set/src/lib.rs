@@ -86,6 +86,7 @@ pub struct FeatureSnapshot {
     pub loader_v3_minimum_extend_program_size: bool,
     pub enable_sha512_syscall: bool,
     pub relax_post_exec_min_balance_check: bool,
+    pub enable_tx_v1: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -200,6 +201,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             ),
             enable_sha512_syscall: is_active(&enable_sha512_syscall::ID),
             relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
+            enable_tx_v1: is_active(&enable_tx_v1::ID),
         }
     }
 }
@@ -365,6 +367,7 @@ impl FeatureSet {
             loader_v3_minimum_extend_program_size: snapshot.loader_v3_minimum_extend_program_size,
             enable_sha512_syscall: snapshot.enable_sha512_syscall,
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
+            enable_tx_v1: snapshot.enable_tx_v1,
         }
     }
 }
