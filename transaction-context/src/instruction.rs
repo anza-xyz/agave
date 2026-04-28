@@ -1,3 +1,4 @@
+use crate::{instruction_accounts::InstructionAccount, vm_slice::VmSlice};
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 use {
     crate::{
@@ -12,11 +13,8 @@ use {
     solana_account::ReadableAccount,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
-    std::collections::HashSet,
-};
-use {
-    crate::{instruction_accounts::InstructionAccount, vm_slice::VmSlice},
     solana_sbpf::memory_region::VmExposable,
+    std::collections::HashSet,
 };
 
 /// Instruction shared between runtime and programs.
@@ -34,6 +32,7 @@ pub struct InstructionFrame {
     pub instruction_data: VmSlice<u8>,
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl VmExposable for InstructionFrame {}
 
 impl Default for InstructionFrame {

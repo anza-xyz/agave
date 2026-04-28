@@ -793,7 +793,6 @@ declare_builtin_function!(
         let Ok(layout) = Layout::from_size_align(size as usize, align) else {
             return Ok(0);
         };
-        std::println!("Getting allocator?");
         let allocator = &mut invoke_context.memory_contexts.memory_context_mut_abi_v1()?.allocator;
         if free_addr == 0 {
             match allocator.alloc(layout) {

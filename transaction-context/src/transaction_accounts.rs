@@ -1,6 +1,6 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
-use {crate::vm_slice::VmSlice, solana_pubkey::Pubkey, solana_sbpf::memory_region::VmExposable};
+use {crate::vm_slice::VmSlice, solana_pubkey::Pubkey};
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 use {
     crate::{
@@ -10,6 +10,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_instruction::error::InstructionError,
     solana_sbpf::memory_region::MemoryRegion,
+    solana_sbpf::memory_region::VmExposable,
     std::{
         cell::{Cell, UnsafeCell},
         ops::{Deref, DerefMut},
@@ -29,6 +30,7 @@ pub struct AccountSharedFields {
     pub payload: VmSlice<u8>,
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl VmExposable for AccountSharedFields {}
 
 #[derive(Debug, PartialEq)]
