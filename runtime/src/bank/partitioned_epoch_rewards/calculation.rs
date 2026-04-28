@@ -110,7 +110,7 @@ impl Bank {
         parent_slot: Slot,
         parent_block_height: u64,
         rewards_calculation: &PartitionedRewardsCalculation,
-        rewards_metrics: &RewardsMetrics,
+        rewards_metrics: &mut RewardsMetrics,
         thread_pool: &ThreadPool,
     ) -> u64 {
         let distributed_rewards = self.distribute_reward_commissions(
@@ -211,7 +211,7 @@ impl Bank {
         &mut self,
         prev_epoch: Epoch,
         rewards_calculation: &PartitionedRewardsCalculation,
-        rewards_metrics: &RewardsMetrics,
+        rewards_metrics: &mut RewardsMetrics,
         thread_pool: &ThreadPool,
     ) -> u64 {
         let PartitionedRewardsCalculation {
@@ -228,9 +228,8 @@ impl Bank {
         // `update_epoch_stakes`) are reflected.
         let (reward_commission_accounts, load_and_reward_commission_accounts_us) =
             measure_us!(self.load_and_reward_commission_accounts(reward_commissions, thread_pool));
-        rewards_metrics
-            .load_and_reward_commission_accounts_us
-            .fetch_add(load_and_reward_commission_accounts_us, Relaxed);
+        rewards_metrics.load_and_reward_commission_accounts_us =
+            load_and_reward_commission_accounts_us;
         info!(
             "load_and_reward_commission_accounts: input_count={} output_count={} elapsed_us={}",
             reward_commissions.len(),

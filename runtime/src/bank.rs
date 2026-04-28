@@ -1775,7 +1775,7 @@ impl Bank {
                 parent_slot,
                 parent_height,
                 &rewards_calculation,
-                &rewards_metrics,
+                &mut rewards_metrics,
                 &thread_pool,
             ));
 
