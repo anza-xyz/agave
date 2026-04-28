@@ -47,6 +47,16 @@
 //!   back to the external scheduler process. This passes back the results
 //!   of processing the transactions.
 //!
+//! Ownership and pointer lifetime rule:
+//! - Sending a message that contains offsets or pointers to memory transfers
+//!   ownership of that memory to the receiver for the lifetime defined by the
+//!   protocol.
+//! - The sender must treat that memory as not owned until ownership is
+//!   explicitly returned by a later message, if any. In particular, the sender
+//!   must not free or modify that memory while it is not owned.
+//! - If the protocol does not return the memory to the sender, the receiver is
+//!   responsible for freeing it.
+//!
 
 /// Reference to a transaction that can shared safely across processes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -452,6 +462,9 @@ pub mod worker_message_types {
         pub const ALREADY_PROCESSED: u8 = 1 << 3;
         /// Flag set if status checks failed due to an invalid nonce state.
         pub const INVALID_NONCE: u8 = 1 << 4;
+        /// Flag set if status checks failed due to unsupported version of
+        /// transaction was received.
+        pub const UNSUPPORTED_VERSION: u8 = 1 << 5;
     }
 
     pub mod fee_payer_balance_flags {

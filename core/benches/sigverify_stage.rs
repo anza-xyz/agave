@@ -9,7 +9,10 @@ use {
         distr::{Distribution, Uniform},
         rng,
     },
-    solana_core::sigverify_stage::{SigVerifier, SigVerifyServiceError, SigVerifyStage},
+    solana_core::{
+        banking_trace::BankingTracer, sigverify::TransactionSigVerifier,
+        sigverify_stage::SigVerifyStage,
+    },
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
@@ -20,15 +23,7 @@ use {
     },
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
-    std::{
-        borrow::Cow,
-        hint::black_box,
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
-        time::Instant,
-    },
+    std::{borrow::Cow, hint::black_box, sync::Arc, time::Instant},
 };
 
 /// Orphan rules workaround that allows for implementation of `TDynBenchFn`.
@@ -40,37 +35,6 @@ where
 {
     fn run(&self, harness: &mut Bencher) {
         (self.0)(harness)
-    }
-}
-
-#[derive(Clone)]
-struct BenchSigVerifier {
-    completed: Arc<AtomicUsize>,
-    thread_pool: Arc<rayon::ThreadPool>,
-}
-
-impl SigVerifier for BenchSigVerifier {
-    fn verify_and_send_packets(
-        &mut self,
-        mut batches: Vec<PacketBatch>,
-        valid_packets: usize,
-        _in_flight_count: Arc<AtomicUsize>,
-        total_valid_packets: Arc<AtomicUsize>,
-        total_verify_time_us: Arc<AtomicUsize>,
-    ) -> Result<(), SigVerifyServiceError> {
-        let mut verify_time = Measure::start("sigverify_batch_time");
-        sigverify::ed25519_verify(&self.thread_pool, &mut batches, false, valid_packets);
-        verify_time.stop();
-        let num_valid_packets = sigverify::count_valid_packets(&batches);
-        total_valid_packets.fetch_add(num_valid_packets, Ordering::Relaxed);
-        total_verify_time_us.fetch_add(verify_time.as_us() as usize, Ordering::Relaxed);
-        self.completed
-            .fetch_add(num_valid_packets, Ordering::Relaxed);
-        Ok(())
-    }
-
-    fn capacity(&self) -> usize {
-        usize::MAX
     }
 }
 
@@ -110,15 +74,16 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
     agave_logger::setup();
     trace!("start");
     let (packet_s, packet_r) = unbounded();
-    let completed = Arc::new(AtomicUsize::new(0));
-    let verifier = BenchSigVerifier {
-        completed: completed.clone(),
-        thread_pool: Arc::new(sigverify::threadpool_for_benches()),
-    };
+    let (verified_s, verified_r) = BankingTracer::channel_for_test();
+    let verifier = TransactionSigVerifier::new(
+        Arc::new(sigverify::threadpool_for_benches()),
+        verified_s,
+        None,
+    );
     let stage = SigVerifyStage::new(packet_r, verifier, "solSigVerBench", "bench");
     let packet_s = packet_s;
     let packet_s_for_bench = packet_s.clone();
-    let completed_for_bench = completed.clone();
+    let verified_r_for_bench = verified_r.clone();
 
     bencher.iter(move || {
         let now = Instant::now();
@@ -129,7 +94,6 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
             batches.len()
         );
 
-        let start = completed_for_bench.load(Ordering::Relaxed);
         let mut sent_len = 0;
         for batch in batches.into_iter() {
             sent_len += batch.len();
@@ -137,13 +101,21 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
         }
         let expected = if use_same_tx { 1 } else { sent_len };
         trace!("sent: {sent_len}, expected: {expected}");
-        while completed_for_bench.load(Ordering::Relaxed) < start + expected {
-            std::hint::spin_loop();
+        let mut verified = 0;
+        while verified < expected {
+            verified += verified_r_for_bench
+                .recv()
+                .unwrap()
+                .iter()
+                .map(|batch| {
+                    batch
+                        .iter()
+                        .filter(|packet| !packet.meta().discard())
+                        .count()
+                })
+                .sum::<usize>();
         }
-        trace!(
-            "received: {}",
-            completed_for_bench.load(Ordering::Relaxed) - start
-        );
+        trace!("received: {verified}");
     });
     // This will wait for all packets to make it through sigverify.
     drop(packet_s);

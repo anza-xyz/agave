@@ -26,7 +26,6 @@ use {
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::BankForks,
     solana_streamer::evicting_sender::EvictingSender,
-    solana_turbine::cluster_nodes,
     std::{
         borrow::Cow,
         net::UdpSocket,
@@ -57,9 +56,11 @@ struct WindowServiceMetrics {
 }
 
 impl WindowServiceMetrics {
-    fn report_metrics(&self, metric_name: &'static str) {
+    const NAME: &str = "recv-window-insert-shreds";
+
+    fn report_metrics(&self) {
         datapoint_info!(
-            metric_name,
+            Self::NAME,
             (
                 "handle_packets_elapsed_us",
                 self.handle_packets_elapsed_us,
@@ -119,7 +120,7 @@ fn run_check_duplicate(
             root_bank = bank_forks.read().unwrap().root_bank();
         }
         let shred_slot = shred.slot();
-        let validate_chained_block_id = cluster_nodes::check_feature_activation(
+        let validate_chained_block_id = shred::filter::check_feature_activation_from_bank(
             &feature_set::validate_chained_block_id::id(),
             shred_slot,
             &root_bank,
@@ -376,9 +377,12 @@ impl WindowService {
                 let handle_duplicate = |possible_duplicate_shred| {
                     let _ = check_duplicate_sender.send(possible_duplicate_shred);
                 };
+
+                const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(2);
                 let mut metrics = BlockstoreInsertionMetrics::default();
                 let mut ws_metrics = WindowServiceMetrics::default();
                 let mut last_print = Instant::now();
+
                 while !exit.load(Ordering::Relaxed) {
                     if let Err(e) = run_insert(
                         &thread_pool,
@@ -398,10 +402,10 @@ impl WindowService {
                         }
                     }
 
-                    if last_print.elapsed().as_secs() > 2 {
-                        metrics.report_metrics("blockstore-insert-shreds");
+                    if last_print.elapsed() > METRICS_REPORTING_INTERVAL {
+                        metrics.report_metrics();
                         metrics = BlockstoreInsertionMetrics::default();
-                        ws_metrics.report_metrics("recv-window-insert-shreds");
+                        ws_metrics.report_metrics();
                         ws_metrics = WindowServiceMetrics::default();
                         last_print = Instant::now();
                     }

@@ -52,8 +52,10 @@ pub struct Stats {
     pub bg_throttling_wait_us: AtomicU64,
     pub count_in_mem: AtomicUsize,
     pub capacity_in_mem: AtomicUsize,
-    pub flush_entries_updated_on_disk: AtomicU64,
-    pub flush_entries_evicted_from_mem: AtomicU64,
+    pub flush_entries_updated_on_disk_immediate: AtomicU64,
+    pub flush_entries_updated_on_disk_background: AtomicU64,
+    pub flush_entries_evicted_from_mem_immediate: AtomicU64,
+    pub flush_entries_evicted_from_mem_background: AtomicU64,
     pub active_threads: AtomicU64,
     last_age: AtomicAge,
     last_ages_flushed: AtomicU64,
@@ -553,14 +555,26 @@ impl Stats {
                     i64
                 ),
                 (
-                    "flush_entries_updated_on_disk",
-                    self.flush_entries_updated_on_disk
+                    "flush_entries_updated_on_disk_immediate",
+                    self.flush_entries_updated_on_disk_immediate
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
-                    "flush_entries_evicted_from_mem",
-                    self.flush_entries_evicted_from_mem
+                    "flush_entries_updated_on_disk_background",
+                    self.flush_entries_updated_on_disk_background
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_entries_evicted_from_mem_immediate",
+                    self.flush_entries_evicted_from_mem_immediate
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_entries_evicted_from_mem_background",
+                    self.flush_entries_evicted_from_mem_background
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),

@@ -801,7 +801,7 @@ impl Validator {
         let genesis_config = load_genesis(config, ledger_path)?;
         metrics_config_sanity_check(genesis_config.cluster_type)?;
 
-        info!("Validating and cleaning accounts paths..");
+        info!("Validating and cleaning accounts paths...");
         *start_progress.write().unwrap() = ValidatorStartProgress::CleaningAccounts;
         let mut timer = Measure::start("validate_and_clean_accounts_paths");
         validate_account_paths(config)?;
@@ -814,7 +814,7 @@ impl Validator {
             &config.snapshot_config.bank_snapshots_dir,
         );
 
-        info!("Cleaning orphaned account snapshot directories..");
+        info!("Cleaning orphaned account snapshot directories...");
         let mut timer = Measure::start("clean_orphaned_account_snapshot_dirs");
         clean_orphaned_account_snapshot_dirs(
             &config.snapshot_config.bank_snapshots_dir,
@@ -1447,7 +1447,12 @@ impl Validator {
 
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let highest_parent_ready = Arc::new(RwLock::default());
+        // Shared state for highest finalized certificates (updated by Votor, read by block creation loop)
         let highest_finalized = Arc::new(RwLock::new(None));
+        // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsRequest`] to 1 message.
+        let (build_reward_certs_sender, build_reward_certs_receiver) = bounded(1);
+        // There will only ever be a single msg in flight so bound channel for [`BuildRewardCertsResponse`] to 1 message.
+        let (reward_certs_sender, reward_certs_receiver) = bounded(1);
 
         let block_creation_loop_config = BlockCreationLoopConfig {
             exit: exit.clone(),
@@ -1464,6 +1469,8 @@ impl Validator {
             replay_highest_frozen: replay_highest_frozen.clone(),
             record_receiver_receiver,
             highest_finalized: highest_finalized.clone(),
+            build_reward_certs_sender,
+            reward_certs_receiver,
         };
         let block_creation_loop = BlockCreationLoop::new(block_creation_loop_config);
 
@@ -1608,6 +1615,8 @@ impl Validator {
                 bls_connection_cache,
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
+                build_reward_certs_receiver,
+                reward_certs_sender,
             },
         )
         .map_err(ValidatorError::Other)?;
@@ -2840,7 +2849,7 @@ fn cleanup_accounts_paths(config: &ValidatorConfig) {
 
 fn validate_account_paths(config: &ValidatorConfig) -> std::io::Result<()> {
     validate_account_paths_for_direct_io(
-        &config.accounts_db_config,
+        config.snapshot_config.use_direct_io,
         &config.account_paths,
         &config.account_snapshot_paths,
     )

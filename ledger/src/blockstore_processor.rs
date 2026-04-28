@@ -2397,10 +2397,6 @@ fn load_frozen_forks(
                 //
                 // We are safe to cleanly transition to alpenglow here
                 if migration_status.is_ready_to_enable() {
-                    debug_assert!(matches!(
-                        error,
-                        BlockstoreProcessorError::InvalidBlock(BlockError::TooFewTicks),
-                    ));
                     let genesis_slot = migration_status.enable_alpenglow_during_startup();
 
                     // We need to clear pending_slots as it might contain Alpenglow blocks initialized as TowerBFT banks.

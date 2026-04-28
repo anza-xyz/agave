@@ -1007,11 +1007,12 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
         .unwrap();
 
         // Now get the same full snapshot on the LEADER that we just got from the validator
-        let mut leader_full_snapshots = snapshot_paths::get_full_snapshot_archives(
+        let mut leader_full_snapshots = snapshot_paths::full_snapshot_archives_iter(
             leader_snapshot_test_config
                 .full_snapshot_archives_dir
                 .path(),
-        );
+        )
+        .collect::<Vec<_>>();
         leader_full_snapshots.retain(|full_snapshot| {
             full_snapshot.slot() == validator_full_snapshot.slot()
                 && full_snapshot.hash() == validator_full_snapshot.hash()
@@ -1141,11 +1142,12 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     // Check to make sure that the full snapshot the validator created during startup is the same
     // or one greater than the snapshot the leader created.
-    let validator_full_snapshot_archives = snapshot_paths::get_full_snapshot_archives(
+    let validator_full_snapshot_archives = snapshot_paths::full_snapshot_archives_iter(
         validator_snapshot_test_config
             .full_snapshot_archives_dir
             .path(),
-    );
+    )
+    .collect::<Vec<_>>();
     info!("validator full snapshot archives: {validator_full_snapshot_archives:#?}");
     let validator_full_snapshot_archive_for_comparison = validator_full_snapshot_archives
         .into_iter()
@@ -5001,9 +5003,10 @@ fn test_boot_from_local_state() {
             );
             std::thread::yield_now();
         }
-        let other_full_snapshot_archives = snapshot_paths::get_full_snapshot_archives(
+        let other_full_snapshot_archives = snapshot_paths::full_snapshot_archives_iter(
             &other_validator_config.full_snapshot_archives_dir,
-        );
+        )
+        .collect::<Vec<_>>();
         debug!("validator{i} full snapshot archives: {other_full_snapshot_archives:?}");
         assert!(
             other_full_snapshot_archives
@@ -5026,9 +5029,11 @@ fn test_boot_from_local_state() {
                 .collect::<Vec<_>>(),
         );
 
-        let other_incremental_snapshot_archives = snapshot_paths::get_incremental_snapshot_archives(
-            &other_validator_config.incremental_snapshot_archives_dir,
-        );
+        let other_incremental_snapshot_archives =
+            snapshot_paths::incremental_snapshot_archives_iter(
+                &other_validator_config.incremental_snapshot_archives_dir,
+            )
+            .collect::<Vec<_>>();
         debug!(
             "validator{i} incremental snapshot archives: {other_incremental_snapshot_archives:?}"
         );
@@ -5116,12 +5121,14 @@ fn test_boot_from_local_state_missing_archive() {
     );
     debug!(
         "snapshot archives:\n\tfull: {:?}\n\tincr: {:?}",
-        snapshot_paths::get_full_snapshot_archives(
+        snapshot_paths::full_snapshot_archives_iter(
             validator_config.full_snapshot_archives_dir.path()
-        ),
-        snapshot_paths::get_incremental_snapshot_archives(
+        )
+        .collect::<Vec<_>>(),
+        snapshot_paths::incremental_snapshot_archives_iter(
             validator_config.incremental_snapshot_archives_dir.path()
-        ),
+        )
+        .collect::<Vec<_>>(),
     );
     info!("Waiting for validator to create snapshots... DONE");
 

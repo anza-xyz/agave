@@ -1018,16 +1018,14 @@ fn verify_authorized_signer<S: std::hash::BuildHasher>(
 }
 
 // The message size is fixed:
-// "ALPENGLOW" (9) + Vote Pubkey (32) + BLS Pubkey (48) = 89 bytes
-const POP_MESSAGE_SIZE: usize = 9 + size_of::<Pubkey>() + BLS_PUBLIC_KEY_COMPRESSED_SIZE;
+// "ALPENGLOW" (9) + Vote Pubkey (32) = 41 bytes
+// Note: The BLS Pubkey (48 bytes) is appended dynamically by the
+// solana-bls-signatures crate.
+const POP_MESSAGE_SIZE: usize = 9 + size_of::<Pubkey>();
 
-pub(crate) fn generate_pop_message(
-    vote_account_pubkey: &Pubkey,
-    bls_pubkey_bytes: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-) -> [u8; POP_MESSAGE_SIZE] {
+pub(crate) fn generate_pop_message(vote_account_pubkey: &Pubkey) -> [u8; POP_MESSAGE_SIZE] {
     const LABEL_LEN: usize = 9;
     const PUBKEY_LEN: usize = size_of::<Pubkey>();
-    const BLS_LEN: usize = BLS_PUBLIC_KEY_COMPRESSED_SIZE;
 
     const LABEL_START: usize = 0;
     const LABEL_END: usize = LABEL_START + LABEL_LEN;
@@ -1035,17 +1033,13 @@ pub(crate) fn generate_pop_message(
     const PUBKEY_START: usize = LABEL_END;
     const PUBKEY_END: usize = PUBKEY_START + PUBKEY_LEN;
 
-    const BLS_START: usize = PUBKEY_END;
-    const BLS_END: usize = BLS_START + BLS_LEN;
-
     // Make sure POP_MESSAGE_SIZE matches the layout at compile time
-    const _: () = assert!(BLS_END == POP_MESSAGE_SIZE);
+    const _: () = assert!(PUBKEY_END == POP_MESSAGE_SIZE);
 
     let mut message = [0u8; POP_MESSAGE_SIZE];
 
     message[LABEL_START..LABEL_END].copy_from_slice(b"ALPENGLOW");
     message[PUBKEY_START..PUBKEY_END].copy_from_slice(vote_account_pubkey.as_ref());
-    message[BLS_START..BLS_END].copy_from_slice(bls_pubkey_bytes);
 
     message
 }
@@ -1062,7 +1056,7 @@ where
     // Consume CUs for BLS verification (SIMD-0387).
     consume_pop_compute_units()?;
 
-    let message = generate_pop_message(vote_account_pubkey, bls_pubkey_compressed_bytes);
+    let message = generate_pop_message(vote_account_pubkey);
     bls_proof_of_possession_compressed_bytes
         .verify(bls_pubkey_compressed_bytes, Some(&message))
         .map_err(|_| InstructionError::InvalidArgument)
@@ -1402,7 +1396,7 @@ pub fn create_bls_proof_of_possession(
     [u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
 ) {
     let bls_pubkey_bytes = bls_keypair.public.to_bytes_compressed();
-    let message = generate_pop_message(vote_account_pubkey, &bls_pubkey_bytes);
+    let message = generate_pop_message(vote_account_pubkey);
 
     let proof_of_possession = bls_keypair.proof_of_possession(Some(&message));
     let proof_of_possession_bytes = proof_of_possession.to_bytes_compressed();

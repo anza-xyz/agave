@@ -3453,14 +3453,6 @@ impl AccountsDb {
             &max_root_ancestors
         };
 
-        // Bound max_root by ancestors.min_slot() so that roots from slots
-        // beyond the querying bank's ancestor chain are not visible. A root
-        // between min_slot and max_slot that is not an ancestor belongs to a
-        // different fork and should not appear in scan results.
-        let mut max_root = scan_guard.max_root();
-        if let Some(min) = ancestors.min_slot() {
-            max_root = max_root.min(min);
-        }
         for pubkey in self.accounts_index.get_index_key_pubkeys(&index_key) {
             if config.is_aborted() {
                 break;
@@ -3468,7 +3460,6 @@ impl AccountsDb {
             self.accounts_index.get_with_and_then(
                 &pubkey,
                 ancestors,
-                Some(max_root),
                 true,
                 |(slot, account_info)| {
                     let account_slot = self
@@ -3607,23 +3598,13 @@ impl AccountsDb {
         pubkey: &'a Pubkey,
         clone_in_lock: bool,
     ) -> Option<(Slot, StorageLocation, Option<LoadedAccountAccessor<'a>>)> {
-        // Bound the root search to ancestors.min_slot() so that roots from
-        // slots beyond the querying bank's ancestor chain are not visible.
-        // min_slot is more correct than max_slot because a root between min
-        // and max that is not an ancestor belongs to a different fork.
-        let max_root_slot = ancestors.min_slot();
-        self.accounts_index.get_with_and_then(
-            pubkey,
-            ancestors,
-            max_root_slot,
-            true,
-            |(slot, account_info)| {
+        self.accounts_index
+            .get_with_and_then(pubkey, ancestors, true, |(slot, account_info)| {
                 let storage_location = account_info.storage_location();
                 let account_accessor = clone_in_lock
                     .then(|| self.get_account_accessor(slot, pubkey, &storage_location));
                 (slot, storage_location, account_accessor)
-            },
-        )
+            })
     }
 
     fn retry_to_get_account_accessor<'a>(
@@ -4811,7 +4792,6 @@ impl AccountsDb {
     pub fn calculate_accounts_lt_hash_at_startup_from_index(
         &self,
         ancestors: &Ancestors,
-        startup_slot: Slot,
     ) -> AccountsLtHash {
         // This impl iterates over all the index bins in parallel, and computes the lt hash
         // sequentially per bin.  Then afterwards reduces to a single lt hash.
@@ -4830,27 +4810,21 @@ impl AccountsDb {
                     for pubkey in accounts_index_bin.keys() {
                         let account_lt_hash = self
                             .accounts_index
-                            .get_with_and_then(
-                                &pubkey,
-                                ancestors,
-                                Some(startup_slot),
-                                false,
-                                |(slot, account_info)| {
-                                    (!account_info.is_zero_lamport()).then(|| {
-                                        self.get_account_accessor(
-                                            slot,
-                                            &pubkey,
-                                            &account_info.storage_location(),
-                                        )
-                                        .get_loaded_account(|loaded_account| {
-                                            Self::lt_hash_account(&loaded_account, &pubkey)
-                                        })
-                                        // SAFETY: The index said this pubkey exists, so
-                                        // there must be an account to load.
-                                        .unwrap()
+                            .get_with_and_then(&pubkey, ancestors, false, |(slot, account_info)| {
+                                (!account_info.is_zero_lamport()).then(|| {
+                                    self.get_account_accessor(
+                                        slot,
+                                        &pubkey,
+                                        &account_info.storage_location(),
+                                    )
+                                    .get_loaded_account(|loaded_account| {
+                                        Self::lt_hash_account(&loaded_account, &pubkey)
                                     })
-                                },
-                            )
+                                    // SAFETY: The index said this pubkey exists, so
+                                    // there must be an account to load.
+                                    .unwrap()
+                                })
+                            })
                             .flatten();
                         if let Some(account_lt_hash) = account_lt_hash {
                             accumulator_lt_hash.mix_in(&account_lt_hash.0);
@@ -4875,11 +4849,7 @@ impl AccountsDb {
     /// account-by-account, summing each account's balance.
     ///
     /// Only intended to be called at startup by ledger-tool or tests.
-    pub fn calculate_capitalization_at_startup_from_index(
-        &self,
-        ancestors: &Ancestors,
-        startup_slot: Slot,
-    ) -> u64 {
+    pub fn calculate_capitalization_at_startup_from_index(&self, ancestors: &Ancestors) -> u64 {
         self.accounts_index
             .account_maps
             .par_iter()
@@ -4889,27 +4859,19 @@ impl AccountsDb {
                     .into_iter()
                     .map(|pubkey| {
                         self.accounts_index
-                            .get_with_and_then(
-                                &pubkey,
-                                ancestors,
-                                Some(startup_slot),
-                                false,
-                                |(slot, account_info)| {
-                                    (!account_info.is_zero_lamport()).then(|| {
-                                        self.get_account_accessor(
-                                            slot,
-                                            &pubkey,
-                                            &account_info.storage_location(),
-                                        )
-                                        .get_loaded_account(|loaded_account| {
-                                            loaded_account.lamports()
-                                        })
-                                        // SAFETY: The index said this pubkey exists, so
-                                        // there must be an account to load.
-                                        .unwrap()
-                                    })
-                                },
-                            )
+                            .get_with_and_then(&pubkey, ancestors, false, |(slot, account_info)| {
+                                (!account_info.is_zero_lamport()).then(|| {
+                                    self.get_account_accessor(
+                                        slot,
+                                        &pubkey,
+                                        &account_info.storage_location(),
+                                    )
+                                    .get_loaded_account(|loaded_account| loaded_account.lamports())
+                                    // SAFETY: The index said this pubkey exists, so
+                                    // there must be an account to load.
+                                    .unwrap()
+                                })
+                            })
                             .flatten()
                             .unwrap_or(0)
                     })
@@ -5638,7 +5600,6 @@ impl AccountsDb {
                         if let Some(is_zero_lamport) = self.accounts_index.get_with_and_then(
                             pubkey,
                             ancestors,
-                            None,
                             true,
                             |(_, account)| account.is_zero_lamport(),
                         ) {

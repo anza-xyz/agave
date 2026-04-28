@@ -1769,13 +1769,15 @@ impl Bank {
 
         // Distribute rewards commission to vote accounts and cache stake rewards
         // for partitioned distribution in the upcoming slots.
-        let epoch_validator_rewards = self.begin_partitioned_rewards(
-            parent_epoch,
-            parent_slot,
-            parent_height,
-            &rewards_calculation,
-            &rewards_metrics,
-        );
+        let (epoch_validator_rewards, begin_partitioned_rewards_time_us) =
+            measure_us!(self.begin_partitioned_rewards(
+                parent_epoch,
+                parent_slot,
+                parent_height,
+                &rewards_calculation,
+                &mut rewards_metrics,
+                &thread_pool,
+            ));
 
         // the vote reward account state should be created at the epoch boundary in which we
         // activate alpenglow as it will need info from the previous epoch.
@@ -1798,6 +1800,7 @@ impl Bank {
                 calculate_activated_stake_time_us,
                 update_epoch_stakes_time_us,
                 update_rewards_with_thread_pool_time_us,
+                begin_partitioned_rewards_time_us,
             },
             rewards_metrics,
         );
@@ -4918,7 +4921,7 @@ impl Bank {
             check_lt_hash(&expected_accounts_lt_hash, calculated_accounts_lt_hash)
         } else {
             let calculated_accounts_lt_hash =
-                accounts_db.calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, slot);
+                accounts_db.calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors);
             check_lt_hash(&expected_accounts_lt_hash, &calculated_accounts_lt_hash)
         };
         info!("Verifying accounts... Done in {:?}", start.elapsed());
@@ -5056,7 +5059,7 @@ impl Bank {
         self.rc
             .accounts
             .accounts_db
-            .calculate_capitalization_at_startup_from_index(&self.ancestors, self.slot())
+            .calculate_capitalization_at_startup_from_index(&self.ancestors)
     }
 
     /// Sets the capitalization.
@@ -6348,7 +6351,7 @@ impl Bank {
         self.rc
             .accounts
             .accounts_db
-            .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, self.slot)
+            .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors)
     }
 
     pub fn get_transaction_processor(&self) -> &TransactionBatchProcessor<BankForks> {

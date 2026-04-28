@@ -22,6 +22,7 @@ docker build "${platform[@]}" \
   --build-arg "NODE_MAJOR=${CI_DOCKER_ARG_NODE_MAJOR}" \
   --build-arg "SCCACHE_VERSION=${CI_DOCKER_ARG_SCCACHE_VERSION}" \
   --build-arg "GRCOV_VERSION=${CI_DOCKER_ARG_GRCOV_VERSION}" \
+  --build-arg "CODECOV_VERSION=${CI_DOCKER_ARG_CODECOV_VERSION}" \
   -t "$CI_DOCKER_IMAGE" .
 
 docker push "$CI_DOCKER_IMAGE"

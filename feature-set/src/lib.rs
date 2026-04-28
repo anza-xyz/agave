@@ -1428,7 +1428,7 @@ pub mod alt_bn128_little_endian {
 }
 
 pub mod bls_pubkey_management_in_vote_account {
-    solana_pubkey::declare_id!("2uxQgtKa2ECHGs67Zdj7dgmzn2w9HiqhdcedwCWfYzzq");
+    solana_pubkey::declare_id!("AnAP9zPV4KL7czAPQbFhpDKV2tx7g4UGNbK9wvXwjaRo");
 }
 
 pub mod relax_programdata_account_check_migration {

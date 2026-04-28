@@ -19,7 +19,7 @@ use {
             BTreeMap, BTreeSet, HashMap, HashSet, VecDeque, btree_set::Iter, hash_map::Entry,
         },
         sync::{Arc, RwLock},
-        time::Instant,
+        time::{Duration, Instant},
     },
 };
 
@@ -27,7 +27,7 @@ pub type ForkWeight = u64;
 pub type SlotHashKey = (Slot, Hash);
 type UpdateOperations = BTreeMap<(SlotHashKey, UpdateLabel), UpdateOperation>;
 
-const MAX_ROOT_PRINT_SECONDS: u64 = 30;
+const MAX_ROOT_PRINT_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(PartialEq, Eq, Clone, Debug, PartialOrd, Ord)]
 enum UpdateLabel {
@@ -448,7 +448,7 @@ impl HeaviestSubtreeForkChoice {
     }
 
     pub fn maybe_print_state(&mut self) {
-        if self.last_root_time.elapsed().as_secs() > MAX_ROOT_PRINT_SECONDS {
+        if self.last_root_time.elapsed() > MAX_ROOT_PRINT_INTERVAL {
             self.print_state();
             self.last_root_time = Instant::now();
         }

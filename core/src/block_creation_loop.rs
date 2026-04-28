@@ -10,9 +10,12 @@ use {
         replay_stage::{Finalizer, ReplayStage},
     },
     agave_votor::event::LeaderWindowInfo,
-    crossbeam_channel::Receiver,
+    agave_votor_messages::reward_certificate::{BuildRewardCertsRequest, BuildRewardCertsResponse},
+    crossbeam_channel::{Receiver, Sender},
     solana_clock::Slot,
-    solana_entry::block_component::{BlockMarkerV1, GenesisCertificate, VersionedBlockMarker},
+    solana_entry::block_component::{
+        BlockFooterV1, BlockMarkerV1, GenesisCertificate, VersionedBlockMarker,
+    },
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
@@ -26,9 +29,11 @@ use {
     solana_runtime::{
         bank::{Bank, NewBankOptions},
         bank_forks::BankForks,
+        block_component_processor::BlockComponentProcessor,
         leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
         validated_block_finalization::ValidatedBlockFinalizationCert,
     },
+    solana_version::version,
     stats::{LoopMetrics, SlotMetrics},
     std::{
         sync::{
@@ -36,7 +41,7 @@ use {
             atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
-        time::{Duration, Instant},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
     thiserror::Error,
 };
@@ -89,6 +94,11 @@ pub struct BlockCreationLoopConfig {
 
     // Channel to receive RecordReceiver from PohService
     pub record_receiver_receiver: Receiver<RecordReceiver>,
+
+    /// Channel to send the request to build reward certs.
+    pub build_reward_certs_sender: Sender<BuildRewardCertsRequest>,
+    /// Channel to receive the built reward certs.
+    pub reward_certs_receiver: Receiver<BuildRewardCertsResponse>,
 }
 
 struct LeaderContext {
@@ -107,6 +117,10 @@ struct LeaderContext {
     slot_status_notifier: Option<SlotStatusNotifier>,
     banking_tracer: Arc<BankingTracer>,
     replay_highest_frozen: Arc<ReplayHighestFrozen>,
+    #[allow(dead_code)]
+    build_reward_certs_sender: Sender<BuildRewardCertsRequest>,
+    #[allow(dead_code)]
+    reward_certs_receiver: Receiver<BuildRewardCertsResponse>,
 
     // Metrics
     metrics: LoopMetrics,
@@ -161,6 +175,8 @@ fn start_loop(config: BlockCreationLoopConfig) {
         replay_highest_frozen,
         record_receiver_receiver,
         highest_finalized,
+        build_reward_certs_sender,
+        reward_certs_receiver,
     } = config;
 
     // Similar to Votor, if this loop dies kill the validator
@@ -204,6 +220,8 @@ fn start_loop(config: BlockCreationLoopConfig) {
         slot_status_notifier,
         banking_tracer,
         replay_highest_frozen,
+        build_reward_certs_sender,
+        reward_certs_receiver,
         metrics: LoopMetrics::default(),
         slot_metrics: SlotMetrics::default(),
         highest_finalized,
@@ -304,6 +322,75 @@ fn block_timeout(bank: &Bank, leader_block_index: usize) -> Duration {
         .saturating_mul((leader_block_index as u32).saturating_add(1))
 }
 
+/// Clamps the block producer timestamp to ensure that the leader produces a timestamp that conforms
+/// to Alpenglow clock bounds.
+fn skew_block_producer_time_nanos(
+    parent_slot: Slot,
+    parent_time_nanos: i64,
+    working_bank_slot: Slot,
+    working_bank_time_nanos: i64,
+    ns_per_slot: u64,
+) -> i64 {
+    let (min_working_bank_time, max_working_bank_time) =
+        BlockComponentProcessor::nanosecond_time_bounds(
+            parent_slot,
+            parent_time_nanos,
+            working_bank_slot,
+            ns_per_slot,
+        );
+
+    working_bank_time_nanos
+        .max(min_working_bank_time)
+        .min(max_working_bank_time)
+}
+
+/// Produces a block footer with the current timestamp; version; reward certs; and finalization cert.
+/// The bank_hash field is left as default and will be filled in after the bank freezes.
+fn produce_block_footer(
+    bank: &Bank,
+    highest_finalized: &RwLock<Option<ValidatedBlockFinalizationCert>>,
+) -> BlockFooterV1 {
+    let mut block_producer_time_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Misconfigured system clock; couldn't measure block producer time.")
+        .as_nanos() as i64;
+
+    let slot = bank.slot();
+
+    if let Some(parent_bank) = bank.parent() {
+        // Get parent time from alpenglow clock (nanoseconds) or fall back to clock sysvar (seconds -> nanoseconds)
+        let parent_time_nanos = bank
+            .get_nanosecond_clock()
+            .unwrap_or_else(|| bank.clock().unix_timestamp.saturating_mul(1_000_000_000));
+        let parent_slot = parent_bank.slot();
+        let ns_per_slot = u64::try_from(bank.ns_per_slot).unwrap_or(u64::MAX);
+
+        block_producer_time_nanos = skew_block_producer_time_nanos(
+            parent_slot,
+            parent_time_nanos,
+            slot,
+            block_producer_time_nanos,
+            ns_per_slot,
+        );
+    }
+
+    // Convert finalization certs into block marker
+    let final_cert = highest_finalized
+        .read()
+        .unwrap()
+        .as_ref()
+        .map(ValidatedBlockFinalizationCert::to_final_certificate);
+
+    BlockFooterV1 {
+        bank_hash: Hash::default(),
+        block_producer_time_nanos: block_producer_time_nanos as u64,
+        block_user_agent: format!("agave/{}", version!()).into_bytes(),
+        final_cert,
+        skip_reward_cert: None,
+        notar_reward_cert: None,
+    }
+}
+
 /// Produces the leader window from `start_slot` -> `end_slot` using parent
 /// `parent_slot` while abiding to the `skip_timer`
 fn produce_window(
@@ -329,12 +416,7 @@ fn produce_window(
         );
 
         let mut bank_completion_measure = Measure::start("bank_completion");
-        if let Err(e) = record_and_complete_block(
-            ctx.poh_recorder.as_ref(),
-            &mut ctx.record_receiver,
-            block_timer,
-            timeout,
-        ) {
+        if let Err(e) = record_and_complete_block(ctx, block_timer, timeout) {
             panic!("PohRecorder record failed: {e:?}");
         }
         assert!(!ctx.poh_recorder.read().unwrap().has_bank());
@@ -371,8 +453,7 @@ fn produce_window(
 /// - Insert the alpentick
 /// - Clear the working bank
 fn record_and_complete_block(
-    poh_recorder: &RwLock<PohRecorder>,
-    record_receiver: &mut RecordReceiver,
+    ctx: &mut LeaderContext,
     block_timer: Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
@@ -381,10 +462,10 @@ fn record_and_complete_block(
         .saturating_sub(block_timer.elapsed())
         .is_zero()
     {
-        let Ok(record) = record_receiver.try_recv() else {
+        let Ok(record) = ctx.record_receiver.try_recv() else {
             continue;
         };
-        poh_recorder.write().unwrap().record(
+        ctx.poh_recorder.write().unwrap().record(
             record.bank_id,
             record.mixins,
             record.transaction_batches,
@@ -392,9 +473,9 @@ fn record_and_complete_block(
     }
 
     // Shutdown and clear any inflight records
-    record_receiver.shutdown();
-    for record in record_receiver.drain() {
-        poh_recorder.write().unwrap().record(
+    ctx.record_receiver.shutdown();
+    for record in ctx.record_receiver.drain() {
+        ctx.poh_recorder.write().unwrap().record(
             record.bank_id,
             record.mixins,
             record.transaction_batches,
@@ -402,7 +483,7 @@ fn record_and_complete_block(
     }
 
     // Alpentick and clear bank
-    let mut w_poh_recorder = poh_recorder.write().unwrap();
+    let mut w_poh_recorder = ctx.poh_recorder.write().unwrap();
     let bank = w_poh_recorder
         .bank()
         .expect("Bank cannot have been cleared as BlockCreationLoop is the only modifier");
@@ -418,9 +499,19 @@ fn record_and_complete_block(
     // will properly increment the tick_height to max_tick_height.
     bank.set_tick_height(max_tick_height - 1);
     // Write the single tick for this slot
-    drop(bank);
-    w_poh_recorder.tick_alpenglow(max_tick_height);
 
+    let footer = produce_block_footer(&bank, &ctx.highest_finalized);
+
+    BlockComponentProcessor::update_bank_with_footer_fields(
+        &bank,
+        footer.block_producer_time_nanos as i64,
+        Hash::default(), // Banks we produce do not need the bank hash mismatch check
+        None,
+        ctx.highest_finalized.read().unwrap().as_ref(),
+    );
+
+    drop(bank);
+    w_poh_recorder.tick_alpenglow(max_tick_height, footer);
     Ok(())
 }
 

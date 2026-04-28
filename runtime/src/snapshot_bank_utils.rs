@@ -9,6 +9,7 @@ use {
         },
     },
     agave_snapshots::SnapshotVersion,
+    solana_accounts_db::accounts_file::StorageAccess,
     tempfile::TempDir,
 };
 use {
@@ -25,7 +26,7 @@ use {
             rebuild_storages_from_snapshot_dir, verify_and_unarchive_snapshots,
         },
     },
-    agave_fs::dirs,
+    agave_fs::{dirs, io_setup::IoSetupState},
     agave_snapshots::{
         SnapshotArchiveKind, SnapshotKind,
         error::{
@@ -55,7 +56,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         ops::RangeInclusive,
-        path::{Path, PathBuf},
+        path::PathBuf,
         sync::{Arc, atomic::AtomicBool},
     },
 };
@@ -64,17 +65,19 @@ use {
 /// epoch schedule, etc.
 #[cfg(feature = "dev-context-only-utils")]
 pub fn bank_fields_from_snapshot_archives(
-    full_snapshot_archives_dir: impl AsRef<Path>,
-    incremental_snapshot_archives_dir: impl AsRef<Path>,
-    accounts_db_config: &AccountsDbConfig,
+    snapshot_config: &SnapshotConfig,
+    storage_access: StorageAccess,
 ) -> agave_snapshots::Result<BankFieldsToDeserialize> {
     let full_snapshot_archive_info =
-        get_highest_full_snapshot_archive_info(&full_snapshot_archives_dir).ok_or_else(|| {
-            SnapshotError::NoSnapshotArchives(full_snapshot_archives_dir.as_ref().to_path_buf())
-        })?;
+        get_highest_full_snapshot_archive_info(&snapshot_config.full_snapshot_archives_dir)
+            .ok_or_else(|| {
+                SnapshotError::NoSnapshotArchives(
+                    snapshot_config.full_snapshot_archives_dir.clone(),
+                )
+            })?;
 
     let incremental_snapshot_archive_info = get_highest_incremental_snapshot_archive_info(
-        &incremental_snapshot_archives_dir,
+        &snapshot_config.incremental_snapshot_archives_dir,
         full_snapshot_archive_info.slot(),
     );
 
@@ -83,6 +86,10 @@ pub fn bank_fields_from_snapshot_archives(
 
     let account_paths = vec![temp_accounts_dir.path().to_path_buf()];
 
+    let io_setup = IoSetupState::default()
+        .with_shared_sqpoll()?
+        .with_direct_io(snapshot_config.use_direct_io)
+        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers);
     let (
         UnarchivedSnapshots {
             full_unpacked_snapshots_dir_and_version,
@@ -95,7 +102,8 @@ pub fn bank_fields_from_snapshot_archives(
         &full_snapshot_archive_info,
         incremental_snapshot_archive_info.as_ref(),
         &account_paths,
-        accounts_db_config,
+        storage_access,
+        &io_setup,
     )?;
 
     bank_fields_from_snapshots(
@@ -135,9 +143,9 @@ fn bank_fields_from_snapshots(
 #[expect(clippy::too_many_arguments)]
 pub fn bank_from_snapshot_archives(
     account_paths: &[PathBuf],
-    bank_snapshots_dir: impl AsRef<Path>,
     full_snapshot_archive_info: &FullSnapshotArchiveInfo,
     incremental_snapshot_archive_info: Option<&IncrementalSnapshotArchiveInfo>,
+    snapshot_config: &SnapshotConfig,
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
@@ -162,6 +170,10 @@ pub fn bank_from_snapshot_archives(
             )
     );
 
+    let io_setup = IoSetupState::default()
+        .with_shared_sqpoll()?
+        .with_direct_io(snapshot_config.use_direct_io)
+        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers);
     let (
         UnarchivedSnapshots {
             full_storage: mut storage,
@@ -177,11 +189,12 @@ pub fn bank_from_snapshot_archives(
         },
         _guard,
     ) = verify_and_unarchive_snapshots(
-        bank_snapshots_dir,
+        &snapshot_config.bank_snapshots_dir,
         full_snapshot_archive_info,
         incremental_snapshot_archive_info,
         account_paths,
-        &accounts_db_config,
+        accounts_db_config.storage_access,
+        &io_setup,
     )?;
 
     if let Some(incremental_storage) = incremental_storage {
@@ -287,14 +300,13 @@ pub fn bank_from_snapshot_archives(
 
 /// Rebuild bank from snapshot archives
 ///
-/// This function searches `full_snapshot_archives_dir` and `incremental_snapshot_archives_dir` for
-/// the highest full snapshot and highest corresponding incremental snapshot, then rebuilds the bank.
+/// This function searches `snapshot_config.full_snapshot_archives_dir` and
+/// `snapshot_config.incremental_snapshot_archives_dir` for the highest full snapshot and
+/// highest corresponding incremental snapshot, then rebuilds the bank.
 #[expect(clippy::too_many_arguments)]
 pub fn bank_from_latest_snapshot_archives(
-    bank_snapshots_dir: impl AsRef<Path>,
-    full_snapshot_archives_dir: impl AsRef<Path>,
-    incremental_snapshot_archives_dir: impl AsRef<Path>,
     account_paths: &[PathBuf],
+    snapshot_config: &SnapshotConfig,
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
@@ -311,20 +323,23 @@ pub fn bank_from_latest_snapshot_archives(
     Option<IncrementalSnapshotArchiveInfo>,
 )> {
     let full_snapshot_archive_info =
-        get_highest_full_snapshot_archive_info(&full_snapshot_archives_dir).ok_or_else(|| {
-            SnapshotError::NoSnapshotArchives(full_snapshot_archives_dir.as_ref().to_path_buf())
-        })?;
+        get_highest_full_snapshot_archive_info(&snapshot_config.full_snapshot_archives_dir)
+            .ok_or_else(|| {
+                SnapshotError::NoSnapshotArchives(
+                    snapshot_config.full_snapshot_archives_dir.clone(),
+                )
+            })?;
 
     let incremental_snapshot_archive_info = get_highest_incremental_snapshot_archive_info(
-        &incremental_snapshot_archives_dir,
+        &snapshot_config.incremental_snapshot_archives_dir,
         full_snapshot_archive_info.slot(),
     );
 
     let bank = bank_from_snapshot_archives(
         account_paths,
-        bank_snapshots_dir.as_ref(),
         &full_snapshot_archive_info,
         incremental_snapshot_archive_info.as_ref(),
+        snapshot_config,
         genesis_config,
         runtime_config,
         debug_keys,
@@ -841,7 +856,9 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction::sanitized::SanitizedTransaction,
         std::{
-            fs, slice,
+            fs,
+            path::Path,
+            slice,
             sync::{Arc, atomic::Ordering},
         },
         test_case::test_case,
@@ -959,9 +976,9 @@ mod tests {
 
         let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
-            bank_snapshots_dir.path(),
             &snapshot_archive_info,
             None,
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
@@ -1040,9 +1057,9 @@ mod tests {
 
         let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
-            bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             None,
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
@@ -1142,9 +1159,9 @@ mod tests {
 
         let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
-            bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             None,
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
@@ -1256,9 +1273,9 @@ mod tests {
 
         let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
-            bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             Some(&incremental_snapshot_archive_info),
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
@@ -1356,10 +1373,8 @@ mod tests {
         bank_to_incremental_snapshot_archive(&snapshot_config, &bank4, full_snapshot_slot).unwrap();
 
         let (deserialized_bank, ..) = bank_from_latest_snapshot_archives(
-            &bank_snapshots_dir,
-            &full_snapshot_archives_dir,
-            &incremental_snapshot_archives_dir,
             &[accounts_dir],
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
@@ -1398,12 +1413,11 @@ mod tests {
             bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
 
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
-        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let error = bank_from_snapshot_archives(
             &[accounts_dir],
-            &bank_snapshots_dir,
             &full_snapshot_archive_info,
             None,
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
@@ -1536,9 +1550,9 @@ mod tests {
                 .unwrap();
         let deserialized_bank = bank_from_snapshot_archives(
             slice::from_ref(&accounts_dir),
-            bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             Some(&incremental_snapshot_archive_info),
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
@@ -1586,9 +1600,9 @@ mod tests {
 
         let deserialized_bank = bank_from_snapshot_archives(
             &[accounts_dir],
-            bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             Some(&incremental_snapshot_archive_info),
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
@@ -1654,15 +1668,8 @@ mod tests {
 
         bank_to_incremental_snapshot_archive(&snapshot_config, &bank2, full_snapshot_slot).unwrap();
 
-        let bank_fields = bank_fields_from_snapshot_archives(
-            &all_snapshots_dir,
-            &all_snapshots_dir,
-            &AccountsDbConfig {
-                storage_access,
-                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            },
-        )
-        .unwrap();
+        let bank_fields =
+            bank_fields_from_snapshot_archives(&snapshot_config, storage_access).unwrap();
         assert_eq!(bank_fields.slot, bank2.slot());
         assert_eq!(bank_fields.parent_slot, bank2.parent_slot());
     }
@@ -2005,12 +2012,11 @@ mod tests {
             bank_to_full_snapshot_archive(&snapshot_config, &bank3).unwrap();
 
         let accounts_dir = tempfile::TempDir::new().unwrap();
-        let other_bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let deserialized_bank = bank_from_snapshot_archives(
             &[accounts_dir.path().to_path_buf()],
-            other_bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             None,
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,

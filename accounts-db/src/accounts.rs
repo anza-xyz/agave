@@ -1317,7 +1317,7 @@ mod tests {
         let accounts = Accounts::new(Arc::new(accounts_db));
         let mut old_pubkey = Pubkey::default();
         let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-        info!("storing..");
+        info!("storing...");
         for i in 0..2_000 {
             let pubkey = solana_pubkey::new_rand();
             let account = AccountSharedData::new(i + 1, 0, AccountSharedData::default().owner());
@@ -1330,7 +1330,7 @@ mod tests {
                 info!("  store {i}");
             }
         }
-        info!("done..cleaning..");
+        info!("done. cleaning...");
         accounts.accounts_db.clean_accounts_for_tests();
     }
 

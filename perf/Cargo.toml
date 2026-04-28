@@ -103,10 +103,6 @@ harness = false
 name = "sigverify"
 harness = false
 
-[[bench]]
-name = "discard"
-harness = false
-
 [lints.rust.unexpected_cfgs]
 level = "warn"
 check-cfg = ['cfg(build_target_feature_avx)', 'cfg(build_target_feature_avx2)']

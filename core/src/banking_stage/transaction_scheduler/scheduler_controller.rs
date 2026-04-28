@@ -4,7 +4,7 @@
 use {
     super::{
         receive_and_buffer::{DisconnectedError, ReceiveAndBuffer},
-        scheduler::{PreLockFilterAction, Scheduler},
+        scheduler::Scheduler,
         scheduler_error::SchedulerError,
         scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics, SchedulingDetails},
     },
@@ -12,7 +12,6 @@ use {
         banking_stage::{
             TOTAL_BUFFERED_PACKETS,
             consume_worker::ConsumeWorkerMetrics,
-            consumer::Consumer,
             decision_maker::{BufferedPacketsDecision, DecisionMaker},
             transaction_scheduler::{
                 receive_and_buffer::ReceivingStats, transaction_priority_id::TransactionPriorityId,
@@ -24,7 +23,7 @@ use {
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
-    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
+    solana_runtime::bank_forks::SharableBanks,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         num::{NonZeroU64, Saturating},
@@ -227,18 +226,14 @@ where
         now: &Instant,
     ) -> Result<usize, SchedulerError> {
         let scheduled = match decision {
-            BufferedPacketsDecision::Consume(bank) => {
+            BufferedPacketsDecision::Consume(_bank) => {
                 let scheduling_budget = cost_pacer
                     .expect("cost pacer must be set for Consume")
                     .scheduling_budget(now);
-                let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
-                    &mut self.container,
-                    scheduling_budget,
-                    |txs, results| {
-                        Self::pre_graph_filter(txs, results, bank, bank.max_processing_age())
-                    },
-                    |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
-                )?);
+                let (scheduling_summary, schedule_time_us) = measure_us!(
+                    self.scheduler
+                        .schedule(&mut self.container, scheduling_budget,)?
+                );
 
                 self.count_metrics.update(|count_metrics| {
                     count_metrics.num_scheduled += scheduling_summary.num_scheduled;
@@ -246,11 +241,9 @@ where
                         scheduling_summary.num_unschedulable_conflicts;
                     count_metrics.num_unschedulable_threads +=
                         scheduling_summary.num_unschedulable_threads;
-                    count_metrics.num_schedule_filtered_out += scheduling_summary.num_filtered_out;
                 });
 
                 self.timing_metrics.update(|timing_metrics| {
-                    timing_metrics.schedule_filter_time_us += scheduling_summary.filter_time_us;
                     timing_metrics.schedule_time_us += schedule_time_us;
                 });
                 self.scheduling_details.update(&scheduling_summary);
@@ -270,32 +263,6 @@ where
         };
 
         Ok(scheduled)
-    }
-
-    fn pre_graph_filter(
-        transactions: &[&R::Transaction],
-        results: &mut [bool],
-        bank: &Bank,
-        max_age: usize,
-    ) {
-        let lock_results = vec![Ok(()); transactions.len()];
-        let mut error_counters = TransactionErrorMetrics::default();
-        let check_results = bank.check_transactions::<R::Transaction>(
-            transactions,
-            &lock_results,
-            max_age,
-            &mut error_counters,
-        );
-
-        for ((check_result, tx), result) in check_results
-            .into_iter()
-            .zip(transactions)
-            .zip(results.iter_mut())
-        {
-            *result = check_result
-                .and_then(|_| Consumer::check_fee_payer_unlocked(bank, *tx, &mut error_counters))
-                .is_ok();
-        }
     }
 
     /// Clears the transaction state container.
@@ -477,9 +444,7 @@ mod tests {
             consumer::{RetryableIndex, TARGET_NUM_TRANSACTIONS_PER_BATCH},
             scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
             tests::create_slow_genesis_config,
-            transaction_scheduler::prio_graph_scheduler::{
-                PrioGraphScheduler, PrioGraphSchedulerConfig,
-            },
+            transaction_scheduler::greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
         },
         agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
         crossbeam_channel::{Receiver, Sender, unbounded},
@@ -534,7 +499,7 @@ mod tests {
         create_receive_and_buffer: impl FnOnce(BankingPacketReceiver, Arc<RwLock<BankForks>>) -> R,
     ) -> (
         TestFrame<R::Transaction>,
-        SchedulerController<R, PrioGraphScheduler<R::Transaction>>,
+        SchedulerController<R, GreedyScheduler<R::Transaction>>,
     ) {
         let GenesisConfigInfo {
             mut genesis_config,
@@ -565,10 +530,10 @@ mod tests {
             finished_consume_work_sender,
         };
 
-        let scheduler = PrioGraphScheduler::new(
+        let scheduler = GreedyScheduler::new(
             consume_work_senders,
             finished_consume_work_receiver,
-            PrioGraphSchedulerConfig::default(),
+            GreedySchedulerConfig::default(),
         );
         let exit = Arc::new(AtomicBool::new(false));
         let scheduler_controller = SchedulerController::new(
@@ -795,16 +760,16 @@ mod tests {
 
         // We expect 2 batches to be scheduled
         test_receive_then_schedule(&mut scheduler_controller);
-        let consume_works = (0..2)
-            .map(|_| consume_work_receivers[0].try_recv().unwrap())
-            .collect_vec();
+        let consume_work = consume_work_receivers[0].try_recv().unwrap();
+        assert!(consume_work_receivers[0].try_recv().is_err());
 
-        let num_txs_per_batch = consume_works.iter().map(|cw| cw.ids.len()).collect_vec();
-        let message_hashes = consume_works
+        let num_txs_per_batch = consume_work.ids.len();
+        let message_hashes = consume_work
+            .transactions
             .iter()
-            .flat_map(|cw| cw.transactions.iter().map(|tx| tx.message_hash()))
+            .map(|tx| tx.message_hash())
             .collect_vec();
-        assert_eq!(num_txs_per_batch, vec![1; 2]);
+        assert_eq!(num_txs_per_batch, 2);
         assert_eq!(message_hashes, vec![&tx2_hash, &tx1_hash]);
     }
 
