@@ -4983,8 +4983,12 @@ impl Bank {
         serialized_message: &[u8],
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        // Discard v1 transactions until support is added.
-        if tx.version() == TransactionVersion::Number(1) {
+        // Discard v1 transactions until feature gate is activated.
+        if !self
+            .feature_set
+            .is_active(&agave_feature_set::enable_tx_v1::ID)
+            && tx.version() == TransactionVersion::Number(1)
+        {
             return Err(TransactionError::UnsupportedVersion);
         }
 

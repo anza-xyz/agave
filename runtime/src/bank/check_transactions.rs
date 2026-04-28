@@ -91,13 +91,18 @@ impl Bank {
         sanitized_txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: &[TransactionResult<()>],
     ) -> Vec<TransactionResult<()>> {
-        // Discard v1 transactions until support is added.
+        // Discard v1 transactions until feature gate is activated.
         sanitized_txs
             .iter()
             .zip(lock_results)
             .map(|(tx, lock_result)| match lock_result {
                 Err(err) => Err(err.clone()),
-                Ok(()) if tx.borrow().version() == TransactionVersion::Number(1) => {
+                Ok(())
+                    if !self
+                        .feature_set
+                        .is_active(&agave_feature_set::enable_tx_v1::ID)
+                        && tx.borrow().version() == TransactionVersion::Number(1) =>
+                {
                     Err(TransactionError::UnsupportedVersion)
                 }
                 Ok(()) => Ok(()),
