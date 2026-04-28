@@ -75,7 +75,8 @@ impl TransactionSigVerifier {
             .sharable_banks
             .working()
             .feature_set
-            .is_active(&agave_feature_set::enable_tx_v1::ID);
+            .snapshot()
+            .enable_tx_v1;
 
         in_flight_count.fetch_add(valid_packets, Ordering::Release);
 

@@ -98,9 +98,7 @@ impl Bank {
             .map(|(tx, lock_result)| match lock_result {
                 Err(err) => Err(err.clone()),
                 Ok(())
-                    if !self
-                        .feature_set
-                        .is_active(&agave_feature_set::enable_tx_v1::ID)
+                    if !self.feature_set.snapshot().enable_tx_v1
                         && tx.borrow().version() == TransactionVersion::Number(1) =>
                 {
                     Err(TransactionError::UnsupportedVersion)

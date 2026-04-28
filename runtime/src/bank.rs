@@ -4984,9 +4984,7 @@ impl Bank {
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
         // Discard v1 transactions until feature gate is activated.
-        if !self
-            .feature_set
-            .is_active(&agave_feature_set::enable_tx_v1::ID)
+        if !self.feature_set.snapshot().enable_tx_v1
             && tx.version() == TransactionVersion::Number(1)
         {
             return Err(TransactionError::UnsupportedVersion);
