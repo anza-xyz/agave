@@ -226,8 +226,17 @@ impl Bank {
         // This is intentionally deferred from calculation time so that any
         // intervening account mutations (e.g. VAT burns in
         // `update_epoch_stakes`) are reflected.
-        let reward_commission_accounts =
-            self.load_and_reward_commission_accounts(reward_commissions, thread_pool);
+        let (reward_commission_accounts, load_and_reward_commission_accounts_us) =
+            measure_us!(self.load_and_reward_commission_accounts(reward_commissions, thread_pool));
+        rewards_metrics
+            .load_and_reward_commission_accounts_us
+            .fetch_add(load_and_reward_commission_accounts_us, Relaxed);
+        info!(
+            "load_and_reward_commission_accounts: input_count={} output_count={} elapsed_us={}",
+            reward_commissions.len(),
+            reward_commission_accounts.accounts_with_rewards.len(),
+            load_and_reward_commission_accounts_us,
+        );
         let total_reward_commissions = reward_commission_accounts.total_reward_commission_lamports;
         self.store_commission_accounts_partitioned(&reward_commission_accounts, rewards_metrics);
         self.update_reward_commissions(&reward_commission_accounts);
