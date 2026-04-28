@@ -164,6 +164,7 @@ mod tests {
             sigverify::{self},
             test_tx::{
                 new_test_tx_with_number_of_ixs, new_test_vote_tx, test_multisig_tx, test_tx,
+                test_tx_v1,
             },
         },
         bytes::Bytes,
@@ -210,39 +211,72 @@ mod tests {
         assert!(!batches[0].get(0).unwrap().meta().discard());
     }
 
-    fn packet_from_num_sigs(required_num_sigs: u8, actual_num_sigs: usize) -> BytesPacket {
-        let message = Message {
-            header: MessageHeader {
-                num_required_signatures: required_num_sigs,
-                num_readonly_signed_accounts: 12,
-                num_readonly_unsigned_accounts: 11,
-            },
-            account_keys: vec![],
-            recent_blockhash: Hash::default(),
-            instructions: vec![],
+    fn packet_from_num_sigs(
+        required_num_sigs: u8,
+        actual_num_sigs: usize,
+        use_v1_tx: bool,
+    ) -> BytesPacket {
+        let mut tx: VersionedTransaction = if !use_v1_tx {
+            let message = Message {
+                header: MessageHeader {
+                    num_required_signatures: required_num_sigs,
+                    num_readonly_signed_accounts: 12,
+                    num_readonly_unsigned_accounts: 11,
+                },
+                account_keys: vec![],
+                recent_blockhash: Hash::default(),
+                instructions: vec![],
+            };
+            Transaction::new_unsigned(message).into()
+        } else {
+            let message = solana_message::v1::Message {
+                header: MessageHeader {
+                    num_required_signatures: required_num_sigs,
+                    num_readonly_signed_accounts: 12,
+                    num_readonly_unsigned_accounts: 11,
+                },
+                config: solana_message::v1::TransactionConfig::default(),
+                lifetime_specifier: Hash::default(),
+                account_keys: vec![],
+                instructions: vec![],
+            };
+
+            VersionedTransaction {
+                message: solana_message::VersionedMessage::V1(message),
+                signatures: vec![],
+            }
         };
-        let mut tx = Transaction::new_unsigned(message);
         tx.signatures = vec![Signature::default(); actual_num_sigs];
         BytesPacket::from_data(None, tx).unwrap()
     }
 
-    #[test]
-    fn test_untrustworthy_sigs() {
+    #[test_case(false, false; "not_use_v1_feature_disabled")]
+    #[test_case(false, true; "not_use_v1_feature_enabled")]
+    #[test_case(true, false; "use_v1_feature_disabled")]
+    #[test_case(true, true; "use_v1_feature_enabled")]
+    fn test_untrustworthy_sigs(use_v1_tx: bool, enable_tx_v1: bool) {
         let required_num_sigs = 14;
         let actual_num_sigs = 5;
 
-        let mut packet = packet_from_num_sigs(required_num_sigs, actual_num_sigs);
+        let mut packet = packet_from_num_sigs(required_num_sigs, actual_num_sigs, use_v1_tx);
         assert!(!sigverify::verify_packet(
             &mut packet.as_mut(),
             false,
-            false
+            enable_tx_v1,
         ));
     }
 
-    #[test]
-    fn test_small_packet() {
-        let tx = test_tx();
-        let mut data = bincode::serialize(&tx).unwrap();
+    #[test_case(false, false; "not_use_v1_feature_disabled")]
+    #[test_case(false, true; "not_use_v1_feature_enabled")]
+    #[test_case(true, false; "use_v1_feature_disabled")]
+    #[test_case(true, true; "use_v1_feature_enabled")]
+    fn test_small_packet(use_v1_tx: bool, enable_tx_v1: bool) {
+        let tx = if use_v1_tx {
+            test_tx_v1()
+        } else {
+            test_tx().into()
+        };
+        let mut data = wincode::serialize(&tx).unwrap();
 
         data[0] = 0xff;
         data[1] = 0xff;
@@ -252,64 +286,77 @@ mod tests {
         assert!(!sigverify::verify_packet(
             &mut packet.as_mut(),
             false,
-            false
+            enable_tx_v1,
         ));
     }
 
-    #[test]
-    fn test_pubkey_too_small() {
+    #[test_case(false, false; "not_use_v1_feature_disabled")]
+    #[test_case(false, true; "not_use_v1_feature_enabled")]
+    #[test_case(true, false; "use_v1_feature_disabled")]
+    #[test_case(true, true; "use_v1_feature_enabled")]
+    fn test_pubkey_too_small(use_v1_tx: bool, enable_tx_v1: bool) {
         agave_logger::setup();
-        let mut tx = test_tx();
+        let mut tx = if use_v1_tx {
+            test_tx_v1()
+        } else {
+            test_tx().into()
+        };
         let sig = tx.signatures[0];
         const NUM_SIG: usize = 18;
         tx.signatures = vec![sig; NUM_SIG];
-        tx.message.account_keys = vec![];
-        tx.message.header.num_required_signatures = NUM_SIG as u8;
+        let message: &mut VersionedMessage = &mut tx.message;
+        match message {
+            VersionedMessage::Legacy(msg) => {
+                msg.account_keys = vec![];
+                msg.header.num_required_signatures = NUM_SIG as u8;
+            }
+            VersionedMessage::V1(msg) => {
+                msg.account_keys = vec![];
+                msg.header.num_required_signatures = NUM_SIG as u8;
+            }
+            VersionedMessage::V0(_) => {
+                unreachable!("v0 is same as legacy");
+            }
+        }
         let mut packet = BytesPacket::from_data(None, tx).unwrap();
 
-        assert!(!verify_packet(&mut packet.as_mut(), false, false));
+        assert!(!verify_packet(&mut packet.as_mut(), false, enable_tx_v1));
 
         packet.meta_mut().set_discard(false);
         let mut batches = generate_packet_batches(&packet, 1, 1);
-        ed25519_verify(&mut batches);
+        ed25519_verify(&mut batches, enable_tx_v1);
         assert!(batches[0].get(0).unwrap().meta().discard());
     }
 
-    #[test]
-    fn test_pubkey_len() {
+    #[test_case(false, false; "not_use_v1_feature_disabled")]
+    #[test_case(false, true; "not_use_v1_feature_enabled")]
+    #[test_case(true, false; "use_v1_feature_disabled")]
+    #[test_case(true, true; "use_v1_feature_enabled")]
+    fn test_pubkey_len(use_v1_tx: bool, enable_tx_v1: bool) {
         // See that the verify cannot walk off the end of the packet
-        // trying to index into the account_keys to access pubkey.
-        agave_logger::setup();
 
-        const NUM_SIG: usize = 17;
-        let keypair1 = Keypair::new();
-        let pubkey1 = keypair1.pubkey();
-        let mut message = Message::new(&[], Some(&pubkey1));
-        message.account_keys.push(pubkey1);
-        message.account_keys.push(pubkey1);
-        message.header.num_required_signatures = NUM_SIG as u8;
-        message.recent_blockhash = Hash::new_from_array(pubkey1.to_bytes());
-        let mut tx = Transaction::new_unsigned(message);
+        // construct tx has NUM_SIG signatures with 0 static accounts.
+        let mut packet = packet_from_num_sigs(17, 17, use_v1_tx);
 
-        info!("message: {:?}", tx.message_data());
-        info!("tx: {tx:?}");
-        let sig = keypair1.try_sign_message(&tx.message_data()).unwrap();
-        tx.signatures = vec![sig; NUM_SIG];
-
-        let mut packet = BytesPacket::from_data(None, tx).unwrap();
-
-        assert!(!verify_packet(&mut packet.as_mut(), false, false));
+        assert!(!verify_packet(&mut packet.as_mut(), false, enable_tx_v1));
 
         packet.meta_mut().set_discard(false);
         let mut batches = generate_packet_batches(&packet, 1, 1);
-        ed25519_verify(&mut batches);
+        ed25519_verify(&mut batches, enable_tx_v1);
         assert!(batches[0].get(0).unwrap().meta().discard());
     }
 
-    #[test]
-    fn test_large_sig_len() {
-        let tx = test_tx();
-        let mut data = bincode::serialize(&tx).unwrap();
+    #[test_case(false, false; "not_use_v1_feature_disabled")]
+    #[test_case(false, true; "not_use_v1_feature_enabled")]
+    #[test_case(true, false; "use_v1_feature_disabled")]
+    #[test_case(true, true; "use_v1_feature_enabled")]
+    fn test_large_sig_len(use_v1_tx: bool, enabel_tx_v1: bool) {
+        let tx = if use_v1_tx {
+            test_tx_v1()
+        } else {
+            test_tx().into()
+        };
+        let mut data = wincode::serialize(&tx).unwrap();
 
         // Make the signatures len huge
         data[0] = 0x7f;
@@ -318,14 +365,21 @@ mod tests {
         assert!(!sigverify::verify_packet(
             &mut packet.as_mut(),
             false,
-            false
+            enabel_tx_v1,
         ));
     }
 
-    #[test]
-    fn test_really_large_sig_len() {
-        let tx = test_tx();
-        let mut data = bincode::serialize(&tx).unwrap();
+    #[test_case(false, false; "not_use_v1_feature_disabled")]
+    #[test_case(false, true; "not_use_v1_feature_enabled")]
+    #[test_case(true, false; "use_v1_feature_disabled")]
+    #[test_case(true, true; "use_v1_feature_enabled")]
+    fn test_really_large_sig_len(use_v1_tx: bool, enable_tx_v1: bool) {
+        let tx = if use_v1_tx {
+            test_tx_v1()
+        } else {
+            test_tx().into()
+        };
+        let mut data = wincode::serialize(&tx).unwrap();
 
         // Make the signatures len huge
         data[0] = 0xff;
@@ -337,14 +391,21 @@ mod tests {
         assert!(!sigverify::verify_packet(
             &mut packet.as_mut(),
             false,
-            false
+            enable_tx_v1,
         ));
     }
 
-    #[test]
-    fn test_invalid_pubkey_len() {
-        let tx = test_tx();
-        let mut data = bincode::serialize(&tx).unwrap();
+    #[test_case(false, false; "not_use_v1_feature_disabled")]
+    #[test_case(false, true; "not_use_v1_feature_enabled")]
+    #[test_case(true, false; "use_v1_feature_disabled")]
+    #[test_case(true, true; "use_v1_feature_enabled")]
+    fn test_invalid_pubkey_len(use_v1_tx: bool, enable_tx_v1: bool) {
+        let tx = if use_v1_tx {
+            test_tx_v1()
+        } else {
+            test_tx().into()
+        };
+        let mut data = wincode::serialize(&tx).unwrap();
 
         // make pubkey len huge
         const PUBKEY_OFFSET: usize =
@@ -355,46 +416,80 @@ mod tests {
         assert!(!sigverify::verify_packet(
             &mut packet.as_mut(),
             false,
-            false
+            enable_tx_v1,
         ));
     }
 
-    #[test]
-    fn test_fee_payer_is_debitable() {
-        let message = Message {
-            header: MessageHeader {
-                num_required_signatures: 1,
-                num_readonly_signed_accounts: 1,
-                num_readonly_unsigned_accounts: 1,
-            },
-            account_keys: vec![],
-            recent_blockhash: Hash::default(),
-            instructions: vec![],
+    #[test_case(false, false; "not_use_v1_feature_disabled")]
+    #[test_case(false, true; "not_use_v1_feature_enabled")]
+    #[test_case(true, false; "use_v1_feature_disabled")]
+    #[test_case(true, true; "use_v1_feature_enabled")]
+    fn test_fee_payer_is_debitable(use_v1_tx: bool, enable_tx_v1: bool) {
+        let mut tx: VersionedTransaction = if !use_v1_tx {
+            let message = Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 1,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                account_keys: vec![],
+                recent_blockhash: Hash::default(),
+                instructions: vec![],
+            };
+            Transaction::new_unsigned(message).into()
+        } else {
+            let message = solana_message::v1::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 1,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                config: solana_message::v1::TransactionConfig::default(),
+                lifetime_specifier: Hash::default(),
+                account_keys: vec![],
+                instructions: vec![],
+            };
+
+            VersionedTransaction {
+                message: solana_message::VersionedMessage::V1(message),
+                signatures: vec![],
+            }
         };
-        let mut tx = Transaction::new_unsigned(message);
         tx.signatures = vec![Signature::default()];
         let mut packet = BytesPacket::from_data(None, tx).unwrap();
+
         assert!(!sigverify::verify_packet(
             &mut packet.as_mut(),
             false,
-            false
+            enable_tx_v1,
         ));
     }
 
-    #[test]
-    fn test_unsupported_version() {
-        let tx = test_tx();
-        let mut data = bincode::serialize(&tx).unwrap();
+    #[test_case(false, false; "not_use_v1_feature_disabled")]
+    #[test_case(false, true; "not_use_v1_feature_enabled")]
+    #[test_case(true, false; "use_v1_feature_disabled")]
+    #[test_case(true, true; "use_v1_feature_enabled")]
+    fn test_unsupported_version(use_v1_tx: bool, enable_tx_v1: bool) {
+        let tx = if use_v1_tx {
+            test_tx_v1()
+        } else {
+            test_tx().into()
+        };
+        let mut data = wincode::serialize(&tx).unwrap();
 
-        // set message version to 1
-        const MESSAGE_OFFSET: usize = 1 + core::mem::size_of::<Signature>();
-        data[MESSAGE_OFFSET] = MESSAGE_VERSION_PREFIX + 1;
+        // set message version to 2
+        let version_offset = if use_v1_tx {
+            0
+        } else {
+            1 + core::mem::size_of::<Signature>()
+        };
+        data[version_offset] = MESSAGE_VERSION_PREFIX + 2;
 
         let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
         assert!(!sigverify::verify_packet(
             &mut packet.as_mut(),
             false,
-            false
+            enable_tx_v1,
         ));
     }
 
@@ -441,7 +536,7 @@ mod tests {
 
     fn test_verify_n(n: usize, modify_data: bool) {
         let tx = test_tx();
-        let mut data = bincode::serialize(&tx).unwrap();
+        let mut data = wincode::serialize(&tx).unwrap();
 
         // jumble some data to test failure
         if modify_data {
@@ -452,7 +547,7 @@ mod tests {
         let mut batches = generate_packet_batches(&packet, n, 2);
 
         // verify packets
-        ed25519_verify(&mut batches);
+        ed25519_verify(&mut batches, true);
 
         // check result
         let should_discard = modify_data;
@@ -464,15 +559,22 @@ mod tests {
         );
     }
 
-    fn ed25519_verify(batches: &mut [PacketBatch]) {
+    fn ed25519_verify(batches: &mut [PacketBatch], enable_tx_v1: bool) {
         let threadpool = threadpool_for_tests();
         let packet_count = sigverify::count_packets_in_batches(batches);
-        sigverify::ed25519_verify(&threadpool, batches, false, packet_count, false);
+        sigverify::ed25519_verify(&threadpool, batches, false, packet_count, enable_tx_v1);
     }
 
-    #[test]
-    fn test_verify_tampered_sig_len() {
-        let mut tx = test_tx();
+    #[test_case(false, false; "not_use_v1_feature_disabled")]
+    #[test_case(false, true; "not_use_v1_feature_enabled")]
+    #[test_case(true, false; "use_v1_feature_disabled")]
+    #[test_case(true, true; "use_v1_feature_enabled")]
+    fn test_verify_tampered_sig_len(use_v1_tx: bool, enable_tx_v1: bool) {
+        let mut tx = if use_v1_tx {
+            test_tx_v1()
+        } else {
+            test_tx().into()
+        };
         // pretend malicious leader dropped a signature...
         tx.signatures.pop();
         let packet = BytesPacket::from_data(None, tx).unwrap();
@@ -480,7 +582,7 @@ mod tests {
         let mut batches = generate_packet_batches(&packet, 1, 1);
 
         // verify packets
-        ed25519_verify(&mut batches);
+        ed25519_verify(&mut batches, enable_tx_v1);
         assert!(
             batches
                 .iter()
@@ -529,7 +631,7 @@ mod tests {
         agave_logger::setup();
 
         let tx = test_multisig_tx();
-        let mut data = bincode::serialize(&tx).unwrap();
+        let mut data = wincode::serialize(&tx).unwrap();
 
         let n = 4;
         let num_batches = 3;
@@ -543,7 +645,7 @@ mod tests {
 
         // verify packets
         let mut batches: Vec<PacketBatch> = batches.into_iter().map(PacketBatch::from).collect();
-        ed25519_verify(&mut batches);
+        ed25519_verify(&mut batches, true);
 
         // check result
         let ref_ans = 1u8;
@@ -672,9 +774,24 @@ mod tests {
             BytesPacket::from_data(None, tx.clone()).unwrap()
         };
 
+        for enable_tx_v1 in [true, false] {
+            assert_eq!(
+                sigverify::verify_packet(&mut packet.as_mut(), false, enable_tx_v1),
+                !too_many_ixs
+            );
+        }
+    }
+
+    #[test_case(false, false; "tx_v1_disabled")]
+    #[test_case(true, true; "tx_v1_enabled")]
+    fn test_verify_packet_tx_v1_feature_gate(enable_tx_v1: bool, expected: bool) {
+        let tx = test_tx_v1();
+        let data = wincode::serialize(&tx).unwrap();
+        let mut packet = BytesPacket::from_bytes(None, data);
+
         assert_eq!(
-            sigverify::verify_packet(&mut packet.as_mut(), false, false),
-            !too_many_ixs
+            verify_packet(&mut packet.as_mut(), false, enable_tx_v1),
+            expected,
         );
     }
 }

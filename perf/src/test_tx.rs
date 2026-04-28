@@ -5,12 +5,12 @@ use {
     solana_keypair::Keypair,
     solana_message::{
         AccountMeta, Instruction, Message, VersionedMessage,
-        compiled_instruction::CompiledInstruction, v0::Message as MessageV0,
+        compiled_instruction::CompiledInstruction, v0::Message as MessageV0, v1,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{stake, system_program},
     solana_signer::Signer,
-    solana_system_interface::instruction::SystemInstruction,
+    solana_system_interface::instruction::{self as system_instruction, SystemInstruction},
     solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_vote::vote_transaction,
     solana_vote_program::vote_state::TowerSync,
@@ -21,6 +21,17 @@ pub fn test_tx() -> Transaction {
     let pubkey1 = keypair1.pubkey();
     let zero = Hash::default();
     solana_system_transaction::transfer(&keypair1, &pubkey1, 42, zero)
+}
+
+pub fn test_tx_v1() -> VersionedTransaction {
+    let payer = Keypair::new();
+    let recipient = Pubkey::new_unique();
+
+    let instruction = system_instruction::transfer(&payer.pubkey(), &recipient, 1);
+    let message =
+        v1::Message::try_compile(&payer.pubkey(), &[instruction], Hash::new_unique()).unwrap();
+
+    VersionedTransaction::try_new(VersionedMessage::V1(message), &[&payer]).unwrap()
 }
 
 pub fn test_multisig_tx() -> Transaction {
