@@ -8,6 +8,7 @@ use {
     solana_bls_signatures::BlsError,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
+    std::collections::HashSet,
     thiserror::Error,
 };
 
@@ -68,9 +69,9 @@ fn extract_slot(
 }
 
 /// Struct built by validating incoming reward certs.
-pub(crate) struct ValidatedRewardCert {
+pub struct ValidatedRewardCert {
     /// List of validators that were present in the reward certs.
-    validators: Vec<Pubkey>,
+    validators: HashSet<Pubkey>,
     /// The slot the reward certs refer to
     reward_slot: Slot,
 }
@@ -90,11 +91,11 @@ impl ValidatedRewardCert {
             .ok_or(Error::NoRankMap)?
             .bls_pubkey_to_rank_map();
         let max_validators = rank_map.len();
-        let mut validators = Vec::with_capacity(max_validators);
+        let mut validators = HashSet::with_capacity(max_validators);
 
         let mut rank_map = |ind: usize| {
             rank_map.get_pubkey_stake_entry(ind).map(|entry| {
-                validators.push(entry.vote_account_pubkey);
+                validators.insert(entry.vote_account_pubkey);
                 entry.bls_pubkey
             })
         };
@@ -133,8 +134,17 @@ impl ValidatedRewardCert {
     }
 
     /// Returns the validators that were extracted from the reward certs.
-    pub(crate) fn into_parts(self) -> (Slot, Vec<Pubkey>) {
+    pub(crate) fn into_parts(self) -> (Slot, HashSet<Pubkey>) {
         (self.reward_slot, self.validators)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(reward_slot: Slot, validators: Vec<Pubkey>) -> Self {
+        let validators = validators.into_iter().collect();
+        Self {
+            reward_slot,
+            validators,
+        }
     }
 }
 
