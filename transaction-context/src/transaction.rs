@@ -15,13 +15,13 @@ use {
     solana_instruction::error::InstructionError,
     solana_instructions_sysvar as instructions,
     solana_rent::Rent,
+    solana_sbpf::memory_region::VmExposable,
     solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
     std::{borrow::Cow, cell::Cell, rc::Rc},
 };
 use {
     crate::{vm_addresses::GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, vm_slice::VmSlice},
     solana_pubkey::Pubkey,
-    solana_sbpf::memory_region::VmExposable,
 };
 
 /// Used only in fn `take_instruction_trace` for deconstructing TransactionContext
@@ -54,6 +54,7 @@ pub struct TransactionFrame {
     pub number_of_transaction_accounts: u16,
 }
 
+#[cfg(not(any(target_arch = "sbf", target_arch = "bpf")))]
 impl VmExposable for TransactionFrame {}
 
 /// Loaded transaction shared between runtime and programs.

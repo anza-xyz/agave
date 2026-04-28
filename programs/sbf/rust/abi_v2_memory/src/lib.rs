@@ -1,4 +1,5 @@
 use {
+    core::{alloc::Layout, ptr::null_mut, slice},
     solana_transaction_context::{
         instruction::InstructionFrame,
         transaction::TransactionFrame,
@@ -8,13 +9,71 @@ use {
             INSTRUCTION_TRACE_AREA, RETURN_DATA_SCRATCHPAD, TRANSACTION_FRAME_ADDRESS,
         },
     },
-    std::slice,
 };
 
 fn sol_log(message: &[u8]) {
     unsafe {
         let syscall: extern "C" fn(*const u8, u64) = core::mem::transmute(544561597u64); // murmur32 hash of "sol_log_"
         syscall(message.as_ptr(), message.len() as u64)
+    }
+}
+
+#[global_allocator]
+static A: BumpAllocator =
+    unsafe { BumpAllocator::with_fixed_address_range(0x300000000, 32 * 1024) };
+
+pub struct BumpAllocator {
+    start: usize,
+    len: usize,
+}
+
+impl BumpAllocator {
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    pub unsafe fn new(arena: &mut [u8]) -> Self {
+        debug_assert!(
+            arena.len() > size_of::<usize>(),
+            "Arena should be larger than usize"
+        );
+
+        // create a pointer to the start of the arena
+        // that will hold an address of the byte following free space
+        let pos_ptr = arena.as_mut_ptr() as *mut usize;
+        // initialize the data there
+        *pos_ptr = pos_ptr as usize + arena.len();
+
+        Self {
+            start: pos_ptr as usize,
+            len: arena.len(),
+        }
+    }
+
+    pub const unsafe fn with_fixed_address_range(start: usize, len: usize) -> Self {
+        Self { start, len }
+    }
+}
+
+#[allow(clippy::arithmetic_side_effects)]
+unsafe impl std::alloc::GlobalAlloc for BumpAllocator {
+    #[inline]
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let pos_ptr = self.start as *mut usize;
+        let mut pos = *pos_ptr;
+        if pos == 0 {
+            // First time, set starting position
+            pos = self.start + self.len;
+        }
+        pos = pos.saturating_sub(layout.size());
+        pos &= !(layout.align().wrapping_sub(1));
+        if pos < self.start + size_of::<*mut u8>() {
+            return null_mut();
+        }
+        *pos_ptr = pos;
+        pos as *mut u8
+    }
+    #[inline]
+    unsafe fn dealloc(&self, _: *mut u8, _: Layout) {
+        // I'm a bump allocator, I don't free
     }
 }
 

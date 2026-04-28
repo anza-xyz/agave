@@ -11,6 +11,9 @@ use {
         bank::Bank,
         bank_client::BankClient,
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
+        loader_utils::{
+            load_upgradeable_program_and_advance_slot, load_upgradeable_program_wrapper,
+        },
     },
     solana_sdk_ids::system_program,
     solana_signer::Signer,
@@ -23,7 +26,6 @@ use {
     solana_transaction_error::TransactionError,
     std::sync::Arc,
 };
-use solana_runtime::loader_utils::{load_upgradeable_program_and_advance_slot, load_upgradeable_program_wrapper};
 
 fn process_transaction_and_record_inner(
     bank: &Bank,
@@ -209,6 +211,7 @@ fn test_access_invalid_regions() {
 
         let (_, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
         let last_line = logs.last().unwrap();
+        std::println!("logs: {:?}", logs);
         // assert_eq!(last_line, &format!("Access violation in unknown section at address 0x{:x}00000000", i));
         assert!(last_line.contains("Access violation"));
         assert!(
