@@ -138,7 +138,7 @@ solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-precompile-error = { workspace = true }
-solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"], optional = true }
+solana-program-binaries = { workspace = true, optional = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }

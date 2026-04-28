@@ -1769,13 +1769,15 @@ impl Bank {
 
         // Distribute rewards commission to vote accounts and cache stake rewards
         // for partitioned distribution in the upcoming slots.
-        let epoch_validator_rewards = self.begin_partitioned_rewards(
-            parent_epoch,
-            parent_slot,
-            parent_height,
-            &rewards_calculation,
-            &rewards_metrics,
-        );
+        let (epoch_validator_rewards, begin_partitioned_rewards_time_us) =
+            measure_us!(self.begin_partitioned_rewards(
+                parent_epoch,
+                parent_slot,
+                parent_height,
+                &rewards_calculation,
+                &mut rewards_metrics,
+                &thread_pool,
+            ));
 
         // the vote reward account state should be created at the epoch boundary in which we
         // activate alpenglow as it will need info from the previous epoch.
@@ -1798,6 +1800,7 @@ impl Bank {
                 calculate_activated_stake_time_us,
                 update_epoch_stakes_time_us,
                 update_rewards_with_thread_pool_time_us,
+                begin_partitioned_rewards_time_us,
             },
             rewards_metrics,
         );
