@@ -282,14 +282,16 @@ impl BlockComponentProcessor {
         );
 
         // Send finalization cert(s) to consensus pool
-        if let Some(validated) = validated_final_cert {
-            if let Some(sender) = finalization_cert_sender {
+        if let Some(sender) = finalization_cert_sender {
+            if let Some(validated) = validated_final_cert {
                 let (finalize_cert, notarize_cert) = validated.into_certificates();
                 if let Some(notarize_cert) = notarize_cert {
+                    // TODO blocking send.
                     let _ = sender
                         .send(vec![ConsensusMessage::from(notarize_cert)])
                         .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
                 }
+                // TODO blocking send.
                 let _ = sender
                     .send(vec![ConsensusMessage::from(finalize_cert)])
                     .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
