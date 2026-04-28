@@ -9,8 +9,7 @@
 
 #[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
 use solana_runtime::loader_utils::{
-    create_program, load_upgradeable_buffer, load_upgradeable_program_and_advance_slot,
-    set_upgrade_authority, upgrade_program,
+    load_upgradeable_program_and_advance_slot, set_upgrade_authority, upgrade_program,
 };
 #[cfg(feature = "sbf_rust")]
 use {
