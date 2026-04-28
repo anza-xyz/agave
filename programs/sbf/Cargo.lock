@@ -297,6 +297,7 @@ dependencies = [
  "solana-inflation",
  "solana-keypair",
  "solana-ledger",
+ "solana-message",
  "solana-metrics",
  "solana-native-token",
  "solana-net-utils",
