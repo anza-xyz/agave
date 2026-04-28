@@ -1,9 +1,6 @@
-use {
-    enum_iterator::{Sequence, all},
-    std::io::{self, BufReader, Read, Write},
-};
+use std::io::{self, BufReader, Read, Write};
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, Sequence)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum CompressionMethod {
     NoCompression,
     Bzip2,
@@ -66,16 +63,8 @@ pub fn compress(method: CompressionMethod, data: &[u8]) -> Result<Vec<u8>, io::E
     Ok(compressed_data)
 }
 
-pub fn compress_best(data: &[u8]) -> Result<Vec<u8>, io::Error> {
-    let mut candidates = vec![];
-    for method in all::<CompressionMethod>() {
-        candidates.push(compress(method, data)?);
-    }
-
-    Ok(candidates
-        .into_iter()
-        .min_by(|a, b| a.len().cmp(&b.len()))
-        .unwrap())
+pub fn compress_default(data: &[u8]) -> Result<Vec<u8>, io::Error> {
+    compress(CompressionMethod::Zstd, data)
 }
 
 #[cfg(test)]
@@ -86,7 +75,7 @@ mod test {
     fn test_compress_uncompress() {
         let data = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         assert_eq!(
-            decompress(&compress_best(&data).expect("compress_best")).expect("decompress"),
+            decompress(&compress_default(&data).expect("compress_default")).expect("decompress"),
             data
         );
     }
@@ -94,6 +83,6 @@ mod test {
     #[test]
     fn test_compress() {
         let data = vec![0; 256];
-        assert!(compress_best(&data).expect("compress_best").len() < data.len());
+        assert!(compress_default(&data).expect("compress_default").len() < data.len());
     }
 }
