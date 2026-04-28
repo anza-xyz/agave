@@ -42,6 +42,8 @@ pub(super) enum Error {
         reward_epoch: Epoch,
         current_slot: Slot,
     },
+    #[error("Missing rank map for reward cert or final cert input")]
+    RankMapNotFound,
 }
 
 /// Common state required to pay rewards to different accounts.
@@ -233,17 +235,17 @@ fn update_account(
 /// Until we overhaul vote state we continue populating these two fields similar to TowerBFT:
 /// - `root_slot` is populated from the footer finalization certificate
 /// - `votes` is populated from the footer rewards aggregate
-fn update_accounts(
+fn update_accounts<'a>(
     bank: &Bank,
-    validators: impl Iterator<Item = Pubkey>,
+    validators: impl Iterator<Item = &'a Pubkey>,
     mut reward_state: Option<&mut RewardState>,
     final_slot: Option<Slot>,
+    updated_accounts: &mut Vec<(Pubkey, AccountSharedData)>,
 ) {
     assert!(reward_state.is_some() || final_slot.is_some());
 
-    let mut updated_accounts = vec![];
     let vote_accounts = bank.vote_accounts();
-    for vote_pubkey in validators {
+    for &vote_pubkey in validators {
         let update = match &mut reward_state {
             None => None,
             Some(reward_state) => {
@@ -300,8 +302,24 @@ fn update_accounts(
             }
         }
     }
+}
 
-    bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
+fn allocate_updated_accounts(
+    bank: &Bank,
+    reward_cert: &Option<ValidatedRewardCert>,
+    final_cert_input: &Option<(&HashSet<Pubkey>, Slot)>,
+) -> Option<Vec<(Pubkey, AccountSharedData)>> {
+    let max_validators = match (&reward_cert, &final_cert_input) {
+        (None, None) => return None,
+        (Some(cert), None) => bank.get_rank_map(cert.slot())?.len(),
+        (None, Some((_, slot))) => bank.get_rank_map(*slot)?.len(),
+        (Some(reward_cert), Some((_, slot))) => {
+            let final_cert_slot_max_validators = bank.get_rank_map(*slot)?.len();
+            let reward_cert_slot_max_validators = bank.get_rank_map(reward_cert.slot())?.len();
+            final_cert_slot_max_validators.max(reward_cert_slot_max_validators)
+        }
+    };
+    Some(Vec::with_capacity(max_validators))
 }
 
 /// Calculates voting rewards based on the `reward_cert` and updates fields in the vote account
@@ -309,53 +327,57 @@ fn update_accounts(
 pub(super) fn calc_vote_reward_and_update_vote_state(
     bank: &Bank,
     reward_cert: Option<ValidatedRewardCert>,
-    final_cert_input: Option<(HashSet<Pubkey>, Slot)>,
+    final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
 ) -> Result<(), Error> {
+    let mut updated_accounts = allocate_updated_accounts(bank, &reward_cert, &final_cert_input)
+        .ok_or(Error::RankMapNotFound)?;
     match (reward_cert, final_cert_input) {
         (None, None) => return Ok(()),
-        (None, Some((validators, final_slot))) => {
-            update_accounts(bank, validators.into_iter(), None, Some(final_slot));
-        }
+        (None, Some((validators, final_slot))) => update_accounts(
+            bank,
+            validators.iter(),
+            None,
+            Some(final_slot),
+            &mut updated_accounts,
+        ),
         (Some(reward_cert), None) => {
             let (reward_slot, validators_to_update) = reward_cert.into_parts();
             let mut reward_state = RewardState::new(bank, reward_slot)?;
             update_accounts(
                 bank,
-                validators_to_update.into_iter(),
+                validators_to_update.iter(),
                 Some(&mut reward_state),
                 None,
-            );
+                &mut updated_accounts,
+            )
         }
         (Some(reward_cert), Some((final_cert_validators, final_slot))) => {
             let (reward_slot, reward_validators) = reward_cert.into_parts();
             let mut reward_state = RewardState::new(bank, reward_slot)?;
             update_accounts(
                 bank,
-                reward_validators
-                    .intersection(&final_cert_validators)
-                    .cloned(),
+                reward_validators.intersection(final_cert_validators),
                 Some(&mut reward_state),
                 Some(final_slot),
+                &mut updated_accounts,
             );
             update_accounts(
                 bank,
-                reward_validators
-                    .difference(&final_cert_validators)
-                    .cloned(),
+                reward_validators.difference(final_cert_validators),
                 Some(&mut reward_state),
                 None,
+                &mut updated_accounts,
             );
             update_accounts(
                 bank,
-                final_cert_validators
-                    .difference(&reward_validators)
-                    .cloned(),
+                final_cert_validators.difference(&reward_validators),
                 None,
                 Some(final_slot),
+                &mut updated_accounts,
             );
         }
-    }
-
+    };
+    bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
     Ok(())
 }
 
@@ -622,7 +644,7 @@ mod tests {
         };
         let final_cert = build_fast_finalization_cert(&bank, &[cert_rank]);
         let (signers, finalize_cert, _) = final_cert.clone().into_parts();
-        let final_cert_input = Some((signers, finalize_cert.cert_type.slot()));
+        let final_cert_input = Some((&signers, finalize_cert.cert_type.slot()));
 
         calc_vote_reward_and_update_vote_state(
             &bank,
@@ -691,7 +713,7 @@ mod tests {
         };
         let final_cert = build_fast_finalization_cert(&bank, &[cert_rank]);
         let (signers, finalize_cert, _) = final_cert.into_parts();
-        let final_cert_input = Some((signers, finalize_cert.cert_type.slot()));
+        let final_cert_input = Some((&signers, finalize_cert.cert_type.slot()));
 
         calc_vote_reward_and_update_vote_state(
             &bank,

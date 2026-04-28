@@ -266,17 +266,17 @@ impl BlockComponentProcessor {
                 Err(ValidatedRewardCertError::Empty) => None,
                 Err(e) => return Err(e.into()),
             };
-        let validated_final_cert = final_cert
+        let final_cert = final_cert
             .map(|final_cert| {
                 ValidatedBlockFinalizationCert::try_from_footer(final_cert, &bank)
                     .map_err(BlockComponentProcessorError::InvalidFinalizationCertificate)
             })
             .transpose()?;
 
-        let (footer_input, pool_input) = match validated_final_cert {
+        let (footer_input, pool_input) = match final_cert {
             None => (None, None),
-            Some(f) => {
-                let (signers, finalize_cert, notarize_cert) = f.into_parts();
+            Some(cert) => {
+                let (signers, finalize_cert, notarize_cert) = cert.into_parts();
                 let final_slot = finalize_cert.cert_type.slot();
                 (
                     Some((signers, final_slot)),
@@ -290,7 +290,9 @@ impl BlockComponentProcessor {
             block_producer_time_nanos as i64,
             bank_hash,
             reward_cert,
-            footer_input,
+            footer_input
+                .as_ref()
+                .map(|(validators, slot)| (validators, *slot)),
         );
 
         // Send finalization cert(s) to consensus pool
@@ -399,12 +401,12 @@ impl BlockComponentProcessor {
         (min_working_bank_time, max_working_bank_time)
     }
 
-    fn update_bank_with_footer_fields(
+    pub fn update_bank_with_footer_fields(
         bank: &Bank,
         block_producer_time_nanos: i64,
         bank_hash: Hash,
         reward_cert: Option<ValidatedRewardCert>,
-        final_cert_input: Option<(HashSet<Pubkey>, Slot)>,
+        final_cert_input: Option<(&HashSet<Pubkey>, Slot)>,
     ) {
         // Update clock sysvar
         bank.update_clock_from_footer(block_producer_time_nanos);

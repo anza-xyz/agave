@@ -300,9 +300,9 @@ impl ValidatedBlockFinalizationCert {
         )
     }
 
-    /// Returns true when the provided vote account pubkey is in the finalization certificate.
-    pub fn was_signed_by(&self, vote_pubkey: &Pubkey) -> bool {
-        self.signers.contains(vote_pubkey)
+    /// Returns the data needed to calculating and paying vote rewards.
+    pub fn vote_rewards_input(&self) -> (&HashSet<Pubkey>, Slot) {
+        (&self.signers, self.slot())
     }
 
     /// Converts this validated certificate into a [`FinalCertificate`] for inclusion in a block footer.
