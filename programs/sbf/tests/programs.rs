@@ -480,6 +480,7 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
         &authority_pubkey,
         1,
         program_elf.len() * 2,
+        true, // close_buffer: pre-SIMD-0430 default
     )
     .unwrap()
     .pop()
@@ -2013,6 +2014,7 @@ fn test_program_sbf_invoke_stable_genesis_and_bank() {
         &buffer_keypair.pubkey(),
         &authority_keypair.pubkey(),
         &mint_keypair.pubkey(),
+        true, // close_buffer: pre-SIMD-0430 default
     );
 
     // Redeployment causes programs to be unavailable to both top-level-instructions and CPI instructions
@@ -2049,6 +2051,7 @@ fn test_program_sbf_invoke_stable_genesis_and_bank() {
         &mint_keypair.pubkey(),
         Some(&authority_keypair.pubkey()),
         Some(&program_id),
+        true, // tombstone: pre-SIMD-0432 default
     );
 
     let invoke_instruction =
@@ -2140,6 +2143,7 @@ fn test_program_sbf_invoke_in_same_tx_as_deployment() {
                 .unwrap(),
         ),
         program.len() * 2,
+        true, // close_buffer: pre-SIMD-0430 default
     )
     .unwrap();
 
@@ -2229,6 +2233,7 @@ fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
         &buffer_keypair.pubkey(),
         &authority_keypair.pubkey(),
         &mint_keypair.pubkey(),
+        true, // close_buffer: pre-SIMD-0430 default
     );
 
     // Deploy indirect invocation program
@@ -2331,6 +2336,7 @@ fn test_program_sbf_invoke_in_same_tx_as_undeployment() {
         &mint_keypair.pubkey(),
         Some(&authority_keypair.pubkey()),
         Some(&program_id),
+        true, // tombstone: pre-SIMD-0432 default
     );
 
     // Undeployment causes the program to become unavailable to both top-level
@@ -2646,6 +2652,7 @@ fn test_program_sbf_upgrade_via_cpi() {
         &buffer_keypair.pubkey(),
         &new_authority_keypair.pubkey(),
         &mint_keypair.pubkey(),
+        true, // close_buffer: pre-SIMD-0430 default
     );
     upgrade_instruction.program_id = invoke_and_return;
     upgrade_instruction

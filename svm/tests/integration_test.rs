@@ -2685,6 +2685,7 @@ fn program_cache_loaderv3_update_tombstone(upgrade_program: bool, invoke_changed
             &buffer_address,
             &fee_payer,
             &Pubkey::new_unique(),
+            true, // close_buffer: pre-SIMD-0430 default
         )
     } else {
         loaderv3_instruction::close_any(
@@ -2692,6 +2693,7 @@ fn program_cache_loaderv3_update_tombstone(upgrade_program: bool, invoke_changed
             &Pubkey::new_unique(),
             Some(&fee_payer),
             Some(&program_id),
+            true, // tombstone: pre-SIMD-0432 default
         )
     };
 
@@ -2803,8 +2805,13 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
     test_entry.drop_expected_account(deploy);
 
     // close the buffer
-    let close_instruction =
-        loaderv3_instruction::close_any(&target, &Pubkey::new_unique(), Some(&fee_payer), None);
+    let close_instruction = loaderv3_instruction::close_any(
+        &target,
+        &Pubkey::new_unique(),
+        Some(&fee_payer),
+        None,
+        true, // tombstone: pre-SIMD-0432 default
+    );
 
     // reopen as a program
     #[allow(deprecated)]
@@ -2815,6 +2822,7 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
         &fee_payer,
         LAMPORTS_PER_SOL,
         buffer_data.len(),
+        true, // close_buffer: pre-SIMD-0430 default
     )
     .unwrap();
 
@@ -3060,6 +3068,7 @@ fn program_cache_stats() {
             &buffer_address,
             &fee_payer,
             &Pubkey::new_unique(),
+            true, // close_buffer: pre-SIMD-0430 default
         )],
         Some(&fee_payer),
         &[&fee_payer_keypair],

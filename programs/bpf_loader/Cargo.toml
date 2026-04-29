@@ -35,7 +35,14 @@ solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
 solana-instruction = { workspace = true }
-solana-loader-v3-interface = { workspace = true, features = ["serde"] }
+# DO NOT BUMP. SIMD-0430 and SIMD-0432 must both be activated before this
+# dependency can be raised to v8.x. v8.x adds optional trailing fields
+# (close_buffer / tombstone) to Upgrade, DeployWithMaxDataLen, and Close,
+# which changes how instruction payloads deserialize and would diverge from
+# validators still on v7. The rest of the workspace (CLI, runtime, tests)
+# tracks the latest version via the workspace dep; only this manifest is
+# pinned.
+solana-loader-v3-interface = { version = "=7.0.0", features = ["serde"] }
 solana-loader-v4-interface = { workspace = true, features = ["bincode"] }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
