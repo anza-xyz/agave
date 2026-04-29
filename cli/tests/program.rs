@@ -8,7 +8,7 @@ use {
     solana_borsh::v1::try_from_slice_unchecked,
     solana_cli::{
         cli::{CliCommand, CliConfig, process_command},
-        program::{CLOSE_PROGRAM_WARNING, ProgramCliCommand},
+        program::ProgramCliCommand,
         test_utils::wait_n_slots,
     },
     solana_cli_output::{OutputFormat, parse_sign_only_reply_string},
@@ -180,6 +180,7 @@ async fn setup_extend_program_test<'a>(
         auto_extend: false,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     process_command(&config).await.unwrap();
 
@@ -261,6 +262,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config).await;
@@ -311,6 +313,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     process_command(&config).await.unwrap();
     let account1 = rpc_client
@@ -372,6 +375,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     expect_command_failure(
         &config,
@@ -400,6 +404,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     expect_command_failure(
         &config,
@@ -480,6 +485,7 @@ async fn test_cli_program_deploy_no_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config).await;
@@ -511,6 +517,7 @@ async fn test_cli_program_deploy_no_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     expect_command_failure(
         &config,
@@ -596,6 +603,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: false,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
 
@@ -628,6 +636,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
             auto_extend: true,
             use_rpc: false,
             skip_feature_verification: true,
+            close_buffer: true,
         });
 
         // When we skip verification, we fail at a later stage
@@ -744,6 +753,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: false,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).await.unwrap();
@@ -769,6 +779,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
         skip_feature_verification: false,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let sig_response = process_command(&config).await.unwrap();
@@ -786,6 +797,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
         skip_feature_verification: false,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     if enable_feature {
@@ -814,6 +826,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
             dump_transaction_message: false,
             blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
             skip_feature_verification: true,
+            close_buffer: true,
         });
         config.output_format = OutputFormat::JsonCompact;
 
@@ -896,6 +909,7 @@ async fn test_cli_program_deploy_with_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config).await;
@@ -952,6 +966,7 @@ async fn test_cli_program_deploy_with_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
@@ -999,6 +1014,7 @@ async fn test_cli_program_deploy_with_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     process_command(&config).await.unwrap();
     let program_account = rpc_client.get_account(&program_pubkey).await.unwrap();
@@ -1078,6 +1094,7 @@ async fn test_cli_program_deploy_with_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     process_command(&config).await.unwrap();
     let program_account = rpc_client.get_account(&program_pubkey).await.unwrap();
@@ -1161,6 +1178,7 @@ async fn test_cli_program_deploy_with_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     expect_command_failure(
         &config,
@@ -1187,6 +1205,7 @@ async fn test_cli_program_deploy_with_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
@@ -1318,6 +1337,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     config.send_transaction_config.skip_preflight = skip_preflight;
@@ -1342,6 +1362,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         auto_extend: false, // --no-auto-extend flag is present
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     if skip_preflight {
         expect_command_failure(
@@ -1390,6 +1411,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         auto_extend: true, // --no-auto-extend flag is absent
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
@@ -1490,6 +1512,7 @@ async fn test_cli_program_close_program() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).await.unwrap();
@@ -1515,21 +1538,27 @@ async fn test_cli_program_close_program() {
         authority_index: 1,
         use_lamports_unit: false,
         bypass_warning: false,
+        tombstone: Some(true),
+        skip_feature_verification: false,
     });
     expect_command_failure(
         &config,
         "CLI requires the --bypass-warning flag in order to close a program",
-        CLOSE_PROGRAM_WARNING,
+        "To proceed with closing, rerun the `close` command with the `--bypass-warning` flag.",
     )
     .await;
 
-    // Close with --bypass-warning flag
+    // Close with --bypass-warning flag and explicit `--tombstone=true` to
+    // assert SIMD-0432 tombstone semantics on the test validator (which
+    // activates the feature by default).
     config.command = CliCommand::Program(ProgramCliCommand::Close {
         account_pubkey: Some(program_keypair.pubkey()),
         recipient_pubkey,
         authority_index: 1,
         use_lamports_unit: false,
         bypass_warning: true,
+        tombstone: Some(true),
+        skip_feature_verification: false,
     });
     process_command(&config).await.unwrap();
 
@@ -1540,7 +1569,328 @@ async fn test_cli_program_close_program() {
     )
     .await;
     let recipient_account = rpc_client.get_account(&recipient_pubkey).await.unwrap();
-    assert_eq!(programdata_lamports, recipient_account.lamports);
+    // With SIMD-0432 active, the program account's excess lamports are also
+    // refunded (it keeps the rent-exempt minimum). The test validator has
+    // SIMD-0432 activated by default, so the recipient collects programdata
+    // lamports + the program-account spill.
+    let program_account_after = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
+    let rent_exempt_for_tombstone = rpc_client
+        .get_minimum_balance_for_rent_exemption(0)
+        .await
+        .unwrap();
+    assert_eq!(program_account_after.lamports, rent_exempt_for_tombstone);
+    assert_eq!(program_account_after.data.len(), 0);
+    assert_eq!(program_account_after.owner, program_keypair.pubkey());
+    let expected_spill = minimum_balance_for_program.saturating_sub(rent_exempt_for_tombstone);
+    assert_eq!(
+        recipient_account.lamports,
+        programdata_lamports + expected_spill
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_close_program_no_tombstone() {
+    agave_logger::setup();
+
+    let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    noop_path.push("tests");
+    noop_path.push("fixtures");
+    noop_path.push("noop");
+    noop_path.set_extension("so");
+
+    let mint_keypair = Keypair::new();
+    let test_validator = test_validator_genesis(
+        &mint_keypair,
+        LoaderV3Features {
+            minimum_extend_program_size: false,
+        },
+    )
+    .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
+    .await
+    .expect("validator start failed");
+
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = setup_rpc_client(&mut config);
+
+    let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
+    let mut program_data = Vec::new();
+    file.read_to_end(&mut program_data).unwrap();
+    let max_len = program_data.len();
+    let minimum_balance_for_programdata = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+            max_len,
+        ))
+        .await
+        .unwrap();
+    let minimum_balance_for_program = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
+        .unwrap();
+    let upgrade_authority = Keypair::new();
+
+    let keypair = Keypair::new();
+    let fee_headroom = 1_000_000;
+    config.signers = vec![&keypair];
+    config.command = CliCommand::Airdrop {
+        pubkey: None,
+        lamports: 100 * minimum_balance_for_programdata
+            + minimum_balance_for_program
+            + fee_headroom,
+    };
+    process_command(&config).await.unwrap();
+
+    // Deploy the upgradeable program
+    let program_keypair = Keypair::new();
+    config.signers = vec![&keypair, &upgrade_authority, &program_keypair];
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(noop_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: Some(2),
+        program_pubkey: Some(program_keypair.pubkey()),
+        buffer_signer_index: None,
+        buffer_pubkey: None,
+        upgrade_authority_signer_index: 1,
+        is_final: false,
+        max_len: Some(max_len),
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        auto_extend: true,
+        use_rpc: false,
+        skip_feature_verification: true,
+        close_buffer: true,
+    });
+    config.output_format = OutputFormat::JsonCompact;
+    process_command(&config).await.unwrap();
+
+    let (programdata_pubkey, _) = Pubkey::find_program_address(
+        &[program_keypair.pubkey().as_ref()],
+        &bpf_loader_upgradeable::id(),
+    );
+
+    // Wait one slot so the SIMD-0432 same-slot guard does not reject the
+    // non-tombstone close.
+    wait_n_slots(&rpc_client, 1).await;
+
+    let close_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
+    let programdata_lamports = close_account.lamports;
+    let program_account_before = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
+    let program_lamports = program_account_before.lamports;
+    let recipient_pubkey = Pubkey::new_unique();
+    config.signers = vec![&keypair, &upgrade_authority];
+
+    // SIMD-0432: `--tombstone=false` garbage-collects the program account.
+    // The test validator activates SIMD-0432 by default.
+    config.command = CliCommand::Program(ProgramCliCommand::Close {
+        account_pubkey: Some(program_keypair.pubkey()),
+        recipient_pubkey,
+        authority_index: 1,
+        use_lamports_unit: false,
+        bypass_warning: true,
+        tombstone: Some(false),
+        skip_feature_verification: false,
+    });
+    process_command(&config).await.unwrap();
+
+    expect_account_absent(
+        &rpc_client,
+        programdata_pubkey,
+        "Program data account is deleted when the program is closed",
+    )
+    .await;
+    expect_account_absent(
+        &rpc_client,
+        program_keypair.pubkey(),
+        "Program account is garbage-collected when closed with `--tombstone=false`",
+    )
+    .await;
+    let recipient_account = rpc_client.get_account(&recipient_pubkey).await.unwrap();
+    assert_eq!(
+        recipient_account.lamports,
+        programdata_lamports + program_lamports
+    );
+}
+
+// With SIMD-0432 inactive, `--tombstone=false` must be rejected by the CLI
+// preflight before touching the network, and `--tombstone=true` must perform
+// the legacy close (programdata drained, program account left as a legacy
+// tombstone).
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_close_program_feature_inactive() {
+    agave_logger::setup();
+
+    let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    noop_path.push("tests");
+    noop_path.push("fixtures");
+    noop_path.push("noop");
+    noop_path.set_extension("so");
+
+    let mint_keypair = Keypair::new();
+    let mut test_validator_builder = test_validator_genesis(
+        &mint_keypair,
+        LoaderV3Features {
+            minimum_extend_program_size: false,
+        },
+    );
+    // Disable SIMD-0432.
+    test_validator_builder
+        .deactivate_features(&[agave_feature_set::loader_v3_reclaim_closed_program::id()]);
+    let test_validator = test_validator_builder
+        .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
+        .await
+        .expect("validator start failed");
+
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = setup_rpc_client(&mut config);
+
+    let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
+    let mut program_data = Vec::new();
+    file.read_to_end(&mut program_data).unwrap();
+    let max_len = program_data.len();
+    let minimum_balance_for_programdata = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+            max_len,
+        ))
+        .await
+        .unwrap();
+    let minimum_balance_for_program = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
+        .unwrap();
+    let upgrade_authority = Keypair::new();
+
+    let keypair = Keypair::new();
+    let fee_headroom = 1_000_000;
+    config.signers = vec![&keypair];
+    config.command = CliCommand::Airdrop {
+        pubkey: None,
+        lamports: 100 * minimum_balance_for_programdata
+            + minimum_balance_for_program
+            + fee_headroom,
+    };
+    process_command(&config).await.unwrap();
+
+    // Deploy.
+    let program_keypair = Keypair::new();
+    config.signers = vec![&keypair, &upgrade_authority, &program_keypair];
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(noop_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: Some(2),
+        program_pubkey: Some(program_keypair.pubkey()),
+        buffer_signer_index: None,
+        buffer_pubkey: None,
+        upgrade_authority_signer_index: 1,
+        is_final: false,
+        max_len: Some(max_len),
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        auto_extend: true,
+        use_rpc: false,
+        skip_feature_verification: true,
+        close_buffer: true,
+    });
+    config.output_format = OutputFormat::JsonCompact;
+    process_command(&config).await.unwrap();
+
+    let (programdata_pubkey, _) = Pubkey::find_program_address(
+        &[program_keypair.pubkey().as_ref()],
+        &bpf_loader_upgradeable::id(),
+    );
+    wait_n_slots(&rpc_client, 1).await;
+
+    let programdata_lamports = rpc_client
+        .get_account(&programdata_pubkey)
+        .await
+        .unwrap()
+        .lamports;
+    let program_lamports_before = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap()
+        .lamports;
+    let recipient_pubkey = Pubkey::new_unique();
+
+    // `--tombstone=false` without `--skip-feature-verify` must fail the CLI
+    // preflight while SIMD-0432 is inactive.
+    config.signers = vec![&keypair, &upgrade_authority];
+    config.command = CliCommand::Program(ProgramCliCommand::Close {
+        account_pubkey: Some(program_keypair.pubkey()),
+        recipient_pubkey,
+        authority_index: 1,
+        use_lamports_unit: false,
+        bypass_warning: true,
+        tombstone: Some(false),
+        skip_feature_verification: false,
+    });
+    let err = process_command(&config).await.unwrap_err().to_string();
+    assert!(
+        err.contains("SIMD-0432"),
+        "expected the SIMD-0432 feature-gate error, got: {err}"
+    );
+    assert!(
+        err.contains("loader_v3_reclaim_closed_program"),
+        "expected the SIMD-0432 feature-gate error, got: {err}"
+    );
+
+    // Confirm the preflight ran before any network modification: programdata
+    // still present, program account untouched.
+    assert_eq!(
+        rpc_client
+            .get_account(&programdata_pubkey)
+            .await
+            .unwrap()
+            .lamports,
+        programdata_lamports,
+    );
+    assert_eq!(
+        rpc_client
+            .get_account(&program_keypair.pubkey())
+            .await
+            .unwrap()
+            .lamports,
+        program_lamports_before,
+    );
+
+    // Legacy close: `--tombstone=true` is always accepted. Programdata is
+    // drained; the program account is left untouched as a legacy tombstone.
+    config.command = CliCommand::Program(ProgramCliCommand::Close {
+        account_pubkey: Some(program_keypair.pubkey()),
+        recipient_pubkey,
+        authority_index: 1,
+        use_lamports_unit: false,
+        bypass_warning: true,
+        tombstone: Some(true),
+        skip_feature_verification: false,
+    });
+    process_command(&config).await.unwrap();
+
+    expect_account_absent(
+        &rpc_client,
+        programdata_pubkey,
+        "Program data account is deleted on legacy close",
+    )
+    .await;
+    let program_account_after = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
+    // Legacy tombstone: program account untouched, still owned by the loader,
+    // retaining its full program-account lamports.
+    assert_eq!(program_account_after.lamports, program_lamports_before);
+    assert_eq!(program_account_after.owner, bpf_loader_upgradeable::id());
+    let recipient_account = rpc_client.get_account(&recipient_pubkey).await.unwrap();
+    // Legacy close refunds only the programdata lamports to the recipient.
+    assert_eq!(recipient_account.lamports, programdata_lamports);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -1624,6 +1974,7 @@ async fn test_cli_program_extend_program() {
         auto_extend: false,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
 
     #[rustfmt::skip]
@@ -1678,6 +2029,7 @@ async fn test_cli_program_extend_program() {
         auto_extend: false,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     process_command(&config).await.unwrap();
 
@@ -2119,6 +2471,8 @@ async fn test_cli_program_write_buffer() {
         authority_index: 1,
         use_lamports_unit: false,
         bypass_warning: false,
+        tombstone: Some(true),
+        skip_feature_verification: false,
     });
     process_command(&config).await.unwrap();
     expect_account_absent(
@@ -2169,6 +2523,7 @@ async fn test_cli_program_write_buffer() {
             &keypair.pubkey(),
             Some(&keypair.pubkey()),
             None,
+            true, // tombstone: pre-SIMD-0432 default
         )],
         Some(&keypair.pubkey()),
     );
@@ -2184,6 +2539,8 @@ async fn test_cli_program_write_buffer() {
         authority_index: 0,
         use_lamports_unit: false,
         bypass_warning: false,
+        tombstone: Some(true),
+        skip_feature_verification: false,
     });
     process_command(&config).await.unwrap();
     expect_account_absent(
@@ -2232,6 +2589,7 @@ async fn test_cli_program_write_buffer() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let buffer_account_len = {
@@ -2476,13 +2834,16 @@ async fn test_cli_program_set_buffer_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     expect_command_failure(
         &config,
         "Deployment with an old authority should fail",
         &format!(
-            "Buffer's authority Some({}) does not match authority provided {}",
+            "Buffer's authority Some({}) does not match authority provided {}. Re-run with \
+             `--close-buffer=false` to upgrade without closing (and draining lamports from) the \
+             buffer account; SIMD-0430 relaxes this check when the buffer will not be closed.",
             new_buffer_authority.pubkey(),
             keypair.pubkey(),
         ),
@@ -2537,6 +2898,7 @@ async fn test_cli_program_set_buffer_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).await.unwrap();
@@ -2614,7 +2976,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         panic!("not a buffer account");
     }
 
-    // Attempt to deploy with mismatched authority
+    // Attempt to deploy with mismatched authority (close_buffer=true)
     let upgrade_authority = Keypair::new();
     config.signers = vec![&keypair, &upgrade_authority];
     config.command = CliCommand::Program(ProgramCliCommand::Deploy {
@@ -2633,19 +2995,66 @@ async fn test_cli_program_mismatch_buffer_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     expect_command_failure(
         &config,
         "Deployment with an invalid authority should fail",
         &format!(
-            "Buffer's authority Some({}) does not match authority provided {}",
+            "Buffer's authority Some({}) does not match authority provided {}. Re-run with \
+             `--close-buffer=false` to upgrade without closing (and draining lamports from) the \
+             buffer account; SIMD-0430 relaxes this check when the buffer will not be closed.",
             buffer_authority.pubkey(),
             upgrade_authority.pubkey(),
         ),
     )
     .await;
 
-    // Attempt to deploy matched authority
+    // Attempt to deploy with mismatched authority AND `close_buffer=false`.
+    // SIMD-0430 relaxes the buffer-authority match requirement when the buffer
+    // will not be closed, so this should succeed. The buffer account's lamports
+    // and data must remain intact afterwards.
+    let buffer_account_before = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
+    let upgrade_authority_close_buffer_false = Keypair::new();
+    let program_keypair = Keypair::new();
+    config.signers = vec![
+        &keypair,
+        &upgrade_authority_close_buffer_false,
+        &program_keypair,
+    ];
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(noop_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: Some(2),
+        program_pubkey: Some(program_keypair.pubkey()),
+        buffer_signer_index: None,
+        buffer_pubkey: Some(buffer_keypair.pubkey()),
+        upgrade_authority_signer_index: 1,
+        is_final: false,
+        max_len: None,
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        auto_extend: true,
+        use_rpc: false,
+        skip_feature_verification: true,
+        close_buffer: false,
+    });
+    process_command(&config).await.unwrap();
+    let buffer_account_after = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
+    assert_eq!(
+        buffer_account_before.lamports,
+        buffer_account_after.lamports
+    );
+    assert_eq!(buffer_account_before.data, buffer_account_after.data);
+
+    // Attempt to deploy matched authority (close_buffer=true)
     config.signers = vec![&keypair, &buffer_authority];
     config.command = CliCommand::Program(ProgramCliCommand::Deploy {
         program_location: Some(noop_path.to_str().unwrap().to_string()),
@@ -2663,8 +3072,92 @@ async fn test_cli_program_mismatch_buffer_authority() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     process_command(&config).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_close_buffer_feature_inactive() {
+    agave_logger::setup();
+
+    let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    noop_path.push("tests");
+    noop_path.push("fixtures");
+    noop_path.push("noop");
+    noop_path.set_extension("so");
+
+    let mint_keypair = Keypair::new();
+    let mut test_validator_builder = test_validator_genesis(
+        &mint_keypair,
+        LoaderV3Features {
+            minimum_extend_program_size: false,
+        },
+    );
+    // Disable SIMD-0430.
+    test_validator_builder.deactivate_features(&[
+        agave_feature_set::loader_v3_relax_program_buffer_constraints::id(),
+    ]);
+    let test_validator = test_validator_builder
+        .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
+        .await
+        .expect("validator start failed");
+
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = setup_rpc_client(&mut config);
+
+    let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
+    let mut program_data = Vec::new();
+    file.read_to_end(&mut program_data).unwrap();
+    let max_len = program_data.len();
+    let minimum_balance_for_programdata = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+            max_len,
+        ))
+        .await
+        .unwrap();
+
+    let keypair = Keypair::new();
+    config.signers = vec![&keypair];
+    config.command = CliCommand::Airdrop {
+        pubkey: None,
+        lamports: 100 * minimum_balance_for_programdata,
+    };
+    process_command(&config).await.unwrap();
+
+    // Attempt an initial deploy with `--close-buffer=false` while the SIMD-0430
+    // feature is inactive. The CLI must refuse before touching the network.
+    let upgrade_authority = Keypair::new();
+    let program_keypair = Keypair::new();
+    config.signers = vec![&keypair, &upgrade_authority, &program_keypair];
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(noop_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: Some(2),
+        program_pubkey: Some(program_keypair.pubkey()),
+        buffer_signer_index: None,
+        buffer_pubkey: None,
+        upgrade_authority_signer_index: 1,
+        is_final: false,
+        max_len: None,
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        auto_extend: true,
+        use_rpc: false,
+        skip_feature_verification: false,
+        close_buffer: false,
+    });
+    let err = process_command(&config).await.unwrap_err().to_string();
+    assert!(
+        err.contains("SIMD-0430"),
+        "expected the SIMD-0430 feature-gate error, got: {err}"
+    );
+    assert!(
+        err.contains("loader_v3_relax_program_buffer_constraints"),
+        "expected the SIMD-0430 feature-gate error, got: {err}"
+    );
 }
 
 // Assume fee payer will be either online signer or offline signer (could be completely
@@ -2755,6 +3248,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).await.unwrap();
@@ -2787,6 +3281,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let sig_response = process_command(&config).await.unwrap();
@@ -2809,6 +3304,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     expect_command_failure(
@@ -2835,6 +3331,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let sig_response = process_command(&config).await.unwrap();
@@ -2857,6 +3354,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).await.unwrap();
@@ -3005,6 +3503,7 @@ async fn test_cli_program_show() {
         auto_extend: true,
         use_rpc: false,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let min_slot = rpc_client.get_slot().await.unwrap();
@@ -3297,6 +3796,7 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
         auto_extend: true,
         use_rpc,
         skip_feature_verification: true,
+        close_buffer: true,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config).await;

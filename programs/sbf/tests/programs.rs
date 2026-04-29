@@ -480,6 +480,7 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
         &authority_pubkey,
         1,
         program_elf.len() * 2,
+        true, // close_buffer: pre-SIMD-0430 default
     )
     .unwrap()
     .pop()
@@ -2013,6 +2014,7 @@ fn test_program_sbf_invoke_stable_genesis_and_bank() {
         &buffer_keypair.pubkey(),
         &authority_keypair.pubkey(),
         &mint_keypair.pubkey(),
+        true, // close_buffer: pre-SIMD-0430 default
     );
 
     // Redeployment causes programs to be unavailable to both top-level-instructions and CPI instructions
@@ -2049,6 +2051,7 @@ fn test_program_sbf_invoke_stable_genesis_and_bank() {
         &mint_keypair.pubkey(),
         Some(&authority_keypair.pubkey()),
         Some(&program_id),
+        true, // tombstone: pre-SIMD-0432 default
     );
 
     let invoke_instruction =
@@ -2140,6 +2143,7 @@ fn test_program_sbf_invoke_in_same_tx_as_deployment() {
                 .unwrap(),
         ),
         program.len() * 2,
+        true, // close_buffer: pre-SIMD-0430 default
     )
     .unwrap();
 
@@ -2229,6 +2233,7 @@ fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
         &buffer_keypair.pubkey(),
         &authority_keypair.pubkey(),
         &mint_keypair.pubkey(),
+        true, // close_buffer: pre-SIMD-0430 default
     );
 
     // Deploy indirect invocation program
@@ -2331,6 +2336,7 @@ fn test_program_sbf_invoke_in_same_tx_as_undeployment() {
         &mint_keypair.pubkey(),
         Some(&authority_keypair.pubkey()),
         Some(&program_id),
+        true, // tombstone: pre-SIMD-0432 default
     );
 
     // Undeployment causes the program to become unavailable to both top-level
@@ -2357,6 +2363,88 @@ fn test_program_sbf_invoke_in_same_tx_as_undeployment() {
             TransactionError::InstructionError(1, InstructionError::UnsupportedProgramId),
         );
     }
+}
+
+/// Reproduction of the Close-via-CPI failure mode flagged on the SIMD-0432 PR.
+///
+/// Under SIMD-0432 the Close handler zeroes the program account's data
+/// (`programs/bpf_loader/src/lib.rs:825` in the legacy-tombstone-reclaim path;
+/// an analogous path runs in the non-tombstone reclaim branch).
+///
+/// When Close runs via CPI, `translate_accounts_common` skips executable
+/// accounts (`program-runtime/src/cpi.rs:1061-1066`), so they're never added
+/// to the list `update_caller_account` walks on CPI return
+/// (`program-runtime/src/cpi.rs:902-918`). The caller's serialized view of the
+/// program account therefore retains the pre-close data length. Post-exec
+/// deserialization (`program-runtime/src/serialization.rs:661-662`) sees the
+/// mismatch between that stale `post_len` and the account's actual (zero)
+/// length, treats it as a resize attempt, and fails the ownership check with
+/// `AccountDataSizeChanged` because the caller does not own the program.
+///
+/// This test locks that behavior in. When the underlying CPI-sync gap is fixed,
+/// the assertion below should flip (and this comment updated accordingly).
+#[test_matrix([true, false])]
+#[cfg(feature = "sbf_rust")]
+fn test_program_sbf_close_via_cpi(tombstone: bool) {
+    agave_logger::setup();
+
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(50);
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank_client = BankClient::new_shared(bank.clone());
+
+    let authority_keypair = Keypair::new();
+
+    // Deploy the target program that we'll close via CPI.
+    let (_bank, target_program_id) = load_upgradeable_program_and_advance_slot(
+        &mut bank_client,
+        &bank_forks,
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_noop",
+    );
+
+    // Deploy the caller that CPIs into Close.
+    let (bank, caller_program_id) = load_upgradeable_program_and_advance_slot(
+        &mut bank_client,
+        &bank_forks,
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_close_via_cpi",
+    );
+
+    let (programdata_address, _) =
+        Pubkey::find_program_address(&[target_program_id.as_ref()], &bpf_loader_upgradeable::id());
+
+    // Outer instruction metas mirror the order the caller program expects and
+    // the meta shape `close_any` will construct inside its CPI.
+    let caller_instruction = Instruction::new_with_bytes(
+        caller_program_id,
+        &[tombstone as u8],
+        vec![
+            AccountMeta::new(programdata_address, false),
+            AccountMeta::new(mint_keypair.pubkey(), false),
+            AccountMeta::new_readonly(authority_keypair.pubkey(), true),
+            AccountMeta::new(target_program_id, false),
+            AccountMeta::new_readonly(bpf_loader_upgradeable::id(), false),
+        ],
+    );
+
+    let message = Message::new(&[caller_instruction], Some(&mint_keypair.pubkey()));
+    let tx = Transaction::new(
+        &[&mint_keypair, &authority_keypair],
+        message,
+        bank.last_blockhash(),
+    );
+    let (result, _, _, _) = process_transaction_and_record_inner(&bank, tx);
+
+    assert_eq!(
+        result.unwrap_err(),
+        TransactionError::InstructionError(0, InstructionError::AccountDataSizeChanged),
+    );
 }
 
 #[test]
@@ -2646,6 +2734,7 @@ fn test_program_sbf_upgrade_via_cpi() {
         &buffer_keypair.pubkey(),
         &new_authority_keypair.pubkey(),
         &mint_keypair.pubkey(),
+        true, // close_buffer: pre-SIMD-0430 default
     );
     upgrade_instruction.program_id = invoke_and_return;
     upgrade_instruction
