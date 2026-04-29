@@ -123,9 +123,9 @@ impl<'a> RewardState<'a> {
             self.total_stake,
             *reward_slot_validator_stake,
         );
-        self.total_leader_reward += leader_reward;
+        self.total_leader_reward = self.total_leader_reward.saturating_add(leader_reward);
         if validator == self.leader_vote_pubkey {
-            self.total_leader_reward += validator_reward;
+            self.total_leader_reward = self.total_leader_reward.saturating_add(leader_reward);
             Ok(None)
         } else {
             Ok(Some(RewardUpdate {
