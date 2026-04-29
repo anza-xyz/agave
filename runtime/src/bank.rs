@@ -88,7 +88,7 @@ use {
     solana_accounts_db::{
         account_locks::validate_account_locks,
         account_storage_entry::AccountStorageEntry,
-        accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
+        accounts::{AccountAddressFilter, Accounts},
         accounts_db::{AccountsDb, AccountsDbConfig},
         accounts_hash::AccountsLtHash,
         accounts_index::IndexKey,
@@ -4605,11 +4605,6 @@ impl Bank {
 
     pub fn account_indexes_include_key(&self, key: &Pubkey) -> bool {
         self.rc.accounts.account_indexes_include_key(key)
-    }
-
-    /// Returns all the accounts this bank can load
-    pub fn get_all_accounts(&self) -> ScanResult<Vec<PubkeyAccountSlot>> {
-        self.rc.accounts.load_all(&self.ancestors, self.bank_id)
     }
 
     // Scans all the accounts this bank can load, applying `scan_func`
