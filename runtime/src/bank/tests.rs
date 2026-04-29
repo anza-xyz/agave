@@ -3284,19 +3284,23 @@ fn test_bank_get_program_accounts() {
     let (parent, _bank_forks) =
         Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 
-    let genesis_accounts: Vec<_> = parent.get_all_accounts().unwrap();
-    assert!(
-        genesis_accounts
-            .iter()
-            .any(|(pubkey, _, _)| *pubkey == mint_keypair.pubkey()),
-        "mint pubkey not found"
-    );
-    assert!(
-        genesis_accounts
-            .iter()
-            .any(|(_, account, _)| solana_sdk_ids::sysvar::check_id(account.owner())),
-        "no sysvars found"
-    );
+    let mut found_mint = false;
+    let mut found_sysvar = false;
+    parent
+        .scan_all_accounts(|address_account_slot| {
+            let Some((pubkey, account, _slot)) = address_account_slot else {
+                return;
+            };
+            if *pubkey == mint_keypair.pubkey() {
+                found_mint = true;
+            }
+            if solana_sdk_ids::sysvar::check_id(account.owner()) {
+                found_sysvar = true;
+            }
+        })
+        .unwrap();
+    assert!(found_mint);
+    assert!(found_sysvar);
 
     let bank0 = Arc::new(new_from_parent(parent));
     let pubkey0 = solana_pubkey::new_rand();
