@@ -5914,17 +5914,19 @@ impl Bank {
     ///
     /// Panics if total overflows a u64.
     ///
-    /// Note, this may be *very* expensive, as *all* accounts are collected
-    /// into a Vec before summing each account's data size.
+    /// Note, this may be *very* expensive, as *all* accounts are accessed.
     ///
     /// Only intended to be called by tests or when the number of accounts is small.
     pub fn calculate_accounts_data_size(&self) -> ScanResult<u64> {
-        let accounts = self.get_all_accounts()?;
-        let accounts_data_size = accounts
-            .into_iter()
-            .map(|(_pubkey, account, _slot)| account.data().len() as u64)
-            .try_fold(0, u64::checked_add)
-            .expect("accounts data size cannot overflow");
+        let mut accounts_data_size: u64 = 0;
+        self.scan_all_accounts(|address_account_slot| {
+            let Some((_address, account, _slot)) = address_account_slot else {
+                return;
+            };
+            accounts_data_size = accounts_data_size
+                .checked_add(account.data().len() as u64)
+                .expect("accounts data size cannot overflow");
+        })?;
         Ok(accounts_data_size)
     }
 
