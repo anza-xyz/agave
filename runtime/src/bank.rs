@@ -107,7 +107,10 @@ use {
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_cost_model::{block_cost_limits::simd_0286_block_limit, cost_tracker::CostTracker},
+    solana_cost_model::{
+        block_cost_limits::simd_0286_block_limit,
+        cost_tracker::{CostTracker, StagedAccountSizeUpdates},
+    },
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface as feature,
@@ -3867,6 +3870,32 @@ impl Bank {
         self.bank_hash_stats.accumulate(&stats);
     }
 
+    pub fn try_stage_cost_tracker_account_size_updates<'a>(
+        &self,
+        sanitized_txs: &'a [impl TransactionWithMeta],
+        processing_results: &'a [TransactionProcessingResult],
+    ) -> Result<StagedAccountSizeUpdates<'a>> {
+        let (accounts_to_store, _) = collect_accounts_to_store(
+            sanitized_txs,
+            None::<&'a Vec<SanitizedTransaction>>,
+            processing_results,
+        );
+        let updates = accounts_to_store
+            .into_iter()
+            .map(|(pubkey, account)| {
+                if account.lamports() > 0 {
+                    (pubkey, account.data().len())
+                } else {
+                    (pubkey, 0)
+                }
+            })
+            .collect();
+        self.read_cost_tracker()
+            .unwrap()
+            .try_stage_account_size_updates(updates)
+            .map_err(TransactionError::from)
+    }
+
     pub fn commit_transactions(
         &self,
         sanitized_txs: &[impl TransactionWithMeta],
@@ -3922,7 +3951,7 @@ impl Bank {
 
             let (accounts_to_store, transactions) = collect_accounts_to_store(
                 sanitized_txs,
-                &maybe_transaction_refs,
+                maybe_transaction_refs.as_ref(),
                 &processing_results,
             );
 

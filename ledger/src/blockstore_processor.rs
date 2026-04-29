@@ -205,6 +205,14 @@ pub fn execute_batch<'a>(
             None => {
                 // We're entering into one of the block-verification methods.
                 get_first_error(batch, processing_results)?;
+                let staged_account_size_updates = bank
+                    .try_stage_cost_tracker_account_size_updates(
+                        batch.sanitized_transactions(),
+                        processing_results,
+                    )?;
+                bank.write_cost_tracker()
+                    .unwrap()
+                    .apply_staged_account_size_updates(staged_account_size_updates);
                 Ok(None)
             }
             Some(extra_pre_commit_callback) => {
@@ -258,7 +266,7 @@ pub fn execute_batch<'a>(
             pre_commit_callback,
         )?;
 
-    let mut check_block_costs_elapsed = Measure::start("check_block_costs");
+    let mut check_block_costs_elapsed: Measure = Measure::start("check_block_costs");
     let tx_costs = if block_verification {
         // Block verification (including unified scheduler) case;
         // collect and check transaction costs
@@ -2857,7 +2865,9 @@ pub mod tests {
         rand::{Rng, rng},
         rayon::ThreadPoolBuilder,
         solana_account::{AccountSharedData, WritableAccount},
-        solana_cost_model::transaction_cost::TransactionCost,
+        solana_cost_model::{
+            cost_tracker_post_analysis::CostTrackerPostAnalysis, transaction_cost::TransactionCost,
+        },
         solana_entry::{
             block_component::{BlockComponent, BlockFooterV1, BlockHeaderV1, VersionedBlockMarker},
             entry::{create_ticks, next_entry, next_entry_mut},
@@ -2867,6 +2877,7 @@ pub mod tests {
         solana_instruction::{Instruction, error::InstructionError},
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
+        solana_message::Message,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
             declare_process_instruction, solana_sbpf::program::BuiltinFunctionDefinition,
@@ -2881,10 +2892,13 @@ pub mod tests {
                 MockInstalledScheduler, MockUninstalledScheduler, SchedulerAborted,
                 SchedulingContext,
             },
+            transaction_batch::OwnedOrBorrowed,
         },
         solana_signer::Signer,
         solana_svm::transaction_processor::ExecutionRecordingConfig,
-        solana_system_interface::error::SystemError,
+        solana_system_interface::{
+            error::SystemError, instruction as system_instruction, program as system_program,
+        },
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
         solana_transaction_error::TransactionError,
@@ -2894,7 +2908,7 @@ pub mod tests {
             vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4, VoteStateVersions},
         },
         std::{
-            collections::BTreeSet,
+            collections::{BTreeSet, HashMap},
             slice,
             sync::{Arc, Barrier, RwLock},
         },
@@ -5802,6 +5816,109 @@ pub mod tests {
         } else {
             assert_matches!(receiver.try_recv(), Err(_));
         }
+    }
+
+    #[test]
+    fn test_execute_batch_updates_cost_tracker_for_recreated_temporary_account() {
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        bank.activate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let bank = Arc::new(bank);
+
+        let fee_calculator = genesis_config.fee_rate_governor.create_fee_calculator();
+        let temp_account_keypair = Keypair::new();
+        let temp_account_pubkey = temp_account_keypair.pubkey();
+        let payer_keypair = Keypair::new();
+        let payer_pubkey = payer_keypair.pubkey();
+        let initial_payer_balance = 10 * LAMPORTS_PER_SOL;
+
+        bank.store_account(
+            &payer_pubkey,
+            &AccountSharedData::new(initial_payer_balance, 0, &system_program::id()),
+        );
+        let temp_account_rent = bank.get_minimum_balance_for_rent_exemption(10);
+        let fee_amount = fee_calculator.lamports_per_signature;
+        let transfer_amount = temp_account_rent + 10_000;
+        let recipient = Pubkey::new_unique();
+        let txs = vec![
+            RuntimeTransaction::from_transaction_for_tests(Transaction::new(
+                &[&payer_keypair, &temp_account_keypair],
+                Message::new(
+                    &[system_instruction::create_account(
+                        &payer_pubkey,
+                        &temp_account_pubkey,
+                        transfer_amount,
+                        0,
+                        &system_program::id(),
+                    )],
+                    Some(&payer_pubkey),
+                ),
+                bank.last_blockhash(),
+            )),
+            RuntimeTransaction::from_transaction_for_tests(Transaction::new(
+                &[&temp_account_keypair],
+                Message::new(
+                    &[system_instruction::transfer(
+                        &temp_account_pubkey,
+                        &recipient,
+                        transfer_amount.checked_sub(fee_amount).unwrap(),
+                    )],
+                    Some(&temp_account_pubkey),
+                ),
+                bank.last_blockhash(),
+            )),
+            RuntimeTransaction::from_transaction_for_tests(Transaction::new(
+                &[&payer_keypair, &temp_account_keypair],
+                Message::new(
+                    &[system_instruction::create_account(
+                        &payer_pubkey,
+                        &temp_account_pubkey,
+                        transfer_amount - 1,
+                        10,
+                        &system_program::id(),
+                    )],
+                    Some(&payer_pubkey),
+                ),
+                bank.last_blockhash(),
+            )),
+        ];
+        let mut batch = TransactionBatch::new(
+            vec![Ok(()); txs.len()],
+            &bank,
+            OwnedOrBorrowed::Borrowed(&txs),
+        );
+        batch.set_needs_unlock(false);
+        let batch = TransactionBatchWithIndexes {
+            batch,
+            transaction_indexes: vec![0, 1, 2],
+        };
+
+        let result = execute_batch(
+            &batch,
+            &bank,
+            None,
+            None,
+            ReplayVoteSendType::VerifiedExecuted,
+            &mut ExecuteTimings::default(),
+            None,
+            None,
+            None::<fn(&_) -> _>,
+        );
+
+        assert_eq!(result, Ok(()));
+        let writable_accounts_map = bank
+            .read_cost_tracker()
+            .unwrap()
+            .get_cost_by_writable_accounts()
+            .iter()
+            .map(|(pubkey, costs)| (*pubkey, costs.data_size))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            HashMap::from_iter([(payer_pubkey, 0), (recipient, 0), (temp_account_pubkey, 10)]),
+            writable_accounts_map,
+        );
     }
 
     #[test]
