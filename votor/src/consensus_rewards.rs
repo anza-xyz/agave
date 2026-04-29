@@ -164,11 +164,9 @@ impl ConsensusRewards {
         let max_validators = rank_map.len();
         let root_slot = root_bank.slot();
         // drop state that is too old based on how the root slot has progressed
-        self.votes = self.votes.split_off(
-            &(root_slot
-                .saturating_add(NUM_SLOTS_FOR_REWARD)
-                .saturating_add(1)),
-        );
+        self.votes = self
+            .votes
+            .split_off(&root_slot.saturating_sub(NUM_SLOTS_FOR_REWARD));
 
         if !self.wants_vote(root_slot, vote) {
             return;
@@ -192,12 +190,18 @@ impl ConsensusRewards {
         bank_slot: Slot,
     ) -> Result<BuildRewardCertsRespSucc, BuildRewardCertsRespError> {
         let Some(reward_slot) = bank_slot.checked_sub(NUM_SLOTS_FOR_REWARD) else {
+            info!("consensus_rewards: bank_slot={bank_slot} checked_sub failed");
             return Ok(BuildRewardCertsRespSucc::default());
         };
         // we assume that the block creation loop will only ever request to build reward certs in a strictly increasing order so we can drop older state
         self.votes = self.votes.split_off(&reward_slot);
         match self.votes.remove(&reward_slot) {
-            None => Ok(BuildRewardCertsRespSucc::default()),
+            None => {
+                info!(
+                    "consensus_rewards: bank_slot={bank_slot} reward_slot={reward_slot} votes not found"
+                );
+                Ok(BuildRewardCertsRespSucc::default())
+            }
             Some(entry) => entry.build_certs(reward_slot),
         }
     }
