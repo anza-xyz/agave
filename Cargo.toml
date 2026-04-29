@@ -333,7 +333,7 @@ reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.5"
 rts-alloc = { version = "3.0.0" }
-rustls = { version = "0.23.39", features = ["std"], default-features = false }
+rustls = { version = "0.23.40", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.28"
 seqlock = "0.2.0"
