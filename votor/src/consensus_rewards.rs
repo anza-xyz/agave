@@ -164,11 +164,11 @@ impl ConsensusRewards {
         let max_validators = rank_map.len();
         let root_slot = root_bank.slot();
         // drop state that is too old based on how the root slot has progressed
-        self.votes = self.votes.split_off(
-            &(root_slot
-                .saturating_add(NUM_SLOTS_FOR_REWARD)
-                .saturating_add(1)),
-        );
+        // TODO: if this actually purges state, that probably indicates that the leader missed its
+        // window.  We should have a metric for this.
+        self.votes = self
+            .votes
+            .split_off(&root_slot.saturating_sub(NUM_SLOTS_FOR_REWARD));
 
         if !self.wants_vote(root_slot, vote) {
             return;
