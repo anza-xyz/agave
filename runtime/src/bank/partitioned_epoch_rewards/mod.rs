@@ -157,6 +157,7 @@ pub(super) struct RewardCommission {
     // After full activation, it can be removed on feature cleanup.
     pub(super) commission_bps: Option<u16>,
     pub(super) commission_lamports: u64,
+    pub(super) is_vote_account: bool,
 }
 
 pub(super) type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;

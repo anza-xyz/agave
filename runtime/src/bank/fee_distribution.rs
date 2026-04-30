@@ -19,7 +19,7 @@ use {
 };
 
 #[derive(Error, Debug, PartialEq)]
-enum DepositFeeError {
+pub(super) enum DepositFeeError {
     #[error("fee account became rent paying")]
     InvalidRentPayingAccount,
     #[error("lamport overflow")]
@@ -228,7 +228,7 @@ impl Bank {
         Ok(account.lamports())
     }
 
-    fn check_collector_account(
+    pub(super) fn check_collector_account(
         collector_id: &Pubkey,
         pre_lamports: u64,
         account: &AccountSharedData,
