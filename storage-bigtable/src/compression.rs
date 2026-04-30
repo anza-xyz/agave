@@ -63,8 +63,16 @@ pub fn compress(method: CompressionMethod, data: &[u8]) -> Result<Vec<u8>, io::E
     Ok(compressed_data)
 }
 
+// Below this size, compression framing overhead typically exceeds any savings.
+const COMPRESSION_MIN_SIZE: usize = 128;
+
 pub fn compress_default(data: &[u8]) -> Result<Vec<u8>, io::Error> {
-    compress(CompressionMethod::Zstd, data)
+    let method = if data.len() < COMPRESSION_MIN_SIZE {
+        CompressionMethod::NoCompression
+    } else {
+        CompressionMethod::Zstd
+    };
+    compress(method, data)
 }
 
 #[cfg(test)]

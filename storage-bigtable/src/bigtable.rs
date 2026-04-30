@@ -4,7 +4,7 @@ use {
     crate::{
         CredentialType,
         access_token::{AccessToken, Scope},
-        compression::{CompressionMethod, compress, compress_default, decompress},
+        compression::{compress_default, decompress},
         root_ca_certificate,
     },
     hyper_util::client::legacy::connect::{HttpConnector, proxy::Tunnel},
@@ -880,11 +880,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         let mut bytes_written = 0;
         let mut new_row_data = vec![];
         for (row_key, data) in cells {
-            // Bincode payloads are tens of bytes; compression framing overhead would inflate them.
-            let data = compress(
-                CompressionMethod::NoCompression,
-                &bincode::serialize(&data).unwrap(),
-            )?;
+            let data = compress_default(&bincode::serialize(&data).unwrap())?;
             bytes_written += data.len();
             new_row_data.push((row_key, vec![("bin".to_string(), data)]));
         }
