@@ -90,8 +90,18 @@ impl solana_sanitize::Sanitize for CrdsFilter {
 }
 
 impl CrdsFilter {
-    #[cfg(test)]
-    pub(crate) fn new_rand(num_items: usize, max_bytes: usize) -> Self {
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub(crate) fn mask(&self) -> u64 {
+        self.mask
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub(crate) fn get_mask_bits(&self) -> u32 {
+        self.mask_bits
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub fn new_rand(num_items: usize, max_bytes: usize) -> Self {
         let max_bits = (max_bytes * 8) as f64;
         let max_items = Self::max_items(max_bits, FALSE_RATE, KEYS);
         let mask_bits = Self::mask_bits(num_items as f64, max_items);

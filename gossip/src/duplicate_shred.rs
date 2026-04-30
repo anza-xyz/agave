@@ -51,6 +51,30 @@ impl DuplicateShred {
     pub(crate) fn chunk_index(&self) -> u8 {
         self.chunk_index
     }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[inline]
+    pub(crate) fn from(&self) -> &Pubkey {
+        &self.from
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[inline]
+    pub(crate) fn wallclock(&self) -> u64 {
+        self.wallclock
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[inline]
+    pub(crate) fn slot(&self) -> Slot {
+        self.slot
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[inline]
+    pub(crate) fn chunk(&self) -> &[u8] {
+        &self.chunk
+    }
 }
 
 #[derive(Debug, Error)]
