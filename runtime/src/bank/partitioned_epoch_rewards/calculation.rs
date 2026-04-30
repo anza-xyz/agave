@@ -46,6 +46,18 @@ struct RewardsAccumulator {
     total_stake_rewards_lamports: u64,
 }
 
+/// If a commission account is used by multiple vote accounts, the reported
+/// `commission_bps` may be incorrect. To keep things simple and correct, don't
+/// report `commission_bps` if there's any variation.
+fn unset_commission_bps_if_different(src: &RewardCommission, dst: &mut RewardCommission) {
+    if dst
+        .commission_bps
+        .is_some_and(|bps| Some(bps) != src.commission_bps)
+    {
+        dst.commission_bps = None;
+    }
+}
+
 impl RewardsAccumulator {
     fn add_reward(
         &mut self,
@@ -56,6 +68,7 @@ impl RewardsAccumulator {
         self.reward_commissions
             .entry(commission_pubkey)
             .and_modify(|dst_reward_commission| {
+                unset_commission_bps_if_different(&reward_commission, dst_reward_commission);
                 dst_reward_commission.commission_lamports = dst_reward_commission
                     .commission_lamports
                     .saturating_add(reward_commission.commission_lamports)
@@ -84,6 +97,7 @@ impl RewardsAccumulator {
             dst.reward_commissions
                 .entry(commission_pubkey)
                 .and_modify(|dst_reward_commission: &mut RewardCommission| {
+                    unset_commission_bps_if_different(&reward_commission, dst_reward_commission);
                     dst_reward_commission.commission_lamports = dst_reward_commission
                         .commission_lamports
                         .saturating_add(reward_commission.commission_lamports)
@@ -845,15 +859,15 @@ impl Bank {
                             ..
                         },
                     )| {
-                        let maybe_commission_account = self
-                            .get_account_with_fixed_root_no_cache(commission_pubkey);
+                        let maybe_commission_account =
+                            self.get_account_with_fixed_root_no_cache(commission_pubkey);
                         let mut commission_account = if custom_commission_collector {
                             maybe_commission_account.unwrap_or_default()
                         } else {
                             let Some(commission_account) = maybe_commission_account else {
                                 debug!(
-                                    "commission account {commission_pubkey} missing at distribution \
-                                 time"
+                                    "commission account {commission_pubkey} missing at \
+                                     distribution time"
                                 );
                                 return None;
                             };
@@ -2813,12 +2827,12 @@ mod tests {
                     0,
                     &solana_sdk_ids::system_program::id(),
                 )),
-                Some(1),
+                Some(100),
             ),
             // vote account, success
-            (vote_address, None, Some(1)),
+            (vote_address, None, Some(100)),
             // incinerator, success
-            (solana_sdk_ids::incinerator::id(), None, Some(1)),
+            (solana_sdk_ids::incinerator::id(), None, Some(100)),
             // non-rent-exempt system account with 1 lamport, success with relaxed checks
             (
                 Pubkey::new_unique(),
@@ -2827,7 +2841,7 @@ mod tests {
                     0,
                     &solana_sdk_ids::system_program::id(),
                 )),
-                Some(1),
+                Some(100),
             ),
             // invalid owner, no commission
             (
@@ -2850,7 +2864,6 @@ mod tests {
             if let Some(account) = maybe_account {
                 bank.store_account(&collector_address, &account);
             }
-            println!("{epoch}");
             bank = apply_epoch_operations(
                 bank,
                 bank_forks.as_ref(),
@@ -2861,6 +2874,7 @@ mod tests {
                         VoteOperations {
                             earned_credits: Some(1),
                             new_inflation_rewards_collector: Some(collector_address),
+                            expect_reward: expected_reward_commission.is_some(),
                             expected_reward_commission,
                             ..VoteOperations::default()
                         },
@@ -2918,10 +2932,94 @@ mod tests {
                     vote_address,
                     VoteOperations {
                         earned_credits: Some(1),
-                        expected_reward_commission: Some(100),
+                        expect_reward: true,
+                        expected_reward_commission: Some(10_000),
                         ..VoteOperations::default()
                     },
                 )],
+            },
+        );
+    }
+
+    #[test]
+    fn test_repeated_inflation_rewards_collector() {
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = genesis_utils::create_genesis_config_with_leader(
+            1_000_000 * LAMPORTS_PER_SOL,
+            &Pubkey::new_unique(),
+            42 * LAMPORTS_PER_SOL,
+        );
+
+        genesis_config.rent = Rent::default();
+        genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
+
+        let (bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+
+        let collector_address = Pubkey::new_unique();
+        let vote1_address = Pubkey::new_unique();
+        let vote2_address = Pubkey::new_unique();
+        // Vote account just created
+        let bank = apply_epoch_operations(
+            bank,
+            bank_forks.as_ref(),
+            EpochOperations {
+                epoch: 0,
+                vote_operations: vec![
+                    (
+                        vote1_address,
+                        VoteOperations {
+                            create_with_balance: Some(LAMPORTS_PER_SOL),
+                            new_commission: Some(50),
+                            earned_credits: Some(1000),
+                            delegate_stake_amount: Some(LAMPORTS_PER_SOL),
+                            new_inflation_rewards_collector: Some(collector_address),
+                            ..VoteOperations::default()
+                        },
+                    ),
+                    (
+                        vote2_address,
+                        VoteOperations {
+                            create_with_balance: Some(LAMPORTS_PER_SOL),
+                            new_commission: Some(100),
+                            earned_credits: Some(1000),
+                            delegate_stake_amount: Some(LAMPORTS_PER_SOL),
+                            new_inflation_rewards_collector: Some(collector_address),
+                            ..VoteOperations::default()
+                        },
+                    ),
+                ],
+            },
+        );
+
+        // next epoch, get double reward into collector
+        let epoch = bank.epoch();
+        apply_epoch_operations(
+            bank,
+            bank_forks.as_ref(),
+            EpochOperations {
+                epoch,
+                vote_operations: vec![
+                    (
+                        vote1_address,
+                        VoteOperations {
+                            earned_credits: Some(1),
+                            expect_reward: true,
+                            expected_reward_commission: None,
+                            ..VoteOperations::default()
+                        },
+                    ),
+                    (
+                        vote2_address,
+                        VoteOperations {
+                            earned_credits: Some(1),
+                            expect_reward: true,
+                            expected_reward_commission: None,
+                            ..VoteOperations::default()
+                        },
+                    ),
+                ],
             },
         );
     }
