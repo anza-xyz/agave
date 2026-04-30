@@ -28,7 +28,7 @@ use {
     },
     rayon::{ThreadPool, prelude::*},
     serde::{Deserialize, Serialize},
-    solana_bloom::bloom::{Bloom, ConcurrentBloom},
+    solana_bloom::bloom::{Bloom, ConcurrentBloom, FalsePositiveRate},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
@@ -53,8 +53,6 @@ use {
 pub const CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS: u64 = 15000;
 // Retention period of hashes of received outdated values.
 const FAILED_INSERTS_RETENTION_MS: u64 = 20_000;
-pub const FALSE_RATE: f64 = 0.1f64;
-pub const KEYS: f64 = 8f64;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -92,10 +90,14 @@ impl solana_sanitize::Sanitize for CrdsFilter {
 impl CrdsFilter {
     #[cfg(test)]
     pub(crate) fn new_rand(num_items: usize, max_bytes: usize) -> Self {
-        let max_bits = (max_bytes * 8) as f64;
-        let max_items = Self::max_items(max_bits, FALSE_RATE, KEYS);
-        let mask_bits = Self::mask_bits(num_items as f64, max_items);
-        let filter = Bloom::random(max_items as usize, FALSE_RATE, max_bits as usize);
+        let max_bits = (max_bytes * 8) as u64;
+        let max_items = Self::max_items(max_bits);
+        let mask_bits = Self::mask_bits(num_items, max_items);
+        let filter = Bloom::random(
+            max_items as usize,
+            FalsePositiveRate::GOSSIP_10_PERCENT,
+            max_bits as usize,
+        );
         let seed: u64 = rand::rng().random_range(0..2u64.pow(mask_bits));
         let mask = Self::compute_mask(seed, mask_bits);
         CrdsFilter {
@@ -110,15 +112,17 @@ impl CrdsFilter {
         let seed: u64 = seed.checked_shl(64 - mask_bits).unwrap_or(0x0);
         seed | (!0u64).checked_shr(mask_bits).unwrap_or(!0x0)
     }
-    fn max_items(max_bits: f64, false_rate: f64, num_keys: f64) -> f64 {
-        let m = max_bits;
-        let p = false_rate;
-        let k = num_keys;
-        (m / (-k / (1f64 - (p.ln() / k).exp()).ln())).ceil()
+    fn max_items(max_bits: u64) -> u64 {
+        max_bits
+            .checked_mul(FalsePositiveRate::MAX_ITEMS_Q40_P10_PERCENT)
+            .expect("max_bits unexpectedly large for gossip bloom filter")
+            .checked_add(FalsePositiveRate::ONE_Q40 - 1)
+            .expect("overflow while rounding max_items; max_bits should be packet-bounded")
+            / FalsePositiveRate::ONE_Q40
     }
-    fn mask_bits(num_items: f64, max_items: f64) -> u32 {
-        // for small ratios this can result in a negative number, ensure it returns 0 instead
-        ((num_items / max_items).log2().ceil()).max(0.0) as u32
+    fn mask_bits(num_items: usize, max_items: u64) -> u32 {
+        let ratio = (num_items as u64).div_ceil(max_items);
+        u64::BITS - ratio.saturating_sub(1).leading_zeros()
     }
     pub fn hash_as_u64(item: &Hash) -> u64 {
         let buf = item.as_ref()[..8].try_into().unwrap();
@@ -170,16 +174,20 @@ impl CrdsFilterSet {
     fn new<R: Rng>(rng: &mut R, num_items: usize, max_bytes: usize) -> Self {
         const SAMPLE_RATE: usize = 8;
         const MAX_NUM_FILTERS: usize = 1024;
-        let max_bits = (max_bytes * 8) as f64;
-        let max_items = CrdsFilter::max_items(max_bits, FALSE_RATE, KEYS);
-        let mask_bits = CrdsFilter::mask_bits(num_items as f64, max_items);
+        let max_bits = (max_bytes * 8) as u64;
+        let max_items = CrdsFilter::max_items(max_bits);
+        let mask_bits = CrdsFilter::mask_bits(num_items, max_items);
         let mut filters: Vec<_> = repeat_with(|| None).take(1usize << mask_bits).collect();
         let mut indices: Vec<_> = (0..filters.len()).collect();
         let size = filters.len().div_ceil(SAMPLE_RATE);
         for _ in 0..MAX_NUM_FILTERS.min(size) {
             let k = rng.random_range(0..indices.len());
             let k = indices.swap_remove(k);
-            let filter = Bloom::random(max_items as usize, FALSE_RATE, max_bits as usize);
+            let filter = Bloom::random(
+                max_items as usize,
+                FalsePositiveRate::GOSSIP_10_PERCENT,
+                max_bits as usize,
+            );
             filters[k] = Some(ConcurrentBloom::<Hash>::from(filter));
         }
         Self { filters, mask_bits }
@@ -1362,9 +1370,9 @@ pub(crate) mod tests {
     fn test_crds_filter_mask() {
         let filter = CrdsFilter::new_rand(1, 128);
         assert_eq!(filter.mask, !0x0);
-        assert_eq!(CrdsFilter::max_items(80f64, 0.01, 8f64), 9f64);
-        //1000/9 = 111, so 7 bits are needed to mask it
-        assert_eq!(CrdsFilter::mask_bits(1000f64, 9f64), 7u32);
+        assert_eq!(CrdsFilter::max_items(80), 14);
+        // 1000 / 14 = 72, so 7 bits are needed to mask it.
+        assert_eq!(CrdsFilter::mask_bits(1000, 14), 7u32);
         let filter = CrdsFilter::new_rand(1000, 10);
         assert_eq!(filter.mask & 0x00_ffff_ffff, 0x00_ffff_ffff);
     }

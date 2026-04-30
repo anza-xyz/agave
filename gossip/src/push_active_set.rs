@@ -2,7 +2,7 @@ use {
     crate::weighted_shuffle::WeightedShuffle,
     indexmap::IndexMap,
     rand::Rng,
-    solana_bloom::bloom::{Bloom, ConcurrentBloom},
+    solana_bloom::bloom::{Bloom, ConcurrentBloom, FalsePositiveRate},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     std::collections::HashMap,
@@ -100,7 +100,6 @@ impl PushActiveSet {
 }
 
 impl PushActiveSetEntry {
-    const BLOOM_FALSE_RATE: f64 = 0.1;
     const BLOOM_MAX_BITS: usize = 1024 * 8 * 4;
 
     fn get_nodes<'a>(
@@ -150,7 +149,7 @@ impl PushActiveSetEntry {
             }
             let bloom = ConcurrentBloom::from(Bloom::random(
                 num_bloom_filter_items,
-                Self::BLOOM_FALSE_RATE,
+                FalsePositiveRate::GOSSIP_10_PERCENT,
                 Self::BLOOM_MAX_BITS,
             ));
             bloom.add(node);

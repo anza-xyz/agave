@@ -7160,6 +7160,7 @@ name = "solana-bloom"
 version = "4.1.0-alpha.0"
 dependencies = [
  "bencher",
+ "bincode",
  "bv",
  "fnv",
  "rand 0.9.4",

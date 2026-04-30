@@ -39,6 +39,7 @@ solana-sanitize = { workspace = true }
 solana-time-utils = { workspace = true }
 
 [dev-dependencies]
+bincode = { workspace = true }
 bencher = { workspace = true }
 rayon = { workspace = true }
 solana-bloom = { path = ".", features = ["agave-unstable-api"] }
