@@ -999,7 +999,7 @@ mod tests {
         let mut packet_batches = packet::to_packet_batches(votes, 1);
         packet_batches
             .iter_mut()
-            .for_each(|packet_batch| sigverify::ed25519_verify_serial(packet_batch, true));
+            .for_each(|packet_batch| sigverify::ed25519_verify_serial(packet_batch, true, false));
         // There is no worker thread in these tests, so preload the verified
         // responses that verify_votes() will receive after it sends work.
         votes

@@ -9262,6 +9262,7 @@ dependencies = [
  "solana-vote-program",
  "test-case",
  "tikv-jemallocator",
+ "wincode",
 ]
 
 [[package]]

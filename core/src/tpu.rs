@@ -267,6 +267,7 @@ impl Tpu {
             forward_stage_sender.clone(),
             tpu_sigverify_threads,
             enable_block_production_forwarding,
+            bank_forks.read().unwrap().sharable_banks(),
         );
 
         let cluster_info_vote_listener = ClusterInfoVoteListener::new(
