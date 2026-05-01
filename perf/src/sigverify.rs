@@ -1,22 +1,148 @@
 //! The `sigverify` module provides digital signature verification functions.
 //! By default, signatures are verified in parallel using all available CPU
 //! cores.
+// todo: remove the verify_old api after we are happy with everything here
 use {
-    crate::packet::{PacketBatch, PacketFlags, PacketRefMut},
+    crate::packet::{PacketBatch, PacketFlags, PacketRef, PacketRefMut},
     agave_transaction_view::{
         transaction_data::TransactionData, transaction_version::TransactionVersion,
         transaction_view::SanitizedTransactionView,
     },
     rayon::prelude::*,
+    solana_signature::Signature,
 };
 
 // Empirically derived to constrain max verify latency to ~8ms at lower packet counts
 pub const VERIFY_PACKET_CHUNK_SIZE: usize = 128;
 
+#[derive(Clone, Copy)]
+// Identifies a packet that passed parsing and still needs signature verification.
+struct PacketLocation {
+    batch_index: usize,
+    packet_index: usize,
+}
+
+// Records whether a packet should be skipped, discarded immediately, or verified later.
+enum PacketVerificationState {
+    Skip,
+    Discard,
+    Verify(PacketLocation),
+}
+
+/// TODO: we will move this API into solana-sdk.
+#[inline]
+fn batch_verify<'a, I>(items: I) -> bool
+where
+    I: IntoParallelIterator<Item = (&'a Signature, &'a solana_pubkey::Pubkey, &'a [u8])>,
+{
+    items
+        .into_par_iter()
+        .all(|(signature, pubkey, message)| signature.verify(pubkey.as_ref(), message))
+}
+
+fn verify_transaction_view<D: TransactionData>(view: &SanitizedTransactionView<D>) -> bool {
+    let message = view.message_data();
+    batch_verify(
+        view.signatures()
+            .par_iter()
+            .zip(view.static_account_keys().par_iter())
+            .map(move |(signature, pubkey)| (signature, pubkey, message)),
+    )
+}
+
+// Parses and classifies a packet, marking vote metadata and returning deferred verify work.
+fn extract_packet_verification_state(
+    packet: &mut PacketRefMut,
+    reject_non_vote: bool,
+    batch_index: usize,
+    packet_index: usize,
+) -> PacketVerificationState {
+    if packet.meta().discard() {
+        return PacketVerificationState::Skip;
+    }
+
+    let Some(data) = packet.data(..) else {
+        return PacketVerificationState::Discard;
+    };
+
+    let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, true) else {
+        return PacketVerificationState::Discard;
+    };
+
+    // Discard v1 transactions until support is added.
+    if matches!(view.version(), TransactionVersion::V1) {
+        return PacketVerificationState::Discard;
+    }
+
+    let is_simple_vote_tx = {
+        let is_simple_vote_tx = is_simple_vote_transaction_view(&view);
+        if reject_non_vote && !is_simple_vote_tx {
+            return PacketVerificationState::Discard;
+        }
+
+        if view.signatures().is_empty() {
+            return PacketVerificationState::Discard;
+        }
+
+        is_simple_vote_tx
+    };
+
+    if is_simple_vote_tx {
+        packet.meta_mut().flags |= PacketFlags::SIMPLE_VOTE_TX;
+    }
+
+    PacketVerificationState::Verify(PacketLocation {
+        batch_index,
+        packet_index,
+    })
+}
+
+#[must_use]
+// Verifies a packet from an immutable packet reference using the shared batch_verify helper.
+fn verify_packet_ref(packet: PacketRef<'_>, reject_non_vote: bool) -> bool {
+    if packet.meta().discard() {
+        return false;
+    }
+
+    let Some(data) = packet.data(..) else {
+        return false;
+    };
+
+    let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, true) else {
+        return false;
+    };
+
+    if matches!(view.version(), TransactionVersion::V1) {
+        return false;
+    }
+
+    let is_simple_vote_tx = is_simple_vote_transaction_view(&view);
+    if reject_non_vote && !is_simple_vote_tx {
+        return false;
+    }
+
+    if view.signatures().is_empty() {
+        return false;
+    }
+
+    verify_transaction_view(&view)
+}
+
 /// Returns true if the signature on the packet verifies.
 /// Caller must do packet.set_discard(true) if this returns false.
+#[cfg_attr(not(test), allow(dead_code))]
 #[must_use]
 fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool) -> bool {
+    match extract_packet_verification_state(packet, reject_non_vote, 0, 0) {
+        PacketVerificationState::Verify(_) => verify_packet_ref(packet.as_ref(), reject_non_vote),
+        PacketVerificationState::Skip | PacketVerificationState::Discard => false,
+    }
+}
+
+/// Returns true if the signature on the packet verifies using the pre-refactor path.
+/// Caller must do packet.set_discard(true) if this returns false.
+#[must_use]
+fn verify_packet_old(packet: &mut PacketRefMut, reject_non_vote: bool) -> bool {
     // If this packet was already marked as discard, drop it
     if packet.meta().discard() {
         return false;
@@ -111,14 +237,90 @@ pub fn ed25519_verify(
     reject_non_vote: bool,
     packet_count: usize,
 ) {
-    debug!("CPU ECDSA for {packet_count}");
+    ed25519_verify_new(thread_pool, batches, reject_non_vote, packet_count);
+}
+
+fn ed25519_verify_old(
+    thread_pool: &rayon::ThreadPool,
+    batches: &mut [PacketBatch],
+    reject_non_vote: bool,
+    packet_count: usize,
+) {
+    debug!("CPU ECDSA old path for {packet_count}");
     thread_pool.install(|| {
         batches.par_iter_mut().flatten().for_each(|mut packet| {
-            if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
+            if !packet.meta().discard() && !verify_packet_old(&mut packet, reject_non_vote) {
                 packet.meta_mut().set_discard(true);
             }
         });
     });
+}
+
+fn ed25519_verify_new(
+    thread_pool: &rayon::ThreadPool,
+    batches: &mut [PacketBatch],
+    reject_non_vote: bool,
+    packet_count: usize,
+) {
+    debug!("CPU ECDSA for {packet_count}");
+    thread_pool.install(|| {
+        let mut verification_data = Vec::with_capacity(packet_count);
+        for (batch_index, batch) in batches.iter_mut().enumerate() {
+            for (packet_index, mut packet) in batch.iter_mut().enumerate() {
+                match extract_packet_verification_state(
+                    &mut packet,
+                    reject_non_vote,
+                    batch_index,
+                    packet_index,
+                ) {
+                    PacketVerificationState::Verify(data) => verification_data.push(data),
+                    PacketVerificationState::Discard => packet.meta_mut().set_discard(true),
+                    PacketVerificationState::Skip => {}
+                }
+            }
+        }
+
+        let failed_packets: Vec<_> = verification_data
+            .par_iter()
+            .filter_map(|packet| {
+                let verified = verify_packet_ref(
+                    batches[packet.batch_index]
+                        .get(packet.packet_index)
+                        .expect("packet index gathered during extraction must still exist"),
+                    reject_non_vote,
+                );
+                (!verified).then_some(*packet)
+            })
+            .collect();
+
+        for packet in failed_packets {
+            batches[packet.batch_index]
+                .get_mut(packet.packet_index)
+                .expect("packet index gathered during extraction must still exist")
+                .meta_mut()
+                .set_discard(true);
+        }
+    });
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub fn ed25519_verify_old_for_bench(
+    thread_pool: &rayon::ThreadPool,
+    batches: &mut [PacketBatch],
+    reject_non_vote: bool,
+    packet_count: usize,
+) {
+    ed25519_verify_old(thread_pool, batches, reject_non_vote, packet_count);
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub fn ed25519_verify_new_for_bench(
+    thread_pool: &rayon::ThreadPool,
+    batches: &mut [PacketBatch],
+    reject_non_vote: bool,
+    packet_count: usize,
+) {
+    ed25519_verify_new(thread_pool, batches, reject_non_vote, packet_count);
 }
 
 pub fn mark_disabled(batches: &mut [PacketBatch], r: &[Vec<u8>]) {
