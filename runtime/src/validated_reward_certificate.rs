@@ -138,6 +138,10 @@ impl ValidatedRewardCert {
         self.reward_slot
     }
 
+    pub(crate) fn validators(&self) -> &HashSet<Pubkey> {
+        &self.validators
+    }
+
     /// Returns the validators that were extracted from the reward certs.
     pub(crate) fn into_parts(self) -> (Slot, HashSet<Pubkey>) {
         (self.reward_slot, self.validators)
