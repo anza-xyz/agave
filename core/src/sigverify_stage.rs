@@ -327,6 +327,17 @@ impl SigVerifyStage {
 }
 
 impl GossipSigVerifyHandle {
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(
+        worker_sender: Sender<crate::sigverify::GossipVerifyTask>,
+        verified_vote_receiver: Receiver<GossipVerifiedVoteBatch>,
+    ) -> Self {
+        Self {
+            verifier: GossipSigVerifier::new_for_tests(worker_sender),
+            verified_vote_receiver,
+        }
+    }
+
     /// Submit gossip votes for signature verification and collect the corresponding responses.
     ///
     /// This takes `&mut self` because responses for all submitted gossip tasks share one receiver.

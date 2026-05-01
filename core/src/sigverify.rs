@@ -31,7 +31,7 @@ struct TransactionVerifyTask {
     batch: PacketBatch,
 }
 
-struct GossipVerifyTask {
+pub(crate) struct GossipVerifyTask {
     batch: PacketBatch,
     transaction: Transaction,
 }
@@ -78,6 +78,11 @@ pub(crate) struct GossipSigVerifier {
 }
 
 impl GossipSigVerifier {
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(worker_sender: Sender<GossipVerifyTask>) -> Self {
+        Self { worker_sender }
+    }
+
     pub(crate) fn send_votes_to_worker_pool(
         &self,
         votes: Vec<Transaction>,

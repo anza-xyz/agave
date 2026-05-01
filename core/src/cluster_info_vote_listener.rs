@@ -965,6 +965,7 @@ impl ClusterInfoVoteListener {
 mod tests {
     use {
         super::*,
+        crate::sigverify::GossipVerifiedVoteBatch,
         itertools::Itertools,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -991,16 +992,43 @@ mod tests {
         },
     };
 
+    fn pre_send_for_tests(
+        verified_vote_sender: &Sender<GossipVerifiedVoteBatch>,
+        votes: &[Transaction],
+    ) {
+        let mut packet_batches = packet::to_packet_batches(votes, 1);
+        packet_batches
+            .iter_mut()
+            .for_each(|packet_batch| sigverify::ed25519_verify_serial(packet_batch, true));
+        // There is no worker thread in these tests, so preload the verified
+        // responses that verify_votes() will receive after it sends work.
+        votes
+            .iter()
+            .cloned()
+            .zip(packet_batches)
+            .for_each(|(transaction, packet_batch)| {
+                verified_vote_sender
+                    .send(GossipVerifiedVoteBatch {
+                        transactions: vec![transaction],
+                        packet_batch,
+                    })
+                    .unwrap();
+            });
+    }
+
     // Avoid setting up sigverify stage.
     fn test_verify_votes(
         votes: Vec<Transaction>,
         sharable_banks: &SharableBanks,
     ) -> (Vec<Transaction>, Vec<PacketBatch>) {
-        let mut packet_batches = packet::to_packet_batches(&votes, 1);
-        packet_batches
-            .iter_mut()
-            .for_each(|packet_batch| sigverify::ed25519_verify_serial(packet_batch, true));
-        ClusterInfoVoteListener::filter_verified_votes(votes, packet_batches, sharable_banks)
+        let (worker_sender, _worker_receiver) = unbounded();
+        let (verified_vote_sender, verified_vote_receiver) = unbounded();
+        let mut gossip_sigverify_handle =
+            GossipSigVerifyHandle::new_for_tests(worker_sender, verified_vote_receiver);
+
+        pre_send_for_tests(&verified_vote_sender, &votes);
+        ClusterInfoVoteListener::verify_votes(votes, &mut gossip_sigverify_handle, sharable_banks)
+            .unwrap()
     }
 
     #[test]
