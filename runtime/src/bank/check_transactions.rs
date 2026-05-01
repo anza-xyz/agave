@@ -587,6 +587,18 @@ mod tests {
     }
 
     #[test]
+    fn test_filter_v1_transactions_keeps_v1_when_feature_enabled() {
+        let txs = vec![make_test_tx(TransactionVersion::Number(1))];
+        let lock_results = vec![Ok(())];
+        let mut bank = Bank::default_for_tests();
+        bank.activate_feature(&agave_feature_set::enable_tx_v1::id());
+
+        let filtered = bank.filter_v1_transactions(&txs, &lock_results);
+
+        assert_eq!(filtered, vec![Ok(())]);
+    }
+
+    #[test]
     fn test_filter_v1_transactions_keeps_legacy_and_v0_ok() {
         let txs = vec![
             make_test_tx(TransactionVersion::LEGACY),
