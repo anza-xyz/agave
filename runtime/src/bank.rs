@@ -6283,81 +6283,51 @@ impl Bank {
         let ancestors = Ancestors::from(vec![slot]);
         let rent = Self::load_rent_from_account_for_snapshot_load(&bank_rc, &ancestors);
 
-        Self {
-            rc: bank_rc,
-            status_cache: Arc::<RwLock<BankStatusCache>>::default(),
-            blockhash_queue: RwLock::new(fields.blockhash_queue),
-            max_processing_age: MAX_PROCESSING_AGE,
-            ancestors,
-            hash: RwLock::new(fields.hash),
-            parent_hash: fields.parent_hash,
-            parent_slot: fields.parent_slot,
-            hard_forks: Arc::new(RwLock::new(fields.hard_forks)),
-            transaction_count: AtomicU64::new(fields.transaction_count),
-            non_vote_transaction_count_since_restart: AtomicU64::default(),
-            transaction_error_count: AtomicU64::default(),
-            transaction_entries_count: AtomicU64::default(),
-            transactions_per_entry_max: AtomicU64::default(),
-            entry_bytes_consumed: EntryBytesBudget::new(MAX_ENTRY_BYTES_PER_SLOT),
-            tick_height: AtomicU64::new(fields.tick_height),
-            signature_count: AtomicU64::new(fields.signature_count),
-            capitalization: AtomicU64::new(fields.capitalization),
-            max_tick_height: fields.max_tick_height,
-            hashes_per_tick: fields.hashes_per_tick,
-            ticks_per_slot: fields.ticks_per_slot,
-            ns_per_slot: fields.ns_per_slot,
-            genesis_creation_time: fields.genesis_creation_time,
-            slots_per_year: fields.slots_per_year,
-            slot,
-            bank_id: 0,
+        let accounts = Accounts::new(Arc::clone(&bank_rc.accounts.accounts_db));
+        let mut bank = Self::default_with_accounts(accounts);
+
+        bank.rc = bank_rc;
+        bank.blockhash_queue = RwLock::new(fields.blockhash_queue);
+        bank.ancestors = ancestors;
+        bank.hash = RwLock::new(fields.hash);
+        bank.parent_hash = fields.parent_hash;
+        bank.parent_slot = fields.parent_slot;
+        bank.hard_forks = Arc::new(RwLock::new(fields.hard_forks));
+        bank.transaction_count = AtomicU64::new(fields.transaction_count);
+        bank.tick_height = AtomicU64::new(fields.tick_height);
+        bank.signature_count = AtomicU64::new(fields.signature_count);
+        bank.capitalization = AtomicU64::new(fields.capitalization);
+        bank.max_tick_height = fields.max_tick_height;
+        bank.hashes_per_tick = fields.hashes_per_tick;
+        bank.ticks_per_slot = fields.ticks_per_slot;
+        bank.ns_per_slot = fields.ns_per_slot;
+        bank.genesis_creation_time = fields.genesis_creation_time;
+        bank.slots_per_year = fields.slots_per_year;
+        bank.slot = slot;
+        bank.epoch = epoch;
+        bank.block_height = fields.block_height;
+        bank.leader = leader;
+        bank.fee_rate_governor = fields.fee_rate_governor;
+        bank.rent_collector = RentCollector::new(
             epoch,
-            block_height: fields.block_height,
-            leader,
-            fee_rate_governor: fields.fee_rate_governor,
-            rent_collector: RentCollector::new(
-                epoch,
-                fields.epoch_schedule.clone(),
-                fields.slots_per_year,
-                rent,
-            ),
-            epoch_schedule: fields.epoch_schedule,
-            inflation: Arc::new(RwLock::new(fields.inflation)),
-            stakes_cache,
-            epoch_stakes,
-            is_delta: AtomicBool::new(fields.is_delta),
-            rewards: RwLock::new(vec![]),
-            cluster_type: Some(ClusterType::Development),
-            transaction_debug_keys: None, /* Irrelevant to txn execution */
-            transaction_log_collector_config: Arc::<RwLock<TransactionLogCollectorConfig>>::default(
-            ),
-            transaction_log_collector: Arc::<RwLock<TransactionLogCollector>>::default(),
-            feature_set: Arc::new(feature_set),
-            reserved_account_keys: Arc::<ReservedAccountKeys>::default(),
-            drop_callback: RwLock::new(OptionalDropCallback(None)),
-            freeze_started: AtomicBool::new(fields.hash != Hash::default()),
-            vote_only_bank: false,
-            cost_tracker: RwLock::new(CostTracker::default()),
-            accounts_data_size_initial,
-            accounts_data_size_delta_on_chain: AtomicI64::new(0),
-            accounts_data_size_delta_off_chain: AtomicI64::new(0),
-            epoch_reward_status: EpochRewardStatus::default(),
-            transaction_processor: TransactionBatchProcessor::new_uninitialized(slot, epoch),
-            check_program_deployment_slot: false,
-            // collector_fee_details is not serialized to snapshot
-            collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
-            compute_budget: None, /* Set in transaction processor init */
-            transaction_account_lock_limit: None,
-            fee_structure: FeeStructure::default(),
-            hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
-            accounts_lt_hash: Mutex::new(fields.accounts_lt_hash),
-            cache_for_accounts_lt_hash: DashMap::default(),
-            stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
-            block_id: RwLock::new(None),
-            bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
-            epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
-            expected_bank_hash: RwLock::new(None),
-            block_component_processor: RwLock::new(BlockComponentProcessor::default()),
-        }
+            fields.epoch_schedule.clone(),
+            fields.slots_per_year,
+            rent,
+        );
+        bank.epoch_schedule = fields.epoch_schedule;
+        bank.inflation = Arc::new(RwLock::new(fields.inflation));
+        bank.stakes_cache = stakes_cache;
+        bank.epoch_stakes = epoch_stakes;
+        bank.is_delta = AtomicBool::new(fields.is_delta);
+        bank.cluster_type = Some(ClusterType::Development);
+        bank.feature_set = Arc::new(feature_set);
+        bank.freeze_started = AtomicBool::new(fields.hash != Hash::default());
+        bank.accounts_data_size_initial = accounts_data_size_initial;
+        bank.transaction_processor = TransactionBatchProcessor::new_uninitialized(slot, epoch);
+        bank.accounts_lt_hash = Mutex::new(fields.accounts_lt_hash);
+        bank.bank_hash_stats = AtomicBankHashStats::new(&fields.bank_hash_stats);
+
+        bank
     }
 
     /// Create a bank for transaction testing. Constructs the bank struct,
