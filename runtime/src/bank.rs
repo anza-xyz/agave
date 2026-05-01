@@ -1843,11 +1843,13 @@ impl Bank {
         new
     }
 
-    fn load_rent_from_account_for_snapshot_load(bank_rc: &BankRc, ancestors: &Ancestors) -> Rent {
+    fn load_rent_from_account_for_snapshot_load(
+        accounts: &Accounts,
+        ancestors: &Ancestors,
+    ) -> Rent {
         // The serialized rent collector is deprecated. Instead, reconstruct from fields plus
         // the rent sysvar account state.
-        let rent_sysvar = bank_rc
-            .accounts
+        let rent_sysvar = accounts
             .load_with_fixed_root_do_not_populate_read_cache(ancestors, &sysvar::rent::id())
             .expect("snapshot must contain rent sysvar account")
             .0;
@@ -1866,7 +1868,7 @@ impl Bank {
         parent_capitalization: u64,
         parent_block_height: u64,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
-    ) -> PrepareBlockExecutionTimings {
+    ) -> PrepareBlockExecutionStats {
         let slot = self.slot;
 
         // Following code may touch AccountsDb, requiring proper ancestors
@@ -1928,7 +1930,7 @@ impl Bank {
                 num_accounts_modified_this_slot
             });
 
-        PrepareBlockExecutionTimings {
+        PrepareBlockExecutionStats {
             update_epoch_time_us,
             distribute_rewards_time_us,
             cache_preparation_time_us,
@@ -2015,7 +2017,7 @@ impl Bank {
         );
 
         let stakes_accounts_load_duration = now.elapsed();
-        let rent = Self::load_rent_from_account_for_snapshot_load(&bank_rc, &ancestors);
+        let rent = Self::load_rent_from_account_for_snapshot_load(&bank_rc.accounts, &ancestors);
         let mut bank = Self {
             rc: bank_rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
@@ -6281,7 +6283,7 @@ impl Bank {
         let slot = fields.slot;
         let epoch = fields.epoch_schedule.get_epoch(slot);
         let ancestors = Ancestors::from(vec![slot]);
-        let rent = Self::load_rent_from_account_for_snapshot_load(&bank_rc, &ancestors);
+        let rent = Self::load_rent_from_account_for_snapshot_load(&bank_rc.accounts, &ancestors);
 
         let accounts = Accounts::new(Arc::clone(&bank_rc.accounts.accounts_db));
         let mut bank = Self::default_with_accounts(accounts);
@@ -6356,10 +6358,7 @@ impl Bank {
             0,                      /* Irrelevant to txn execution */
         );
 
-        // Apply activated features
         bank.apply_activated_features();
-
-        // Initialize sysvar cache
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
 
@@ -6376,15 +6375,9 @@ impl Bank {
         fields: BankFieldsToDeserialize,
         feature_set: FeatureSet,
         epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
-        stakes: Stakes<
-            crate::stake_account::StakeAccount<solana_stake_interface::state::Delegation>,
-        >,
+        stakes: Stakes<StakeAccount<Delegation>>,
         accounts_data_size_initial: u64,
     ) -> Self {
-        assert_ne!(
-            fields.slot, 0,
-            "new_for_block_tests does not support genesis slot"
-        );
         let parent_epoch = fields.epoch_schedule.get_epoch(fields.parent_slot);
         let parent_capitalization = fields.capitalization;
         let leader =

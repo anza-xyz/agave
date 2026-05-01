@@ -48,7 +48,7 @@ pub(crate) struct NewBankTimings {
     pub(crate) populate_cache_for_accounts_lt_hash_us: u64,
 }
 
-pub(crate) struct PrepareBlockExecutionTimings {
+pub(crate) struct PrepareBlockExecutionStats {
     pub(crate) update_epoch_time_us: u64,
     pub(crate) distribute_rewards_time_us: u64,
     pub(crate) cache_preparation_time_us: u64,
