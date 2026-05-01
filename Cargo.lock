@@ -10747,6 +10747,7 @@ dependencies = [
  "num-traits",
  "solana-account 4.3.0",
  "solana-account-info",
+ "solana-big-mod-exp",
  "solana-blake3-hasher",
  "solana-bls12-381-syscall",
  "solana-bn254",

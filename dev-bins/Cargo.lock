@@ -6433,6 +6433,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-big-mod-exp"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30c80fb6d791b3925d5ec4bf23a7c169ef5090c013059ec3ed7d0b2c04efa085"
+dependencies = [
+ "num-bigint 0.4.6",
+ "num-traits",
+ "solana-define-syscall 3.0.0",
+]
+
+[[package]]
 name = "solana-bincode"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9231,6 +9242,7 @@ dependencies = [
  "num-traits",
  "solana-account 4.3.0",
  "solana-account-info",
+ "solana-big-mod-exp",
  "solana-blake3-hasher",
  "solana-bls12-381-syscall",
  "solana-bn254",

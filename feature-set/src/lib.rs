@@ -28,6 +28,7 @@ pub struct FeatureSnapshot {
     pub enable_bpf_loader_set_authority_checked_ix: bool,
     pub enable_alt_bn128_syscall: bool,
     pub simplify_alt_bn128_syscall_error_codes: bool,
+    pub enable_big_mod_exp_syscall: bool,
     pub remove_bpf_loader_incorrect_program_id: bool,
     pub syscall_parameter_address_restrictions: bool,
     pub virtual_address_space_adjustments: bool,
@@ -111,6 +112,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             simplify_alt_bn128_syscall_error_codes: is_active(
                 &simplify_alt_bn128_syscall_error_codes::ID,
             ),
+            enable_big_mod_exp_syscall: is_active(&enable_big_mod_exp_syscall::ID),
             remove_bpf_loader_incorrect_program_id: is_active(
                 &remove_bpf_loader_incorrect_program_id::ID,
             ),
@@ -318,6 +320,7 @@ impl FeatureSet {
             disable_fees_sysvar: snapshot.disable_fees_sysvar,
             enable_alt_bn128_compression_syscall: snapshot.enable_alt_bn128_compression_syscall,
             enable_alt_bn128_syscall: snapshot.enable_alt_bn128_syscall,
+            enable_big_mod_exp_syscall: snapshot.enable_big_mod_exp_syscall,
             enable_get_epoch_stake_syscall: snapshot.enable_get_epoch_stake_syscall,
             enable_poseidon_syscall: snapshot.enable_poseidon_syscall,
             disable_sbpf_v0_execution: snapshot.disable_sbpf_v0_execution,
@@ -922,6 +925,10 @@ pub mod move_serialized_len_ptr_in_cpi {
 
 pub mod update_hashes_per_tick {
     solana_pubkey::declare_id!("3uFHb9oKdGfgZGJK9EHaAXN4USvnQtAFC13Fh5gGFS5B");
+}
+
+pub mod enable_big_mod_exp_syscall {
+    solana_pubkey::declare_id!("EBq48m8irRKuE7ZnMTLvLg2UuGSqhe8s8oMqnmja1fJw");
 }
 
 pub mod disable_builtin_loader_ownership_chains {
@@ -2016,6 +2023,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             update_hashes_per_tick::id(),
             "Update desired hashes per tick on epoch boundary",
+        ),
+        (
+            enable_big_mod_exp_syscall::id(),
+            "add big_mod_exp syscall #28503",
         ),
         (
             disable_builtin_loader_ownership_chains::id(),
