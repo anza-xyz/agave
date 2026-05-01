@@ -30,13 +30,7 @@ use {
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_signer::Signer,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
-    std::{
-        collections::HashSet,
-        fs,
-        net::SocketAddr,
-        path::{Path, PathBuf},
-        str::FromStr,
-    },
+    std::{collections::HashSet, net::SocketAddr, path::PathBuf, str::FromStr},
 };
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
@@ -137,11 +131,13 @@ impl FromClapArgMatches for RunArgs {
             send_transaction_service_config: SendTransactionServiceConfig::from_clap_arg_match(
                 matches,
             )?,
-            filter_keys: matches
-                .value_of("filter_key_file")
-                .map(parse_filter_key_file)
-                .transpose()?
-                .unwrap_or_default(),
+            filter_keys: if matches.is_present("filter_keys") {
+                values_t!(matches, "filter_keys", Pubkey)?
+                    .into_iter()
+                    .collect()
+            } else {
+                HashSet::new()
+            },
         })
     }
 }
@@ -1194,14 +1190,16 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("filter_key_file")
-            .long("filter-key-file")
-            .value_name("FILE")
+        Arg::with_name("filter_keys")
+            .long("filter-keys")
+            .value_name("PUBKEY")
             .takes_value(true)
+            .min_values(1)
+            .validator(is_pubkey)
             .help(
-                "Read account pubkeys from FILE and drop internally processed leader-side \
-                 transactions that touch any listed account. This is not supported with external \
-                 schedulers",
+                "Drop internally processed leader-side transactions that touch any listed account \
+                 pubkey. Values are space-separated. Using too many keys will negatively impact \
+                 performance. External schedulers must implement this filtering themselves",
             ),
     )
     .arg(
@@ -1252,33 +1250,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     .args(&send_transaction_config::args())
     .args(&rpc_bootstrap_config::args())
     .args(&blockstore_options::args())
-}
-
-fn parse_filter_key_file(path: impl AsRef<Path>) -> Result<HashSet<Pubkey>> {
-    let path = path.as_ref();
-    let contents = fs::read_to_string(path).map_err(|err| {
-        crate::commands::Error::Dynamic(Box::<dyn std::error::Error>::from(format!(
-            "failed to read --filter-key-file '{}': {err}",
-            path.display()
-        )))
-    })?;
-
-    contents
-        .lines()
-        .enumerate()
-        .filter_map(|(line_index, line)| {
-            let key = line.trim();
-            (!key.is_empty()).then_some((line_index + 1, key))
-        })
-        .map(|(line_number, key)| {
-            Pubkey::from_str(key).map_err(|err| {
-                crate::commands::Error::Dynamic(Box::<dyn std::error::Error>::from(format!(
-                    "invalid pubkey in --filter-key-file '{}' at line {line_number}: {err}",
-                    path.display()
-                )))
-            })
-        })
-        .collect()
 }
 
 fn validators_set(
@@ -1466,30 +1437,6 @@ mod tests {
         );
     }
 
-    fn parse_args_by_command_run_with_identity_setup(
-        default_run_args: &RunArgs,
-        args: Vec<&str>,
-    ) -> Result<RunArgs> {
-        let default_args = DefaultArgs::default();
-
-        let tmp_dir = tempfile::tempdir().unwrap();
-        let file = tmp_dir.path().join("id.json");
-        solana_keypair::write_keypair_file(&default_run_args.identity_keypair, &file).unwrap();
-
-        let app = add_args(App::new("run_command"), &default_args)
-            .args(&thread_args(&default_args.thread_args));
-        let matches = app.get_matches_from(
-            [
-                &["run_command"],
-                &["--identity", file.to_str().unwrap()][..],
-                &args[..],
-            ]
-            .concat(),
-        );
-
-        RunArgs::from_clap_arg_match(&matches)
-    }
-
     #[test]
     fn verify_args_struct_by_command_run_with_ledger_path() {
         // nonexistent absolute ledger path
@@ -1577,17 +1524,10 @@ mod tests {
     }
 
     #[test]
-    fn verify_args_struct_by_command_run_with_filter_key_file() {
+    fn verify_args_struct_by_command_run_with_filter_keys() {
         let default_run_args = RunArgs::default();
         let filter_key = Pubkey::new_unique();
         let other_filter_key = Pubkey::new_unique();
-        let tmp_dir = tempfile::tempdir().unwrap();
-        let filter_key_file = tmp_dir.path().join("filter-keys.txt");
-        fs::write(
-            &filter_key_file,
-            format!("\n {filter_key} \n{other_filter_key}\n\n"),
-        )
-        .unwrap();
 
         let expected_args = RunArgs {
             filter_keys: HashSet::from([filter_key, other_filter_key]),
@@ -1595,27 +1535,23 @@ mod tests {
         };
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
-            vec!["--filter-key-file", filter_key_file.to_str().unwrap()],
+            vec![
+                "--filter-keys",
+                &filter_key.to_string(),
+                &other_filter_key.to_string(),
+            ],
             expected_args,
         );
     }
 
     #[test]
-    fn verify_args_struct_by_command_run_with_invalid_filter_key_file() {
+    fn verify_args_struct_by_command_run_with_invalid_filter_keys() {
         let default_run_args = RunArgs::default();
-        let tmp_dir = tempfile::tempdir().unwrap();
-        let filter_key_file = tmp_dir.path().join("filter-keys.txt");
-        fs::write(&filter_key_file, "\nnot-a-pubkey\n").unwrap();
 
-        let err = parse_args_by_command_run_with_identity_setup(
-            &default_run_args,
-            vec!["--filter-key-file", filter_key_file.to_str().unwrap()],
-        )
-        .unwrap_err()
-        .to_string();
-
-        assert!(err.contains(filter_key_file.to_str().unwrap()));
-        assert!(err.contains("line 2"));
+        verify_args_struct_by_command_run_is_error_with_identity_setup(
+            default_run_args,
+            vec!["--filter-keys", "not-a-pubkey"],
+        );
     }
 
     #[test]
