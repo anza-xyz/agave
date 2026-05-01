@@ -112,9 +112,11 @@ impl GossipSigVerifier {
     }
 }
 
-/// Work queues are kept separate so that a spam on TPU
-/// will not lead to us dropping votes.
-const SIGVERIFY_WORK_CHANNEL_SIZE: usize = 50_000;
+// Work queues are kept separate so that a spam on TPU
+// will not lead to us dropping votes.
+const SIGVERIFY_NON_VOTE_WORK_CHANNEL_SIZE: usize = 50_000;
+const SIGVERIFY_TPU_VOTE_WORK_CHANNEL_SIZE: usize = 5_000; // channel is batches not individual packets
+const SIGVERIFY_GOSSIP_VOTE_WORK_CHANNEL_SIZE: usize = 50_000;
 
 #[derive(Clone)]
 struct WorkerPoolChannels {
@@ -159,9 +161,9 @@ impl SigVerifyWorkerPool {
         non_vote_stats: SigVerifyWorkerStats,
         tpu_vote_stats: SigVerifyWorkerStats,
     ) -> Self {
-        let (non_vote_sender, non_vote_receiver) = bounded(SIGVERIFY_WORK_CHANNEL_SIZE);
-        let (tpu_vote_sender, tpu_vote_receiver) = bounded(SIGVERIFY_WORK_CHANNEL_SIZE);
-        let (gossip_sender, gossip_receiver) = bounded(SIGVERIFY_WORK_CHANNEL_SIZE);
+        let (non_vote_sender, non_vote_receiver) = bounded(SIGVERIFY_NON_VOTE_WORK_CHANNEL_SIZE);
+        let (tpu_vote_sender, tpu_vote_receiver) = bounded(SIGVERIFY_TPU_VOTE_WORK_CHANNEL_SIZE);
+        let (gossip_sender, gossip_receiver) = bounded(SIGVERIFY_GOSSIP_VOTE_WORK_CHANNEL_SIZE);
         let channels = WorkerPoolChannels {
             non_vote_receiver,
             tpu_vote_receiver,
