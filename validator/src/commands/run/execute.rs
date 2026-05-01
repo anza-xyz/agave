@@ -818,6 +818,7 @@ pub fn execute(
         blockstore_options: run_args.blockstore_options,
         run_verification: !matches.is_present("skip_startup_ledger_verification"),
         debug_keys,
+        filter_keys: Arc::new(run_args.filter_keys),
         warp_slot: None,
         generator_config: None,
         contact_debug_interval,

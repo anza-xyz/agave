@@ -36,6 +36,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         tower_storage: config.tower_storage.clone(),
         vote_history_storage: config.vote_history_storage.clone(),
         debug_keys: config.debug_keys.clone(),
+        filter_keys: config.filter_keys.clone(),
         contact_debug_interval: config.contact_debug_interval,
         contact_save_interval: config.contact_save_interval,
         send_transaction_service_config: config.send_transaction_service_config.clone(),

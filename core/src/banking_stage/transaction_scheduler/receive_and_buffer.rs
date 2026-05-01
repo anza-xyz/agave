@@ -23,6 +23,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_cost_model::cost_model::CostModel,
     solana_message::v0::LoadedAddresses,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_forks::{BankPair, SharableBanks},
@@ -36,7 +37,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransactionError,
-    std::time::Instant,
+    std::{collections::HashSet, sync::Arc, time::Instant},
 };
 
 #[derive(Debug)]
@@ -56,6 +57,7 @@ pub(crate) struct ReceivingStats {
     pub num_dropped_on_age: usize,
     pub num_dropped_on_already_processed: usize,
     pub num_dropped_on_fee_payer: usize,
+    pub num_dropped_on_filter_key: usize,
     pub num_dropped_on_capacity: usize,
 
     pub num_buffered: usize,
@@ -75,6 +77,7 @@ impl ReceivingStats {
         self.num_dropped_on_age += other.num_dropped_on_age;
         self.num_dropped_on_already_processed += other.num_dropped_on_already_processed;
         self.num_dropped_on_fee_payer += other.num_dropped_on_fee_payer;
+        self.num_dropped_on_filter_key += other.num_dropped_on_filter_key;
         self.num_dropped_on_capacity += other.num_dropped_on_capacity;
         self.num_buffered += other.num_buffered;
 
@@ -99,6 +102,7 @@ pub(crate) trait ReceiveAndBuffer {
 pub(crate) struct TransactionViewReceiveAndBuffer {
     pub receiver: BankingPacketReceiver,
     pub sharable_banks: SharableBanks,
+    pub filter_keys: Arc<HashSet<Pubkey>>,
 }
 
 impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
@@ -130,6 +134,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             num_dropped_on_age: 0,
             num_dropped_on_already_processed: 0,
             num_dropped_on_fee_payer: 0,
+            num_dropped_on_filter_key: 0,
             num_dropped_on_capacity: 0,
             num_buffered: 0,
             receive_time_us: 0,
@@ -207,6 +212,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             num_dropped_on_age: stats.num_dropped_on_age,
             num_dropped_on_already_processed: stats.num_dropped_on_already_processed,
             num_dropped_on_fee_payer: stats.num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: stats.num_dropped_on_filter_key,
             num_dropped_on_capacity: stats.num_dropped_on_capacity,
             num_buffered: stats.num_buffered,
             receive_time_us: stats.receive_time_us,
@@ -220,6 +226,7 @@ pub(crate) enum PacketHandlingError {
     LockValidation,
     ComputeBudget,
     ALTResolution,
+    FilterKey,
 }
 
 impl TransactionViewReceiveAndBuffer {
@@ -247,6 +254,7 @@ impl TransactionViewReceiveAndBuffer {
         let mut num_dropped_on_age = 0;
         let mut num_dropped_on_already_processed = 0;
         let mut num_dropped_on_fee_payer = 0;
+        let mut num_dropped_on_filter_key = 0;
         let mut num_dropped_on_capacity = 0;
         let mut num_buffered = 0;
 
@@ -341,6 +349,7 @@ impl TransactionViewReceiveAndBuffer {
                             working_bank,
                             transaction_account_lock_limit,
                             enable_instruction_accounts_limit,
+                            &self.filter_keys,
                         ) {
                             Ok(state) => Ok(state),
                             Err(
@@ -356,6 +365,10 @@ impl TransactionViewReceiveAndBuffer {
                             }
                             Err(PacketHandlingError::ComputeBudget) => {
                                 num_dropped_on_compute_budget += 1;
+                                Err(())
+                            }
+                            Err(PacketHandlingError::FilterKey) => {
+                                num_dropped_on_filter_key += 1;
                                 Err(())
                             }
                         }
@@ -388,6 +401,7 @@ impl TransactionViewReceiveAndBuffer {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: 0, // receive is outside this function
@@ -401,6 +415,7 @@ impl TransactionViewReceiveAndBuffer {
         working_bank: &Bank,
         transaction_account_lock_limit: usize,
         enable_instruction_accounts_limit: bool,
+        filter_keys: &HashSet<Pubkey>,
     ) -> Result<TransactionViewState, PacketHandlingError> {
         let (view, deactivation_slot) = translate_to_runtime_view(
             bytes,
@@ -408,6 +423,15 @@ impl TransactionViewReceiveAndBuffer {
             transaction_account_lock_limit,
             enable_instruction_accounts_limit,
         )?;
+
+        if !filter_keys.is_empty()
+            && view
+                .account_keys()
+                .iter()
+                .any(|key| filter_keys.contains(key))
+        {
+            return Err(PacketHandlingError::FilterKey);
+        }
 
         let Ok(transaction_configuration) =
             view.transaction_configuration(&working_bank.feature_set)
@@ -601,9 +625,25 @@ mod tests {
         TransactionViewReceiveAndBuffer,
         TransactionViewStateContainer,
     ) {
+        setup_transaction_view_receive_and_buffer_with_filter_keys(
+            receiver,
+            bank_forks,
+            Arc::default(),
+        )
+    }
+
+    fn setup_transaction_view_receive_and_buffer_with_filter_keys(
+        receiver: Receiver<BankingPacketBatch>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        filter_keys: Arc<HashSet<Pubkey>>,
+    ) -> (
+        TransactionViewReceiveAndBuffer,
+        TransactionViewStateContainer,
+    ) {
         let receive_and_buffer = TransactionViewReceiveAndBuffer {
             receiver,
             sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            filter_keys,
         };
         let container = TransactionViewStateContainer::with_capacity(TEST_CONTAINER_CAPACITY);
         (receive_and_buffer, container)
@@ -692,6 +732,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -746,6 +787,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -789,6 +831,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -831,6 +874,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -878,6 +922,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -940,6 +985,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -987,6 +1033,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -1006,6 +1053,97 @@ mod tests {
         assert_eq!(num_dropped_on_capacity, 0);
         assert_eq!(num_buffered, 1);
 
+        verify_container(&mut container, 1);
+    }
+
+    #[test]
+    fn test_receive_and_buffer_filters_fee_payer() {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer_with_filter_keys(
+                receiver,
+                bank_forks.clone(),
+                Arc::new(HashSet::from([mint_keypair.pubkey()])),
+            );
+
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        sender.send(packet_batches).unwrap();
+
+        let stats = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_dropped_on_filter_key, 1);
+        assert_eq!(stats.num_buffered, 0);
+        verify_container(&mut container, 0);
+    }
+
+    #[test]
+    fn test_receive_and_buffer_filters_account_key() {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let filtered_key = Pubkey::new_unique();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer_with_filter_keys(
+                receiver,
+                bank_forks.clone(),
+                Arc::new(HashSet::from([filtered_key])),
+            );
+
+        let transaction = transfer(
+            &mint_keypair,
+            &filtered_key,
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        sender.send(packet_batches).unwrap();
+
+        let stats = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_dropped_on_filter_key, 1);
+        assert_eq!(stats.num_buffered, 0);
+        verify_container(&mut container, 0);
+    }
+
+    #[test]
+    fn test_receive_and_buffer_does_not_filter_unmatched_keys() {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer_with_filter_keys(
+                receiver,
+                bank_forks.clone(),
+                Arc::new(HashSet::from([Pubkey::new_unique()])),
+            );
+
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        sender.send(packet_batches).unwrap();
+
+        let stats = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_dropped_on_filter_key, 0);
+        assert_eq!(stats.num_buffered, 1);
         verify_container(&mut container, 1);
     }
 
@@ -1038,6 +1176,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -1117,6 +1256,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
