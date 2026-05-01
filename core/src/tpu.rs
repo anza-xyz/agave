@@ -256,7 +256,7 @@ impl Tpu {
         )
         .unwrap();
 
-        let (forward_stage_sender, forward_stage_receiver) = bounded(1024);
+        let (forward_stage_sender, forward_stage_receiver) = bounded(50_000);
 
         let (sigverify_stage, gossip_sigverify_handle) = SigVerifyStage::new(
             packet_receiver,
