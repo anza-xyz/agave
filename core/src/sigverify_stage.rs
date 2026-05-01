@@ -47,6 +47,7 @@ type Result<T> = std::result::Result<T, SigVerifyServiceError>;
 pub struct SigVerifyStage {
     non_vote_thread_hdl: JoinHandle<()>,
     tpu_vote_thread_hdl: JoinHandle<()>,
+    // pool held so workers stay alive. If dropped, workers in pool shut down.
     _worker_pool: SigVerifyWorkerPool,
 }
 
