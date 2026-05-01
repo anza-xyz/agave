@@ -4960,8 +4960,10 @@ impl Bank {
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        // Discard v1 transactions until support is added.
-        if tx.version() == TransactionVersion::Number(1) {
+        // Discard v1 transactions until feature gate is activated.
+        if !self.feature_set.snapshot().enable_tx_v1
+            && tx.version() == TransactionVersion::Number(1)
+        {
             return Err(TransactionError::UnsupportedVersion);
         }
 
@@ -4981,10 +4983,17 @@ impl Bank {
         serialized_message: &[u8],
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        // Discard v1 transactions until support is added.
-        if tx.version() == TransactionVersion::Number(1) {
+        // Discard v1 transactions until feature gate is activated.
+        let enable_tx_v1 = self.feature_set.snapshot().enable_tx_v1;
+        if !enable_tx_v1 && tx.version() == TransactionVersion::Number(1) {
             return Err(TransactionError::UnsupportedVersion);
         }
+        let max_transaction_size = match tx.version() {
+            TransactionVersion::Number(1) if enable_tx_v1 => {
+                solana_message::v1::MAX_TRANSACTION_SIZE
+            }
+            _ => PACKET_DATA_SIZE,
+        } as u64;
 
         let enable_instruction_account_limit =
             self.feature_set.snapshot().limit_instruction_accounts;
@@ -4994,7 +5003,7 @@ impl Bank {
         let sanitized_tx = {
             let size =
                 wincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
-            if size > PACKET_DATA_SIZE as u64 {
+            if size > max_transaction_size {
                 return Err(TransactionError::SanitizeFailure);
             }
 
