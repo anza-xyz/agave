@@ -63,16 +63,10 @@ pub fn compress(method: CompressionMethod, data: &[u8]) -> Result<Vec<u8>, io::E
     Ok(compressed_data)
 }
 
-// Below this size, compression framing overhead typically exceeds any savings.
-const COMPRESSION_MIN_SIZE: usize = 128;
-
-pub fn compress_default(data: &[u8]) -> Result<Vec<u8>, io::Error> {
-    let method = if data.len() < COMPRESSION_MIN_SIZE {
-        CompressionMethod::NoCompression
-    } else {
-        CompressionMethod::Zstd
-    };
-    compress(method, data)
+pub fn compress_zstd_or_none(data: &[u8]) -> Result<Vec<u8>, io::Error> {
+    let zstd = compress(CompressionMethod::Zstd, data)?;
+    let none = compress(CompressionMethod::NoCompression, data)?;
+    Ok(if zstd.len() < none.len() { zstd } else { none })
 }
 
 #[cfg(test)]
@@ -83,7 +77,8 @@ mod test {
     fn test_compress_uncompress() {
         let data = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         assert_eq!(
-            decompress(&compress_default(&data).expect("compress_default")).expect("decompress"),
+            decompress(&compress_zstd_or_none(&data).expect("compress_zstd_or_none"))
+                .expect("decompress"),
             data
         );
     }
@@ -91,6 +86,11 @@ mod test {
     #[test]
     fn test_compress() {
         let data = vec![0; 256];
-        assert!(compress_default(&data).expect("compress_default").len() < data.len());
+        assert!(
+            compress_zstd_or_none(&data)
+                .expect("compress_zstd_or_none")
+                .len()
+                < data.len()
+        );
     }
 }
