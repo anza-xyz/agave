@@ -52,7 +52,7 @@ impl TransactionSigVerifier {
         Self { worker_sender }
     }
 
-    pub(crate) fn verify_and_send_packets(
+    pub(crate) fn send_packets_to_worker_pool(
         &mut self,
         batches: Vec<PacketBatch>,
     ) -> Result<usize, SigVerifyServiceError> {
@@ -78,7 +78,7 @@ pub(crate) struct GossipSigVerifier {
 }
 
 impl GossipSigVerifier {
-    pub(crate) fn verify_and_send_votes(
+    pub(crate) fn send_votes_to_worker_pool(
         &self,
         votes: Vec<Transaction>,
         packet_batches: Vec<PacketBatch>,

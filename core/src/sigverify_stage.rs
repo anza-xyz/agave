@@ -271,7 +271,7 @@ impl SigVerifyStage {
         let discard_or_dedup_fail =
             deduper::dedup_packets_and_count_discards(deduper, &mut batches) as usize;
         dedup_time.stop();
-        stats.total_dropped_on_capacity += verifier.verify_and_send_packets(batches)?;
+        stats.total_dropped_on_capacity += verifier.send_packets_to_worker_pool(batches)?;
         stats
             .dedup_packets_pp_us_hist
             .increment(dedup_time.as_us() / (num_packets as u64))
@@ -337,7 +337,10 @@ impl GossipSigVerifyHandle {
         packet_batches: Vec<PacketBatch>,
     ) -> std::result::Result<(Vec<Transaction>, Vec<PacketBatch>), crossbeam_channel::RecvError>
     {
-        let num_batches = match self.verifier.verify_and_send_votes(votes, packet_batches) {
+        let num_batches = match self
+            .verifier
+            .send_votes_to_worker_pool(votes, packet_batches)
+        {
             Ok(num_batches) => num_batches,
             Err(err) => {
                 error!("gossip sigverify enqueue failed: {err:?}");
