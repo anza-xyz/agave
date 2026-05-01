@@ -9638,7 +9638,6 @@ dependencies = [
  "bincode",
  "bytes",
  "bzip2",
- "enum-iterator",
  "flate2",
  "futures 0.3.32",
  "goauth",

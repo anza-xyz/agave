@@ -25,7 +25,6 @@ backoff = { workspace = true, features = ["tokio"] }
 bincode = { workspace = true }
 bytes = { workspace = true }
 bzip2 = { workspace = true }
-enum-iterator = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
 goauth = { workspace = true }
