@@ -37,7 +37,7 @@ pub(crate) struct GossipVerifyTask {
 }
 
 pub(crate) struct GossipVerifiedVoteBatch {
-    pub(crate) transactions: Vec<Transaction>,
+    pub(crate) transaction: Transaction,
     pub(crate) packet_batch: PacketBatch,
 }
 
@@ -307,7 +307,7 @@ impl SigVerifyWorkerPool {
         sigverify::ed25519_verify_serial(&mut work.batch, true);
 
         if let Err(err) = verified_vote_sender.send(GossipVerifiedVoteBatch {
-            transactions: vec![work.transaction],
+            transaction: work.transaction,
             packet_batch: work.batch,
         }) {
             debug!("gossip sigverify response send failed: {err:?}");

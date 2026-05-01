@@ -1009,7 +1009,7 @@ mod tests {
             .for_each(|(transaction, packet_batch)| {
                 verified_vote_sender
                     .send(GossipVerifiedVoteBatch {
-                        transactions: vec![transaction],
+                        transaction,
                         packet_batch,
                     })
                     .unwrap();

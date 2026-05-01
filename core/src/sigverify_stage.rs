@@ -364,7 +364,7 @@ impl GossipSigVerifyHandle {
 
         for _ in 0..num_batches {
             let verified_vote_batch = self.verified_vote_receiver.recv()?;
-            verified_vote_txs.extend(verified_vote_batch.transactions);
+            verified_vote_txs.push(verified_vote_batch.transaction);
             verified_packet_batches.push(verified_vote_batch.packet_batch);
         }
 
