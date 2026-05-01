@@ -11,7 +11,7 @@ use {
         cluster_nodes::{ClusterNodes, ClusterNodesCache},
     },
     agave_votor::event::VotorEventSender,
-    crossbeam_channel::{Receiver, RecvError, RecvTimeoutError, Sender, unbounded},
+    crossbeam_channel::{Receiver, RecvError, RecvTimeoutError, Sender, bounded},
     itertools::Itertools,
     solana_clock::{NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
     solana_gossip::{
@@ -20,7 +20,9 @@ use {
     },
     solana_keypair::Keypair,
     solana_ledger::{
-        blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache, shred::Shred,
+        blockstore::Blockstore,
+        leader_schedule_cache::LeaderScheduleCache,
+        shred::{MAX_FEC_SETS_PER_SLOT, Shred},
     },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
@@ -58,6 +60,13 @@ const _: () = const {
 };
 const CLUSTER_NODES_CACHE_NUM_EPOCH_CAP: usize = MAX_LEADER_SCHEDULE_STAKES as usize;
 const CLUSTER_NODES_CACHE_TTL: Duration = Duration::from_secs(5);
+
+// Capacity in batches. One batch typically packs 1-2 FEC sets worth of bytes
+// (see get_target_batch_bytes_default), so this is at least 4 slots' worth of
+// broadcast traffic. Filling the channel means the consumer (blockstore record
+// or socket transmit) has fallen at least 4 slots behind, which means we've
+// been skipped already.
+const BROADCAST_CHANNEL_CAPACITY: usize = MAX_FEC_SETS_PER_SLOT as usize * 4;
 
 pub(crate) type RecordReceiver = Receiver<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>;
 pub(crate) type TransmitReceiver = Receiver<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>;
@@ -274,8 +283,8 @@ impl BroadcastStage {
         mut broadcast_stage_run: impl BroadcastRun + Send + 'static + Clone,
         xdp_sender: Option<XdpSender>,
     ) -> Self {
-        let (socket_sender, socket_receiver) = unbounded();
-        let (blockstore_sender, blockstore_receiver) = unbounded();
+        let (socket_sender, socket_receiver) = bounded(BROADCAST_CHANNEL_CAPACITY);
+        let (blockstore_sender, blockstore_receiver) = bounded(BROADCAST_CHANNEL_CAPACITY);
         let bs_run = broadcast_stage_run.clone();
 
         let socket_sender_ = socket_sender.clone();
