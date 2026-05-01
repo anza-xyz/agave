@@ -1142,14 +1142,24 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("delay_leader_block_for_pending_fork")
             .hidden(hidden_unless_forced())
             .long("delay-leader-block-for-pending-fork")
+            .conflicts_with("no_delay_leader_block_for_pending_fork")
             .takes_value(false)
             .help(
-                "Delay leader block creation while replaying a block which descends from the \
-                 current fork and has a lower slot than our next leader slot. If we don't delay \
-                 here, our new leader block will be on a different fork from the block we are \
-                 replaying and there is a high chance that the cluster will confirm that block's \
-                 fork rather than our leader block's fork because it was created before we \
-                 started creating ours.",
+                "Deprecated no-op: delay leader block creation while replaying a block which \
+                 descends from the current fork and has a lower slot than our next leader slot. \
+                 This behavior is now enabled by default. Use \
+                 --no-delay-leader-block-for-pending-fork to opt out.",
+            ),
+    )
+    .arg(
+        Arg::with_name("no_delay_leader_block_for_pending_fork")
+            .hidden(hidden_unless_forced())
+            .long("no-delay-leader-block-for-pending-fork")
+            .conflicts_with("delay_leader_block_for_pending_fork")
+            .takes_value(false)
+            .help(
+                "Disable delaying leader block creation while replaying a block which descends \
+                 from the current fork and has a lower slot than our next leader slot.",
             ),
     )
     .arg(
@@ -1791,6 +1801,27 @@ mod tests {
             default_run_args,
             vec!["--allow-private-addr"],
             expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_no_delay_leader_block_for_pending_fork() {
+        let default_run_args = RunArgs::default();
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args.clone(),
+            vec!["--no-delay-leader-block-for-pending-fork"],
+            default_run_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_conflicting_delay_leader_flags_is_error() {
+        verify_args_struct_by_command_run_is_error_with_identity_setup(
+            RunArgs::default(),
+            vec![
+            "--delay-leader-block-for-pending-fork",
+            "--no-delay-leader-block-for-pending-fork",
+            ],
         );
     }
 }

@@ -455,6 +455,7 @@ impl ValidatorConfig {
             replay_transactions_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             tvu_shred_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             tvu_bls_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
+            // Keep tests on the lower-latency behavior unless they opt in explicitly.
             delay_leader_block_for_pending_fork: false,
             voting_service_test_override: None,
             repair_handler_type: RepairHandlerType::default(),

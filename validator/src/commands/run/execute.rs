@@ -856,8 +856,11 @@ pub fn execute(
         replay_transactions_threads,
         tvu_shred_sigverify_threads: tvu_sigverify_threads,
         tvu_bls_sigverify_threads,
+        // Enabled by default: this evaluates to `true` when neither flag is present,
+        // and is only disabled by the explicit `no_delay_leader_block_for_pending_fork` flag.
         delay_leader_block_for_pending_fork: matches
-            .is_present("delay_leader_block_for_pending_fork"),
+            .is_present("delay_leader_block_for_pending_fork")
+            || !matches.is_present("no_delay_leader_block_for_pending_fork"),
         turbine_disabled: Arc::<AtomicBool>::default(),
         broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
