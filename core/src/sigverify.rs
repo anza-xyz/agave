@@ -141,7 +141,9 @@ impl Drop for SigVerifyWorkerPool {
     fn drop(&mut self) {
         self.exit.store(true, Ordering::Relaxed);
         self.worker_hdls.drain(..).for_each(|hdl| {
-            let _ = hdl.join();
+            if let Err(err) = hdl.join() {
+                error!("sigverify worker encountered unexpected error: {err:?}");
+            }
         });
     }
 }
