@@ -367,7 +367,6 @@ impl FeatureSet {
             loader_v3_minimum_extend_program_size: snapshot.loader_v3_minimum_extend_program_size,
             enable_sha512_syscall: snapshot.enable_sha512_syscall,
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
-            enable_tx_v1: snapshot.enable_tx_v1,
         }
     }
 }
