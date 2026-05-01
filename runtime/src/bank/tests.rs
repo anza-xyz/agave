@@ -11786,3 +11786,162 @@ fn test_calculate_and_set_block_id_for_dcou() {
         assert_eq!(bank.block_id(), Some(expected_block_id));
     }
 }
+
+#[test]
+fn test_new_for_txn_tests_system_transfer() {
+    use {
+        crate::{
+            epoch_stakes::VersionedEpochStakes,
+            stake_history::StakeHistory,
+            stakes::{DeserializableStakes, SerdeStakesToStakeFormat, Stakes},
+        },
+        solana_accounts_db::{
+            accounts::Accounts, accounts_db::AccountsDb, accounts_hash::AccountsLtHash,
+            blockhash_queue::BlockhashQueue,
+        },
+        solana_hard_forks::HardForks,
+        solana_inflation::Inflation,
+        solana_lattice_hash::lt_hash::LtHash,
+        solana_vote::vote_account::VoteAccounts,
+    };
+
+    let slot: Slot = 10;
+    let parent_slot: Slot = slot - 1;
+    let epoch_schedule = EpochSchedule::default();
+    let epoch = epoch_schedule.get_epoch(slot);
+    let lamports_per_signature: u64 = 5000;
+    let transfer_amount: u64 = 100_000;
+
+    let sender = Keypair::new();
+    let recipient = Pubkey::new_unique();
+
+    let mut blockhash_queue = BlockhashQueue::default();
+    let recent_blockhash = Hash::new_unique();
+    blockhash_queue.register_hash(&recent_blockhash, lamports_per_signature);
+
+    let accounts_db = AccountsDb::default_for_tests();
+    let accounts = Accounts::new(Arc::new(accounts_db));
+
+    let clock = solana_clock::Clock {
+        slot,
+        epoch,
+        ..solana_clock::Clock::default()
+    };
+    let rent = Rent::default();
+
+    let make_sysvar = |data: Vec<u8>| -> AccountSharedData {
+        let mut acct = AccountSharedData::new(1, data.len(), &solana_sdk_ids::sysvar::id());
+        acct.set_data_from_slice(&data);
+        acct
+    };
+
+    let owned_accounts: Vec<(Pubkey, AccountSharedData)> = vec![
+        (
+            sender.pubkey(),
+            AccountSharedData::new(1_000_000_000, 0, &system_program::id()),
+        ),
+        (
+            recipient,
+            AccountSharedData::new(1_000_000_000, 0, &system_program::id()),
+        ),
+        (
+            sysvar::clock::id(),
+            make_sysvar(bincode::serialize(&clock).unwrap()),
+        ),
+        (
+            sysvar::epoch_schedule::id(),
+            make_sysvar(bincode::serialize(&epoch_schedule).unwrap()),
+        ),
+        (
+            sysvar::rent::id(),
+            make_sysvar(bincode::serialize(&rent).unwrap()),
+        ),
+        (
+            solana_sdk_ids::sysvar::slot_hashes::id(),
+            make_sysvar(bincode::serialize(&solana_slot_hashes::SlotHashes::default()).unwrap()),
+        ),
+        (system_program::id(), {
+            let mut acct = AccountSharedData::new(1, 14, &native_loader::id());
+            acct.set_executable(true);
+            acct.set_data_from_slice(b"system_program");
+            acct
+        }),
+    ];
+
+    let refs: Vec<(&Pubkey, &AccountSharedData)> =
+        owned_accounts.iter().map(|(k, v)| (k, v)).collect();
+    accounts.store_accounts_seq((parent_slot, refs.as_slice()), None, None);
+    accounts.accounts_db.add_root(parent_slot);
+
+    let bank_rc = BankRc::new(accounts);
+
+    let mut epoch_stakes: HashMap<Epoch, VersionedEpochStakes> = HashMap::new();
+    for key in [epoch, epoch.saturating_add(1)] {
+        epoch_stakes.insert(
+            key,
+            VersionedEpochStakes::new(
+                SerdeStakesToStakeFormat::Stake(Stakes::<Stake>::default()),
+                key,
+            ),
+        );
+    }
+
+    let stakes = DeserializableStakes {
+        vote_accounts: VoteAccounts::default(),
+        stake_delegations: vec![],
+        unused: 0,
+        epoch,
+        stake_history: StakeHistory::default(),
+    };
+
+    let fields = BankFieldsToDeserialize {
+        blockhash_queue,
+        hash: Hash::default(),
+        parent_hash: Hash::default(),
+        parent_slot,
+        hard_forks: HardForks::default(),
+        transaction_count: 0,
+        tick_height: 0,
+        signature_count: 0,
+        capitalization: 0,
+        max_tick_height: 0,
+        hashes_per_tick: None,
+        ticks_per_slot: 0,
+        ns_per_slot: 0,
+        genesis_creation_time: 0,
+        slots_per_year: 0.0,
+        slot,
+        block_height: 0,
+        leader_id: Pubkey::default(),
+        fee_rate_governor: FeeRateGovernor::default(),
+        epoch_schedule: epoch_schedule.clone(),
+        inflation: Inflation::default(),
+        stakes,
+        versioned_epoch_stakes: vec![],
+        is_delta: false,
+        accounts_data_len: 0,
+        accounts_lt_hash: AccountsLtHash(LtHash::identity()),
+        bank_hash_stats: BankHashStats::default(),
+        block_id: None,
+    };
+
+    let bank = Bank::new_for_txn_tests(bank_rc, fields, FeatureSet::all_enabled(), epoch_stakes);
+    let bank_forks = BankForks::new_rw_arc(bank);
+    let bank = bank_forks.read().unwrap().root_bank();
+
+    assert_eq!(bank.slot(), slot);
+    assert_eq!(bank.epoch(), epoch);
+    assert_eq!(bank.last_blockhash(), recent_blockhash);
+
+    let tx = system_transaction::transfer(&sender, &recipient, transfer_amount, recent_blockhash);
+    let result = bank.process_transaction(&tx);
+    assert!(result.is_ok(), "transaction failed: {result:?}");
+
+    let sender_balance = bank.get_balance(&sender.pubkey());
+    let recipient_balance = bank.get_balance(&recipient);
+    assert_eq!(
+        sender_balance,
+        1_000_000_000 - transfer_amount - lamports_per_signature
+    );
+    assert_eq!(recipient_balance, 1_000_000_000 + transfer_amount);
+}
