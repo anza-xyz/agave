@@ -210,50 +210,53 @@ impl SigVerifyWorkerPool {
 
     fn worker(exit: Arc<AtomicBool>, channels: WorkerPoolChannels, forward_non_votes: bool) {
         while !exit.load(Ordering::Relaxed) {
-            let should_continue = crossbeam_channel::select! {
-                recv(&channels.non_vote_receiver) -> maybe_work => {
-                    match maybe_work {
-                        Ok(work) => Self::run_transaction_task(
-                            work,
-                            false,
-                            &channels.non_vote_banking_sender,
-                            &channels.forward_stage_sender,
-                            forward_non_votes,
-                            false,
-                            &channels.non_vote_stats,
-                        ),
-                        Err(_) => false,
-                    }
-                }
-                recv(&channels.tpu_vote_receiver) -> maybe_work => {
-                    match maybe_work {
-                        Ok(work) => Self::run_transaction_task(
-                            work,
-                            true,
-                            &channels.tpu_vote_banking_sender,
-                            &channels.forward_stage_sender,
-                            true,
-                            true,
-                            &channels.tpu_vote_stats,
-                        ),
-                        Err(_) => false,
-                    }
-                }
-                recv(&channels.gossip_receiver) -> maybe_work => {
-                    match maybe_work {
-                        Ok(work) => Self::run_gossip_task(
-                            work,
-                            &channels.gossip_verified_vote_sender,
-                        ),
-                        Err(_) => false,
-                    }
-                }
-                default(Duration::from_millis(10)) => { true }
-            };
-
-            if !should_continue {
-                return;
+            if !Self::worker_iteration(&channels, forward_non_votes) {
+                break;
             }
+        }
+    }
+
+    /// Returns false if some channel connection is disconnected.
+    fn worker_iteration(channels: &WorkerPoolChannels, forward_non_votes: bool) -> bool {
+        crossbeam_channel::select! {
+            recv(&channels.non_vote_receiver) -> maybe_work => {
+                match maybe_work {
+                    Ok(work) => Self::run_transaction_task(
+                        work,
+                        false,
+                        &channels.non_vote_banking_sender,
+                        &channels.forward_stage_sender,
+                        forward_non_votes,
+                        false,
+                        &channels.non_vote_stats,
+                    ),
+                    Err(_) => false,
+                }
+            }
+            recv(&channels.tpu_vote_receiver) -> maybe_work => {
+                match maybe_work {
+                    Ok(work) => Self::run_transaction_task(
+                        work,
+                        true,
+                        &channels.tpu_vote_banking_sender,
+                        &channels.forward_stage_sender,
+                        true,
+                        true,
+                        &channels.tpu_vote_stats,
+                    ),
+                    Err(_) => false,
+                }
+            }
+            recv(&channels.gossip_receiver) -> maybe_work => {
+                match maybe_work {
+                    Ok(work) => Self::run_gossip_task(
+                        work,
+                        &channels.gossip_verified_vote_sender,
+                    ),
+                    Err(_) => false,
+                }
+            }
+            default(Duration::from_millis(10)) => { true }
         }
     }
 
