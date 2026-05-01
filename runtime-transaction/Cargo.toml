@@ -44,6 +44,7 @@ criterion = { workspace = true }
 rand = { workspace = true }
 solana-compute-budget-instruction = { path = "../compute-budget-instruction", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-compute-budget-interface = { workspace = true }
+solana-hash = { workspace = true, features = ["atomic"] }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
@@ -52,7 +53,7 @@ solana-signer = { workspace = true }
 solana-system-interface = { workspace = true, features = ["wincode"] }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["blake3"] }
-solana-vote-interface = { workspace = true }
+solana-vote-interface = { workspace = true, features = ["bincode"] }
 
 [[bench]]
 name = "get_signature_details"
