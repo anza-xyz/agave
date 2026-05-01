@@ -134,15 +134,13 @@ impl ProgressTracker {
         } else {
             let current_slot = slot_from_tick_height(tick_height, self.ticks_per_slot);
 
-            // We aren't ready to build a slot yet, however, it may already be our leader
-            // slot which is useful to tell the scheduler.
-            let leader_state = match leader_state
-                .leader_first_tick_height()
-                .is_some_and(|leader_height| tick_height >= leader_height)
-            {
-                true => agave_scheduler_bindings::LEADER_STARTING,
-                false => agave_scheduler_bindings::NOT_LEADER,
-            };
+            // No bank yet but we may already be inside our leader window.
+            let leader_state =
+                if (next_leader_range_start..=next_leader_range_end).contains(&current_slot) {
+                    agave_scheduler_bindings::LEADER_STARTING
+                } else {
+                    agave_scheduler_bindings::NOT_LEADER
+                };
 
             ProgressMessage {
                 leader_state,
@@ -268,6 +266,21 @@ mod tests {
         assert_eq!(message.current_slot_progress, 1);
         assert_eq!(message.epoch, 0);
         assert_eq!(message.latest_blockhash, [0; 32]);
+
+        // Slot boundary mid-window: tick_height one tick before leader_first_tick_height.
+        let slot_5_boundary = 5 * ticks_per_slot;
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            None,
+            slot_5_boundary,
+            Some(slot_5_boundary + 1),
+            Some((5, 7)),
+        )));
+        let (message, _) = progress_tracker.produce_progress_message();
+        assert_eq!(message.current_slot, 5);
+        assert_eq!(
+            message.leader_state,
+            agave_scheduler_bindings::LEADER_STARTING
+        );
 
         let (bank, _bank_forks) =
             Bank::new_for_tests(&solana_genesis_config::create_genesis_config(1).0)
