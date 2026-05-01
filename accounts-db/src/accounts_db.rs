@@ -1033,6 +1033,15 @@ impl AccountsDb {
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     const DEFAULT_READ_ONLY_CACHE_EVICT_SAMPLE_SIZE: usize = 8;
 
+    /// Number of read-only cache shards. Using 2^16 (65 536) shards keeps the
+    /// count a power of two and roughly matches the number of cached accounts
+    /// we observe on mainnet-beta. The average load is still ~1 account per
+    /// shard (collisions are common), but compared with the default
+    /// `num_cpus * 4` shards - where we saw hot shards carrying ~200
+    /// accounts - this dramatically lowers contention.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    const DEFAULT_READ_ONLY_CACHE_NUM_SHARDS: usize = 65536;
+
     pub fn new_with_config(
         paths: Vec<PathBuf>,
         accounts_db_config: AccountsDbConfig,
@@ -1063,6 +1072,9 @@ impl AccountsDb {
         let read_cache_evict_sample_size = accounts_db_config
             .read_cache_evict_sample_size
             .unwrap_or(Self::DEFAULT_READ_ONLY_CACHE_EVICT_SAMPLE_SIZE);
+        let read_cache_num_shards = accounts_db_config
+            .read_cache_num_shards
+            .unwrap_or(Self::DEFAULT_READ_ONLY_CACHE_NUM_SHARDS);
 
         // Increase the stack for foreground threads
         // rayon needs a lot of stack
@@ -1112,6 +1124,7 @@ impl AccountsDb {
                 read_cache_size.0,
                 read_cache_size.1,
                 read_cache_evict_sample_size,
+                read_cache_num_shards,
             ),
             write_cache_limit_bytes: accounts_db_config.write_cache_limit_bytes,
             partitioned_epoch_rewards_config: accounts_db_config.partitioned_epoch_rewards_config,
@@ -1655,7 +1668,7 @@ impl AccountsDb {
             return;
         }
         let failed = AtomicBool::default();
-        let threads = quarter_thread_count();
+        let threads = rayon::current_num_threads();
         let per_batch = total.div_ceil(threads);
         (0..=threads).into_par_iter().for_each(|attempt| {
             pubkey_refcount
@@ -4975,7 +4988,7 @@ impl AccountsDb {
             UpdateIndexThreadSelection::PoolWithThreshold,
         ) && len > threshold
         {
-            let chunk_size = std::cmp::max(1, len / quarter_thread_count()); // # pubkeys/thread
+            let chunk_size = len.div_ceil(self.thread_pool_foreground.current_num_threads());
             let batches = 1 + len / chunk_size;
             self.thread_pool_foreground.install(|| {
                 (0..batches).into_par_iter().for_each(|batch| {
@@ -5041,7 +5054,7 @@ impl AccountsDb {
             UpdateIndexThreadSelection::PoolWithThreshold,
         ) && len > threshold
         {
-            let chunk_size = std::cmp::max(1, len / quarter_thread_count()); // # pubkeys/thread
+            let chunk_size = len.div_ceil(thread_pool.current_num_threads());
             let batches = 1 + len / chunk_size;
             thread_pool.install(|| {
                 (0..batches)

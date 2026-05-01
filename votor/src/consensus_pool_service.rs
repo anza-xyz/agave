@@ -61,6 +61,7 @@ pub(crate) struct ConsensusPoolContext {
     pub(crate) event_sender: VotorEventSender,
     pub(crate) commitment_sender: Sender<CommitmentAggregationData>,
 
+    /// Used to communicate the highest finalization cert the pool has observed to the block creation loop.
     pub(crate) highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 }
 

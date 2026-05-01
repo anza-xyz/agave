@@ -67,6 +67,11 @@ impl<T: BloomHashIndex> Sanitize for Bloom<T> {
 }
 
 impl<T: BloomHashIndex> Bloom<T> {
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn num_bits_set(&self) -> u64 {
+        self.num_bits_set
+    }
+
     pub fn new(num_bits: usize, keys: Vec<u64>) -> Self {
         let bits = BitVec::new_fill(false, num_bits as u64);
         Bloom {

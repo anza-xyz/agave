@@ -294,7 +294,7 @@ pub enum CliCommand {
     },
     // Validator Info Commands
     GetValidatorInfo(Option<Pubkey>),
-    SetValidatorInfo {
+    PublishValidatorInfo {
         validator_info: Value,
         force_keybase: bool,
         info_pubkey: Option<Pubkey>,
@@ -726,7 +726,7 @@ pub fn parse_command(
         // Validator Info Commands
         ("validator-info", Some(matches)) => match matches.subcommand() {
             ("publish", Some(matches)) => {
-                parse_validator_info_command(matches, default_signer, wallet_manager)
+                parse_publish_validator_info_command(matches, default_signer, wallet_manager)
             }
             ("get", Some(matches)) => parse_get_validator_info_command(matches),
             _ => unreachable!(),
@@ -1413,13 +1413,13 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             process_get_validator_info(&rpc_client, config, *info_pubkey).await
         }
         // Publish validator info
-        CliCommand::SetValidatorInfo {
+        CliCommand::PublishValidatorInfo {
             validator_info,
             force_keybase,
             info_pubkey,
             compute_unit_price,
         } => {
-            process_set_validator_info(
+            process_publish_validator_info(
                 &rpc_client,
                 config,
                 validator_info,

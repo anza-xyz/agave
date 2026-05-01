@@ -176,11 +176,12 @@ pub trait RepairHandler {
             .ok()??;
 
         let parent_slot = slot_meta.parent_slot?;
+        let parent_block_id = slot_meta.parent_block_id;
         let parent_proof = double_merkle_meta.get_parent_info_proof()?.to_vec();
 
         let response = BlockIdRepairResponse::ParentFecSetCount {
             fec_set_count: double_merkle_meta.fec_set_count(),
-            parent_info: (parent_slot, Hash::default()),
+            parent_info: (parent_slot, parent_block_id),
             parent_proof,
         };
         create_response_packet_batch(

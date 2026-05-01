@@ -5209,9 +5209,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "3KVpZkLPRXLUakJJkf9vqSapmy4a7rHVwgWa4y82mtjA"
+                    "HLHFxvKMzPVeV1cPFZ7a15BZeBHjLKbBuMVWepwoY42Y"
                 } else {
-                    "EzyLJJki4ALhQAq5wbmiNctDhytQckGJRXnk9APKXv7r"
+                    "FajfXWTy5KiU1NNEDi2faY8Cav1QnBKnQcwcQJADRYTG"
                 },
             );
         }
@@ -5221,9 +5221,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "Gqd3QevNuGLvzL91YbUa86FCcPFCi3GsSDqrhbq2gjX7"
+                    "DxyFxUsAXMtJUgB9SxgemBPg7jU8NcHoVgHMgihQ8xuB"
                 } else {
-                    "HV9Wr7XVke8YYYxMnsQWYf8GnBC5PPKJyGX52raDvev8"
+                    "xq1FdoZAgR6xBMRG7ArTKptb1rE5VPYDhxU1UvDMt7h"
                 },
             );
         }
@@ -5232,9 +5232,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "Gdes9UEi7nxJyytpnAPM8wRMpZ39W8G3tqJSHUj49GQk"
+                    "A2zek43hceCKySHyYbNrHerdLGSBZAoj6Qf9UyBoMjTv"
                 } else {
-                    "5Gp1HpKChMPo1t34WHCFM2mhWxy5s8QYFkf3FnxEAmku"
+                    "BYUDXrsqms4Brvv4dNUUY8BJqpeoJuydCgN2jAn6auF1"
                 },
             );
             break;
@@ -5827,7 +5827,9 @@ fn test_bank_load_program() {
 fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
     let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.feature_set = Arc::new(FeatureSet::all_enabled());
+    let mut feature_set = FeatureSet::all_enabled();
+    feature_set.deactivate(&agave_feature_set::disable_sbpf_v0_v1_v2_deployment::id());
+    bank.feature_set = Arc::new(feature_set);
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let mut bank_client = BankClient::new_shared(bank.clone());
 

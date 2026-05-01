@@ -28,7 +28,6 @@ pub struct FeatureSnapshot {
     pub enable_bpf_loader_set_authority_checked_ix: bool,
     pub enable_alt_bn128_syscall: bool,
     pub simplify_alt_bn128_syscall_error_codes: bool,
-    pub enable_big_mod_exp_syscall: bool,
     pub remove_bpf_loader_incorrect_program_id: bool,
     pub syscall_parameter_address_restrictions: bool,
     pub virtual_address_space_adjustments: bool,
@@ -36,7 +35,6 @@ pub struct FeatureSnapshot {
     pub last_restart_slot_sysvar: bool,
     pub enable_poseidon_syscall: bool,
     pub remaining_compute_units_syscall_enabled: bool,
-    pub enable_loader_v4: bool,
     pub enable_alt_bn128_compression_syscall: bool,
     pub abort_on_invalid_curve: bool,
     pub get_sysvar_syscall_enabled: bool,
@@ -49,6 +47,7 @@ pub struct FeatureSnapshot {
     pub enable_sbpf_v1_deployment_and_execution: bool,
     pub enable_sbpf_v2_deployment_and_execution: bool,
     pub enable_sbpf_v3_deployment_and_execution: bool,
+    pub disable_sbpf_v0_v1_v2_deployment: bool,
     pub deplete_cu_meter_on_vm_failure: bool,
     pub fix_alt_bn128_multiplication_input_length: bool,
     pub formalize_loaded_transaction_data_size: bool,
@@ -112,7 +111,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             simplify_alt_bn128_syscall_error_codes: is_active(
                 &simplify_alt_bn128_syscall_error_codes::ID,
             ),
-            enable_big_mod_exp_syscall: is_active(&enable_big_mod_exp_syscall::ID),
             remove_bpf_loader_incorrect_program_id: is_active(
                 &remove_bpf_loader_incorrect_program_id::ID,
             ),
@@ -126,7 +124,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             remaining_compute_units_syscall_enabled: is_active(
                 &remaining_compute_units_syscall_enabled::ID,
             ),
-            enable_loader_v4: is_active(&enable_loader_v4::ID),
             enable_alt_bn128_compression_syscall: is_active(
                 &enable_alt_bn128_compression_syscall::ID,
             ),
@@ -149,6 +146,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_sbpf_v3_deployment_and_execution: is_active(
                 &enable_sbpf_v3_deployment_and_execution::ID,
             ),
+            disable_sbpf_v0_v1_v2_deployment: is_active(&disable_sbpf_v0_v1_v2_deployment::ID),
             deplete_cu_meter_on_vm_failure: is_active(&deplete_cu_meter_on_vm_failure::ID),
             fix_alt_bn128_multiplication_input_length: is_active(
                 &fix_alt_bn128_multiplication_input_length::ID,
@@ -313,27 +311,26 @@ impl FeatureSet {
             account_data_direct_mapping: snapshot.account_data_direct_mapping,
             enable_bpf_loader_set_authority_checked_ix: snapshot
                 .enable_bpf_loader_set_authority_checked_ix,
-            enable_loader_v4: snapshot.enable_loader_v4,
             deplete_cu_meter_on_vm_failure: snapshot.deplete_cu_meter_on_vm_failure,
             abort_on_invalid_curve: snapshot.abort_on_invalid_curve,
             blake3_syscall_enabled: snapshot.blake3_syscall_enabled,
             curve25519_syscall_enabled: snapshot.curve25519_syscall_enabled,
             disable_fees_sysvar: snapshot.disable_fees_sysvar,
-            disable_sbpf_v0_execution: snapshot.disable_sbpf_v0_execution,
             enable_alt_bn128_compression_syscall: snapshot.enable_alt_bn128_compression_syscall,
             enable_alt_bn128_syscall: snapshot.enable_alt_bn128_syscall,
-            enable_big_mod_exp_syscall: snapshot.enable_big_mod_exp_syscall,
             enable_get_epoch_stake_syscall: snapshot.enable_get_epoch_stake_syscall,
             enable_poseidon_syscall: snapshot.enable_poseidon_syscall,
+            disable_sbpf_v0_execution: snapshot.disable_sbpf_v0_execution,
+            reenable_sbpf_v0_execution: snapshot.reenable_sbpf_v0_execution,
             enable_sbpf_v1_deployment_and_execution: snapshot
                 .enable_sbpf_v1_deployment_and_execution,
             enable_sbpf_v2_deployment_and_execution: snapshot
                 .enable_sbpf_v2_deployment_and_execution,
             enable_sbpf_v3_deployment_and_execution: snapshot
                 .enable_sbpf_v3_deployment_and_execution,
+            disable_sbpf_v0_v1_v2_deployment: snapshot.disable_sbpf_v0_v1_v2_deployment,
             get_sysvar_syscall_enabled: snapshot.get_sysvar_syscall_enabled,
             last_restart_slot_sysvar: snapshot.last_restart_slot_sysvar,
-            reenable_sbpf_v0_execution: snapshot.reenable_sbpf_v0_execution,
             remaining_compute_units_syscall_enabled: snapshot
                 .remaining_compute_units_syscall_enabled,
             remove_bpf_loader_incorrect_program_id: snapshot.remove_bpf_loader_incorrect_program_id,
@@ -927,10 +924,6 @@ pub mod update_hashes_per_tick {
     solana_pubkey::declare_id!("3uFHb9oKdGfgZGJK9EHaAXN4USvnQtAFC13Fh5gGFS5B");
 }
 
-pub mod enable_big_mod_exp_syscall {
-    solana_pubkey::declare_id!("EBq48m8irRKuE7ZnMTLvLg2UuGSqhe8s8oMqnmja1fJw");
-}
-
 pub mod disable_builtin_loader_ownership_chains {
     solana_pubkey::declare_id!("4UDcAfQ6EcA6bdcadkeHpkarkhZGJ7Bpq7wTAiRMjkoi");
 }
@@ -1040,7 +1033,7 @@ pub mod remaining_compute_units_syscall_enabled {
 }
 
 pub mod enable_loader_v4 {
-    solana_pubkey::declare_id!("LoaderV4Wi11BeDe1eted1111111111111111111111");
+    solana_pubkey::declare_id!("LoaderV4WasAbandoned11111111111111111111111");
 }
 
 pub mod require_rent_exempt_split_destination {
@@ -1231,6 +1224,10 @@ pub mod enable_sbpf_v3_deployment_and_execution {
     solana_pubkey::declare_id!("5cC3foj77CWun58pC51ebHFUWavHWKarWyR5UUik7dnC");
 }
 
+pub mod disable_sbpf_v0_v1_v2_deployment {
+    solana_pubkey::declare_id!("5789pRHRXvzpj5ZmGAjHL2QRCDwFx5CuoUqEB55hunbo");
+}
+
 pub mod remove_accounts_executable_flag_checks {
     solana_pubkey::declare_id!("FXs1zh47QbNnhXcnB6YiAQoJ4sGB91tKF3UFHLcKT7PM");
 }
@@ -1380,7 +1377,7 @@ pub mod static_instruction_limit {
 }
 
 pub mod discard_unexpected_data_complete_shreds {
-    solana_pubkey::declare_id!("dcomRRWHXP1FVWPqi9Mm4oxJhF4ehC795SvAtUdA9os");
+    solana_pubkey::declare_id!("disCA4efguFL6Wqa4pGdG7jpjC7C5uiKzKnhEBqchBe");
 }
 
 pub mod vote_state_v4 {
@@ -2021,10 +2018,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "Update desired hashes per tick on epoch boundary",
         ),
         (
-            enable_big_mod_exp_syscall::id(),
-            "add big_mod_exp syscall #28503",
-        ),
-        (
             disable_builtin_loader_ownership_chains::id(),
             "disable builtin loader ownership chains #29956",
         ),
@@ -2327,6 +2320,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             enable_sbpf_v3_deployment_and_execution::id(),
             "SIMD-0178, SIMD-0189 and SIMD-0377: Enable deployment and execution of SBPFv3 \
              programs",
+        ),
+        (
+            disable_sbpf_v0_v1_v2_deployment::id(),
+            "SIMD-0500: Disable deployment of SBPF v0, v1 and v2 programs",
         ),
         (
             remove_accounts_executable_flag_checks::id(),

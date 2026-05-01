@@ -3,6 +3,7 @@ use solana_program_runtime::program_metrics::LoadProgramMetrics;
 use {
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_clock::Slot,
+    solana_instruction::error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::{
@@ -36,7 +37,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     let (program_account, last_modification_slot) = callbacks.get_account_shared_data(pubkey)?;
 
     let load_result = if loader_v4::check_id(program_account.owner()) {
-        solana_loader_v4_program::get_state(program_account.data())
+        loader_v4_get_state(program_account.data())
             .ok()
             .and_then(|state| {
                 (!matches!(state.status, LoaderV4Status::Retracted)).then_some(state.slot)
@@ -224,11 +225,26 @@ pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
         }
         Err(TransactionError::ProgramAccountNotFound)
     } else if loader_v4::check_id(program.owner()) {
-        let state = solana_loader_v4_program::get_state(program.data())
+        let state = loader_v4_get_state(program.data())
             .map_err(|_| TransactionError::ProgramAccountNotFound)?;
         Ok(state.slot)
     } else {
         Ok(0)
+    }
+}
+
+// Plucked from the now-removed Loader V4 program library.
+fn loader_v4_get_state(data: &[u8]) -> Result<&LoaderV4State, InstructionError> {
+    unsafe {
+        let data = data
+            .get(0..LoaderV4State::program_data_offset())
+            .ok_or(InstructionError::AccountDataTooSmall)?
+            .try_into()
+            .unwrap();
+        Ok(std::mem::transmute::<
+            &[u8; LoaderV4State::program_data_offset()],
+            &LoaderV4State,
+        >(data))
     }
 }
 
